@@ -36,6 +36,7 @@ import (
 	"arkloop/services/worker/internal/tools"
 	"arkloop/services/worker/internal/tools/builtin/channel_telegram"
 	"arkloop/services/worker/internal/tools/builtin/sandbox"
+	conversationtool "arkloop/services/worker/internal/tools/conversation"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -107,6 +108,9 @@ type EngineV1Deps struct {
 
 	// ChannelTelegramLoader: Telegram Channel 工具取 token；nil 时不注入 telegram_react/reply
 	ChannelTelegramLoader channel_telegram.TokenLoader
+
+	// GroupSearchExecutor: 群聊搜索执行器；nil 时不注入 group_history_search
+	GroupSearchExecutor tools.Executor
 }
 
 func serviceExternalSkillDirs(_ context.Context) []string {
@@ -458,7 +462,7 @@ func buildPipeline(
 	var mws []pipeline.RunMiddleware
 	mws = append(mws, buildBaseLayer(runsRepo, eventsRepo, messagesRepo, deps.RunControlHub, deps.MessageAttachmentStore, deps.RolloutBlobStore, resolver, releaseSlot)...)
 	mws = append(mws, buildAgentConfigLayer(deps, runsRepo, eventsRepo, baseAllowlistSet, releaseSlot)...)
-	mws = append(mws, buildChannelLayer(deps)...)
+	mws = append(mws, buildChannelLayer(deps, messagesRepo, eventsRepo)...)
 	mws = append(mws, buildCapabilityLayer(deps, promptInjection, eventsRepo)...)
 	mws = append(mws, buildRoutingLayer(deps, runsRepo, eventsRepo, messagesRepo, resolver, releaseSlot)...)
 	mws = append(mws, buildToolFinalizeLayer(deps)...)
@@ -504,13 +508,25 @@ func buildAgentConfigLayer(
 	}
 }
 
-func buildChannelLayer(deps EngineV1Deps) []pipeline.RunMiddleware {
+func buildChannelLayer(deps EngineV1Deps, messagesRepo data.MessagesRepository, eventsRepo data.RunEventsRepository) []pipeline.RunMiddleware {
 	return []pipeline.RunMiddleware{
 		pipeline.NewChannelContextMiddleware(deps.DBPool),
 		pipeline.NewHeartbeatScheduleMiddleware(deps.DBPool),
+		pipeline.NewChannelAdminTagMiddleware(deps.DBPool),
 		pipeline.NewChannelTelegramGroupUserMergeMiddleware(),
-		pipeline.NewChannelGroupContextTrimMiddleware(),
-		pipeline.NewChannelTelegramToolsMiddleware(deps.ChannelTelegramLoader, nil),
+		pipeline.NewChannelGroupContextTrimMiddleware(pipeline.GroupContextTrimDeps{
+			Pool:            deps.DBPool,
+			MessagesRepo:    messagesRepo,
+			EventsRepo:      eventsRepo,
+			AuxGateway:      deps.AuxGateway,
+			EmitDebugEvents: deps.EmitDebugEvents,
+			ConfigLoader:    deps.RoutingConfigLoader,
+		}),
+		pipeline.NewChannelTelegramToolsMiddleware(nil, nil, pipeline.ChannelTelegramToolsDeps{
+			TokenLoader:        deps.ChannelTelegramLoader,
+			GroupSearchExec:    deps.GroupSearchExecutor,
+			GroupSearchLlmSpec: conversationtool.GroupSearchLlmSpec,
+		}),
 	}
 }
 
@@ -528,6 +544,7 @@ func buildCapabilityLayer(
 			ExternalDirs: serviceExternalSkillDirs,
 		}),
 		pipeline.NewMemoryMiddleware(nil, pipeline.NewPgxMemorySnapshotStore(deps.DBPool), deps.DBPool, deps.ConfigResolver),
+		pipeline.NewNotebookInjectionMiddleware(deps.DBPool),
 		pipeline.NewRuntimeContextMiddleware(),
 	}
 	mws = append(mws, promptInjection.Middlewares(eventsRepo)...)

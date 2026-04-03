@@ -439,6 +439,8 @@ export interface LocaleStrings {
   copTimelineThinkingForSeconds: (sec: number) => string
   copTimelineShowMoreSources: (count: number) => string
   copTimelineShowFewerSources: string
+  copThinkShowMore: string
+  copThinkShowLess: string
   /** COP 时间轴：thinking 折叠行左侧标签 */
   copThinkingInlineTitle: string
   /** COP thinking 卡片顶栏（流式中） */
@@ -501,6 +503,7 @@ export interface LocaleStrings {
     availableFetchFailed: string
     noModelsAvailable: string
     visionBridgeHint: string
+    addModelTitle: string
   }
   // agent settings
   agentSettings: {
@@ -787,6 +790,8 @@ export interface LocaleStrings {
     logLevelError: string;
     showRunEvents: string;
     showRunEventsDesc: string;
+    showDebugPanel: string;
+    showDebugPanelDesc: string;
     viewRunDetail: string;
     runDetailTitle: string;
     runDetailOverview: string;
@@ -960,6 +965,17 @@ export interface LocaleStrings {
     memoryNoCompatibleModels: string;
     memoryProviderActivated: string;
     memoryNoEmbeddingModels: string;
+    // notebook settings tab
+    notebook: string;
+    notebookSettingsTitle: string;
+    notebookSettingsDesc: string;
+    notebookAddPlaceholder: string;
+    notebookAddButton: string;
+    notebookSearchPlaceholder: string;
+    // memory config modal
+    memoryConfigureButton: string;
+    memoryConfigureModalTitle: string;
+    memoryNotConfiguredHint: string;
     // tool model
     toolModel: string;
     toolModelDesc: string;

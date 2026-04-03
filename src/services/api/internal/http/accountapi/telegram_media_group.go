@@ -369,6 +369,14 @@ func (c telegramConnector) processTelegramMediaGroupMerged(
 	if err != nil {
 		return err
 	}
+	preTailMsg, err := c.messageRepo.WithTx(tx).GetLatestVisibleMessage(ctx, ch.AccountID, threadID)
+	if err != nil {
+		return err
+	}
+	preTailMessageID := ""
+	if preTailMsg != nil {
+		preTailMessageID = preTailMsg.ID.String()
+	}
 	if _, err := c.messageRepo.WithTx(tx).CreateStructuredWithMetadata(
 		ctx,
 		ch.AccountID,
@@ -393,9 +401,15 @@ func (c telegramConnector) processTelegramMediaGroupMerged(
 	if activeRun, err := runRepoTx.GetActiveRootRunForThread(ctx, threadID); err != nil {
 		return err
 	} else if activeRun != nil {
-		delivered, err := c.deliverTelegramMessageToActiveRun(ctx, runRepoTx, activeRun, content, traceID)
+		delivered, absorbed, err := c.deliverTelegramMessageToActiveRun(ctx, runRepoTx, activeRun, incoming, content, traceID, preTailMessageID)
 		if err != nil {
 			return err
+		}
+		if absorbed {
+			if err := tx.Commit(ctx); err != nil {
+				return err
+			}
+			return nil
 		}
 		if delivered {
 			if err := tx.Commit(ctx); err != nil {

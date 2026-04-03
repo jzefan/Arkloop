@@ -28,6 +28,7 @@ type TitleSummarizerDB interface {
 
 const titleSummarizerTimeout = 30 * time.Second
 const titleSummarizerTemperature = 0.2
+const titleSummarizerMaterialsBudget = 1200
 
 type TitleGeneratorFunc func(context.Context, TitleSummarizerDB, *redis.Client, eventbus.EventBus, llm.Gateway, uuid.UUID, uuid.UUID, string, []llm.Message, string, int)
 
@@ -265,25 +266,25 @@ func generateTitle(
 	maxTokens int,
 ) {
 
-	userText := extractUserText(messages)
-	if userText == "" {
+	titleInput := buildTitleInput(messages)
+	if titleInput == "" {
 		logTitleSummarizerDebug(ctx, "generate_skip",
-			slog.String("reason", "empty_user_text"),
+			slog.String("reason", "empty_title_input"),
 			slog.String("run_id", runID.String()),
 			slog.String("thread_id", threadID.String()),
 		)
 		return
 	}
-	logTitleSummarizerDebug(ctx, "generate_user_text",
+	logTitleSummarizerDebug(ctx, "generate_title_input",
 		slog.String("run_id", runID.String()),
-		slog.Int("user_text_runes", len([]rune(userText))),
+		slog.Int("title_input_runes", len([]rune(titleInput))),
 	)
 
 	req := llm.Request{
 		Model: model,
 		Messages: []llm.Message{
 			{Role: "system", Content: []llm.TextPart{{Text: buildSummarizeSystem(prompt)}}},
-			{Role: "user", Content: []llm.TextPart{{Text: userText}}},
+			{Role: "user", Content: []llm.TextPart{{Text: titleInput}}},
 		},
 		Temperature:     floatPtr(titleSummarizerTemperature),
 		MaxOutputTokens: &maxTokens,
@@ -456,23 +457,115 @@ func emitTitleEvent(
 	}
 }
 
-func extractUserText(messages []llm.Message) string {
+func buildTitleInput(messages []llm.Message) string {
+	userPrompt := buildTitleUserPrompt(messages)
+	materials := buildTitleMaterials(messages, titleSummarizerMaterialsBudget)
+	if userPrompt == "" && materials == "" {
+		return ""
+	}
+
+	if materials == "" {
+		materials = "(none)"
+	}
+
+	return "User prompt:\n" + userPrompt + "\n\nMaterials:\n" + materials
+}
+
+func buildTitleUserPrompt(messages []llm.Message) string {
 	var parts []string
 	for _, msg := range messages {
 		if msg.Role != "user" {
 			continue
 		}
 		for _, part := range msg.Content {
-			if t := strings.TrimSpace(part.Text); t != "" {
-				parts = append(parts, t)
+			if part.Kind() != "text" {
+				continue
+			}
+			if part.Text != "" {
+				parts = append(parts, part.Text)
 			}
 		}
 	}
-	joined := strings.Join(parts, "\n")
-	if len([]rune(joined)) > 500 {
-		joined = string([]rune(joined)[:500])
+	return strings.Join(parts, "\n")
+}
+
+func buildTitleMaterials(messages []llm.Message, budget int) string {
+	if budget <= 0 {
+		return ""
 	}
-	return joined
+
+	var blocks []string
+	remaining := budget
+	for _, msg := range messages {
+		if msg.Role != "user" {
+			continue
+		}
+		for _, part := range msg.Content {
+			block := titleMaterialBlock(part)
+			if block == "" {
+				continue
+			}
+			if len(blocks) > 0 {
+				separator := "\n\n"
+				if utf8RuneCount(separator) >= remaining {
+					return strings.Join(blocks, "\n\n")
+				}
+				remaining -= utf8RuneCount(separator)
+			}
+			block = truncateRunes(block, remaining)
+			if block == "" {
+				return strings.Join(blocks, "\n\n")
+			}
+			blocks = append(blocks, block)
+			remaining -= utf8RuneCount(block)
+			if remaining <= 0 {
+				return strings.Join(blocks, "\n\n")
+			}
+		}
+	}
+	return strings.Join(blocks, "\n\n")
+}
+
+func titleMaterialBlock(part llm.ContentPart) string {
+	switch part.Kind() {
+	case "file":
+		name := titleAttachmentName(part, "file")
+		if strings.TrimSpace(part.ExtractedText) == "" {
+			return "[附件: " + name + "]"
+		}
+		return "[附件: " + name + "]\n" + part.ExtractedText
+	case "image":
+		return "[图片: " + titleAttachmentName(part, "image") + "]"
+	default:
+		return ""
+	}
+}
+
+func titleAttachmentName(part llm.ContentPart, fallback string) string {
+	if part.Attachment != nil {
+		if name := strings.TrimSpace(part.Attachment.Filename); name != "" {
+			return name
+		}
+		if mime := strings.TrimSpace(part.Attachment.MimeType); mime != "" {
+			return mime
+		}
+	}
+	return fallback
+}
+
+func truncateRunes(value string, limit int) string {
+	if limit <= 0 {
+		return ""
+	}
+	runes := []rune(value)
+	if len(runes) <= limit {
+		return value
+	}
+	return string(runes[:limit])
+}
+
+func utf8RuneCount(value string) int {
+	return len([]rune(value))
 }
 
 func normalizeGeneratedTitle(raw string) string {
@@ -556,7 +649,7 @@ func resolveAccountToolGateway(
 }
 
 func buildSummarizeSystem(styleHint string) string {
-	base := "Generate a very short conversation title from the user's ask only.\n" +
+	base := "Generate a very short conversation title from the provided User prompt and Materials.\n" +
 		"Hard rules:\n" +
 		"- Output exactly one title and nothing else.\n" +
 		"- Do not answer the user.\n" +
@@ -565,8 +658,11 @@ func buildSummarizeSystem(styleHint string) string {
 		"- Use the same language as the user's message.\n" +
 		"- If the user's message is mainly Chinese, keep the title under 10 Chinese characters.\n" +
 		"- Otherwise keep the title under 6 words.\n" +
-		"- Focus on the concrete task or question in this chat.\n" +
-		"- Ignore pasted specs, code, HTML, logs, and long quotations.\n" +
+		"- Prefer the concrete task or question the user asked for.\n" +
+		"- Use material details when they make the title more specific.\n" +
+		"- Do not ignore the Materials section.\n" +
+		"- Do not turn the title into only a raw file name or domain label.\n" +
+		"- Ignore formatting noise, boilerplate, and repeated content.\n" +
 		"- Avoid naming only the business domain or deliverable topic when the user asked for an action."
 	if styleHint != "" {
 		return base + "\n\n" + styleHint

@@ -8,9 +8,9 @@ import (
 
 // MemoryIdentity 标识一次 memory 操作的调用方身份，用于多租户隔离。
 type MemoryIdentity struct {
-	AccountID     uuid.UUID
-	UserID        uuid.UUID
-	AgentID       string // 默认取 PersonaDefinition.ID，字符集 [a-zA-Z0-9_-]
+	AccountID      uuid.UUID
+	UserID         uuid.UUID
+	AgentID        string // 默认取 PersonaDefinition.ID，字符集 [a-zA-Z0-9_-]
 	ExternalUserID string
 }
 
@@ -25,7 +25,7 @@ const (
 // MemoryHit 是一次语义检索的单条结果。
 type MemoryHit struct {
 	URI         string
-	Abstract    string  // L0 摘要
+	Abstract    string // L0 摘要
 	Score       float64
 	MatchReason string
 	IsLeaf      bool
@@ -94,7 +94,19 @@ type MemoryProvider interface {
 	Delete(ctx context.Context, ident MemoryIdentity, uri string) error
 }
 
+// MemoryEditURI is implemented by providers that can overwrite an existing
+// semantic memory entry in place by URI.
+type MemoryEditURI interface {
+	UpdateByURI(ctx context.Context, ident MemoryIdentity, uri string, entry MemoryEntry) error
+}
+
 // DesktopLocalMemoryWriteURI is implemented by the Desktop SQLite provider so memory_write can return the canonical URI.
 type DesktopLocalMemoryWriteURI interface {
 	WriteReturningURI(ctx context.Context, ident MemoryIdentity, scope MemoryScope, entry MemoryEntry) (uri string, err error)
+}
+
+// DesktopLocalMemoryEditURI is implemented by the Desktop SQLite provider so
+// notebook_edit can update an existing local note by URI.
+type DesktopLocalMemoryEditURI interface {
+	UpdateByURI(ctx context.Context, ident MemoryIdentity, uri string, entry MemoryEntry) error
 }

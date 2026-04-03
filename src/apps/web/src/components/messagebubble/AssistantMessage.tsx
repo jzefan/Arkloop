@@ -1,9 +1,10 @@
-import { useState } from 'react'
-import { Copy, Check, RefreshCw, Share2, Split, Terminal } from 'lucide-react'
+import { useEffect, useState } from 'react'
+import { Check, Share2, Split, Terminal } from 'lucide-react'
 import type { MessageResponse } from '../../api'
 import type { WebSource, ArtifactRef, BrowserActionRef, WidgetRef } from '../../storage'
 import { WidgetBlock } from '../WidgetBlock'
 import { MarkdownRenderer } from '../MarkdownRenderer'
+import { recordPerfCount, recordPerfValue } from '../../perfDebug'
 import { DocumentCard } from '../DocumentCard'
 import { BrowserScreenshotCard } from '../BrowserScreenshotCard'
 import type { ArtifactAction } from '../ArtifactIframe'
@@ -11,6 +12,8 @@ import { useLocale } from '../../contexts/LocaleContext'
 import { useTypewriter } from '../../hooks/useTypewriter'
 import { isDesktop } from '@arkloop/shared/desktop'
 import { isDocumentArtifact, isArtifactReferenced, getDomain } from './utils'
+import { CopyIconButton } from '../CopyIconButton'
+import { RefreshIconButton } from '../RefreshIconButton'
 
 type Props = {
   message: MessageResponse
@@ -34,6 +37,36 @@ type Props = {
   contentOverride?: string
   /** 与正文展示解耦的复制文本（例如分段 Markdown 合并） */
   plainTextForCopy?: string
+}
+
+function PressableIconWrap({ children, disabled }: { children: React.ReactNode; disabled?: boolean }) {
+  const [pressed, setPressed] = useState(false)
+
+  return (
+    <span
+      className={disabled ? '' : 'group/presswrap'}
+      style={{ position: 'relative', display: 'inline-flex' }}
+      onPointerDown={() => { if (!disabled) setPressed(true) }}
+      onPointerUp={() => setPressed(false)}
+      onPointerLeave={() => setPressed(false)}
+    >
+      {/* 背景层：承载 hover 背景 + pressed scale，与图标是兄弟关系 */}
+      <span
+        style={{
+          position: 'absolute',
+          inset: 0,
+          borderRadius: '7px',
+          transition: 'background-color 60ms, transform 80ms ease-out',
+          transform: pressed ? 'scale(0.92)' : 'scale(1)',
+          pointerEvents: 'none',
+        }}
+        className={disabled ? '' : 'group-hover/presswrap:bg-[var(--c-bg-deep)]'}
+      />
+      <span style={{ position: 'relative' }}>
+        {children}
+      </span>
+    </span>
+  )
 }
 
 function renderBrowserScreenshots(browserActions?: BrowserActionRef[], accessToken?: string) {
@@ -78,16 +111,32 @@ export function AssistantMessage({
   plainTextForCopy,
 }: Props) {
   const { t } = useLocale()
-  const [copied, setCopied] = useState(false)
+  const [pressedBtn, setPressedBtn] = useState<string | null>(null)
+  const [forkHovered, setForkHovered] = useState(false)
   const renderedContent = contentOverride ?? (contentPrefix && message.content.startsWith(contentPrefix) ? message.content.slice(contentPrefix.length).trimStart() : message.content)
   const textForCopy = plainTextForCopy ?? renderedContent
   const displayedAssistantMd = useTypewriter(renderedContent, !streamMarkdown)
+  const widgetCount = widgets?.length ?? 0
+  const artifactCount = artifacts?.length ?? 0
+
+  useEffect(() => {
+    recordPerfCount('assistant_message_render', 1, {
+      messageId: message.id,
+      contentLength: renderedContent.length,
+      displayedLength: displayedAssistantMd.length,
+      streamMarkdown,
+      widgetCount,
+      artifactCount,
+    })
+    recordPerfValue('assistant_message_displayed', displayedAssistantMd.length, 'chars', {
+      messageId: message.id,
+      contentLength: renderedContent.length,
+      streamMarkdown,
+    })
+  }, [artifactCount, displayedAssistantMd.length, message.id, renderedContent.length, streamMarkdown, widgetCount])
 
   const handleCopy = () => {
-    void navigator.clipboard.writeText(textForCopy).then(() => {
-      setCopied(true)
-      setTimeout(() => setCopied(false), 1500)
-    })
+    void navigator.clipboard.writeText(textForCopy)
   }
 
   return (
@@ -128,51 +177,31 @@ export function AssistantMessage({
         />
         <div style={{ marginTop: '4px' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '3px' }}>
-            <div style={{ position: 'relative' }}>
-              <button
-                onClick={handleCopy}
-                className="flex h-9 w-9 items-center justify-center rounded-[7px] text-[var(--c-text-secondary)] opacity-60 transition-[opacity,background,color] duration-[60ms] hover:bg-[var(--c-bg-deep)] hover:opacity-100 hover:text-[var(--c-text-primary)] cursor-pointer border-none bg-transparent"
-              >
-                {copied ? <Check size={16} /> : <Copy size={16} />}
-              </button>
-              <span
-                style={{
-                  position: 'absolute',
-                  top: '100%',
-                  left: '50%',
-                  transform: copied
-                    ? 'translateX(-50%) translateY(2px)'
-                    : 'translateX(-50%) translateY(-2px)',
-                  marginTop: '4px',
-                  fontSize: '11px',
-                  color: 'var(--c-text-tertiary)',
-                  background: 'var(--c-bg-deep)',
-                  border: '0.5px solid var(--c-border-subtle)',
-                  borderRadius: '5px',
-                  padding: '2px 6px',
-                  whiteSpace: 'nowrap',
-                  opacity: copied ? 1 : 0,
-                  transition: 'opacity 150ms ease, transform 150ms ease',
-                  pointerEvents: 'none',
-                  userSelect: 'none',
-                  zIndex: 10,
-                }}
-              >
-                已复制
-              </span>
-            </div>
-            <button
-              onClick={onRetry}
-              disabled={!onRetry}
-              className={`flex h-9 w-9 items-center justify-center rounded-[7px] text-[var(--c-text-secondary)] transition-[opacity,background,color] duration-[60ms] border-none bg-transparent ${onRetry ? 'opacity-60 hover:bg-[var(--c-bg-deep)] hover:opacity-100 hover:text-[var(--c-text-primary)] cursor-pointer' : 'opacity-25 cursor-default'}`}
-            >
-              <RefreshCw size={16} />
-            </button>
+            <PressableIconWrap>
+              <CopyIconButton
+                onCopy={handleCopy}
+                size={16}
+                className="flex h-9 w-9 items-center justify-center rounded-[7px] text-[var(--c-text-secondary)] opacity-60 transition-[opacity,background,color] duration-[60ms] hover:opacity-100 hover:text-[var(--c-text-primary)] cursor-pointer border-none bg-transparent"
+                resetDelay={1500}
+              />
+            </PressableIconWrap>
+            <PressableIconWrap disabled={!onRetry}>
+              <RefreshIconButton
+                onRefresh={onRetry!}
+                disabled={!onRetry}
+                size={16}
+                className={`flex h-9 w-9 items-center justify-center rounded-[7px] text-[var(--c-text-secondary)] transition-[opacity,background,color] duration-[60ms] border-none bg-transparent ${onRetry ? 'opacity-60 hover:opacity-100 hover:text-[var(--c-text-primary)] cursor-pointer' : 'opacity-25 cursor-default'}`}
+              />
+            </PressableIconWrap>
             {!isDesktop() && (
             <div style={{ position: 'relative', display: 'inline-flex' }}>
               <button
                 onClick={onShare}
                 disabled={!onShare || shareState === 'sharing'}
+                onPointerDown={() => { if (onShare && shareState !== 'sharing') setPressedBtn('share') }}
+                onPointerUp={() => setPressedBtn(null)}
+                onPointerLeave={() => setPressedBtn(null)}
+                style={{ transform: pressedBtn === 'share' ? 'scale(0.96)' : 'scale(1)', transition: 'transform 80ms ease-out' }}
                 className={`flex h-9 w-9 items-center justify-center rounded-[7px] text-[var(--c-text-secondary)] transition-[opacity,background,color] duration-[60ms] border-none bg-transparent ${onShare && shareState !== 'sharing' ? 'opacity-60 hover:bg-[var(--c-bg-deep)] hover:opacity-100 hover:text-[var(--c-text-primary)] cursor-pointer' : 'opacity-25 cursor-default'}`}
               >
                 {shareState === 'shared' ? <Check size={16} /> : <Share2 size={16} />}
@@ -195,16 +224,51 @@ export function AssistantMessage({
               </span>
             </div>
             )}
-            <button
-              onClick={onFork}
-              disabled={!onFork}
-              className={`flex h-9 w-9 items-center justify-center rounded-[7px] text-[var(--c-text-secondary)] transition-[opacity,background,color] duration-[60ms] border-none bg-transparent ${onFork ? 'opacity-60 hover:bg-[var(--c-bg-deep)] hover:opacity-100 hover:text-[var(--c-text-primary)] cursor-pointer' : 'opacity-25 cursor-default'}`}
-            >
-              <Split size={16} />
-            </button>
+            <span style={{ position: 'relative', display: 'inline-flex' }}>
+              <button
+                onClick={onFork}
+                disabled={!onFork}
+                onPointerDown={() => { if (onFork) setPressedBtn('fork') }}
+                onPointerUp={() => setPressedBtn(null)}
+                onPointerLeave={() => { setPressedBtn(null); setForkHovered(false) }}
+                onMouseEnter={() => setForkHovered(true)}
+                onMouseLeave={() => setForkHovered(false)}
+                style={{ transform: pressedBtn === 'fork' ? 'scale(0.96)' : 'scale(1)', transition: 'transform 80ms ease-out' }}
+                className={`flex h-9 w-9 items-center justify-center rounded-[7px] text-[var(--c-text-secondary)] transition-[opacity,background,color] duration-[60ms] border-none bg-transparent ${onFork ? 'opacity-60 hover:bg-[var(--c-bg-deep)] hover:opacity-100 hover:text-[var(--c-text-primary)] cursor-pointer' : 'opacity-25 cursor-default'}`}
+              >
+                <Split size={16} />
+              </button>
+              <span
+                style={{
+                  position: 'absolute',
+                  top: '100%',
+                  left: '50%',
+                  marginTop: '3px',
+                  fontSize: '11px',
+                  fontWeight: 500,
+                  color: 'rgba(255,255,255,0.9)',
+                  background: 'rgba(0,0,0,0.75)',
+                  borderRadius: '5px',
+                  padding: '2px 7px',
+                  whiteSpace: 'nowrap',
+                  pointerEvents: 'none',
+                  userSelect: 'none',
+                  zIndex: 20,
+                  opacity: forkHovered && pressedBtn !== 'fork' ? 1 : 0,
+                  transform: forkHovered && pressedBtn !== 'fork' ? 'translateX(-50%) translateY(0px)' : 'translateX(-50%) translateY(-3px)',
+                  transition: 'opacity 120ms ease, transform 120ms ease',
+                }}
+              >
+                Fork
+              </span>
+            </span>
             {onViewRunDetail && (
               <button
                 onClick={onViewRunDetail}
+                onPointerDown={() => setPressedBtn('terminal')}
+                onPointerUp={() => setPressedBtn(null)}
+                onPointerLeave={() => setPressedBtn(null)}
+                style={{ transform: pressedBtn === 'terminal' ? 'scale(0.96)' : 'scale(1)', transition: 'transform 80ms ease-out' }}
                 className="flex h-9 w-9 items-center justify-center rounded-[7px] text-[var(--c-text-secondary)] opacity-60 transition-[opacity,background,color] duration-[60ms] hover:bg-[var(--c-bg-deep)] hover:opacity-100 hover:text-[var(--c-text-primary)] cursor-pointer border-none bg-transparent"
                 title={t.desktopSettings.viewRunDetail}
               >

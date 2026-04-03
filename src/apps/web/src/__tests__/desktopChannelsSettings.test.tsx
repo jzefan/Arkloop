@@ -22,6 +22,35 @@ function setInputValue(input: HTMLInputElement, value: string) {
 
 async function loadDesktopSettingsSubject() {
   vi.resetModules()
+  vi.doMock('../api-admin', () => ({
+    listPlatformSettings: vi.fn().mockResolvedValue([]),
+  }))
+  vi.doMock('../api-bridge', () => ({
+    bridgeClient: {
+      getExecutionMode: vi.fn().mockResolvedValue('local'),
+    },
+  }))
+  vi.doMock('@arkloop/shared/desktop', () => ({
+    getDesktopApi: () => ({
+      config: {
+        get: vi.fn().mockResolvedValue({
+          mode: 'local',
+          saas: { baseUrl: '' },
+          selfHosted: { baseUrl: '' },
+          local: { port: 19001, portMode: 'auto' },
+          window: { width: 1280, height: 800 },
+          onboarding_completed: true,
+          connectors: {
+            fetch: { provider: 'basic' },
+            search: { provider: 'duckduckgo' },
+          },
+          memory: { enabled: true, provider: 'notebook' },
+          network: { proxyEnabled: false, requestTimeoutMs: 30000, retryCount: 1 },
+        }),
+        onChanged: vi.fn(() => () => {}),
+      },
+    }),
+  }))
   vi.doMock('../storage', async () => {
     const actual = await vi.importActual<typeof import('../storage')>('../storage')
     return {
@@ -123,6 +152,9 @@ afterEach(() => {
   root = null
   vi.doUnmock('../api')
   vi.doUnmock('../storage')
+  vi.doUnmock('../api-admin')
+  vi.doUnmock('../api-bridge')
+  vi.doUnmock('@arkloop/shared/desktop')
   vi.doUnmock('../components/settings')
   vi.doUnmock('../components/settings/GeneralSettings')
   vi.doUnmock('../components/settings/DesktopAppearanceSettings')

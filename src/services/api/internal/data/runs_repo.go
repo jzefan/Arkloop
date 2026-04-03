@@ -155,6 +155,34 @@ func (r *RunEventRepository) CreateRootRunWithClaim(
 	return r.CreateRootRunWithClaimFrom(ctx, accountID, threadID, createdByUserID, startedType, startedData)
 }
 
+func (r *RunEventRepository) CreateRootRunWithResume(
+	ctx context.Context,
+	accountID uuid.UUID,
+	threadID uuid.UUID,
+	createdByUserID *uuid.UUID,
+	startedType string,
+	startedData map[string]any,
+	resumeFromRunID uuid.UUID,
+) (Run, RunEvent, error) {
+	if resumeFromRunID == uuid.Nil {
+		return Run{}, RunEvent{}, fmt.Errorf("resume_from_run_id must not be empty")
+	}
+	if err := r.LockThreadRow(ctx, threadID); err != nil {
+		return Run{}, RunEvent{}, err
+	}
+	if active, err := r.GetActiveRootRunForThread(ctx, threadID); err != nil {
+		return Run{}, RunEvent{}, err
+	} else if active != nil {
+		return Run{}, RunEvent{}, ErrThreadBusy
+	}
+	startedData, _, err := r.withThreadTailMessage(ctx, threadID, startedData)
+	if err != nil {
+		return Run{}, RunEvent{}, err
+	}
+	startedData = applyContinuationMetadata(startedData, &resumeFromRunID)
+	return r.createRunWithStartedEvent(ctx, accountID, threadID, createdByUserID, startedType, startedData, &resumeFromRunID)
+}
+
 func (r *RunEventRepository) CreateRootRunWithClaimFrom(
 	ctx context.Context,
 	accountID uuid.UUID,
@@ -177,7 +205,9 @@ func (r *RunEventRepository) CreateRootRunWithClaimFrom(
 				return Run{}, RunEvent{}, err
 			}
 			if strings.EqualFold(runKindFromData(activeData), runkind.Heartbeat) {
-				// active 是 heartbeat，incoming 是 normal，放行
+				if err := r.resolveHeartbeatConflict(ctx, active, activeData, threadID); err != nil {
+					return Run{}, RunEvent{}, err
+				}
 			} else {
 				return Run{}, RunEvent{}, ErrThreadBusy
 			}
@@ -252,6 +282,48 @@ func runKindFromData(data map[string]any) string {
 	return strings.TrimSpace(raw)
 }
 
+// resolveHeartbeatConflict 在 normal run 放行 heartbeat 时决定是否 cancel heartbeat。
+// 上下文相同（tail message 一致）+ heartbeat 未向第三方发送过消息 -> cancel heartbeat
+// 上下文相同 + heartbeat 已发送 -> 阻塞 normal run (ErrThreadBusy)
+// 上下文不同 -> 放行并发，不 cancel
+func (r *RunEventRepository) resolveHeartbeatConflict(ctx context.Context, active *Run, activeData map[string]any, threadID uuid.UUID) error {
+	activeTail := threadTailMessageIDFromData(activeData)
+	currentTail, err := r.getLatestThreadMessage(ctx, threadID)
+	if err != nil {
+		return err
+	}
+	currentTailID := ""
+	if currentTail != nil {
+		currentTailID = currentTail.ID.String()
+	}
+	if activeTail != currentTailID {
+		return nil // 上下文不同，并发放行
+	}
+	// 上下文相同，检查 heartbeat 是否已向第三方发送过消息
+	hasOutbound, err := r.hasOutboundForRun(ctx, active.ID)
+	if err != nil {
+		return err
+	}
+	if hasOutbound {
+		return ErrThreadBusy
+	}
+	// 无外发输出，cancel heartbeat
+	_, err = r.RequestCancel(ctx, active.ID, nil, "heartbeat_superseded", 0, nil)
+	return err
+}
+
+func (r *RunEventRepository) hasOutboundForRun(ctx context.Context, runID uuid.UUID) (bool, error) {
+	var exists bool
+	err := r.db.QueryRow(ctx,
+		`SELECT EXISTS(SELECT 1 FROM channel_message_ledger WHERE run_id = $1 AND direction = 'outbound')`,
+		runID,
+	).Scan(&exists)
+	if err != nil {
+		return false, fmt.Errorf("hasOutboundForRun: %w", err)
+	}
+	return exists, nil
+}
+
 func applyContinuationMetadata(data map[string]any, resumeFromRunID *uuid.UUID) map[string]any {
 	if data == nil {
 		data = map[string]any{}
@@ -299,6 +371,7 @@ func (r *RunEventRepository) getLatestThreadMessage(ctx context.Context, threadI
 		 WHERE thread_id = $1
 		   AND hidden = FALSE
 		   AND deleted_at IS NULL
+		   AND COALESCE(compacted, false) = false
 		 ORDER BY created_at DESC, id DESC
 		 LIMIT 1`,
 		threadID,
@@ -615,6 +688,27 @@ func (r *RunEventRepository) GetLatestEventType(
 		return "", err
 	}
 	return eventType, nil
+}
+
+func (r *RunEventRepository) HasRecoverableAssistantOutput(
+	ctx context.Context,
+	runID uuid.UUID,
+) (bool, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if runID == uuid.Nil {
+		return false, fmt.Errorf("run_id must not be empty")
+	}
+	eventType, err := r.GetLatestEventType(ctx, runID, []string{
+		"message.delta",
+		"tool.call",
+		"tool.result",
+	})
+	if err != nil {
+		return false, err
+	}
+	return strings.TrimSpace(eventType) != "", nil
 }
 
 func (r *RunEventRepository) RequestCancel(

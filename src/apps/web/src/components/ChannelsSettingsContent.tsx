@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
-import { Plus, Trash2, Copy, Check, Link2 } from 'lucide-react'
+import { Plus, Trash2, Link2 } from 'lucide-react'
 import {
   type ChannelResponse,
   type ChannelIdentityResponse,
@@ -17,6 +17,7 @@ import {
 import { useLocale } from '../contexts/LocaleContext'
 import { AutoResizeTextarea } from '@arkloop/shared'
 import { QQLoginFlow } from './QQLoginFlow'
+import { CopyIconButton } from './CopyIconButton'
 
 type Props = {
   accessToken: string
@@ -52,7 +53,6 @@ export function ChannelsSettingsContent({ accessToken }: Props) {
 
   const [bindCode, setBindCode] = useState<string | null>(null)
   const [generating, setGenerating] = useState(false)
-  const [copiedWebhook, setCopiedWebhook] = useState<string | null>(null)
 
   const load = useCallback(async () => {
     try {
@@ -125,8 +125,6 @@ export function ChannelsSettingsContent({ accessToken }: Props) {
 
   const handleCopyWebhook = (url: string) => {
     navigator.clipboard.writeText(url)
-    setCopiedWebhook(url)
-    setTimeout(() => setCopiedWebhook(null), 2000)
   }
 
   const handleGenerateBindCode = async () => {
@@ -313,12 +311,12 @@ export function ChannelsSettingsContent({ accessToken }: Props) {
                   {ch.webhook_url && (
                     <div className="flex items-center gap-1.5">
                       <span className="truncate text-xs text-[var(--c-text-tertiary)]">{ch.webhook_url}</span>
-                      <button
-                        onClick={() => handleCopyWebhook(ch.webhook_url!)}
+                      <CopyIconButton
+                        onCopy={() => handleCopyWebhook(ch.webhook_url!)}
+                        size={12}
+                        tooltip={t.copyAction}
                         className="shrink-0 text-[var(--c-text-muted)] hover:text-[var(--c-text-secondary)]"
-                      >
-                        {copiedWebhook === ch.webhook_url ? <Check size={12} /> : <Copy size={12} />}
-                      </button>
+                      />
                     </div>
                   )}
                 </div>

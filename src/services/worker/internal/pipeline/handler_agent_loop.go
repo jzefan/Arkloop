@@ -147,10 +147,20 @@ func NewAgentLoopHandler(
 		}
 		if writer.Completed() {
 			if !ShouldSuppressHeartbeatOutput(rc, writer.AssistantOutput()) {
-				if _, err := writer.InsertAssistantMessage(ctx, messagesRepo, rc.Run.AccountID, rc.Run.ThreadID, false); err != nil {
-					return err
+				if writer.hasStreamedChunks() {
+					remainder := writer.telegramStreamRemainder()
+					if strings.TrimSpace(remainder) != "" {
+						if err := writer.insertStreamRemainder(ctx, messagesRepo, rc.Run.AccountID, rc.Run.ThreadID, remainder); err != nil {
+							return err
+						}
+					}
+				} else {
+					if _, err := writer.InsertAssistantMessage(ctx, messagesRepo, rc.Run.AccountID, rc.Run.ThreadID, false); err != nil {
+						return err
+					}
 				}
 				rc.FinalAssistantOutput = writer.AssistantOutput()
+				rc.FinalAssistantOutputs = writer.AssistantOutputs()
 				rc.TelegramStreamDeliveryRemainder = writer.telegramStreamRemainder()
 			}
 		}
@@ -189,6 +199,9 @@ type eventWriter struct {
 	lastCommitAt             time.Time
 	assistantDeltas          []string
 	assistantMessage         *llm.Message
+	assistantMessageFresh    bool
+	assistantOutputs         []string
+	lastTurnDeltaCount       int
 	toolCallCount            int
 	iterationCount           int
 	completed                bool
@@ -270,6 +283,36 @@ func (w *eventWriter) telegramStreamRemainder() string {
 		return ""
 	}
 	return strings.TrimSpace(strings.Join(w.assistantDeltas[w.telegramFlushSentDeltas:], ""))
+}
+
+func (w *eventWriter) hasStreamedChunks() bool {
+	return w.telegramToolBoundaryFlush != nil && w.telegramFlushSentDeltas > 0
+}
+
+func (w *eventWriter) insertStreamRemainder(
+	ctx context.Context,
+	repo data.MessagesRepository,
+	accountID uuid.UUID,
+	threadID uuid.UUID,
+	content string,
+) error {
+	if err := w.ensureTx(ctx); err != nil {
+		return err
+	}
+	messageID, err := repo.InsertAssistantMessageWithMetadata(
+		ctx, w.tx, accountID, threadID, w.run.ID,
+		content, nil, false,
+		map[string]any{"stream_chunk": true},
+	)
+	if err != nil {
+		return err
+	}
+	if messageID != uuid.Nil {
+		if err := (data.SubAgentRepository{}).SetLastOutputRefByLastCompletedRunID(ctx, w.tx, w.run.ID, "message:"+messageID.String()); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (w *eventWriter) ensureTx(ctx context.Context) error {
@@ -368,9 +411,15 @@ func (w *eventWriter) Append(
 	w.pendingEventsSinceCommit++
 	if assistantMessage, ok := assistantMessageFromEventData(ev.DataJSON); ok {
 		w.assistantMessage = &assistantMessage
+		w.assistantMessageFresh = true
+	}
+	if ev.Type == "llm.turn.completed" {
+		w.captureAssistantTurnOutput()
 	}
 
-	w.accumUsage(ev.DataJSON)
+	if shouldAccumulateUsageForEvent(ev.Type) {
+		w.accumUsage(ev.DataJSON)
+	}
 
 	if ev.Type == "tool.call" {
 		if w.telegramToolBoundaryFlush != nil && len(w.assistantDeltas) > w.telegramFlushSentDeltas {
@@ -528,6 +577,26 @@ func (w *eventWriter) AssistantOutput() string {
 	return strings.Join(w.assistantDeltas, "")
 }
 
+func (w *eventWriter) AssistantOutputs() []string {
+	if len(w.assistantOutputs) == 0 {
+		output := strings.TrimSpace(w.AssistantOutput())
+		if output == "" {
+			return nil
+		}
+		return []string{output}
+	}
+	out := make([]string, 0, len(w.assistantOutputs))
+	for _, item := range w.assistantOutputs {
+		if trimmed := strings.TrimSpace(item); trimmed != "" {
+			out = append(out, trimmed)
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
 func (w *eventWriter) InsertAssistantMessage(
 	ctx context.Context,
 	repo data.MessagesRepository,
@@ -567,6 +636,20 @@ func (w *eventWriter) finalAssistantMessage() llm.Message {
 	return llm.Message{
 		Role:    "assistant",
 		Content: []llm.TextPart{{Text: content}},
+	}
+}
+
+func (w *eventWriter) captureAssistantTurnOutput() {
+	text := ""
+	if w.assistantMessageFresh && w.assistantMessage != nil {
+		text = llm.VisibleMessageText(*w.assistantMessage)
+	} else if w.lastTurnDeltaCount < len(w.assistantDeltas) {
+		text = strings.Join(w.assistantDeltas[w.lastTurnDeltaCount:], "")
+	}
+	w.lastTurnDeltaCount = len(w.assistantDeltas)
+	w.assistantMessageFresh = false
+	if trimmed := strings.TrimSpace(text); trimmed != "" {
+		w.assistantOutputs = append(w.assistantOutputs, trimmed)
 	}
 }
 
@@ -653,6 +736,15 @@ func (w *eventWriter) accumUsage(dataJSON map[string]any) {
 		if v, ok := toInt64(cost["amount_micros"]); ok {
 			w.totalCostUSD += float64(v) / 1_000_000.0
 		}
+	}
+}
+
+func shouldAccumulateUsageForEvent(eventType string) bool {
+	switch eventType {
+	case "run.completed", "run.failed", "run.cancelled", "run.interrupted":
+		return false
+	default:
+		return true
 	}
 }
 

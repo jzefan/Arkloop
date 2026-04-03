@@ -32,10 +32,22 @@ export type TurnSegment =
       errorClass?: string
     }
 
+export type RequestMessageView = {
+  role: string
+  text: string
+}
+
+export type RequestSnapshot = {
+  llmCallId: string
+  messageCount?: number
+  messages: RequestMessageView[]
+}
+
 export type LlmTurn = {
   llmCallId: string
   providerKind: string
   apiMode: string
+  contextTokens?: number
   inputTokens?: number
   outputTokens?: number
   cachedTokens?: number
@@ -66,6 +78,7 @@ export type LlmTurn = {
   roleBytes?: Record<string, number>
   toolSchemaBytesMap?: Record<string, number>
   stablePrefixHash?: string
+  requests: RequestSnapshot[]
 }
 
 type UserInputInfo = {
@@ -109,6 +122,9 @@ function approxContextTokensFromPayloadBytes(turn: LlmTurn): number | undefined 
 }
 
 function refreshContextTokenEstimate(turn: LlmTurn) {
+  if (turn.contextTokens != null) {
+    return
+  }
   const approx = approxContextTokensFromPayloadBytes(turn)
   turn.estimatedInputTokens = approx
 }
@@ -133,7 +149,8 @@ function extractMessageText(msg: Record<string, unknown>): string {
         if (typeof part === 'string') return part
         if (typeof part === 'object' && part !== null) {
           const record = part as Record<string, unknown>
-          return typeof record.text === 'string' ? record.text : JSON.stringify(record)
+          if (record.type === 'tool_use' || record.type === 'tool_result') return ''
+          return typeof record.text === 'string' ? record.text : ''
         }
         return ''
       })
@@ -142,6 +159,15 @@ function extractMessageText(msg: Record<string, unknown>): string {
     out = JSON.stringify(content)
   }
   return redactDataUrlsInString(out)
+}
+
+function extractRequestMessages(messages: Array<Record<string, unknown>>): RequestMessageView[] {
+  return messages
+    .map((message) => ({
+      role: typeof message.role === 'string' ? message.role : 'unknown',
+      text: extractMessageText(message),
+    }))
+    .filter((message) => message.role || message.text)
 }
 
 function parseChannelEnvelope(text: string): { text: string; meta: Record<string, string> } | null {
@@ -371,6 +397,13 @@ function startTurn(
     toolSchemaBytesMap: requestData.tool_schema_bytes_by_name as Record<string, number> | undefined,
     stablePrefixHash:
       typeof requestData.stable_prefix_hash === 'string' ? requestData.stable_prefix_hash : undefined,
+    requests: [
+      {
+        llmCallId: String(requestData.llm_call_id ?? ''),
+        messageCount: input.messages.length > 0 ? input.messages.length : undefined,
+        messages: extractRequestMessages(input.messages),
+      },
+    ],
   }
   refreshContextTokenEstimate(turn)
   return { userMessageCount: input.userMessageCount, turn }
@@ -418,6 +451,17 @@ function mergeRequestMetadata(
   }
   if (typeof requestData.stable_prefix_hash === 'string') {
     turn.stablePrefixHash = requestData.stable_prefix_hash
+  }
+  const llmCallId = String(requestData.llm_call_id ?? '')
+  if (llmCallId) {
+    const nextSnapshot: RequestSnapshot = {
+      llmCallId,
+      messageCount: input.messages.length > 0 ? input.messages.length : undefined,
+      messages: extractRequestMessages(input.messages),
+    }
+    const existingIndex = turn.requests.findIndex((request) => request.llmCallId === llmCallId)
+    if (existingIndex >= 0) turn.requests[existingIndex] = nextSnapshot
+    else turn.requests.push(nextSnapshot)
   }
   refreshContextTokenEstimate(turn)
 }
@@ -543,14 +587,25 @@ export function buildTurns(events: RunEventRaw[]): LlmTurn[] {
 
       const usage = data.usage as Record<string, unknown> | undefined
       if (usage) {
-        requestState.turn.inputTokens = (requestState.turn.inputTokens ?? 0) + Number(usage.input_tokens ?? 0)
+        const inputTokens = Number(usage.input_tokens ?? 0)
+        const cacheReadTokens = Number(usage.cache_read_input_tokens ?? 0)
+        const cacheCreationTokens = Number(usage.cache_creation_input_tokens ?? 0)
+        requestState.turn.inputTokens = (requestState.turn.inputTokens ?? 0) + inputTokens
         requestState.turn.outputTokens = (requestState.turn.outputTokens ?? 0) + Number(usage.output_tokens ?? 0)
         requestState.turn.cachedTokens =
           (requestState.turn.cachedTokens ?? 0) +
           Number(usage.cached_tokens ?? usage.cache_read_input_tokens ?? 0)
         requestState.turn.cacheCreationTokens =
           (requestState.turn.cacheCreationTokens ?? 0) +
-          Number(usage.cache_creation_input_tokens ?? 0)
+          cacheCreationTokens
+        requestState.turn.contextTokens =
+          (requestState.turn.contextTokens ?? 0) +
+          inputTokens +
+          cacheReadTokens +
+          cacheCreationTokens
+      }
+      if (typeof data.last_request_context_estimate_tokens === 'number' && data.last_request_context_estimate_tokens >= 0) {
+        requestState.turn.estimatedInputTokens = data.last_request_context_estimate_tokens
       }
 
       if (llmCallId === activeRequestCallID) {

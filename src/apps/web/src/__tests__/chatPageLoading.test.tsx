@@ -15,6 +15,7 @@ import {
   createMessage,
   createRun,
   cancelRun,
+  continueThread,
   retryThread,
 } from '../api'
 import {
@@ -24,6 +25,9 @@ import {
   writeMessageAssistantTurn,
   writeMessageTerminalStatus,
   writeMessageWidgets,
+  readThreadRunHandoff,
+  writeThreadRunHandoff,
+  clearThreadRunHandoff,
 } from '../storage'
 
 const sseMock = vi.hoisted(() => ({
@@ -48,6 +52,7 @@ vi.mock('../api', async () => {
     createMessage: vi.fn(),
     createRun: vi.fn(),
     cancelRun: vi.fn(),
+    continueThread: vi.fn(),
     provideInput: vi.fn(),
     retryThread: vi.fn(),
     editMessage: vi.fn(),
@@ -92,6 +97,9 @@ vi.mock('../storage', async () => {
     readMessageAssistantTurn: vi.fn(() => null),
     writeMessageAssistantTurn: vi.fn(),
     clearMessageAssistantTurn: vi.fn(),
+    readThreadRunHandoff: vi.fn(() => null),
+    writeThreadRunHandoff: vi.fn(),
+    clearThreadRunHandoff: vi.fn(),
     readMessageBrowserActions: vi.fn(() => null),
     writeMessageBrowserActions: vi.fn(),
     migrateMessageMetadata: vi.fn(),
@@ -278,6 +286,7 @@ describe('ChatPage loading state', () => {
   const mockedCreateMessage = vi.mocked(createMessage)
   const mockedCreateRun = vi.mocked(createRun)
   const mockedCancelRun = vi.mocked(cancelRun)
+  const mockedContinueThread = vi.mocked(continueThread)
   const mockedRetryThread = vi.mocked(retryThread)
   const mockedWriteMessageAssistantTurn = vi.mocked(writeMessageAssistantTurn)
   const mockedReadMessageTerminalStatus = vi.mocked(readMessageTerminalStatus)
@@ -285,16 +294,20 @@ describe('ChatPage loading state', () => {
   const mockedReadMessageCodeExecutions = vi.mocked(readMessageCodeExecutions)
   const mockedWriteMessageTerminalStatus = vi.mocked(writeMessageTerminalStatus)
   const mockedWriteMessageWidgets = vi.mocked(writeMessageWidgets)
+  const mockedReadThreadRunHandoff = vi.mocked(readThreadRunHandoff)
+  const mockedWriteThreadRunHandoff = vi.mocked(writeThreadRunHandoff)
+  const mockedClearThreadRunHandoff = vi.mocked(clearThreadRunHandoff)
   const actEnvironment = globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
   const originalActEnvironment = actEnvironment.IS_REACT_ACT_ENVIRONMENT
   const originalScrollIntoView = HTMLElement.prototype.scrollIntoView
 
   beforeEach(() => {
     vi.useRealTimers()
+    vi.clearAllMocks()
     mockedReadMessageAssistantTurn.mockReturnValue(null)
     mockedReadMessageTerminalStatus.mockReturnValue(null)
     mockedReadMessageCodeExecutions.mockReturnValue(null)
-    vi.clearAllMocks()
+    mockedReadThreadRunHandoff.mockReturnValue(null)
     actEnvironment.IS_REACT_ACT_ENVIRONMENT = true
     HTMLElement.prototype.scrollIntoView = vi.fn()
     sseMock.state = 'idle'
@@ -340,6 +353,7 @@ describe('ChatPage loading state', () => {
     })
     mockedCreateRun.mockResolvedValue({ run_id: 'run-created', trace_id: 'trace-1' })
     mockedCancelRun.mockResolvedValue({ ok: true })
+    mockedContinueThread.mockResolvedValue({ run_id: 'run-continued', trace_id: 'trace-continue' })
     mockedRetryThread.mockResolvedValue({ run_id: 'run-retried', trace_id: 'trace-retry' })
     mockedReadMessageTerminalStatus.mockReturnValue(null)
   })
@@ -1230,6 +1244,97 @@ describe('ChatPage loading state', () => {
     container.remove()
   })
 
+  it('cancelled 且有 assistant 消息时应显示继续并调用 continue 接口', async () => {
+    const mathRandomSpy = vi.spyOn(Math, 'random').mockReturnValue(0)
+    mockedReadMessageTerminalStatus.mockReturnValue('cancelled')
+    mockedListMessages.mockResolvedValue([
+      {
+        id: 'msg-1',
+        role: 'user',
+        content: 'hello',
+        account_id: 'acc-1',
+        thread_id: 'thread-1',
+        created_by_user_id: 'user-1',
+        created_at: '2026-03-10T00:00:00Z',
+      },
+      {
+        id: 'msg-2',
+        role: 'assistant',
+        content: '半截输出',
+        run_id: 'run-cancelled-output',
+        account_id: 'acc-1',
+        thread_id: 'thread-1',
+        created_by_user_id: 'user-1',
+        created_at: '2026-03-10T00:00:01Z',
+      },
+    ])
+    mockedListThreadRuns.mockResolvedValue([
+      {
+        run_id: 'run-cancelled-output',
+        status: 'cancelled',
+        created_at: '2026-03-10T00:00:00Z',
+      },
+    ])
+
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const root = createRoot(container)
+    const outletContext = {
+      accessToken: 'token',
+      onLoggedOut: vi.fn(),
+      onRunStarted: vi.fn(),
+      onRunEnded: vi.fn(),
+      onThreadCreated: vi.fn(),
+      onThreadTitleUpdated: vi.fn(),
+      refreshCredits: vi.fn(),
+      onOpenNotifications: vi.fn(),
+      notificationVersion: 0,
+      creditsBalance: 0,
+      isPrivateMode: false,
+      onTogglePrivateMode: vi.fn(),
+      privateThreadIds: new Set<string>(),
+      onSetPendingIncognito: vi.fn(),
+      onRightPanelChange: vi.fn(),
+      threads: [],
+      onThreadDeleted: vi.fn(),
+    }
+
+    await act(async () => {
+      root.render(
+        <LocaleProvider>
+          <MemoryRouter initialEntries={['/t/thread-1']}>
+            <Routes>
+              <Route element={<OutletShell context={outletContext} />}>
+                <Route path="/t/:threadId" element={<ChatPage />} />
+              </Route>
+            </Routes>
+          </MemoryRouter>
+        </LocaleProvider>,
+      )
+    })
+    await act(async () => {
+      await flushMicrotasks()
+    })
+
+    const actionButton = container.querySelector('.failed-run-retry-button')
+    expect(actionButton?.textContent).toBe('继续')
+
+    await act(async () => {
+      actionButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      await flushMicrotasks()
+    })
+
+    expect(container.textContent).toContain('Finding the right words')
+    expect(mockedContinueThread).toHaveBeenCalledWith('token', 'thread-1', 'run-cancelled-output')
+    expect(mockedRetryThread).not.toHaveBeenCalled()
+
+    act(() => {
+      root.unmount()
+    })
+    container.remove()
+    mathRandomSpy.mockRestore()
+  })
+
   it('run.completed 后应把显示权交回历史消息，同时保留完成态的折叠结构', async () => {
     mockedListMessages
       .mockResolvedValueOnce([
@@ -1983,6 +2088,229 @@ describe('ChatPage loading state', () => {
       root.unmount()
     })
     container.remove()
+  })
+
+  it('cancel 后在消息刷新前重开 thread 仍应恢复 handoff 与重试入口', async () => {
+    let resolveSecondMessages: ((value: Awaited<ReturnType<typeof listMessages>>) => void) | null = null
+    mockedListMessages
+      .mockResolvedValueOnce([
+        {
+          id: 'msg-1',
+          role: 'user',
+          content: 'hello',
+          account_id: 'acc-1',
+          thread_id: 'thread-1',
+          created_by_user_id: 'user-1',
+          created_at: '2026-03-10T00:00:00Z',
+        },
+      ])
+      .mockImplementationOnce(() => new Promise((resolve) => {
+        resolveSecondMessages = resolve
+      }))
+      .mockResolvedValueOnce([
+        {
+          id: 'msg-1',
+          role: 'user',
+          content: 'hello',
+          account_id: 'acc-1',
+          thread_id: 'thread-1',
+          created_by_user_id: 'user-1',
+          created_at: '2026-03-10T00:00:00Z',
+        },
+      ])
+
+    mockedListThreadRuns
+      .mockResolvedValueOnce([
+        {
+          run_id: 'run-cancel-restore',
+          status: 'running',
+          created_at: '2026-03-10T00:00:00Z',
+        },
+      ])
+      .mockResolvedValueOnce([])
+
+    const handoff: NonNullable<ReturnType<typeof readThreadRunHandoff>> = {
+      runId: 'run-cancel-restore',
+      status: 'cancelled' as const,
+      assistantTurn: {
+        segments: [
+          {
+            type: 'cop' as const,
+            title: null,
+            items: [{ kind: 'thinking' as const, content: '先想一下', seq: 1 }],
+          },
+          {
+            type: 'text' as const,
+            content: '半截回复',
+          },
+        ],
+      },
+      sources: [],
+      artifacts: [],
+      widgets: [],
+      codeExecutions: [],
+      browserActions: [],
+      subAgents: [],
+      fileOps: [],
+      webFetches: [],
+      searchSteps: [],
+    }
+
+    mockedReadThreadRunHandoff
+      .mockReturnValueOnce(null)
+      .mockImplementation((threadId: string) => (
+        threadId === 'thread-1' ? handoff : null
+      ))
+
+    const outletContext = {
+      accessToken: 'token',
+      onLoggedOut: vi.fn(),
+      onRunStarted: vi.fn(),
+      onRunEnded: vi.fn(),
+      onThreadCreated: vi.fn(),
+      onThreadTitleUpdated: vi.fn(),
+      refreshCredits: vi.fn(),
+      onOpenNotifications: vi.fn(),
+      notificationVersion: 0,
+      creditsBalance: 0,
+      isPrivateMode: false,
+      onTogglePrivateMode: vi.fn(),
+      privateThreadIds: new Set<string>(),
+      onSetPendingIncognito: vi.fn(),
+      onRightPanelChange: vi.fn(),
+      threads: [],
+      onThreadDeleted: vi.fn(),
+    }
+
+    const renderTree = () => (
+      <LocaleProvider>
+        <MemoryRouter initialEntries={['/t/thread-1']}>
+          <Routes>
+            <Route element={<OutletShell context={outletContext} />}>
+              <Route path="/t/:threadId" element={<ChatPage />} />
+            </Route>
+          </Routes>
+        </MemoryRouter>
+      </LocaleProvider>
+    )
+
+    const firstContainer = document.createElement('div')
+    document.body.appendChild(firstContainer)
+    const firstRoot = createRoot(firstContainer)
+
+    await act(async () => {
+      firstRoot.render(renderTree())
+      await flushMicrotasks()
+      await flushMicrotasks()
+    })
+
+    sseMock.state = 'connected'
+    sseMock.events = [
+      {
+        event_id: 'evt-1',
+        run_id: 'run-cancel-restore',
+        seq: 1,
+        ts: '2026-03-10T00:00:00Z',
+        type: 'message.delta',
+        data: {
+          role: 'assistant',
+          channel: 'thinking',
+          content_delta: '先想一下',
+        },
+      },
+      {
+        event_id: 'evt-2',
+        run_id: 'run-cancel-restore',
+        seq: 2,
+        ts: '2026-03-10T00:00:00Z',
+        type: 'message.delta',
+        data: {
+          role: 'assistant',
+          content_delta: '半截回复',
+        },
+      },
+      {
+        event_id: 'evt-3',
+        run_id: 'run-cancel-restore',
+        seq: 3,
+        ts: '2026-03-10T00:00:01Z',
+        type: 'run.cancelled',
+        data: {},
+      },
+    ]
+
+    await act(async () => {
+      firstRoot.render(renderTree())
+      await flushMicrotasks()
+      await flushMicrotasks()
+    })
+
+    expect(mockedWriteThreadRunHandoff).toHaveBeenCalledWith('thread-1', expect.objectContaining({
+      runId: 'run-cancel-restore',
+      status: 'cancelled',
+    }))
+
+    act(() => {
+      firstRoot.unmount()
+    })
+    firstContainer.remove()
+
+    const secondContainer = document.createElement('div')
+    document.body.appendChild(secondContainer)
+    const secondRoot = createRoot(secondContainer)
+
+    sseMock.state = 'idle'
+    sseMock.events = []
+
+    await act(async () => {
+      secondRoot.render(renderTree())
+      await flushMicrotasks()
+      await flushMicrotasks()
+    })
+
+    const text = secondContainer.textContent ?? ''
+    expect(secondContainer.querySelector('[data-testid="current-run-handoff"]')).not.toBeNull()
+    expect(text).toContain('半截回复')
+    expect(text).toMatch(/Stopped|已停止|运行已取消|Run was cancelled/)
+
+    if (!resolveSecondMessages) {
+      throw new Error('second listMessages resolver missing')
+    }
+    const resolvePendingMessages: (value: Awaited<ReturnType<typeof listMessages>>) => void = resolveSecondMessages
+    resolvePendingMessages([
+      {
+        id: 'msg-1',
+        role: 'user',
+        content: 'hello',
+        account_id: 'acc-1',
+        thread_id: 'thread-1',
+        created_by_user_id: 'user-1',
+        created_at: '2026-03-10T00:00:00Z',
+      },
+      {
+        id: 'msg-2',
+        role: 'assistant',
+        content: '半截回复',
+        run_id: 'run-cancel-restore',
+        account_id: 'acc-1',
+        thread_id: 'thread-1',
+        created_by_user_id: 'user-1',
+        created_at: '2026-03-10T00:00:01Z',
+      },
+    ])
+
+    await act(async () => {
+      await flushMicrotasks()
+      await flushMicrotasks()
+    })
+
+    expect(mockedWriteMessageTerminalStatus).toHaveBeenCalledWith('msg-2', 'cancelled')
+    expect(mockedClearThreadRunHandoff).toHaveBeenCalledWith('thread-1')
+
+    act(() => {
+      secondRoot.unmount()
+    })
+    secondContainer.remove()
   })
 
   it('run.cancelled 落入历史消息后不应默认保留展开态', async () => {

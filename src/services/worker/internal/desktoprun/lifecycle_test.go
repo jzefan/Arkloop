@@ -114,7 +114,7 @@ func TestLifecycleBootstrapRecoversRecentRun(t *testing.T) {
 	}
 }
 
-func TestLifecycleBootstrapSkipsRunWithoutRecoveryMaterial(t *testing.T) {
+func TestLifecycleBootstrapRecoversRunWithoutRecoveryMaterial(t *testing.T) {
 	ctx := context.Background()
 	db, cleanup := openLifecycleTestDB(t, ctx)
 	defer cleanup()
@@ -134,12 +134,12 @@ func TestLifecycleBootstrapSkipsRunWithoutRecoveryMaterial(t *testing.T) {
 		t.Fatalf("bootstrap failed: %v", err)
 	}
 
-	if len(q.calls) != 0 {
-		t.Fatalf("expected no recovered runs without runtime state, got %d", len(q.calls))
+	if len(q.calls) != 1 {
+		t.Fatalf("expected 1 recovered run without rollout, got %d", len(q.calls))
 	}
 }
 
-func TestLifecycleBootstrapSkipsRunWithEmptyRolloutState(t *testing.T) {
+func TestLifecycleBootstrapRecoversRunWithEmptyRolloutState(t *testing.T) {
 	ctx := context.Background()
 	db, cleanup := openLifecycleTestDB(t, ctx)
 	defer cleanup()
@@ -160,8 +160,8 @@ func TestLifecycleBootstrapSkipsRunWithEmptyRolloutState(t *testing.T) {
 		t.Fatalf("bootstrap failed: %v", err)
 	}
 
-	if len(q.calls) != 0 {
-		t.Fatalf("expected no recovered run when rollout only contains metadata, got %d", len(q.calls))
+	if len(q.calls) != 1 {
+		t.Fatalf("expected 1 recovered run with empty rollout, got %d", len(q.calls))
 	}
 }
 
@@ -181,7 +181,7 @@ func TestLifecycleReapStaleRunUsesTwoStages(t *testing.T) {
 
 	q := &lifecycleQueueStub{}
 	manager := newLifecycleManager(db, q, nil, nil)
-	if err := manager.reapOnce(ctx); err != nil {
+	if err := manager.reapOnce(ctx, false); err != nil {
 		t.Fatalf("first reap failed: %v", err)
 	}
 	if len(q.calls) != 0 {
@@ -215,7 +215,7 @@ func TestLifecycleReapStaleRunUsesTwoStages(t *testing.T) {
 		t.Fatalf("age cancel_requested event: %v", err)
 	}
 
-	if err := manager.reapOnce(ctx); err != nil {
+	if err := manager.reapOnce(ctx, false); err != nil {
 		t.Fatalf("second reap failed: %v", err)
 	}
 
@@ -261,7 +261,7 @@ func TestLifecycleReapCanceledRunEvenIfInputAfter(t *testing.T) {
 
 	q := &lifecycleQueueStub{}
 	manager := newLifecycleManager(db, q, nil, nil)
-	if err := manager.reapOnce(ctx); err != nil {
+	if err := manager.reapOnce(ctx, false); err != nil {
 		t.Fatalf("reap failed: %v", err)
 	}
 

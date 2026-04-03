@@ -173,7 +173,7 @@ func (g *OpenAIGateway) chatCompletions(ctx context.Context, request Request, yi
 	}
 	if len(request.Tools) > 0 {
 		payload["tools"] = toOpenAITools(request.Tools)
-		payload["tool_choice"] = "auto"
+		payload["tool_choice"] = openAIToolChoice(request.ToolChoice)
 	}
 	for k, v := range g.protocol.AdvancedPayloadJSON {
 		if _, exists := payload[k]; !exists {
@@ -360,7 +360,7 @@ func (g *OpenAIGateway) responses(ctx context.Context, request Request, yield fu
 	}
 	if len(request.Tools) > 0 {
 		payload["tools"] = toOpenAIResponsesTools(request.Tools)
-		payload["tool_choice"] = "auto"
+		payload["tool_choice"] = openAIToolChoice(request.ToolChoice)
 	}
 	for k, v := range g.protocol.AdvancedPayloadJSON {
 		if _, exists := payload[k]; !exists {
@@ -1314,7 +1314,18 @@ func toOpenAIChatMessages(messages []Message) ([]map[string]any, error) {
 		}
 
 		if message.Role == "tool" {
-			out = append(out, toOpenAIToolMessage(text))
+			base := toOpenAIToolMessage(text)
+			imageParts := collectImageBlocks(message.Content)
+			if len(imageParts) == 0 {
+				out = append(out, base)
+				continue
+			}
+			contentArr := []map[string]any{
+				{"type": "text", "text": base["content"]},
+			}
+			contentArr = append(contentArr, imageParts...)
+			base["content"] = contentArr
+			out = append(out, base)
 			continue
 		}
 
@@ -1339,6 +1350,23 @@ func joinParts(parts []ContentPart) string {
 		}
 	}
 	return strings.Join(chunks, "\n\n")
+}
+
+func openAIToolChoice(tc *ToolChoice) any {
+	if tc == nil {
+		return "auto"
+	}
+	switch tc.Mode {
+	case "required":
+		return "required"
+	case "specific":
+		return map[string]any{
+			"type":     "function",
+			"function": map[string]any{"name": tc.ToolName},
+		}
+	default:
+		return "auto"
+	}
 }
 
 func toOpenAITools(specs []ToolSpec) []map[string]any {
@@ -1491,6 +1519,13 @@ func toOpenAIResponsesInput(messages []Message) ([]map[string]any, error) {
 				"call_id": toolCallID,
 				"output":  toolOutputTextFromEnvelope(parsed),
 			})
+			if imgBlocks := collectImageBlocks(message.Content); len(imgBlocks) > 0 {
+				items = append(items, map[string]any{
+					"type":    "message",
+					"role":    "user",
+					"content": imgBlocks,
+				})
+			}
 			continue
 		}
 
@@ -1635,6 +1670,24 @@ func toOpenAIResponsesContentBlocks(parts []ContentPart) ([]map[string]any, erro
 		blocks = append(blocks, map[string]any{"type": "input_text", "text": ""})
 	}
 	return blocks, nil
+}
+
+func collectImageBlocks(parts []ContentPart) []map[string]any {
+	var blocks []map[string]any
+	for _, part := range parts {
+		if part.Kind() != "image" {
+			continue
+		}
+		dataURL, err := partDataURL(part)
+		if err != nil {
+			continue
+		}
+		blocks = append(blocks, map[string]any{
+			"type":      "image_url",
+			"image_url": map[string]any{"url": dataURL},
+		})
+	}
+	return blocks
 }
 
 func partDataURL(part ContentPart) (string, error) {

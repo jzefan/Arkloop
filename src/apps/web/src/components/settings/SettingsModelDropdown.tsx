@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { ChevronDown } from 'lucide-react'
 
 export type SettingsModelOption = { value: string; label: string }
@@ -20,6 +21,7 @@ export function SettingsModelDropdown({
 }) {
   const [open, setOpen] = useState(false)
   const [hovered, setHovered] = useState(false)
+  const [menuStyle, setMenuStyle] = useState<React.CSSProperties>({})
   const menuRef = useRef<HTMLDivElement>(null)
   const btnRef = useRef<HTMLButtonElement>(null)
 
@@ -40,13 +42,75 @@ export function SettingsModelDropdown({
     return () => document.removeEventListener('mousedown', handler)
   }, [open])
 
+  const handleOpen = () => {
+    if (disabled) return
+    if (!open && btnRef.current) {
+      const rect = btnRef.current.getBoundingClientRect()
+      setMenuStyle({
+        position: 'fixed',
+        top: rect.bottom + 4,
+        left: rect.left,
+        width: rect.width,
+        zIndex: 9999,
+      })
+    }
+    setOpen((v) => !v)
+  }
+
+  const menu = open ? (
+    <div
+      ref={menuRef}
+      className="dropdown-menu"
+      style={{
+        ...menuStyle,
+        border: '0.5px solid var(--c-border-subtle)',
+        borderRadius: '10px',
+        padding: '4px',
+        background: 'var(--c-bg-menu)',
+        boxShadow: 'var(--c-dropdown-shadow)',
+        maxHeight: '220px',
+        overflowY: 'auto',
+      }}
+    >
+      {showEmpty && (
+        <button
+          type="button"
+          onClick={() => { onChange(''); setOpen(false) }}
+          className="flex w-full items-center px-3 py-2 text-sm transition-colors bg-[var(--c-bg-menu)] hover:bg-[var(--c-bg-deep)]"
+          style={{
+            borderRadius: '8px',
+            fontWeight: !value ? 600 : 400,
+            color: !value ? 'var(--c-text-heading)' : 'var(--c-text-secondary)',
+          }}
+        >
+          {placeholder}
+        </button>
+      )}
+      {options.map(({ value: v, label }) => (
+        <button
+          key={v}
+          type="button"
+          onClick={() => { onChange(v); setOpen(false) }}
+          className="flex w-full items-center px-3 py-2 text-sm transition-colors bg-[var(--c-bg-menu)] hover:bg-[var(--c-bg-deep)]"
+          style={{
+            borderRadius: '8px',
+            fontWeight: value === v ? 600 : 400,
+            color: value === v ? 'var(--c-text-heading)' : 'var(--c-text-secondary)',
+          }}
+        >
+          {label}
+        </button>
+      ))}
+    </div>
+  ) : null
+
   return (
     <div className="relative">
       <button
         ref={btnRef}
         type="button"
         disabled={disabled}
-        onClick={() => setOpen((v) => !v)}
+        onClick={handleOpen}
         onMouseEnter={() => setHovered(true)}
         onMouseLeave={() => setHovered(false)}
         className="flex h-9 w-full items-center justify-between rounded-lg px-3 text-sm disabled:cursor-not-allowed disabled:opacity-50"
@@ -61,52 +125,7 @@ export function SettingsModelDropdown({
         <ChevronDown size={13} className="ml-2 shrink-0" />
       </button>
 
-      {open && (
-        <div
-          ref={menuRef}
-          className="dropdown-menu absolute left-0 top-[calc(100%+4px)] z-50"
-          style={{
-            border: '0.5px solid var(--c-border-subtle)',
-            borderRadius: '10px',
-            padding: '4px',
-            background: 'var(--c-bg-menu)',
-            minWidth: '100%',
-            boxShadow: 'var(--c-dropdown-shadow)',
-            maxHeight: '220px',
-            overflowY: 'auto',
-          }}
-        >
-          {showEmpty && (
-            <button
-              type="button"
-              onClick={() => { onChange(''); setOpen(false) }}
-              className="flex w-full items-center px-3 py-2 text-sm transition-colors bg-[var(--c-bg-menu)] hover:bg-[var(--c-bg-deep)]"
-              style={{
-                borderRadius: '8px',
-                fontWeight: !value ? 600 : 400,
-                color: !value ? 'var(--c-text-heading)' : 'var(--c-text-secondary)',
-              }}
-            >
-              {placeholder}
-            </button>
-          )}
-          {options.map(({ value: v, label }) => (
-            <button
-              key={v}
-              type="button"
-              onClick={() => { onChange(v); setOpen(false) }}
-              className="flex w-full items-center px-3 py-2 text-sm transition-colors bg-[var(--c-bg-menu)] hover:bg-[var(--c-bg-deep)]"
-              style={{
-                borderRadius: '8px',
-                fontWeight: value === v ? 600 : 400,
-                color: value === v ? 'var(--c-text-heading)' : 'var(--c-text-secondary)',
-              }}
-            >
-              {label}
-            </button>
-          ))}
-        </div>
-      )}
+      {menu && createPortal(menu, document.body)}
     </div>
   )
 }

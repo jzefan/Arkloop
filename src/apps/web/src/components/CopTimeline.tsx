@@ -10,6 +10,7 @@ import { MarkdownRenderer } from './MarkdownRenderer'
 import { useLocale } from '../contexts/LocaleContext'
 import { ExecutionCard } from './ExecutionCard'
 import { SubAgentBlock } from './SubAgentBlock'
+import { recordPerfCount, recordPerfValue } from '../perfDebug'
 
 /** CopTimeline 左轴点线几何；ChatPage 顶层条与之对齐 */
 export const COP_TIMELINE_DOT_NUDGE_Y = 1
@@ -295,6 +296,12 @@ function QueryPill({ text, live }: { text: string; live?: boolean }) {
   )
 }
 
+const THINK_MAX_LINES = 10
+// 14.5px * 1.45 line-height = 21.025px per line
+const THINK_LINE_HEIGHT_PX = 21.025
+const THINK_COLLAPSED_HEIGHT = THINK_MAX_LINES * THINK_LINE_HEIGHT_PX
+const THINK_FADE_HEIGHT = THINK_LINE_HEIGHT_PX * 2
+
 export function AssistantThinkingMarkdown({
   markdown,
   live,
@@ -307,16 +314,62 @@ export function AssistantThinkingMarkdown({
 }) {
   const displayed = useTypewriter(markdown, !live)
   const { t } = useLocale()
+  const [expanded, setExpanded] = useState(false)
+  const [fullHeight, setFullHeight] = useState<number | null>(null)
+  const contentRef = useRef<HTMLDivElement>(null)
+
+  // useLayoutEffect：在 paint 前同步测量，避免展开再折叠的闪烁
+  useLayoutEffect(() => {
+    const el = contentRef.current
+    if (!el) return
+    // 临时移除 maxHeight 限制以测量真实高度
+    const prev = el.style.maxHeight
+    el.style.maxHeight = 'none'
+    const h = el.scrollHeight
+    el.style.maxHeight = prev
+    setFullHeight(h > THINK_COLLAPSED_HEIGHT + 1 ? h : null)
+  }, [markdown])
+
+  const overflows = fullHeight !== null
   const rootClass =
     variant === 'timeline-plain'
       ? 'cop-thinking-output-md cop-thinking-output-md--timeline-plain'
       : 'cop-thinking-output-md'
+
+  const isCollapsed = overflows && !expanded
+  const fadeMask = `linear-gradient(to bottom, black calc(100% - ${THINK_FADE_HEIGHT}px), transparent)`
+
   return (
     <div className={rootClass}>
-      {!markdown.trim() && live ? (
-        <span className="thinking-shimmer cop-thinking-output-placeholder">{t.assistantStreamThinkingPlaceholder}</span>
-      ) : (
-        <MarkdownRenderer content={live ? displayed : markdown} disableMath trimTrailingMargin compact />
+      <div
+        ref={contentRef}
+        className="cop-thinking-body"
+        style={{
+          maxHeight: isCollapsed
+            ? `${THINK_COLLAPSED_HEIGHT}px`
+            : fullHeight != null
+              ? `${fullHeight}px`
+              : undefined,
+          overflow: 'hidden',
+          ...(isCollapsed
+            ? { WebkitMaskImage: fadeMask, maskImage: fadeMask }
+            : { WebkitMaskImage: 'none', maskImage: 'none' }),
+        }}
+      >
+        {!markdown.trim() && live ? (
+          <span className="thinking-shimmer cop-thinking-output-placeholder">{t.assistantStreamThinkingPlaceholder}</span>
+        ) : (
+          <MarkdownRenderer content={live ? displayed : markdown} disableMath trimTrailingMargin compact />
+        )}
+      </div>
+      {overflows && (
+        <button
+          type="button"
+          onClick={() => setExpanded((p) => !p)}
+          className="cop-think-toggle-btn"
+        >
+          {expanded ? t.copThinkShowLess : t.copThinkShowMore}
+        </button>
       )}
     </div>
   )
@@ -803,10 +856,36 @@ export function CopTimeline({ steps, sources, narratives, isComplete, codeExecut
   const fileOpCount = fileOps?.length ?? 0
   const webFetchCount = webFetches?.length ?? 0
   const genericToolCount = genericTools?.length ?? 0
+  const sourceCount = sources.length
   const effectiveStepCount = visibleSteps.length || (codeExecCount + subAgentCount + fileOpCount + webFetchCount + genericToolCount)
-  const hasThinkingOnly = hasAnyThinking && effectiveStepCount === 0 && sources.length === 0
+  const hasThinkingOnly = hasAnyThinking && effectiveStepCount === 0 && sourceCount === 0
   const mixedSegmentWithThinking = hasAnyThinking && !hasThinkingOnly
   const timelineIsLive = !!live || anyThinkingLive
+  const timelinePerfSample = useMemo(() => ({
+    steps: visibleSteps.length,
+    narratives: textEntries.length,
+    thinkingRows: thinkingRowList.length,
+    inlineRows: copInlineList.length,
+    sources: sourceCount,
+    codes: codeExecCount,
+    subAgents: subAgentCount,
+    fileOps: fileOpCount,
+    webFetches: webFetchCount,
+    genericTools: genericToolCount,
+    live: !!live,
+  }), [
+    codeExecCount,
+    copInlineList.length,
+    fileOpCount,
+    genericToolCount,
+    live,
+    sourceCount,
+    subAgentCount,
+    textEntries.length,
+    thinkingRowList.length,
+    visibleSteps.length,
+    webFetchCount,
+  ])
 
   const [collapsed, setCollapsed] = useState(() => {
     if (preserveExpanded) return false
@@ -900,14 +979,14 @@ export function CopTimeline({ steps, sources, narratives, isComplete, codeExecut
     thinkingRowList.length +
     copInlineList.length +
     (legacyThinkingVisible ? 1 : 0)
-  ) > 0 || sources.length > 0
+  ) > 0 || sourceCount > 0
   const pendingShowThinkingHeader = !!live && !hasAnyThinking && !pendingHasContent && !!thinkingHint
   const thinkingTimerActive = anyThinkingLive || (hasAnyThinking && !!live)
   const activeThinkingElapsed = useThinkingElapsedSeconds(thinkingTimerActive, segmentThinkingStartedAtMs)
   const thinkingLiveHeaderLabel = formatThinkingHeaderLabel(thinkingHint, activeThinkingElapsed, t)
 
   const [hovered, setHovered] = useState(false)
-  if (
+  const shouldRender = !(
     visibleSteps.length === 0 &&
     textEntries.length === 0 &&
     codeExecCount === 0 &&
@@ -919,9 +998,7 @@ export function CopTimeline({ steps, sources, narratives, isComplete, codeExecut
     !hasAnyThinking &&
     !thinkingHint &&
     copInlineList.length === 0
-  ) {
-    return null
-  }
+  )
 
   type UEntry =
     | { kind: 'thinking'; id: string; seq: number; item: { markdown: string; live: boolean; durationSec?: number; startedAtMs?: number } }
@@ -1001,7 +1078,7 @@ export function CopTimeline({ steps, sources, narratives, isComplete, codeExecut
     thinkingRowList.length +
     copInlineList.length +
     (legacyThinkingVisible ? 1 : 0)
-  const hasContent = totalUnifiableItems > 0 || sources.length > 0
+  const hasContent = totalUnifiableItems > 0 || sourceCount > 0
   const useUnified = allUnified.length === totalUnifiableItems && totalUnifiableItems > 0
   if (useUnified) {
     const priority: Record<UEntry['kind'], number> = {
@@ -1045,6 +1122,7 @@ export function CopTimeline({ steps, sources, narratives, isComplete, codeExecut
         },
       ]
     : allUnified
+
   // run 活跃期间 thinking 暂停也保持 thinking-live phase，不闪变到 thought
   const headerPhaseKey = (anyThinkingLive || (hasAnyThinking && !!live))
     ? 'thinking-live'
@@ -1065,8 +1143,8 @@ export function CopTimeline({ steps, sources, narratives, isComplete, codeExecut
     ? thinkingLiveHeaderLabel
     : hasAnyThinking
       ? isComplete && !hasThinkingOnly
-        ? sources.length > 0
-          ? `Reviewed ${sources.length} sources`
+        ? sourceCount > 0
+          ? `Reviewed ${sourceCount} sources`
           : effectiveStepCount > 0
             ? `${effectiveStepCount} step${effectiveStepCount === 1 ? '' : 's'} completed`
             : thoughtDurationLabel
@@ -1074,8 +1152,8 @@ export function CopTimeline({ steps, sources, narratives, isComplete, codeExecut
       : showPendingThinkingHeader
         ? `${thinkingHint}...`
         : isComplete
-          ? sources.length > 0
-            ? `Reviewed ${sources.length} sources`
+          ? sourceCount > 0
+            ? `Reviewed ${sourceCount} sources`
             : effectiveStepCount > 0
               ? `${effectiveStepCount} step${effectiveStepCount === 1 ? '' : 's'} completed`
               : 'Completed'
@@ -1088,6 +1166,17 @@ export function CopTimeline({ steps, sources, narratives, isComplete, codeExecut
   const headerLabel = headerOverride ?? autoLabel
   const resolvedHeaderLabel = headerLabel
   const dottedStepCount = visibleSteps.length
+
+  useEffect(() => {
+    recordPerfCount('cop_timeline_render', 1, timelinePerfSample)
+    recordPerfValue('cop_timeline_visible_nodes', unifiedEntries.length, 'nodes', {
+      collapsed,
+      live: !!live,
+      unified: useUnified,
+    })
+  }, [collapsed, live, timelinePerfSample, unifiedEntries.length, useUnified])
+
+  if (!shouldRender) return null
 
   return (
     <div

@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"arkloop/services/shared/messagecontent"
 	"arkloop/services/shared/rollout"
 	"arkloop/services/shared/skillstore"
 	sharedtoolruntime "arkloop/services/shared/toolruntime"
@@ -371,6 +372,8 @@ func (l *Loop) Run(
 
 		// 执行非 ask_user 的常规工具
 		continuationRejected := false
+		terminalSideEffectOnly := len(regularPending) > 0
+		terminalSideEffectSucceeded := len(regularPending) > 0
 		if len(regularPending) > 0 {
 			if runCtx.ToolExecutor == nil {
 				return fmt.Errorf("tool executor not initialized")
@@ -388,6 +391,12 @@ func (l *Loop) Run(
 				governor.Touch()
 				call := executed.Call
 				result := executed.Result
+				if !isTerminalSideEffectTool(call.ToolName) {
+					terminalSideEffectOnly = false
+				}
+				if result.Error != nil {
+					terminalSideEffectSucceeded = false
+				}
 				if isContinuationBudgetError(result.Error) {
 					continuationRejected = true
 				}
@@ -415,19 +424,22 @@ func (l *Loop) Run(
 					}
 				}
 
-				dedupKey, sig, ok := toolResultDedupKey(call.ToolName, call.ArgumentsJSON, toolResult)
-				if ok {
-					if prev, exists := seenToolResultKeys[dedupKey]; exists && prev.Signature == sig {
-						messages = append(messages, toolResultMessageDedup(toolResult, prev.ToolCallID))
-					} else {
-						seenToolResultKeys[dedupKey] = toolResultDedupInfo{
-							ToolCallID: toolResult.ToolCallID,
-							Signature:  sig,
+				suppressResultReplay := shouldSuppressToolResultReplay(runCtx, call.ToolName, toolResult.Error == nil)
+				if !suppressResultReplay {
+					dedupKey, sig, ok := toolResultDedupKey(call.ToolName, call.ArgumentsJSON, toolResult)
+					if ok {
+						if prev, exists := seenToolResultKeys[dedupKey]; exists && prev.Signature == sig {
+							messages = append(messages, toolResultMessageDedup(toolResult, prev.ToolCallID))
+						} else {
+							seenToolResultKeys[dedupKey] = toolResultDedupInfo{
+								ToolCallID: toolResult.ToolCallID,
+								Signature:  sig,
+							}
+							messages = append(messages, toolResultMessage(toolResult))
 						}
+					} else {
 						messages = append(messages, toolResultMessage(toolResult))
 					}
-				} else {
-					messages = append(messages, toolResultMessage(toolResult))
 				}
 
 				var errorClass *string
@@ -448,8 +460,10 @@ func (l *Loop) Run(
 					appendRollout(ctx, runCtx.RolloutRecorder, MakeToolResult(toolResult.ToolCallID, outputJSON, errMsg))
 				}
 
-				if err := yield(emitter.Emit("tool.result", toolResult.ToDataJSON(), stringPtr(toolResult.ToolName), errorClass)); err != nil {
-					return err
+				if !suppressResultReplay {
+					if err := yield(emitter.Emit("tool.result", toolResult.ToDataJSON(), stringPtr(toolResult.ToolName), errorClass)); err != nil {
+						return err
+					}
 				}
 			}
 		}
@@ -472,6 +486,8 @@ func (l *Loop) Run(
 
 		// ask_user 拦截：不走 dispatcher，直接 yield 事件并阻塞等待用户输入
 		if askUserCall != nil {
+			terminalSideEffectOnly = false
+			terminalSideEffectSucceeded = false
 			preparedAskUserCall, startEvent := prepareToolCallStart(emitter, nil, *askUserCall)
 			if err := yield(startEvent); err != nil {
 				return err
@@ -577,16 +593,24 @@ func (l *Loop) Run(
 		}
 
 		if heartbeatDecisionFinalized(runCtx) {
+			if !runCtx.PipelineRC.HeartbeatToolOutcome.Reply {
+				reasoningTurnsUsed++
+				if runCtx.RolloutRecorder != nil {
+					appendRolloutSync(ctx, runCtx.RolloutRecorder, MakeRunEnd("completed"))
+				}
+				return yield(emitter.Emit("run.completed", completionTotals.Apply(turn.CompletedDataJSON), nil, nil))
+			}
+			// reply=true: 解除 tool_choice 约束，继续 loop
+			if request.ToolChoice != nil {
+				request.ToolChoice = nil
+			}
+		}
+		if terminalSideEffectOnly && terminalSideEffectSucceeded {
 			reasoningTurnsUsed++
 			if runCtx.RolloutRecorder != nil {
 				appendRolloutSync(ctx, runCtx.RolloutRecorder, MakeRunEnd("completed"))
 			}
 			return yield(emitter.Emit("run.completed", completionTotals.Apply(turn.CompletedDataJSON), nil, nil))
-		} else if runCtx.PipelineRC != nil &&
-			runCtx.PipelineRC.HeartbeatToolOutcome != nil &&
-			runCtx.PipelineRC.HeartbeatToolOutcome.Reply &&
-			!runCtx.PipelineRC.HeartbeatReplyGranted {
-			runCtx.PipelineRC.HeartbeatReplyGranted = true
 		}
 
 		// load_tools dynamic activation: inject newly activated tool specs
@@ -1396,6 +1420,11 @@ func (l *Loop) runSingleTurn(
 			return nil
 		}
 		assistantChunks = append(assistantChunks, tail)
+		if runCtx.PipelineRC != nil &&
+			pipeline.IsHeartbeatRunContext(runCtx.PipelineRC) &&
+			runCtx.PipelineRC.HeartbeatToolOutcome == nil {
+			return nil
+		}
 		return yieldOrStop(emitter.Emit("message.delta", llm.StreamMessageDelta{
 			ContentDelta: tail,
 			Role:         "assistant",
@@ -1425,17 +1454,26 @@ func (l *Loop) runSingleTurn(
 			if typed.Channel != nil && *typed.Channel == "thinking" && !runCtx.StreamThinking {
 				return nil
 			}
-			// thinking 内容不计入对话上下文
+			// heartbeat Phase 1: outcome 未确定前，累积 context 但不 stream 给客户端
+			suppressHeartbeatStream := runCtx.PipelineRC != nil &&
+				pipeline.IsHeartbeatRunContext(runCtx.PipelineRC) &&
+				runCtx.PipelineRC.HeartbeatToolOutcome == nil
 			if typed.Channel == nil {
 				cleaned := visibleAssistantFilter.Push(typed.ContentDelta)
 				if cleaned == "" {
 					return nil
 				}
 				assistantChunks = append(assistantChunks, cleaned)
+				if suppressHeartbeatStream {
+					return nil
+				}
 				return yieldOrStop(emitter.Emit("message.delta", llm.StreamMessageDelta{
 					ContentDelta: cleaned,
 					Role:         typed.Role,
 				}.ToDataJSON(), nil, nil))
+			}
+			if suppressHeartbeatStream {
+				return nil
 			}
 			return yieldOrStop(emitter.Emit("message.delta", typed.ToDataJSON(), nil, nil))
 		case llm.StreamLlmRequest:
@@ -1531,7 +1569,9 @@ func copyRequest(request llm.Request, messages []llm.Message) llm.Request {
 		Temperature:     request.Temperature,
 		MaxOutputTokens: request.MaxOutputTokens,
 		Tools:           append([]llm.ToolSpec{}, request.Tools...),
+		ToolChoice:      request.ToolChoice,
 		Metadata:        copyMap(request.Metadata),
+		ReasoningMode:   request.ReasoningMode,
 	}
 }
 
@@ -1730,10 +1770,32 @@ func heartbeatDecisionFinalized(runCtx RunContext) bool {
 	if outcome == nil {
 		return false
 	}
-	if !outcome.Reply {
+	return true
+}
+
+func shouldSuppressToolResultReplay(runCtx RunContext, toolName string, success bool) bool {
+	if !success {
+		return false
+	}
+	if runCtx.PipelineRC != nil &&
+		pipeline.IsHeartbeatRunContext(runCtx.PipelineRC) &&
+		toolName == "heartbeat_decision" {
+		// reply=true 时 loop 继续，必须保留 tool_result 给下一轮 LLM
+		if runCtx.PipelineRC.HeartbeatToolOutcome != nil && runCtx.PipelineRC.HeartbeatToolOutcome.Reply {
+			return false
+		}
 		return true
 	}
-	return runCtx.PipelineRC.HeartbeatReplyGranted
+	return isTerminalSideEffectTool(toolName)
+}
+
+func isTerminalSideEffectTool(toolName string) bool {
+	switch toolName {
+	case "telegram_reply", "telegram_react", "telegram_send_file":
+		return true
+	default:
+		return false
+	}
 }
 
 func assistantMessageOrFallback(message *llm.Message, assistantChunks []string) llm.Message {
@@ -1773,9 +1835,13 @@ func toolResultMessage(result llm.StreamToolResult) llm.Message {
 		encoded, _ := json.Marshal(envelope)
 		text = string(encoded)
 	}
+	parts := []llm.ContentPart{
+		{Type: messagecontent.PartTypeText, Text: text, TrustSource: "tool"},
+	}
+	parts = append(parts, result.ContentParts...)
 	return llm.Message{
 		Role:    "tool",
-		Content: []llm.TextPart{{Text: text, TrustSource: "tool"}},
+		Content: parts,
 	}
 }
 
@@ -2031,11 +2097,22 @@ func toolResultFromExecution(toolCallID string, toolName string, result tools.Ex
 	if result.ResultJSON != nil {
 		resultJSON = copyMap(result.ResultJSON)
 	}
+	var contentParts []llm.ContentPart
+	for _, att := range result.ContentParts {
+		contentParts = append(contentParts, llm.ContentPart{
+			Type: messagecontent.PartTypeImage,
+			Data: att.Data,
+			Attachment: &messagecontent.AttachmentRef{
+				MimeType: att.MimeType,
+			},
+		})
+	}
 	return llm.StreamToolResult{
-		ToolCallID: toolCallID,
-		ToolName:   toolName,
-		ResultJSON: resultJSON,
-		Error:      errObj,
+		ToolCallID:   toolCallID,
+		ToolName:     toolName,
+		ResultJSON:   resultJSON,
+		ContentParts: contentParts,
+		Error:        errObj,
 	}
 }
 

@@ -1,4 +1,4 @@
-import { Suspense, lazy, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { motion } from "framer-motion";
 import {
   ChevronLeft,
@@ -6,6 +6,7 @@ import {
   Settings,
   Cpu,
   Brain,
+  Database,
   Bot,
   Radio,
   Puzzle,
@@ -17,29 +18,33 @@ import {
   Code2,
   Loader2,
 } from "lucide-react";
+import { getDesktopApi } from "@arkloop/shared/desktop";
 import type { MeResponse } from "../api";
+import type { DesktopConfig } from "@arkloop/shared/desktop";
+import { listPlatformSettings } from "../api-admin";
+import { bridgeClient } from "../api-bridge";
 import { useLocale } from "../contexts/LocaleContext";
 import { readDeveloperMode } from "../storage";
-
-const GeneralSettings = lazy(async () => ({ default: (await import("./settings/GeneralSettings")).GeneralSettings }));
-const DesktopAppearanceSettings = lazy(async () => ({ default: (await import("./settings/DesktopAppearanceSettings")).DesktopAppearanceSettings }));
-const ProvidersSettings = lazy(async () => ({ default: (await import("./settings/ProvidersSettings")).ProvidersSettings }));
-const RoutingSettings = lazy(async () => ({ default: (await import("./settings/RoutingSettings")).RoutingSettings }));
-const PersonasSettings = lazy(async () => ({ default: (await import("./settings/PersonasSettings")).PersonasSettings }));
-const DesktopChannelsSettings = lazy(async () => ({ default: (await import("./settings/DesktopChannelsSettings")).DesktopChannelsSettings }));
-const SkillsSettings = lazy(async () => ({ default: (await import("./settings/SkillsSettings")).SkillsSettings }));
-const MCPSettings = lazy(async () => ({ default: (await import("./settings/MCPSettings")).MCPSettings }));
-const ToolsSettings = lazy(async () => ({ default: (await import("./settings/ToolsSettings")).ToolsSettings }));
-const AdvancedSettings = lazy(async () => ({ default: (await import("./settings/AdvancedSettings")).AdvancedSettings }));
-const MemorySettings = lazy(async () => ({ default: (await import("./settings/MemorySettings")).MemorySettings }));
-const ConnectionSettings = lazy(async () => ({ default: (await import("./settings/ConnectionSettings")).ConnectionSettings }));
-const ChatSettings = lazy(async () => ({ default: (await import("./settings/ChatSettings")).ChatSettings }));
-const ExtensionsSettings = lazy(async () => ({ default: (await import("./settings/ExtensionsSettings")).ExtensionsSettings }));
-const ModulesSettings = lazy(async () => ({ default: (await import("./settings/ModulesSettings")).ModulesSettings }));
-const DeveloperSettings = lazy(async () => ({ default: (await import("./settings/DeveloperSettings")).DeveloperSettings }));
-const DesktopPromptInjectionSettings = lazy(async () => ({ default: (await import("./settings/DesktopPromptInjectionSettings")).DesktopPromptInjectionSettings }));
-const VoiceSettings = lazy(async () => ({ default: (await import("./settings/VoiceSettings")).VoiceSettings }));
-const DesignTokensSettings = lazy(async () => ({ default: (await import("./settings/DesignTokensSettings")).DesignTokensSettings }));
+import { GeneralSettings } from "./settings/GeneralSettings";
+import { DesktopAppearanceSettings } from "./settings/DesktopAppearanceSettings";
+import { ProvidersSettings } from "./settings/ProvidersSettings";
+import { RoutingSettings } from "./settings/RoutingSettings";
+import { PersonasSettings } from "./settings/PersonasSettings";
+import { DesktopChannelsSettings } from "./settings/DesktopChannelsSettings";
+import { SkillsSettings } from "./settings/SkillsSettings";
+import { MCPSettings } from "./settings/MCPSettings";
+import { ToolsSettings } from "./settings/ToolsSettings";
+import { AdvancedSettings } from "./settings/AdvancedSettings";
+import { MemorySettings } from "./settings/MemorySettings";
+import { NotebookSettings } from "./settings/NotebookSettings";
+import { ConnectionSettings } from "./settings/ConnectionSettings";
+import { ChatSettings } from "./settings/ChatSettings";
+import { ExtensionsSettings } from "./settings/ExtensionsSettings";
+import { ModulesSettings } from "./settings/ModulesSettings";
+import { DeveloperSettings } from "./settings/DeveloperSettings";
+import { DesktopPromptInjectionSettings } from "./settings/DesktopPromptInjectionSettings";
+import { VoiceSettings } from "./settings/VoiceSettings";
+import { DesignTokensSettings } from "./settings/DesignTokensSettings";
 
 export type DesktopSettingsKey =
   | "general"
@@ -52,6 +57,7 @@ export type DesktopSettingsKey =
   | "mcp"
   | "tools"
   | "advanced"
+  | "notebook"
   | "memory"
   | "connection"
   | "chat"
@@ -77,7 +83,8 @@ const NAV_ITEMS: NavItem[] = [
   { key: "skills",     icon: Puzzle },
   { key: "mcp",        icon: Server },
   { key: "tools",      icon: Wrench },
-  { key: "memory",     icon: Brain },
+  { key: "notebook",   icon: Brain },
+  { key: "memory",     icon: Database },
   { key: "chat",       icon: MessageSquare },
   { key: "advanced",   icon: SlidersHorizontal },
 ];
@@ -100,6 +107,14 @@ type Props = {
   onTrySkill?: (prompt: string) => void;
 };
 
+export type DesktopSettingsHydrationSnapshot = {
+  config: DesktopConfig | null;
+  platformSettings: Record<string, string> | null;
+  executionMode: "local" | "vm" | null;
+  platformSettingsError: string;
+  executionModeError: string;
+};
+
 export function DesktopSettings({
   me,
   accessToken,
@@ -111,17 +126,79 @@ export function DesktopSettings({
 }: Props) {
   const { t } = useLocale();
   const ds = t.desktopSettings;
+  const desktopApi = useMemo(() => getDesktopApi(), []);
   const [activeKey, setActiveKey] =
     useState<DesktopSettingsKey>(initialSection);
   const [scrolled, setScrolled] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const [devMode, setDevMode] = useState(() => readDeveloperMode());
+  const [hydrationLoading, setHydrationLoading] = useState(true);
+  const [hydrationSnapshot, setHydrationSnapshot] =
+    useState<DesktopSettingsHydrationSnapshot>({
+      config: null,
+      platformSettings: null,
+      executionMode: null,
+      platformSettingsError: "",
+      executionModeError: "",
+    });
 
   useEffect(() => {
     const handler = (e: Event) => setDevMode((e as CustomEvent<boolean>).detail);
     window.addEventListener("arkloop:developer_mode", handler);
     return () => window.removeEventListener("arkloop:developer_mode", handler);
   }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadSnapshot = async () => {
+      setHydrationLoading(true);
+      const [configResult, platformResult, executionResult] = await Promise.allSettled([
+        desktopApi?.config.get() ?? Promise.resolve(null),
+        listPlatformSettings(accessToken),
+        bridgeClient.getExecutionMode(),
+      ]);
+
+      if (cancelled) return;
+
+      setHydrationSnapshot({
+        config:
+          configResult.status === "fulfilled"
+            ? configResult.value
+            : null,
+        platformSettings:
+          platformResult.status === "fulfilled"
+            ? Object.fromEntries(platformResult.value.map((row) => [row.key, row.value]))
+            : null,
+        executionMode:
+          executionResult.status === "fulfilled"
+            ? executionResult.value
+            : null,
+        platformSettingsError:
+          platformResult.status === "rejected"
+            ? (platformResult.reason instanceof Error ? platformResult.reason.message : t.requestFailed)
+            : "",
+        executionModeError:
+          executionResult.status === "rejected"
+            ? (executionResult.reason instanceof Error ? executionResult.reason.message : t.requestFailed)
+            : "",
+      });
+      setHydrationLoading(false);
+    };
+
+    void loadSnapshot();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [accessToken, desktopApi, t.requestFailed]);
+
+  useEffect(() => {
+    if (!desktopApi?.config) return;
+    return desktopApi.config.onChanged((config) => {
+      setHydrationSnapshot((current) => ({ ...current, config }));
+    });
+  }, [desktopApi]);
 
   const navItems = useMemo(() => {
     const items = [...NAV_ITEMS];
@@ -183,14 +260,34 @@ export function DesktopSettings({
         return <ToolsSettings accessToken={accessToken} />;
       case "advanced":
         return <AdvancedSettings accessToken={accessToken} />;
+      case "notebook":
+        return <NotebookSettings />;
       case "memory":
         return <MemorySettings accessToken={accessToken} />;
       case "connection":
-        return <ConnectionSettings />;
+        return <ConnectionSettings initialConfig={hydrationSnapshot.config} />;
       case "chat":
-        return <ChatSettings accessToken={accessToken} />;
+        return (
+          <ChatSettings
+            accessToken={accessToken}
+            initialSnapshot={hydrationSnapshot}
+            onExecutionModeChange={(executionMode) => {
+              setHydrationSnapshot((current) => ({ ...current, executionMode, executionModeError: "" }));
+            }}
+            onPlatformSettingsChange={(updates) => {
+              setHydrationSnapshot((current) => ({
+                ...current,
+                platformSettings: {
+                  ...(current.platformSettings ?? {}),
+                  ...updates,
+                },
+                platformSettingsError: "",
+              }));
+            }}
+          />
+        );
       case "voice":
-        return <VoiceSettings accessToken={accessToken} />;
+        return <VoiceSettings accessToken={accessToken} initialConfig={hydrationSnapshot.config} />;
       case "promptInjection":
         return <DesktopPromptInjectionSettings accessToken={accessToken} />;
       case "modules":
@@ -247,11 +344,10 @@ export function DesktopSettings({
         <div
           ref={scrollRef}
           className="flex min-w-0 flex-1 flex-col overflow-y-auto p-6"
+          style={{ scrollbarGutter: 'stable' }}
           onScroll={(e) => setScrolled((e.currentTarget as HTMLDivElement).scrollTop > 8)}
         >
-          <Suspense fallback={<SettingsPaneFallback />}>
-            {renderContent()}
-          </Suspense>
+          {hydrationLoading ? <SettingsPaneFallback /> : renderContent()}
         </div>
       </div>
     </motion.div>

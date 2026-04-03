@@ -3,7 +3,7 @@ import type { ReactNode } from 'react'
 import { ChevronLeft } from 'lucide-react'
 import { getDesktopApi } from '@arkloop/shared/desktop'
 import { useLocale } from '../../contexts/LocaleContext'
-import { readDeveloperShowRunEvents, writeDeveloperShowRunEvents } from '../../storage'
+import { readDeveloperShowRunEvents, writeDeveloperShowRunEvents, readDeveloperShowDebugPanel, writeDeveloperShowDebugPanel } from '../../storage'
 import { RunsSettings } from './RunsSettings'
 import { PillToggle } from '@arkloop/shared'
 import type { DesktopSettingsKey } from '../DesktopSettings'
@@ -40,6 +40,7 @@ export function DeveloperSettings({ accessToken, onNavigate }: Props) {
   const [appVersion, setAppVersion] = useState('')
   const [resetDone, setResetDone] = useState(false)
   const [showRunEvents, setShowRunEvents] = useState(() => readDeveloperShowRunEvents())
+  const [showDebugPanel, setShowDebugPanel] = useState(() => readDeveloperShowDebugPanel())
   const [runsOpen, setRunsOpen] = useState(false)
 
   useEffect(() => {
@@ -107,6 +108,28 @@ export function DeveloperSettings({ accessToken, onNavigate }: Props) {
             onChange={(next) => {
               setShowRunEvents(next)
               writeDeveloperShowRunEvents(next)
+            }}
+          />
+        </div>
+
+        {/* Debug panel toggle */}
+        <div
+          className="flex items-center justify-between rounded-xl bg-[var(--c-bg-menu)] px-4 py-3"
+          style={{ border: '0.5px solid var(--c-border-subtle)' }}
+        >
+          <div>
+            <div className="text-sm font-medium text-[var(--c-text-primary)]">
+              {ds.showDebugPanel}
+            </div>
+            <div className="text-xs text-[var(--c-text-muted)]">
+              {ds.showDebugPanelDesc}
+            </div>
+          </div>
+          <PillToggle
+            checked={showDebugPanel}
+            onChange={(next) => {
+              setShowDebugPanel(next)
+              writeDeveloperShowDebugPanel(next)
             }}
           />
         </div>

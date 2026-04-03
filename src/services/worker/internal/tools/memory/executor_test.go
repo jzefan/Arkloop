@@ -27,14 +27,75 @@ type mockProvider struct {
 	contentText string
 	contentErr  error
 	writeErr    error
+	updateErr   error
 	deleteErr   error
 
 	findCalled     bool
 	contentCalled  bool
 	writeCalled    bool
+	updateCalled   bool
 	deleteCalled   bool
 	lastWriteEntry workermemory.MemoryEntry
 	lastDeleteURI  string
+}
+
+type desktopMockProvider struct {
+	mockProvider
+	writeURI    string
+	snapshot    string
+	updateErr   error
+	writeURIErr error
+}
+
+func (m *desktopMockProvider) WriteReturningURI(_ context.Context, _ workermemory.MemoryIdentity, _ workermemory.MemoryScope, entry workermemory.MemoryEntry) (string, error) {
+	m.writeCalled = true
+	m.lastWriteEntry = entry
+	if m.writeURIErr != nil {
+		return "", m.writeURIErr
+	}
+	if strings.TrimSpace(m.writeURI) == "" {
+		return "local://memory/test-id", nil
+	}
+	return m.writeURI, nil
+}
+
+func (m *desktopMockProvider) UpdateByURI(_ context.Context, _ workermemory.MemoryIdentity, uri string, entry workermemory.MemoryEntry) error {
+	m.lastDeleteURI = uri
+	m.lastWriteEntry = entry
+	if m.updateErr != nil {
+		return m.updateErr
+	}
+	return nil
+}
+
+func (m *desktopMockProvider) GetSnapshot(_ context.Context, _, _ uuid.UUID, _ string) (string, error) {
+	return m.snapshot, nil
+}
+
+type noDesktopEditProvider struct{}
+
+func (noDesktopEditProvider) Find(_ context.Context, _ workermemory.MemoryIdentity, _ string, _ string, _ int) ([]workermemory.MemoryHit, error) {
+	return nil, nil
+}
+
+func (noDesktopEditProvider) Content(_ context.Context, _ workermemory.MemoryIdentity, _ string, _ workermemory.MemoryLayer) (string, error) {
+	return "", nil
+}
+
+func (noDesktopEditProvider) AppendSessionMessages(_ context.Context, _ workermemory.MemoryIdentity, _ string, _ []workermemory.MemoryMessage) error {
+	return nil
+}
+
+func (noDesktopEditProvider) CommitSession(_ context.Context, _ workermemory.MemoryIdentity, _ string) error {
+	return nil
+}
+
+func (noDesktopEditProvider) Write(_ context.Context, _ workermemory.MemoryIdentity, _ workermemory.MemoryScope, _ workermemory.MemoryEntry) error {
+	return nil
+}
+
+func (noDesktopEditProvider) Delete(_ context.Context, _ workermemory.MemoryIdentity, _ string) error {
+	return nil
 }
 
 func (m *mockProvider) Find(_ context.Context, _ workermemory.MemoryIdentity, _ string, _ string, _ int) ([]workermemory.MemoryHit, error) {
@@ -65,6 +126,13 @@ func (m *mockProvider) Delete(_ context.Context, _ workermemory.MemoryIdentity, 
 	m.deleteCalled = true
 	m.lastDeleteURI = uri
 	return m.deleteErr
+}
+
+func (m *mockProvider) UpdateByURI(_ context.Context, _ workermemory.MemoryIdentity, uri string, entry workermemory.MemoryEntry) error {
+	m.updateCalled = true
+	m.lastDeleteURI = uri
+	m.lastWriteEntry = entry
+	return m.updateErr
 }
 
 type snapshotMock struct {
@@ -372,6 +440,52 @@ func TestMemoryExecutor_Forget_MissingURI(t *testing.T) {
 	}
 }
 
+func TestMemoryExecutor_Edit_Success(t *testing.T) {
+	mp := &mockProvider{}
+	ex := NewToolExecutor(mp, nil, nil)
+	targetURI := "viking://user/memories/preferences/lang.md"
+	result := ex.Execute(context.Background(), "memory_edit", map[string]any{
+		"uri":     targetURI,
+		"content": "updated memory body",
+	}, newUserExecCtx(), "")
+
+	if result.Error != nil {
+		t.Fatalf("unexpected error: %v", result.Error.Message)
+	}
+	if result.ResultJSON["status"] != "ok" {
+		t.Fatalf("unexpected status: %v", result.ResultJSON["status"])
+	}
+	if !mp.updateCalled {
+		t.Fatal("expected UpdateByURI to be called on provider")
+	}
+	if mp.lastDeleteURI != targetURI {
+		t.Fatalf("unexpected edit uri: %q", mp.lastDeleteURI)
+	}
+	if mp.lastWriteEntry.Content != "updated memory body" {
+		t.Fatalf("unexpected edit content: %q", mp.lastWriteEntry.Content)
+	}
+}
+
+func TestMemoryExecutor_Edit_MissingURI(t *testing.T) {
+	ex := NewToolExecutor(&mockProvider{}, nil, nil)
+	result := ex.Execute(context.Background(), "memory_edit", map[string]any{
+		"content": "updated memory body",
+	}, newUserExecCtx(), "")
+	if result.Error == nil || result.Error.ErrorClass != errorArgsInvalid {
+		t.Fatalf("expected args_invalid, got: %+v", result.Error)
+	}
+}
+
+func TestMemoryExecutor_Edit_MissingContent(t *testing.T) {
+	ex := NewToolExecutor(&mockProvider{}, nil, nil)
+	result := ex.Execute(context.Background(), "memory_edit", map[string]any{
+		"uri": "viking://user/memories/preferences/lang.md",
+	}, newUserExecCtx(), "")
+	if result.Error == nil || result.Error.ErrorClass != errorArgsInvalid {
+		t.Fatalf("expected args_invalid, got: %+v", result.Error)
+	}
+}
+
 // --- identity missing ---
 
 func TestMemoryExecutor_NoUserID_IdentityMissing(t *testing.T) {
@@ -379,5 +493,30 @@ func TestMemoryExecutor_NoUserID_IdentityMissing(t *testing.T) {
 	result := ex.Execute(context.Background(), "memory_search", map[string]any{"query": "test"}, newExecCtx(nil), "")
 	if result.Error == nil || result.Error.ErrorClass != errorIdentityMissing {
 		t.Fatalf("expected identity_missing, got: %+v", result.Error)
+	}
+}
+
+func TestNotebookTools_NotAvailableOutsideDesktop(t *testing.T) {
+	mp := noDesktopEditProvider{}
+	ex := NewToolExecutor(mp, nil, nil)
+	execCtx := newUserExecCtx()
+
+	writeResult := ex.Execute(context.Background(), "notebook_write", map[string]any{
+		"category": "preferences",
+		"key":      "style",
+		"content":  "concise",
+	}, execCtx, "")
+	if writeResult.Error == nil || writeResult.Error.ErrorClass != errorStateMissing {
+		t.Fatalf("expected state_missing write error, got: %+v", writeResult.Error)
+	}
+
+	editResult := ex.Execute(context.Background(), "notebook_edit", map[string]any{
+		"uri":      "local://memory/test-id",
+		"category": "preferences",
+		"key":      "style",
+		"content":  "formal",
+	}, execCtx, "")
+	if editResult.Error == nil || editResult.Error.ErrorClass != errorStateMissing {
+		t.Fatalf("expected state_missing edit error, got: %+v", editResult.Error)
 	}
 }

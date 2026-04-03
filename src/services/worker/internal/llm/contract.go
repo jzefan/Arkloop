@@ -271,12 +271,19 @@ func (s ToolSpec) ToJSON() map[string]any {
 	return payload
 }
 
+// ToolChoice controls whether the LLM must call a tool.
+type ToolChoice struct {
+	Mode     string // "auto" | "required" | "specific"
+	ToolName string // only used when Mode="specific"
+}
+
 type Request struct {
 	Model            string
 	Messages         []Message
 	Temperature      *float64
 	MaxOutputTokens  *int
 	Tools            []ToolSpec
+	ToolChoice       *ToolChoice
 	Metadata         map[string]any
 	ExperimentalJSON map[string]any
 	ReasoningMode    string // "auto" | "enabled" | "disabled" | "none"
@@ -403,12 +410,13 @@ func (c StreamLlmResponseChunk) ToDataJSON() map[string]any {
 }
 
 type StreamToolResult struct {
-	ToolCallID string
-	ToolName   string
-	ResultJSON map[string]any
-	Error      *GatewayError
-	Usage      *Usage
-	Cost       *Cost
+	ToolCallID   string
+	ToolName     string
+	ResultJSON   map[string]any
+	ContentParts []ContentPart // 多模态附件（图片等），由 agent loop 注入 tool result message
+	Error        *GatewayError
+	Usage        *Usage
+	Cost         *Cost
 }
 
 func (r StreamToolResult) ToDataJSON() map[string]any {

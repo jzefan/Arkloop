@@ -42,6 +42,7 @@ type telegramChannelConfig struct {
 	AllowedUserIDs        []string `json:"allowed_user_ids"`
 	DefaultModel          string   `json:"default_model,omitempty"`
 	BotUsername           string   `json:"bot_username,omitempty"`
+	BotFirstName          string   `json:"bot_first_name,omitempty"`
 	TelegramBotUserID     int64    `json:"telegram_bot_user_id,omitempty"`
 	TelegramTypingSignal  *bool    `json:"telegram_typing_indicator,omitempty"`
 	TelegramReactionEmoji string   `json:"telegram_reaction_emoji,omitempty"`
@@ -135,20 +136,22 @@ type telegramVideo struct {
 }
 
 type telegramAnimation struct {
-	FileID   string `json:"file_id"`
-	FileName string `json:"file_name"`
-	MimeType string `json:"mime_type"`
-	FileSize int64  `json:"file_size"`
-	Duration int    `json:"duration"`
-	Width    int    `json:"width"`
-	Height   int    `json:"height"`
+	FileID    string              `json:"file_id"`
+	FileName  string              `json:"file_name"`
+	MimeType  string              `json:"mime_type"`
+	FileSize  int64               `json:"file_size"`
+	Duration  int                 `json:"duration"`
+	Width     int                 `json:"width"`
+	Height    int                 `json:"height"`
+	Thumbnail *telegramPhotoSize  `json:"thumbnail,omitempty"`
 }
 
 type telegramSticker struct {
-	FileID   string `json:"file_id"`
-	FileSize int64  `json:"file_size"`
-	Width    int    `json:"width"`
-	Height   int    `json:"height"`
+	FileID    string              `json:"file_id"`
+	FileSize  int64               `json:"file_size"`
+	Width     int                 `json:"width"`
+	Height    int                 `json:"height"`
+	Thumbnail *telegramPhotoSize  `json:"thumbnail,omitempty"`
 }
 
 func normalizeChannelConfigJSON(channelType string, raw json.RawMessage) (json.RawMessage, *telegramChannelConfig, error) {
@@ -740,6 +743,11 @@ func mergeTelegramBotProfileFromGetMe(raw json.RawMessage, info *telegrambot.Bot
 		generic["bot_username"] = uname
 		changed = true
 	}
+	firstName := strings.TrimSpace(info.FirstName)
+	if strings.TrimSpace(cfg.BotFirstName) == "" && firstName != "" {
+		generic["bot_first_name"] = firstName
+		changed = true
+	}
 	if !changed {
 		return raw, false, nil
 	}
@@ -1302,6 +1310,14 @@ func (c telegramConnector) HandleUpdate(
 	if err != nil {
 		return err
 	}
+	preTailMsg, err := c.messageRepo.WithTx(tx).GetLatestVisibleMessage(ctx, ch.AccountID, threadID)
+	if err != nil {
+		return err
+	}
+	preTailMessageID := ""
+	if preTailMsg != nil {
+		preTailMessageID = preTailMsg.ID.String()
+	}
 	if _, err := c.messageRepo.WithTx(tx).CreateStructuredWithMetadata(
 		ctx,
 		ch.AccountID,
@@ -1322,9 +1338,24 @@ func (c telegramConnector) HandleUpdate(
 	if activeRun, err := runRepoTx.GetActiveRootRunForThread(ctx, threadID); err != nil {
 		return err
 	} else if activeRun != nil {
-		delivered, err := c.deliverTelegramMessageToActiveRun(ctx, runRepoTx, activeRun, content, traceID)
+		delivered, absorbed, err := c.deliverTelegramMessageToActiveRun(ctx, runRepoTx, activeRun, *incoming, content, traceID, preTailMessageID)
 		if err != nil {
 			return err
+		}
+		if absorbed {
+			if err := tx.Commit(ctx); err != nil {
+				return err
+			}
+			slog.InfoContext(ctx, "telegram_inbound_processed",
+				"stage", "absorbed_by_heartbeat",
+				"channel_id", ch.ID.String(),
+				"account_id", ch.AccountID.String(),
+				"run_id", activeRun.ID.String(),
+				"thread_id", threadID.String(),
+				"platform_chat_id", incoming.PlatformChatID,
+				"platform_message_id", incoming.PlatformMsgID,
+			)
+			return nil
 		}
 		if delivered {
 			if err := tx.Commit(ctx); err != nil {
@@ -1587,22 +1618,51 @@ func (c telegramConnector) deliverTelegramMessageToActiveRun(
 	ctx context.Context,
 	repo *data.RunEventRepository,
 	run *data.Run,
+	incoming telegramIncomingMessage,
 	content, traceID string,
-) (bool, error) {
+	preTailMessageID string,
+) (delivered bool, heartbeatAbsorbed bool, err error) {
 	if run == nil {
-		return false, nil
+		return false, false, nil
 	}
 	if strings.TrimSpace(content) == "" {
-		return false, nil
+		return false, false, nil
+	}
+	if incoming.ShouldCreateRun() {
+		events, err := repo.ListEvents(ctx, run.ID, 0, 1)
+		if err != nil {
+			return false, false, err
+		}
+		if len(events) > 0 {
+			if startedData, ok := events[0].DataJSON.(map[string]any); ok {
+				if runKind, _ := startedData["run_kind"].(string); strings.EqualFold(strings.TrimSpace(runKind), runkind.Heartbeat) {
+					heartbeatTail, _ := startedData["thread_tail_message_id"].(string)
+					heartbeatTail = strings.TrimSpace(heartbeatTail)
+					if heartbeatTail == strings.TrimSpace(preTailMessageID) {
+						if c.channelLedgerRepo != nil {
+							hasOutbound, ledgerErr := c.channelLedgerRepo.HasOutboundForRun(ctx, run.ID)
+							if ledgerErr != nil {
+								return false, false, ledgerErr
+							}
+							if hasOutbound {
+								return false, true, nil
+							}
+						}
+						_, _ = repo.RequestCancel(ctx, run.ID, nil, "heartbeat_superseded", 0, nil)
+					}
+					return false, false, nil
+				}
+			}
+		}
 	}
 	if _, err := repo.ProvideInput(ctx, run.ID, content, traceID); err != nil {
 		var notActive data.RunNotActiveError
 		if errors.As(err, &notActive) {
-			return false, nil
+			return false, false, nil
 		}
-		return false, err
+		return false, false, err
 	}
-	return true, nil
+	return true, false, nil
 }
 
 func (c telegramConnector) notifyActiveRunInput(ctx context.Context, runID uuid.UUID) {
@@ -1625,10 +1685,6 @@ func buildTelegramChannelDeliveryPayload(
 	channelIdentityID uuid.UUID,
 	incoming telegramIncomingMessage,
 ) map[string]any {
-	triggerMessageID := incoming.PlatformMsgID
-	if incoming.ReplyToMsgID != nil && strings.TrimSpace(*incoming.ReplyToMsgID) != "" {
-		triggerMessageID = strings.TrimSpace(*incoming.ReplyToMsgID)
-	}
 	payload := map[string]any{
 		"channel_id":   channelID.String(),
 		"channel_type": "telegram",
@@ -1639,11 +1695,11 @@ func buildTelegramChannelDeliveryPayload(
 			"message_id": incoming.PlatformMsgID,
 		},
 		"trigger_message_ref": map[string]any{
-			"message_id": triggerMessageID,
+			"message_id": incoming.PlatformMsgID,
 		},
 		"platform_chat_id":           incoming.PlatformChatID,
 		"platform_message_id":        incoming.PlatformMsgID,
-		"reply_to_message_id":        triggerMessageID,
+		"reply_to_message_id":        incoming.PlatformMsgID,
 		"sender_channel_identity_id": channelIdentityID.String(),
 		"conversation_type":          incoming.ChatType,
 		"mentions_bot":               incoming.MentionsBot,
@@ -2408,6 +2464,14 @@ func (c telegramConnector) HandleUpdateForPoll(
 	if err != nil {
 		return err
 	}
+	preTailMsg, err := c.messageRepo.WithTx(tx).GetLatestVisibleMessage(ctx, ch.AccountID, threadID)
+	if err != nil {
+		return err
+	}
+	preTailMessageID := ""
+	if preTailMsg != nil {
+		preTailMessageID = preTailMsg.ID.String()
+	}
 	if _, err := c.messageRepo.WithTx(tx).CreateStructuredWithMetadata(
 		ctx,
 		ch.AccountID,
@@ -2428,9 +2492,24 @@ func (c telegramConnector) HandleUpdateForPoll(
 	if activeRun, err := runRepoTx.GetActiveRootRunForThread(ctx, threadID); err != nil {
 		return err
 	} else if activeRun != nil {
-		delivered, err := c.deliverTelegramMessageToActiveRun(ctx, runRepoTx, activeRun, content, traceID)
+		delivered, absorbed, err := c.deliverTelegramMessageToActiveRun(ctx, runRepoTx, activeRun, *incoming, content, traceID, preTailMessageID)
 		if err != nil {
 			return err
+		}
+		if absorbed {
+			if err := tx.Commit(ctx); err != nil {
+				return err
+			}
+			slog.InfoContext(ctx, "telegram_inbound_processed",
+				"stage", "absorbed_by_heartbeat",
+				"channel_id", ch.ID.String(),
+				"account_id", ch.AccountID.String(),
+				"run_id", activeRun.ID.String(),
+				"thread_id", threadID.String(),
+				"platform_chat_id", incoming.PlatformChatID,
+				"platform_message_id", incoming.PlatformMsgID,
+			)
+			return nil
 		}
 		if delivered {
 			if err := tx.Commit(ctx); err != nil {

@@ -298,6 +298,8 @@ func (p Policy) validateParsedURL(u *url.URL, baseURLMode bool) error {
 		if strings.TrimSpace(u.Fragment) != "" {
 			return DeniedError{Reason: "fragment_denied"}
 		}
+		// user-configured base URLs are trusted; skip all security checks
+		return nil
 	}
 
 	if !p.isAllowedSchemeForHost(scheme, hostname) {

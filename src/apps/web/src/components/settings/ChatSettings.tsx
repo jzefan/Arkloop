@@ -8,8 +8,7 @@ import {
 import { bridgeClient } from '../../api-bridge'
 import { PillToggle } from '@arkloop/shared'
 import { useToast } from '@arkloop/shared'
-
-const EXEC_MODE_KEY = 'arkloop:desktop:execution_mode'
+import type { DesktopSettingsHydrationSnapshot } from '../DesktopSettings'
 
 /** 与 shared/config 注册表默认值一致（无 platform_settings 行时） */
 const DEFAULT_KEEP_LAST_MESSAGES = 40
@@ -36,6 +35,9 @@ const rangeClass =
 
 type Props = {
   accessToken: string
+  initialSnapshot?: DesktopSettingsHydrationSnapshot
+  onExecutionModeChange?: (mode: 'local' | 'vm') => void
+  onPlatformSettingsChange?: (updates: Record<string, string>) => void
 }
 
 function parseBool(raw: string | undefined): boolean {
@@ -51,26 +53,12 @@ function parsePositiveInt(raw: string | undefined, fallback: number): number {
   return n
 }
 
-function readStoredExecutionMode(): 'local' | 'vm' | null {
-  try {
-    if (typeof localStorage?.getItem !== 'function') return null
-    const stored = localStorage.getItem(EXEC_MODE_KEY)
-    return stored === 'local' || stored === 'vm' ? stored : null
-  } catch {
-    return null
-  }
-}
-
-function writeStoredExecutionMode(mode: 'local' | 'vm') {
-  try {
-    if (typeof localStorage?.setItem !== 'function') return
-    localStorage.setItem(EXEC_MODE_KEY, mode)
-  } catch {
-    return
-  }
-}
-
-export function ChatSettings({ accessToken }: Props) {
+export function ChatSettings({
+  accessToken,
+  initialSnapshot,
+  onExecutionModeChange,
+  onPlatformSettingsChange,
+}: Props) {
   const { t } = useLocale()
   const st = t.desktopSettings
   const { addToast } = useToast()
@@ -92,51 +80,66 @@ export function ChatSettings({ accessToken }: Props) {
   const initializedRef = useRef(false)
   const persistedRef = useRef({ autoOn: false, thresholdPct: 80, keepLast: DEFAULT_KEEP_LAST_MESSAGES })
 
+  const applyPlatformSettingsSnapshot = useCallback((values: Record<string, string>, fallbackError = '') => {
+    const enabled = parseBool(values[KEY_ENABLED])
+    const persist = parseBool(values[KEY_PERSIST])
+    const nextAutoOn = enabled && persist
+
+    let pct = parsePositiveInt(values[KEY_PCT], 0)
+    if (pct > 100) pct = 100
+    if (pct <= 0) {
+      const fb = parsePositiveInt(values[KEY_FALLBACK], DEFAULT_FALLBACK_WINDOW)
+      const triggerTok = parsePositiveInt(values[KEY_TRIGGER_LEGACY], 0)
+      if (triggerTok > 0 && fb > 0) {
+        pct = Math.min(100, Math.max(5, Math.round((triggerTok / fb) * 100)))
+      } else {
+        pct = 80
+      }
+    }
+    const nextThresholdPct = Math.min(100, Math.max(5, pct))
+
+    const keep = parsePositiveInt(values[KEY_KEEP], DEFAULT_KEEP_LAST_MESSAGES)
+    const nextKeepLast = Math.min(50, Math.max(2, keep))
+
+    persistedRef.current = {
+      autoOn: nextAutoOn,
+      thresholdPct: nextThresholdPct,
+      keepLast: nextKeepLast,
+    }
+    setAutoOn(nextAutoOn)
+    setThresholdPct(nextThresholdPct)
+    setKeepLast(nextKeepLast)
+    setLoadErr(fallbackError)
+    setLoading(false)
+    initializedRef.current = true
+  }, [])
+
   const load = useCallback(async () => {
+    if (initialSnapshot?.platformSettings) {
+      applyPlatformSettingsSnapshot(initialSnapshot.platformSettings, initialSnapshot.platformSettingsError)
+      return
+    }
     setLoadErr('')
     setLoading(true)
     try {
       const rows = await listPlatformSettings(accessToken)
-      const values = new Map(rows.map((row) => [row.key, row.value]))
-      const enabled = parseBool(values.get(KEY_ENABLED))
-      const persist = parseBool(values.get(KEY_PERSIST))
-      const nextAutoOn = enabled && persist
-
-      let pct = parsePositiveInt(values.get(KEY_PCT), 0)
-      if (pct > 100) pct = 100
-      if (pct <= 0) {
-        const fb = parsePositiveInt(values.get(KEY_FALLBACK), DEFAULT_FALLBACK_WINDOW)
-        const triggerTok = parsePositiveInt(values.get(KEY_TRIGGER_LEGACY), 0)
-        if (triggerTok > 0 && fb > 0) {
-          pct = Math.min(100, Math.max(5, Math.round((triggerTok / fb) * 100)))
-        } else {
-          pct = 80
-        }
-      }
-      const nextThresholdPct = Math.min(100, Math.max(5, pct))
-
-      const keep = parsePositiveInt(values.get(KEY_KEEP), DEFAULT_KEEP_LAST_MESSAGES)
-      const nextKeepLast = Math.min(50, Math.max(2, keep))
-
-      persistedRef.current = {
-        autoOn: nextAutoOn,
-        thresholdPct: nextThresholdPct,
-        keepLast: nextKeepLast,
-      }
-      setAutoOn(nextAutoOn)
-      setThresholdPct(nextThresholdPct)
-      setKeepLast(nextKeepLast)
+      applyPlatformSettingsSnapshot(Object.fromEntries(rows.map((row) => [row.key, row.value])))
     } catch (e) {
       setLoadErr(e instanceof Error ? e.message : t.requestFailed)
     } finally {
       setLoading(false)
       initializedRef.current = true
     }
-  }, [accessToken, t.requestFailed])
+  }, [accessToken, applyPlatformSettingsSnapshot, initialSnapshot?.platformSettings, initialSnapshot?.platformSettingsError, t.requestFailed])
 
   useEffect(() => {
     void load()
   }, [load])
+
+  useEffect(() => {
+    if (!initialSnapshot?.platformSettings) return
+    applyPlatformSettingsSnapshot(initialSnapshot.platformSettings, initialSnapshot.platformSettingsError)
+  }, [applyPlatformSettingsSnapshot, initialSnapshot?.platformSettings, initialSnapshot?.platformSettingsError])
 
   const normalizedState = useMemo(() => ({
     autoOn,
@@ -158,12 +161,18 @@ export function ChatSettings({ accessToken }: Props) {
       await updatePlatformSetting(accessToken, KEY_PERSIST, enStr)
       await updatePlatformSetting(accessToken, KEY_PCT, String(pctClamped))
       await updatePlatformSetting(accessToken, KEY_KEEP, keepStr)
+      onPlatformSettingsChange?.({
+        [KEY_ENABLED]: enStr,
+        [KEY_PERSIST]: enStr,
+        [KEY_PCT]: String(pctClamped),
+        [KEY_KEEP]: keepStr,
+      })
       persistedRef.current = normalizedState
       addToast(st.chatCompactSaved, 'success')
     } catch (e) {
       addToast(e instanceof Error ? e.message : t.requestFailed, 'error')
     }
-  }, [accessToken, addToast, keepLast, normalizedState, st.chatCompactSaved, t.requestFailed, thresholdPct])
+  }, [accessToken, addToast, keepLast, normalizedState, onPlatformSettingsChange, st.chatCompactSaved, t.requestFailed, thresholdPct])
 
   useEffect(() => {
     if (!initializedRef.current) return
@@ -184,42 +193,47 @@ export function ChatSettings({ accessToken }: Props) {
   }, [handleSave, normalizedState])
 
   const loadExecutionMode = useCallback(async () => {
+    if (initialSnapshot?.executionMode) {
+      setExecutionMode(initialSnapshot.executionMode)
+      setExecModeError(initialSnapshot.executionModeError)
+      setExecModeLoading(false)
+      return
+    }
     setExecModeLoading(true)
     setExecModeError('')
-    // Read from localStorage first (persists across restarts), then sync with bridge
-    const stored = readStoredExecutionMode()
-    if (stored) {
-      setExecutionMode(stored)
-    }
     try {
       const mode = await bridgeClient.getExecutionMode()
       setExecutionMode(mode)
-      writeStoredExecutionMode(mode)
     } catch (e) {
-      if (!stored) {
-        setExecModeError(e instanceof Error ? e.message : 'Failed to load execution mode')
-      }
+      setExecModeError(e instanceof Error ? e.message : 'Failed to load execution mode')
     } finally {
       setExecModeLoading(false)
     }
-  }, [])
+  }, [initialSnapshot?.executionMode, initialSnapshot?.executionModeError])
 
   useEffect(() => {
     void loadExecutionMode()
   }, [loadExecutionMode])
 
+  useEffect(() => {
+    if (!initialSnapshot?.executionMode) return
+    setExecutionMode(initialSnapshot.executionMode)
+    setExecModeError(initialSnapshot.executionModeError)
+    setExecModeLoading(false)
+  }, [initialSnapshot?.executionMode, initialSnapshot?.executionModeError])
+
   const handleExecutionModeToggle = useCallback(async (vm: boolean) => {
     const newMode = vm ? 'vm' : 'local'
     setExecModeError('')
     setExecutionMode(newMode)
-    writeStoredExecutionMode(newMode)
     try {
       await bridgeClient.setExecutionMode(newMode)
+      onExecutionModeChange?.(newMode)
       addToast(st.chatCompactSaved, 'success')
     } catch (e) {
       setExecModeError(e instanceof Error ? e.message : 'Failed to set execution mode')
     }
-  }, [addToast, st.chatCompactSaved])
+  }, [addToast, onExecutionModeChange, st.chatCompactSaved])
 
   if (loading) {
     return (

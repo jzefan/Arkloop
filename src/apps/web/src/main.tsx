@@ -1,4 +1,4 @@
-import { StrictMode } from 'react'
+import { StrictMode, useEffect, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import { BrowserRouter, HashRouter } from 'react-router-dom'
 import { ToastProvider } from '@arkloop/shared'
@@ -10,6 +10,15 @@ import { AppearanceProvider } from './contexts/AppearanceContext'
 
 const Router = window.location.protocol === 'file:' ? HashRouter : BrowserRouter
 
+function BlurWarmup() {
+  const [alive, setAlive] = useState(true)
+  useEffect(() => {
+    const id = requestAnimationFrame(() => requestAnimationFrame(() => setAlive(false)))
+    return () => cancelAnimationFrame(id)
+  }, [])
+  return alive ? <div className="blur-warmup" /> : null
+}
+
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <Router>
@@ -17,6 +26,7 @@ createRoot(document.getElementById('root')!).render(
         <AppearanceProvider>
           <LocaleProvider>
             <ToastProvider>
+              <BlurWarmup />
               <App />
             </ToastProvider>
           </LocaleProvider>

@@ -5,7 +5,7 @@ import { createPortal } from 'react-dom'
 import { motion } from 'framer-motion'
 import { ArrowDown, Check, ChevronDown, Glasses, Info, Loader2, Pencil, Share2, Star, Trash2, X, AlertCircle } from 'lucide-react'
 import { isDesktop } from '@arkloop/shared/desktop'
-import { AutoResizeTextarea, Button } from '@arkloop/shared'
+import { AutoResizeTextarea, Button, DebugTrigger } from '@arkloop/shared'
 import { ChatInput, type Attachment } from './ChatInput'
 import { MessageBubble } from './MessageBubble'
 import { RunDetailPanel } from './RunDetailPanel'
@@ -15,6 +15,7 @@ import {
   type WebSearchPhaseStep,
 } from './CopTimeline'
 import { MarkdownRenderer } from './MarkdownRenderer'
+import { recordPerfCount, recordPerfValue } from '../perfDebug'
 import { useTypewriter } from '../hooks/useTypewriter'
 import { ArtifactStreamBlock, extractPartialArtifactFields, type StreamingArtifactEntry } from './ArtifactStreamBlock'
 import { WidgetBlock } from './WidgetBlock'
@@ -78,6 +79,7 @@ import {
   createMessage,
   createRun,
   cancelRun,
+  continueThread,
   provideInput,
   retryThread,
   editMessage,
@@ -102,6 +104,9 @@ import {
   addSearchThreadId,
   SEARCH_PERSONA_KEY,
   isSearchThreadId,
+  readThreadRunHandoff,
+  writeThreadRunHandoff,
+  clearThreadRunHandoff,
   readSelectedPersonaKeyFromStorage,
   readSelectedModelFromStorage,
   readMessageSources,
@@ -140,9 +145,11 @@ import {
   type WidgetRef,
   migrateMessageMetadata,
   readDeveloperShowRunEvents,
+  readDeveloperShowDebugPanel,
   readMsgRunEvents,
   writeMsgRunEvents,
   type MsgRunEvent,
+  type ThreadRunHandoffRef,
   readThreadClawFolder,
 } from '../storage'
 
@@ -291,6 +298,11 @@ function FailedRunRetryCard({
       )}
     </div>
   )
+}
+
+function assistantTurnHasVisibleOutput(turn: AssistantTurnUi | null | undefined): boolean {
+  if (!turn) return false
+  return assistantTurnPlainText(turn).trim() !== ''
 }
 
 type OutletContext = {
@@ -450,6 +462,17 @@ function LiveTurnMarkdown({
   typewriterDone: boolean
 } & Omit<ComponentProps<typeof MarkdownRenderer>, 'content'>) {
   const displayed = useTypewriter(content, typewriterDone)
+  useEffect(() => {
+    recordPerfCount('live_turn_markdown_render', 1, {
+      contentLength: content.length,
+      displayedLength: displayed.length,
+      typewriterDone,
+    })
+    recordPerfValue('live_turn_markdown_displayed', displayed.length, 'chars', {
+      contentLength: content.length,
+      typewriterDone,
+    })
+  }, [content.length, displayed.length, typewriterDone])
   return <MarkdownRenderer content={displayed} {...rest} />
 }
 
@@ -488,6 +511,8 @@ const HistoricalMessageList = memo(function HistoricalMessageList({
   userEnterMessageId,
   locationState,
   currentRunCopHeaderOverride,
+  actionLabelForTerminalRun,
+  actionHandlerForTerminalRun,
   handleRetry,
   handleEditMessage,
   handleFork,
@@ -547,6 +572,15 @@ const HistoricalMessageList = memo(function HistoricalMessageList({
     hasThinking: boolean
     handoffStatus?: 'completed' | 'cancelled' | 'interrupted' | 'failed' | null
   }) => string | undefined
+  actionLabelForTerminalRun: (params: {
+    status: MessageTerminalStatusRef | null
+    hasOutput: boolean
+  }) => string | undefined
+  actionHandlerForTerminalRun: (params: {
+    runId: string | null | undefined
+    status: MessageTerminalStatusRef | null
+    hasOutput: boolean
+  }) => (() => void) | undefined
   handleRetry: () => void
   handleEditMessage: (message: MessageResponse, newContent: string) => void
   handleFork: (messageId: string) => Promise<void>
@@ -585,6 +619,21 @@ const HistoricalMessageList = memo(function HistoricalMessageList({
         const canShowSources = !!(resolvedSources && resolvedSources.length > 0)
         const historicalTurn = msg.role === 'assistant' ? messageAssistantTurnMap.get(msg.id) : undefined
         const hasAssistantTurn = !!(historicalTurn && historicalTurn.segments.length > 0)
+        const hasTerminalOutput =
+          msg.role === 'assistant' &&
+          (
+            !!msg.content.trim() ||
+            assistantTurnHasVisibleOutput(historicalTurn)
+          )
+        const terminalActionLabel = actionLabelForTerminalRun({
+          status: effectiveTerminalStatus,
+          hasOutput: hasTerminalOutput,
+        })
+        const terminalActionHandler = actionHandlerForTerminalRun({
+          runId: msg.run_id,
+          status: effectiveTerminalStatus,
+          hasOutput: hasTerminalOutput,
+        })
         const historicalSegments = historicalTurn?.segments ?? []
         const msgWidgetsRaw =
           msg.role === 'assistant' ? (messageWidgetsMap.get(msg.id) ?? readMessageWidgets(msg.id) ?? undefined) : undefined
@@ -822,8 +871,8 @@ const HistoricalMessageList = memo(function HistoricalMessageList({
             {msg.role === 'assistant' && (effectiveTerminalStatus === 'failed' || effectiveTerminalStatus === 'interrupted' || effectiveTerminalStatus === 'cancelled') && (
               <FailedRunRetryCard
                 title={effectiveTerminalStatus === 'interrupted' ? t.runInterrupted : effectiveTerminalStatus === 'cancelled' ? t.runCancelled : t.failedRunRetryTitle}
-                actionLabel={!isStreaming && !sending ? t.retryAction : undefined}
-                onRetry={!isStreaming && !sending ? handleRetry : undefined}
+                actionLabel={!isStreaming && !sending ? terminalActionLabel : undefined}
+                onRetry={!isStreaming && !sending ? terminalActionHandler : undefined}
               />
             )}
             {locationState?.isIncognitoFork && locationState.forkBaseCount != null && idx === locationState.forkBaseCount - 1 && (
@@ -1051,6 +1100,7 @@ export function ChatPage() {
 
   // --- 开发者调试 ---
   const [showRunEvents, setShowRunEvents] = useState(() => readDeveloperShowRunEvents())
+  const [showDebugPanel, setShowDebugPanel] = useState(() => readDeveloperShowDebugPanel())
   const [runDetailPanelRunId, setRunDetailPanelRunId] = useState<string | null>(null)
   const [_msgRunEventsMap, setMsgRunEventsMap] = useState<Map<string, MsgRunEvent[]>>(new Map())
 
@@ -1060,6 +1110,14 @@ export function ChatPage() {
     }
     window.addEventListener('arkloop:developer_show_run_events', handleChange)
     return () => window.removeEventListener('arkloop:developer_show_run_events', handleChange)
+  }, [])
+
+  useEffect(() => {
+    const handleChange = (e: Event) => {
+      setShowDebugPanel((e as CustomEvent<boolean>).detail)
+    }
+    window.addEventListener('arkloop:developer_show_debug_panel', handleChange)
+    return () => window.removeEventListener('arkloop:developer_show_debug_panel', handleChange)
   }, [])
 
   // --- 标题下拉菜单 ---
@@ -1292,6 +1350,38 @@ export function ChatPage() {
     terminalStatus?: MessageTerminalStatusRef | null
   }
 
+function buildStreamingArtifactsFromHandoff(handoff: ThreadRunHandoffRef): StreamingArtifactEntry[] {
+  const entries: StreamingArtifactEntry[] = []
+  let toolCallIndex = 0
+  for (const widget of handoff.widgets) {
+    entries.push({
+      toolCallIndex,
+      toolCallId: widget.id,
+      toolName: 'show_widget',
+      argumentsBuffer: '',
+      title: widget.title,
+      content: widget.html,
+      complete: true,
+    })
+    toolCallIndex += 1
+  }
+  for (const artifact of handoff.artifacts) {
+    entries.push({
+      toolCallIndex,
+      toolCallId: artifact.key,
+      toolName: 'create_artifact',
+      argumentsBuffer: '',
+      title: artifact.title,
+      filename: artifact.filename,
+      display: artifact.display,
+      complete: true,
+      artifactRef: artifact,
+    })
+    toolCallIndex += 1
+  }
+  return entries
+}
+
   type PersistRunDataOptions = {
     persistThinking?: boolean
     persistAssistantTurn?: boolean
@@ -1377,6 +1467,9 @@ export function ChatPage() {
         writeMsgRunEvents(messageId, runEvents)
         setMsgRunEventsMap((prev) => new Map(prev).set(messageId, runEvents))
       }
+      if (threadId) {
+        clearThreadRunHandoff(threadId)
+      }
     },
     [
       setMessageArtifactsMap,
@@ -1390,8 +1483,27 @@ export function ChatPage() {
       setMessageWebFetchesMap,
       setMessageWidgetsMap,
       setMsgRunEventsMap,
+      threadId,
     ],
   )
+
+  const persistThreadRunHandoff = useCallback((runId: string, runData: TerminalRunCache) => {
+    if (!threadId || !runId) return
+    writeThreadRunHandoff(threadId, {
+      runId,
+      status: (runData.terminalStatus ?? 'cancelled') as Exclude<MessageTerminalStatusRef, 'completed'>,
+      assistantTurn: runData.handoffAssistantTurn.segments.length > 0 ? runData.handoffAssistantTurn : null,
+      sources: [...runData.runSources],
+      artifacts: [...runData.runArtifacts],
+      widgets: [...runData.runWidgets],
+      codeExecutions: [...runData.runCodeExecs],
+      browserActions: [...runData.runBrowserActions],
+      subAgents: [...runData.runSubAgents],
+      fileOps: [...runData.runFileOps],
+      webFetches: [...runData.runWebFetches],
+      searchSteps: [...(runData.pendingSearchSteps ?? [])],
+    })
+  }, [threadId])
 
   const bottomRef = useRef<HTMLDivElement>(null)
   const scrollContainerRef = useRef<HTMLDivElement>(null)
@@ -1609,7 +1721,7 @@ export function ChatPage() {
     } finally {
       setSending(false)
     }
-  }, [accessToken, threadId, activeRunId, sending, onLoggedOut, onRunStarted, invalidateMessageSync, resetSearchSteps])
+  }, [accessToken, threadId, activeRunId, sending, onLoggedOut, onRunStarted, invalidateMessageSync, markTerminalRunHistory, resetSearchSteps])
 
   // 用 ref 持有最新的 sendMessage，避免 widget 回调闭包中捕获旧引用
   const sendMessageRef = useRef(sendMessage)
@@ -1873,6 +1985,39 @@ export function ChatPage() {
           setTerminalRunHandoffStatus('failed')
         }
 
+        const cachedThreadHandoff = readThreadRunHandoff(threadId)
+        const shouldRestoreThreadHandoff =
+          !!cachedThreadHandoff &&
+          (!latest || latest.run_id === cachedThreadHandoff.runId) &&
+          !findAssistantMessageForRun(items, cachedThreadHandoff.runId)
+        if (
+          cachedThreadHandoff &&
+          shouldRestoreThreadHandoff
+        ) {
+          setPreserveLiveRunUi(true)
+          setTerminalRunDisplayId(cachedThreadHandoff.runId)
+          setTerminalRunHandoffStatus(cachedThreadHandoff.status)
+          setLiveAssistantTurn(cachedThreadHandoff.assistantTurn ?? null)
+          currentRunSourcesRef.current = [...cachedThreadHandoff.sources]
+          currentRunArtifactsRef.current = [...cachedThreadHandoff.artifacts]
+          currentRunCodeExecutionsRef.current = [...cachedThreadHandoff.codeExecutions]
+          currentRunBrowserActionsRef.current = [...cachedThreadHandoff.browserActions]
+          currentRunSubAgentsRef.current = [...cachedThreadHandoff.subAgents]
+          currentRunFileOpsRef.current = [...cachedThreadHandoff.fileOps]
+          currentRunWebFetchesRef.current = [...cachedThreadHandoff.webFetches]
+          setTopLevelCodeExecutions(cachedThreadHandoff.codeExecutions)
+          setTopLevelSubAgents(cachedThreadHandoff.subAgents)
+          setTopLevelFileOps(cachedThreadHandoff.fileOps)
+          setTopLevelWebFetches(cachedThreadHandoff.webFetches)
+          const restoredStreamingArtifacts = buildStreamingArtifactsFromHandoff(cachedThreadHandoff)
+          streamingArtifactsRef.current = restoredStreamingArtifacts
+          setStreamingArtifacts(restoredStreamingArtifacts)
+          searchStepsRef.current = cachedThreadHandoff.searchSteps
+          setSearchSteps(cachedThreadHandoff.searchSteps)
+        } else if (threadId) {
+          clearThreadRunHandoff(threadId)
+        }
+
         // 若 location state 已提供 initialRunId，优先使用（来自 WelcomePage 新建后导航）
         // 必须显式调用 setActiveRunId，因为 React Router 复用组件实例，useState 初始值不会重新求值
         if (
@@ -1885,7 +2030,7 @@ export function ChatPage() {
           setThinkingHint(hints[Math.floor(Math.random() * hints.length)])
           if (threadId) onRunStarted(threadId)
         } else {
-          const isActiveRun = latest?.status === 'running' || latest?.status === 'cancelling'
+          const isActiveRun = !shouldRestoreThreadHandoff && (latest?.status === 'running' || latest?.status === 'cancelling')
           setActiveRunId(isActiveRun ? latest.run_id : null)
           if (isActiveRun && threadId) onRunStarted(threadId)
           else if (threadId) onRunEnded(threadId)
@@ -2008,6 +2153,9 @@ export function ChatPage() {
   // 连接 SSE
   useEffect(() => {
     if (!activeRunId) return
+    if (threadId) {
+      clearThreadRunHandoff(threadId)
+    }
     clearCompletedTitleTail()
     freezeCutoffRef.current = null
     injectionBlockedRunIdRef.current = null
@@ -2038,7 +2186,7 @@ export function ChatPage() {
     setStreamingArtifacts([])
     setCancelSubmitting(false)
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeRunId, baseUrl, clearCompletedTitleTail, resetAssistantTurnLive])
+  }, [activeRunId, baseUrl, clearCompletedTitleTail, resetAssistantTurnLive, threadId])
 
   useEffect(() => {
     if (!sseRunId) return
@@ -2678,6 +2826,9 @@ export function ChatPage() {
           runCache.handoffAssistantTurn = buildFrozenAssistantTurnFromRunEvents(runEventsForMessage)
           runCache.runAssistantTurn = runCache.handoffAssistantTurn
         }
+        if (runId) {
+          persistThreadRunHandoff(runId, runCache)
+        }
         resetTerminalRunState({
           restoreQueuedDraft: true,
           preserveSearchSteps: true,
@@ -2720,6 +2871,9 @@ export function ChatPage() {
         if (runCache.handoffAssistantTurn.segments.length === 0 && runEventsForMessage.length > 0) {
           runCache.handoffAssistantTurn = buildFrozenAssistantTurnFromRunEvents(runEventsForMessage)
           runCache.runAssistantTurn = runCache.handoffAssistantTurn
+        }
+        if (runId) {
+          persistThreadRunHandoff(runId, runCache)
         }
         resetTerminalRunState({
           restoreQueuedDraft: true,
@@ -2776,6 +2930,9 @@ export function ChatPage() {
           runCache.handoffAssistantTurn = buildFrozenAssistantTurnFromRunEvents(runEventsForMessage)
           runCache.runAssistantTurn = runCache.handoffAssistantTurn
         }
+        if (runId) {
+          persistThreadRunHandoff(runId, runCache)
+        }
         resetTerminalRunState({
           restoreQueuedDraft: true,
           preserveSearchSteps: true,
@@ -2804,7 +2961,7 @@ export function ChatPage() {
         continue
       }
     }
-  }, [sseRunId, activeRunId, armCompletedTitleTail, clearCompletedTitleTail, clearContextCompactHideTimer, clearLiveRunSecurityArtifacts, clearQueuedDraft, completedTitleTailRunId, refreshMessages, refreshCredits, resetSearchSteps, restoreQueuedDraftToInput, sse.events]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [sseRunId, activeRunId, armCompletedTitleTail, clearCompletedTitleTail, clearContextCompactHideTimer, clearLiveRunSecurityArtifacts, clearQueuedDraft, completedTitleTailRunId, persistThreadRunHandoff, refreshMessages, refreshCredits, resetSearchSteps, restoreQueuedDraftToInput, sse.events]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // 401 SSE 错误时登出
   useEffect(() => {
@@ -2843,6 +3000,10 @@ export function ChatPage() {
     setPreserveLiveRunUi(true)
     setTerminalRunHandoffStatus('interrupted')
     setLiveAssistantTurn(terminalCache.handoffAssistantTurn.segments.length > 0 ? terminalCache.handoffAssistantTurn : null)
+    persistThreadRunHandoff(terminalRunId, {
+      ...terminalCache,
+      terminalStatus: 'interrupted',
+    })
 
     setActiveRunId(null)
     setPendingThinking(false)
@@ -2860,7 +3021,7 @@ export function ChatPage() {
           persistRunDataToMessage(completedAssistant.id, terminalCache, runEventsForMessage)
         }
       })
-  }, [activeRunId, sse.state, persistRunDataToMessage]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [activeRunId, sse.state, persistRunDataToMessage, persistThreadRunHandoff]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // 初始加载完成后，将最后一条 user 消息滚动至顶部
   useEffect(() => {
@@ -2990,6 +3151,7 @@ export function ChatPage() {
     e.preventDefault()
     if (sending || !threadId) return
     markTerminalRunHistory(null)
+    clearThreadRunHandoff(threadId)
 
     // streaming 期间排队，输出结束后自动发送
     if (isStreaming) {
@@ -3147,9 +3309,12 @@ export function ChatPage() {
   const handleRetry = useCallback(async () => {
     if (isStreaming || sending || !threadId) return
     setSending(true)
+    setPendingThinking(true)
+    setThinkingHint(t.copThinkingHints[Math.floor(Math.random() * t.copThinkingHints.length)])
     setError(null)
     setInjectionBlocked(null)
     injectionBlockedRunIdRef.current = null
+    clearThreadRunHandoff(threadId)
     try {
       const run = await retryThread(accessToken, threadId)
       // 乐观地移除最后一条 assistant 消息（后端已标记 hidden）
@@ -3172,7 +3337,53 @@ export function ChatPage() {
     } finally {
       setSending(false)
     }
-  }, [accessToken, threadId, isStreaming, sending, onRunStarted, onLoggedOut, scrollToBottom, invalidateMessageSync, resetSearchSteps])
+  }, [accessToken, threadId, isStreaming, sending, onRunStarted, onLoggedOut, scrollToBottom, invalidateMessageSync, resetSearchSteps, t.copThinkingHints])
+
+  const handleContinue = useCallback(async (runId: string) => {
+    if (isStreaming || sending || !threadId || !runId) return
+    setSending(true)
+    setPendingThinking(true)
+    setThinkingHint(t.copThinkingHints[Math.floor(Math.random() * t.copThinkingHints.length)])
+    setError(null)
+    setInjectionBlocked(null)
+    injectionBlockedRunIdRef.current = null
+    try {
+      const run = await continueThread(accessToken, threadId, runId)
+      clearThreadRunHandoff(threadId)
+      setPreserveLiveRunUi(false)
+      setLiveAssistantTurn(null)
+      setTerminalRunDisplayId(null)
+      setTerminalRunHandoffStatus(null)
+      streamingArtifactsRef.current = []
+      setStreamingArtifacts([])
+      setSegments([])
+      activeSegmentIdRef.current = null
+      currentRunSourcesRef.current = []
+      currentRunArtifactsRef.current = []
+      currentRunCodeExecutionsRef.current = []
+      currentRunBrowserActionsRef.current = []
+      currentRunSubAgentsRef.current = []
+      currentRunFileOpsRef.current = []
+      currentRunWebFetchesRef.current = []
+      setTopLevelCodeExecutions([])
+      setTopLevelSubAgents([])
+      setTopLevelFileOps([])
+      setTopLevelWebFetches([])
+      assistantTurnFoldStateRef.current = createEmptyAssistantTurnFoldState()
+      resetSearchSteps()
+      setActiveRunId(run.run_id)
+      onRunStarted(threadId)
+      scrollToBottom()
+    } catch (err) {
+      if (isApiError(err) && err.status === 401) {
+        onLoggedOut()
+        return
+      }
+      setError(normalizeError(err))
+    } finally {
+      setSending(false)
+    }
+  }, [accessToken, threadId, isStreaming, sending, onRunStarted, onLoggedOut, scrollToBottom, resetSearchSteps, t.copThinkingHints])
 
   const handleAsrError = useCallback((err: unknown) => {
     if (isApiError(err) && err.status === 401) {
@@ -3181,6 +3392,35 @@ export function ChatPage() {
     }
     setError(normalizeError(err))
   }, [onLoggedOut])
+
+  const actionLabelForTerminalRun = useCallback((params: {
+    status: MessageTerminalStatusRef | null
+    hasOutput: boolean
+  }) => {
+    if (isStreaming || sending) return undefined
+    if (params.status === 'cancelled' || params.status === 'interrupted') {
+      return params.hasOutput ? t.continueBtn : t.retryAction
+    }
+    if (params.status === 'failed') {
+      return t.retryAction
+    }
+    return undefined
+  }, [isStreaming, sending, t.continueBtn, t.retryAction])
+
+  const actionHandlerForTerminalRun = useCallback((params: {
+    runId: string | null | undefined
+    status: MessageTerminalStatusRef | null
+    hasOutput: boolean
+  }) => {
+    if (isStreaming || sending) return undefined
+    if ((params.status === 'cancelled' || params.status === 'interrupted') && params.hasOutput && params.runId) {
+      return () => void handleContinue(params.runId!)
+    }
+    if (params.status === 'cancelled' || params.status === 'interrupted' || params.status === 'failed') {
+      return handleRetry
+    }
+    return undefined
+  }, [isStreaming, sending, handleContinue, handleRetry])
 
   const handleFork = useCallback(async (messageId: string) => {
     if (!threadId || isStreaming || sending) return
@@ -3432,6 +3672,13 @@ export function ChatPage() {
       allStreamItemsForUi.length > 0 ||
       streamingArtifacts.length > 0
     )
+
+  const terminalRunHasOutput = useMemo(() => {
+    if ((liveAssistantTurn?.segments.length ?? 0) > 0 && assistantTurnHasVisibleOutput(liveAssistantTurn)) {
+      return true
+    }
+    return segmentsRef.current.some((segment) => segment.content.trim() !== '')
+  }, [liveAssistantTurn])
 
   const currentRunCopHeaderOverride = useCallback((params: {
     title?: string | null
@@ -3718,6 +3965,7 @@ export function ChatPage() {
       {/* 主体区域：消息 + 输入 + 可选的 sources 侧边面板 */}
       <div className="relative flex flex-1 min-h-0">
         <div className="relative flex flex-1 min-w-0 flex-col">
+          <div className="pointer-events-none absolute inset-x-0 top-0 z-10 h-10" style={{ background: 'linear-gradient(to bottom, var(--c-bg-page), transparent)' }} />
           {/* 消息列表 */}
           <div
             ref={scrollContainerRef}
@@ -3776,6 +4024,8 @@ export function ChatPage() {
                 userEnterMessageId={userEnterMessageId}
                 locationState={locationState}
                 currentRunCopHeaderOverride={currentRunCopHeaderOverride}
+                actionLabelForTerminalRun={actionLabelForTerminalRun}
+                actionHandlerForTerminalRun={actionHandlerForTerminalRun}
                 handleRetry={handleRetry}
                 handleEditMessage={handleEditMessage}
                 handleFork={handleFork}
@@ -3961,8 +4211,15 @@ export function ChatPage() {
               {(terminalRunHandoffStatus === 'failed' || terminalRunHandoffStatus === 'interrupted' || terminalRunHandoffStatus === 'cancelled') && terminalRunDisplayId && !messages.some((msg) => msg.role === 'assistant' && msg.run_id === terminalRunDisplayId) && (
                 <FailedRunRetryCard
                   title={terminalRunHandoffStatus === 'interrupted' ? t.runInterrupted : terminalRunHandoffStatus === 'cancelled' ? t.runCancelled : t.failedRunRetryTitle}
-                  actionLabel={undefined}
-                  onRetry={undefined}
+                  actionLabel={actionLabelForTerminalRun({
+                    status: terminalRunHandoffStatus,
+                    hasOutput: terminalRunHasOutput,
+                  })}
+                  onRetry={actionHandlerForTerminalRun({
+                    runId: terminalRunDisplayId,
+                    status: terminalRunHandoffStatus,
+                    hasOutput: terminalRunHasOutput,
+                  })}
                 />
               )}
               <div ref={bottomRef} />
@@ -4287,6 +4544,8 @@ export function ChatPage() {
           onClose={() => setRunDetailPanelRunId(null)}
         />
       )}
+
+      {showDebugPanel && <DebugTrigger />}
     </div>
   )
 }

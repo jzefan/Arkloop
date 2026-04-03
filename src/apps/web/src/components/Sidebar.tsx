@@ -75,6 +75,9 @@ export function Sidebar({
   const activeThreadId = suppressActiveThreadHighlight ? undefined : threadId
   const { t } = useLocale()
 
+  const [pressedCollapseBtn, setPressedCollapseBtn] = useState(false)
+  const [pressedSettingsBtn, setPressedSettingsBtn] = useState(false)
+  const [pressedMenuThreadId, setPressedMenuThreadId] = useState<string | null>(null)
   const [starredIds, setStarredIds] = useState<string[]>([])
   const [menuThreadId, setMenuThreadId] = useState<string | null>(null)
   const [shareModalThreadId, setShareModalThreadId] = useState<string | null>(null)
@@ -216,7 +219,11 @@ export function Sidebar({
             </div>
             <button
               onClick={onToggleCollapse}
+              onPointerDown={() => setPressedCollapseBtn(true)}
+              onPointerUp={() => setPressedCollapseBtn(false)}
+              onPointerLeave={() => setPressedCollapseBtn(false)}
               className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-[var(--c-text-secondary)] transition-[background-color,color] duration-[60ms] hover:bg-[var(--c-bg-deep)] hover:text-[var(--c-text-primary)]"
+              style={{ transform: pressedCollapseBtn ? 'scale(0.96)' : 'scale(1)', transition: 'transform 80ms ease-out' }}
             >
               <PanelLeftClose size={17} />
             </button>
@@ -378,12 +385,16 @@ export function Sidebar({
                           <button
                             data-menu-button={thread.id}
                             onClick={(e) => openMenu(e, thread.id)}
+                            onPointerDown={() => setPressedMenuThreadId(thread.id)}
+                            onPointerUp={() => setPressedMenuThreadId(null)}
+                            onPointerLeave={() => setPressedMenuThreadId(null)}
                             className={[
                               'flex h-6 w-6 shrink-0 items-center justify-center rounded-md',
                               isMenuOpen
                                 ? 'opacity-100 bg-[var(--c-sidebar-btn-hover)] text-[var(--c-text-primary)]'
                                 : 'opacity-0 group-hover:opacity-100 text-[var(--c-text-muted)] hover:bg-[var(--c-sidebar-btn-hover)] hover:text-[var(--c-text-primary)]',
                             ].join(' ')}
+                            style={{ transform: pressedMenuThreadId === thread.id ? 'scale(0.96)' : 'scale(1)', transition: 'transform 80ms ease-out' }}
                           >
                             <MoreHorizontal size={14} />
                           </button>
@@ -452,7 +463,11 @@ export function Sidebar({
         <div className="mt-0.5 pl-1">
           <button
             onClick={() => onOpenSettings('settings')}
+            onPointerDown={() => setPressedSettingsBtn(true)}
+            onPointerUp={() => setPressedSettingsBtn(false)}
+            onPointerLeave={() => setPressedSettingsBtn(false)}
             className="flex h-8 w-8 items-center justify-center rounded-md text-[var(--c-text-icon)] transition-[background-color,color] duration-[60ms] hover:bg-[var(--c-bg-deep)] hover:text-[var(--c-text-primary)]"
+            style={{ transform: pressedSettingsBtn ? 'scale(0.96)' : 'scale(1)', transition: 'transform 80ms ease-out' }}
           >
             <Bolt size={18} />
           </button>
