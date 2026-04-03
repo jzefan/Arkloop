@@ -21,6 +21,7 @@ import (
 	"arkloop/services/shared/eventbus"
 	sharedexec "arkloop/services/shared/executionconfig"
 	"arkloop/services/shared/objectstore"
+	"arkloop/services/shared/onebotclient"
 	"arkloop/services/shared/rollout"
 	"arkloop/services/shared/telegrambot"
 	sharedtoolruntime "arkloop/services/shared/toolruntime"
@@ -817,6 +818,7 @@ func desktopChannelDelivery(db data.DesktopDB) pipeline.RunMiddleware {
 
 	return func(ctx context.Context, rc *pipeline.RunContext, next pipeline.RunHandler) error {
 		var preloaded *desktopDeliveryChannelRecord
+		var qqChannel *desktopQQDeliveryChannelRecord
 		var ux pipeline.TelegramChannelUX
 		channelType := desktopNormalizedChannelType(rc)
 		if db != nil && rc != nil && rc.ChannelContext != nil && (channelType == "telegram" || channelType == "discord") {
@@ -828,6 +830,14 @@ func desktopChannelDelivery(db data.DesktopDB) pipeline.RunMiddleware {
 				if channelType == "telegram" {
 					ux = pipeline.ParseTelegramChannelUX(ch.ConfigJSON)
 				}
+			}
+		}
+		if db != nil && rc != nil && rc.ChannelContext != nil && channelType == "qq" {
+			ch, prefetchErr := loadDesktopQQDeliveryChannel(ctx, db, rc.ChannelContext.ChannelID)
+			if prefetchErr != nil {
+				slog.WarnContext(ctx, "desktop qq channel delivery prefetch failed", "run_id", rc.Run.ID, "err", prefetchErr.Error())
+			} else {
+				qqChannel = ch
 			}
 		}
 
@@ -884,7 +894,7 @@ func desktopChannelDelivery(db data.DesktopDB) pipeline.RunMiddleware {
 			return err
 		}
 		channelType = desktopNormalizedChannelType(rc)
-		if db == nil || (channelType != "telegram" && channelType != "discord") {
+		if db == nil || (channelType != "telegram" && channelType != "discord" && channelType != "qq") {
 			return err
 		}
 		if pipeline.ShouldSuppressHeartbeatOutput(rc, rc.FinalAssistantOutput) {
@@ -914,7 +924,7 @@ func desktopChannelDelivery(db data.DesktopDB) pipeline.RunMiddleware {
 
 		channel := preloaded
 		var lookupErr error
-		if channel == nil {
+		if channel == nil && channelType != "qq" {
 			channel, lookupErr = loadDesktopDeliveryChannel(ctx, db, rc.ChannelContext.ChannelID)
 		}
 		if lookupErr != nil {
@@ -922,7 +932,7 @@ func desktopChannelDelivery(db data.DesktopDB) pipeline.RunMiddleware {
 			slog.WarnContext(ctx, "desktop channel delivery lookup failed", "run_id", rc.Run.ID, "err", lookupErr.Error())
 			return err
 		}
-		if channel == nil {
+		if channel == nil && channelType != "qq" {
 			recordDesktopChannelDeliveryFailure(db, rc.Run.ID, fmt.Errorf("channel not found or inactive"))
 			return err
 		}
@@ -941,6 +951,26 @@ func desktopChannelDelivery(db data.DesktopDB) pipeline.RunMiddleware {
 			if finalRecordErr := deliverDesktopDiscordChannelOutput(ctx, db, rc, discordClient, channel, output); finalRecordErr != nil {
 				recordDesktopChannelDeliveryFailure(db, rc.Run.ID, finalRecordErr)
 				slog.WarnContext(ctx, "desktop discord channel delivery failed", "run_id", rc.Run.ID, "err", finalRecordErr.Error())
+				return err
+			}
+		case "qq":
+			qCh := qqChannel
+			if qCh == nil {
+				var lookupErr error
+				qCh, lookupErr = loadDesktopQQDeliveryChannel(ctx, db, rc.ChannelContext.ChannelID)
+				if lookupErr != nil {
+					recordDesktopChannelDeliveryFailure(db, rc.Run.ID, lookupErr)
+					slog.WarnContext(ctx, "desktop qq channel delivery lookup failed", "run_id", rc.Run.ID, "err", lookupErr.Error())
+					return err
+				}
+			}
+			if qCh == nil {
+				recordDesktopChannelDeliveryFailure(db, rc.Run.ID, fmt.Errorf("qq channel config not found"))
+				return err
+			}
+			if finalRecordErr := deliverDesktopOneBotChannelOutput(ctx, db, rc, qCh, output); finalRecordErr != nil {
+				recordDesktopChannelDeliveryFailure(db, rc.Run.ID, finalRecordErr)
+				slog.WarnContext(ctx, "desktop qq channel delivery failed", "run_id", rc.Run.ID, "err", finalRecordErr.Error())
 				return err
 			}
 		}
@@ -1020,6 +1050,87 @@ func deliverDesktopDiscordChannelOutput(
 		rc.ChannelContext.ChannelType,
 		rc.ChannelContext.Conversation.Target,
 		replyTo,
+		rc.ChannelContext.Conversation.ThreadID,
+		messageIDs,
+	)
+}
+
+type desktopQQDeliveryChannelRecord struct {
+	OneBotHTTPURL string
+	OneBotToken   string
+}
+
+func loadDesktopQQDeliveryChannel(ctx context.Context, db data.DesktopDB, channelID uuid.UUID) (*desktopQQDeliveryChannelRecord, error) {
+	if db == nil {
+		return nil, fmt.Errorf("db must not be nil")
+	}
+	var configRaw []byte
+	err := db.QueryRow(
+		ctx,
+		`SELECT COALESCE(c.config_json, '{}')
+		   FROM channels c
+		  WHERE c.id = $1
+		    AND c.is_active = 1`,
+		channelID,
+	).Scan(&configRaw)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("desktop qq channel lookup: %w", err)
+	}
+	var cfg struct {
+		OneBotHTTPURL string `json:"onebot_http_url"`
+		OneBotToken   string `json:"onebot_token"`
+	}
+	if err := json.Unmarshal(configRaw, &cfg); err != nil {
+		return nil, fmt.Errorf("desktop qq channel config: %w", err)
+	}
+	httpURL := strings.TrimSpace(cfg.OneBotHTTPURL)
+	if httpURL == "" {
+		httpURL = "http://127.0.0.1:3000"
+	}
+	return &desktopQQDeliveryChannelRecord{
+		OneBotHTTPURL: httpURL,
+		OneBotToken:   strings.TrimSpace(cfg.OneBotToken),
+	}, nil
+}
+
+func deliverDesktopOneBotChannelOutput(
+	ctx context.Context,
+	db data.DesktopDB,
+	rc *pipeline.RunContext,
+	channel *desktopQQDeliveryChannelRecord,
+	output string,
+) error {
+	if strings.TrimSpace(output) == "" {
+		return nil
+	}
+	client := onebotclient.NewClient(channel.OneBotHTTPURL, channel.OneBotToken, nil)
+	sender := pipeline.NewOneBotChannelSender(client, 50*time.Millisecond)
+
+	metadata := map[string]any{}
+	if rc.ChannelContext.ConversationType == "group" {
+		metadata["message_type"] = "group"
+	}
+
+	messageIDs, err := sender.SendText(ctx, pipeline.ChannelDeliveryTarget{
+		ChannelType:  rc.ChannelContext.ChannelType,
+		Conversation: rc.ChannelContext.Conversation,
+		Metadata:     metadata,
+	}, output)
+	if err != nil {
+		return err
+	}
+	return recordDesktopChannelDelivery(
+		ctx,
+		db,
+		rc.Run.ID,
+		rc.Run.ThreadID,
+		rc.ChannelContext.ChannelID,
+		rc.ChannelContext.ChannelType,
+		rc.ChannelContext.Conversation.Target,
+		nil,
 		rc.ChannelContext.Conversation.ThreadID,
 		messageIDs,
 	)

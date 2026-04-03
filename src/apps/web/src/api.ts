@@ -1897,6 +1897,8 @@ export type NapCatStatus = {
   setup_total?: number
   setup_error?: string
   logs?: string[]
+  onebot_ws_url?: string
+  onebot_http_url?: string
 }
 
 export async function getNapCatStatus(accessToken: string): Promise<NapCatStatus> {

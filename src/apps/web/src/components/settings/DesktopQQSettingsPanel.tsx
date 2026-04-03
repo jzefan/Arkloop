@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { MessageCircle } from 'lucide-react'
+import { MessageCircle, Zap } from 'lucide-react'
 import {
   type ChannelBindingResponse,
   type ChannelResponse,
   type LlmProvider,
+  type NapCatStatus,
   type Persona,
   createChannel,
   createChannelBindCode,
@@ -62,7 +63,10 @@ export function DesktopQQSettingsPanel({
   const [bindCode, setBindCode] = useState<string | null>(null)
   const [generatingCode, setGeneratingCode] = useState(false)
   const [bindings, setBindings] = useState<ChannelBindingResponse[]>([])
-
+  const [napCatStatus, setNapCatStatus] = useState<NapCatStatus | null>(null)
+  const [onebotWSUrl, setOnebotWSUrl] = useState((channel?.config_json?.onebot_ws_url as string | undefined) ?? '')
+  const [onebotHTTPUrl, setOnebotHTTPUrl] = useState((channel?.config_json?.onebot_http_url as string | undefined) ?? '')
+  const [onebotToken, setOnebotToken] = useState((channel?.config_json?.onebot_token as string | undefined) ?? '')
   const refreshBindings = useCallback(async () => {
     if (!channel?.id) {
       setBindings([])
@@ -84,6 +88,9 @@ export function DesktopQQSettingsPanel({
     setAllowedGroupIDs(readStringArrayConfig(channel, 'allowed_group_ids'))
     setAllowedGroupInput('')
     setDefaultModel((channel?.config_json?.default_model as string | undefined) ?? '')
+    setOnebotWSUrl((channel?.config_json?.onebot_ws_url as string | undefined) ?? '')
+    setOnebotHTTPUrl((channel?.config_json?.onebot_http_url as string | undefined) ?? '')
+    setOnebotToken((channel?.config_json?.onebot_token as string | undefined) ?? '')
   }, [channel, personas])
 
   useEffect(() => {
@@ -116,6 +123,9 @@ export function DesktopQQSettingsPanel({
   )
   const persistedDefaultModel = (channel?.config_json?.default_model as string | undefined) ?? ''
   const persistedAllowAllUsers = (channel?.config_json?.allow_all_users as boolean | undefined) ?? false
+  const persistedOnebotWSUrl = (channel?.config_json?.onebot_ws_url as string | undefined) ?? ''
+  const persistedOnebotHTTPUrl = (channel?.config_json?.onebot_http_url as string | undefined) ?? ''
+  const persistedOnebotToken = (channel?.config_json?.onebot_token as string | undefined) ?? ''
   const dirty = useMemo(() => {
     if ((channel?.is_active ?? false) !== enabled) return true
     if (effectivePersonaID !== personaID) return true
@@ -123,6 +133,9 @@ export function DesktopQQSettingsPanel({
     if (!sameItems(persistedAllowedGroupIDs, effectiveAllowedGroupIDs)) return true
     if (allowAllUsers !== persistedAllowAllUsers) return true
     if (defaultModel !== persistedDefaultModel) return true
+    if (onebotWSUrl !== persistedOnebotWSUrl) return true
+    if (onebotHTTPUrl !== persistedOnebotHTTPUrl) return true
+    if (onebotToken !== persistedOnebotToken) return true
     return false
   }, [
     channel,
@@ -137,6 +150,12 @@ export function DesktopQQSettingsPanel({
     persistedDefaultModel,
     allowAllUsers,
     persistedAllowAllUsers,
+    onebotWSUrl,
+    onebotHTTPUrl,
+    onebotToken,
+    persistedOnebotWSUrl,
+    persistedOnebotHTTPUrl,
+    persistedOnebotToken,
   ])
   const canSave = dirty || channel === null
 
@@ -184,6 +203,12 @@ export function DesktopQQSettingsPanel({
       }
       if (defaultModel.trim()) configJSON.default_model = defaultModel.trim()
       else delete configJSON.default_model
+      if (onebotWSUrl.trim()) configJSON.onebot_ws_url = onebotWSUrl.trim()
+      else delete configJSON.onebot_ws_url
+      if (onebotHTTPUrl.trim()) configJSON.onebot_http_url = onebotHTTPUrl.trim()
+      else delete configJSON.onebot_http_url
+      if (onebotToken.trim()) configJSON.onebot_token = onebotToken.trim()
+      else delete configJSON.onebot_token
 
       if (channel == null) {
         const created = await createChannel(accessToken, {
@@ -258,6 +283,16 @@ export function DesktopQQSettingsPanel({
     }
   }
 
+  const handleNapCatStatus = useCallback((status: NapCatStatus | null) => {
+    setNapCatStatus(status)
+    if (status?.logged_in && status.onebot_ws_url && !onebotWSUrl) {
+      setOnebotWSUrl(status.onebot_ws_url)
+    }
+    if (status?.logged_in && status.onebot_http_url && !onebotHTTPUrl) {
+      setOnebotHTTPUrl(status.onebot_http_url)
+    }
+  }, [onebotWSUrl, onebotHTTPUrl])
+
   const handleSaveHeartbeat = async (
     binding: ChannelBindingResponse,
     next: { enabled: boolean; interval: number; model: string },
@@ -319,7 +354,64 @@ export function DesktopQQSettingsPanel({
             className="rounded-xl px-4 py-4"
             style={{ border: '0.5px solid var(--c-border-subtle)', background: 'var(--c-bg-page)' }}
           >
-            <QQLoginFlow accessToken={accessToken} channelId={channel?.id ?? ''} />
+            <QQLoginFlow accessToken={accessToken} channelId={channel?.id ?? ''} onStatusChange={handleNapCatStatus} />
+          </div>
+
+          {/* OneBot API config */}
+          <div
+            className="rounded-xl px-4 py-4"
+            style={{ border: '0.5px solid var(--c-border-subtle)', background: 'var(--c-bg-page)' }}
+          >
+            <div className="mb-4 flex items-center gap-2">
+              <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-[var(--c-bg-deep)] text-[var(--c-text-secondary)]">
+                <Zap size={14} />
+              </span>
+              <div className="text-sm font-medium text-[var(--c-text-heading)]">{ct.qqOneBotTitle}</div>
+              {napCatStatus?.logged_in && (napCatStatus.onebot_ws_url || napCatStatus.onebot_http_url) && (
+                <span className="ml-auto text-[10px] text-[var(--c-text-muted)]">{ct.qqOneBotAutoFilled}</span>
+              )}
+            </div>
+            <div className="grid gap-3">
+              <div>
+                <label className="mb-1 block text-xs font-medium text-[var(--c-text-secondary)]">
+                  {ct.qqOneBotWSUrl}
+                </label>
+                <input
+                  type="text"
+                  value={onebotWSUrl}
+                  onChange={(e) => { setOnebotWSUrl(e.target.value); setSaved(false) }}
+                  placeholder={ct.qqOneBotWSUrlPlaceholder}
+                  disabled={saving}
+                  className="w-full rounded-lg border-0 bg-[var(--c-bg-input)] px-3 py-2 text-sm text-[var(--c-text-primary)] outline-none placeholder:text-[var(--c-text-muted)] focus:ring-1 focus:ring-[var(--c-border-mid)]"
+                />
+              </div>
+              <div>
+                <label className="mb-1 block text-xs font-medium text-[var(--c-text-secondary)]">
+                  {ct.qqOneBotHTTPUrl}
+                </label>
+                <input
+                  type="text"
+                  value={onebotHTTPUrl}
+                  onChange={(e) => { setOnebotHTTPUrl(e.target.value); setSaved(false) }}
+                  placeholder={ct.qqOneBotHTTPUrlPlaceholder}
+                  disabled={saving}
+                  className="w-full rounded-lg border-0 bg-[var(--c-bg-input)] px-3 py-2 text-sm text-[var(--c-text-primary)] outline-none placeholder:text-[var(--c-text-muted)] focus:ring-1 focus:ring-[var(--c-border-mid)]"
+                />
+              </div>
+              <div>
+                <label className="mb-1 block text-xs font-medium text-[var(--c-text-secondary)]">
+                  {ct.qqOneBotToken}
+                </label>
+                <input
+                  type="password"
+                  value={onebotToken}
+                  onChange={(e) => { setOnebotToken(e.target.value); setSaved(false) }}
+                  placeholder={ct.qqOneBotTokenPlaceholder}
+                  disabled={saving}
+                  className="w-full rounded-lg border-0 bg-[var(--c-bg-input)] px-3 py-2 text-sm text-[var(--c-text-primary)] outline-none placeholder:text-[var(--c-text-muted)] focus:ring-1 focus:ring-[var(--c-border-mid)]"
+                />
+              </div>
+            </div>
           </div>
 
           <div className="grid gap-4 md:grid-cols-2">

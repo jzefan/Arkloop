@@ -587,6 +587,20 @@ func RunDesktop(ctx context.Context) error {
 		Bus:                   desktopBus,
 	})
 
+	accountapi.StartQQOneBotWSListener(ctx, accountapi.QQOneBotWSListenerDeps{
+		ChannelsRepo:            channelsRepo,
+		ChannelIdentitiesRepo:   channelIdentitiesRepo,
+		ChannelDMThreadsRepo:    channelDMThreadsRepo,
+		ChannelGroupThreadsRepo: channelGroupThreadsRepo,
+		ChannelReceiptsRepo:     channelReceiptsRepo,
+		PersonasRepo:            personasRepo,
+		ThreadRepo:              threadRepo,
+		MessageRepo:             messageRepo,
+		RunEventRepo:            runEventRepo,
+		JobRepo:                 jobRepo,
+		Pool:                    pgxPool,
+	})
+
 	// ---- HTTP server ----
 
 	srv := &nethttp.Server{
