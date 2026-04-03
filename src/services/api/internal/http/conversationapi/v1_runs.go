@@ -1147,6 +1147,12 @@ func writeSseEvent(w nethttp.ResponseWriter, item data.RunEvent) error {
 	if payload["data"] == nil {
 		payload["data"] = map[string]any{}
 	}
+	if item.ToolName != nil {
+		payload["tool_name"] = *item.ToolName
+	}
+	if item.ErrorClass != nil {
+		payload["error_class"] = *item.ErrorClass
+	}
 
 	dataBytes, err := json.Marshal(payload)
 	if err != nil {

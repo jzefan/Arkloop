@@ -192,11 +192,25 @@ function parseChannelEnvelope(text: string): { text: string; meta: Record<string
   return { text: body, meta }
 }
 
+// Anthropic 将 tool_result 包装为 role:"user" 消息，需要排除这些消息以避免 userMessageCount 膨胀。
+function isToolResultOnlyMessage(message: Record<string, unknown>): boolean {
+  const content = message.content
+  if (!Array.isArray(content)) return false
+  if (content.length === 0) return false
+  return content.every((part: unknown) => {
+    if (typeof part !== 'object' || part === null) return false
+    const record = part as Record<string, unknown>
+    return record.type === 'tool_result'
+  })
+}
+
 function extractLatestUserInput(payload: Record<string, unknown> | undefined): UserInputInfo {
   const messages = Array.isArray(payload?.messages)
     ? (payload.messages as Array<Record<string, unknown>>)
     : []
-  const userMessages = messages.filter((message) => message.role === 'user')
+  const userMessages = messages.filter(
+    (message) => message.role === 'user' && !isToolResultOnlyMessage(message),
+  )
 
   for (let i = messages.length - 1; i >= 0; i--) {
     const message = messages[i]
