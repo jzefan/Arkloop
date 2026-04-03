@@ -94,6 +94,7 @@ type DesktopEngine struct {
 	messageAttachmentStore objectstore.Store
 	rolloutStore           objectstore.BlobStore
 	promptInjection        securitycap.Runtime
+	groupSearchExec        tools.Executor
 }
 
 // ComposeDesktopEngine assembles a DesktopEngine from environment configuration.
@@ -186,6 +187,12 @@ func ComposeDesktopEngine(ctx context.Context, db data.DesktopDB, bus eventbus.E
 		executors[spec.Name] = convExec
 	}
 
+	groupSearchExec := conversationtool.NewGroupSearchExecutor(db, nil)
+	if err := toolRegistry.Register(conversationtool.GroupSearchAgentSpec); err != nil {
+		return nil, err
+	}
+	executors[conversationtool.GroupSearchAgentSpec.Name] = groupSearchExec
+
 	memEnabled := strings.TrimSpace(os.Getenv("ARKLOOP_MEMORY_ENABLED")) != "false"
 	ovURL := strings.TrimSpace(os.Getenv("ARKLOOP_OPENVIKING_BASE_URL"))
 	ovKey := strings.TrimSpace(os.Getenv("ARKLOOP_OPENVIKING_ROOT_API_KEY"))
@@ -265,6 +272,7 @@ func ComposeDesktopEngine(ctx context.Context, db data.DesktopDB, bus eventbus.E
 	shellLlmSpecs := localshell.LlmSpecs()
 	allLlmSpecs := append(builtin.LlmSpecs(), shellLlmSpecs...)
 	allLlmSpecs = append(allLlmSpecs, conversationtool.LlmSpecs()...)
+	allLlmSpecs = append(allLlmSpecs, conversationtool.GroupSearchLlmSpec)
 	if notebookProvider != nil {
 		allLlmSpecs = append(allLlmSpecs, memorytool.NotebookLlmSpecs()...)
 	}
@@ -281,7 +289,7 @@ func ComposeDesktopEngine(ctx context.Context, db data.DesktopDB, bus eventbus.E
 
 	envSnap, err := sharedtoolruntime.BuildRuntimeSnapshot(ctx, sharedtoolruntime.SnapshotInput{
 		HasConversationSearch:   true,
-		HasGroupHistorySearch:   false,
+		HasGroupHistorySearch:   true,
 		ArtifactStoreAvailable: artifactToolsRegistered,
 		ConfigResolver:         nil,
 	})
@@ -351,6 +359,7 @@ func ComposeDesktopEngine(ctx context.Context, db data.DesktopDB, bus eventbus.E
 		messageAttachmentStore: messageAttachmentStore,
 		rolloutStore:           rolloutStore,
 		promptInjection:        promptInjection,
+		groupSearchExec:        groupSearchExec,
 	}, nil
 }
 
@@ -520,7 +529,11 @@ func (e *DesktopEngine) Execute(ctx context.Context, run data.Run, traceID strin
 			EmitDebugEvents: e.emitDebugEvents,
 			ConfigLoader:    e.routingLoader,
 		}),
-		pipeline.NewChannelTelegramToolsMiddleware(&desktopTelegramTokenLoader{db: e.db}, nil),
+		pipeline.NewChannelTelegramToolsMiddleware(nil, nil, pipeline.ChannelTelegramToolsDeps{
+			TokenLoader:        &desktopTelegramTokenLoader{db: e.db},
+			GroupSearchExec:    e.groupSearchExec,
+			GroupSearchLlmSpec: conversationtool.GroupSearchLlmSpec,
+		}),
 		desktopSubAgentContext(e.db, subagentctl.NewSnapshotStorage()),
 		pipeline.NewSkillContextMiddleware(pipeline.SkillContextConfig{
 			Resolve:        desktopSkillResolver(e.db),
