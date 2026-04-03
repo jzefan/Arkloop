@@ -139,3 +139,27 @@ func (c *Client) GetLoginInfo(ctx context.Context) (*LoginInfo, error) {
 	}
 	return &info, nil
 }
+
+// GetMsg 获取消息详情
+func (c *Client) GetMsg(ctx context.Context, messageID string) (*GetMsgResponse, error) {
+	req := map[string]any{"message_id": messageID}
+	var resp GetMsgResponse
+	if err := c.callJSON(ctx, "get_msg", req, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
+// GetGroupMemberInfo 获取群成员信息（含 role: owner/admin/member）
+func (c *Client) GetGroupMemberInfo(ctx context.Context, groupID, userID string) (*GroupMemberInfo, error) {
+	req := map[string]any{
+		"group_id": groupID,
+		"user_id":  userID,
+		"no_cache": false,
+	}
+	var info GroupMemberInfo
+	if err := c.callJSON(ctx, "get_group_member_info", req, &info); err != nil {
+		return nil, err
+	}
+	return &info, nil
+}

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"arkloop/services/api/internal/data"
+	"arkloop/services/api/internal/entitlement"
 	"arkloop/services/api/internal/observability"
 	"arkloop/services/shared/onebotclient"
 	"arkloop/services/shared/pgnotify"
@@ -19,17 +20,20 @@ import (
 
 // QQOneBotWSListenerDeps 桌面模式 OneBot WS 客户端依赖。
 type QQOneBotWSListenerDeps struct {
-	ChannelsRepo            *data.ChannelsRepository
-	ChannelIdentitiesRepo   *data.ChannelIdentitiesRepository
-	ChannelDMThreadsRepo    *data.ChannelDMThreadsRepository
-	ChannelGroupThreadsRepo *data.ChannelGroupThreadsRepository
-	ChannelReceiptsRepo     *data.ChannelMessageReceiptsRepository
-	PersonasRepo            *data.PersonasRepository
-	ThreadRepo              *data.ThreadRepository
-	MessageRepo             *data.MessageRepository
-	RunEventRepo            *data.RunEventRepository
-	JobRepo                 *data.JobRepository
-	Pool                    data.DB
+	ChannelsRepo             *data.ChannelsRepository
+	ChannelIdentitiesRepo    *data.ChannelIdentitiesRepository
+	ChannelBindCodesRepo     *data.ChannelBindCodesRepository
+	ChannelIdentityLinksRepo *data.ChannelIdentityLinksRepository
+	ChannelDMThreadsRepo     *data.ChannelDMThreadsRepository
+	ChannelGroupThreadsRepo  *data.ChannelGroupThreadsRepository
+	ChannelReceiptsRepo      *data.ChannelMessageReceiptsRepository
+	PersonasRepo             *data.PersonasRepository
+	ThreadRepo               *data.ThreadRepository
+	MessageRepo              *data.MessageRepository
+	RunEventRepo             *data.RunEventRepository
+	JobRepo                  *data.JobRepository
+	EntitlementSvc           *entitlement.Service
+	Pool                     data.DB
 }
 
 // StartQQOneBotWSListener 启动 QQ OneBot WS Client Listener（桌面模式）。
@@ -47,18 +51,21 @@ func StartQQOneBotWSListener(ctx context.Context, deps QQOneBotWSListenerDeps) {
 	channelLedgerRepo = repo
 
 	connector := &qqConnector{
-		channelsRepo:            deps.ChannelsRepo,
-		channelIdentitiesRepo:   deps.ChannelIdentitiesRepo,
-		channelDMThreadsRepo:    deps.ChannelDMThreadsRepo,
-		channelGroupThreadsRepo: deps.ChannelGroupThreadsRepo,
-		channelReceiptsRepo:     deps.ChannelReceiptsRepo,
-		channelLedgerRepo:       channelLedgerRepo,
-		personasRepo:            deps.PersonasRepo,
-		threadRepo:              deps.ThreadRepo,
-		messageRepo:             deps.MessageRepo,
-		runEventRepo:            deps.RunEventRepo,
-		jobRepo:                 deps.JobRepo,
-		pool:                    deps.Pool,
+		channelsRepo:             deps.ChannelsRepo,
+		channelIdentitiesRepo:    deps.ChannelIdentitiesRepo,
+		channelBindCodesRepo:     deps.ChannelBindCodesRepo,
+		channelIdentityLinksRepo: deps.ChannelIdentityLinksRepo,
+		channelDMThreadsRepo:     deps.ChannelDMThreadsRepo,
+		channelGroupThreadsRepo:  deps.ChannelGroupThreadsRepo,
+		channelReceiptsRepo:      deps.ChannelReceiptsRepo,
+		channelLedgerRepo:        channelLedgerRepo,
+		personasRepo:             deps.PersonasRepo,
+		threadRepo:               deps.ThreadRepo,
+		messageRepo:              deps.MessageRepo,
+		runEventRepo:             deps.RunEventRepo,
+		jobRepo:                  deps.JobRepo,
+		entitlementSvc:           deps.EntitlementSvc,
+		pool:                     deps.Pool,
 		inputNotify: func(ctx context.Context, runID uuid.UUID) {
 			if _, err := deps.Pool.Exec(ctx, "SELECT pg_notify($1, $2)", pgnotify.ChannelRunInput, runID.String()); err != nil {
 				slog.Warn("qq_ws_active_run_notify_failed", "run_id", runID, "error", err)
