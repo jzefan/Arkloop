@@ -2,12 +2,6 @@ import { useState, useRef, useEffect } from 'react'
 import { Copy } from 'lucide-react'
 import { AnimatedCheck } from './AnimatedCheck'
 
-// idle         → 显示 Copy
-// exiting      → 旧图标缩小消失
-// entering     → 新图标从小弹出
-// active       → 显示 AnimatedCheck，鼠标在按钮上时锁定不可再按
-// exiting-back → Check 缩小消失
-// entering-back→ Copy 从小弹出
 type Phase = 'idle' | 'exiting' | 'entering' | 'active' | 'exiting-back' | 'entering-back'
 
 type Props = {
@@ -24,7 +18,6 @@ type Props = {
 
 export function CopyIconButton({ onCopy, onCopied, size = 16, className, style, resetDelay = 1500, tooltip = 'Copy', onMouseEnter, onMouseLeave }: Props) {
   const [phase, setPhase] = useState<Phase>('idle')
-  const [pressed, setPressed] = useState(false)
   const [hovered, setHovered] = useState(false)
   const hoveredRef = useRef(false)
   const resetTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -43,15 +36,7 @@ export function CopyIconButton({ onCopy, onCopied, size = 16, className, style, 
     }, 60)
   }
 
-  const handlePointerDown = () => {
-    // 无论 phase，都响应缩小
-    setPressed(true)
-  }
-
-  const handlePointerUp = () => {
-    if (!pressed) return
-    setPressed(false)
-    // 只有 idle 时才触发复制
+  const handleClick = () => {
     if (phase !== 'idle') return
     onCopy()
     onCopied?.(true)
@@ -81,7 +66,6 @@ export function CopyIconButton({ onCopy, onCopied, size = 16, className, style, 
   const handleMouseLeave: React.MouseEventHandler<HTMLButtonElement> = (e) => {
     hoveredRef.current = false
     setHovered(false)
-    setPressed(false)
     onMouseLeave?.(e)
     if (pendingResetRef.current) {
       pendingResetRef.current = false
@@ -102,41 +86,23 @@ export function CopyIconButton({ onCopy, onCopied, size = 16, className, style, 
     return {}
   }
 
-  // 按钮缩小时，内部 span 反向补偿，使图标保持原始大小
-  const counterScale = pressed ? (1 / 0.96) : 1
-  const iStyle = iconStyle()
-  const spanTransform = iStyle.transform
-    ? `scale(${counterScale}) ${iStyle.transform}`
-    : `scale(${counterScale})`
-
   const showCheck = phase === 'entering' || phase === 'active' || phase === 'exiting-back'
-  // tooltip 只在 idle 且 hover 时显示
   const showTooltip = hovered && phase === 'idle'
 
   return (
     <span style={{ position: 'relative', display: 'inline-flex' }}>
       <button
-        onPointerDown={handlePointerDown}
-        onPointerUp={handlePointerUp}
+        onClick={handleClick}
         onMouseEnter={handleMouseEnter}
         onMouseLeave={handleMouseLeave}
         className={className}
-        style={{
-          ...style,
-          transform: pressed ? 'scale(0.96)' : 'scale(1)',
-          transition: 'transform 80ms ease-out',
-        }}
+        style={style}
       >
         <span style={{
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
-          ...iStyle,
-          transform: spanTransform,
-          transition: [
-            pressed ? undefined : 'transform 80ms ease-out',
-            iStyle.transition,
-          ].filter(Boolean).join(', ') || undefined,
+          ...iconStyle(),
         }}>
           {showCheck
             ? <AnimatedCheck size={size} />
@@ -150,8 +116,8 @@ export function CopyIconButton({ onCopy, onCopied, size = 16, className, style, 
           top: '100%',
           left: '50%',
           transform: showTooltip
-            ? 'translateX(-50%) translateY(4px)'
-            : 'translateX(-50%) translateY(0px)',
+            ? 'translateX(-50%) translateY(0px)'
+            : 'translateX(-50%) translateY(-3px)',
           marginTop: '3px',
           fontSize: '11px',
           fontWeight: 500,
