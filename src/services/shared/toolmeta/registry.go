@@ -296,6 +296,8 @@ var registry = []ToolMeta{
 		LLMDescription: "keyword-search the current group chat history. " +
 			"Returns matching messages with role, content snippet, attachment_keys (for images), and timestamp. " +
 			"Use to recall previously discussed topics, shared images, or facts from earlier in this group conversation. " +
+			"To view an image from results or from an [image attachment_key=...] placeholder in context, " +
+			"call the read tool with source.kind=\"message_attachment\" and source.attachment_key set to the key. " +
 			"This is keyword search, not semantic search, and costs no model tokens.",
 	},
 	// ── artifact ──
