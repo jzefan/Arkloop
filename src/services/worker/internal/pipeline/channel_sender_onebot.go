@@ -50,7 +50,11 @@ func (s *OneBotChannelSender) SendText(ctx context.Context, target ChannelDelive
 			return ids, err
 		}
 		if resp != nil {
-			ids = append(ids, resp.MessageID.String())
+			mid := resp.MessageID.String()
+			if mid == "" {
+				mid = "unknown"
+			}
+			ids = append(ids, mid)
 		}
 		if idx < len(segments)-1 && s.segmentDelay > 0 {
 			time.Sleep(s.segmentDelay)
