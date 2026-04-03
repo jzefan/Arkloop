@@ -31,7 +31,6 @@ const MessageAttachmentOwnerKind = "message_attachment"
 const uploadMultipartBodyLimit = (20 << 20) + (1 << 20)
 
 const attachmentMetaCreatedAt = "created_at"
-const attachmentMetaFinalized = "finalized"
 
 func stagingAttachmentUpload(
 	authService *auth.Service,
@@ -93,102 +92,9 @@ func stagingAttachmentUpload(
 			return
 		}
 
-		key := fmt.Sprintf("attachments/%s/%s/%s", actor.AccountID.String(), uuid.NewString(), sanitizeAttachmentKeyNameImpl(filename))
+		key := fmt.Sprintf("staging/%s/%s/%s", actor.AccountID.String(), uuid.NewString(), sanitizeAttachmentKeyNameImpl(filename))
 		metadata := objectstore.ArtifactMetadata(MessageAttachmentOwnerKind, actor.UserID.String(), actor.AccountID.String(), nil)
 		metadata[attachmentMetaCreatedAt] = strconv.FormatInt(time.Now().Unix(), 10)
-		if err := store.PutObject(r.Context(), key, payload.bytes, objectstore.PutOptions{ContentType: payload.mimeType, Metadata: metadata}); err != nil {
-			httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
-			return
-		}
-
-		httpkit.WriteJSON(w, traceID, nethttp.StatusCreated, messageAttachmentUploadResponse{
-			Key:           key,
-			Filename:      filename,
-			MimeType:      payload.mimeType,
-			Size:          int64(len(payload.bytes)),
-			Kind:          payload.kind,
-			ExtractedText: payload.extractedText,
-		})
-	}
-}
-
-func uploadThreadAttachment(
-	authService *auth.Service,
-	membershipRepo *data.AccountMembershipRepository,
-	threadRepo *data.ThreadRepository,
-	auditWriter *audit.Writer,
-	apiKeysRepo *data.APIKeysRepository,
-	store messageAttachmentStore,
-) func(nethttp.ResponseWriter, *nethttp.Request, uuid.UUID) {
-	return func(w nethttp.ResponseWriter, r *nethttp.Request, threadID uuid.UUID) {
-		traceID := observability.TraceIDFromContext(r.Context())
-		if r.Method != nethttp.MethodPost {
-			httpkit.WriteMethodNotAllowed(w, r)
-			return
-		}
-		if authService == nil {
-			httpkit.WriteAuthNotConfigured(w, traceID)
-			return
-		}
-		if threadRepo == nil || store == nil {
-			httpkit.WriteError(w, nethttp.StatusServiceUnavailable, "attachments.not_configured", "attachment storage not configured", traceID, nil)
-			return
-		}
-
-		actor, ok := httpkit.ResolveActor(w, r, traceID, authService, membershipRepo, apiKeysRepo, auditWriter)
-		if !ok {
-			return
-		}
-		if !httpkit.RequirePerm(actor, auth.PermDataThreadsWrite, w, traceID) {
-			return
-		}
-
-		thread, err := threadRepo.GetByID(r.Context(), threadID)
-		if err != nil {
-			httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
-			return
-		}
-		if thread == nil {
-			httpkit.WriteError(w, nethttp.StatusNotFound, "threads.not_found", "thread not found", traceID, nil)
-			return
-		}
-		if !authorizeThreadOrAudit(w, r, traceID, actor, "attachments.create", thread, auditWriter) {
-			return
-		}
-
-		r.Body = nethttp.MaxBytesReader(w, r.Body, uploadMultipartBodyLimit)
-		if err := r.ParseMultipartForm(uploadMultipartBodyLimit); err != nil {
-			httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "request validation failed", traceID, map[string]any{"reason": "invalid multipart body"})
-			return
-		}
-		file, header, err := r.FormFile("file")
-		if err != nil {
-			httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "request validation failed", traceID, map[string]any{"reason": "file is required"})
-			return
-		}
-		defer file.Close()
-
-		filename := sanitizeAttachmentFilenameImpl(header.Filename)
-		if filename == "" {
-			httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "request validation failed", traceID, map[string]any{"reason": "invalid filename"})
-			return
-		}
-
-		dataBytes, err := io.ReadAll(io.LimitReader(file, MaxImageAttachmentBytes+1))
-		if err != nil {
-			httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
-			return
-		}
-		declaredMime := strings.TrimSpace(header.Header.Get("Content-Type"))
-		payload, err := buildAttachmentUploadPayload(filename, declaredMime, dataBytes)
-		if err != nil {
-			httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "request validation failed", traceID, map[string]any{"reason": err.Error()})
-			return
-		}
-
-		threadIDText := thread.ID.String()
-		key := fmt.Sprintf("threads/%s/attachments/%s/%s", thread.ID.String(), uuid.NewString(), sanitizeAttachmentKeyNameImpl(filename))
-		metadata := objectstore.ArtifactMetadata(MessageAttachmentOwnerKind, actor.UserID.String(), actor.AccountID.String(), &threadIDText)
 		if err := store.PutObject(r.Context(), key, payload.bytes, objectstore.PutOptions{ContentType: payload.mimeType, Metadata: metadata}); err != nil {
 			httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 			return

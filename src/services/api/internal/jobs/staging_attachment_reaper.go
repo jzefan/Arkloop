@@ -13,7 +13,7 @@ import (
 const (
 	stagingReapInterval  = 10 * time.Minute
 	stagingMaxAge        = time.Hour
-	stagingPrefix        = "attachments/"
+	stagingPrefix        = "staging/"
 	stagingMetaCreatedAt = "created_at"
 )
 

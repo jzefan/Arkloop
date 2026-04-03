@@ -3093,7 +3093,6 @@ function buildStreamingArtifactsFromHandoff(handoff: ThreadRunHandoffRef): Strea
       const deduped = newAttachments.filter((item) => !existingIDs.has(item.id))
       return [...prev, ...deduped]
     })
-    if (!threadId) return
     for (const att of newAttachments) {
       uploadStagingAttachment(accessToken, att.file)
         .then((uploaded) => {
@@ -3107,7 +3106,7 @@ function buildStreamingArtifactsFromHandoff(handoff: ThreadRunHandoffRef): Strea
           )
         })
     }
-  }, [accessToken, threadId])
+  }, [accessToken])
 
   const handlePasteContent = useCallback((text: string) => {
     const ts = Math.floor(Date.now() / 1000)
@@ -3125,7 +3124,6 @@ function buildStreamingArtifactsFromHandoff(handoff: ThreadRunHandoffRef): Strea
       pasted: { text, lineCount },
     }
     setAttachments((prev) => [...prev, att])
-    if (!threadId) return
     uploadStagingAttachment(accessToken, file)
       .then((uploaded) => {
         setAttachments((prev) =>
@@ -3137,7 +3135,7 @@ function buildStreamingArtifactsFromHandoff(handoff: ThreadRunHandoffRef): Strea
           prev.map((a) => a.id === att.id ? { ...a, status: 'error' as const } : a),
         )
       })
-  }, [accessToken, threadId])
+  }, [accessToken])
 
   const handleRemoveAttachment = useCallback((id: string) => {
     setAttachments((prev) => {

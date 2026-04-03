@@ -2,8 +2,10 @@ package conversationapi
 
 import (
 	httpkit "arkloop/services/api/internal/http/httpkit"
+	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"strconv"
 	"strings"
@@ -16,6 +18,8 @@ import (
 	"arkloop/services/api/internal/data"
 	"arkloop/services/api/internal/featureflag"
 	"arkloop/services/api/internal/observability"
+	"arkloop/services/shared/messagecontent"
+	"arkloop/services/shared/objectstore"
 
 	"github.com/google/uuid"
 )
@@ -28,6 +32,7 @@ func createThreadMessage(
 	auditWriter *audit.Writer,
 	apiKeysRepo *data.APIKeysRepository,
 	flagService *featureflag.Service,
+	store messageAttachmentStore,
 ) func(nethttp.ResponseWriter, *nethttp.Request, uuid.UUID) {
 	return func(w nethttp.ResponseWriter, r *nethttp.Request, threadID uuid.UUID) {
 		if r.Method != nethttp.MethodPost {
@@ -83,6 +88,13 @@ func createThreadMessage(
 		authorized := authorizeThreadOrAudit(w, r, traceID, actor, "messages.create", thread, auditWriter)
 		slog.Debug("createThreadMessage: authorization check", "authorized", authorized)
 		if !authorized {
+			return
+		}
+
+		contentJSON, err = migrateStagingAttachments(r.Context(), store, contentJSON, thread.AccountID, threadID)
+		if err != nil {
+			slog.Error("createThreadMessage: staging migration failed", "thread_id", threadID, "error", err)
+			httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 			return
 		}
 
@@ -216,4 +228,53 @@ func toMessageResponse(message data.Message) messageResponse {
 		ContentJSON:     message.ContentJSON,
 		CreatedAt:       message.CreatedAt.UTC().Format(time.RFC3339Nano),
 	}
+}
+
+const stagingKeyPrefix = "staging/"
+
+// migrateStagingAttachments 将 content_json 中 staging/ 前缀的附件 key
+// 迁移到 attachments/ 前缀下，同时在对象存储中执行 copy + delete。
+func migrateStagingAttachments(ctx context.Context, store messageAttachmentStore, contentJSON json.RawMessage, accountID, threadID uuid.UUID) (json.RawMessage, error) {
+	if len(contentJSON) == 0 || store == nil {
+		return contentJSON, nil
+	}
+
+	parsed, err := messagecontent.Parse(contentJSON)
+	if err != nil {
+		return contentJSON, nil
+	}
+
+	modified := false
+	for i, part := range parsed.Parts {
+		if part.Attachment == nil {
+			continue
+		}
+		if !strings.HasPrefix(part.Attachment.Key, stagingKeyPrefix) {
+			continue
+		}
+
+		newKey := fmt.Sprintf("attachments/%s/%s", accountID.String(), strings.TrimPrefix(part.Attachment.Key, stagingKeyPrefix+accountID.String()+"/"))
+
+		dataBytes, contentType, err := store.GetWithContentType(ctx, part.Attachment.Key)
+		if err != nil {
+			return nil, fmt.Errorf("read staging object %q: %w", part.Attachment.Key, err)
+		}
+
+		threadIDText := threadID.String()
+		metadata := objectstore.ArtifactMetadata(MessageAttachmentOwnerKind, "", accountID.String(), &threadIDText)
+		if err := store.PutObject(ctx, newKey, dataBytes, objectstore.PutOptions{ContentType: contentType, Metadata: metadata}); err != nil {
+			return nil, fmt.Errorf("write attachment object %q: %w", newKey, err)
+		}
+
+		_ = store.Delete(ctx, part.Attachment.Key)
+
+		parsed.Parts[i].Attachment.Key = newKey
+		modified = true
+	}
+
+	if !modified {
+		return contentJSON, nil
+	}
+
+	return json.Marshal(parsed)
 }
