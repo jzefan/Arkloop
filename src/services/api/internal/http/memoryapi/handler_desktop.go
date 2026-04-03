@@ -10,8 +10,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	nethttp "net/http"
+	"net/url"
 	"strings"
+	"time"
 
 	"arkloop/services/api/internal/auth"
 	"arkloop/services/api/internal/data"
@@ -32,19 +35,25 @@ type MemoryEntry struct {
 
 // Deps holds the dependencies for the notebook API.
 type Deps struct {
-	Pool data.DB
+	Pool              data.DB
+	OpenVikingBaseURL string
+	OpenVikingAPIKey  string
 }
 
 // RegisterRoutes registers notebook management routes onto mux.
 func RegisterRoutes(mux *nethttp.ServeMux, deps Deps) {
-	h := &handler{pool: deps.Pool}
+	h := &handler{pool: deps.Pool, ovBaseURL: deps.OpenVikingBaseURL, ovAPIKey: deps.OpenVikingAPIKey}
 	mux.HandleFunc("/v1/desktop/memory/entries", h.dispatchEntries)
 	mux.HandleFunc("/v1/desktop/memory/entries/", h.dispatchEntryByID)
 	mux.HandleFunc("/v1/desktop/memory/snapshot", h.getSnapshot)
+	mux.HandleFunc("/v1/desktop/memory/snapshot/rebuild", h.rebuildSnapshotHandler)
+	mux.HandleFunc("/v1/desktop/memory/content", h.getContent)
 }
 
 type handler struct {
-	pool data.DB
+	pool      data.DB
+	ovBaseURL string
+	ovAPIKey  string
 }
 
 func (h *handler) dispatchEntries(w nethttp.ResponseWriter, r *nethttp.Request) {
@@ -88,12 +97,15 @@ func (h *handler) getSnapshot(w nethttp.ResponseWriter, r *nethttp.Request) {
 		return
 	}
 	agentID := agentIDFromQuery(r)
-	block, err := getMemoryBlock(r.Context(), h.pool, auth.DesktopAccountID.String(), auth.DesktopUserID.String(), agentID)
+	accountID := auth.DesktopAccountID.String()
+	userID := auth.DesktopUserID.String()
+	block, err := getMemoryBlock(r.Context(), h.pool, accountID, userID, agentID)
 	if err != nil {
 		httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal_error", err.Error(), "", nil)
 		return
 	}
-	writeJSON(w, map[string]any{"memory_block": block})
+	hits, _ := getMemoryHits(r.Context(), h.pool, accountID, userID, agentID)
+	writeJSON(w, map[string]any{"memory_block": block, "hits": hits})
 }
 
 func (h *handler) listEntries(w nethttp.ResponseWriter, r *nethttp.Request) {
@@ -187,7 +199,133 @@ func (h *handler) deleteEntry(w nethttp.ResponseWriter, r *nethttp.Request, id s
 	writeJSON(w, map[string]any{"status": "ok"})
 }
 
-// ---------- queries ----------
+func (h *handler) rebuildSnapshotHandler(w nethttp.ResponseWriter, r *nethttp.Request) {
+	if !checkDesktopToken(w, r) {
+		return
+	}
+	if r.Method != nethttp.MethodPost {
+		httpkit.WriteError(w, nethttp.StatusMethodNotAllowed, "method_not_allowed", "method not allowed", "", nil)
+		return
+	}
+	if strings.TrimSpace(h.ovBaseURL) == "" {
+		httpkit.WriteError(w, nethttp.StatusServiceUnavailable, "unavailable", "openviking not configured", "", nil)
+		return
+	}
+	accountID := auth.DesktopAccountID.String()
+	userID := auth.DesktopUserID.String()
+	agentID := agentIDFromQuery(r)
+
+	block, hits, err := h.findAndBuildMemoryBlock(r.Context(), userID)
+	if err != nil {
+		httpkit.WriteError(w, nethttp.StatusBadGateway, "upstream_error", err.Error(), "", nil)
+		return
+	}
+	hitsJSON, _ := json.Marshal(hits)
+	_, err = h.pool.Exec(r.Context(),
+		`INSERT INTO user_memory_snapshots (account_id, user_id, agent_id, memory_block, hits_json, updated_at)
+		 VALUES ($1, $2, $3, $4, $5, datetime('now'))
+		 ON CONFLICT (account_id, user_id, agent_id)
+		 DO UPDATE SET memory_block = EXCLUDED.memory_block, hits_json = EXCLUDED.hits_json, updated_at = EXCLUDED.updated_at`,
+		accountID, userID, agentID, block, string(hitsJSON),
+	)
+	if err != nil {
+		httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal_error", err.Error(), "", nil)
+		return
+	}
+	writeJSON(w, map[string]any{"memory_block": block, "hits": hits})
+}
+
+// findAndBuildMemoryBlock 调用 OpenViking find API 检索全部记忆并构建 <memory> 块。
+func (h *handler) findAndBuildMemoryBlock(ctx context.Context, userID string) (string, []snapshotHit, error) {
+	targetURI := fmt.Sprintf("viking://user/%s/memories/", userID)
+	body := map[string]any{
+		"query":      "*",
+		"target_uri": targetURI,
+		"limit":      32,
+	}
+	payload, err := json.Marshal(body)
+	if err != nil {
+		return "", nil, err
+	}
+
+	ovURL := strings.TrimRight(h.ovBaseURL, "/") + "/api/v1/search/find"
+	req, err := nethttp.NewRequestWithContext(ctx, nethttp.MethodPost, ovURL, strings.NewReader(string(payload)))
+	if err != nil {
+		return "", nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if h.ovAPIKey != "" {
+		req.Header.Set("X-API-Key", h.ovAPIKey)
+	}
+	req.Header.Set("X-OpenViking-Account", auth.DesktopAccountID.String())
+	req.Header.Set("X-OpenViking-User", userID)
+	req.Header.Set("X-OpenViking-Agent", "user_"+userID)
+
+	client := &nethttp.Client{Timeout: 30 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", nil, fmt.Errorf("openviking find: %w", err)
+	}
+	defer resp.Body.Close()
+
+	respBody, err := io.ReadAll(io.LimitReader(resp.Body, 1024*1024))
+	if err != nil {
+		return "", nil, fmt.Errorf("read find response: %w", err)
+	}
+	if resp.StatusCode >= 400 {
+		return "", nil, fmt.Errorf("openviking %d: %s", resp.StatusCode, string(respBody))
+	}
+
+	var apiResp struct {
+		Result json.RawMessage `json:"result"`
+	}
+	if err := json.Unmarshal(respBody, &apiResp); err != nil {
+		return "", nil, fmt.Errorf("decode response: %w", err)
+	}
+
+	var findResult struct {
+		Memories  []ovFindHit `json:"memories"`
+		Resources []ovFindHit `json:"resources"`
+		Skills    []ovFindHit `json:"skills"`
+	}
+	if err := json.Unmarshal(apiResp.Result, &findResult); err != nil {
+		return "", nil, fmt.Errorf("decode find result: %w", err)
+	}
+
+	var all []snapshotHit
+	for _, src := range [][]ovFindHit{findResult.Memories, findResult.Resources, findResult.Skills} {
+		for _, h := range src {
+			all = append(all, snapshotHit{
+				URI:         h.URI,
+				Abstract:    h.Abstract,
+				Score:       h.Score,
+				MatchReason: h.MatchReason,
+				IsLeaf:      len(h.Relations) == 0,
+			})
+		}
+	}
+
+	if len(all) == 0 {
+		return "", nil, nil
+	}
+
+	var sb strings.Builder
+	sb.WriteString("\n\n<memory>\n")
+	for _, hit := range all {
+		line := strings.TrimSpace(hit.Abstract)
+		if line == "" {
+			continue
+		}
+		sb.WriteString("- ")
+		sb.WriteString(line)
+		sb.WriteString("\n")
+	}
+	sb.WriteString("</memory>")
+
+	return sb.String(), all, nil
+}
+
+// ---------- content ----------
 
 // listMemoryEntries returns all notebook entries for a user across all agents.
 // The settings UI shows a unified view regardless of which persona wrote each entry.
@@ -213,6 +351,42 @@ func listMemoryEntries(ctx context.Context, pool data.DB, accountID, userID, _ s
 		entries = append(entries, e)
 	}
 	return entries, rows.Err()
+}
+
+type snapshotHit struct {
+	URI         string  `json:"uri"`
+	Abstract    string  `json:"abstract"`
+	Score       float64 `json:"score"`
+	MatchReason string  `json:"match_reason"`
+	IsLeaf      bool    `json:"is_leaf"`
+}
+
+type ovFindHit struct {
+	URI         string   `json:"uri"`
+	Abstract    string   `json:"abstract"`
+	Score       float64  `json:"score"`
+	MatchReason string   `json:"match_reason"`
+	Relations   []string `json:"relations"`
+}
+
+func getMemoryHits(ctx context.Context, pool data.DB, accountID, userID, agentID string) ([]snapshotHit, error) {
+	var raw []byte
+	err := pool.QueryRow(ctx,
+		`SELECT hits_json FROM user_memory_snapshots
+		 WHERE account_id = $1 AND user_id = $2 AND agent_id = $3 AND hits_json IS NOT NULL`,
+		accountID, userID, agentID,
+	).Scan(&raw)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	var hits []snapshotHit
+	if err := json.Unmarshal(raw, &hits); err != nil {
+		return nil, nil
+	}
+	return hits, nil
 }
 
 func getMemoryBlock(ctx context.Context, pool data.DB, accountID, userID, agentID string) (string, error) {
@@ -284,6 +458,85 @@ func buildNotebookBlock(lines []string) string {
 	}
 	sb.WriteString("</notebook>")
 	return sb.String()
+}
+
+func (h *handler) getContent(w nethttp.ResponseWriter, r *nethttp.Request) {
+	if !checkDesktopToken(w, r) {
+		return
+	}
+	if r.Method != nethttp.MethodGet {
+		httpkit.WriteError(w, nethttp.StatusMethodNotAllowed, "method_not_allowed", "method not allowed", "", nil)
+		return
+	}
+	uri := strings.TrimSpace(r.URL.Query().Get("uri"))
+	layer := strings.TrimSpace(r.URL.Query().Get("layer"))
+	if uri == "" {
+		httpkit.WriteError(w, nethttp.StatusBadRequest, "bad_request", "uri is required", "", nil)
+		return
+	}
+	if layer == "" {
+		layer = "overview"
+	}
+	if layer != "overview" && layer != "read" {
+		httpkit.WriteError(w, nethttp.StatusBadRequest, "bad_request", "layer must be overview or read", "", nil)
+		return
+	}
+	if strings.TrimSpace(h.ovBaseURL) == "" {
+		httpkit.WriteError(w, nethttp.StatusServiceUnavailable, "unavailable", "openviking not configured", "", nil)
+		return
+	}
+
+	content, err := h.fetchOVContent(r.Context(), uri, layer)
+	if err != nil {
+		httpkit.WriteError(w, nethttp.StatusBadGateway, "upstream_error", err.Error(), "", nil)
+		return
+	}
+	writeJSON(w, map[string]any{"content": content})
+}
+
+func (h *handler) fetchOVContent(ctx context.Context, uri, layer string) (string, error) {
+	ovURL := fmt.Sprintf("%s/api/v1/content/%s?uri=%s",
+		strings.TrimRight(h.ovBaseURL, "/"), url.PathEscape(layer), url.QueryEscape(uri))
+
+	req, err := nethttp.NewRequestWithContext(ctx, nethttp.MethodGet, ovURL, nil)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if h.ovAPIKey != "" {
+		req.Header.Set("X-API-Key", h.ovAPIKey)
+	}
+	req.Header.Set("X-OpenViking-Account", auth.DesktopAccountID.String())
+	req.Header.Set("X-OpenViking-User", auth.DesktopUserID.String())
+	agentID := "user_" + auth.DesktopUserID.String()
+	req.Header.Set("X-OpenViking-Agent", agentID)
+
+	client := &nethttp.Client{Timeout: 15 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("openviking request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 512*1024))
+	if err != nil {
+		return "", fmt.Errorf("read response: %w", err)
+	}
+	if resp.StatusCode >= 400 {
+		return "", fmt.Errorf("openviking %d: %s", resp.StatusCode, string(body))
+	}
+
+	var wrapper struct {
+		Result json.RawMessage `json:"result"`
+	}
+	if err := json.Unmarshal(body, &wrapper); err != nil {
+		return string(body), nil
+	}
+	var content string
+	if err := json.Unmarshal(wrapper.Result, &content); err != nil {
+		return string(wrapper.Result), nil
+	}
+	return content, nil
 }
 
 // ---------- helpers ----------

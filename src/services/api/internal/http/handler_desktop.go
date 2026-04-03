@@ -397,7 +397,9 @@ func NewHandler(cfg HandlerConfig) nethttp.Handler {
 	})
 
 	memoryapi.RegisterRoutes(mux, memoryapi.Deps{
-		Pool: cfg.Pool,
+		Pool:              cfg.Pool,
+		OpenVikingBaseURL: os.Getenv("ARKLOOP_OPENVIKING_BASE_URL"),
+		OpenVikingAPIKey:  os.Getenv("ARKLOOP_OPENVIKING_ROOT_API_KEY"),
 	})
 
 	notFound := nethttp.HandlerFunc(func(w nethttp.ResponseWriter, r *nethttp.Request) {
