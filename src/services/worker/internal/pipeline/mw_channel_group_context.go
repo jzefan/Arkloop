@@ -83,11 +83,14 @@ func NewChannelGroupContextTrimMiddleware(deps ...GroupContextTrimDeps) RunMiddl
 		if rc == nil || rc.ChannelContext == nil {
 			return next(ctx, rc)
 		}
+
+		// envelope 投影对所有 Telegram 对话生效（含私聊）
+		projectGroupEnvelopes(rc)
+
 		if !IsTelegramGroupLikeConversation(rc.ChannelContext.ConversationType) {
 			return next(ctx, rc)
 		}
 
-		projectGroupEnvelopes(rc)
 		stripOlderImages(rc, keepImageTail)
 		compactResult := maybeGroupCompact(ctx, rc, dep, maxTokens)
 		trimRunContextMessagesToApproxTokens(rc, maxTokens)

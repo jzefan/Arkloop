@@ -47,7 +47,7 @@ func TestNewChannelTelegramGroupUserMergeMiddleware_skipsNonTelegram(t *testing.
 	}
 }
 
-func TestNewChannelTelegramGroupUserMergeMiddleware_skipsPrivate(t *testing.T) {
+func TestNewChannelTelegramGroupUserMergeMiddleware_mergesPrivate(t *testing.T) {
 	mw := NewChannelTelegramGroupUserMergeMiddleware()
 	msgs := []llm.Message{
 		{Role: "user", Content: []llm.ContentPart{{Type: "text", Text: "a"}}},
@@ -63,8 +63,8 @@ func TestNewChannelTelegramGroupUserMergeMiddleware_skipsPrivate(t *testing.T) {
 		ThreadMessageIDs: append([]uuid.UUID(nil), ids...),
 	}
 	_ = mw(context.Background(), rc, func(context.Context, *RunContext) error { return nil })
-	if len(rc.Messages) != 2 {
-		t.Fatalf("expected 2 messages for DM, got %d", len(rc.Messages))
+	if len(rc.Messages) != 1 {
+		t.Fatalf("expected 1 merged message for DM, got %d", len(rc.Messages))
 	}
 }
 

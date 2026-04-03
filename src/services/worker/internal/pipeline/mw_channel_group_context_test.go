@@ -32,17 +32,24 @@ func TestTrimRunContextMessagesToApproxTokens_keepsSuffixWithinBudget(t *testing
 	}
 }
 
-func TestNewChannelGroupContextTrimMiddleware_skipsNonGroup(t *testing.T) {
+func TestNewChannelGroupContextTrimMiddleware_projectsButSkipsTrimForPrivate(t *testing.T) {
 	mw := NewChannelGroupContextTrimMiddleware()
 	rc := &RunContext{
 		ChannelContext: &ChannelContext{ConversationType: "private"},
-		Messages:       []llm.Message{{Role: "user", Content: []llm.ContentPart{{Type: "text", Text: strings.Repeat("a", 5000)}}}},
+		Messages: []llm.Message{{Role: "user", Content: []llm.ContentPart{{Type: "text", Text: "---\ndisplay-name: \"Alice\"\nchannel: \"telegram\"\nconversation-type: \"private\"\ntime: \"2026-04-03T10:00:00Z\"\n---\nhello"}}}},
 	}
 	called := false
 	err := mw(context.Background(), rc, func(context.Context, *RunContext) error {
 		called = true
 		if len(rc.Messages) != 1 {
 			t.Fatalf("messages should not be trimmed for DM")
+		}
+		text := llm.PartPromptText(rc.Messages[0].Content[0])
+		if strings.Contains(text, "---") {
+			t.Fatalf("envelope should be projected for DM, got %q", text)
+		}
+		if !strings.Contains(text, "Alice") {
+			t.Fatalf("projected text should contain display name, got %q", text)
 		}
 		return nil
 	})

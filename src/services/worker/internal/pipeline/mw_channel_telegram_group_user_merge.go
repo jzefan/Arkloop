@@ -24,9 +24,6 @@ func NewChannelTelegramGroupUserMergeMiddleware() RunMiddleware {
 		if strings.ToLower(strings.TrimSpace(rc.ChannelContext.ChannelType)) != "telegram" {
 			return next(ctx, rc)
 		}
-		if !IsTelegramGroupLikeConversation(rc.ChannelContext.ConversationType) {
-			return next(ctx, rc)
-		}
 		msgs, ids, lastScan := mergeAllTelegramGroupUserBursts(rc.Messages, rc.ThreadMessageIDs)
 		rc.Messages = msgs
 		rc.ThreadMessageIDs = ids
