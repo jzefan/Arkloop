@@ -65,6 +65,7 @@ func NewChannelDeliveryMiddlewareWithOptions(pool *pgxpool.Pool, opts ChannelDel
 		}
 
 		streamMidCount := 0
+		messagesRepo := data.MessagesRepository{}
 		var streamFlush func(context.Context, string) error
 		if preloaded != nil && pool != nil && rc != nil && rc.ChannelContext != nil && channelType == "telegram" &&
 			!rc.HeartbeatRun &&
@@ -81,6 +82,9 @@ func NewChannelDeliveryMiddlewareWithOptions(pool *pgxpool.Pool, opts ChannelDel
 				}
 				if err := recordChannelDeliverySuccess(ctx2, pool, repo, ledgerRepo, rc, nil, ids); err != nil {
 					return err
+				}
+				if err := persistStreamChunkMessage(ctx2, pool, messagesRepo, rc, text); err != nil {
+					slog.WarnContext(ctx2, "persist stream chunk message failed", "run_id", rc.Run.ID, "err", err.Error())
 				}
 				streamMidCount++
 				return nil
@@ -590,4 +594,25 @@ func TryDeliverTelegramInjectionBlockNotice(ctx context.Context, pool *pgxpool.P
 
 func optsTelegramClientOrDefault() *telegrambot.Client {
 	return telegrambot.NewClient(os.Getenv("ARKLOOP_TELEGRAM_BOT_API_BASE_URL"), nil)
+}
+
+func persistStreamChunkMessage(ctx context.Context, pool *pgxpool.Pool, repo data.MessagesRepository, rc *RunContext, text string) error {
+	if pool == nil || rc == nil || strings.TrimSpace(text) == "" {
+		return nil
+	}
+	tx, err := pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck
+	_, err = repo.InsertAssistantMessageWithMetadata(
+		ctx, tx,
+		rc.Run.AccountID, rc.Run.ThreadID, rc.Run.ID,
+		text, nil, false,
+		map[string]any{"stream_chunk": true},
+	)
+	if err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
