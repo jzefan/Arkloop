@@ -912,6 +912,9 @@ func desktopChannelDelivery(db data.DesktopDB) pipeline.RunMiddleware {
 				); err != nil {
 					return err
 				}
+				if err := persistDesktopStreamChunkMessage(ctx2, db, rc.Run, text); err != nil {
+					slog.WarnContext(ctx2, "desktop: persist stream chunk message failed", "run_id", rc.Run.ID, "err", err.Error())
+				}
 				streamMidCount++
 				return nil
 			}
@@ -1801,6 +1804,7 @@ func desktopAgentLoop(
 			rc.ChannelTerminalNotice = strings.TrimSpace(w.terminalUserMessage)
 		}
 		content := w.visibleAssistantOutput()
+		hasStreamedChunks := w.telegramBoundaryFlush != nil && w.telegramFlushSentDeltas > 0
 		shouldPersistAssistantOutput := (w.completed || w.terminalStatus == "cancelled" || w.terminalStatus == "interrupted") && strings.TrimSpace(content) != ""
 		if shouldPersistAssistantOutput && !pipeline.ShouldSuppressHeartbeatOutput(rc, content) {
 			metadata := map[string]any{
@@ -1811,8 +1815,18 @@ func desktopAgentLoop(
 				metadata["completion_state"] = "complete"
 				metadata["finish_reason"] = "completed"
 			}
-			if err := desktopInsertAssistantMessage(ctx, db, rc.Run, w.finalAssistantMessage(), metadata); err != nil {
-				slog.WarnContext(ctx, "desktop: insert assistant message failed", "err", err)
+			if hasStreamedChunks {
+				remainder := w.telegramStreamRemainder()
+				if strings.TrimSpace(remainder) != "" {
+					metadata["stream_chunk"] = true
+					if err := persistDesktopStreamChunkMessageWithMetadata(ctx, db, rc.Run, remainder, metadata); err != nil {
+						slog.WarnContext(ctx, "desktop: insert assistant remainder failed", "err", err)
+					}
+				}
+			} else {
+				if err := desktopInsertAssistantMessage(ctx, db, rc.Run, w.finalAssistantMessage(), metadata); err != nil {
+					slog.WarnContext(ctx, "desktop: insert assistant message failed", "err", err)
+				}
 			}
 			if err := pipeline.DeleteResponseDraft(ctx, rc.ResponseDraftStore, rc.Run.ID); err != nil {
 				slog.WarnContext(ctx, "desktop: delete response draft failed", "err", err)
@@ -2385,6 +2399,30 @@ func desktopInsertAssistantMessage(ctx context.Context, db data.DesktopDB, run d
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck
 	if _, err := (data.MessagesRepository{}).InsertAssistantMessageWithMetadata(ctx, tx, run.AccountID, run.ThreadID, run.ID, content, contentJSON, false, metadata); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
+func persistDesktopStreamChunkMessage(ctx context.Context, db data.DesktopDB, run data.Run, text string) error {
+	return persistDesktopStreamChunkMessageWithMetadata(ctx, db, run, text, map[string]any{"stream_chunk": true})
+}
+
+func persistDesktopStreamChunkMessageWithMetadata(ctx context.Context, db data.DesktopDB, run data.Run, text string, metadata map[string]any) error {
+	if db == nil || strings.TrimSpace(text) == "" {
+		return nil
+	}
+	tx, err := db.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck
+	if _, err := (data.MessagesRepository{}).InsertAssistantMessageWithMetadata(
+		ctx, tx,
+		run.AccountID, run.ThreadID, run.ID,
+		text, nil, false,
+		metadata,
+	); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)

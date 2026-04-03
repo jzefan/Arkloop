@@ -147,8 +147,17 @@ func NewAgentLoopHandler(
 		}
 		if writer.Completed() {
 			if !ShouldSuppressHeartbeatOutput(rc, writer.AssistantOutput()) {
-				if _, err := writer.InsertAssistantMessage(ctx, messagesRepo, rc.Run.AccountID, rc.Run.ThreadID, false); err != nil {
-					return err
+				if writer.hasStreamedChunks() {
+					remainder := writer.telegramStreamRemainder()
+					if strings.TrimSpace(remainder) != "" {
+						if err := writer.insertStreamRemainder(ctx, messagesRepo, rc.Run.AccountID, rc.Run.ThreadID, remainder); err != nil {
+							return err
+						}
+					}
+				} else {
+					if _, err := writer.InsertAssistantMessage(ctx, messagesRepo, rc.Run.AccountID, rc.Run.ThreadID, false); err != nil {
+						return err
+					}
 				}
 				rc.FinalAssistantOutput = writer.AssistantOutput()
 				rc.FinalAssistantOutputs = writer.AssistantOutputs()
@@ -274,6 +283,36 @@ func (w *eventWriter) telegramStreamRemainder() string {
 		return ""
 	}
 	return strings.TrimSpace(strings.Join(w.assistantDeltas[w.telegramFlushSentDeltas:], ""))
+}
+
+func (w *eventWriter) hasStreamedChunks() bool {
+	return w.telegramToolBoundaryFlush != nil && w.telegramFlushSentDeltas > 0
+}
+
+func (w *eventWriter) insertStreamRemainder(
+	ctx context.Context,
+	repo data.MessagesRepository,
+	accountID uuid.UUID,
+	threadID uuid.UUID,
+	content string,
+) error {
+	if err := w.ensureTx(ctx); err != nil {
+		return err
+	}
+	messageID, err := repo.InsertAssistantMessageWithMetadata(
+		ctx, w.tx, accountID, threadID, w.run.ID,
+		content, nil, false,
+		map[string]any{"stream_chunk": true},
+	)
+	if err != nil {
+		return err
+	}
+	if messageID != uuid.Nil {
+		if err := (data.SubAgentRepository{}).SetLastOutputRefByLastCompletedRunID(ctx, w.tx, w.run.ID, "message:"+messageID.String()); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (w *eventWriter) ensureTx(ctx context.Context) error {
