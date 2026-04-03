@@ -588,17 +588,20 @@ func RunDesktop(ctx context.Context) error {
 	})
 
 	accountapi.StartQQOneBotWSListener(ctx, accountapi.QQOneBotWSListenerDeps{
-		ChannelsRepo:            channelsRepo,
-		ChannelIdentitiesRepo:   channelIdentitiesRepo,
-		ChannelDMThreadsRepo:    channelDMThreadsRepo,
-		ChannelGroupThreadsRepo: channelGroupThreadsRepo,
-		ChannelReceiptsRepo:     channelReceiptsRepo,
-		PersonasRepo:            personasRepo,
-		ThreadRepo:              threadRepo,
-		MessageRepo:             messageRepo,
-		RunEventRepo:            runEventRepo,
-		JobRepo:                 jobRepo,
-		Pool:                    pgxPool,
+		ChannelsRepo:             channelsRepo,
+		ChannelIdentitiesRepo:    channelIdentitiesRepo,
+		ChannelBindCodesRepo:     channelBindCodesRepo,
+		ChannelIdentityLinksRepo: channelIdentityLinksRepo,
+		ChannelDMThreadsRepo:     channelDMThreadsRepo,
+		ChannelGroupThreadsRepo:  channelGroupThreadsRepo,
+		ChannelReceiptsRepo:      channelReceiptsRepo,
+		PersonasRepo:             personasRepo,
+		ThreadRepo:               threadRepo,
+		MessageRepo:              messageRepo,
+		RunEventRepo:             runEventRepo,
+		JobRepo:                  jobRepo,
+		EntitlementSvc:           entitlementService,
+		Pool:                     pgxPool,
 	})
 
 	// ---- HTTP server ----

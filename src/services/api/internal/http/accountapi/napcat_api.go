@@ -9,6 +9,7 @@ import (
 
 	"arkloop/services/api/internal/auth"
 	"arkloop/services/api/internal/data"
+	"arkloop/services/api/internal/entitlement"
 	"arkloop/services/shared/desktop"
 	"arkloop/services/shared/napcat"
 )
@@ -39,17 +40,20 @@ type NapCatDeps struct {
 
 // QQCallbackDeps holds dependencies for the QQ OneBot callback endpoint.
 type QQCallbackDeps struct {
-	ChannelsRepo            *data.ChannelsRepository
-	ChannelIdentitiesRepo   *data.ChannelIdentitiesRepository
-	ChannelDMThreadsRepo    *data.ChannelDMThreadsRepository
-	ChannelGroupThreadsRepo *data.ChannelGroupThreadsRepository
-	ChannelReceiptsRepo     *data.ChannelMessageReceiptsRepository
-	PersonasRepo            *data.PersonasRepository
-	ThreadRepo              *data.ThreadRepository
-	MessageRepo             *data.MessageRepository
-	RunEventRepo            *data.RunEventRepository
-	JobRepo                 *data.JobRepository
-	Pool                    data.DB
+	ChannelsRepo             *data.ChannelsRepository
+	ChannelIdentitiesRepo    *data.ChannelIdentitiesRepository
+	ChannelBindCodesRepo     *data.ChannelBindCodesRepository
+	ChannelIdentityLinksRepo *data.ChannelIdentityLinksRepository
+	ChannelDMThreadsRepo     *data.ChannelDMThreadsRepository
+	ChannelGroupThreadsRepo  *data.ChannelGroupThreadsRepository
+	ChannelReceiptsRepo      *data.ChannelMessageReceiptsRepository
+	PersonasRepo             *data.PersonasRepository
+	ThreadRepo               *data.ThreadRepository
+	MessageRepo              *data.MessageRepository
+	RunEventRepo             *data.RunEventRepository
+	JobRepo                  *data.JobRepository
+	EntitlementSvc           *entitlement.Service
+	Pool                     data.DB
 }
 
 // RegisterQQCallbackRoute registers POST /v1/napcat/onebot-callback (no auth, NapCat calls directly).
@@ -57,6 +61,8 @@ func RegisterQQCallbackRoute(mux *nethttp.ServeMux, deps QQCallbackDeps) {
 	handler := qqOneBotCallbackHandler(
 		deps.ChannelsRepo,
 		deps.ChannelIdentitiesRepo,
+		deps.ChannelBindCodesRepo,
+		deps.ChannelIdentityLinksRepo,
 		deps.ChannelDMThreadsRepo,
 		deps.ChannelGroupThreadsRepo,
 		deps.ChannelReceiptsRepo,
@@ -65,6 +71,7 @@ func RegisterQQCallbackRoute(mux *nethttp.ServeMux, deps QQCallbackDeps) {
 		deps.MessageRepo,
 		deps.RunEventRepo,
 		deps.JobRepo,
+		deps.EntitlementSvc,
 		deps.Pool,
 	)
 	mux.HandleFunc("POST /v1/napcat/onebot-callback", handler)

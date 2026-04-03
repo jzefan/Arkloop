@@ -123,6 +123,96 @@ type LoginInfo struct {
 	Nickname string      `json:"nickname"`
 }
 
+// --- get_msg 响应 ---
+
+type GetMsgResponse struct {
+	Time        int64           `json:"time"`
+	MessageType string          `json:"message_type"`
+	MessageID   json.Number     `json:"message_id"`
+	RealID      json.Number     `json:"real_id"`
+	Sender      *Sender         `json:"sender,omitempty"`
+	Message     json.RawMessage `json:"message,omitempty"`
+}
+
+// --- get_group_member_info 响应 ---
+
+type GroupMemberInfo struct {
+	GroupID  json.Number `json:"group_id"`
+	UserID   json.Number `json:"user_id"`
+	Nickname string      `json:"nickname"`
+	Card     string      `json:"card"`
+	Role     string      `json:"role"` // owner / admin / member
+}
+
+// AtData 是 type="at" 消息段的 data
+type AtData struct {
+	QQ string `json:"qq"`
+}
+
+// ReplyData 是 type="reply" 消息段的 data（NapCat 扩展）
+type ReplyData struct {
+	ID string `json:"id"`
+}
+
+// ParseSegments 解析 message 字段为 MessageSegment 数组
+func (e *Event) ParseSegments() []MessageSegment {
+	if len(e.Message) == 0 {
+		return nil
+	}
+	var segments []MessageSegment
+	if err := json.Unmarshal(e.Message, &segments); err != nil {
+		return nil
+	}
+	return segments
+}
+
+// MentionsQQ 检查消息中是否 @了指定 QQ 号
+func (e *Event) MentionsQQ(selfID string) bool {
+	if selfID == "" {
+		return false
+	}
+	for _, seg := range e.ParseSegments() {
+		if seg.Type != "at" {
+			continue
+		}
+		var ad AtData
+		if err := json.Unmarshal(seg.Data, &ad); err != nil {
+			continue
+		}
+		if ad.QQ == selfID || ad.QQ == "all" {
+			return true
+		}
+	}
+	return false
+}
+
+// HasReplySegment 检查消息中是否包含 reply 段（回复消息）
+func (e *Event) HasReplySegment() bool {
+	for _, seg := range e.ParseSegments() {
+		if seg.Type == "reply" {
+			return true
+		}
+	}
+	return false
+}
+
+// ReplyMessageID 提取被回复消息的 ID，无回复返回空字符串
+func (e *Event) ReplyMessageID() string {
+	for _, seg := range e.ParseSegments() {
+		if seg.Type != "reply" {
+			continue
+		}
+		var rd ReplyData
+		if err := json.Unmarshal(seg.Data, &rd); err != nil {
+			continue
+		}
+		if rd.ID != "" {
+			return rd.ID
+		}
+	}
+	return ""
+}
+
 // TextSegments 将纯文本构造为消息段数组
 func TextSegments(text string) []MessageSegment {
 	data, _ := json.Marshal(TextData{Text: text})

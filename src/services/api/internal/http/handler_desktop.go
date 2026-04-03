@@ -422,17 +422,20 @@ func NewHandler(cfg HandlerConfig) nethttp.Handler {
 
 	// QQ OneBot11 HTTP callback (NapCat -> Arkloop)
 	accountapi.RegisterQQCallbackRoute(mux, accountapi.QQCallbackDeps{
-		ChannelsRepo:            cfg.ChannelsRepo,
-		ChannelIdentitiesRepo:   cfg.ChannelIdentitiesRepo,
-		ChannelDMThreadsRepo:    cfg.ChannelDMThreadsRepo,
-		ChannelGroupThreadsRepo: cfg.ChannelGroupThreadsRepo,
-		ChannelReceiptsRepo:     cfg.ChannelReceiptsRepo,
-		PersonasRepo:            cfg.PersonasRepo,
-		ThreadRepo:              cfg.ThreadRepo,
-		MessageRepo:             cfg.MessageRepo,
-		RunEventRepo:            cfg.RunEventRepo,
-		JobRepo:                 cfg.JobRepo,
-		Pool:                    cfg.Pool,
+		ChannelsRepo:             cfg.ChannelsRepo,
+		ChannelIdentitiesRepo:    cfg.ChannelIdentitiesRepo,
+		ChannelBindCodesRepo:     cfg.ChannelBindCodesRepo,
+		ChannelIdentityLinksRepo: cfg.ChannelIdentityLinksRepo,
+		ChannelDMThreadsRepo:     cfg.ChannelDMThreadsRepo,
+		ChannelGroupThreadsRepo:  cfg.ChannelGroupThreadsRepo,
+		ChannelReceiptsRepo:      cfg.ChannelReceiptsRepo,
+		PersonasRepo:             cfg.PersonasRepo,
+		ThreadRepo:               cfg.ThreadRepo,
+		MessageRepo:              cfg.MessageRepo,
+		RunEventRepo:             cfg.RunEventRepo,
+		JobRepo:                  cfg.JobRepo,
+		EntitlementSvc:           cfg.EntitlementService,
+		Pool:                     cfg.Pool,
 	})
 
 	notFound := nethttp.HandlerFunc(func(w nethttp.ResponseWriter, r *nethttp.Request) {
