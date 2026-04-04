@@ -331,11 +331,7 @@ function OVConfigForm({ ov, providers, loadingProviders, onChange, onSave, savin
     { requireShowInPicker: false },
   )
 
-  const rerankOptions = buildOpenVikingModelOptions(
-    providers,
-    (_provider, model) => !model.tags.includes('embedding'),
-    { requireShowInPicker: false },
-  )
+  const rerankOptions = vlmOptions
 
   const currentVlm = resolveCurrentSelector(ov.vlmSelector, ov.vlmModel, vlmOptions)
   const currentEmb = resolveCurrentSelector(ov.embeddingSelector, ov.embeddingModel, embeddingOptions)
@@ -528,7 +524,6 @@ export function MemoryConfigModal({ open, onClose, accessToken, memConfig, onCon
     const rerankOptions = buildOpenVikingModelOptions(
       providers,
       (_provider, model) => !model.tags.includes('embedding'),
-      { requireShowInPicker: false },
     )
     const currentRerank = resolveCurrentSelector(draft.rerankSelector, draft.rerankModel, rerankOptions)
     if (currentRerank && currentRerank !== draft.rerankSelector) {
@@ -621,7 +616,6 @@ export function MemoryConfigModal({ open, onClose, accessToken, memConfig, onCon
         const rerankOptions = buildOpenVikingModelOptions(
           providers,
           (_provider, model) => !model.tags.includes('embedding'),
-          { requireShowInPicker: false },
         )
         const rerankSelector = resolveCurrentSelector(ovDraft.rerankSelector, ovDraft.rerankModel, rerankOptions)
 
