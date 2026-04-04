@@ -110,7 +110,7 @@ func createThreadMessage(
 				httpkit.WriteError(w, nethttp.StatusNotFound, "threads.not_found", "thread not found", traceID, nil)
 				return
 			}
-			httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
+			httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, internalErrorDetails(err))
 			return
 		}
 		slog.Debug("createThreadMessage: success", "message_id", message.ID)

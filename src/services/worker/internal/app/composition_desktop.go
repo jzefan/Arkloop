@@ -300,8 +300,8 @@ func ComposeDesktopEngine(ctx context.Context, db data.DesktopDB, bus eventbus.E
 	}
 
 	envSnap, err := sharedtoolruntime.BuildRuntimeSnapshot(ctx, sharedtoolruntime.SnapshotInput{
-		HasConversationSearch:   true,
-		HasGroupHistorySearch:   true,
+		HasConversationSearch:  true,
+		HasGroupHistorySearch:  true,
 		ArtifactStoreAvailable: artifactToolsRegistered,
 		ConfigResolver:         nil,
 	})
@@ -1859,39 +1859,8 @@ func desktopAgentLoop(
 		if !w.completed {
 			rc.ChannelTerminalNotice = strings.TrimSpace(w.terminalUserMessage)
 		}
-		content := w.visibleAssistantOutput()
-		hasStreamedChunks := w.telegramBoundaryFlush != nil && w.telegramFlushSentDeltas > 0
-		shouldPersistAssistantOutput := (w.completed || w.terminalStatus == "cancelled" || w.terminalStatus == "interrupted") && strings.TrimSpace(content) != ""
-		if shouldPersistAssistantOutput && !pipeline.ShouldSuppressHeartbeatOutput(rc, content) {
-			metadata := map[string]any{
-				"completion_state": "incomplete",
-				"finish_reason":    w.terminalStatus,
-			}
-			if w.completed {
-				metadata["completion_state"] = "complete"
-				metadata["finish_reason"] = "completed"
-			}
-			if hasStreamedChunks {
-				remainder := w.telegramStreamRemainder()
-				if strings.TrimSpace(remainder) != "" {
-					metadata["stream_chunk"] = true
-					if err := persistDesktopStreamChunkMessageWithMetadata(ctx, db, rc.Run, remainder, metadata); err != nil {
-						slog.WarnContext(ctx, "desktop: insert assistant remainder failed", "err", err)
-					}
-				}
-			} else {
-				if err := desktopInsertAssistantMessage(ctx, db, rc.Run, w.finalAssistantMessage(), metadata); err != nil {
-					slog.WarnContext(ctx, "desktop: insert assistant message failed", "err", err)
-				}
-			}
-			if err := pipeline.DeleteResponseDraft(ctx, rc.ResponseDraftStore, rc.Run.ID); err != nil {
-				slog.WarnContext(ctx, "desktop: delete response draft failed", "err", err)
-			}
-			if w.completed {
-				rc.FinalAssistantOutput = content
-				rc.FinalAssistantOutputs = w.visibleAssistantOutputs()
-				rc.TelegramStreamDeliveryRemainder = w.telegramStreamRemainder()
-			}
+		if err := desktopPersistFinalAssistantOutput(ctx, db, rc, w, runsRepo, eventsRepo); err != nil {
+			return err
 		}
 		rc.RunToolCallCount = w.toolCallCount
 		rc.RunIterationCount = w.iterationCount
@@ -1936,6 +1905,7 @@ type desktopEventWriter struct {
 	terminalStatus           string
 	visibleAssistantText     string
 	visibleAssistantTexts    []string
+	toolDeliveredTexts       []string
 	draftVisibleContent      string
 	draftUseVisible          bool
 }
@@ -2023,6 +1993,7 @@ func (w *desktopEventWriter) append(ctx context.Context, runID uuid.UUID, ev eve
 
 	flushChunk := ""
 	if ev.Type == "tool.call" {
+		w.captureChannelToolCallOutput(ev.DataJSON)
 		if w.telegramBoundaryFlush != nil && len(w.assistantDeltas) > w.telegramFlushSentDeltas {
 			flushChunk = strings.TrimSpace(strings.Join(w.assistantDeltas[w.telegramFlushSentDeltas:], ""))
 		}
@@ -2146,15 +2117,20 @@ func (w *desktopEventWriter) visibleAssistantOutput() string {
 }
 
 func (w *desktopEventWriter) visibleAssistantOutputs() []string {
-	if len(w.visibleAssistantTexts) == 0 {
+	if len(w.visibleAssistantTexts) == 0 && len(w.toolDeliveredTexts) == 0 {
 		output := strings.TrimSpace(w.visibleAssistantOutput())
 		if output == "" {
 			return nil
 		}
 		return []string{output}
 	}
-	out := make([]string, 0, len(w.visibleAssistantTexts))
+	out := make([]string, 0, len(w.visibleAssistantTexts)+len(w.toolDeliveredTexts))
 	for _, item := range w.visibleAssistantTexts {
+		if trimmed := strings.TrimSpace(item); trimmed != "" {
+			out = append(out, trimmed)
+		}
+	}
+	for _, item := range w.toolDeliveredTexts {
 		if trimmed := strings.TrimSpace(item); trimmed != "" {
 			out = append(out, trimmed)
 		}
@@ -2177,6 +2153,37 @@ func (w *desktopEventWriter) captureAssistantTurnOutput() {
 	if trimmed := strings.TrimSpace(text); trimmed != "" {
 		w.visibleAssistantTexts = append(w.visibleAssistantTexts, trimmed)
 		w.visibleAssistantText = strings.Join(w.visibleAssistantTexts, "")
+	}
+}
+
+func (w *desktopEventWriter) captureChannelToolCallOutput(dataJSON map[string]any) {
+	if dataJSON == nil {
+		return
+	}
+	toolName, _ := dataJSON["tool_name"].(string)
+	args, _ := dataJSON["arguments"].(map[string]any)
+	if args == nil {
+		return
+	}
+
+	var text string
+	switch strings.TrimSpace(toolName) {
+	case "telegram_reply":
+		text, _ = args["text"].(string)
+	case "telegram_send_file":
+		text, _ = args["caption"].(string)
+		if strings.TrimSpace(text) == "" {
+			text, _ = args["text"].(string)
+		}
+	default:
+		return
+	}
+
+	if trimmed := strings.TrimSpace(text); trimmed != "" {
+		w.toolDeliveredTexts = append(w.toolDeliveredTexts, trimmed)
+		if strings.TrimSpace(w.visibleAssistantText) == "" {
+			w.visibleAssistantText = trimmed
+		}
 	}
 }
 
@@ -2337,6 +2344,74 @@ func desktopWriteFailure(
 	details map[string]any,
 ) error {
 	return desktopWriteTerminalEvent(ctx, db, run, emitter, runsRepo, eventsRepo, "run.failed", errorClass, message, details)
+}
+
+func desktopPersistFinalAssistantOutput(
+	ctx context.Context,
+	db data.DesktopDB,
+	rc *pipeline.RunContext,
+	w *desktopEventWriter,
+	runsRepo data.DesktopRunsRepository,
+	eventsRepo data.DesktopRunEventsRepository,
+) error {
+	if rc == nil || w == nil {
+		return nil
+	}
+
+	content := w.visibleAssistantOutput()
+	hasStreamedChunks := w.telegramBoundaryFlush != nil && w.telegramFlushSentDeltas > 0
+	shouldPersistAssistantOutput := (w.completed || w.terminalStatus == "cancelled" || w.terminalStatus == "interrupted") && strings.TrimSpace(content) != ""
+	if !shouldPersistAssistantOutput || pipeline.ShouldSuppressHeartbeatOutput(rc, content) {
+		return nil
+	}
+
+	metadata := map[string]any{
+		"completion_state": "incomplete",
+		"finish_reason":    w.terminalStatus,
+	}
+	if w.completed {
+		metadata["completion_state"] = "complete"
+		metadata["finish_reason"] = "completed"
+	}
+
+	var persistErr error
+	if hasStreamedChunks {
+		remainder := w.telegramStreamRemainder()
+		if strings.TrimSpace(remainder) != "" {
+			metadata["stream_chunk"] = true
+			persistErr = persistDesktopStreamChunkMessageWithMetadata(ctx, db, rc.Run, remainder, metadata)
+		}
+	} else {
+		persistErr = desktopInsertAssistantMessage(ctx, db, rc.Run, w.finalAssistantMessage(), metadata)
+	}
+	if persistErr != nil {
+		slog.ErrorContext(ctx, "desktop: persist assistant output failed", "run_id", rc.Run.ID, "err", persistErr.Error())
+		if err := desktopWriteFailure(
+			ctx,
+			db,
+			rc.Run,
+			rc.Emitter,
+			runsRepo,
+			eventsRepo,
+			"database.write_failed",
+			"assistant output persistence failed",
+			map[string]any{"reason": persistErr.Error()},
+		); err != nil {
+			return err
+		}
+		w.publishRunEvents(ctx)
+		return nil
+	}
+
+	if err := pipeline.DeleteResponseDraft(ctx, rc.ResponseDraftStore, rc.Run.ID); err != nil {
+		slog.WarnContext(ctx, "desktop: delete response draft failed", "err", err)
+	}
+	if w.completed {
+		rc.FinalAssistantOutput = content
+		rc.FinalAssistantOutputs = w.visibleAssistantOutputs()
+		rc.TelegramStreamDeliveryRemainder = w.telegramStreamRemainder()
+	}
+	return nil
 }
 
 func desktopWriteTerminalEvent(

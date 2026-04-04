@@ -1720,6 +1720,148 @@ func TestDesktopEventWriterFinalizeCancelledIfRequested(t *testing.T) {
 	}
 }
 
+func TestDesktopPersistFinalAssistantOutputWritesRunFailedWhenMessageInsertFails(t *testing.T) {
+	ctx := context.Background()
+
+	sqlitePool, err := sqliteadapter.AutoMigrate(ctx, filepath.Join(t.TempDir(), "desktop.db"))
+	if err != nil {
+		t.Fatalf("auto migrate sqlite: %v", err)
+	}
+	defer sqlitePool.Close()
+
+	db := sqlitepgx.New(sqlitePool.Unwrap())
+
+	accountID := uuid.New()
+	userID := uuid.New()
+	threadID := uuid.New()
+	runID := uuid.New()
+	seedDesktopRunBindingAccount(t, db, accountID, userID)
+	seedDesktopRunBindingThread(t, db, accountID, threadID, nil, &userID)
+	seedDesktopRunBindingRun(t, db, accountID, threadID, &userID, runID)
+
+	if _, err := db.Exec(ctx, `DROP TABLE messages`); err != nil {
+		t.Fatalf("drop messages: %v", err)
+	}
+
+	rc := &pipeline.RunContext{
+		Run:     data.Run{ID: runID, AccountID: accountID, ThreadID: threadID},
+		Emitter: events.NewEmitter("persist-failed"),
+	}
+	writer := &desktopEventWriter{
+		db:                   db,
+		run:                  rc.Run,
+		traceID:              "persist-failed",
+		runsRepo:             data.DesktopRunsRepository{},
+		eventsRepo:           data.DesktopRunEventsRepository{},
+		completed:            true,
+		terminalStatus:       "completed",
+		visibleAssistantText: "heartbeat reply",
+		assistantMessage:     &llm.Message{Role: "assistant", Content: []llm.ContentPart{{Type: "text", Text: "heartbeat reply"}}},
+	}
+
+	if err := desktopPersistFinalAssistantOutput(ctx, db, rc, writer, data.DesktopRunsRepository{}, data.DesktopRunEventsRepository{}); err != nil {
+		t.Fatalf("desktopPersistFinalAssistantOutput: %v", err)
+	}
+
+	var status string
+	if err := db.QueryRow(ctx, `SELECT status FROM runs WHERE id = $1`, runID).Scan(&status); err != nil {
+		t.Fatalf("select run status: %v", err)
+	}
+	if status != "failed" {
+		t.Fatalf("expected run status failed, got %q", status)
+	}
+
+	var (
+		eventType   string
+		errorClass  *string
+		rawDataJSON string
+	)
+	if err := db.QueryRow(
+		ctx,
+		`SELECT type, error_class, data_json
+		   FROM run_events
+		  WHERE run_id = $1
+		  ORDER BY seq DESC
+		  LIMIT 1`,
+		runID,
+	).Scan(&eventType, &errorClass, &rawDataJSON); err != nil {
+		t.Fatalf("select latest run event: %v", err)
+	}
+	if eventType != "run.failed" {
+		t.Fatalf("expected latest event run.failed, got %q", eventType)
+	}
+	if errorClass == nil || *errorClass != "database.write_failed" {
+		t.Fatalf("expected error_class database.write_failed, got %#v", errorClass)
+	}
+
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(rawDataJSON), &payload); err != nil {
+		t.Fatalf("unmarshal run.failed payload: %v", err)
+	}
+	if payload["message"] != "assistant output persistence failed" {
+		t.Fatalf("unexpected run.failed message: %#v", payload["message"])
+	}
+	details, _ := payload["details"].(map[string]any)
+	reason, _ := details["reason"].(string)
+	if !strings.Contains(reason, "no such table") {
+		t.Fatalf("expected sqlite reason to mention missing table, got %q", reason)
+	}
+}
+
+func TestDesktopEventWriterUsesTelegramReplyToolTextAsVisibleAssistantOutput(t *testing.T) {
+	ctx := context.Background()
+
+	sqlitePool, err := sqliteadapter.AutoMigrate(ctx, filepath.Join(t.TempDir(), "desktop.db"))
+	if err != nil {
+		t.Fatalf("auto migrate sqlite: %v", err)
+	}
+	defer sqlitePool.Close()
+
+	db := sqlitepgx.New(sqlitePool.Unwrap())
+
+	accountID := uuid.New()
+	userID := uuid.New()
+	threadID := uuid.New()
+	runID := uuid.New()
+	seedDesktopRunBindingAccount(t, db, accountID, userID)
+	seedDesktopRunBindingThread(t, db, accountID, threadID, nil, &userID)
+	seedDesktopRunBindingRun(t, db, accountID, threadID, &userID, runID)
+
+	writer := &desktopEventWriter{
+		db:         db,
+		run:        data.Run{ID: runID, AccountID: accountID, ThreadID: threadID},
+		traceID:    "telegram-reply-visible",
+		runsRepo:   data.DesktopRunsRepository{},
+		eventsRepo: data.DesktopRunEventsRepository{},
+		usageRepo:  data.UsageRecordsRepository{},
+	}
+
+	replyCall := events.NewEmitter("telegram-reply-visible").Emit("tool.call", map[string]any{
+		"tool_name":    "telegram_reply",
+		"tool_call_id": "call-1",
+		"arguments": map[string]any{
+			"text":                "hello~ 喵！（收到了，正在修复中喵）",
+			"reply_to_message_id": "6592",
+		},
+	}, nil, nil)
+	if err := writer.append(ctx, runID, replyCall, "normal"); err != nil {
+		t.Fatalf("append tool.call: %v", err)
+	}
+
+	completed := events.NewEmitter("telegram-reply-visible").Emit("run.completed", map[string]any{}, nil, nil)
+	if err := writer.append(ctx, runID, completed, "normal"); err != nil {
+		t.Fatalf("append run.completed: %v", err)
+	}
+
+	got := writer.visibleAssistantOutputs()
+	if len(got) != 1 || got[0] != "hello~ 喵！（收到了，正在修复中喵）" {
+		t.Fatalf("unexpected visible assistant outputs: %#v", got)
+	}
+	if writer.visibleAssistantOutput() != "hello~ 喵！（收到了，正在修复中喵）" {
+		t.Fatalf("unexpected visible assistant output: %q", writer.visibleAssistantOutput())
+	}
+}
+
 func TestDesktopSubAgentContextRestoresRoutingFromSnapshotFallback(t *testing.T) {
 	ctx := context.Background()
 
@@ -2797,6 +2939,15 @@ func (m *mapStore) Head(_ context.Context, key string) (objectstore.ObjectInfo, 
 func (m *mapStore) Delete(_ context.Context, key string) error {
 	delete(m.data, key)
 	return nil
+}
+func (m *mapStore) ListPrefix(_ context.Context, prefix string) ([]objectstore.ObjectInfo, error) {
+	out := make([]objectstore.ObjectInfo, 0)
+	for key := range m.data {
+		if strings.HasPrefix(key, prefix) {
+			out = append(out, objectstore.ObjectInfo{Key: key})
+		}
+	}
+	return out, nil
 }
 
 func TestEnsureSkillExtractedSkipsWhenHashMatches(t *testing.T) {
