@@ -341,6 +341,7 @@ func persistGroupCompact(
 
 	if lockErr := compactThreadCompactionAdvisoryXactLock(postCtx, tx, rc.Run.ThreadID); lockErr != nil {
 		_ = tx.Rollback(postCtx)
+		emitContextCompactFailure(ctx, postCtx, dep.Pool, dep.EventsRepo, rc, "group_persist", "advisory_lock", lockErr)
 		slog.WarnContext(ctx, "group_compact", "phase", "advisory_lock", "err", lockErr.Error(), "run_id", rc.Run.ID.String())
 		return
 	}
@@ -349,6 +350,7 @@ func persistGroupCompact(
 		still, chkErr := compactPrefixMessagesStillUncompacted(postCtx, tx, rc.Run.AccountID, rc.Run.ThreadID, filteredIDs)
 		if chkErr != nil {
 			_ = tx.Rollback(postCtx)
+			emitContextCompactFailure(ctx, postCtx, dep.Pool, dep.EventsRepo, rc, "group_persist", "prefix_precheck", chkErr)
 			slog.WarnContext(ctx, "group_compact", "phase", "prefix_precheck", "err", chkErr.Error(), "run_id", rc.Run.ID.String())
 			return
 		}
@@ -358,6 +360,7 @@ func persistGroupCompact(
 		}
 		if err := dep.MessagesRepo.MarkThreadMessagesCompacted(postCtx, tx, rc.Run.AccountID, rc.Run.ThreadID, filteredIDs); err != nil {
 			_ = tx.Rollback(postCtx)
+			emitContextCompactFailure(ctx, postCtx, dep.Pool, dep.EventsRepo, rc, "group_persist", "mark_compacted", err)
 			slog.WarnContext(ctx, "group_compact", "phase", "mark_compacted", "err", err.Error(), "run_id", rc.Run.ID.String())
 			return
 		}
@@ -367,6 +370,7 @@ func persistGroupCompact(
 	_, insErr := (data.ThreadCompactionSnapshotsRepository{}).ReplaceActive(postCtx, tx, rc.Run.AccountID, rc.Run.ThreadID, result.Summary, meta)
 	if insErr != nil {
 		_ = tx.Rollback(postCtx)
+		emitContextCompactFailure(ctx, postCtx, dep.Pool, dep.EventsRepo, rc, "group_persist", "replace_snapshot", insErr)
 		slog.WarnContext(ctx, "group_compact", "phase", "replace_snapshot", "err", insErr.Error(), "run_id", rc.Run.ID.String())
 		return
 	}

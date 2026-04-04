@@ -384,23 +384,27 @@ func NewContextCompactMiddleware(
 			} else {
 				if lockErr := compactThreadCompactionAdvisoryXactLock(postCtx, tx, rc.Run.ThreadID); lockErr != nil {
 					_ = tx.Rollback(postCtx)
+					emitContextCompactFailure(ctx, postCtx, pool, eventsRepo, rc, "persist", "advisory_lock", lockErr)
 					slog.WarnContext(ctx, "context_compact", "phase", "advisory_lock", "err", lockErr.Error(), "run_id", rc.Run.ID.String())
 				} else {
 					still, chkErr := compactPrefixMessagesStillUncompacted(postCtx, tx, rc.Run.AccountID, rc.Run.ThreadID, persistPrefixIDs)
 					if chkErr != nil {
 						_ = tx.Rollback(postCtx)
+						emitContextCompactFailure(ctx, postCtx, pool, eventsRepo, rc, "persist", "prefix_precheck", chkErr)
 						slog.WarnContext(ctx, "context_compact", "phase", "prefix_precheck", "err", chkErr.Error(), "run_id", rc.Run.ID.String())
 					} else if !still {
 						_ = tx.Rollback(postCtx)
 					} else if len(persistPrefixIDs) > 0 {
 						if err := messagesRepo.MarkThreadMessagesCompacted(postCtx, tx, rc.Run.AccountID, rc.Run.ThreadID, persistPrefixIDs); err != nil {
 							_ = tx.Rollback(postCtx)
+							emitContextCompactFailure(ctx, postCtx, pool, eventsRepo, rc, "persist", "mark_compacted", err)
 							slog.WarnContext(ctx, "context_compact", "phase", "mark_compacted", "err", err.Error(), "run_id", rc.Run.ID.String())
 						} else {
 							meta, _ := json.Marshal(map[string]string{"kind": "context_compact"})
 							snapshot, insErr := (data.ThreadCompactionSnapshotsRepository{}).ReplaceActive(postCtx, tx, rc.Run.AccountID, rc.Run.ThreadID, persistSummary, meta)
 							if insErr != nil {
 								_ = tx.Rollback(postCtx)
+								emitContextCompactFailure(ctx, postCtx, pool, eventsRepo, rc, "persist", "replace_snapshot", insErr)
 								slog.WarnContext(ctx, "context_compact", "phase", "replace_snapshot", "err", insErr.Error(), "run_id", rc.Run.ID.String())
 							} else {
 								evOk := true
@@ -427,6 +431,7 @@ func NewContextCompactMiddleware(
 						snapshot, insErr := (data.ThreadCompactionSnapshotsRepository{}).ReplaceActive(postCtx, tx, rc.Run.AccountID, rc.Run.ThreadID, persistSummary, meta)
 						if insErr != nil {
 							_ = tx.Rollback(postCtx)
+							emitContextCompactFailure(ctx, postCtx, pool, eventsRepo, rc, "persist", "replace_snapshot", insErr)
 							slog.WarnContext(ctx, "context_compact", "phase", "replace_snapshot", "err", insErr.Error(), "run_id", rc.Run.ID.String())
 						} else {
 							evOk := true
@@ -722,6 +727,29 @@ func appendContextCompactRunEvent(
 	}
 	committed = true
 	return nil
+}
+
+func emitContextCompactFailure(
+	ctx context.Context,
+	postCtx context.Context,
+	pool CompactPersistDB,
+	eventsRepo CompactRunEventAppender,
+	rc *RunContext,
+	op string,
+	phase string,
+	err error,
+) {
+	if err == nil {
+		return
+	}
+	payload := map[string]any{
+		"op":    op,
+		"phase": phase,
+		"error": err.Error(),
+	}
+	if appendErr := appendContextCompactRunEvent(postCtx, pool, eventsRepo, rc, payload); appendErr != nil {
+		slog.WarnContext(ctx, "context_compact", "phase", "run_event_failure", "err", appendErr.Error(), "run_id", rc.Run.ID.String())
+	}
 }
 
 // serializeMessagesForCompact 将消息列表序列化为摘要 LLM 可读的纯文本。
