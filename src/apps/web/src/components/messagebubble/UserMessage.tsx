@@ -8,7 +8,7 @@ import { ImageThumbnailCard } from './ImageThumbnailCard'
 import { PastedBubbleCard } from './PastedBubbleCard'
 import { ArtifactDownload } from '../ArtifactDownload'
 import { MessageDate } from './MessageDate'
-import { AutoResizeTextarea } from '@arkloop/shared'
+import { AutoResizeTextarea, normalizeChannelEnvelopeText } from '@arkloop/shared'
 import { CopyIconButton } from '../CopyIconButton'
 import { ActionIconButton } from '../ActionIconButton'
 import {
@@ -101,7 +101,7 @@ export function UserMessage({ message, onEdit, accessToken, animateEnter, onEnte
   const allFileAttachments = attachmentParts.filter(isFilePart)
   const pastedAttachments = allFileAttachments.filter((p) => isPastedFile(p.attachment.filename))
   const fileAttachments = allFileAttachments.filter((p) => !isPastedFile(p.attachment.filename))
-  const text = messageTextContent(message)
+  const text = normalizeChannelEnvelopeText(messageTextContent(message))
   const displayText = !accessToken && attachmentParts.length > 0 ? message.content : text
   const userTextOverflows = userTextFullHeight !== null
   const fileNames = attachmentParts.length > 0
@@ -223,62 +223,13 @@ export function UserMessage({ message, onEdit, accessToken, animateEnter, onEnte
 
   return (
     <div
-      className="group"
-      style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px' }}
+      style={{ display: 'flex', justifyContent: 'flex-end' }}
     >
       <div
-        className="pointer-events-none opacity-0 group-hover:pointer-events-auto group-hover:opacity-100 transition-[opacity] duration-[180ms] ease-out"
-        style={{
-          display: 'flex',
-          flexDirection: 'column',
-          alignItems: 'flex-end',
-          position: 'sticky',
-          top: '6px',
-        }}
+        className="group"
+        style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', maxWidth: '663px' }}
       >
-        <div style={{ display: 'flex', alignItems: 'center', gap: '2px', position: 'relative', zIndex: 1 }}>
-        <CopyIconButton
-          onCopy={handleCopy}
-          size={16}
-          tooltip={t.copyAction}
-          hoverBackground="var(--c-bg-deep)"
-          style={{
-            width: '32px',
-            height: '32px',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            borderRadius: '8px',
-            border: 'none',
-            color: 'var(--c-text-primary)',
-            cursor: 'pointer',
-          }}
-        />
-        <ActionIconButton
-          onClick={handleEditStart}
-          tooltip={t.editAction}
-          hoverBackground="var(--c-bg-deep)"
-          style={{
-            width: '32px',
-            height: '32px',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            borderRadius: '8px',
-            border: 'none',
-            color: 'var(--c-text-primary)',
-            cursor: 'pointer',
-          }}
-        >
-          <Pencil size={16} />
-        </ActionIconButton>
-        </div>
-        <div style={{ marginTop: '4px', paddingRight: '2px' }}>
-          <MessageDate createdAt={message.created_at} />
-        </div>
-      </div>
-
-      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '8px', maxWidth: '663px' }}>
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '8px' }}>
         {(imageAttachments.length > 0 || pastedAttachments.length > 0) && accessToken && (
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: '12px', justifyContent: 'flex-end' }}>
             {imageAttachments.map((part) => (
@@ -410,6 +361,36 @@ export function UserMessage({ message, onEdit, accessToken, animateEnter, onEnte
             </div>
           )
         })()}
+        </div>
+
+        <div
+          className="pointer-events-none opacity-0 transition-[opacity] duration-[180ms] ease-out group-hover:pointer-events-auto group-hover:opacity-100"
+          style={{
+            display: 'flex',
+            alignItems: 'flex-end',
+            gap: '2px',
+            marginTop: '8px',
+          }}
+        >
+          <div style={{ marginRight: '12px', marginBottom: '0px' }}>
+            <MessageDate createdAt={message.created_at} />
+          </div>
+          <ActionIconButton
+            onClick={handleEditStart}
+            tooltip={t.editAction}
+            hoverBackground="var(--c-bg-deep)"
+            className="flex h-9 w-9 items-center justify-center rounded-[7px] text-[var(--c-text-secondary)] opacity-60 transition-[opacity,color] duration-[60ms] hover:opacity-100 hover:text-[var(--c-text-primary)] cursor-pointer border-none bg-transparent"
+          >
+            <Pencil size={16} />
+          </ActionIconButton>
+          <CopyIconButton
+            onCopy={handleCopy}
+            size={16}
+            tooltip={t.copyAction}
+            hoverBackground="var(--c-bg-deep)"
+            className="flex h-9 w-9 items-center justify-center rounded-[7px] text-[var(--c-text-secondary)] opacity-60 transition-[opacity,color] duration-[60ms] hover:opacity-100 hover:text-[var(--c-text-primary)] cursor-pointer border-none bg-transparent"
+          />
+        </div>
       </div>
     </div>
   )

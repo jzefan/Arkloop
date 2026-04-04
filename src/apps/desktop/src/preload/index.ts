@@ -74,8 +74,6 @@ export type MemoryEntry = {
 export type SnapshotHit = {
   uri: string
   abstract: string
-  score: number
-  match_reason: string
   is_leaf: boolean
 }
 

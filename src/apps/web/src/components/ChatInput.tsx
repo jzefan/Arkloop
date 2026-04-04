@@ -524,10 +524,10 @@ export function ChatInput({
                 <span
                   aria-hidden="true"
                   style={{
-                    width: '16px',
-                    height: '16px',
+                    width: '14px',
+                    height: '14px',
                     borderRadius: '999px',
-                    border: '1.5px solid #1A1A19',
+                    border: '1.3px solid #1A1A19',
                     display: 'flex',
                     alignItems: 'center',
                     justifyContent: 'center',
@@ -536,8 +536,8 @@ export function ChatInput({
                 >
                   <span
                     style={{
-                      width: '6px',
-                      height: '6px',
+                      width: '5px',
+                      height: '5px',
                       borderRadius: '1px',
                       background: '#1A1A19',
                       flexShrink: 0,

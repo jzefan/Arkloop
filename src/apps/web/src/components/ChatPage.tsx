@@ -478,8 +478,9 @@ function LiveTurnMarkdown({
 
 const HistoricalMessageList = memo(function HistoricalMessageList({
   messages,
-  lastUserMsgIdx,
-  lastUserMsgRef,
+  lastTurnStartIdx,
+  lastTurnRef,
+  lastTurnChildren,
   hasCurrentRunHandoffUi,
   terminalRunDisplayId,
   resolvedMessageSources,
@@ -529,8 +530,9 @@ const HistoricalMessageList = memo(function HistoricalMessageList({
   documentPanelArtifactKey,
 }: {
   messages: MessageResponse[]
-  lastUserMsgIdx: number
-  lastUserMsgRef: React.RefObject<HTMLDivElement | null>
+  lastTurnStartIdx: number
+  lastTurnRef: React.RefObject<HTMLDivElement | null>
+  lastTurnChildren?: React.ReactNode
   hasCurrentRunHandoffUi: boolean
   terminalRunDisplayId: string | null
   resolvedMessageSources: Map<string, WebSource[]>
@@ -596,9 +598,7 @@ const HistoricalMessageList = memo(function HistoricalMessageList({
   clearUserEnterAnimation: () => void
   documentPanelArtifactKey: string | null
 }) {
-  return (
-    <>
-      {messages.map((msg, idx) => {
+  const renderMessage = (msg: MessageResponse, idx: number) => {
         const hideTerminalRunMessage =
           msg.role === 'assistant' &&
           hasCurrentRunHandoffUi &&
@@ -651,7 +651,7 @@ const HistoricalMessageList = memo(function HistoricalMessageList({
         const messageWebFetches = msg.role === 'assistant' ? messageWebFetchesMap.get(msg.id) : undefined
         const msgThinking = msg.role === 'assistant' ? messageThinkingMap.get(msg.id) : undefined
         return (
-          <div key={msg.id} ref={idx === lastUserMsgIdx ? lastUserMsgRef : undefined}>
+          <div key={msg.id}>
             {msg.role === 'assistant' && hasAssistantTurn && (
               <div style={{ marginBottom: '6px', display: 'flex', flexDirection: 'column', gap: 0, maxWidth: '663px' }}>
                 {!isSearchThread &&
@@ -811,6 +811,7 @@ const HistoricalMessageList = memo(function HistoricalMessageList({
             )}
             <MessageBubble
               message={msg}
+              isLast={idx === messages.length - 1}
               streamAssistantMarkdown={
                 isStreaming && msg.role === 'assistant' && idx === messages.length - 1
               }
@@ -880,7 +881,18 @@ const HistoricalMessageList = memo(function HistoricalMessageList({
             )}
           </div>
         )
-      })}
+      }
+
+  const hasLastTurn = lastTurnStartIdx < messages.length
+  return (
+    <>
+      {messages.slice(0, lastTurnStartIdx).map(renderMessage)}
+      {(hasLastTurn || lastTurnChildren) && (
+        <div ref={lastTurnRef} style={{ minHeight: hasLastTurn ? 'calc(100dvh - var(--chat-input-area-height, 72px) - 50px)' : undefined }} className="flex flex-col gap-6">
+          {hasLastTurn && messages.slice(lastTurnStartIdx).map((msg, i) => renderMessage(msg, lastTurnStartIdx + i))}
+          {lastTurnChildren}
+        </div>
+      )}
     </>
   )
 })
@@ -1509,6 +1521,7 @@ function buildStreamingArtifactsFromHandoff(handoff: ThreadRunHandoffRef): Strea
   const scrollContainerRef = useRef<HTMLDivElement>(null)
   const copCodeExecScrollRef = useRef<HTMLDivElement>(null)
   const lastUserMsgRef = useRef<HTMLDivElement>(null)
+  const inputAreaRef = useRef<HTMLDivElement>(null)
   const forceInstantBottomScrollRef = useRef(false)
   const completedTitleTailTimerRef = useRef<number | null>(null)
   const documentPanelScrollFrameRef = useRef<number | null>(null)
@@ -1620,6 +1633,16 @@ function buildStreamingArtifactsFromHandoff(handoff: ThreadRunHandoffRef): Strea
     }
   }, [])
 
+  useEffect(() => {
+    const el = inputAreaRef.current
+    if (!el) return
+    const ro = new ResizeObserver(([entry]) => {
+      document.documentElement.style.setProperty('--chat-input-area-height', `${entry.contentRect.height}px`)
+    })
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [])
+
   const prevActiveRunIdRef = useRef<string | null>(null)
   useEffect(() => {
     if (activeRunId && activeRunId !== prevActiveRunIdRef.current) {
@@ -1709,9 +1732,7 @@ function buildStreamingArtifactsFromHandoff(handoff: ThreadRunHandoffRef): Strea
       resetSearchSteps()
       setActiveRunId(run.run_id)
       onRunStarted(threadId)
-      isAtBottomRef.current = true
-      setIsAtBottom(true)
-      bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
+      scrollToBottom()
     } catch (err) {
       if (isApiError(err) && err.status === 401) {
         onLoggedOut()
@@ -1721,6 +1742,7 @@ function buildStreamingArtifactsFromHandoff(handoff: ThreadRunHandoffRef): Strea
     } finally {
       setSending(false)
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- scrollToBottom is a stable ref (useCallback with [])
   }, [accessToken, threadId, activeRunId, sending, onLoggedOut, onRunStarted, invalidateMessageSync, markTerminalRunHistory, resetSearchSteps])
 
   // 用 ref 持有最新的 sendMessage，避免 widget 回调闭包中捕获旧引用
@@ -3046,12 +3068,26 @@ function buildStreamingArtifactsFromHandoff(handoff: ThreadRunHandoffRef): Strea
   // 新消息/流式内容时，仅在用户停留在底部时自动滚动
   useEffect(() => {
     if (!isAtBottomRef.current) return
+    const forceInstant = forceInstantBottomScrollRef.current
     const liveHandoffPaint =
       liveAssistantTurn != null && liveAssistantTurn.segments.length > 0
-    const forceInstant = forceInstantBottomScrollRef.current
-    bottomRef.current?.scrollIntoView({
-      behavior: forceInstant || liveRunUiVisible || liveHandoffPaint ? 'instant' : 'smooth',
-    })
+    const behavior: ScrollBehavior = forceInstant || liveRunUiVisible || liveHandoffPaint ? 'instant' : 'smooth'
+    const container = scrollContainerRef.current
+    const bottom = bottomRef.current
+    if (container && bottom) {
+      const bottomTop = bottom.offsetTop
+      const viewBottom = container.scrollTop + container.clientHeight
+      if (bottomTop > viewBottom) {
+        const targetScroll = bottomTop - container.clientHeight
+        if (behavior === 'instant') {
+          container.scrollTop = targetScroll
+        } else {
+          container.scrollTo({ top: targetScroll, behavior })
+        }
+      }
+    } else {
+      bottomRef.current?.scrollIntoView({ behavior })
+    }
     if (forceInstant) forceInstantBottomScrollRef.current = false
   }, [messages, liveAssistantTurn, liveRunUiVisible])
 
@@ -3061,11 +3097,20 @@ function buildStreamingArtifactsFromHandoff(handoff: ThreadRunHandoffRef): Strea
     if (el) el.scrollTop = el.scrollHeight
   }, [topLevelCodeExecutions.length, liveAssistantTurn])
 
-  // 发送新消息时强制滚动到底部（用户主动操作，应该跟上）
+  // 发送新消息时滚动到最新 user prompt 位置
   const scrollToBottom = useCallback(() => {
-    isAtBottomRef.current = true
-    setIsAtBottom(true)
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        const target = lastUserMsgRef.current
+        if (target) {
+          target.scrollIntoView({ block: 'start', behavior: 'smooth' })
+        } else {
+          bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
+        }
+        isAtBottomRef.current = true
+        setIsAtBottom(true)
+      })
+    })
   }, [])
 
   const revokeDraftAttachment = useCallback((attachment: Attachment) => {
@@ -3547,6 +3592,8 @@ function buildStreamingArtifactsFromHandoff(handoff: ThreadRunHandoffRef): Strea
     return -1
   }, [messages])
 
+  const lastTurnStartIdx = lastUserMsgIdx >= 0 ? lastUserMsgIdx : messages.length
+
   const clearUserEnterAnimation = useCallback(() => {
     setUserEnterMessageId(null)
   }, [])
@@ -3996,71 +4043,9 @@ function buildStreamingArtifactsFromHandoff(handoff: ThreadRunHandoffRef): Strea
               )}
               <HistoricalMessageList
                 messages={messages}
-                lastUserMsgIdx={lastUserMsgIdx}
-                lastUserMsgRef={lastUserMsgRef}
-                hasCurrentRunHandoffUi={hasCurrentRunHandoffUi}
-                terminalRunDisplayId={terminalRunDisplayId}
-                resolvedMessageSources={resolvedMessageSources}
-                terminalRunHandoffStatus={terminalRunHandoffStatus}
-                messageAssistantTurnMap={messageAssistantTurnMap}
-                messageWidgetsMap={messageWidgetsMap}
-                messageCodeExecutionsMap={messageCodeExecutionsMap}
-                messageSubAgentsMap={messageSubAgentsMap}
-                messageSearchStepsMap={messageSearchStepsMap}
-                messageFileOpsMap={messageFileOpsMap}
-                messageWebFetchesMap={messageWebFetchesMap}
-                messageThinkingMap={messageThinkingMap}
-                messageArtifactsMap={messageArtifactsMap}
-                messageBrowserActionsMap={messageBrowserActionsMap}
-                terminalRunHistoryExpanded={terminalRunHistoryExpanded}
-                terminalRunAssistantMessageId={terminalRunAssistantMessageId}
-                codePanelExecutionId={codePanelExecution?.id ?? null}
-                isSearchThread={isSearchThread}
-                accessToken={accessToken}
-                baseUrl={baseUrl}
-                t={t}
-                showRunEvents={showRunEvents}
-                sharingMessageId={sharingMessageId}
-                sharedMessageId={sharedMessageId}
-                threadId={threadId}
-                privateThreadIds={privateThreadIds}
-                isStreaming={isStreaming}
-                sending={sending}
-                userEnterMessageId={userEnterMessageId}
-                locationState={locationState}
-                currentRunCopHeaderOverride={currentRunCopHeaderOverride}
-                actionLabelForTerminalRun={actionLabelForTerminalRun}
-                actionHandlerForTerminalRun={actionHandlerForTerminalRun}
-                handleRetry={handleRetry}
-                handleEditMessage={handleEditMessage}
-                handleFork={handleFork}
-                createShareForMessage={(messageId) => {
-                  if (!threadId || sharingMessageId) return
-                  setSharingMessageId(messageId)
-                  createThreadShare(accessToken, threadId, 'public')
-                    .then((share) => {
-                      const url = `${window.location.origin}/s/${share.token}`
-                      void navigator.clipboard.writeText(url)
-                      setSharingMessageId(null)
-                      setSharedMessageId(messageId)
-                      setTimeout(() => setSharedMessageId(null), 1500)
-                    })
-                    .catch(() => {
-                      setSharingMessageId(null)
-                    })
-                }}
-                handleArtifactAction={handleArtifactAction}
-                openDocumentPanel={openDocumentPanel}
-                openCodePanel={openCodePanel}
-                setRunDetailPanelRunId={setRunDetailPanelRunId}
-                setSourcePanelMessageId={setSourcePanelMessageId}
-                setCodePanelExecution={setCodePanelExecution}
-                setDocumentPanelArtifact={setDocumentPanelArtifact}
-                onRightPanelChange={onRightPanelChange}
-                clearUserEnterAnimation={clearUserEnterAnimation}
-                documentPanelArtifactKey={documentPanelArtifact?.artifact.key ?? null}
-              />
-
+                lastTurnStartIdx={lastTurnStartIdx}
+                lastTurnRef={lastUserMsgRef}
+                lastTurnChildren={<>
               {/* 流式：正文 Markdown + COP 用 CopTimeline 点线 */}
               {(showPendingThinkingShell || liveSegments.length > 0) && (
                 <div data-testid={preserveLiveRunUi ? 'current-run-handoff' : undefined} style={{ display: 'flex', flexDirection: 'column', gap: 0, maxWidth: '663px' }}>
@@ -4228,6 +4213,70 @@ function buildStreamingArtifactsFromHandoff(handoff: ThreadRunHandoffRef): Strea
                 />
               )}
               <div ref={bottomRef} />
+                </>}
+                hasCurrentRunHandoffUi={hasCurrentRunHandoffUi}
+                terminalRunDisplayId={terminalRunDisplayId}
+                resolvedMessageSources={resolvedMessageSources}
+                terminalRunHandoffStatus={terminalRunHandoffStatus}
+                messageAssistantTurnMap={messageAssistantTurnMap}
+                messageWidgetsMap={messageWidgetsMap}
+                messageCodeExecutionsMap={messageCodeExecutionsMap}
+                messageSubAgentsMap={messageSubAgentsMap}
+                messageSearchStepsMap={messageSearchStepsMap}
+                messageFileOpsMap={messageFileOpsMap}
+                messageWebFetchesMap={messageWebFetchesMap}
+                messageThinkingMap={messageThinkingMap}
+                messageArtifactsMap={messageArtifactsMap}
+                messageBrowserActionsMap={messageBrowserActionsMap}
+                terminalRunHistoryExpanded={terminalRunHistoryExpanded}
+                terminalRunAssistantMessageId={terminalRunAssistantMessageId}
+                codePanelExecutionId={codePanelExecution?.id ?? null}
+                isSearchThread={isSearchThread}
+                accessToken={accessToken}
+                baseUrl={baseUrl}
+                t={t}
+                showRunEvents={showRunEvents}
+                sharingMessageId={sharingMessageId}
+                sharedMessageId={sharedMessageId}
+                threadId={threadId}
+                privateThreadIds={privateThreadIds}
+                isStreaming={isStreaming}
+                sending={sending}
+                userEnterMessageId={userEnterMessageId}
+                locationState={locationState}
+                currentRunCopHeaderOverride={currentRunCopHeaderOverride}
+                actionLabelForTerminalRun={actionLabelForTerminalRun}
+                actionHandlerForTerminalRun={actionHandlerForTerminalRun}
+                handleRetry={handleRetry}
+                handleEditMessage={handleEditMessage}
+                handleFork={handleFork}
+                createShareForMessage={(messageId) => {
+                  if (!threadId || sharingMessageId) return
+                  setSharingMessageId(messageId)
+                  createThreadShare(accessToken, threadId, 'public')
+                    .then((share) => {
+                      const url = `${window.location.origin}/s/${share.token}`
+                      void navigator.clipboard.writeText(url)
+                      setSharingMessageId(null)
+                      setSharedMessageId(messageId)
+                      setTimeout(() => setSharedMessageId(null), 1500)
+                    })
+                    .catch(() => {
+                      setSharingMessageId(null)
+                    })
+                }}
+                handleArtifactAction={handleArtifactAction}
+                openDocumentPanel={openDocumentPanel}
+                openCodePanel={openCodePanel}
+                setRunDetailPanelRunId={setRunDetailPanelRunId}
+                setSourcePanelMessageId={setSourcePanelMessageId}
+                setCodePanelExecution={setCodePanelExecution}
+                setDocumentPanelArtifact={setDocumentPanelArtifact}
+                onRightPanelChange={onRightPanelChange}
+                clearUserEnterAnimation={clearUserEnterAnimation}
+                documentPanelArtifactKey={documentPanelArtifact?.artifact.key ?? null}
+              />
+
             </>
           )}
         </div>
@@ -4235,6 +4284,7 @@ function buildStreamingArtifactsFromHandoff(handoff: ThreadRunHandoffRef): Strea
 
       {/* 输入区域 */}
       <div
+        ref={inputAreaRef}
         style={{ maxWidth: 1200, margin: '0 auto', padding: `12px ${appMode === 'work' ? chatInputPadding.work : isPanelOpen ? chatInputPadding.panelOpen : chatInputPadding.panelClosed} ${appMode === 'work' ? '22px' : '8px'}`, position: 'absolute', bottom: 0, left: 0, right: 0, zIndex: 10, background: 'linear-gradient(to bottom, transparent 0%, var(--c-bg-page) 24px)' }}
         className="flex w-full flex-col items-center gap-2"
       >

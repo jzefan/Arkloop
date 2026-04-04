@@ -409,7 +409,7 @@ func (c *client) Delete(ctx context.Context, ident memory.MemoryIdentity, uri st
 
 // ListDir lists direct children URIs under the given directory.
 func (c *client) ListDir(ctx context.Context, ident memory.MemoryIdentity, uri string) ([]string, error) {
-	path := "/api/v1/fs/ls?uri=" + url.QueryEscape(uri) + "&simple=true"
+	path := "/api/v1/fs/ls?uri=" + url.QueryEscape(uri)
 	var resp apiResponse
 	if err := c.doJSONWithRetry(ctx, http.MethodGet, path, nil, ident, &resp); err != nil {
 		return nil, err
@@ -417,9 +417,20 @@ func (c *client) ListDir(ctx context.Context, ident memory.MemoryIdentity, uri s
 	if resp.Error != nil {
 		return nil, fmt.Errorf("openviking ls error: [%s] %s", resp.Error.Code, resp.Error.Message)
 	}
-	var entries []string
-	if err := json.Unmarshal(resp.Result, &entries); err != nil {
+	var rawEntries []struct {
+		URI   string `json:"uri"`
+		IsDir bool   `json:"isDir"`
+	}
+	if err := json.Unmarshal(resp.Result, &rawEntries); err != nil {
 		return nil, fmt.Errorf("decode ls result: %w", err)
+	}
+	entries := make([]string, len(rawEntries))
+	for i, e := range rawEntries {
+		u := e.URI
+		if e.IsDir && !strings.HasSuffix(u, "/") {
+			u += "/"
+		}
+		entries[i] = u
 	}
 	return entries, nil
 }

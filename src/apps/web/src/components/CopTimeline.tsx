@@ -216,6 +216,28 @@ function usePreviousHeaderRender(target: { phaseKey: string; text: string }) {
 function CopTimelineHeaderLabel({ text, phaseKey, shimmer }: { text: string; phaseKey: string; shimmer?: boolean }) {
   const target = useDelayedHeaderTarget(phaseKey, text)
   const prevRendered = usePreviousHeaderRender(target)
+  // 首次 mount 且处于 thinking phase 时，用打字机展示一次
+  const [retypingInitial, setRetypingInitial] = useState(
+    () => phaseKey === 'thinking-pending' || phaseKey === 'thinking-live',
+  )
+
+  // 打字机完成后或 phase 离开 thinking 时清除
+  useEffect(() => {
+    if (!retypingInitial) return
+    if (target.phaseKey !== 'thinking-pending' && target.phaseKey !== 'thinking-live') {
+      setRetypingInitial(false)
+      return
+    }
+    // text 打字完成后自然清除（PhaseRetypingLabel 内部用 interval，给足够时间）
+    const cps = HEADER_TYPE_CPS
+    const duration = HEADER_RETYPING_DELAY_MS + Math.ceil((target.text.length / cps) * 1000) + 100
+    const id = window.setTimeout(() => setRetypingInitial(false), duration)
+    return () => window.clearTimeout(id)
+  }, [retypingInitial, target.phaseKey, target.text])
+
+  if (retypingInitial) {
+    return <PhaseRetypingLabel key="initial-typing" text={target.text} shimmer={shimmer} />
+  }
 
   if (prevRendered?.phaseKey === 'thinking-pending' && target.phaseKey === 'thinking-live') {
     const prefix = trimThinkingEllipsis(longestCommonPrefix(trimThinkingEllipsis(prevRendered.text), target.text))
