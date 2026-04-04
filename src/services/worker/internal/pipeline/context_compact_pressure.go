@@ -177,7 +177,7 @@ func compactConsecutiveFailures(ctx context.Context, pool CompactPersistDB, acco
 		  LIMIT $3`,
 		accountID,
 		threadID,
-		maxConsecutiveCompactFailures+1,
+		maxConsecutiveCompactFailures*2+1,
 	)
 	if err != nil {
 		return 0
@@ -196,8 +196,10 @@ func compactConsecutiveFailures(ctx context.Context, pool CompactPersistDB, acco
 		}
 		phase, _ := payload["phase"].(string)
 		switch {
-		case phase == "completed" || phase == "started":
+		case phase == "completed":
 			return count
+		case phase == "started":
+			// started 是中间状态，不中断也不累加
 		case strings.Contains(phase, "failed") || phase == "circuit_breaker" || payload["error"] != nil:
 			count++
 		default:

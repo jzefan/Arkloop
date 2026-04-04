@@ -12,6 +12,7 @@ import { useLocale } from '../../contexts/LocaleContext'
 import { useTypewriter } from '../../hooks/useTypewriter'
 import { isDesktop } from '@arkloop/shared/desktop'
 import { isDocumentArtifact, isArtifactReferenced, getDomain } from './utils'
+import { messageTextContent } from '../../messageContent'
 import { CopyIconButton } from '../CopyIconButton'
 import { RefreshIconButton } from '../RefreshIconButton'
 import { ActionIconButton } from '../ActionIconButton'
@@ -82,7 +83,8 @@ export function AssistantMessage({
   plainTextForCopy,
 }: Props) {
   const { t } = useLocale()
-  const renderedContent = contentOverride ?? (contentPrefix && message.content.startsWith(contentPrefix) ? message.content.slice(contentPrefix.length).trimStart() : message.content)
+  const messageText = messageTextContent(message)
+  const renderedContent = contentOverride ?? (contentPrefix && messageText.startsWith(contentPrefix) ? messageText.slice(contentPrefix.length).trimStart() : messageText)
   const textForCopy = plainTextForCopy ?? renderedContent
   const displayedAssistantMd = useTypewriter(renderedContent, !streamMarkdown)
   const widgetCount = widgets?.length ?? 0
@@ -119,7 +121,7 @@ export function AssistantMessage({
       )}
       <div style={{ maxWidth: '663px' }}>
         {artifacts && onOpenDocument && (() => {
-          const referenced = artifacts.filter((a) => isDocumentArtifact(a) && isArtifactReferenced(message.content, a.key))
+          const referenced = artifacts.filter((a) => isDocumentArtifact(a) && isArtifactReferenced(messageText, a.key))
           if (referenced.length === 0) return null
           return (
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginBottom: '14px' }}>
