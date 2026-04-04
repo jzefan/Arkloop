@@ -30,12 +30,6 @@ function statusDotColor(s: HealthStatus): string {
 // SnapshotView — memory hits displayed as cards (matches Notebook EntryCard style)
 // ---------------------------------------------------------------------------
 
-function scoreColor(score: number): string {
-  if (score >= 0.85) return 'bg-green-500/15 text-green-400'
-  if (score >= 0.6) return 'bg-amber-500/15 text-amber-400'
-  return 'bg-[var(--c-bg-deep)] text-[var(--c-text-muted)]'
-}
-
 const CONTENT_MAX_LINES = 6
 const CONTENT_LINE_HEIGHT = 20
 const CONTENT_COLLAPSED_HEIGHT = CONTENT_MAX_LINES * CONTENT_LINE_HEIGHT
@@ -213,9 +207,6 @@ function HitCard({ hit, onLoadContent }: {
         </span>
         <div className="flex min-w-0 flex-1 flex-col gap-1">
           <div className="flex flex-wrap items-center gap-1.5">
-            <span className={`inline-flex items-center rounded-md px-2 py-0.5 text-xs font-medium ${scoreColor(hit.score)}`}>
-              {Math.round(hit.score * 100)}%
-            </span>
             {!hit.is_leaf && (
               <span className="inline-flex items-center rounded-md bg-blue-500/15 px-2 py-0.5 text-xs font-medium text-blue-400">
                 topic

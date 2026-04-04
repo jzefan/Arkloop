@@ -39,6 +39,7 @@ type Props = {
   contentOverride?: string
   /** 与正文展示解耦的复制文本（例如分段 Markdown 合并） */
   plainTextForCopy?: string
+  isLast?: boolean
 }
 
 function renderBrowserScreenshots(browserActions?: BrowserActionRef[], accessToken?: string) {
@@ -81,6 +82,7 @@ export function AssistantMessage({
   contentPrefix,
   contentOverride,
   plainTextForCopy,
+  isLast,
 }: Props) {
   const { t } = useLocale()
   const messageText = messageTextContent(message)
@@ -119,7 +121,7 @@ export function AssistantMessage({
   }, [displayedAssistantMd])
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column' }}>
+    <div className="group" style={{ display: 'flex', flexDirection: 'column' }}>
       {widgets && widgets.length > 0 && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '8px', width: '100%' }}>
           {widgets.map((w) => (
@@ -157,7 +159,10 @@ export function AssistantMessage({
             trimTrailingMargin
           />
         </div>
-        <div style={{ marginTop: contentCompact ? '-4px' : '4px', marginLeft: '-6px' }}>
+        <div
+          className={isLast ? '' : 'pointer-events-none opacity-0 group-hover:pointer-events-auto group-hover:opacity-100 transition-[opacity] duration-[180ms] ease-out'}
+          style={{ marginTop: contentCompact ? '-4px' : '4px', marginLeft: '-6px' }}
+        >
           <div style={{ display: 'flex', alignItems: 'center', gap: '3px' }}>
             <CopyIconButton
               onCopy={handleCopy}
