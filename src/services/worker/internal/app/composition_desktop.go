@@ -979,6 +979,9 @@ func desktopChannelDelivery(db data.DesktopDB) pipeline.RunMiddleware {
 		if db == nil || (channelType != "telegram" && channelType != "discord") {
 			return err
 		}
+		if rc.ChannelOutputDelivered {
+			return err
+		}
 		finalOutput := strings.TrimSpace(rc.FinalAssistantOutput)
 		finalOutputs := pipelineNormalizedAssistantOutputs(rc.FinalAssistantOutputs, finalOutput)
 		if pipeline.ShouldSuppressHeartbeatOutput(rc, finalOutput) {
@@ -2113,6 +2116,9 @@ func (w *desktopEventWriter) visibleAssistantOutput() string {
 	if strings.TrimSpace(w.visibleAssistantText) != "" {
 		return strings.TrimSpace(w.visibleAssistantText)
 	}
+	if len(w.toolDeliveredTexts) > 0 {
+		return strings.Join(w.toolDeliveredTexts, "")
+	}
 	return strings.Join(w.assistantDeltas, "")
 }
 
@@ -2321,6 +2327,9 @@ func (w *desktopEventWriter) finalAssistantMessage() llm.Message {
 	}
 	content := strings.Join(w.assistantDeltas, "")
 	if strings.TrimSpace(content) == "" {
+		content = w.visibleAssistantOutput()
+	}
+	if strings.TrimSpace(content) == "" {
 		return llm.Message{Role: "assistant"}
 	}
 	return llm.Message{
@@ -2410,6 +2419,7 @@ func desktopPersistFinalAssistantOutput(
 		rc.FinalAssistantOutput = content
 		rc.FinalAssistantOutputs = w.visibleAssistantOutputs()
 		rc.TelegramStreamDeliveryRemainder = w.telegramStreamRemainder()
+		rc.ChannelOutputDelivered = len(w.toolDeliveredTexts) > 0
 	}
 	return nil
 }
