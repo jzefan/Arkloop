@@ -1810,7 +1810,7 @@ func shouldSuppressToolResultReplay(runCtx RunContext, toolName string, success 
 
 func isTerminalSideEffectTool(toolName string) bool {
 	switch toolName {
-	case "telegram_reply", "telegram_react", "telegram_send_file":
+	case "telegram_react", "telegram_send_file":
 		return true
 	default:
 		return false

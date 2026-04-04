@@ -1808,7 +1808,7 @@ func TestDesktopPersistFinalAssistantOutputWritesRunFailedWhenMessageInsertFails
 	}
 }
 
-func TestDesktopEventWriterUsesTelegramReplyToolTextAsVisibleAssistantOutput(t *testing.T) {
+func TestDesktopEventWriterCapturesTelegramReplyOverride(t *testing.T) {
 	ctx := context.Background()
 
 	sqlitePool, err := sqliteadapter.AutoMigrate(ctx, filepath.Join(t.TempDir(), "desktop.db"))
@@ -1830,17 +1830,16 @@ func TestDesktopEventWriterUsesTelegramReplyToolTextAsVisibleAssistantOutput(t *
 	writer := &desktopEventWriter{
 		db:         db,
 		run:        data.Run{ID: runID, AccountID: accountID, ThreadID: threadID},
-		traceID:    "telegram-reply-visible",
+		traceID:    "telegram-reply-override",
 		runsRepo:   data.DesktopRunsRepository{},
 		eventsRepo: data.DesktopRunEventsRepository{},
 		usageRepo:  data.UsageRecordsRepository{},
 	}
 
-	replyCall := events.NewEmitter("telegram-reply-visible").Emit("tool.call", map[string]any{
+	replyCall := events.NewEmitter("telegram-reply-override").Emit("tool.call", map[string]any{
 		"tool_name":    "telegram_reply",
 		"tool_call_id": "call-1",
 		"arguments": map[string]any{
-			"text":                "hello~ 喵！（收到了，正在修复中喵）",
 			"reply_to_message_id": "6592",
 		},
 	}, nil, nil)
@@ -1848,21 +1847,15 @@ func TestDesktopEventWriterUsesTelegramReplyToolTextAsVisibleAssistantOutput(t *
 		t.Fatalf("append tool.call: %v", err)
 	}
 
-	completed := events.NewEmitter("telegram-reply-visible").Emit("run.completed", map[string]any{}, nil, nil)
-	if err := writer.append(ctx, runID, completed, "normal"); err != nil {
-		t.Fatalf("append run.completed: %v", err)
+	if writer.pendingReplyOverride != "6592" {
+		t.Fatalf("expected pendingReplyOverride=6592, got %q", writer.pendingReplyOverride)
 	}
-
-	got := writer.visibleAssistantOutputs()
-	if len(got) != 1 || got[0] != "hello~ 喵！（收到了，正在修复中喵）" {
-		t.Fatalf("unexpected visible assistant outputs: %#v", got)
-	}
-	if writer.visibleAssistantOutput() != "hello~ 喵！（收到了，正在修复中喵）" {
-		t.Fatalf("unexpected visible assistant output: %q", writer.visibleAssistantOutput())
+	if len(writer.toolDeliveredTexts) != 0 {
+		t.Fatalf("telegram_reply should not contribute to toolDeliveredTexts, got %v", writer.toolDeliveredTexts)
 	}
 }
 
-func TestDesktopPersistFinalAssistantOutputPersistsTelegramReplyToolText(t *testing.T) {
+func TestDesktopPersistFinalAssistantOutputSetsReplyOverride(t *testing.T) {
 	ctx := context.Background()
 
 	sqlitePool, err := sqliteadapter.AutoMigrate(ctx, filepath.Join(t.TempDir(), "desktop.db"))
@@ -1883,48 +1876,32 @@ func TestDesktopPersistFinalAssistantOutputPersistsTelegramReplyToolText(t *test
 
 	rc := &pipeline.RunContext{
 		Run:     data.Run{ID: runID, AccountID: accountID, ThreadID: threadID},
-		Emitter: events.NewEmitter("persist-telegram-tool-text"),
+		Emitter: events.NewEmitter("persist-reply-override"),
 	}
 	writer := &desktopEventWriter{
-		db:                 db,
-		run:                rc.Run,
-		traceID:            "persist-telegram-tool-text",
-		runsRepo:           data.DesktopRunsRepository{},
-		eventsRepo:         data.DesktopRunEventsRepository{},
-		completed:          true,
-		terminalStatus:     "completed",
-		toolDeliveredTexts: []string{"哎哎，什么事喵！"},
+		db:                   db,
+		run:                  rc.Run,
+		traceID:              "persist-reply-override",
+		runsRepo:             data.DesktopRunsRepository{},
+		eventsRepo:           data.DesktopRunEventsRepository{},
+		completed:            true,
+		terminalStatus:       "completed",
+		pendingReplyOverride: "6592",
+		assistantDeltas:      []string{"回复内容喵"},
 	}
 
 	if err := desktopPersistFinalAssistantOutput(ctx, db, rc, writer, data.DesktopRunsRepository{}, data.DesktopRunEventsRepository{}); err != nil {
 		t.Fatalf("desktopPersistFinalAssistantOutput: %v", err)
 	}
 
-	var (
-		role         string
-		content      string
-		metadataJSON string
-	)
-	if err := db.QueryRow(
-		ctx,
-		`SELECT role, content, metadata_json
-		   FROM messages
-		  WHERE thread_id = $1 AND json_extract(metadata_json, '$.run_id') = $2
-		  ORDER BY created_at DESC, id DESC
-		  LIMIT 1`,
-		threadID,
-		runID.String(),
-	).Scan(&role, &content, &metadataJSON); err != nil {
-		t.Fatalf("select persisted message: %v", err)
+	if rc.ChannelReplyOverride == nil {
+		t.Fatal("expected ChannelReplyOverride to be set")
 	}
-	if role != "assistant" {
-		t.Fatalf("expected assistant role, got %q", role)
+	if rc.ChannelReplyOverride.MessageID != "6592" {
+		t.Fatalf("expected reply override message_id=6592, got %q", rc.ChannelReplyOverride.MessageID)
 	}
-	if content != "哎哎，什么事喵！" {
-		t.Fatalf("unexpected content: %q", content)
-	}
-	if !strings.Contains(metadataJSON, `"completion_state":"complete"`) {
-		t.Fatalf("expected completion_state in metadata, got %s", metadataJSON)
+	if rc.ChannelOutputDelivered {
+		t.Fatal("telegram_reply should not set ChannelOutputDelivered")
 	}
 }
 
