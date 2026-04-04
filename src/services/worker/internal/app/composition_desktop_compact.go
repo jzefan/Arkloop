@@ -26,6 +26,10 @@ func resolveDesktopContextCompact(ctx context.Context, db data.DesktopDB) (pipel
 	if persistPct > 100 {
 		persistPct = 100
 	}
+	persistKeepTailPct := desktopResolveNonNegInt(ctx, resolver, registry, "context.compact.persist_keep_tail_pct", scope, 0)
+	if persistKeepTailPct > 100 {
+		persistKeepTailPct = 100
+	}
 	return pipeline.ContextCompactSettings{
 		Enabled:                     desktopResolveBool(ctx, resolver, registry, "context.compact.enabled", scope, false),
 		MaxMessages:                 desktopResolveNonNegInt(ctx, resolver, registry, "context.compact.max_messages", scope, 0),
@@ -38,6 +42,7 @@ func resolveDesktopContextCompact(ctx context.Context, db data.DesktopDB) (pipel
 		PersistTriggerContextPct:    persistPct,
 		FallbackContextWindowTokens: desktopResolvePositiveInt(ctx, resolver, registry, "context.compact.fallback_context_window_tokens", scope, 128000),
 		PersistKeepLastMessages:     desktopResolvePositiveInt(ctx, resolver, registry, "context.compact.persist_keep_last_messages", scope, 40),
+		PersistKeepTailPct:          persistKeepTailPct,
 	}, nil
 }
 
