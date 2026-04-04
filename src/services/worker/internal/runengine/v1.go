@@ -301,6 +301,10 @@ func (e *EngineV1) Execute(ctx context.Context, pool *pgxpool.Pool, run data.Run
 	if persistPct > 100 {
 		persistPct = 100
 	}
+	persistKeepTailPct := resolveNonNegativeInt(ctx, e.configResolver, registry, "context.compact.persist_keep_tail_pct", platformScope, 0)
+	if persistKeepTailPct > 100 {
+		persistKeepTailPct = 100
+	}
 	rc.ContextCompact = pipeline.ContextCompactSettings{
 		Enabled:                     resolveBool(ctx, e.configResolver, registry, "context.compact.enabled", platformScope, false),
 		MaxMessages:                 resolveNonNegativeInt(ctx, e.configResolver, registry, "context.compact.max_messages", platformScope, 0),
@@ -313,6 +317,7 @@ func (e *EngineV1) Execute(ctx context.Context, pool *pgxpool.Pool, run data.Run
 		PersistTriggerContextPct:    persistPct,
 		FallbackContextWindowTokens: resolvePositiveInt(ctx, e.configResolver, registry, "context.compact.fallback_context_window_tokens", platformScope, 128000),
 		PersistKeepLastMessages:     resolvePositiveInt(ctx, e.configResolver, registry, "context.compact.persist_keep_last_messages", platformScope, defaultPersistKeepLastMessagesWorker),
+		PersistKeepTailPct:          persistKeepTailPct,
 	}
 	rc.AgentReasoningIterationsLimit = resolveNonNegativeInt(ctx, e.configResolver, registry, "limit.agent_reasoning_iterations", platformScope, 0)
 	rc.ToolContinuationBudgetLimit = resolvePositiveInt(ctx, e.configResolver, registry, "limit.tool_continuation_budget", platformScope, 32)

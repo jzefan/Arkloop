@@ -222,14 +222,6 @@ func NewContextCompactMiddleware(
 			if keep <= 0 {
 				keep = defaultPersistKeepLastMessages
 			}
-			// 配置的「保留最近 N 条」在总条数不足时按实际条数折算，否则 N≥len 时永远无法触发 persist。
-			tailKeep := keep
-			if tailKeep >= len(msgs) {
-				tailKeep = len(msgs) - 1
-			}
-			if tailKeep < 1 {
-				tailKeep = 1
-			}
 			requestEstimate := HistoryThreadPromptTokens(enc, contextCompactRequestMessages(rc.SystemPrompt, msgs))
 			anchor, anchored := resolveContextCompactPressureAnchor(ctx, pool, rc)
 			if anchored {
@@ -244,6 +236,17 @@ func NewContextCompactMiddleware(
 			if pressure.ContextPressureTokens >= trigger && len(ids) == len(msgs) {
 				compactBase := msgs[fixedPrefixCount:]
 				compactBaseIDs := ids[fixedPrefixCount:]
+				var tailKeep int
+				tailPct := cfg.PersistKeepTailPct
+				if tailPct > 100 {
+					tailPct = 100
+				}
+				if tailPct > 0 && window > 0 {
+					tailTokenBudget := window * tailPct / 100
+					tailKeep = computeTailKeepByTokenBudget(enc, compactBase, tailTokenBudget, keep)
+				} else {
+					tailKeep = keep
+				}
 				if tailKeep >= len(compactBase) {
 					tailKeep = len(compactBase) - 1
 				}
@@ -311,6 +314,7 @@ func NewContextCompactMiddleware(
 							ApplyContextCompactPressureFields(persistCompletedEvent, pressure)
 							tail := make([]llm.Message, len(compactBase)-split)
 							copy(tail, compactBase[split:])
+							tail = truncateLargeTailMessages(enc, tail)
 							msgs = append([]llm.Message{makeCompactSnapshotMessage(persistSummary)}, tail...)
 							ids = append([]uuid.UUID{uuid.Nil}, compactBaseIDs[split:]...)
 							rc.Messages = msgs
@@ -590,7 +594,7 @@ func MaybeInlineCompactMessages(
 		enc, _ = tiktoken.GetEncoding(tiktoken.MODEL_O200K_BASE)
 	}
 	window := routing.RouteContextWindowTokens(rc.SelectedRoute.Route)
-	trigger, _ := compactPersistTriggerTokens(cfg, window)
+	trigger, window := compactPersistTriggerTokens(cfg, window)
 	estimate := HistoryThreadPromptTokens(enc, msgs)
 	stats := ComputeContextCompactPressure(estimate, anchor)
 	if stats.ContextPressureTokens < trigger {
@@ -610,7 +614,17 @@ func MaybeInlineCompactMessages(
 	if keep <= 0 {
 		keep = defaultPersistKeepLastMessages
 	}
-	tailKeep := keep
+	var tailKeep int
+	tailPct := cfg.PersistKeepTailPct
+	if tailPct > 100 {
+		tailPct = 100
+	}
+	if tailPct > 0 && window > 0 {
+		tailTokenBudget := window * tailPct / 100
+		tailKeep = computeTailKeepByTokenBudget(enc, compactBase, tailTokenBudget, keep)
+	} else {
+		tailKeep = keep
+	}
 	if tailKeep >= len(compactBase) {
 		tailKeep = len(compactBase) - 1
 	}
@@ -631,6 +645,7 @@ func MaybeInlineCompactMessages(
 	}
 	tail := make([]llm.Message, len(compactBase)-split)
 	copy(tail, compactBase[split:])
+	tail = truncateLargeTailMessages(enc, tail)
 	compactedBase := append([]llm.Message{makeCompactSnapshotMessage(summary)}, tail...)
 	return compactedBase, stats, true, nil
 }

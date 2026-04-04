@@ -1,6 +1,7 @@
 package pipeline
 
 import (
+	"fmt"
 	"strings"
 
 	"arkloop/services/worker/internal/llm"
@@ -29,6 +30,8 @@ type ContextCompactSettings struct {
 	// FallbackContextWindowTokens 路由无 available_catalog.context_length 时用于比例换算。
 	FallbackContextWindowTokens int
 	PersistKeepLastMessages     int
+	// PersistKeepTailPct 1–100：persist 时保留 context window 的百分比作为尾部 token 预算；0 = 用旧的条数逻辑。
+	PersistKeepTailPct int
 }
 
 func approxTokensFromText(s string) int {
@@ -160,6 +163,68 @@ func alignIDs(ids []uuid.UUID, n int) []uuid.UUID {
 		return ids
 	}
 	return nil
+}
+
+const (
+	tailTruncateThresholdTokens = 2000
+	tailTruncatePreviewTokens   = 512
+)
+
+// truncateLargeTailMessages 对尾部保留区里超过阈值的 user 消息截断为预览（内存副本，不改 DB）。
+// 最后一条 user 消息不截断（用户正在讨论的内容）。
+func truncateLargeTailMessages(enc *tiktoken.Tiktoken, msgs []llm.Message) []llm.Message {
+	if enc == nil || len(msgs) == 0 {
+		return msgs
+	}
+	lastUserIdx := -1
+	for i := len(msgs) - 1; i >= 0; i-- {
+		if msgs[i].Role == "user" {
+			lastUserIdx = i
+			break
+		}
+	}
+	out := make([]llm.Message, len(msgs))
+	copy(out, msgs)
+	for i := range out {
+		if i == lastUserIdx || out[i].Role != "user" {
+			continue
+		}
+		text := messageText(out[i])
+		encoded := enc.Encode(text, nil, nil)
+		if len(encoded) <= tailTruncateThresholdTokens {
+			continue
+		}
+		preview := enc.Decode(encoded[:tailTruncatePreviewTokens])
+		truncated := fmt.Sprintf("%s\n\n[... content truncated (%d tokens) ...]", preview, len(encoded))
+		out[i] = llm.Message{
+			Role:    out[i].Role,
+			Phase:   out[i].Phase,
+			Content: []llm.ContentPart{{Type: "text", Text: truncated}},
+		}
+	}
+	return out
+}
+
+// computeTailKeepByTokenBudget 从 msgs 末尾往前累加 token，在 tokenBudget 和 maxMessages 双重约束下返回保留条数。
+func computeTailKeepByTokenBudget(enc *tiktoken.Tiktoken, msgs []llm.Message, tokenBudget int, maxMessages int) int {
+	if len(msgs) == 0 || tokenBudget <= 0 {
+		return 0
+	}
+	const tokensPerMessage = 3
+	accum := 0
+	keep := 0
+	for i := len(msgs) - 1; i >= 0; i-- {
+		mt := tokensPerMessage + len(enc.Encode(msgs[i].Role, nil, nil)) + len(enc.Encode(messageText(msgs[i]), nil, nil))
+		if keep > 0 && accum+mt > tokenBudget {
+			break
+		}
+		accum += mt
+		keep++
+		if maxMessages > 0 && keep >= maxMessages {
+			break
+		}
+	}
+	return keep
 }
 
 // ContextCompactHasActiveBudget enabled 为真且至少有一项预算大于 0。
