@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { useEffect, useRef, useState, useLayoutEffect } from 'react'
 import { Check, Share2, Split, Terminal } from 'lucide-react'
 import type { MessageResponse } from '../../api'
 import type { WebSource, ArtifactRef, BrowserActionRef, WidgetRef } from '../../storage'
@@ -110,6 +110,14 @@ export function AssistantMessage({
     void navigator.clipboard.writeText(textForCopy)
   }
 
+  const contentRef = useRef<HTMLDivElement>(null)
+  const [contentCompact, setContentCompact] = useState(false)
+  useLayoutEffect(() => {
+    const el = contentRef.current
+    if (!el) return
+    setContentCompact(el.scrollHeight <= 36)
+  }, [displayedAssistantMd])
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column' }}>
       {widgets && widgets.length > 0 && (
@@ -137,17 +145,19 @@ export function AssistantMessage({
           )
         })()}
         {renderBrowserScreenshots(browserActions, accessToken)}
-        <MarkdownRenderer
-          content={displayedAssistantMd}
-          streaming={streamMarkdown}
-          webSources={webSources}
-          artifacts={artifacts}
-          accessToken={accessToken}
-          runId={message.run_id}
-          onOpenDocument={onOpenDocument}
-          trimTrailingMargin
-        />
-        <div style={{ marginTop: '4px' }}>
+        <div ref={contentRef}>
+          <MarkdownRenderer
+            content={displayedAssistantMd}
+            streaming={streamMarkdown}
+            webSources={webSources}
+            artifacts={artifacts}
+            accessToken={accessToken}
+            runId={message.run_id}
+            onOpenDocument={onOpenDocument}
+            trimTrailingMargin
+          />
+        </div>
+        <div style={{ marginTop: contentCompact ? '-4px' : '4px', marginLeft: '-6px' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '3px' }}>
             <CopyIconButton
               onCopy={handleCopy}
