@@ -357,7 +357,7 @@ export function AssistantThinkingMarkdown({
         {!markdown.trim() && live ? (
           <span className="thinking-shimmer cop-thinking-output-placeholder">{t.assistantStreamThinkingPlaceholder}</span>
         ) : (
-          <MarkdownRenderer content={live ? displayed : markdown} disableMath trimTrailingMargin compact />
+          <MarkdownRenderer content={live ? displayed : markdown} disableMath streaming={live} trimTrailingMargin compact />
         )}
       </div>
       {overflows && (

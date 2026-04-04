@@ -137,6 +137,7 @@ export function AssistantMessage({
         {renderBrowserScreenshots(browserActions, accessToken)}
         <MarkdownRenderer
           content={displayedAssistantMd}
+          streaming={streamMarkdown}
           webSources={webSources}
           artifacts={artifacts}
           accessToken={accessToken}

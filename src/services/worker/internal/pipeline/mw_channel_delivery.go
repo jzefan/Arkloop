@@ -238,20 +238,24 @@ func deliverTelegramChannelOutputs(
 	}
 	sender := NewTelegramChannelSenderWithClient(client, channel.Token, resolveSegmentDelay())
 	replyTo := telegramReplyReference(rc)
-	for _, item := range outputs {
+	for i, item := range outputs {
 		trimmed := strings.TrimSpace(item)
 		if trimmed == "" {
 			continue
 		}
+		ref := replyTo
+		if i > 0 {
+			ref = nil
+		}
 		messageIDs, err := sender.SendText(ctx, ChannelDeliveryTarget{
 			ChannelType:  rc.ChannelContext.ChannelType,
 			Conversation: rc.ChannelContext.Conversation,
-			ReplyTo:      replyTo,
+			ReplyTo:      ref,
 		}, trimmed)
 		if err != nil {
 			return err
 		}
-		if err := recordChannelDeliverySuccess(ctx, pool, deliveryRepo, ledgerRepo, rc, replyTo, messageIDs); err != nil {
+		if err := recordChannelDeliverySuccess(ctx, pool, deliveryRepo, ledgerRepo, rc, ref, messageIDs); err != nil {
 			slog.WarnContext(ctx, "telegram channel delivery record failed", "run_id", rc.Run.ID, "err", err.Error())
 			return err
 		}
