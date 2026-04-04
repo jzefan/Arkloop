@@ -2,14 +2,28 @@ package pipeline
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 
 	"arkloop/services/shared/messagecontent"
+	"arkloop/services/worker/internal/data"
+	"arkloop/services/worker/internal/events"
 	"arkloop/services/worker/internal/llm"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5"
 )
+
+type capturedGroupTrimEventAppender struct {
+	events []events.RunEvent
+}
+
+func (c *capturedGroupTrimEventAppender) AppendRunEvent(_ context.Context, _ pgx.Tx, _ uuid.UUID, ev events.RunEvent) (int64, error) {
+	c.events = append(c.events, ev)
+	return int64(len(c.events)), nil
+}
 
 func TestTrimRunContextMessagesToApproxTokens_keepsSuffixWithinBudget(t *testing.T) {
 	const budget = 50
@@ -115,5 +129,165 @@ func TestMessageTokens_outputTokensOnlyForAssistant(t *testing.T) {
 	}
 	if got := messageTokens(a); got != 500 {
 		t.Fatalf("assistant should use output_tokens, got %d want 500", got)
+	}
+}
+
+func TestNewChannelGroupContextTrimMiddleware_emitsDebugTrimEvent(t *testing.T) {
+	t.Setenv("ARKLOOP_CHANNEL_GROUP_MAX_CONTEXT_TOKENS", "40")
+	appender := &capturedGroupTrimEventAppender{}
+	mw := NewChannelGroupContextTrimMiddleware(GroupContextTrimDeps{
+		Pool:            noopCompactPersistDB{},
+		EventsRepo:      appender,
+		EmitDebugEvents: true,
+	})
+	long := strings.Repeat("w", 400)
+	runID := uuid.New()
+	rc := &RunContext{
+		Run:            dataRunForTest(runID),
+		Emitter:        events.NewEmitter("trace-group-trim"),
+		ChannelContext: &ChannelContext{ConversationType: "supergroup"},
+		Messages: []llm.Message{
+			{Role: "user", Content: []llm.ContentPart{{Type: "text", Text: long}}},
+			{Role: "user", Content: []llm.ContentPart{{Type: "text", Text: long}}},
+			{Role: "user", Content: []llm.ContentPart{{Type: "text", Text: "tail"}}},
+		},
+		ThreadMessageIDs: []uuid.UUID{uuid.New(), uuid.New(), uuid.New()},
+	}
+	if err := mw(context.Background(), rc, func(context.Context, *RunContext) error { return nil }); err != nil {
+		t.Fatal(err)
+	}
+	if len(appender.events) != 1 {
+		t.Fatalf("expected 1 debug event, got %d", len(appender.events))
+	}
+	ev := appender.events[0]
+	if ev.Type != "run.context_compact" {
+		t.Fatalf("unexpected event type: %s", ev.Type)
+	}
+	if ev.DataJSON["op"] != "group_trim" || ev.DataJSON["phase"] != "completed" {
+		t.Fatalf("unexpected event payload: %#v", ev.DataJSON)
+	}
+	if ev.DataJSON["dropped_count"] != 2 {
+		t.Fatalf("expected dropped_count=2, got %#v", ev.DataJSON["dropped_count"])
+	}
+	if ev.DataJSON["estimated_text_tokens_before"] == nil || ev.DataJSON["estimated_image_tokens_before"] == nil {
+		t.Fatalf("expected token diagnostics, got %#v", ev.DataJSON)
+	}
+}
+
+func TestNewChannelGroupContextTrimMiddleware_skipsDebugEventWhenDisabled(t *testing.T) {
+	t.Setenv("ARKLOOP_CHANNEL_GROUP_MAX_CONTEXT_TOKENS", "40")
+	appender := &capturedGroupTrimEventAppender{}
+	mw := NewChannelGroupContextTrimMiddleware(GroupContextTrimDeps{
+		Pool:            noopCompactPersistDB{},
+		EventsRepo:      appender,
+		EmitDebugEvents: false,
+	})
+	long := strings.Repeat("w", 400)
+	rc := &RunContext{
+		Run:              dataRunForTest(uuid.New()),
+		Emitter:          events.NewEmitter("trace-group-trim"),
+		ChannelContext:   &ChannelContext{ConversationType: "supergroup"},
+		Messages:         []llm.Message{{Role: "user", Content: []llm.ContentPart{{Type: "text", Text: long}}}, {Role: "user", Content: []llm.ContentPart{{Type: "text", Text: long}}}, {Role: "user", Content: []llm.ContentPart{{Type: "text", Text: "tail"}}}},
+		ThreadMessageIDs: []uuid.UUID{uuid.New(), uuid.New(), uuid.New()},
+	}
+	if err := mw(context.Background(), rc, func(context.Context, *RunContext) error { return nil }); err != nil {
+		t.Fatal(err)
+	}
+	if len(appender.events) != 0 {
+		t.Fatalf("expected no debug events, got %d", len(appender.events))
+	}
+}
+
+func TestBuildGroupTrimEventIncludesSnapshotFlag(t *testing.T) {
+	before := groupTrimStats{
+		MessageCount:         4,
+		RealMessageCount:     3,
+		HasSnapshotPrefix:    true,
+		EstimatedTrimWeight:  100,
+		EstimatedTextTokens:  80,
+		EstimatedImageTokens: 20,
+	}
+	after := groupTrimStats{
+		MessageCount:         3,
+		RealMessageCount:     2,
+		HasSnapshotPrefix:    true,
+		EstimatedTrimWeight:  60,
+		EstimatedTextTokens:  50,
+		EstimatedImageTokens: 10,
+	}
+	ev := buildGroupTrimEvent(before, after, 32768, false)
+	if ev == nil {
+		t.Fatal("expected event")
+	}
+	if ev["has_snapshot_prefix"] != true {
+		t.Fatalf("expected snapshot flag, got %#v", ev["has_snapshot_prefix"])
+	}
+	if ev["dropped_count"] != 1 {
+		t.Fatalf("expected dropped_count=1, got %#v", ev["dropped_count"])
+	}
+}
+
+type noopCompactPersistDB struct{}
+
+func (noopCompactPersistDB) BeginTx(context.Context, pgx.TxOptions) (pgx.Tx, error) { return noopTx{}, nil }
+func (noopCompactPersistDB) QueryRow(context.Context, string, ...any) pgx.Row       { return noopRow{} }
+
+type noopTx struct{}
+
+func (noopTx) Begin(context.Context) (pgx.Tx, error)                                  { return noopTx{}, nil }
+func (noopTx) Commit(context.Context) error                                            { return nil }
+func (noopTx) Rollback(context.Context) error                                          { return nil }
+func (noopTx) CopyFrom(context.Context, pgx.Identifier, []string, pgx.CopyFromSource) (int64, error) {
+	return 0, nil
+}
+func (noopTx) SendBatch(context.Context, *pgx.Batch) pgx.BatchResults { return noopBatchResults{} }
+func (noopTx) LargeObjects() pgx.LargeObjects                         { return pgx.LargeObjects{} }
+func (noopTx) Prepare(context.Context, string, string) (*pgconn.StatementDescription, error) {
+	return nil, nil
+}
+func (noopTx) Exec(context.Context, string, ...any) (pgconn.CommandTag, error) { return pgconn.CommandTag{}, nil }
+func (noopTx) Query(context.Context, string, ...any) (pgx.Rows, error)          { return noopRows{}, nil }
+func (noopTx) QueryRow(context.Context, string, ...any) pgx.Row                 { return noopRow{} }
+func (noopTx) Conn() *pgx.Conn                                                  { return nil }
+
+type noopRow struct{}
+
+func (noopRow) Scan(...any) error { return nil }
+
+type noopRows struct{}
+
+func (noopRows) Close() {}
+func (noopRows) Err() error { return nil }
+func (noopRows) CommandTag() pgconn.CommandTag { return pgconn.CommandTag{} }
+func (noopRows) FieldDescriptions() []pgconn.FieldDescription { return nil }
+func (noopRows) Next() bool { return false }
+func (noopRows) Scan(...any) error { return nil }
+func (noopRows) Values() ([]any, error) { return nil, nil }
+func (noopRows) RawValues() [][]byte { return nil }
+func (noopRows) Conn() *pgx.Conn { return nil }
+
+type noopBatchResults struct{}
+
+func (noopBatchResults) Exec() (pgconn.CommandTag, error) { return pgconn.CommandTag{}, nil }
+func (noopBatchResults) Query() (pgx.Rows, error) { return noopRows{}, nil }
+func (noopBatchResults) QueryRow() pgx.Row { return noopRow{} }
+func (noopBatchResults) Close() error { return nil }
+
+func dataRunForTest(runID uuid.UUID) data.Run {
+	return data.Run{ID: runID, AccountID: uuid.New(), ThreadID: uuid.New()}
+}
+
+func TestGroupTrimEventJSONStable(t *testing.T) {
+	ev := buildGroupTrimEvent(
+		groupTrimStats{MessageCount: 3, RealMessageCount: 3, EstimatedTrimWeight: 90, EstimatedTextTokens: 80, EstimatedImageTokens: 10},
+		groupTrimStats{MessageCount: 2, RealMessageCount: 2, EstimatedTrimWeight: 60, EstimatedTextTokens: 50, EstimatedImageTokens: 10},
+		100,
+		false,
+	)
+	if ev == nil {
+		t.Fatal("expected event")
+	}
+	if _, err := json.Marshal(ev); err != nil {
+		t.Fatalf("marshal event: %v", err)
 	}
 }
