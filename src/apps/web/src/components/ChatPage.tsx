@@ -473,7 +473,7 @@ function LiveTurnMarkdown({
       typewriterDone,
     })
   }, [content.length, displayed.length, typewriterDone])
-  return <MarkdownRenderer content={displayed} {...rest} />
+  return <MarkdownRenderer content={displayed} streaming={!typewriterDone} {...rest} />
 }
 
 const HistoricalMessageList = memo(function HistoricalMessageList({
