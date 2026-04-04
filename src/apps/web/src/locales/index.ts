@@ -703,6 +703,8 @@ export interface LocaleStrings {
     promptInjection: string;
     extensions: string;
     developer: string;
+    agentCoreHeader: string;
+    managementHeader: string;
     // general settings
     profileSection: string;
     localModeLabel: string;

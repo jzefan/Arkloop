@@ -1,8 +1,10 @@
+import { useRef } from 'react'
 import { ChevronLeft, ChevronRight, PanelLeftClose, PanelLeftOpen, Glasses } from 'lucide-react'
 import { isDesktop } from '@arkloop/shared/desktop'
 import { ModeSwitch } from './ModeSwitch'
 import { useLocale } from '../contexts/LocaleContext'
 import type { AppMode } from '../storage'
+import { beginPerfTrace, endPerfTrace } from '../perfDebug'
 
 export const DESKTOP_TITLEBAR_HEIGHT = 44
 
@@ -29,6 +31,7 @@ export function DesktopTitleBar({
   onTogglePrivateMode,
 }: Props) {
   const { t } = useLocale()
+  const sidebarToggleTrace = useRef<ReturnType<typeof beginPerfTrace>>(null)
 
   if (!isDesktop()) return null
 
@@ -57,7 +60,28 @@ export function DesktopTitleBar({
         className="flex items-center gap-1 self-start pt-[6px]"
         style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
       >
-        <button onClick={onToggleSidebar} className={btnCls}>
+        <button
+          onClick={() => {
+            endPerfTrace(sidebarToggleTrace.current, {
+              phase: 'click',
+              collapsed: sidebarCollapsed,
+              appMode,
+            })
+            sidebarToggleTrace.current = null
+            onToggleSidebar()
+          }}
+          onPointerDown={() => {
+            sidebarToggleTrace.current = beginPerfTrace('desktop_titlebar_sidebar_interaction', {
+              phase: 'pointerdown',
+              collapsed: sidebarCollapsed,
+              appMode,
+            })
+          }}
+          onPointerLeave={() => {
+            sidebarToggleTrace.current = null
+          }}
+          className={btnCls}
+        >
           {sidebarCollapsed ? <PanelLeftOpen size={17} /> : <PanelLeftClose size={17} />}
         </button>
         <button onClick={() => window.history.back()} className={btnCls}>

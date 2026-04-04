@@ -629,7 +629,11 @@ export function MemoryConfigModal({ open, onClose, accessToken, memConfig, onCon
           throw new Error(ds.memoryConfigureError)
         }
 
-        const params = buildOpenVikingConfigureParams(resolved.vlm, resolved.embedding, resolved.rerank ?? undefined)
+        const params = buildOpenVikingConfigureParams(
+          resolved.vlm,
+          resolved.embedding,
+          resolved.rerank ?? undefined,
+        )
         const { operation_id } = await bridgeClient.performAction('openviking', 'configure', params)
         await new Promise<void>((resolve, reject) => {
           let done = false
