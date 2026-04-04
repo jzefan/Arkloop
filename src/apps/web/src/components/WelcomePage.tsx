@@ -5,8 +5,9 @@ import { ChatInput, type Attachment } from './ChatInput'
 import { ErrorCallout, type AppError } from './ErrorCallout'
 import { NotificationBell } from './NotificationBell'
 import { isDesktop } from '@arkloop/shared/desktop'
+import { DebugTrigger } from '@arkloop/shared'
 import { createThread, createMessage, createRun, uploadStagingAttachment, isApiError, type ThreadResponse, type MeResponse } from '../api'
-import { writeActiveThreadIdToStorage, addSearchThreadId, SEARCH_PERSONA_KEY, transferGlobalClawFolderToThread, readClawWorkFolder } from '../storage'
+import { writeActiveThreadIdToStorage, addSearchThreadId, SEARCH_PERSONA_KEY, transferGlobalClawFolderToThread, readClawWorkFolder, readDeveloperShowDebugPanel } from '../storage'
 import { useLocale } from '../contexts/LocaleContext'
 import { buildMessageRequest } from '../messageContent'
 
@@ -118,6 +119,7 @@ function buildGreeting(name: string | null, now: Date): string {
 
 export function WelcomePage() {
   const { accessToken, onLoggedOut, onThreadCreated, refreshCredits, onOpenNotifications, notificationVersion, creditsBalance: _creditsBalance, me, isPrivateMode, onTogglePrivateMode, isSearchMode, onEnterSearchMode, onExitSearchMode, pendingSkillPrompt, onConsumeSkillPrompt, onOpenSettings, appMode } = useOutletContext<OutletContext>()
+  const [showDebugPanel, setShowDebugPanel] = useState(() => readDeveloperShowDebugPanel())
   const [draft, setDraft] = useState('')
   const [attachments, setAttachments] = useState<Attachment[]>([])
   const attachmentsRef = useRef<Attachment[]>([])
@@ -127,6 +129,14 @@ export function WelcomePage() {
   const { t } = useLocale()
 
   const greeting = useMemo(() => buildGreeting(me?.username ?? null, new Date()), [me?.username])
+
+  useEffect(() => {
+    const handleChange = (e: Event) => {
+      setShowDebugPanel((e as CustomEvent<boolean>).detail)
+    }
+    window.addEventListener('arkloop:developer_show_debug_panel', handleChange)
+    return () => window.removeEventListener('arkloop:developer_show_debug_panel', handleChange)
+  }, [])
 
   useEffect(() => {
     if (pendingSkillPrompt) {
@@ -419,6 +429,7 @@ export function WelcomePage() {
           {error && <ErrorCallout error={error} />}
         </div>
       </div>
+      {showDebugPanel && <DebugTrigger />}
     </div>
   )
 }

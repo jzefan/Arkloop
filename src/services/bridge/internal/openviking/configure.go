@@ -2,6 +2,8 @@ package openviking
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -192,8 +194,14 @@ func RenderConfig(configPath string, params ConfigureParams) ([]byte, error) {
 	// --- Server ---
 	if params.RootAPIKey != nil && strings.TrimSpace(*params.RootAPIKey) != "" {
 		srv["root_api_key"] = strings.TrimSpace(*params.RootAPIKey)
+	} else if existing := strings.TrimSpace(asString(srv["root_api_key"])); existing != "" {
+		srv["root_api_key"] = existing
 	} else {
-		srv["root_api_key"] = nil
+		generated, err := generateRootAPIKey()
+		if err != nil {
+			return nil, fmt.Errorf("generate root_api_key: %w", err)
+		}
+		srv["root_api_key"] = generated
 	}
 
 	return json.MarshalIndent(cfg, "", "  ")
@@ -295,4 +303,17 @@ func normalizeStoragePaths(cfg map[string]any) {
 		}
 		sub["path"] = "./data"
 	}
+}
+
+func asString(v any) string {
+	s, _ := v.(string)
+	return s
+}
+
+func generateRootAPIKey() (string, error) {
+	buf := make([]byte, 24)
+	if _, err := rand.Read(buf); err != nil {
+		return "", err
+	}
+	return "ovk_" + hex.EncodeToString(buf), nil
 }
