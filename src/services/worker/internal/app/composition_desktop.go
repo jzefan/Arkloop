@@ -531,6 +531,7 @@ func (e *DesktopEngine) Execute(ctx context.Context, run data.Run, traceID strin
 		pipeline.NewMCPDiscoveryMiddleware(
 			e.mcpDiscoveryCache,
 			func(*pipeline.RunContext) mcp.DiscoveryQueryer { return e.db },
+			data.DesktopRunEventsRepository{},
 			e.toolExecutors,
 			e.allLlmSpecs,
 			e.baseAllowlist,

@@ -666,7 +666,7 @@ func TestDesktopOpenVikingMemoryMiddlewareUsesPromptInjectionResolver(t *testing
 	}
 
 	provider := &desktopMemoryProviderStub{appendCalled: make(chan struct{}, 1)}
-	mw := pipeline.NewMemoryMiddleware(provider, pipeline.NewDesktopMemorySnapshotStore(db), db, capability.Resolver)
+	mw := pipeline.NewMemoryMiddleware(provider, pipeline.NewDesktopMemorySnapshotStore(db), db, capability.Resolver, nil, nil)
 	userID := uuid.New()
 	rc := &pipeline.RunContext{
 		Run: data.Run{
@@ -3689,6 +3689,10 @@ func (s *desktopMemoryProviderStub) Find(context.Context, memory.MemoryIdentity,
 
 func (s *desktopMemoryProviderStub) Content(context.Context, memory.MemoryIdentity, string, memory.MemoryLayer) (string, error) {
 	return "", nil
+}
+
+func (s *desktopMemoryProviderStub) ListDir(context.Context, memory.MemoryIdentity, string) ([]string, error) {
+	return nil, nil
 }
 
 func (s *desktopMemoryProviderStub) AppendSessionMessages(context.Context, memory.MemoryIdentity, string, []memory.MemoryMessage) error {

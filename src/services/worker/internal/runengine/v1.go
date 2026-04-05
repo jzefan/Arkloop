@@ -504,6 +504,7 @@ func buildAgentConfigLayer(
 		pipeline.NewMCPDiscoveryMiddleware(
 			deps.MCPDiscoveryCache,
 			func(*pipeline.RunContext) mcp.DiscoveryQueryer { return deps.DBPool },
+			eventsRepo,
 			deps.ToolExecutors,
 			deps.AllLlmToolSpecs,
 			baseAllowlistSet,

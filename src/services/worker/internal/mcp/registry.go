@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"arkloop/services/worker/internal/llm"
 	"arkloop/services/worker/internal/tools"
@@ -24,17 +25,38 @@ type Registration struct {
 	Executors  map[string]tools.Executor
 }
 
+type DiscoverDiagnostics struct {
+	ServerCount int
+	ToolCount   int
+	Servers     []ServerDiagnostics
+}
+
+type ServerDiagnostics struct {
+	ServerID     string
+	Transport    string
+	DurationMs   int64
+	Outcome      string
+	ErrorClass   string
+	ToolCount    int
+	ReusedClient bool
+}
+
 // DiscoverFromDB 按 account_id 从数据库加载 MCP 配置并发现工具。
 // 若该 account 无活跃配置，返回空 Registration（不报错）。
 func DiscoverFromDB(ctx context.Context, dbPool DiscoveryQueryer, accountID uuid.UUID, profileRef string, workspaceRef string, mcpPool *Pool) (Registration, error) {
+	reg, _, err := DiscoverFromDBWithDiagnostics(ctx, dbPool, accountID, profileRef, workspaceRef, mcpPool)
+	return reg, err
+}
+
+func DiscoverFromDBWithDiagnostics(ctx context.Context, dbPool DiscoveryQueryer, accountID uuid.UUID, profileRef string, workspaceRef string, mcpPool *Pool) (Registration, DiscoverDiagnostics, error) {
 	cfg, err := LoadConfigFromDB(ctx, dbPool, accountID, profileRef, workspaceRef)
 	if err != nil {
-		return Registration{}, err
+		return Registration{}, DiscoverDiagnostics{}, err
 	}
 	if cfg == nil || len(cfg.Servers) == 0 {
-		return Registration{Executors: map[string]tools.Executor{}}, nil
+		return Registration{Executors: map[string]tools.Executor{}}, DiscoverDiagnostics{}, nil
 	}
-	return Discover(ctx, *cfg, mcpPool)
+	return DiscoverWithDiagnostics(ctx, *cfg, mcpPool)
 }
 
 func DiscoverFromEnv(ctx context.Context, pool *Pool) (Registration, error) {
@@ -49,6 +71,11 @@ func DiscoverFromEnv(ctx context.Context, pool *Pool) (Registration, error) {
 }
 
 func Discover(ctx context.Context, cfg Config, pool *Pool) (Registration, error) {
+	reg, _, err := DiscoverWithDiagnostics(ctx, cfg, pool)
+	return reg, err
+}
+
+func DiscoverWithDiagnostics(ctx context.Context, cfg Config, pool *Pool) (Registration, DiscoverDiagnostics, error) {
 	if pool == nil {
 		pool = NewPool()
 	}
@@ -57,6 +84,7 @@ func Discover(ctx context.Context, cfg Config, pool *Pool) (Registration, error)
 		index  int
 		server ServerConfig
 		tools  []Tool
+		diag   ServerDiagnostics
 	}
 
 	results := make([]serverResult, len(cfg.Servers))
@@ -65,19 +93,50 @@ func Discover(ctx context.Context, cfg Config, pool *Pool) (Registration, error)
 		wg.Add(1)
 		go func(idx int, srv ServerConfig) {
 			defer wg.Done()
-			client, err := pool.Borrow(ctx, srv)
+			startedAt := time.Now()
+			result := serverResult{
+				index:  idx,
+				server: srv,
+				diag: ServerDiagnostics{
+					ServerID:   strings.TrimSpace(srv.ServerID),
+					Transport:  strings.TrimSpace(srv.Transport),
+					Outcome:    "borrow_failed",
+					ErrorClass: "",
+				},
+			}
+			client, meta, err := pool.BorrowWithMeta(ctx, srv)
 			if err != nil {
+				result.diag.DurationMs = time.Since(startedAt).Milliseconds()
+				result.diag.ErrorClass = classifyDiscoverError(err)
+				results[idx] = result
 				return
 			}
+			result.diag.ReusedClient = meta.Reused
 			toolsList, err := client.ListTools(ctx, srv.CallTimeoutMs)
-			if err != nil || len(toolsList) == 0 {
+			result.diag.DurationMs = time.Since(startedAt).Milliseconds()
+			if err != nil {
+				result.diag.Outcome = "list_failed"
+				result.diag.ErrorClass = classifyDiscoverError(err)
+				results[idx] = result
 				return
 			}
-			results[idx] = serverResult{index: idx, server: srv, tools: toolsList}
+			if len(toolsList) == 0 {
+				result.diag.Outcome = "empty"
+				results[idx] = result
+				return
+			}
+			result.tools = toolsList
+			result.diag.Outcome = "ok"
+			result.diag.ToolCount = len(toolsList)
+			results[idx] = result
 		}(i, server)
 	}
 	wg.Wait()
 
+	diag := DiscoverDiagnostics{
+		ServerCount: len(cfg.Servers),
+		Servers:     make([]ServerDiagnostics, 0, len(results)),
+	}
 	discoveredByServer := []struct {
 		server ServerConfig
 		tools  []Tool
@@ -86,6 +145,7 @@ func Discover(ctx context.Context, cfg Config, pool *Pool) (Registration, error)
 	baseCounts := map[string]int{}
 
 	for _, r := range results {
+		diag.Servers = append(diag.Servers, r.diag)
 		if len(r.tools) == 0 {
 			continue
 		}
@@ -98,6 +158,12 @@ func Discover(ctx context.Context, cfg Config, pool *Pool) (Registration, error)
 			baseCounts[base]++
 		}
 	}
+	sort.Slice(diag.Servers, func(i, j int) bool {
+		if diag.Servers[i].DurationMs == diag.Servers[j].DurationMs {
+			return diag.Servers[i].ServerID < diag.Servers[j].ServerID
+		}
+		return diag.Servers[i].DurationMs > diag.Servers[j].DurationMs
+	})
 
 	usedNames := map[string]struct{}{}
 	agentSpecs := []tools.AgentToolSpec{}
@@ -149,12 +215,28 @@ func Discover(ctx context.Context, cfg Config, pool *Pool) (Registration, error)
 
 	sort.Slice(agentSpecs, func(i, j int) bool { return agentSpecs[i].Name < agentSpecs[j].Name })
 	sort.Slice(llmSpecs, func(i, j int) bool { return llmSpecs[i].Name < llmSpecs[j].Name })
+	diag.ToolCount = len(llmSpecs)
 
 	return Registration{
 		AgentSpecs: agentSpecs,
 		LlmSpecs:   llmSpecs,
 		Executors:  executors,
-	}, nil
+	}, diag, nil
+}
+
+func classifyDiscoverError(err error) string {
+	switch err.(type) {
+	case TimeoutError:
+		return "timeout"
+	case DisconnectedError:
+		return "disconnected"
+	case ProtocolError:
+		return "protocol"
+	case RpcError:
+		return "rpc"
+	default:
+		return "unknown"
+	}
 }
 
 func mcpToolRawName(serverID string, toolName string) string {

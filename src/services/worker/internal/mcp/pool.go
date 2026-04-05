@@ -21,6 +21,10 @@ type Pool struct {
 	clients map[string]Client
 }
 
+type BorrowMeta struct {
+	Reused bool
+}
+
 func NewPool() *Pool {
 	return &Pool{clients: map[string]Client{}}
 }
@@ -28,6 +32,11 @@ func NewPool() *Pool {
 // Borrow 返回现有 client 或根据 transport 类型新建一个。
 // 若现有 client 不健康（子进程已退出、被显式关闭等），关闭并重建。
 func (p *Pool) Borrow(ctx context.Context, server ServerConfig) (Client, error) {
+	client, _, err := p.BorrowWithMeta(ctx, server)
+	return client, err
+}
+
+func (p *Pool) BorrowWithMeta(ctx context.Context, server ServerConfig) (Client, BorrowMeta, error) {
 	key := poolKey(server.AccountID, server.ServerID)
 
 	p.mu.Lock()
@@ -35,7 +44,7 @@ func (p *Pool) Borrow(ctx context.Context, server ServerConfig) (Client, error) 
 
 	if client := p.clients[key]; client != nil {
 		if client.IsHealthy(ctx) {
-			return client, nil
+			return client, BorrowMeta{Reused: true}, nil
 		}
 		_ = client.Close()
 		delete(p.clients, key)
@@ -49,14 +58,14 @@ func (p *Pool) Borrow(ctx context.Context, server ServerConfig) (Client, error) 
 		var err error
 		client, err = NewHTTPClient(server)
 		if err != nil {
-			return nil, err
+			return nil, BorrowMeta{}, err
 		}
 	default:
-		return nil, fmt.Errorf("mcp: unsupported transport: %s", server.Transport)
+		return nil, BorrowMeta{}, fmt.Errorf("mcp: unsupported transport: %s", server.Transport)
 	}
 
 	p.clients[key] = client
-	return client, nil
+	return client, BorrowMeta{}, nil
 }
 
 func (p *Pool) CloseAll() {
