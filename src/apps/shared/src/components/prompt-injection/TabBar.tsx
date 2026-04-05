@@ -27,7 +27,7 @@ export function TabBar<T extends string>({ tabs, active, onChange, className }: 
   return (
     <div
       ref={containerRef}
-      className={`relative mb-3 inline-flex w-fit gap-0.5 rounded-[10px] p-[2px] ${className ?? ''}`}
+      className={`relative inline-flex w-fit gap-0.5 rounded-[10px] p-[2px] ${className ?? ''}`}
       style={{ background: 'var(--c-mode-switch-track)' }}
     >
       {/* sliding pill */}
