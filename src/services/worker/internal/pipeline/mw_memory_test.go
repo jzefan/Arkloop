@@ -155,7 +155,7 @@ func buildMemRC(userID *uuid.UUID, userMsg string, assistantOutput string) *pipe
 // --- tests ---
 
 func TestMemoryMiddleware_NilProvider_NoOp(t *testing.T) {
-	mw := pipeline.NewMemoryMiddleware(nil, nil, nil, nil)
+	mw := pipeline.NewMemoryMiddleware(nil, nil, nil, nil, nil, nil)
 
 	called := false
 	h := pipeline.Build([]pipeline.RunMiddleware{mw}, func(_ context.Context, _ *pipeline.RunContext) error {
@@ -174,7 +174,7 @@ func TestMemoryMiddleware_NilProvider_NoOp(t *testing.T) {
 
 func TestMemoryMiddleware_NilUserID_NoOp(t *testing.T) {
 	mp := newMemMock()
-	mw := pipeline.NewMemoryMiddleware(mp, nil, nil, nil)
+	mw := pipeline.NewMemoryMiddleware(mp, nil, nil, nil, nil, nil)
 
 	rc := buildMemRC(nil, "test query", "response")
 	h := pipeline.Build([]pipeline.RunMiddleware{mw}, func(_ context.Context, _ *pipeline.RunContext) error { return nil })
@@ -192,7 +192,7 @@ func TestMemoryMiddleware_InjectsMemoryBlock(t *testing.T) {
 		found: true,
 		block: "\n\n<memory>\n- user prefers Go\n</memory>",
 	}
-	mw := pipeline.NewMemoryMiddleware(mp, snap, nil, nil)
+	mw := pipeline.NewMemoryMiddleware(mp, snap, nil, nil, nil, nil)
 
 	rc := buildMemRC(userIDPtr(), "what language do you prefer?", "")
 	h := pipeline.Build([]pipeline.RunMiddleware{mw}, func(_ context.Context, _ *pipeline.RunContext) error { return nil })
@@ -216,7 +216,7 @@ func TestMemoryMiddleware_NotebookAndMemoryBlocksCanCoexist(t *testing.T) {
 		found: true,
 		block: "\n\n<memory>\n- recalled fact\n</memory>",
 	}
-	mw := pipeline.NewMemoryMiddleware(mp, snap, nil, nil)
+	mw := pipeline.NewMemoryMiddleware(mp, snap, nil, nil, nil, nil)
 
 	rc := buildMemRC(userIDPtr(), "hello", "")
 	rc.SystemPrompt = "<notebook>\n- stable note\n</notebook>"
@@ -231,7 +231,7 @@ func TestMemoryMiddleware_NotebookAndMemoryBlocksCanCoexist(t *testing.T) {
 
 func TestMemoryMiddleware_NoHits_NoInjection(t *testing.T) {
 	mp := newMemMock()
-	mw := pipeline.NewMemoryMiddleware(mp, nil, nil, nil)
+	mw := pipeline.NewMemoryMiddleware(mp, nil, nil, nil, nil, nil)
 
 	rc := buildMemRC(userIDPtr(), "hello", "")
 	original := rc.SystemPrompt
@@ -247,7 +247,7 @@ func TestMemoryMiddleware_NoHits_NoInjection(t *testing.T) {
 func TestMemoryMiddleware_SnapshotReadError_Continues(t *testing.T) {
 	mp := newMemMock()
 	snap := &memSnapStub{err: context.DeadlineExceeded}
-	mw := pipeline.NewMemoryMiddleware(mp, snap, nil, nil)
+	mw := pipeline.NewMemoryMiddleware(mp, snap, nil, nil, nil, nil)
 
 	nextCalled := false
 	rc := buildMemRC(userIDPtr(), "query", "")
@@ -265,7 +265,7 @@ func TestMemoryMiddleware_SnapshotReadError_Continues(t *testing.T) {
 
 func TestMemoryMiddleware_FlushesPendingWritesAfterRun(t *testing.T) {
 	mp := newMemMock()
-	mw := pipeline.NewMemoryMiddleware(mp, nil, nil, nil)
+	mw := pipeline.NewMemoryMiddleware(mp, nil, nil, nil, nil, nil)
 
 	rc := buildMemRC(userIDPtr(), "user message", "assistant reply")
 	rc.PendingMemoryWrites.Append(memory.PendingWrite{
@@ -304,7 +304,7 @@ func TestMemoryMiddleware_FlushesPendingWritesAfterRun(t *testing.T) {
 
 func TestMemoryMiddleware_FlushesPendingWritesEvenWhenNextFails(t *testing.T) {
 	mp := newMemMock()
-	mw := pipeline.NewMemoryMiddleware(mp, nil, nil, nil)
+	mw := pipeline.NewMemoryMiddleware(mp, nil, nil, nil, nil, nil)
 
 	rc := buildMemRC(userIDPtr(), "user message", "assistant reply")
 	rc.PendingMemoryWrites.Append(memory.PendingWrite{
@@ -329,7 +329,7 @@ func TestMemoryMiddleware_FlushesPendingWritesEvenWhenNextFails(t *testing.T) {
 
 func TestMemoryMiddleware_NoFlushWhenNoPendingWrites(t *testing.T) {
 	mp := newMemMock()
-	mw := pipeline.NewMemoryMiddleware(mp, nil, nil, nil)
+	mw := pipeline.NewMemoryMiddleware(mp, nil, nil, nil, nil, nil)
 
 	rc := buildMemRC(userIDPtr(), "", "assistant reply")
 	h := pipeline.Build([]pipeline.RunMiddleware{mw}, func(_ context.Context, _ *pipeline.RunContext) error { return nil })
@@ -352,7 +352,7 @@ func TestMemoryMiddleware_SnapshotMayIncludeMultilineAbstract(t *testing.T) {
 		found: true,
 		block: "\n\n<memory>\n- user preferences\n  user prefers Go with modules\n</memory>",
 	}
-	mw := pipeline.NewMemoryMiddleware(mp, snap, nil, nil)
+	mw := pipeline.NewMemoryMiddleware(mp, snap, nil, nil, nil, nil)
 
 	rc := buildMemRC(userIDPtr(), "programming preferences", "")
 	h := pipeline.Build([]pipeline.RunMiddleware{mw}, func(_ context.Context, _ *pipeline.RunContext) error { return nil })
@@ -372,7 +372,7 @@ func TestMemoryMiddleware_UsesRunContextMemoryProviderWhenStaticProviderNil(t *t
 	mp := newMemMock()
 	mp.findHits = []memory.MemoryHit{{URI: "u1", Abstract: "remembered"}}
 	snap := &memSnapStub{found: true, block: "\n\n<memory>\n- remembered\n</memory>"}
-	mw := pipeline.NewMemoryMiddleware(nil, snap, nil, nil)
+	mw := pipeline.NewMemoryMiddleware(nil, snap, nil, nil, nil, nil)
 	rc := buildMemRC(userIDPtr(), "hello", "")
 	rc.MemoryProvider = mp
 	h := pipeline.Build([]pipeline.RunMiddleware{mw}, func(_ context.Context, rc *pipeline.RunContext) error {
@@ -411,7 +411,7 @@ func (s *configResolverStub) ResolvePrefix(_ context.Context, _ string, _ shared
 
 func TestMemoryMiddleware_DistillTriggeredWithIncrementalUserInput(t *testing.T) {
 	mp := newMemMock()
-	mw := pipeline.NewMemoryMiddleware(mp, nil, nil, nil)
+	mw := pipeline.NewMemoryMiddleware(mp, nil, nil, nil, nil, nil)
 
 	rc := buildMemRC(userIDPtr(), "help me search", "found 3 results")
 
@@ -454,7 +454,7 @@ func TestMemoryMiddleware_DistillTriggeredWithIncrementalUserInput(t *testing.T)
 
 func TestMemoryMiddleware_DistillTriggeredWithoutToolOrIterationThreshold(t *testing.T) {
 	mp := newMemMock()
-	mw := pipeline.NewMemoryMiddleware(mp, nil, nil, nil)
+	mw := pipeline.NewMemoryMiddleware(mp, nil, nil, nil, nil, nil)
 
 	rc := buildMemRC(userIDPtr(), "complex question", "detailed answer")
 
@@ -478,7 +478,7 @@ func TestMemoryMiddleware_DistillTriggeredWithoutToolOrIterationThreshold(t *tes
 
 func TestMemoryMiddleware_DistillIncludesRuntimeUserMessages(t *testing.T) {
 	mp := newMemMock()
-	mw := pipeline.NewMemoryMiddleware(mp, nil, nil, nil)
+	mw := pipeline.NewMemoryMiddleware(mp, nil, nil, nil, nil, nil)
 
 	rc := buildMemRC(userIDPtr(), "first prompt", "final answer")
 
@@ -514,7 +514,7 @@ func TestMemoryMiddleware_DistillIncludesRuntimeUserMessages(t *testing.T) {
 
 func TestMemoryMiddleware_DistillSkippedWhenNoIncrementalInput(t *testing.T) {
 	mp := newMemMock()
-	mw := pipeline.NewMemoryMiddleware(mp, nil, nil, nil)
+	mw := pipeline.NewMemoryMiddleware(mp, nil, nil, nil, nil, nil)
 
 	rc := buildMemRC(userIDPtr(), "", "simple answer")
 
@@ -539,7 +539,7 @@ func TestMemoryMiddleware_DistillSkippedWhenDisabled(t *testing.T) {
 	resolver := &configResolverStub{values: map[string]string{
 		"memory.distill_enabled": "false",
 	}}
-	mw := pipeline.NewMemoryMiddleware(mp, nil, nil, resolver)
+	mw := pipeline.NewMemoryMiddleware(mp, nil, nil, resolver, nil, nil)
 
 	rc := buildMemRC(userIDPtr(), "query", "response")
 
@@ -558,7 +558,7 @@ func TestMemoryMiddleware_DistillSkippedWhenDisabled(t *testing.T) {
 
 func TestMemoryMiddleware_DistillSkippedWhenNoAssistantOutput(t *testing.T) {
 	mp := newMemMock()
-	mw := pipeline.NewMemoryMiddleware(mp, nil, nil, nil)
+	mw := pipeline.NewMemoryMiddleware(mp, nil, nil, nil, nil, nil)
 
 	rc := buildMemRC(userIDPtr(), "query", "")
 

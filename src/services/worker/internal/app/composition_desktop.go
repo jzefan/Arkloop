@@ -502,6 +502,8 @@ func (e *DesktopEngine) Execute(ctx context.Context, run data.Run, traceID strin
 	}
 
 	var memMiddleware pipeline.RunMiddleware
+	impStore := pipeline.NewDesktopImpressionStore(e.db)
+	impRefresh := newDesktopImpressionRefresh(e.db, e.jobQueue)
 	if e.useOV {
 		notebookMW := desktopMemoryInjection(e.db)
 		memoryMW := pipeline.NewMemoryMiddleware(
@@ -509,6 +511,8 @@ func (e *DesktopEngine) Execute(ctx context.Context, run data.Run, traceID strin
 			pipeline.NewDesktopMemorySnapshotStore(e.db),
 			e.db,
 			e.promptInjection.Resolver,
+			impStore,
+			impRefresh,
 		)
 		memMiddleware = func(ctx context.Context, rc *pipeline.RunContext, next pipeline.RunHandler) error {
 			return notebookMW(ctx, rc, func(ctx context.Context, rc *pipeline.RunContext) error {
@@ -564,6 +568,7 @@ func (e *DesktopEngine) Execute(ctx context.Context, run data.Run, traceID strin
 		desktopRouting(e.auxRouter, e.auxGateway, e.emitDebugEvents, e.db, runsRepo, eventsRepo),
 		pipeline.NewTitleSummarizerMiddleware(e.db, nil, e.auxGateway, e.emitDebugEvents, e.routingLoader),
 		pipeline.NewContextCompactMiddleware(e.db, data.MessagesRepository{}, data.DesktopRunEventsRepository{}, e.auxGateway, e.emitDebugEvents, e.routingLoader),
+		pipeline.NewImpressionPrepareMiddleware(impStore, e.db, e.auxGateway, e.emitDebugEvents, e.routingLoader),
 		pipeline.NewHeartbeatPrepareMiddleware(),
 		pipeline.NewConditionalToolsMiddleware(),
 		pipeline.NewToolBuildMiddleware(),
@@ -596,6 +601,25 @@ func resolveDesktopRunBindings(ctx context.Context, db data.DesktopDB, run data.
 }
 
 // --------------- desktop middleware ---------------
+
+func newDesktopImpressionRefresh(db data.DesktopDB, jq queue.JobQueue) pipeline.ImpressionRefreshFunc {
+	if db == nil || jq == nil {
+		return nil
+	}
+	return pipeline.NewImpressionRefreshFunc(pipeline.ImpressionRefreshDeps{
+		ExecSQL: func(ctx context.Context, sql string, args ...any) error {
+			_, err := db.Exec(ctx, sql, args...)
+			return err
+		},
+		QueryRowScan: func(ctx context.Context, sql string, args []any, dest ...any) error {
+			return db.QueryRow(ctx, sql, args...).Scan(dest...)
+		},
+		EnqueueRun: func(ctx context.Context, accountID, runID uuid.UUID, traceID, jobType string, payload map[string]any) error {
+			_, err := jq.EnqueueRun(ctx, accountID, runID, traceID, jobType, payload, nil)
+			return err
+		},
+	})
+}
 
 // desktopMemoryInjection reads the saved notebook block from
 // user_notebook_snapshots and appends it to the run's system prompt.
