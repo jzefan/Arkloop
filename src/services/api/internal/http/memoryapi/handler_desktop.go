@@ -19,7 +19,9 @@ import (
 	"arkloop/services/api/internal/auth"
 	"arkloop/services/api/internal/data"
 	"arkloop/services/api/internal/http/httpkit"
+	"arkloop/services/shared/desktop"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -48,12 +50,23 @@ func RegisterRoutes(mux *nethttp.ServeMux, deps Deps) {
 	mux.HandleFunc("/v1/desktop/memory/snapshot", h.getSnapshot)
 	mux.HandleFunc("/v1/desktop/memory/snapshot/rebuild", h.rebuildSnapshotHandler)
 	mux.HandleFunc("/v1/desktop/memory/content", h.getContent)
+	mux.HandleFunc("/v1/desktop/memory/impression", h.getImpression)
+	mux.HandleFunc("/v1/desktop/memory/impression/rebuild", h.rebuildImpression)
 }
 
 type handler struct {
 	pool      data.DB
 	ovBaseURL string
 	ovAPIKey  string
+}
+
+var impressionRebuildWaitTimeout = 90 * time.Second
+var impressionRebuildPollInterval = 300 * time.Millisecond
+
+type impressionState struct {
+	impression string
+	updatedAt  string
+	found      bool
 }
 
 func (h *handler) dispatchEntries(w nethttp.ResponseWriter, r *nethttp.Request) {
@@ -646,6 +659,205 @@ func checkDesktopToken(w nethttp.ResponseWriter, r *nethttp.Request) bool {
 		return false
 	}
 	return true
+}
+
+func (h *handler) getImpression(w nethttp.ResponseWriter, r *nethttp.Request) {
+	if !checkDesktopToken(w, r) {
+		return
+	}
+	if r.Method != nethttp.MethodGet {
+		httpkit.WriteError(w, nethttp.StatusMethodNotAllowed, "method_not_allowed", "method not allowed", "", nil)
+		return
+	}
+	agentID := agentIDFromQuery(r)
+	accountID := auth.DesktopAccountID.String()
+	userID := auth.DesktopUserID.String()
+
+	var impression, updatedAt string
+	err := h.pool.QueryRow(r.Context(),
+		`SELECT impression, updated_at FROM user_impression_snapshots WHERE account_id = $1 AND user_id = $2 AND agent_id = $3`,
+		accountID, userID, agentID,
+	).Scan(&impression, &updatedAt)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeJSON(w, map[string]any{"impression": ""})
+			return
+		}
+		httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal_error", err.Error(), "", nil)
+		return
+	}
+	writeJSON(w, map[string]any{"impression": impression, "updated_at": updatedAt})
+}
+
+func getImpressionState(ctx context.Context, pool data.Querier, accountID, userID, agentID string) (impressionState, error) {
+	var state impressionState
+	err := pool.QueryRow(ctx,
+		`SELECT impression, updated_at FROM user_impression_snapshots WHERE account_id = $1 AND user_id = $2 AND agent_id = $3`,
+		accountID, userID, agentID,
+	).Scan(&state.impression, &state.updatedAt)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return impressionState{}, nil
+		}
+		return impressionState{}, err
+	}
+	state.found = true
+	return state, nil
+}
+
+func getRunStatus(ctx context.Context, pool data.Querier, runID uuid.UUID) (string, error) {
+	var status string
+	if err := pool.QueryRow(ctx, `SELECT status FROM runs WHERE id = $1`, runID).Scan(&status); err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(status), nil
+}
+
+func isRunTerminalStatus(status string) bool {
+	switch strings.TrimSpace(status) {
+	case "completed", "failed", "interrupted", "cancelled":
+		return true
+	default:
+		return false
+	}
+}
+
+func impressionUpdatedAfterRebuild(before, after impressionState) bool {
+	if !after.found {
+		return false
+	}
+	if !before.found {
+		return true
+	}
+	return after.updatedAt != before.updatedAt || after.impression != before.impression
+}
+
+func (h *handler) waitForImpressionRebuild(ctx context.Context, runID uuid.UUID, accountID, userID, agentID string, before impressionState) (impressionState, error) {
+	ticker := time.NewTicker(impressionRebuildPollInterval)
+	defer ticker.Stop()
+
+	for {
+		status, err := getRunStatus(ctx, h.pool, runID)
+		if err != nil {
+			return impressionState{}, err
+		}
+		if isRunTerminalStatus(status) {
+			if status != "completed" {
+				return impressionState{}, fmt.Errorf("impression rebuild %s", status)
+			}
+			after, err := getImpressionState(ctx, h.pool, accountID, userID, agentID)
+			if err != nil {
+				return impressionState{}, err
+			}
+			if impressionUpdatedAfterRebuild(before, after) {
+				return after, nil
+			}
+		}
+
+		select {
+		case <-ctx.Done():
+			return impressionState{}, ctx.Err()
+		case <-ticker.C:
+		}
+	}
+}
+
+func (h *handler) rebuildImpression(w nethttp.ResponseWriter, r *nethttp.Request) {
+	if !checkDesktopToken(w, r) {
+		return
+	}
+	if r.Method != nethttp.MethodPost {
+		httpkit.WriteError(w, nethttp.StatusMethodNotAllowed, "method_not_allowed", "method not allowed", "", nil)
+		return
+	}
+
+	accountID := auth.DesktopAccountID
+	userID := auth.DesktopUserID
+	agentID := agentIDFromQuery(r)
+	accountIDText := accountID.String()
+	userIDText := userID.String()
+
+	enq := desktop.GetJobEnqueuer()
+	if enq == nil {
+		httpkit.WriteError(w, nethttp.StatusServiceUnavailable, "unavailable", "job queue not ready", "", nil)
+		return
+	}
+
+	ctx := r.Context()
+	threadID := uuid.New()
+	runID := uuid.New()
+	traceID := uuid.NewString()
+	before, err := getImpressionState(ctx, h.pool, accountIDText, userIDText, agentID)
+	if err != nil {
+		httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal_error", err.Error(), "", nil)
+		return
+	}
+
+	var projectID string
+	if err := h.pool.QueryRow(ctx,
+		`SELECT id FROM projects WHERE account_id = $1 ORDER BY created_at ASC LIMIT 1`,
+		accountIDText,
+	).Scan(&projectID); err != nil {
+		httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal_error", err.Error(), "", nil)
+		return
+	}
+
+	_ = agentID // agent_id 通过 pipeline 的 StableAgentID 自动推导
+
+	if _, err := h.pool.Exec(ctx,
+		`INSERT INTO threads (id, account_id, project_id, is_private) VALUES ($1, $2, $3, TRUE)`,
+		threadID, accountIDText, projectID,
+	); err != nil {
+		httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal_error", err.Error(), "", nil)
+		return
+	}
+
+	startedJSON, _ := json.Marshal(map[string]any{"run_kind": "impression", "persona_id": "impression-builder"})
+	if _, err := h.pool.Exec(ctx,
+		`INSERT INTO runs (id, account_id, thread_id, status, created_by_user_id) VALUES ($1, $2, $3, 'running', $4)`,
+		runID, accountIDText, threadID, userIDText,
+	); err != nil {
+		httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal_error", err.Error(), "", nil)
+		return
+	}
+	if _, err := h.pool.Exec(ctx,
+		`INSERT INTO run_events (run_id, seq, type, data_json) VALUES ($1, 1, 'run.started', $2)`,
+		runID, string(startedJSON),
+	); err != nil {
+		httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal_error", err.Error(), "", nil)
+		return
+	}
+
+	payload := map[string]any{
+		"source":   "impression_rebuild",
+		"run_kind": "impression",
+	}
+	if _, err := enq.EnqueueRun(ctx, accountID, runID, traceID, "run.execute", payload, nil); err != nil {
+		httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal_error", err.Error(), "", nil)
+		return
+	}
+
+	waitCtx, cancel := context.WithTimeout(ctx, impressionRebuildWaitTimeout)
+	defer cancel()
+
+	after, err := h.waitForImpressionRebuild(waitCtx, runID, accountIDText, userIDText, agentID, before)
+	if err != nil {
+		switch {
+		case errors.Is(err, context.DeadlineExceeded):
+			httpkit.WriteError(w, nethttp.StatusGatewayTimeout, "timeout", "impression rebuild timed out", "", nil)
+		case errors.Is(err, context.Canceled):
+			return
+		default:
+			httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal_error", err.Error(), "", nil)
+		}
+		return
+	}
+
+	writeJSON(w, map[string]any{
+		"status":     "completed",
+		"run_id":     runID.String(),
+		"updated_at": after.updatedAt,
+	})
 }
 
 func writeJSON(w nethttp.ResponseWriter, v any) {

@@ -284,6 +284,30 @@ export function registerIpcHandlers(
     return resp
   })
 
+  ipcMain.handle('arkloop:memory:get-impression', async (_event, agentId?: string) => {
+    const apiBaseUrl = getLocalApiBaseUrl()
+    if (!apiBaseUrl) return { impression: '' }
+    const token = getDesktopAccessToken()
+    const query = typeof agentId === 'string' && agentId.trim()
+      ? `?agent_id=${encodeURIComponent(agentId.trim())}`
+      : ''
+    const url = `${apiBaseUrl}/v1/desktop/memory/impression${query}`
+    const resp = await makeApiRequest(url, 'GET', token)
+    return resp
+  })
+
+  ipcMain.handle('arkloop:memory:rebuild-impression', async (_event, agentId?: string) => {
+    const apiBaseUrl = getLocalApiBaseUrl()
+    if (!apiBaseUrl) return { status: 'unavailable' }
+    const token = getDesktopAccessToken()
+    const query = typeof agentId === 'string' && agentId.trim()
+      ? `?agent_id=${encodeURIComponent(agentId.trim())}`
+      : ''
+    const url = `${apiBaseUrl}/v1/desktop/memory/impression/rebuild${query}`
+    const resp = await makeApiRequest(url, 'POST', token)
+    return resp
+  })
+
   ipcMain.handle('arkloop:memory:get-content', async (_event, uri: string, layer?: string) => {
     const apiBaseUrl = getLocalApiBaseUrl()
     if (!apiBaseUrl) return { content: '' }

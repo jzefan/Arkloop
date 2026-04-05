@@ -174,6 +174,8 @@ export type ArkloopDesktopApi = {
     rebuildSnapshot: (agentId?: string) => Promise<{ memory_block: string; hits?: SnapshotHit[] }>
     getContent: (uri: string, layer?: 'overview' | 'read') => Promise<{ content: string }>
     add: (content: string, category?: string) => Promise<{ entry: MemoryEntry }>
+    getImpression: (agentId?: string) => Promise<{ impression: string; updated_at?: string }>
+    rebuildImpression: (agentId?: string) => Promise<{ status: string; run_id?: string; updated_at?: string }>
   }
   sidecar: {
     getStatus: () => Promise<'stopped' | 'starting' | 'running' | 'crashed'>
