@@ -16,6 +16,11 @@ type cacheEntry struct {
 	cachedAt     time.Time
 }
 
+type CacheResult struct {
+	Hit bool
+	TTL time.Duration
+}
+
 func discoveryCacheKey(accountID uuid.UUID, profileRef string, workspaceRef string) string {
 	return accountID.String() + "|" + strings.TrimSpace(profileRef) + "|" + strings.TrimSpace(workspaceRef)
 }
@@ -39,19 +44,26 @@ func NewDiscoveryCache(ttl time.Duration, mcpPool *Pool) *DiscoveryCache {
 // Get 返回 accountID 对应的 MCP Registration。
 // 缓存命中且未过期时直接返回，否则调 DiscoverFromDB 并回填缓存。
 func (c *DiscoveryCache) Get(ctx context.Context, pool DiscoveryQueryer, accountID uuid.UUID, profileRef string, workspaceRef string) (Registration, error) {
+	reg, _, _, err := c.GetWithMeta(ctx, pool, accountID, profileRef, workspaceRef)
+	return reg, err
+}
+
+func (c *DiscoveryCache) GetWithMeta(ctx context.Context, pool DiscoveryQueryer, accountID uuid.UUID, profileRef string, workspaceRef string) (Registration, CacheResult, DiscoverDiagnostics, error) {
 	cacheKey := discoveryCacheKey(accountID, profileRef, workspaceRef)
+	meta := CacheResult{TTL: c.ttl}
 	if c.ttl > 0 {
 		if raw, ok := c.entries.Load(cacheKey); ok {
 			entry := raw.(cacheEntry)
 			if time.Since(entry.cachedAt) < c.ttl {
-				return entry.registration, nil
+				meta.Hit = true
+				return entry.registration, meta, DiscoverDiagnostics{}, nil
 			}
 		}
 	}
 
-	reg, err := DiscoverFromDB(ctx, pool, accountID, profileRef, workspaceRef, c.mcpPool)
+	reg, diag, err := DiscoverFromDBWithDiagnostics(ctx, pool, accountID, profileRef, workspaceRef, c.mcpPool)
 	if err != nil {
-		return Registration{}, err
+		return Registration{}, meta, diag, err
 	}
 
 	if c.ttl > 0 {
@@ -61,7 +73,7 @@ func (c *DiscoveryCache) Get(ctx context.Context, pool DiscoveryQueryer, account
 		})
 	}
 
-	return reg, nil
+	return reg, meta, diag, nil
 }
 
 // Invalidate 删除指定 account 的缓存条目。
@@ -74,6 +86,13 @@ func (c *DiscoveryCache) Invalidate(accountID uuid.UUID) {
 		}
 		return true
 	})
+}
+
+func (c *DiscoveryCache) MCPPool() *Pool {
+	if c == nil {
+		return nil
+	}
+	return c.mcpPool
 }
 
 // StartInvalidationListener 启动后台 goroutine，LISTEN mcp_config_changed，
