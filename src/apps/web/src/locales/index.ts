@@ -986,6 +986,9 @@ export interface LocaleStrings {
     notebookAddPlaceholder: string;
     notebookAddButton: string;
     notebookSearchPlaceholder: string;
+    notebookViewEdit: string;
+    notebookModalTitle: string;
+    notebookEntries: (count: number) => string;
     // memory config modal
     memoryConfigureButton: string;
     memoryConfigureModalTitle: string;
