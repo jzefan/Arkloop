@@ -1043,6 +1043,9 @@ export const en: LocaleStrings = {
     notebookAddPlaceholder: "Enter something you want the AI to remember...",
     notebookAddButton: "Add",
     notebookSearchPlaceholder: "Search notes...",
+    notebookViewEdit: "View and edit notes",
+    notebookModalTitle: "Notebook",
+    notebookEntries: (count: number) => `${count} entries`,
     // Memory config modal
     memoryConfigureButton: "Configure",
     memoryConfigureModalTitle: "Memory Service Configuration",

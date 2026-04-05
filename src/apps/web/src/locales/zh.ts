@@ -1027,6 +1027,9 @@ export const zh: LocaleStrings = {
     notebookAddPlaceholder: "输入希望 AI 记住的内容...",
     notebookAddButton: "添加",
     notebookSearchPlaceholder: "搜索笔记...",
+    notebookViewEdit: "查看和编辑笔记",
+    notebookModalTitle: "笔记本",
+    notebookEntries: (count: number) => `${count} 条笔记`,
     // Memory config modal
     memoryConfigureButton: "配置",
     memoryConfigureModalTitle: "记忆服务配置",
