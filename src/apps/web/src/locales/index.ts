@@ -923,6 +923,14 @@ export interface LocaleStrings {
     memoryDeleteConfirm: string;
     memorySnapshotTitle: string;
     memoryRebuildSnapshot: string;
+    memorySnapshotEmpty: string;
+    memorySnapshotViewEdit: string;
+    memoryImpressionTitle: string;
+    memoryImpressionUpdatedAgo: string;
+    memoryImpressionEmpty: string;
+    memoryImpressionViewEdit: string;
+    memoryImpressionRebuild: string;
+    memoryImpressionModalTitle: string;
     memoryEnabled: string;
     memoryEnabledDesc: string;
     memorySummarizeSectionTitle: string;
@@ -983,6 +991,7 @@ export interface LocaleStrings {
     memoryConfigureModalTitle: string;
     memoryNotConfiguredHint: string;
     memoryRecentErrors: string;
+    memoryErrorsModalTitle: string;
     // tool model
     toolModel: string;
     toolModelDesc: string;
