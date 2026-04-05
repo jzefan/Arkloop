@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { ChevronDown, ChevronRight, FolderSearch, Loader2, Plus } from 'lucide-react'
 import { listMCPDiscoverySources, importMCPInstall, type MCPDiscoverySource, type MCPDiscoveryProposal } from '../../api'
 import { SettingsInput } from '../settings/_SettingsInput'
@@ -43,8 +43,7 @@ export function MCPScanSection({ accessToken, copy, onImported }: Props) {
   const [scanLoading, setScanLoading] = useState(false)
   const [importing, setImporting] = useState(false)
   const [error, setError] = useState('')
-
-  const [manualOpen, setManualOpen] = useState(false)
+  const [open, setOpen] = useState(false)
   const [manualPath, setManualPath] = useState('')
   const [manualLoading, setManualLoading] = useState(false)
 
@@ -62,6 +61,11 @@ export function MCPScanSection({ accessToken, copy, onImported }: Props) {
   }, [accessToken, copy.toastScanFailed])
 
   useEffect(() => { void autoScan() }, [autoScan])
+
+  const totalProposalCount = useMemo(
+    () => scanItems.reduce((sum, s) => sum + (s.proposed_installs?.length ?? 0), 0),
+    [scanItems],
+  )
 
   const handleManualScan = async () => {
     const trimmed = manualPath.trim()
@@ -100,128 +104,130 @@ export function MCPScanSection({ accessToken, copy, onImported }: Props) {
   }
 
   return (
-    <div className="flex flex-col gap-3">
-      {error && (
-        <p className="text-xs" style={{ color: 'var(--c-status-error-text)' }}>{error}</p>
-      )}
+    <div className="rounded-xl overflow-hidden" style={{ border: '0.5px solid var(--c-border-subtle)' }}>
+      <button
+        type="button"
+        className="flex w-full items-center gap-2 p-3 select-none transition-colors bg-[var(--c-bg-menu)] hover:bg-[var(--c-bg-deep)]"
+        onClick={() => setOpen((v) => !v)}
+      >
+        {open
+          ? <ChevronDown size={14} className="shrink-0 text-[var(--c-text-tertiary)]" />
+          : <ChevronRight size={14} className="shrink-0 text-[var(--c-text-tertiary)]" />
+        }
+        <FolderSearch size={14} className="shrink-0 text-[var(--c-text-tertiary)]" />
+        <span className="text-sm font-medium text-[var(--c-text-heading)]">
+          {copy.externalTitle}
+        </span>
+        {!scanLoading && totalProposalCount > 0 && (
+          <span
+            className="rounded px-1.5 py-px text-[10px] font-medium leading-tight text-[var(--c-text-secondary)]"
+            style={{ background: 'var(--c-bg-deep)' }}
+          >
+            {totalProposalCount}
+          </span>
+        )}
+      </button>
 
-      {scanLoading ? (
-        <div className="flex h-20 items-center justify-center">
-          <Loader2 size={14} className="animate-spin text-[var(--c-text-tertiary)]" />
-        </div>
-      ) : scanItems.length === 0 ? (
+      <div
+        className="grid transition-[grid-template-rows] duration-200 ease-out"
+        style={{ gridTemplateRows: open ? '1fr' : '0fr' }}
+      >
         <div
-          className="rounded-xl py-6 text-center text-sm text-[var(--c-text-muted)]"
-          style={{ border: '0.5px solid var(--c-border-subtle)' }}
+          className="overflow-hidden"
+          style={{ borderTop: open ? '0.5px solid var(--c-border-subtle)' : 'none' }}
         >
-          {copy.sourceEmpty}
-        </div>
-      ) : (
-        <div className="flex flex-col gap-2">
-          {scanItems.map((source) => {
-            const proposals = source.proposed_installs ?? []
-            const errors = source.validation_errors ?? []
-            const warnings = source.host_warnings ?? []
-            const label = sourceLabel(source.source_uri)
-            const path = shortenPath(source.source_uri)
+          <div className="flex flex-col gap-2 p-3">
+            {error && (
+              <p className="text-xs" style={{ color: 'var(--c-status-error-text)' }}>{error}</p>
+            )}
 
-            if (proposals.length === 0 && errors.length > 0) {
+            {scanLoading && (
+              <div className="flex h-20 items-center justify-center">
+                <Loader2 size={14} className="animate-spin text-[var(--c-text-tertiary)]" />
+              </div>
+            )}
+
+            {!scanLoading && !error && scanItems.length === 0 && (
+              <p className="py-4 text-center text-sm text-[var(--c-text-muted)]">
+                {copy.sourceEmpty}
+              </p>
+            )}
+
+            {!scanLoading && scanItems.map((source) => {
+              const proposals = source.proposed_installs ?? []
+              const errors = source.validation_errors ?? []
+              const warnings = source.host_warnings ?? []
+              const label = sourceLabel(source.source_uri)
+              const path = shortenPath(source.source_uri)
+
+              if (proposals.length === 0 && errors.length > 0) {
+                return (
+                  <div
+                    key={source.source_uri}
+                    className="rounded-xl px-4 py-3"
+                    style={{ border: '0.5px solid var(--c-border-subtle)', background: 'var(--c-bg-menu)' }}
+                  >
+                    <div className="flex items-center gap-2">
+                      <span className="text-[13px] font-medium text-[var(--c-text-heading)]">{label}</span>
+                      <span className="text-xs text-[var(--c-text-muted)]">{path}</span>
+                    </div>
+                    <p className="mt-1.5 text-xs" style={{ color: 'var(--c-status-error-text)' }}>
+                      {errors.join(' | ')}
+                    </p>
+                  </div>
+                )
+              }
+              if (proposals.length === 0) return null
               return (
                 <div
                   key={source.source_uri}
-                  className="rounded-xl px-4 py-3"
+                  className="rounded-xl overflow-hidden"
                   style={{ border: '0.5px solid var(--c-border-subtle)', background: 'var(--c-bg-menu)' }}
                 >
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-2 px-4 py-2.5">
                     <span className="text-[13px] font-medium text-[var(--c-text-heading)]">{label}</span>
                     <span className="text-xs text-[var(--c-text-muted)]">{path}</span>
                   </div>
-                  <p className="mt-1.5 text-xs" style={{ color: 'var(--c-status-error-text)' }}>
-                    {errors.join(' | ')}
-                  </p>
+
+                  {errors.length > 0 && (
+                    <p className="px-4 pb-2 text-xs" style={{ color: 'var(--c-status-error-text)' }}>
+                      {errors.join(' | ')}
+                    </p>
+                  )}
+                  {warnings.length > 0 && (
+                    <p className="px-4 pb-2 text-xs text-[var(--c-text-secondary)]">
+                      {warnings.join(' | ')}
+                    </p>
+                  )}
+
+                  <div className="flex flex-col gap-0.5 px-2 pb-2">
+                    {proposals.map((proposal) => (
+                      <div
+                        key={proposal.install_key}
+                        className="flex items-center justify-between gap-3 rounded-lg px-3 py-2.5"
+                        style={{ background: 'var(--c-bg-page)' }}
+                      >
+                        <span className="min-w-0 flex-1 truncate text-[13px] font-medium text-[var(--c-text-heading)]">
+                          {proposal.display_name}
+                        </span>
+                        <button
+                          type="button"
+                          disabled={!source.installable || importing}
+                          onClick={() => void handleImport(source, proposal)}
+                          className="shrink-0 rounded-lg px-3 py-1.5 text-xs font-medium transition-[filter] duration-150 hover:[filter:brightness(1.12)] disabled:opacity-50"
+                          style={{ background: 'var(--c-btn-bg)', color: 'var(--c-btn-text)' }}
+                        >
+                          {copy.import}
+                        </button>
+                      </div>
+                    ))}
+                  </div>
                 </div>
               )
-            }
-            if (proposals.length === 0) return null
-            return (
-              <div
-                key={source.source_uri}
-                className="rounded-xl overflow-hidden"
-                style={{ border: '0.5px solid var(--c-border-subtle)', background: 'var(--c-bg-menu)' }}
-              >
-                <div className="flex items-center gap-2 px-4 py-2.5">
-                  <span className="text-[13px] font-medium text-[var(--c-text-heading)]">{label}</span>
-                  <span className="text-xs text-[var(--c-text-muted)]">{path}</span>
-                </div>
+            })}
 
-                {errors.length > 0 && (
-                  <p className="px-4 pb-2 text-xs" style={{ color: 'var(--c-status-error-text)' }}>
-                    {errors.join(' | ')}
-                  </p>
-                )}
-                {warnings.length > 0 && (
-                  <p className="px-4 pb-2 text-xs text-[var(--c-text-secondary)]">
-                    {warnings.join(' | ')}
-                  </p>
-                )}
-
-                <div className="flex flex-col gap-0.5 px-2 pb-2">
-                  {proposals.map((proposal) => (
-                    <div
-                      key={proposal.install_key}
-                      className="flex items-center justify-between gap-3 rounded-lg px-3 py-2.5"
-                      style={{ background: 'var(--c-bg-page)' }}
-                    >
-                      <span className="min-w-0 flex-1 truncate text-[13px] font-medium text-[var(--c-text-heading)]">
-                        {proposal.display_name}
-                      </span>
-                      <button
-                        type="button"
-                        disabled={!source.installable || importing}
-                        onClick={() => void handleImport(source, proposal)}
-                        className="shrink-0 rounded-lg px-3 py-1.5 text-xs font-medium transition-[filter] duration-150 hover:[filter:brightness(1.12)] disabled:opacity-50"
-                        style={{ background: 'var(--c-btn-bg)', color: 'var(--c-btn-text)' }}
-                      >
-                        {copy.import}
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )
-          })}
-        </div>
-      )}
-
-      {/* manual path */}
-      <div
-        className="rounded-xl overflow-hidden"
-        style={{ border: '0.5px solid var(--c-border-subtle)' }}
-      >
-        <button
-          type="button"
-          className="flex w-full items-center gap-2 px-3 py-2.5 select-none transition-colors bg-[var(--c-bg-menu)] hover:bg-[var(--c-bg-deep)]"
-          onClick={() => setManualOpen((v) => !v)}
-        >
-          {manualOpen
-            ? <ChevronDown size={14} className="shrink-0 text-[var(--c-text-tertiary)]" />
-            : <ChevronRight size={14} className="shrink-0 text-[var(--c-text-tertiary)]" />
-          }
-          <FolderSearch size={14} className="shrink-0 text-[var(--c-text-tertiary)]" />
-          <span className="flex-1 text-left text-xs font-medium text-[var(--c-text-secondary)]">
-            {copy.scanTitle}
-          </span>
-        </button>
-
-        <div
-          className="grid transition-[grid-template-rows] duration-200 ease-out"
-          style={{ gridTemplateRows: manualOpen ? '1fr' : '0fr' }}
-        >
-          <div
-            className="overflow-hidden"
-            style={{ borderTop: manualOpen ? '0.5px solid var(--c-border-subtle)' : 'none' }}
-          >
-            <div className="flex items-end gap-2 p-3">
+            {/* manual path input */}
+            <div className="flex items-end gap-2">
               <div className="min-w-0 flex-1">
                 <SettingsInput
                   value={manualPath}
