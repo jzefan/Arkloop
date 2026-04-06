@@ -602,6 +602,7 @@ func RunDesktop(ctx context.Context) error {
 		JobRepo:                  jobRepo,
 		Pool:                     pgxPool,
 		AttachmentStore:          messageAttachmentStore,
+		Bus:                      desktopBus,
 	})
 
 	// ---- HTTP server ----

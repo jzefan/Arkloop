@@ -16,6 +16,7 @@ import (
 	"arkloop/services/api/internal/observability"
 	"arkloop/services/shared/messagecontent"
 	"arkloop/services/shared/objectstore"
+	"arkloop/services/shared/eventbus"
 	"arkloop/services/shared/onebotclient"
 	"arkloop/services/shared/pgnotify"
 
@@ -35,6 +36,7 @@ type qqChannelConfig struct {
 	OneBotToken     string   `json:"onebot_token,omitempty"`
 	BotQQ           string   `json:"bot_qq,omitempty"`
 	TriggerKeywords []string `json:"trigger_keywords,omitempty"`
+	BotName         string   `json:"bot_name,omitempty"`
 	ReactionEmojiID string   `json:"reaction_emoji_id,omitempty"`
 	AutoLoginUin    string   `json:"auto_login_uin,omitempty"`
 }
@@ -120,6 +122,7 @@ type qqConnector struct {
 	pool                     data.DB
 	attachmentStore          MessageAttachmentPutStore
 	inputNotify              func(ctx context.Context, runID uuid.UUID)
+	bus                      eventbus.EventBus
 }
 
 // HandleEvent 处理来自 OneBot11 的入站事件
@@ -200,9 +203,12 @@ func (c *qqConnector) HandleEvent(ctx context.Context, traceID string, ch data.C
 		incoming.ForwardFrom = "forwarded"
 	}
 
-	// 关键词触发
-	if !isPrivate && !incoming.MentionsBot && !incoming.IsReplyToBot && len(cfg.TriggerKeywords) > 0 {
-		incoming.MatchesKeyword = qqMessageMatchesKeyword(incoming.Text, cfg.TriggerKeywords)
+	// 关键词触发（含 bot 名称）
+	if !isPrivate && !incoming.MentionsBot && !incoming.IsReplyToBot {
+		triggerKeywords := buildQQTriggerKeywords(cfg)
+		if len(triggerKeywords) > 0 {
+			incoming.MatchesKeyword = qqMessageMatchesKeyword(incoming.Text, triggerKeywords)
+		}
 	}
 
 	persona, personaRef, err := c.resolveQQPersona(ctx, ch)
@@ -271,8 +277,29 @@ func (c *qqConnector) HandleEvent(ctx context.Context, traceID string, ch data.C
 			if err != nil {
 				return err
 			}
+			// 群聊 heartbeat on 时预创建 thread，确保 scheduler 首次 fire 能找到
+			if !isPrivate && !strings.Contains(replyText, "已关闭") {
+				threadProjectID := derefUUID(persona.ProjectID)
+				if threadProjectID == uuid.Nil {
+					ownerUserID := uuid.Nil
+					if ch.OwnerUserID != nil {
+						ownerUserID = *ch.OwnerUserID
+					}
+					if ownerUserID != uuid.Nil {
+						if pid, err := c.personasRepo.GetOrCreateDefaultProjectIDByOwner(ctx, ch.AccountID, ownerUserID); err == nil {
+							threadProjectID = pid
+						}
+					}
+				}
+				if threadProjectID != uuid.Nil {
+					_, _ = c.resolveQQThreadID(ctx, tx, ch, persona.ID, threadProjectID, identity, false, platformChatID, "")
+				}
+			}
 			if err := tx.Commit(ctx); err != nil {
 				return err
+			}
+			if c.bus != nil {
+				_ = c.bus.Publish(ctx, pgnotify.ChannelHeartbeat, "")
 			}
 			c.sendQQReply(ctx, cfg, chatType, platformChatID, replyText)
 			return nil
@@ -405,7 +432,7 @@ func (c *qqConnector) HandleEvent(ctx context.Context, traceID string, ch data.C
 	if threadProjectID == uuid.Nil {
 		return fmt.Errorf("cannot resolve project for persona %s", persona.ID)
 	}
-	threadID, err := c.resolveQQThreadID(ctx, tx, ch, persona.ID, threadProjectID, identity, isPrivate, platformChatID)
+	threadID, err := c.resolveQQThreadID(ctx, tx, ch, persona.ID, threadProjectID, identity, isPrivate, platformChatID, displayName)
 	if err != nil {
 		return err
 	}
@@ -617,7 +644,7 @@ func (c *qqConnector) persistQQGroupPassiveMessage(
 		return fmt.Errorf("cannot resolve project for passive persist")
 	}
 
-	threadID, err := c.resolveQQThreadID(ctx, tx, ch, persona.ID, threadProjectID, identity, false, incoming.PlatformChatID)
+	threadID, err := c.resolveQQThreadID(ctx, tx, ch, persona.ID, threadProjectID, identity, false, incoming.PlatformChatID, displayName)
 	if err != nil {
 		return err
 	}
@@ -737,38 +764,75 @@ func (c *qqConnector) resolveQQPersona(ctx context.Context, ch data.Channel) (*d
 func (c *qqConnector) resolveQQThreadID(
 	ctx context.Context, tx pgx.Tx, ch data.Channel,
 	personaID, projectID uuid.UUID, identity data.ChannelIdentity,
-	isPrivate bool, platformChatID string,
+	isPrivate bool, platformChatID string, displayName string,
 ) (uuid.UUID, error) {
+	threadRepoTx := c.threadRepo.WithTx(tx)
+
+	// 构造 thread 标题
+	buildTitle := func() *string {
+		var t string
+		if isPrivate {
+			name := strings.TrimSpace(displayName)
+			if name == "" {
+				name = platformChatID
+			}
+			t = name + " (QQ 私聊)"
+		} else {
+			t = "QQ群 " + platformChatID
+		}
+		return &t
+	}
+
+	// 创建后锁定标题，防止 worker LLM 覆盖
+	lockTitle := func(threadID uuid.UUID) {
+		_, _ = threadRepoTx.UpdateFields(ctx, threadID, data.ThreadUpdateFields{
+			SetTitleLocked: true,
+			TitleLocked:    true,
+		})
+	}
+
 	if isPrivate {
-		threadMap, err := c.channelDMThreadsRepo.WithTx(tx).GetByBinding(ctx, ch.ID, identity.ID, personaID)
+		dmRepo := c.channelDMThreadsRepo.WithTx(tx)
+		threadMap, err := dmRepo.GetByBinding(ctx, ch.ID, identity.ID, personaID)
 		if err != nil {
 			return uuid.Nil, err
 		}
 		if threadMap != nil {
-			return threadMap.ThreadID, nil
+			if existing, _ := threadRepoTx.GetByID(ctx, threadMap.ThreadID); existing != nil {
+				return threadMap.ThreadID, nil
+			}
+			slog.InfoContext(ctx, "qq_stale_dm_binding", "thread_id", threadMap.ThreadID, "channel_id", ch.ID)
+			_ = dmRepo.DeleteByBinding(ctx, ch.ID, identity.ID, personaID)
 		}
-		thread, err := c.threadRepo.WithTx(tx).Create(ctx, ch.AccountID, identity.UserID, projectID, nil, false)
+		thread, err := threadRepoTx.Create(ctx, ch.AccountID, identity.UserID, projectID, buildTitle(), false)
 		if err != nil {
 			return uuid.Nil, err
 		}
-		if _, err := c.channelDMThreadsRepo.WithTx(tx).Create(ctx, ch.ID, identity.ID, personaID, thread.ID); err != nil {
+		lockTitle(thread.ID)
+		if _, err := dmRepo.Create(ctx, ch.ID, identity.ID, personaID, thread.ID); err != nil {
 			return uuid.Nil, err
 		}
 		return thread.ID, nil
 	}
 
-	threadMap, err := c.channelGroupThreadsRepo.WithTx(tx).GetByBinding(ctx, ch.ID, platformChatID, personaID)
+	groupRepo := c.channelGroupThreadsRepo.WithTx(tx)
+	threadMap, err := groupRepo.GetByBinding(ctx, ch.ID, platformChatID, personaID)
 	if err != nil {
 		return uuid.Nil, err
 	}
 	if threadMap != nil {
-		return threadMap.ThreadID, nil
+		if existing, _ := threadRepoTx.GetByID(ctx, threadMap.ThreadID); existing != nil {
+			return threadMap.ThreadID, nil
+		}
+		slog.InfoContext(ctx, "qq_stale_group_binding", "thread_id", threadMap.ThreadID, "channel_id", ch.ID)
+		_ = groupRepo.DeleteByBinding(ctx, ch.ID, platformChatID, personaID)
 	}
-	thread, err := c.threadRepo.WithTx(tx).Create(ctx, ch.AccountID, nil, projectID, nil, false)
+	thread, err := threadRepoTx.Create(ctx, ch.AccountID, nil, projectID, buildTitle(), false)
 	if err != nil {
 		return uuid.Nil, err
 	}
-	if _, err := c.channelGroupThreadsRepo.WithTx(tx).Create(ctx, ch.ID, platformChatID, personaID, thread.ID); err != nil {
+	lockTitle(thread.ID)
+	if _, err := groupRepo.Create(ctx, ch.ID, platformChatID, personaID, thread.ID); err != nil {
 		return uuid.Nil, err
 	}
 	return thread.ID, nil
@@ -946,6 +1010,28 @@ func buildQQEnvelopeText(identityID uuid.UUID, displayName, chatType, body strin
 
 func escapeEnvelopeValue(value string) string {
 	return strings.NewReplacer(`\`, `\\`, `"`, `\"`).Replace(strings.TrimSpace(value))
+}
+
+// buildQQTriggerKeywords 合并显式配置的关键词与 bot 名称（复用 Telegram 的触发逻辑）。
+func buildQQTriggerKeywords(cfg qqChannelConfig) []string {
+	seen := make(map[string]struct{}, len(cfg.TriggerKeywords)+1)
+	out := make([]string, 0, len(cfg.TriggerKeywords)+1)
+	add := func(s string) {
+		s = strings.ToLower(strings.TrimSpace(s))
+		if s == "" {
+			return
+		}
+		if _, ok := seen[s]; ok {
+			return
+		}
+		seen[s] = struct{}{}
+		out = append(out, s)
+	}
+	for _, kw := range cfg.TriggerKeywords {
+		add(kw)
+	}
+	add(cfg.BotName)
+	return out
 }
 
 // qqMessageMatchesKeyword 检查消息文本是否包含任一触发关键词（大小写不敏感子串匹配）。
