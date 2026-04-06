@@ -11,6 +11,7 @@ import (
 
 	"arkloop/services/api/internal/data"
 	"arkloop/services/api/internal/observability"
+	"arkloop/services/shared/eventbus"
 	"arkloop/services/shared/napcat"
 	"arkloop/services/shared/onebotclient"
 	"arkloop/services/shared/pgnotify"
@@ -34,6 +35,7 @@ type QQOneBotWSListenerDeps struct {
 	JobRepo                  *data.JobRepository
 	Pool                     data.DB
 	AttachmentStore          MessageAttachmentPutStore
+	Bus                      eventbus.EventBus
 }
 
 // StartQQOneBotWSListener 启动 QQ OneBot WS Client Listener（桌面模式）。
@@ -66,6 +68,7 @@ func StartQQOneBotWSListener(ctx context.Context, deps QQOneBotWSListenerDeps) {
 		jobRepo:                  deps.JobRepo,
 		pool:                     deps.Pool,
 		attachmentStore:          deps.AttachmentStore,
+		bus:                      deps.Bus,
 		inputNotify: func(ctx context.Context, runID uuid.UUID) {
 			if _, err := deps.Pool.Exec(ctx, "SELECT pg_notify($1, $2)", pgnotify.ChannelRunInput, runID.String()); err != nil {
 				slog.Warn("qq_ws_active_run_notify_failed", "run_id", runID, "error", err)
@@ -92,6 +95,20 @@ func qqWSListenerLoop(ctx context.Context, channelsRepo *data.ChannelsRepository
 			return
 		}
 
+		// NapCat 管理的 channel：检测 QQ 掉线后拆除 listener 以触发重登
+		mgr := getNapCatManagerIfExists()
+		if mgr != nil && !mgr.IsLoggedIn() {
+			activeListeners.Range(func(key, value any) bool {
+				id := key.(uuid.UUID)
+				if l, ok := value.(*onebotclient.WSListener); ok {
+					l.Stop()
+				}
+				activeListeners.Delete(id)
+				slog.Info("qq_ws_listener_removed_offline", "channel_id", id)
+				return true
+			})
+		}
+
 		activeIDs := make(map[uuid.UUID]bool, len(channels))
 		for _, ch := range channels {
 			activeIDs[ch.ID] = true
@@ -108,13 +125,9 @@ func qqWSListenerLoop(ctx context.Context, channelsRepo *data.ChannelsRepository
 				continue
 			}
 
-			mgr := getNapCatManagerIfExists()
-			if mgr != nil {
-				if !mgr.IsLoggedIn() {
-					// 未登录：尝试自动快速登录
-					qqAutoQuickLogin(mgr, cfg, &lastAutoLoginAttempt)
-					continue
-				}
+			if mgr != nil && !mgr.IsLoggedIn() {
+				qqAutoQuickLogin(mgr, cfg, &lastAutoLoginAttempt)
+				continue
 			}
 
 			chCopy := ch
