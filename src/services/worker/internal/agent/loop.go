@@ -1687,10 +1687,15 @@ func compactedToolMessage(m llm.Message) llm.Message {
 	}
 	var envelope map[string]any
 	if err := json.Unmarshal([]byte(m.Content[0].Text), &envelope); err != nil {
-		// unparseable: emit a safe stub
+		callID := extractToolCallIDFromText(m.Content[0].Text)
+		stub := map[string]any{
+			"tool_call_id": callID,
+			"result":       map[string]any{"compacted": true},
+		}
+		text, _ := json.Marshal(stub)
 		return llm.Message{
 			Role:    "tool",
-			Content: []llm.TextPart{{Text: `{"tool_call_id":"","result":{"compacted":true}}`, TrustSource: m.Content[0].TrustSource}},
+			Content: []llm.TextPart{{Text: string(text), TrustSource: m.Content[0].TrustSource}},
 		}
 	}
 	toolName, _ := envelope["tool_name"].(string)
@@ -1709,6 +1714,21 @@ func compactedToolMessage(m llm.Message) llm.Message {
 		Role:    "tool",
 		Content: []llm.TextPart{{Text: string(text), TrustSource: m.Content[0].TrustSource}},
 	}
+}
+
+// extractToolCallIDFromText attempts to extract a tool_call_id from malformed JSON.
+func extractToolCallIDFromText(text string) string {
+	prefix := `"tool_call_id":"`
+	idx := strings.Index(text, prefix)
+	if idx < 0 {
+		return "unknown"
+	}
+	start := idx + len(prefix)
+	end := strings.Index(text[start:], `"`)
+	if end < 0 {
+		return "unknown"
+	}
+	return text[start : start+end]
 }
 
 func assistantMessage(text string, toolCalls []llm.ToolCall) llm.Message {

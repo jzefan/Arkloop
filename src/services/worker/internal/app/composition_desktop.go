@@ -371,6 +371,9 @@ func ComposeDesktopEngine(ctx context.Context, db data.DesktopDB, bus eventbus.E
 	if err := cleanupOrphanSkillRuntimes(ctx, db); err != nil {
 		slog.WarnContext(ctx, "desktop: orphan skill runtime cleanup failed", "err", err.Error())
 	}
+	if err := recoverOrphanRuns(ctx, db); err != nil {
+		slog.WarnContext(ctx, "desktop: orphan run recovery failed", "err", err.Error())
+	}
 
 	return &DesktopEngine{
 		db:                     db,
@@ -3236,4 +3239,28 @@ func decryptDesktopCiphertext(keyRing *sharedencryption.KeyRing, encoded string,
 		return "", err
 	}
 	return string(plain), nil
+}
+
+func recoverOrphanRuns(ctx context.Context, db data.DesktopDB) error {
+	if db == nil {
+		return nil
+	}
+	tx, err := db.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck
+	tag, err := tx.Exec(ctx,
+		`UPDATE runs SET status = 'interrupted', updated_at = datetime('now')
+		 WHERE status IN ('running', 'queued')`)
+	if err != nil {
+		return err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return err
+	}
+	if n := tag.RowsAffected(); n > 0 {
+		slog.InfoContext(ctx, "desktop: recovered orphan runs", "count", n)
+	}
+	return nil
 }

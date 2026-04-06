@@ -119,7 +119,10 @@ func injectFromSnapshotOnly(ctx context.Context, rc *RunContext, snap MemorySnap
 	}
 	block, found, err := snap.Get(ctx, ident.AccountID, ident.UserID, ident.AgentID)
 	if err != nil {
-		slog.WarnContext(ctx, "memory: snapshot read failed", "err", err.Error())
+		slog.ErrorContext(ctx, "memory: snapshot read failed", "err", err.Error())
+		appendAsyncRunEvent(ctx, rc.MemoryServiceDB, rc.Run.ID, rc.Emitter.Emit("memory.snapshot.read_failed", map[string]any{
+			"message": err.Error(),
+		}, nil, nil))
 		return
 	}
 	if found && strings.TrimSpace(block) != "" {
