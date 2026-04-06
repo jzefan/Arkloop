@@ -175,6 +175,12 @@ func loadRunInputs(
 		if rawContinuationResponse, ok := dataJSON[runStartedContinuationResponseKey].(bool); ok {
 			inputJSON[runStartedContinuationResponseKey] = rawContinuationResponse
 		}
+		if rawRunKind, ok := dataJSON["run_kind"].(string); ok && strings.TrimSpace(rawRunKind) != "" {
+			inputJSON["run_kind"] = strings.TrimSpace(rawRunKind)
+		}
+		if rawChannelDelivery, ok := dataJSON["channel_delivery"].(map[string]any); ok && len(rawChannelDelivery) > 0 {
+			inputJSON["channel_delivery"] = rawChannelDelivery
+		}
 	}
 
 	messages, err := messagesRepo.ListByThread(ctx, tx, run.AccountID, run.ThreadID, messageLimit)

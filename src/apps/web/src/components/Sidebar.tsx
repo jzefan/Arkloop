@@ -1,4 +1,4 @@
-import { memo, useState, useRef, useEffect, useCallback, useMemo } from 'react'
+import { memo, useState, useRef, useEffect, useCallback, useMemo, useLayoutEffect } from 'react'
 import { createPortal } from 'react-dom'
 import { useNavigate, useParams, useLocation } from 'react-router-dom'
 import {
@@ -21,9 +21,10 @@ import { ShareModal } from './ShareModal'
 import { beginPerfTrace, endPerfTrace, isPerfDebugEnabled, recordPerfValue } from '../perfDebug'
 import { useAuth } from '../contexts/auth'
 import { useThreadList } from '../contexts/thread-list'
-import { useAppUI } from '../contexts/app-ui'
+import { useAppModeUI, useSearchUI, useSettingsUI, useSidebarUI } from '../contexts/app-ui'
 
 type Props = {
+  threads: ThreadResponse[]
   onNewThread: () => void
   onThreadDeleted: (threadId: string) => void
   /** 点到历史会话时先收起设置等全屏层；否则同 URL 的 navigate 不会触发，桌面端无法回到聊天 */
@@ -72,6 +73,16 @@ const SidebarThreadList = memo(function SidebarThreadList({
   navigate,
   openMenu,
 }: SidebarThreadListProps) {
+  useEffect(() => {
+    if (!isPerfDebugEnabled()) return
+    recordPerfValue('sidebar_thread_list_render_count', 1, 'count', {
+      starredCount: starredThreads.length,
+      regularCount: regularThreads.length,
+      runningCount: runningThreadIds.size,
+      activeThreadId: activeThreadId ?? null,
+    })
+  })
+
   const renderThread = (thread: ThreadResponse, section: 'starred' | 'regular') => {
     const isRunning = runningThreadIds.has(thread.id)
     const isMenuOpen = menuThreadId === thread.id
@@ -168,16 +179,19 @@ const SidebarThreadList = memo(function SidebarThreadList({
 })
 
 export function Sidebar({
+  threads,
   onNewThread,
   onThreadDeleted,
   beforeNavigateToThread,
 }: Props) {
   const { me, accessToken } = useAuth()
-  const { runningThreadIds, isPrivateMode, pendingIncognitoMode, updateTitle: onThreadTitleUpdated, getFilteredThreads } = useThreadList()
-  const { sidebarCollapsed: collapsed, toggleSidebar: onToggleCollapse, rightPanelOpen: narrow, settingsOpen: suppressActiveThreadHighlight, appMode, openSettings: onOpenSettings } = useAppUI()
+  const { runningThreadIds, isPrivateMode, pendingIncognitoMode, updateTitle: onThreadTitleUpdated } = useThreadList()
+  const { sidebarCollapsed: collapsed, toggleSidebar: onToggleCollapse, rightPanelOpen: narrow } = useSidebarUI()
+  const { enterSearchMode: onEnterSearchMode } = useSearchUI()
+  const { settingsOpen: suppressActiveThreadHighlight, openSettings: onOpenSettings } = useSettingsUI()
+  const { appMode } = useAppModeUI()
   const desktopMode = isDesktop()
   const isPrivateModeEffective = isPrivateMode || pendingIncognitoMode
-  const threads = getFilteredThreads(appMode)
   const isWorkMode = appMode === 'work'
   const navigate = useNavigate()
   const location = useLocation()
@@ -190,23 +204,37 @@ export function Sidebar({
   const [shareModalThreadId, setShareModalThreadId] = useState<string | null>(null)
   const [menuPos, setMenuPos] = useState<{ x: number; y: number }>({ x: 0, y: 0 })
   const menuRef = useRef<HTMLDivElement>(null)
+  const asideRef = useRef<HTMLElement>(null)
+  const toggleStartedRef = useRef<{ startedAt: number; sample?: Record<string, string | number | boolean | null | undefined> } | null>(null)
+  const toggleCommittedAtRef = useRef<number | null>(null)
   const [editingThreadId, setEditingThreadId] = useState<string | null>(null)
   const [editingTitle, setEditingTitle] = useState<string>('')
   const editInputRef = useRef<HTMLInputElement>(null)
   const [deleteConfirmThreadId, setDeleteConfirmThreadId] = useState<string | null>(null)
   const settingsPointerTraceRef = useRef<ReturnType<typeof beginPerfTrace>>(null)
   const collapsePointerTraceRef = useRef<ReturnType<typeof beginPerfTrace>>(null)
+  const searchPointerTraceRef = useRef<ReturnType<typeof beginPerfTrace>>(null)
   const { starredSet, starredThreads, regularThreads } = useMemo(() => {
+    const startedAt = typeof performance !== 'undefined' ? performance.now() : 0
     const nextStarredSet = new Set(starredIds)
     const threadsById = new Map(threads.map((thread) => [thread.id, thread] as const))
-    return {
+    const next = {
       starredSet: nextStarredSet,
       starredThreads: starredIds
         .map((id) => threadsById.get(id))
         .filter((t): t is ThreadResponse => t !== undefined),
       regularThreads: threads.filter((t) => !nextStarredSet.has(t.id)),
     }
-  }, [starredIds, threads])
+    if (isPerfDebugEnabled() && typeof performance !== 'undefined') {
+      recordPerfValue('sidebar_prepare_threads', performance.now() - startedAt, 'ms', {
+        threadCount: threads.length,
+        starredCount: next.starredThreads.length,
+        regularCount: next.regularThreads.length,
+        appMode: appMode ?? 'chat',
+      })
+    }
+    return next
+  }, [appMode, starredIds, threads])
 
   // 初始化时从服务端拉取收藏列表
   useEffect(() => {
@@ -323,11 +351,242 @@ export function Sidebar({
     })
   })
 
+  useEffect(() => {
+    if (!isPerfDebugEnabled()) return
+    const startedAt = performance.now()
+    const timer = window.setTimeout(() => {
+      recordPerfValue('sidebar_collapse_animation', performance.now() - startedAt, 'ms', {
+        collapsed,
+        threadCount: threads.length,
+      })
+    }, 280)
+    return () => window.clearTimeout(timer)
+  }, [collapsed, threads.length])
+
+  useEffect(() => {
+    const handleToggleStarted = (event: Event) => {
+      const detail = (event as CustomEvent<{ startedAt: number; sample?: Record<string, string | number | boolean | null | undefined> }>).detail
+      if (!detail || typeof detail.startedAt !== 'number') return
+      toggleStartedRef.current = detail
+      toggleCommittedAtRef.current = null
+    }
+    window.addEventListener('arkloop:sidebar-toggle-started', handleToggleStarted as EventListener)
+    return () => window.removeEventListener('arkloop:sidebar-toggle-started', handleToggleStarted as EventListener)
+  }, [])
+
+  useLayoutEffect(() => {
+    const current = toggleStartedRef.current
+    if (!current || !isPerfDebugEnabled() || typeof performance === 'undefined') return
+    const committedAt = performance.now()
+    toggleCommittedAtRef.current = committedAt
+    recordPerfValue('sidebar_component_commit', committedAt - current.startedAt, 'ms', {
+      ...current.sample,
+      threadCount: threads.length,
+      pathname: location.pathname,
+    })
+    const frameId = requestAnimationFrame(() => {
+      recordPerfValue('sidebar_component_first_frame', performance.now() - current.startedAt, 'ms', {
+        ...current.sample,
+        threadCount: threads.length,
+        pathname: location.pathname,
+      })
+    })
+    return () => cancelAnimationFrame(frameId)
+  }, [collapsed, threads.length, location.pathname])
+
+  useEffect(() => {
+    const aside = asideRef.current
+    if (!aside || !isPerfDebugEnabled()) return
+    const handleTransitionStart = (event: TransitionEvent) => {
+      if (event.propertyName !== 'width') return
+      const current = toggleStartedRef.current
+      if (!current || typeof performance === 'undefined') return
+      recordPerfValue('sidebar_collapse_transition_start_delay', performance.now() - current.startedAt, 'ms', {
+        ...current.sample,
+        threadCount: threads.length,
+        pathname: location.pathname,
+      })
+      if (toggleCommittedAtRef.current !== null) {
+        recordPerfValue('sidebar_commit_to_transition_start_gap', performance.now() - toggleCommittedAtRef.current, 'ms', {
+          ...current.sample,
+          threadCount: threads.length,
+          pathname: location.pathname,
+        })
+      }
+      toggleStartedRef.current = null
+      toggleCommittedAtRef.current = null
+    }
+    aside.addEventListener('transitionstart', handleTransitionStart)
+    return () => aside.removeEventListener('transitionstart', handleTransitionStart)
+  }, [threads.length, location.pathname])
+
   const userInitial = me?.username?.charAt(0).toUpperCase() ?? '?'
+  const recordSearchOpenStart = useCallback(() => {
+    if (!isPerfDebugEnabled() || typeof performance === 'undefined') return
+    const sample = {
+      source: 'sidebar',
+      collapsed,
+      threadCount: threads.length,
+      appMode: appMode ?? 'chat',
+      pathname: location.pathname,
+    }
+    ;(window as Window & {
+      __arkloopSearchOpenStarted?: {
+        startedAt: number
+        sample: Record<string, string | number | boolean | null | undefined>
+      }
+    }).__arkloopSearchOpenStarted = {
+      startedAt: performance.now(),
+      sample,
+    }
+    recordPerfValue('desktop_search_open_request', 0, 'ms', sample)
+  }, [appMode, collapsed, location.pathname, threads.length])
+  const menuPortal = menuThreadId !== null ? createPortal(
+    <div
+      ref={menuRef}
+      style={{
+        position: 'fixed',
+        right: `calc(100vw - ${menuPos.x}px)`,
+        top: menuPos.y,
+        zIndex: 9999,
+        border: '0.5px solid var(--c-border-subtle)',
+        borderRadius: '10px',
+        padding: '4px',
+        background: 'var(--c-bg-menu)',
+        minWidth: '120px',
+        boxShadow: 'var(--c-dropdown-shadow)',
+      }}
+      className="dropdown-menu"
+    >
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+        <button
+          onClick={() => {
+            const thread = threads.find((th) => th.id === menuThreadId)
+            const currentTitle = thread ? threadTitle(thread, t.untitled) : ''
+            startRename(menuThreadId, currentTitle === t.untitled ? '' : currentTitle)
+          }}
+          className="flex w-full items-center gap-2 rounded-lg px-3 py-1.5 text-[13px] text-[var(--c-text-secondary)] hover:bg-[var(--c-bg-deep)] hover:text-[var(--c-text-primary)]"
+        >
+          <Pencil size={13} style={{ flexShrink: 0 }} />
+          {t.renameThread}
+        </button>
+        <button
+          onClick={() => toggleStar(menuThreadId)}
+          className="flex w-full items-center gap-2 rounded-lg px-3 py-1.5 text-[13px] text-[var(--c-text-secondary)] hover:bg-[var(--c-bg-deep)] hover:text-[var(--c-text-primary)]"
+        >
+          <Star
+            size={13}
+            style={{
+              flexShrink: 0,
+              color: 'var(--c-text-secondary)',
+              fill: starredIds.includes(menuThreadId) ? 'var(--c-text-secondary)' : 'none',
+            }}
+          />
+          {starredIds.includes(menuThreadId) ? t.unstarThread : t.starThread}
+        </button>
+        {!isDesktop() && (
+          <button
+            onClick={() => {
+              const id = menuThreadId
+              setMenuThreadId(null)
+              setShareModalThreadId(id)
+            }}
+            className="flex w-full items-center gap-2 rounded-lg px-3 py-1.5 text-[13px] text-[var(--c-text-secondary)] hover:bg-[var(--c-bg-deep)] hover:text-[var(--c-text-primary)]"
+          >
+            <Share2 size={13} style={{ flexShrink: 0 }} />
+            {t.shareThread}
+          </button>
+        )}
+        <div style={{ height: '1px', background: 'var(--c-border-subtle)', margin: '2px 0' }} />
+        <button
+          onClick={() => {
+            const id = menuThreadId
+            setMenuThreadId(null)
+            setDeleteConfirmThreadId(id)
+          }}
+          className="flex w-full items-center gap-2 rounded-lg px-3 py-1.5 text-[13px] text-[#ef4444] hover:bg-[rgba(239,68,68,0.08)] hover:text-[#f87171]"
+        >
+          <Trash2 size={13} style={{ flexShrink: 0 }} />
+          {t.deleteThread}
+        </button>
+      </div>
+    </div>,
+    document.body,
+  ) : null
+  const shareModal = shareModalThreadId ? (
+    <ShareModal
+      accessToken={accessToken}
+      threadId={shareModalThreadId}
+      open={shareModalThreadId !== null}
+      onClose={() => setShareModalThreadId(null)}
+    />
+  ) : null
+  const deleteConfirmPortal = deleteConfirmThreadId !== null ? createPortal(
+    <div
+      className="overlay-fade-in fixed inset-0 flex items-center justify-center"
+      style={{ zIndex: 10000, background: 'rgba(0,0,0,0.12)', backdropFilter: 'blur(2px)', WebkitBackdropFilter: 'blur(2px)' }}
+      onClick={(e) => { if (e.target === e.currentTarget) setDeleteConfirmThreadId(null) }}
+    >
+      <div
+        className="modal-enter"
+        style={{
+          background: 'var(--c-bg-page)',
+          border: '0.5px solid var(--c-border-subtle)',
+          borderRadius: '16px',
+          padding: '24px',
+          width: '320px',
+          boxShadow: 'var(--c-dropdown-shadow)',
+        }}
+      >
+        <p style={{ fontSize: '15px', fontWeight: 600, color: 'var(--c-text-primary)', marginBottom: '8px' }}>
+          {t.deleteThreadConfirmTitle}
+        </p>
+        <p style={{ fontSize: '13px', color: 'var(--c-text-secondary)', lineHeight: 1.55, marginBottom: '20px' }}>
+          {t.deleteThreadConfirmBody}
+        </p>
+        <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
+          <button
+            onClick={() => setDeleteConfirmThreadId(null)}
+            className="hover:bg-[var(--c-bg-deep)]"
+            style={{
+              padding: '7px 16px',
+              borderRadius: '8px',
+              fontSize: '13px',
+              fontWeight: 500,
+              color: 'var(--c-text-secondary)',
+              background: 'transparent',
+              border: '0.5px solid var(--c-border-subtle)',
+              cursor: 'pointer',
+            }}
+          >
+            {t.deleteThreadCancel}
+          </button>
+          <button
+            onClick={() => handleDelete(deleteConfirmThreadId)}
+            className="hover:opacity-85 active:opacity-70"
+            style={{
+              padding: '7px 16px',
+              borderRadius: '8px',
+              fontSize: '13px',
+              fontWeight: 500,
+              color: '#fff',
+              background: '#ef4444',
+              border: 'none',
+              cursor: 'pointer',
+            }}
+          >
+            {t.deleteThreadConfirm}
+          </button>
+        </div>
+      </div>
+    </div>,
+    document.body,
+  ) : null
 
   return (
     <>
-    <aside
+      <aside
+      ref={asideRef}
       className={[
         'flex h-full shrink-0 flex-col overflow-hidden bg-[var(--c-bg-sidebar)]',
         collapsed ? 'w-[48px]' : narrow ? 'w-[224px]' : desktopMode ? 'w-[284px]' : 'w-[304px]',
@@ -373,7 +632,7 @@ export function Sidebar({
                   starredCount: starredIds.length,
                 })
                 collapsePointerTraceRef.current = null
-                onToggleCollapse()
+                onToggleCollapse('sidebar')
               }}
               onPointerDown={() => {
                 collapsePointerTraceRef.current = beginPerfTrace('sidebar_collapse_interaction', {
@@ -409,9 +668,28 @@ export function Sidebar({
 
         <button
           onClick={() => {
-            const basePath = location.pathname.replace(/\/search$/, '') || '/'
-            const searchPath = basePath.endsWith('/') ? `${basePath}search` : `${basePath}/search`
-            navigate(searchPath)
+            endPerfTrace(searchPointerTraceRef.current, {
+              phase: 'click',
+              collapsed,
+              threadCount: threads.length,
+              appMode: appMode ?? 'chat',
+              pathname: location.pathname,
+            })
+            searchPointerTraceRef.current = null
+            recordSearchOpenStart()
+            onEnterSearchMode()
+          }}
+          onPointerDown={() => {
+            searchPointerTraceRef.current = beginPerfTrace('sidebar_search_interaction', {
+              phase: 'pointerdown',
+              collapsed,
+              threadCount: threads.length,
+              appMode: appMode ?? 'chat',
+              pathname: location.pathname,
+            })
+          }}
+          onPointerLeave={() => {
+            searchPointerTraceRef.current = null
           }}
           className="group flex h-9 items-center gap-2.5 overflow-hidden whitespace-nowrap rounded-lg px-2 text-[15px] font-[300] text-[var(--c-text-secondary)] transition-[background-color,color] duration-[60ms] hover:bg-[var(--c-bg-deep)] hover:text-[var(--c-text-primary)]"
         >
@@ -429,72 +707,70 @@ export function Sidebar({
         ].join(' ')}
         style={{ transition: 'opacity 150ms ease' }}
       >
-        <div className="mb-[12px] mt-1 flex shrink-0 items-center gap-2 px-2">
-          <h3 className="text-[11px] font-[350] tracking-[0.3px] text-[var(--c-text-tertiary)]">
-            {t.recents}
-          </h3>
-        </div>
-        <div className="flex flex-col gap-[2px]">
-          {/* incognito placeholder */}
-          <div
-            style={{
-              display: 'grid',
-              gridTemplateRows: isPrivateModeEffective ? '1fr' : '0fr',
-              opacity: isPrivateModeEffective ? 1 : 0,
-              overflow: 'hidden',
-              transition: 'grid-template-rows 0.15s ease, opacity 0.12s ease',
-            }}
-          >
-            <div style={{ minHeight: 0 }}>
-              <div
-                className="flex items-center gap-2 rounded-lg px-3 py-2.5"
-                style={{
-                  border: '1px dashed var(--c-border-subtle)',
-                  color: 'var(--c-text-muted)',
-                }}
-              >
-                <Glasses size={14} strokeWidth={1.5} style={{ opacity: 0.6, flexShrink: 0 }} />
-                <p className="text-[12px] leading-snug">{t.incognitoHistoryNote}</p>
+          <div className="mb-[12px] mt-1 flex shrink-0 items-center gap-2 px-2">
+            <h3 className="text-[11px] font-[350] tracking-[0.3px] text-[var(--c-text-tertiary)]">
+              {t.recents}
+            </h3>
+          </div>
+          <div className="flex flex-col gap-[2px]">
+            {/* incognito placeholder */}
+            <div
+              style={{
+                display: 'grid',
+                gridTemplateRows: isPrivateModeEffective ? '1fr' : '0fr',
+                opacity: isPrivateModeEffective ? 1 : 0,
+                overflow: 'hidden',
+                transition: 'grid-template-rows 0.15s ease, opacity 0.12s ease',
+              }}
+            >
+              <div style={{ minHeight: 0 }}>
+                <div
+                  className="flex items-center gap-2 rounded-lg px-3 py-2.5"
+                  style={{
+                    border: '1px dashed var(--c-border-subtle)',
+                    color: 'var(--c-text-muted)',
+                  }}
+                >
+                  <Glasses size={14} strokeWidth={1.5} style={{ opacity: 0.6, flexShrink: 0 }} />
+                  <p className="text-[12px] leading-snug">{t.incognitoHistoryNote}</p>
+                </div>
               </div>
             </div>
-          </div>
 
-          {/* Thread list — keyed by appMode so switching modes replaces the whole list
-              without triggering mass exit animations on individual items */}
-          <div
-            key={appMode}
-            className="w-full flex flex-col gap-[2px]"
-            style={{
-              opacity: isPrivateModeEffective ? 0 : 1,
-              transition: 'opacity 0.15s ease',
-              pointerEvents: isPrivateModeEffective ? 'none' : 'auto',
-            }}
-          >
-            {threads.length === 0 ? (
-              <p className="overflow-hidden whitespace-nowrap px-2 py-1 text-[12px] text-[var(--c-text-muted)]">{t.recentsEmpty}</p>
-            ) : (
-              <SidebarThreadList
-                starredThreads={starredThreads}
-                regularThreads={regularThreads}
-                starredSet={starredSet}
-                runningThreadIds={runningThreadIds}
-                menuThreadId={menuThreadId}
-                editingThreadId={editingThreadId}
-                editingTitle={editingTitle}
-                activeThreadId={activeThreadId}
-                untitled={t.untitled}
-                editInputRef={editInputRef}
-                setEditingTitle={setEditingTitle}
-                setEditingThreadId={setEditingThreadId}
-                commitRename={commitRename}
-                beforeNavigateToThread={beforeNavigateToThread}
-                navigate={navigate}
-                openMenu={openMenu}
-              />
-            )}
+            <div
+              key={appMode}
+              className="flex w-full flex-col gap-[2px]"
+              style={{
+                opacity: isPrivateModeEffective ? 0 : 1,
+                transition: 'opacity 0.15s ease',
+                pointerEvents: isPrivateModeEffective ? 'none' : 'auto',
+              }}
+            >
+              {threads.length === 0 ? (
+                <p className="overflow-hidden whitespace-nowrap px-2 py-1 text-[12px] text-[var(--c-text-muted)]">{t.recentsEmpty}</p>
+              ) : (
+                <SidebarThreadList
+                  starredThreads={starredThreads}
+                  regularThreads={regularThreads}
+                  starredSet={starredSet}
+                  runningThreadIds={runningThreadIds}
+                  menuThreadId={menuThreadId}
+                  editingThreadId={editingThreadId}
+                  editingTitle={editingTitle}
+                  activeThreadId={activeThreadId}
+                  untitled={t.untitled}
+                  editInputRef={editInputRef}
+                  setEditingTitle={setEditingTitle}
+                  setEditingThreadId={setEditingThreadId}
+                  commitRename={commitRename}
+                  beforeNavigateToThread={beforeNavigateToThread}
+                  navigate={navigate}
+                  openMenu={openMenu}
+                />
+              )}
+            </div>
           </div>
         </div>
-      </div>
 
       {/* Bottom area */}
       <div
@@ -566,150 +842,11 @@ export function Sidebar({
         </div>
       </div>
 
-    </aside>
+      </aside>
 
-    {/* 三点菜单 - portal 挂到 body 避免被 overflow 裁切 */}
-    {menuThreadId !== null && createPortal(
-      <div
-        ref={menuRef}
-        style={{
-          position: 'fixed',
-          right: `calc(100vw - ${menuPos.x}px)`,
-          top: menuPos.y,
-          zIndex: 9999,
-          border: '0.5px solid var(--c-border-subtle)',
-          borderRadius: '10px',
-          padding: '4px',
-          background: 'var(--c-bg-menu)',
-          minWidth: '120px',
-          boxShadow: 'var(--c-dropdown-shadow)',
-        }}
-        className="dropdown-menu"
-      >
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
-          <button
-            onClick={() => {
-              const thread = threads.find((th) => th.id === menuThreadId)
-              const currentTitle = thread ? threadTitle(thread, t.untitled) : ''
-              startRename(menuThreadId, currentTitle === t.untitled ? '' : currentTitle)
-            }}
-            className="flex w-full items-center gap-2 rounded-lg px-3 py-1.5 text-[13px] text-[var(--c-text-secondary)] hover:bg-[var(--c-bg-deep)] hover:text-[var(--c-text-primary)]"
-          >
-            <Pencil size={13} style={{ flexShrink: 0 }} />
-            {t.renameThread}
-          </button>
-          <button
-            onClick={() => toggleStar(menuThreadId)}
-            className="flex w-full items-center gap-2 rounded-lg px-3 py-1.5 text-[13px] text-[var(--c-text-secondary)] hover:bg-[var(--c-bg-deep)] hover:text-[var(--c-text-primary)]"
-          >
-            <Star
-              size={13}
-              style={{
-                flexShrink: 0,
-                color: 'var(--c-text-secondary)',
-                fill: starredIds.includes(menuThreadId) ? 'var(--c-text-secondary)' : 'none',
-              }}
-            />
-            {starredIds.includes(menuThreadId) ? t.unstarThread : t.starThread}
-          </button>
-          {!isDesktop() && (
-            <button
-              onClick={() => {
-                const id = menuThreadId
-                setMenuThreadId(null)
-                setShareModalThreadId(id)
-              }}
-              className="flex w-full items-center gap-2 rounded-lg px-3 py-1.5 text-[13px] text-[var(--c-text-secondary)] hover:bg-[var(--c-bg-deep)] hover:text-[var(--c-text-primary)]"
-            >
-              <Share2 size={13} style={{ flexShrink: 0 }} />
-              {t.shareThread}
-            </button>
-          )}
-          <div style={{ height: '1px', background: 'var(--c-border-subtle)', margin: '2px 0' }} />
-          <button
-            onClick={() => {
-              const id = menuThreadId
-              setMenuThreadId(null)
-              setDeleteConfirmThreadId(id)
-            }}
-            className="flex w-full items-center gap-2 rounded-lg px-3 py-1.5 text-[13px] text-[#ef4444] hover:bg-[rgba(239,68,68,0.08)] hover:text-[#f87171]"
-          >
-            <Trash2 size={13} style={{ flexShrink: 0 }} />
-            {t.deleteThread}
-          </button>
-        </div>
-      </div>,
-      document.body,
-    )}
-      {shareModalThreadId && (
-        <ShareModal
-          accessToken={accessToken}
-          threadId={shareModalThreadId}
-          open={shareModalThreadId !== null}
-          onClose={() => setShareModalThreadId(null)}
-        />
-      )}
-      {deleteConfirmThreadId !== null && createPortal(
-        <div
-          className="overlay-fade-in fixed inset-0 flex items-center justify-center"
-          style={{ zIndex: 10000, background: 'rgba(0,0,0,0.12)', backdropFilter: 'blur(2px)', WebkitBackdropFilter: 'blur(2px)' }}
-          onClick={(e) => { if (e.target === e.currentTarget) setDeleteConfirmThreadId(null) }}
-        >
-          <div
-            className="modal-enter"
-            style={{
-              background: 'var(--c-bg-page)',
-              border: '0.5px solid var(--c-border-subtle)',
-              borderRadius: '16px',
-              padding: '24px',
-              width: '320px',
-              boxShadow: 'var(--c-dropdown-shadow)',
-            }}
-          >
-            <p style={{ fontSize: '15px', fontWeight: 600, color: 'var(--c-text-primary)', marginBottom: '8px' }}>
-              {t.deleteThreadConfirmTitle}
-            </p>
-            <p style={{ fontSize: '13px', color: 'var(--c-text-secondary)', lineHeight: 1.55, marginBottom: '20px' }}>
-              {t.deleteThreadConfirmBody}
-            </p>
-            <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
-              <button
-                onClick={() => setDeleteConfirmThreadId(null)}
-                className="hover:bg-[var(--c-bg-deep)]"
-                style={{
-                  padding: '7px 16px',
-                  borderRadius: '8px',
-                  fontSize: '13px',
-                  fontWeight: 500,
-                  color: 'var(--c-text-secondary)',
-                  background: 'transparent',
-                  border: '0.5px solid var(--c-border-subtle)',
-                  cursor: 'pointer',
-                }}
-              >
-                {t.deleteThreadCancel}
-              </button>
-              <button
-                onClick={() => handleDelete(deleteConfirmThreadId)}
-                className="hover:opacity-85 active:opacity-70"
-                style={{
-                  padding: '7px 16px',
-                  borderRadius: '8px',
-                  fontSize: '13px',
-                  fontWeight: 500,
-                  color: '#fff',
-                  background: '#ef4444',
-                  border: 'none',
-                  cursor: 'pointer',
-                }}
-              >
-                {t.deleteThreadConfirm}
-              </button>
-            </div>
-          </div>
-        </div>,
-        document.body,
-      )}
+      {menuPortal}
+      {shareModal}
+      {deleteConfirmPortal}
     </>
   )
 }

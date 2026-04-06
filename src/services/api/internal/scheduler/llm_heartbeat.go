@@ -205,7 +205,20 @@ func (s *LLMHeartbeat) fireOne(ctx context.Context, row data.ScheduledTriggerRow
 		ctxData.ThreadID,
 		ctxData.CreatedByUserID,
 		"run.started",
-		map[string]any{"persona_id": row.PersonaKey, "model": row.Model, "run_kind": runkind.Heartbeat},
+		map[string]any{
+			"persona_id": row.PersonaKey,
+			"model":      row.Model,
+			"run_kind":   runkind.Heartbeat,
+			"channel_delivery": map[string]any{
+				"channel_id":                 ctxData.ChannelID.String(),
+				"channel_type":               ctxData.ChannelType,
+				"sender_channel_identity_id": ctxData.IdentityID.String(),
+				"conversation_type":          ctxData.ConversationType,
+				"conversation_ref": map[string]any{
+					"target": ctxData.PlatformChatID,
+				},
+			},
+		},
 	)
 	if err != nil {
 		if errors.Is(err, data.ErrThreadBusy) {

@@ -1,4 +1,4 @@
-import { memo, useCallback } from 'react'
+import { memo, useCallback, useEffect, useMemo } from 'react'
 import { Outlet, useNavigate, useLocation } from 'react-router-dom'
 import { isDesktop } from '@arkloop/shared/desktop'
 import { LoadingPage } from '@arkloop/shared'
@@ -14,13 +14,51 @@ import { getMe } from '../api'
 import { writeSelectedPersonaKeyToStorage, DEFAULT_PERSONA_KEY } from '../storage'
 import { useAuth } from '../contexts/auth'
 import { useThreadList } from '../contexts/thread-list'
-import { useAppUI } from '../contexts/app-ui'
+import {
+  useAppModeUI,
+  useNotificationsUI,
+  useSearchUI,
+  useSettingsUI,
+  useSidebarUI,
+  useSkillPromptUI,
+  useTitleBarIncognitoUI,
+} from '../contexts/app-ui'
 import { useCredits } from '../contexts/credits'
+import { isPerfDebugEnabled, recordPerfValue } from '../perfDebug'
+
+const MainViewport = memo(function MainViewport({
+  accessToken,
+  notificationsOpen,
+  closeNotifications,
+  markNotificationRead,
+}: {
+  accessToken: string
+  notificationsOpen: boolean
+  closeNotifications: () => void
+  markNotificationRead: () => void
+}) {
+  useEffect(() => {
+    if (!isPerfDebugEnabled()) return
+    recordPerfValue('layout_main_viewport_render_count', 1, 'count', {
+      notificationsOpen,
+    })
+  })
+
+  return (
+    <main className="relative flex min-w-0 flex-1 flex-col overflow-y-auto" style={{ scrollbarGutter: 'stable' }}>
+      <Outlet />
+      {notificationsOpen && (
+        <NotificationsPanel accessToken={accessToken} onClose={closeNotifications} onMarkedRead={markNotificationRead} />
+      )}
+    </main>
+  )
+})
 
 type LayoutMainProps = {
   desktop: boolean
   isSearchOpen: boolean
   filteredThreads: import('../api').ThreadResponse[]
+  pathname: string
   onSearchClose: () => void
   onMeUpdated: (m: import('../api').MeResponse) => void
   onTrySkill: (prompt: string) => void
@@ -30,16 +68,27 @@ const LayoutMain = memo(function LayoutMain({
   desktop,
   isSearchOpen,
   filteredThreads,
+  pathname,
   onSearchClose,
   onMeUpdated,
   onTrySkill,
 }: LayoutMainProps) {
   const { me, accessToken, logout } = useAuth()
   const { setCreditsBalance } = useCredits()
-  const {
-    settingsOpen, settingsInitialTab, desktopSettingsSection,
-    closeSettings, notificationsOpen, closeNotifications, markNotificationRead,
-  } = useAppUI()
+  const { settingsOpen, settingsInitialTab, desktopSettingsSection, closeSettings } = useSettingsUI()
+  const { notificationsOpen, closeNotifications, markNotificationRead } = useNotificationsUI()
+
+  useEffect(() => {
+    if (!isPerfDebugEnabled()) return
+    recordPerfValue('layout_main_render_count', 1, 'count', {
+      desktop,
+      isSearchOpen,
+      settingsOpen,
+      notificationsOpen,
+      filteredThreadCount: filteredThreads.length,
+      pathname,
+    })
+  })
 
   return (
     <>
@@ -71,12 +120,14 @@ const LayoutMain = memo(function LayoutMain({
           onTrySkill={onTrySkill}
         />
       ) : (
-        <main className="relative flex min-w-0 flex-1 flex-col overflow-y-auto" style={{ scrollbarGutter: 'stable' }}>
-          <Outlet />
-          {notificationsOpen && (
-            <NotificationsPanel accessToken={accessToken} onClose={closeNotifications} onMarkedRead={markNotificationRead} />
-          )}
-        </main>
+        <div className="relative flex min-w-0 flex-1 overflow-hidden">
+          <MainViewport
+            accessToken={accessToken}
+            notificationsOpen={notificationsOpen}
+            closeNotifications={closeNotifications}
+            markNotificationRead={markNotificationRead}
+          />
+        </div>
       )}
     </>
   )
@@ -90,20 +141,22 @@ export function AppLayout() {
     togglePrivateMode,
     getFilteredThreads,
   } = useThreadList()
-  const {
-    sidebarCollapsed, sidebarHiddenByWidth,
-    isSearchMode, appMode, availableAppModes,
-    toggleSidebar, closeSettings,
-    exitSearchMode, closeNotifications,
-    setAppMode, queueSkillPrompt, triggerTitleBarIncognitoClick,
-  } = useAppUI()
+  const { sidebarCollapsed, sidebarHiddenByWidth, toggleSidebar } = useSidebarUI()
+  const { isSearchMode, exitSearchMode } = useSearchUI()
+  const { appMode, availableAppModes, setAppMode } = useAppModeUI()
+  const { closeSettings } = useSettingsUI()
+  const { closeNotifications } = useNotificationsUI()
+  const { queueSkillPrompt } = useSkillPromptUI()
+  const { triggerTitleBarIncognitoClick } = useTitleBarIncognitoUI()
   useCredits()
   const { t } = useLocale()
   const navigate = useNavigate()
   const location = useLocation()
   const desktop = isDesktop()
 
-  const isSearchOpen = location.pathname.endsWith('/search')
+  const pathnameSearchOpen = location.pathname.endsWith('/search')
+  const isSearchOpen = isSearchMode || pathnameSearchOpen
+  const filteredThreads = useMemo(() => getFilteredThreads(appMode), [getFilteredThreads, appMode])
 
   const handleDesktopTitleBarIncognitoClick = useCallback(() => {
     triggerTitleBarIncognitoClick(togglePrivateMode)
@@ -118,9 +171,11 @@ export function AppLayout() {
   }, [isSearchMode, exitSearchMode, closeNotifications, desktop, closeSettings, navigate])
 
   const handleCloseSearch = useCallback(() => {
+    exitSearchMode()
+    if (!location.pathname.endsWith('/search')) return
     const basePath = location.pathname.replace(/\/search$/, '') || '/'
     navigate(basePath)
-  }, [location.pathname, navigate])
+  }, [exitSearchMode, location.pathname, navigate])
 
   const handleTrySkill = useCallback((prompt: string) => {
     closeSettings()
@@ -138,8 +193,6 @@ export function AppLayout() {
   const handleBeforeNavigateToThread = useCallback(() => {
     closeSettings()
   }, [closeSettings])
-
-  const filteredThreads = getFilteredThreads(appMode)
 
   if (!meLoaded) return <LoadingPage label={t.loading} />
 
@@ -165,7 +218,7 @@ export function AppLayout() {
       {desktop && (
         <DesktopTitleBar
           sidebarCollapsed={sidebarCollapsed}
-          onToggleSidebar={toggleSidebar}
+          onToggleSidebar={() => toggleSidebar('titlebar')}
           appMode={appMode}
           onSetAppMode={setAppMode}
           availableModes={availableAppModes}
@@ -178,6 +231,7 @@ export function AppLayout() {
       <div className="flex min-h-0 flex-1">
         {!sidebarHiddenByWidth && (
           <Sidebar
+            threads={filteredThreads}
             onNewThread={handleNewThread}
             onThreadDeleted={handleThreadDeleted}
             beforeNavigateToThread={handleBeforeNavigateToThread}
@@ -188,6 +242,7 @@ export function AppLayout() {
           desktop={desktop}
           isSearchOpen={isSearchOpen}
           filteredThreads={filteredThreads}
+          pathname={location.pathname}
           onSearchClose={handleCloseSearch}
           onMeUpdated={updateMe}
           onTrySkill={handleTrySkill}

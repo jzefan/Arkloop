@@ -12,7 +12,13 @@ import { useLocale } from '../contexts/LocaleContext'
 import { buildMessageRequest } from '../messageContent'
 import { useAuth } from '../contexts/auth'
 import { useThreadList } from '../contexts/thread-list'
-import { useAppUI } from '../contexts/app-ui'
+import {
+  useAppModeUI,
+  useNotificationsUI,
+  useSearchUI,
+  useSettingsUI,
+  useSkillPromptUI,
+} from '../contexts/app-ui'
 import { useCredits } from '../contexts/credits'
 
 function normalizeError(error: unknown, fallback: string): AppError {
@@ -102,7 +108,11 @@ function buildGreeting(name: string | null, now: Date): string {
 export function WelcomePage() {
   const { accessToken, logout: onLoggedOut, me } = useAuth()
   const { addThread: onThreadCreated, isPrivateMode, togglePrivateMode: onTogglePrivateMode } = useThreadList()
-  const { isSearchMode, enterSearchMode: onEnterSearchMode, exitSearchMode: onExitSearchMode, openNotifications: onOpenNotifications, notificationVersion, openSettings: onOpenSettings, appMode, pendingSkillPrompt, consumeSkillPrompt } = useAppUI()
+  const { isSearchMode, enterSearchMode: onEnterSearchMode, exitSearchMode: onExitSearchMode } = useSearchUI()
+  const { openNotifications: onOpenNotifications, notificationVersion } = useNotificationsUI()
+  const { openSettings: onOpenSettings } = useSettingsUI()
+  const { appMode } = useAppModeUI()
+  const { pendingSkillPrompt, consumeSkillPrompt } = useSkillPromptUI()
   const { refreshCredits } = useCredits()
   const [showDebugPanel, setShowDebugPanel] = useState(() => readDeveloperShowDebugPanel())
   const [draft, setDraft] = useState('')

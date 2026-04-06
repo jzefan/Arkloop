@@ -98,6 +98,10 @@ func (noDesktopEditProvider) Delete(_ context.Context, _ workermemory.MemoryIden
 	return nil
 }
 
+func (noDesktopEditProvider) ListDir(_ context.Context, _ workermemory.MemoryIdentity, _ string) ([]string, error) {
+	return nil, nil
+}
+
 func (m *mockProvider) Find(_ context.Context, _ workermemory.MemoryIdentity, _ string, _ string, _ int) ([]workermemory.MemoryHit, error) {
 	m.findCalled = true
 	return m.findHits, m.findErr
@@ -126,6 +130,10 @@ func (m *mockProvider) Delete(_ context.Context, _ workermemory.MemoryIdentity, 
 	m.deleteCalled = true
 	m.lastDeleteURI = uri
 	return m.deleteErr
+}
+
+func (m *mockProvider) ListDir(_ context.Context, _ workermemory.MemoryIdentity, _ string) ([]string, error) {
+	return nil, nil
 }
 
 func (m *mockProvider) UpdateByURI(_ context.Context, _ workermemory.MemoryIdentity, uri string, entry workermemory.MemoryEntry) error {

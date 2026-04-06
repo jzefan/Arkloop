@@ -1,7 +1,7 @@
 import { debugBus } from '@arkloop/shared'
 import { isDesktop } from '@arkloop/shared/desktop'
 
-type PerfSample = Record<string, string | number | boolean | null | undefined>
+export type PerfSample = Record<string, string | number | boolean | null | undefined>
 export type PerfTrace = {
   metric: string
   startedAt: number
