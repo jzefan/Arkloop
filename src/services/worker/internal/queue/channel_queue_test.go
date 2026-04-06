@@ -532,8 +532,8 @@ func TestChannelQueueOnEnqueueCallback(t *testing.T) {
 		}
 	}
 
-	if got := callCount.Load(); got != 3 {
-		t.Fatalf("expected onEnqueue to be called 3 times, got %d", got)
+	if got := callCount.Load(); got != 1 {
+		t.Fatalf("expected onEnqueue to be called 1 time (dedup), got %d", got)
 	}
 }
 
