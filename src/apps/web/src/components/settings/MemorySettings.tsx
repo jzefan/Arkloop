@@ -621,7 +621,7 @@ export function MemorySettings({ accessToken }: Props) {
         try {
           const errResp = await listMemoryErrors(accessToken, 5)
           setMemoryErrors(errResp.errors)
-        } catch { /* ignore */ }
+        } catch (err) { console.error('listMemoryErrors failed', err) }
       }
       if (cfg.enabled) {
         const snap = await api.memory.getSnapshot()
@@ -632,10 +632,10 @@ export function MemorySettings({ accessToken }: Props) {
             const imp = await api.memory.getImpression()
             setImpression(imp.impression ?? '')
             setImpressionUpdatedAt(imp.updated_at)
-          } catch { /* ignore */ }
+          } catch (err) { console.error('getImpression failed', err) }
         }
       }
-    } catch { /* ignore */ } finally {
+    } catch (err) { console.error('memory loadData failed', err) } finally {
       setLoading(false)
     }
   }, [api, probeHealth, accessToken])
@@ -647,7 +647,7 @@ export function MemorySettings({ accessToken }: Props) {
       const snap = await api.memory.rebuildSnapshot()
       setSnapshot(snap.memory_block ?? '')
       setHits(snap.hits ?? [])
-    } catch { /* ignore */ } finally {
+    } catch (err) { console.error('rebuildSnapshot failed', err) } finally {
       setRebuilding(false)
     }
   }, [api])
@@ -662,11 +662,11 @@ export function MemorySettings({ accessToken }: Props) {
           const imp = await api.memory.getImpression()
           setImpression(imp.impression ?? '')
           setImpressionUpdatedAt(imp.updated_at ?? resp.updated_at)
-        } catch { /* ignore */ }
+        } catch (err) { console.error('getImpression after rebuild failed', err) }
       }
       setRebuildImpressionDone(true)
       setTimeout(() => setRebuildImpressionDone(false), 2000)
-    } catch { /* ignore */ } finally {
+    } catch (err) { console.error('rebuildImpression failed', err) } finally {
       setRebuildingImpression(false)
     }
   }, [api])

@@ -14,6 +14,7 @@ type Props = {
 export function ImageThumbnailCard({ artifact, accessToken, pathPrefix = '/v1/artifacts' }: Props) {
   const [blobUrl, setBlobUrl] = useState<string | null>(null)
   const [loaded, setLoaded] = useState(false)
+  const [fetchError, setFetchError] = useState(false)
   const [hovered, setHovered] = useState(false)
   const [lbVisible, setLbVisible] = useState(false)
   const [lbShow, setLbShow] = useState(false)
@@ -30,7 +31,7 @@ export function ImageThumbnailCard({ artifact, accessToken, pathPrefix = '/v1/ar
       .then((blob) => {
         if (!cancelled) setBlobUrl(URL.createObjectURL(blob))
       })
-      .catch(() => {})
+      .catch((err) => { console.error('image fetch failed', err); if (!cancelled) setFetchError(true) })
     return () => { cancelled = true }
   }, [artifact.key, accessToken, pathPrefix])
 
@@ -104,9 +105,18 @@ export function ImageThumbnailCard({ artifact, accessToken, pathPrefix = '/v1/ar
           cursor: 'pointer',
         }}
       >
-        {!loaded && (
+        {!loaded && !fetchError && (
           <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
             <div className="attachment-shimmer" style={{ width: '80%', height: '80%', borderRadius: '6px' }} />
+          </div>
+        )}
+        {fetchError && (
+          <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--c-bg-deep)' }}>
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" style={{ color: 'var(--c-text-muted)' }}>
+              <rect x="3" y="3" width="18" height="18" rx="2" stroke="currentColor" strokeWidth="1.5" fill="none" />
+              <path d="M3 16l5-5 4 4 3-3 6 5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" fill="none" />
+              <circle cx="8.5" cy="8.5" r="1.5" fill="currentColor" />
+            </svg>
           </div>
         )}
         {blobUrl && (
@@ -115,6 +125,7 @@ export function ImageThumbnailCard({ artifact, accessToken, pathPrefix = '/v1/ar
             alt={artifact.filename}
             draggable={false}
             onLoad={() => setLoaded(true)}
+            onError={() => { setFetchError(true); setLoaded(false) }}
             style={{
               width: '100%',
               height: '100%',
