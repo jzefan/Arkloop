@@ -491,7 +491,7 @@ func TestBuildEffectiveToolCatalogOmitsStoredArtifactsWithoutArtifactStore(t *te
 	}
 	t.Cleanup(pool.Close)
 
-	catalog, err := buildEffectiveToolCatalog(ctx, uuid.Nil, uuid.Nil, "", uuid.Nil, nil, pool, nil, false)
+	catalog, err := buildEffectiveToolCatalog(ctx, uuid.Nil, uuid.Nil, uuid.Nil, nil, pool, nil, false)
 	if err != nil {
 		t.Fatalf("build effective tool catalog: %v", err)
 	}

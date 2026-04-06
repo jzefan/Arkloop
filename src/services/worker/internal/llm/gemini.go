@@ -508,8 +508,13 @@ func toGeminiContents(messages []Message) (systemInstruction map[string]any, con
 		switch msg.Role {
 		case "system":
 			if strings.TrimSpace(text) != "" {
-				systemInstruction = map[string]any{
-					"parts": []map[string]any{{"text": text}},
+				if systemInstruction == nil {
+					systemInstruction = map[string]any{
+						"parts": []map[string]any{{"text": text}},
+					}
+				} else {
+					parts := systemInstruction["parts"].([]map[string]any)
+					systemInstruction["parts"] = append(parts, map[string]any{"text": text})
 				}
 			}
 			continue

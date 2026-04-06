@@ -12,7 +12,6 @@ import (
 	"arkloop/services/worker/internal/tools/builtin/fileops"
 	"arkloop/services/worker/internal/tools/builtin/glob"
 	"arkloop/services/worker/internal/tools/builtin/grep"
-	"arkloop/services/worker/internal/tools/builtin/heartbeat_decision"
 	loadskill "arkloop/services/worker/internal/tools/builtin/load_skill"
 	loadtools "arkloop/services/worker/internal/tools/builtin/load_tools"
 	read "arkloop/services/worker/internal/tools/builtin/read"
@@ -65,7 +64,6 @@ func AgentSpecs() []tools.AgentToolSpec {
 		acptool.CloseACPAgentSpec,
 		showwidget.AgentSpec,
 		todowrite.AgentSpec,
-		heartbeat_decision.AgentSpec,
 	}
 }
 
@@ -93,7 +91,6 @@ func LlmSpecs() []llm.ToolSpec {
 		acptool.CloseACPLlmSpec,
 		showwidget.LlmSpec,
 		todowrite.LlmSpec,
-		heartbeat_decision.Spec,
 	}
 }
 
@@ -130,6 +127,5 @@ func Executors(pool *pgxpool.Pool, rdb *redis.Client, resolver sharedconfig.Reso
 		acptool.CloseACPAgentSpec.Name:     acptool.ToolExecutor{ConfigResolver: resolver},
 		showwidget.AgentSpec.Name:          showwidget.NewToolExecutor(),
 		todowrite.AgentSpec.Name:           &todowrite.Executor{},
-		heartbeat_decision.AgentSpec.Name:  heartbeat_decision.New(),
 	}
 }

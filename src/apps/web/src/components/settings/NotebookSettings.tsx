@@ -1,6 +1,8 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { Brain, Trash2, RefreshCw, Search, Plus, Pencil } from 'lucide-react'
-import { ConfirmDialog } from '@arkloop/shared'
+import { BookOpen, Brain, Trash2, RefreshCw, Search, Plus, Pencil } from 'lucide-react'
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
+import { ConfirmDialog, Modal } from '@arkloop/shared'
 import { SpinnerIcon } from '@arkloop/shared/components/auth-ui'
 import { useLocale } from '../../contexts/LocaleContext'
 import { getDesktopApi } from '@arkloop/shared/desktop'
@@ -28,6 +30,10 @@ function categoryColor(category: string): string {
   }
   return map[category] ?? 'bg-[var(--c-bg-deep)] text-[var(--c-text-muted)]'
 }
+
+// ---------------------------------------------------------------------------
+// EntryCard — hover reveals metadata + actions in a unified right column
+// ---------------------------------------------------------------------------
 
 function EntryCard({
   entry,
@@ -74,15 +80,6 @@ function EntryCard({
     >
       <div className="flex items-start gap-3 px-4 py-3">
         <div className="flex min-w-0 flex-1 flex-col gap-1">
-          <div className="flex flex-wrap items-center gap-1.5">
-            <span className={`inline-flex items-center rounded-md px-2 py-0.5 text-xs font-medium ${categoryColor(entry.category)}`}>
-              {entry.category}
-            </span>
-            {entry.scope === 'agent' && (
-              <span className="inline-flex items-center rounded-md bg-indigo-500/15 px-2 py-0.5 text-xs font-medium text-indigo-400">agent</span>
-            )}
-            {entry.key && <span className="text-[10px] text-[var(--c-text-muted)]">{entry.key}</span>}
-          </div>
           {editing ? (
             <div className="flex flex-col gap-2">
               <textarea
@@ -116,30 +113,165 @@ function EntryCard({
               </div>
             </div>
           ) : (
-            <p className="text-sm text-[var(--c-text-primary)]">{content}</p>
+            <div className="notebook-entry-md prose-sm max-w-none text-sm text-[var(--c-text-primary)]">
+              <ReactMarkdown remarkPlugins={[remarkGfm]}>{content}</ReactMarkdown>
+            </div>
           )}
-          <p className="text-[10px] text-[var(--c-text-muted)]">{formatDate(entry.created_at)}</p>
         </div>
+
+        {/* hover-only: metadata + actions */}
         {!editing && (
-          <div className="mt-0.5 flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity duration-100 group-hover:opacity-100">
-            <button
-              onClick={startEdit}
-              className="rounded-lg p-1.5 text-[var(--c-text-muted)] transition-colors hover:text-[var(--c-text-secondary)]"
-            >
-              <Pencil size={13} />
-            </button>
-            <button
-              onClick={() => onDelete(entry.id)}
-              className="rounded-lg p-1.5 text-[var(--c-text-muted)] transition-colors hover:text-red-400"
-            >
-              <Trash2 size={13} />
-            </button>
+          <div className="mt-0.5 flex shrink-0 flex-col items-end gap-1 opacity-0 transition-opacity duration-100 group-hover:opacity-100">
+            <div className="flex items-center gap-0.5">
+              <span className={`inline-flex items-center rounded-md px-1.5 py-px text-[10px] font-medium leading-tight ${categoryColor(entry.category)}`}>
+                {entry.category}
+              </span>
+              {entry.scope === 'agent' && (
+                <span className="inline-flex items-center rounded-md bg-indigo-500/15 px-1.5 py-px text-[10px] font-medium leading-tight text-indigo-400">agent</span>
+              )}
+            </div>
+            <div className="flex items-center gap-0.5">
+              <span className="text-[10px] text-[var(--c-text-muted)]">{formatDate(entry.created_at)}</span>
+              <button
+                onClick={startEdit}
+                className="rounded-lg p-1 text-[var(--c-text-muted)] transition-colors hover:text-[var(--c-text-secondary)]"
+              >
+                <Pencil size={12} />
+              </button>
+              <button
+                onClick={() => onDelete(entry.id)}
+                className="rounded-lg p-1 text-[var(--c-text-muted)] transition-colors hover:text-red-400"
+              >
+                <Trash2 size={12} />
+              </button>
+            </div>
           </div>
         )}
       </div>
     </div>
   )
 }
+
+// ---------------------------------------------------------------------------
+// NotebookCard — skeuomorphic preview card (mirrors MemoriesCard pattern)
+// ---------------------------------------------------------------------------
+
+function NotebookCard({
+  entries,
+  onClick,
+  titles,
+}: {
+  entries: MemoryEntry[]
+  onClick: () => void
+  titles: { countLabel: string; viewEdit: string; emptyTitle: string; emptyDesc: string }
+}) {
+  const [hovered, setHovered] = useState(false)
+  const [miniHovered, setMiniHovered] = useState(false)
+
+  const hasContent = entries.length > 0
+  const previewText = (() => {
+    let text = ''
+    for (const e of entries) {
+      const clean = e.content.replace(/^\[.*?\]\s*/, '').trim() || e.content
+      text += (text ? '\n' : '') + clean
+      if (text.length >= 400) break
+    }
+    return text.slice(0, 400)
+  })()
+
+  if (!hasContent) {
+    return (
+      <div
+        className="flex flex-col items-center justify-center rounded-xl py-10"
+        style={{ border: '1px solid var(--c-border-subtle)', background: 'var(--c-bg-menu)' }}
+      >
+        <BookOpen size={24} className="mb-2 text-[var(--c-text-muted)]" />
+        <p className="text-sm font-medium text-[var(--c-text-heading)]">{titles.emptyTitle}</p>
+        <p className="mt-1 text-xs text-[var(--c-text-muted)]">{titles.emptyDesc}</p>
+      </div>
+    )
+  }
+
+  return (
+    <div
+      className="group/card cursor-pointer rounded-xl"
+      style={{ border: '0.5px solid var(--c-border-subtle)', background: 'var(--c-bg-menu)' }}
+      onClick={onClick}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => { setHovered(false); setMiniHovered(false) }}
+    >
+      <div className="flex gap-4 p-4">
+        {/* mini preview */}
+        <div
+          className="shrink-0 overflow-hidden rounded-lg transition-shadow duration-200"
+          style={{
+            width: 120,
+            height: 80,
+            border: '0.5px solid var(--c-border-subtle)',
+            background: 'var(--c-bg-page)',
+            boxShadow: hovered
+              ? '0 3px 6px -2px rgba(0,0,0,0.08), 1px 0 3px -2px rgba(0,0,0,0.03), -1px 0 3px -2px rgba(0,0,0,0.03)'
+              : '0 1px 3px -1px rgba(0,0,0,0.04)',
+          }}
+          onMouseEnter={() => setMiniHovered(true)}
+          onMouseLeave={() => setMiniHovered(false)}
+        >
+          <div
+            className="overflow-hidden transition-all duration-200"
+            style={{
+              padding: '10px 0 0 12px',
+              fontSize: 8,
+              lineHeight: '11px',
+              letterSpacing: '-0.01em',
+              color: hovered ? 'var(--c-text-secondary)' : 'var(--c-text-tertiary)',
+              maxHeight: 80,
+              transformOrigin: 'top left',
+              transform: miniHovered ? 'scale(1.12)' : 'scale(1)',
+              WebkitMaskImage: 'linear-gradient(to bottom, black 40%, transparent 90%), linear-gradient(to left, transparent 0px, black 8px)',
+              maskImage: 'linear-gradient(to bottom, black 40%, transparent 90%), linear-gradient(to left, transparent 0px, black 8px)',
+              WebkitMaskComposite: 'source-in',
+              maskComposite: 'intersect',
+            }}
+          >
+            {previewText}
+          </div>
+        </div>
+
+        {/* text area */}
+        <div className="flex min-w-0 flex-1 flex-col justify-center overflow-hidden">
+          <p className="text-sm text-[var(--c-text-heading)]" style={{ fontWeight: 450 }}>
+            Notebook
+          </p>
+          <div className="relative h-[18px] overflow-hidden">
+            <p
+              className="absolute inset-0 text-[11px] text-[var(--c-text-muted)] transition-all duration-150 ease-out"
+              style={{
+                transform: hovered ? 'translateX(-16px)' : 'translateX(0)',
+                opacity: hovered ? 0 : 1,
+              }}
+            >
+              {titles.countLabel}
+            </p>
+            <p
+              className="absolute inset-0 text-[11px] transition-all duration-150 ease-out"
+              style={{
+                color: 'var(--c-text-muted)',
+                transform: hovered ? 'translateX(0)' : 'translateX(16px)',
+                opacity: hovered ? 1 : 0,
+              }}
+            >
+              {titles.viewEdit}
+            </p>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Main component
+// ---------------------------------------------------------------------------
 
 export function NotebookSettings() {
   const { t } = useLocale()
@@ -153,6 +285,7 @@ export function NotebookSettings() {
   const [adding, setAdding] = useState(false)
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
   const [confirmClearAll, setConfirmClearAll] = useState(false)
+  const [modalOpen, setModalOpen] = useState(false)
 
   const api = getDesktopApi()
 
@@ -241,35 +374,13 @@ export function NotebookSettings() {
 
   return (
     <div className="flex flex-col gap-6">
-      {/* header */}
-      <div className="flex items-start justify-between gap-2">
-        <SettingsSectionHeader title={ds.notebookSettingsTitle} description={ds.notebookSettingsDesc} />
-        <button
-          onClick={() => void loadEntries(true)}
-          disabled={refreshing}
-          className="shrink-0 rounded-lg p-1.5 text-[var(--c-text-muted)] transition-colors hover:text-[var(--c-text-secondary)] disabled:opacity-40"
-        >
-          <RefreshCw size={14} className={refreshing ? 'animate-spin' : ''} />
-        </button>
-      </div>
+      <SettingsSectionHeader title={ds.notebookSettingsTitle} description={ds.notebookSettingsDesc} />
 
-      {/* search */}
+      {/* add card */}
       <div
-        className="flex items-center gap-2 rounded-xl px-3 py-2"
-        style={{ border: '1px solid var(--c-border-subtle)', background: 'var(--c-bg-input)' }}
+        className="flex flex-col gap-3 rounded-xl p-4"
+        style={{ border: '0.5px solid var(--c-border-subtle)', background: 'var(--c-bg-menu)' }}
       >
-        <Search size={14} className="shrink-0 text-[var(--c-text-muted)]" />
-        <input
-          type="text"
-          value={searchQuery}
-          onChange={(e) => setSearchQuery(e.target.value)}
-          placeholder={ds.notebookSearchPlaceholder}
-          className="min-w-0 flex-1 bg-transparent text-sm text-[var(--c-text-primary)] placeholder:text-[var(--c-text-muted)] outline-none"
-        />
-      </div>
-
-      {/* add */}
-      <div className="flex flex-col gap-2">
         <textarea
           value={addContent}
           onChange={(e) => setAddContent(e.target.value)}
@@ -280,65 +391,105 @@ export function NotebookSettings() {
             }
           }}
           placeholder={ds.notebookAddPlaceholder}
-          rows={3}
-          className="w-full resize-none rounded-xl px-3 py-2 text-sm text-[var(--c-text-primary)] placeholder:text-[var(--c-text-muted)] outline-none"
-          style={{ border: '1px solid var(--c-border-subtle)', background: 'var(--c-bg-input)' }}
+          rows={4}
+          className="w-full resize-none rounded-lg px-3 py-2.5 text-sm text-[var(--c-text-primary)] placeholder:text-[var(--c-text-muted)] outline-none"
+          style={{ border: '0.5px solid var(--c-border-subtle)', background: 'var(--c-bg-input)' }}
         />
-        <div className="flex justify-end">
-          <button
-            onClick={() => void handleAdd()}
-            disabled={adding || !addContent.trim()}
-            className="flex items-center gap-1.5 rounded-lg bg-[var(--c-btn-bg)] px-4 py-2 text-sm font-medium text-[var(--c-btn-text)] transition-opacity hover:opacity-90 disabled:opacity-40"
-          >
-            {adding ? <SpinnerIcon /> : <Plus size={14} />}
-            {ds.notebookAddButton}
-          </button>
-        </div>
+        <button
+          onClick={() => void handleAdd()}
+          disabled={adding || !addContent.trim()}
+          className="flex w-full items-center justify-center gap-1.5 rounded-lg py-2.5 text-sm font-medium transition-[filter] hover:[filter:brightness(1.08)] disabled:opacity-40"
+          style={{ background: 'var(--c-btn-bg)', color: 'var(--c-btn-text)' }}
+        >
+          {adding ? <SpinnerIcon /> : <Plus size={14} />}
+          {ds.notebookAddButton}
+        </button>
       </div>
 
-      <div className="border-t border-[var(--c-border-subtle)]" />
+      {/* notebook preview card */}
+      <NotebookCard
+        entries={entries}
+        onClick={() => setModalOpen(true)}
+        titles={{
+          countLabel: ds.notebookEntries(entries.length),
+          viewEdit: ds.notebookViewEdit,
+          emptyTitle: ds.memoryEmptyTitle,
+          emptyDesc: ds.memoryEmptyDesc,
+        }}
+      />
 
-      {/* entries header */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <Brain size={15} className="text-[var(--c-text-secondary)]" />
-          <h4 className="text-sm font-semibold text-[var(--c-text-heading)]">{ds.memoryEntriesTitle}</h4>
+      {/* Modal: entries list */}
+      <Modal open={modalOpen} onClose={() => { setModalOpen(false); setSearchQuery('') }} title={ds.notebookModalTitle} width="560px">
+        <div className="flex flex-col gap-4">
+          {/* entries header */}
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Brain size={15} className="text-[var(--c-text-secondary)]" />
+              <h4 className="text-sm font-semibold text-[var(--c-text-heading)]">{ds.memoryEntriesTitle}</h4>
+              {entries.length > 0 && (
+                <span
+                  className="inline-flex items-center rounded-md px-2 py-0.5 text-xs font-medium"
+                  style={{ background: 'var(--c-bg-deep)', color: 'var(--c-text-muted)' }}
+                >
+                  {filteredEntries.length}{searchQuery.trim() && entries.length !== filteredEntries.length ? `/${entries.length}` : ''}
+                </span>
+              )}
+            </div>
+            <div className="flex items-center gap-1">
+              <button
+                onClick={() => void loadEntries(true)}
+                disabled={refreshing}
+                className="shrink-0 rounded-lg p-1.5 text-[var(--c-text-muted)] transition-colors hover:text-[var(--c-text-secondary)] disabled:opacity-40"
+              >
+                <RefreshCw size={14} className={refreshing ? 'animate-spin' : ''} />
+              </button>
+              {entries.length > 0 && (
+                <button
+                  onClick={() => setConfirmClearAll(true)}
+                  className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs text-red-400 transition-colors hover:bg-red-500/10"
+                >
+                  <Trash2 size={12} />{ds.memoryClearAll}
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* search */}
           {entries.length > 0 && (
-            <span
-              className="inline-flex items-center rounded-md px-2 py-0.5 text-xs font-medium"
-              style={{ background: 'var(--c-bg-deep)', color: 'var(--c-text-muted)' }}
+            <div
+              className="flex items-center gap-2 rounded-lg px-3 py-2"
+              style={{ border: '0.5px solid var(--c-border-subtle)', background: 'var(--c-bg-input)' }}
             >
-              {filteredEntries.length}{searchQuery.trim() && entries.length !== filteredEntries.length ? `/${entries.length}` : ''}
-            </span>
+              <Search size={14} className="shrink-0 text-[var(--c-text-muted)]" />
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder={ds.notebookSearchPlaceholder}
+                className="min-w-0 flex-1 bg-transparent text-sm text-[var(--c-text-primary)] placeholder:text-[var(--c-text-muted)] outline-none"
+              />
+            </div>
+          )}
+
+          {/* list */}
+          {filteredEntries.length === 0 ? (
+            <div
+              className="flex flex-col items-center justify-center rounded-xl py-14"
+              style={{ border: '1px solid var(--c-border-subtle)', background: 'var(--c-bg-menu)' }}
+            >
+              <BookOpen size={28} className="mb-3 text-[var(--c-text-muted)]" />
+              <p className="text-sm font-medium text-[var(--c-text-heading)]">{ds.memoryEmptyTitle}</p>
+              <p className="mt-1 text-xs text-[var(--c-text-muted)]">{ds.memoryEmptyDesc}</p>
+            </div>
+          ) : (
+            <div className="flex flex-col gap-2">
+              {filteredEntries.map((e) => (
+                <EntryCard key={e.id} entry={e} onDelete={(id) => setConfirmDeleteId(id)} onEdit={handleEdit} />
+              ))}
+            </div>
           )}
         </div>
-        {entries.length > 0 && (
-          <button
-            onClick={() => setConfirmClearAll(true)}
-            className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs text-red-400 transition-colors hover:bg-red-500/10"
-          >
-            <Trash2 size={12} />{ds.memoryClearAll}
-          </button>
-        )}
-      </div>
-
-      {/* list */}
-      {filteredEntries.length === 0 ? (
-        <div
-          className="flex flex-col items-center justify-center rounded-xl py-14"
-          style={{ border: '1px solid var(--c-border-subtle)', background: 'var(--c-bg-menu)' }}
-        >
-          <Brain size={28} className="mb-3 text-[var(--c-text-muted)]" />
-          <p className="text-sm font-medium text-[var(--c-text-heading)]">{ds.memoryEmptyTitle}</p>
-          <p className="mt-1 text-xs text-[var(--c-text-muted)]">{ds.memoryEmptyDesc}</p>
-        </div>
-      ) : (
-        <div className="flex flex-col gap-2">
-          {filteredEntries.map((e) => (
-            <EntryCard key={e.id} entry={e} onDelete={(id) => setConfirmDeleteId(id)} onEdit={handleEdit} />
-          ))}
-        </div>
-      )}
+      </Modal>
 
       <ConfirmDialog
         open={confirmDeleteId !== null}

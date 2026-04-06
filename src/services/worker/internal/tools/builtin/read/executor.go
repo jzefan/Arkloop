@@ -12,6 +12,7 @@ import (
 
 	sharedoutbound "arkloop/services/shared/outboundurl"
 	"arkloop/services/shared/toolruntime"
+	"arkloop/services/worker/internal/imageutil"
 	"arkloop/services/worker/internal/llm"
 	"arkloop/services/worker/internal/tools"
 	"arkloop/services/worker/internal/tools/builtin/fileops"
@@ -222,6 +223,7 @@ func (e *Executor) executeMessageAttachment(
 			DurationMs: durationMs(started),
 		}
 	}
+	image.Bytes, image.MimeType = imageutil.ProcessImage(image.Bytes, image.MimeType)
 
 	provider, providerErr := e.resolveProvider(execCtx)
 	if providerErr != nil {
@@ -305,6 +307,7 @@ func (e *Executor) executeRemoteURL(
 			DurationMs: durationMs(started),
 		}
 	}
+	image.Bytes, image.MimeType = imageutil.ProcessImage(image.Bytes, image.MimeType)
 
 	description, err := provider.DescribeImage(runCtx, DescribeImageRequest{
 		Prompt:    parsed.Prompt,

@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"log/slog"
 	"sync"
 	"testing"
 	"time"
@@ -34,7 +35,7 @@ func (w *lockingWriter) contains(sub []byte) bool {
 }
 
 func TestNewApplicationInitializesEmptyDynamicConfig(t *testing.T) {
-	app, err := NewApplication(DefaultConfig(), NewJSONLogger("gateway", io.Discard))
+	app, err := NewApplication(DefaultConfig(), slog.New(slog.NewJSONHandler(io.Discard, nil)))
 	if err != nil {
 		t.Fatalf("NewApplication: %v", err)
 	}
@@ -53,7 +54,7 @@ func TestNewApplicationInitializesEmptyDynamicConfig(t *testing.T) {
 
 func TestNewApplicationLogsWhenJWTSecretMissing(t *testing.T) {
 	var out lockingWriter
-	_, err := NewApplication(DefaultConfig(), NewJSONLogger("gateway", &out))
+	_, err := NewApplication(DefaultConfig(), slog.New(slog.NewJSONHandler(&out, nil)))
 	if err != nil {
 		t.Fatalf("NewApplication: %v", err)
 	}
@@ -84,7 +85,7 @@ func TestLoadDynamicConfigOverridesEffectiveValues(t *testing.T) {
 	cfg.RateLimit.Capacity = 10
 	cfg.RateLimit.RatePerMinute = 20
 
-	app, err := NewApplication(cfg, NewJSONLogger("gateway", io.Discard))
+	app, err := NewApplication(cfg, slog.New(slog.NewJSONHandler(io.Discard, nil)))
 	if err != nil {
 		t.Fatalf("NewApplication: %v", err)
 	}
@@ -132,7 +133,7 @@ func TestLoadDynamicConfigAllowsZeroRiskThreshold(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.RiskRejectThreshold = 30
 
-	app, err := NewApplication(cfg, NewJSONLogger("gateway", io.Discard))
+	app, err := NewApplication(cfg, slog.New(slog.NewJSONHandler(io.Discard, nil)))
 	if err != nil {
 		t.Fatalf("NewApplication: %v", err)
 	}
@@ -160,7 +161,7 @@ func TestLoadDynamicConfigWithoutRiskThresholdFallsBackToConfig(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.RiskRejectThreshold = 30
 
-	app, err := NewApplication(cfg, NewJSONLogger("gateway", io.Discard))
+	app, err := NewApplication(cfg, slog.New(slog.NewJSONHandler(io.Discard, nil)))
 	if err != nil {
 		t.Fatalf("NewApplication: %v", err)
 	}
@@ -185,7 +186,7 @@ func TestDynamicConfigConcurrentAccess(t *testing.T) {
 	rdb := goredis.NewClient(&goredis.Options{Addr: mr.Addr()})
 	defer rdb.Close()
 
-	app, err := NewApplication(DefaultConfig(), NewJSONLogger("gateway", io.Discard))
+	app, err := NewApplication(DefaultConfig(), slog.New(slog.NewJSONHandler(io.Discard, nil)))
 	if err != nil {
 		t.Fatalf("NewApplication: %v", err)
 	}

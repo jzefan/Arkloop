@@ -56,8 +56,8 @@ func TestLoadRegistryLoadsClawPersona(t *testing.T) {
 	if def.Budgets.MaxOutputTokens != nil {
 		t.Fatalf("work persona.yaml omits max_output_tokens; got %#v", def.Budgets.MaxOutputTokens)
 	}
-	if len(def.ToolAllowlist) == 0 {
-		t.Fatal("expected work tool allowlist")
+	if len(def.CoreTools) == 0 {
+		t.Fatal("expected work core tools")
 	}
 	if def.PromptMD == "" || def.SoulMD == "" {
 		t.Fatal("expected work prompt and soul")

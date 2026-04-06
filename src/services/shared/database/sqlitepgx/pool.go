@@ -11,6 +11,8 @@ import (
 	"database/sql/driver"
 	"encoding/json"
 	"fmt"
+	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -63,6 +65,14 @@ func sqliteExecPragma(ctx context.Context, conn driver.Conn, pragma string) erro
 }
 
 func openSQLiteDB(dsn string) (*sql.DB, error) {
+	// _txlock=immediate: all transactions use BEGIN IMMEDIATE so that
+	// SELECT-then-UPDATE patterns hold the write lock from the start,
+	// compensating for FOR UPDATE being stripped by the SQL rewrite layer.
+	if strings.Contains(dsn, "?") {
+		dsn += "&_txlock=immediate"
+	} else {
+		dsn += "?_txlock=immediate"
+	}
 	return sql.OpenDB(&pragmaConnector{dsn: dsn, drv: &sqlite.Driver{}}), nil
 }
 
@@ -154,6 +164,8 @@ func convertArg(v any) any {
 		return nil
 	}
 	switch val := v.(type) {
+	case time.Time:
+		return val.UTC().Format("2006-01-02 15:04:05.999999999")
 	case []string:
 		b, _ := json.Marshal(val)
 		return string(b)
@@ -180,7 +192,8 @@ func (p *Pool) Begin(ctx context.Context) (*Tx, error) {
 }
 
 // BeginTx satisfies the DesktopDB interface.
-// TxOptions are ignored; SQLite only supports DEFERRED transactions.
+// pgx.TxOptions are ignored; the underlying driver uses BEGIN IMMEDIATE
+// (configured via _txlock DSN param) for write safety.
 func (p *Pool) BeginTx(ctx context.Context, _ pgx.TxOptions) (pgx.Tx, error) {
 	return p.Begin(ctx)
 }

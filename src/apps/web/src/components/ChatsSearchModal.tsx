@@ -1,9 +1,10 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Search, X, SquarePen } from 'lucide-react'
 import type { ThreadResponse } from '../api'
 import { searchThreads } from '../api'
 import { useLocale } from '../contexts/LocaleContext'
+import { isPerfDebugEnabled, recordPerfDuration, recordPerfValue } from '../perfDebug'
 
 type DateGroup = {
   label: string
@@ -52,17 +53,67 @@ type Props = {
   onClose: () => void
 }
 
+const INITIAL_VISIBLE_THREAD_COUNT = 18
+
 export function ChatsSearchModal({ threads, accessToken, onClose }: Props) {
   const navigate = useNavigate()
   const { t } = useLocale()
   const [query, setQuery] = useState('')
   const [searchResults, setSearchResults] = useState<ThreadResponse[] | null>(null)
   const [searching, setSearching] = useState(false)
+  const [renderedThreadCount, setRenderedThreadCount] = useState(() =>
+    Math.min(threads.length, INITIAL_VISIBLE_THREAD_COUNT),
+  )
   const inputRef = useRef<HTMLInputElement>(null)
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const openMarkerRef = useRef<{
+    startedAt: number
+    sample: Record<string, string | number | boolean | null | undefined>
+  } | null>(null)
+
+  useLayoutEffect(() => {
+    if (!isPerfDebugEnabled() || typeof performance === 'undefined') return
+    const marker = (window as Window & {
+      __arkloopSearchOpenStarted?: {
+        startedAt: number
+        sample: Record<string, string | number | boolean | null | undefined>
+      }
+    }).__arkloopSearchOpenStarted
+    if (!marker) return
+    openMarkerRef.current = marker
+    recordPerfDuration('desktop_search_modal_mount_commit', performance.now() - marker.startedAt, {
+      ...marker.sample,
+      threadCount: threads.length,
+      phase: 'commit',
+    })
+    ;(window as Window & { __arkloopSearchOpenStarted?: unknown }).__arkloopSearchOpenStarted = undefined
+  }, [threads.length])
+
+  useEffect(() => {
+    if (!isPerfDebugEnabled()) return
+    recordPerfValue('desktop_search_modal_render_count', 1, 'count', {
+      threadCount: threads.length,
+      renderedThreadCount,
+      queryLength: query.length,
+      searching,
+      resultCount: searchResults?.length ?? threads.length,
+    })
+  })
 
   useEffect(() => {
     inputRef.current?.focus()
+    if (!isPerfDebugEnabled() || typeof performance === 'undefined') return
+    const marker = openMarkerRef.current
+    if (!marker) return
+    const frameId = requestAnimationFrame(() => {
+      recordPerfDuration('desktop_search_modal_first_frame', performance.now() - marker.startedAt, {
+        ...marker.sample,
+        threadCount: threads.length,
+        phase: 'frame',
+      })
+      openMarkerRef.current = null
+    })
+    return () => cancelAnimationFrame(frameId)
   }, [])
 
   useEffect(() => {
@@ -107,6 +158,31 @@ export function ChatsSearchModal({ threads, accessToken, onClose }: Props) {
   }, [query, accessToken])
 
   const displayThreads = searchResults ?? threads
+  const visibleThreadCount = Math.min(renderedThreadCount, displayThreads.length)
+  const visibleThreads = useMemo(
+    () => displayThreads.slice(0, visibleThreadCount),
+    [displayThreads, visibleThreadCount],
+  )
+
+  useEffect(() => {
+    const shouldDeferTail = displayThreads.length > INITIAL_VISIBLE_THREAD_COUNT
+    const nextInitialCount = shouldDeferTail ? INITIAL_VISIBLE_THREAD_COUNT : displayThreads.length
+    setRenderedThreadCount(nextInitialCount)
+    if (!shouldDeferTail) return
+    const startedAt = typeof performance !== 'undefined' ? performance.now() : 0
+    const frameId = requestAnimationFrame(() => {
+      setRenderedThreadCount(displayThreads.length)
+      if (isPerfDebugEnabled() && typeof performance !== 'undefined') {
+        recordPerfDuration('desktop_search_modal_tail_fill', performance.now() - startedAt, {
+          totalThreadCount: displayThreads.length,
+          initialThreadCount: nextInitialCount,
+          queryLength: query.length,
+          searching,
+        })
+      }
+    })
+    return () => cancelAnimationFrame(frameId)
+  }, [displayThreads, query.length, searching])
 
   const dateLabels = useMemo(() => ({
     today: t.searchToday,
@@ -115,7 +191,20 @@ export function ChatsSearchModal({ threads, accessToken, onClose }: Props) {
     earlier: t.searchEarlier,
   }), [t])
 
-  const groups = useMemo(() => groupByDate(displayThreads, dateLabels), [displayThreads, dateLabels])
+  const groups = useMemo(() => {
+    const startedAt = typeof performance !== 'undefined' ? performance.now() : 0
+    const next = groupByDate(visibleThreads, dateLabels)
+    if (isPerfDebugEnabled() && typeof performance !== 'undefined') {
+      recordPerfDuration('desktop_search_modal_grouping', performance.now() - startedAt, {
+        threadCount: visibleThreads.length,
+        totalThreadCount: displayThreads.length,
+        groupCount: next.length,
+        queryLength: query.length,
+        searching,
+      })
+    }
+    return next
+  }, [dateLabels, displayThreads.length, query.length, searching, visibleThreads])
 
   const handleThreadClick = useCallback(
     (threadId: string) => {

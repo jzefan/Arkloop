@@ -260,10 +260,12 @@ func (c telegramConnector) processTelegramMediaGroupMerged(
 			}
 			if c.telegramClient != nil && strings.TrimSpace(token) != "" {
 				sendCtx, sendCancel := context.WithTimeout(ctx, telegramRemoteRequestTimeout)
-				_, _ = c.telegramClient.SendMessage(sendCtx, token, telegrambot.SendMessageRequest{
+				if _, err := c.telegramClient.SendMessage(sendCtx, token, telegrambot.SendMessageRequest{
 					ChatID: incoming.PlatformChatID,
 					Text:   replyText,
-				})
+				}); err != nil {
+					slog.Warn("telegram: failed to send command reply", "chat_id", incoming.PlatformChatID, "err", err)
+				}
 				sendCancel()
 			}
 			return nil
@@ -299,10 +301,12 @@ func (c telegramConnector) processTelegramMediaGroupMerged(
 			}
 			if c.telegramClient != nil && strings.TrimSpace(token) != "" {
 				sendCtx, sendCancel := context.WithTimeout(ctx, telegramRemoteRequestTimeout)
-				_, _ = c.telegramClient.SendMessage(sendCtx, token, telegrambot.SendMessageRequest{
+				if _, err := c.telegramClient.SendMessage(sendCtx, token, telegrambot.SendMessageRequest{
 					ChatID: incoming.PlatformChatID,
 					Text:   replyText,
-				})
+				}); err != nil {
+					slog.Warn("telegram: failed to send /new command reply", "chat_id", incoming.PlatformChatID, "err", err)
+				}
 				sendCancel()
 			}
 			return nil

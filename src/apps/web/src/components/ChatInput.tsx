@@ -23,6 +23,7 @@ import { useAudioRecorder } from './chat-input/useAudioRecorder'
 import { useAttachments } from './chat-input/useAttachments'
 import { PersonaModelBar } from './chat-input/PersonaModelBar'
 import { AutoResizeTextarea } from '@arkloop/shared'
+import { useLatest } from '../hooks/useLatest'
 
 export type Attachment = {
   id: string
@@ -113,16 +114,11 @@ export function ChatInput({
 }: Props) {
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
-  const valueRef = useRef(value)
-  const onChangeRef = useRef(onChange)
-  const accessTokenRef = useRef(accessToken)
-  const onAsrErrorRef = useRef(onAsrError)
-  const onVoiceNotConfiguredRef = useRef<(() => void) | undefined>(() => onOpenSettings?.('voice' as never))
-  useEffect(() => { valueRef.current = value }, [value])
-  useEffect(() => { onChangeRef.current = onChange }, [onChange])
-  useEffect(() => { accessTokenRef.current = accessToken }, [accessToken])
-  useEffect(() => { onAsrErrorRef.current = onAsrError }, [onAsrError])
-  useEffect(() => { onVoiceNotConfiguredRef.current = () => onOpenSettings?.('voice' as never) }, [onOpenSettings])
+  const valueRef = useLatest(value)
+  const onChangeRef = useLatest(onChange)
+  const accessTokenRef = useLatest(accessToken)
+  const onAsrErrorRef = useLatest(onAsrError)
+  const onVoiceNotConfiguredRef = useLatest<(() => void) | undefined>(() => onOpenSettings?.('voice' as never))
 
   const { t } = useLocale()
 

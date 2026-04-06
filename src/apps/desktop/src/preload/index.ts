@@ -289,6 +289,8 @@ export type ArkloopDesktopApi = {
     rebuildSnapshot: (agentId?: string) => Promise<{ memory_block: string; hits?: SnapshotHit[] }>
     getContent: (uri: string, layer?: 'overview' | 'read') => Promise<{ content: string }>
     add: (content: string, category?: string) => Promise<{ entry: MemoryEntry }>
+    getImpression: (agentId?: string) => Promise<{ impression: string; updated_at?: string }>
+    rebuildImpression: (agentId?: string) => Promise<{ status: string; run_id?: string; updated_at?: string }>
   }
   app: {
     getVersion: () => Promise<string>
@@ -456,6 +458,8 @@ const api: ArkloopDesktopApi = {
     rebuildSnapshot: (agentId?: string) => ipcRenderer.invoke('arkloop:memory:rebuild-snapshot', agentId),
     getContent: (uri: string, layer?: 'overview' | 'read') => ipcRenderer.invoke('arkloop:memory:get-content', uri, layer),
     add: (content: string, category?: string) => ipcRenderer.invoke('arkloop:memory:add', content, category),
+    getImpression: (agentId?: string) => ipcRenderer.invoke('arkloop:memory:get-impression', agentId),
+    rebuildImpression: (agentId?: string) => ipcRenderer.invoke('arkloop:memory:rebuild-impression', agentId),
   },
 
   app: {

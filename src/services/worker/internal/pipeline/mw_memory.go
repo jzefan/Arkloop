@@ -52,8 +52,13 @@ const (
 // snap 为 nil 时不注入、不刷新快照表（与旧版 pool==nil 行为一致）。
 // mdb 为 nil 时跳过 run_events / usage_records 写入，仍会执行 OpenViking 写与快照 Upsert。
 // configResolver 为 nil 时跳过 memory usage 记录。
-func NewMemoryMiddleware(provider memory.MemoryProvider, snap MemorySnapshotStore, mdb data.MemoryMiddlewareDB, configResolver sharedconfig.Resolver) RunMiddleware {
+// impStore 为 nil 时不注入 impression、不累积 score。
+func NewMemoryMiddleware(provider memory.MemoryProvider, snap MemorySnapshotStore, mdb data.MemoryMiddlewareDB, configResolver sharedconfig.Resolver, impStore ImpressionStore, impRefresh ImpressionRefreshFunc) RunMiddleware {
 	return func(ctx context.Context, rc *RunContext, next RunHandler) error {
+		if rc.ImpressionRun || isImpressionRun(rc) {
+			return next(ctx, rc)
+		}
+
 		activeProvider := provider
 		if activeProvider == nil {
 			activeProvider = rc.MemoryProvider
@@ -70,18 +75,18 @@ func NewMemoryMiddleware(provider memory.MemoryProvider, snap MemorySnapshotStor
 
 		userQuery := lastUserMessageText(rc.Messages)
 		if userQuery != "" {
-			injectFromSnapshotOnly(ctx, rc, snap, ident)
+			injectFromSnapshotOnly(ctx, rc, snap, impStore, ident)
 		}
 		baseDistillUserMsgs := collectTrailingRealUserMessages(rc.Messages, rc.ThreadMessageIDs)
 
 		err := next(ctx, rc)
-		flushPendingWritesAfterRun(ctx, activeProvider, snap, mdb, configResolver, rc)
-		distillAfterRun(activeProvider, snap, mdb, configResolver, rc, ident, baseDistillUserMsgs)
+		flushPendingWritesAfterRun(ctx, activeProvider, snap, mdb, configResolver, rc, impStore, impRefresh)
+		distillAfterRun(activeProvider, snap, mdb, configResolver, rc, ident, baseDistillUserMsgs, impStore, impRefresh)
 		return err
 	}
 }
 
-func flushPendingWritesAfterRun(ctx context.Context, provider memory.MemoryProvider, snap MemorySnapshotStore, mdb data.MemoryMiddlewareDB, configResolver sharedconfig.Resolver, rc *RunContext) {
+func flushPendingWritesAfterRun(ctx context.Context, provider memory.MemoryProvider, snap MemorySnapshotStore, mdb data.MemoryMiddlewareDB, configResolver sharedconfig.Resolver, rc *RunContext, impStore ImpressionStore, impRefresh ImpressionRefreshFunc) {
 	if rc.PendingMemoryWrites == nil {
 		return
 	}
@@ -90,17 +95,35 @@ func flushPendingWritesAfterRun(ctx context.Context, provider memory.MemoryProvi
 		return
 	}
 	costPerWrite := resolveCommitCost(ctx, configResolver)
-	go flushPendingWrites(pending, provider, snap, mdb, rc.Run.AccountID, rc.Run.ID, rc.TraceID, costPerWrite)
+
+	ident := memory.MemoryIdentity{
+		AccountID: rc.Run.AccountID,
+		UserID:    *rc.UserID,
+		AgentID:   StableAgentID(rc),
+	}
+	go flushPendingWrites(pending, provider, snap, mdb, rc.Run.AccountID, rc.Run.ID, rc.TraceID, costPerWrite, impStore, ident, configResolver, impRefresh)
 }
 
-// injectFromSnapshotOnly 只追加已持久化的 memory_block，不在请求路径调用 OpenViking Find。
-func injectFromSnapshotOnly(ctx context.Context, rc *RunContext, snap MemorySnapshotStore, ident memory.MemoryIdentity) {
+// injectFromSnapshotOnly 先注入 impression，再追加已持久化的 memory_block，不在请求路径调用 OpenViking Find。
+func injectFromSnapshotOnly(ctx context.Context, rc *RunContext, snap MemorySnapshotStore, impStore ImpressionStore, ident memory.MemoryIdentity) {
+	if impStore != nil {
+		impression, found, err := impStore.Get(ctx, ident.AccountID, ident.UserID, ident.AgentID)
+		if err != nil {
+			slog.WarnContext(ctx, "impression: read failed", "err", err.Error())
+		} else if found && strings.TrimSpace(impression) != "" {
+			rc.SystemPrompt += "\n\n<impression>\n" + impression + "\n</impression>"
+		}
+	}
 	if snap == nil {
 		return
 	}
 	block, found, err := snap.Get(ctx, ident.AccountID, ident.UserID, ident.AgentID)
 	if err != nil {
-		slog.WarnContext(ctx, "memory: snapshot read failed", "err", err.Error())
+		slog.ErrorContext(ctx, "memory: snapshot read failed", "err", err.Error())
+		appendAsyncRunEvent(ctx, rc.MemoryServiceDB, rc.Run.ID, rc.Emitter.Emit("memory.snapshot.read_failed", map[string]any{
+			"message": err.Error(),
+		}, nil, nil))
+		rc.SystemPrompt += "\n\n<memory_unavailable>Memory system temporarily unavailable. Proceed without memory context.</memory_unavailable>"
 		return
 	}
 	if found && strings.TrimSpace(block) != "" {
@@ -108,7 +131,7 @@ func injectFromSnapshotOnly(ctx context.Context, rc *RunContext, snap MemorySnap
 	}
 }
 
-func flushPendingWrites(pending []memory.PendingWrite, provider memory.MemoryProvider, snap MemorySnapshotStore, mdb data.MemoryMiddlewareDB, accountID, runID uuid.UUID, traceID string, costPerWrite float64) {
+func flushPendingWrites(pending []memory.PendingWrite, provider memory.MemoryProvider, snap MemorySnapshotStore, mdb data.MemoryMiddlewareDB, accountID, runID uuid.UUID, traceID string, costPerWrite float64, impStore ImpressionStore, ident memory.MemoryIdentity, configResolver sharedconfig.Resolver, impRefresh ImpressionRefreshFunc) {
 	// 由 goroutine 调用，超出请求生命周期，需要独立 context
 	ctx, cancel := context.WithTimeout(context.Background(), memoryFlushTimeout)
 	defer cancel()
@@ -148,6 +171,10 @@ func flushPendingWrites(pending []memory.PendingWrite, provider memory.MemoryPro
 	if snap != nil && len(pending) > 0 && successCount > 0 {
 		ident := pending[0].Ident
 		scheduleSnapshotRefresh(provider, snap, mdb, runID, traceID, ident, "", successfulQueries, "", "write")
+	}
+
+	if impStore != nil && successCount > 0 {
+		addImpressionScore(ctx, impStore, ident, 5*successCount, configResolver, impRefresh)
 	}
 
 	if successCount == 0 {
@@ -394,7 +421,7 @@ func lastUserMessageText(messages []llm.Message) string {
 // distillAfterRun 在 run 完成后判断是否触发 Memory 提炼。
 // 条件：开启 distill、非 heartbeat、存在 FinalAssistantOutput、且有本轮增量 user 输入。
 // 异步执行，不阻塞 run 返回。
-func distillAfterRun(provider memory.MemoryProvider, snap MemorySnapshotStore, mdb data.MemoryMiddlewareDB, configResolver sharedconfig.Resolver, rc *RunContext, ident memory.MemoryIdentity, baseUserMsgs []memory.MemoryMessage) {
+func distillAfterRun(provider memory.MemoryProvider, snap MemorySnapshotStore, mdb data.MemoryMiddlewareDB, configResolver sharedconfig.Resolver, rc *RunContext, ident memory.MemoryIdentity, baseUserMsgs []memory.MemoryMessage, impStore ImpressionStore, impRefresh ImpressionRefreshFunc) {
 	// heartbeat 是否写 memory 由 heartbeat_decision 决定，这里不再额外自动 distill。
 	if rc.HeartbeatRun {
 		return
@@ -473,6 +500,11 @@ func distillAfterRun(provider memory.MemoryProvider, snap MemorySnapshotStore, m
 			"kind":       "distill",
 			"session_id": sessionID,
 		}, nil, nil))
+
+		if impStore != nil {
+			weight := impressionScoreForRun(rc)
+			addImpressionScore(ctx, impStore, ident, weight, configResolver, impRefresh)
+		}
 
 		scheduleSnapshotRefresh(provider, snap, mdb, runID, rc.TraceID, ident, sessionID, userMessagesToQueries(msgs), "memory.distill", "distill")
 
@@ -684,4 +716,46 @@ func stringPtr(value string) *string {
 		return nil
 	}
 	return &cleaned
+}
+
+// --- impression score ---
+
+func impressionScoreForRun(rc *RunContext) int {
+	if rc.ChannelContext != nil && rc.ChannelContext.ConversationType == "supergroup" {
+		return 1
+	}
+	return 3
+}
+
+func addImpressionScore(ctx context.Context, store ImpressionStore, ident memory.MemoryIdentity, delta int, resolver sharedconfig.Resolver, refresh ImpressionRefreshFunc) {
+	newScore, err := store.AddScore(ctx, ident.AccountID, ident.UserID, ident.AgentID, delta)
+	if err != nil {
+		slog.WarnContext(ctx, "impression: add score failed", "err", err.Error())
+		return
+	}
+	threshold := resolveImpressionThreshold(resolver)
+	if newScore >= threshold {
+		if err := store.ResetScore(ctx, ident.AccountID, ident.UserID, ident.AgentID); err != nil {
+			slog.WarnContext(ctx, "impression: reset score failed", "err", err.Error())
+			return
+		}
+		if refresh != nil {
+			refresh(ctx, ident, ident.AccountID, ident.UserID)
+		}
+	}
+}
+
+func resolveImpressionThreshold(resolver sharedconfig.Resolver) int {
+	if resolver == nil {
+		return 50
+	}
+	raw, err := resolver.Resolve(context.Background(), "memory.impression_score_threshold", sharedconfig.Scope{})
+	if err != nil || strings.TrimSpace(raw) == "" {
+		return 50
+	}
+	v, parseErr := strconv.Atoi(strings.TrimSpace(raw))
+	if parseErr != nil || v <= 0 {
+		return 50
+	}
+	return v
 }

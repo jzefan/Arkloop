@@ -504,6 +504,7 @@ func buildAgentConfigLayer(
 		pipeline.NewMCPDiscoveryMiddleware(
 			deps.MCPDiscoveryCache,
 			func(*pipeline.RunContext) mcp.DiscoveryQueryer { return deps.DBPool },
+			eventsRepo,
 			deps.ToolExecutors,
 			deps.AllLlmToolSpecs,
 			baseAllowlistSet,
@@ -520,14 +521,6 @@ func buildChannelLayer(deps EngineV1Deps, messagesRepo data.MessagesRepository, 
 		pipeline.NewHeartbeatScheduleMiddleware(deps.DBPool),
 		pipeline.NewChannelAdminTagMiddleware(deps.DBPool),
 		pipeline.NewChannelTelegramGroupUserMergeMiddleware(),
-		pipeline.NewChannelGroupContextTrimMiddleware(pipeline.GroupContextTrimDeps{
-			Pool:            deps.DBPool,
-			MessagesRepo:    messagesRepo,
-			EventsRepo:      eventsRepo,
-			AuxGateway:      deps.AuxGateway,
-			EmitDebugEvents: deps.EmitDebugEvents,
-			ConfigLoader:    deps.RoutingConfigLoader,
-		}),
 		pipeline.NewChannelTelegramToolsMiddleware(nil, nil, pipeline.ChannelTelegramToolsDeps{
 			TokenLoader:        deps.ChannelTelegramLoader,
 			GroupSearchExec:    deps.GroupSearchExecutor,
@@ -549,7 +542,7 @@ func buildCapabilityLayer(
 			},
 			ExternalDirs: serviceExternalSkillDirs,
 		}),
-		pipeline.NewMemoryMiddleware(nil, pipeline.NewPgxMemorySnapshotStore(deps.DBPool), deps.DBPool, deps.ConfigResolver),
+		pipeline.NewMemoryMiddleware(nil, pipeline.NewPgxMemorySnapshotStore(deps.DBPool), deps.DBPool, deps.ConfigResolver, pipeline.NewPgxImpressionStore(deps.DBPool), newPgxImpressionRefresh(deps)),
 		pipeline.NewNotebookInjectionMiddleware(deps.DBPool),
 		pipeline.NewRuntimeContextMiddleware(),
 	}
@@ -567,6 +560,12 @@ func buildRoutingLayer(
 ) []pipeline.RunMiddleware {
 	return []pipeline.RunMiddleware{
 		pipeline.NewRoutingMiddleware(deps.Router, deps.RoutingConfigLoader, deps.AuxGateway, deps.EmitDebugEvents, runsRepo, eventsRepo, releaseSlot, resolver),
+		pipeline.NewChannelGroupContextTrimMiddleware(pipeline.GroupContextTrimDeps{
+			Pool:            deps.DBPool,
+			MessagesRepo:    messagesRepo,
+			EventsRepo:      eventsRepo,
+			EmitDebugEvents: deps.EmitDebugEvents,
+		}),
 		pipeline.NewTitleSummarizerMiddleware(deps.DBPool, deps.RunLimiterRDB, deps.AuxGateway, deps.EmitDebugEvents, deps.RoutingConfigLoader),
 		pipeline.NewContextCompactMiddleware(deps.DBPool, messagesRepo, eventsRepo, deps.AuxGateway, deps.EmitDebugEvents, deps.RoutingConfigLoader),
 	}
@@ -574,6 +573,7 @@ func buildRoutingLayer(
 
 func buildToolFinalizeLayer(deps EngineV1Deps) []pipeline.RunMiddleware {
 	return []pipeline.RunMiddleware{
+		pipeline.NewImpressionPrepareMiddleware(pipeline.NewPgxImpressionStore(deps.DBPool), deps.DBPool, deps.AuxGateway, deps.EmitDebugEvents, deps.RoutingConfigLoader),
 		pipeline.NewHeartbeatPrepareMiddleware(),
 		pipeline.NewConditionalToolsMiddleware(),
 		pipeline.NewToolDescriptionOverrideMiddleware(deps.ToolDescriptionOverridesRepo),
@@ -611,4 +611,23 @@ func resolveNonNegativeInt(ctx context.Context, resolver sharedconfig.Resolver, 
 		return fallback
 	}
 	return v
+}
+
+func newPgxImpressionRefresh(deps EngineV1Deps) pipeline.ImpressionRefreshFunc {
+	if deps.DBPool == nil || deps.JobQueue == nil {
+		return nil
+	}
+	return pipeline.NewImpressionRefreshFunc(pipeline.ImpressionRefreshDeps{
+		ExecSQL: func(ctx context.Context, sql string, args ...any) error {
+			_, err := deps.DBPool.Exec(ctx, sql, args...)
+			return err
+		},
+		QueryRowScan: func(ctx context.Context, sql string, args []any, dest ...any) error {
+			return deps.DBPool.QueryRow(ctx, sql, args...).Scan(dest...)
+		},
+		EnqueueRun: func(ctx context.Context, accountID, runID uuid.UUID, traceID, jobType string, payload map[string]any) error {
+			_, err := deps.JobQueue.EnqueueRun(ctx, accountID, runID, traceID, jobType, payload, nil)
+			return err
+		},
+	})
 }

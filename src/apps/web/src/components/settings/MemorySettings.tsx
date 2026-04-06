@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef, useLayoutEffect } from 'react'
-import { FileText, RefreshCw, Settings, Database, ChevronRight, AlertTriangle } from 'lucide-react'
-import { PillToggle } from '@arkloop/shared'
+import { FileText, RefreshCw, Settings, Database, AlertTriangle, Brain, Check, ChevronRight } from 'lucide-react'
+import { PillToggle, Modal } from '@arkloop/shared'
 import { SpinnerIcon } from '@arkloop/shared/components/auth-ui'
 import { useLocale } from '../../contexts/LocaleContext'
 import { getDesktopApi } from '@arkloop/shared/desktop'
@@ -10,6 +10,7 @@ import { secondaryButtonSmCls, secondaryButtonXsCls, secondaryButtonBorderStyle 
 import { SettingsSectionHeader } from './_SettingsSectionHeader'
 import { MemoryConfigModal } from './MemoryConfigModal'
 import { listMemoryErrors, type MemoryErrorEvent } from '../../api'
+import { PastedContentModal } from '../PastedContentModal'
 
 // ---------------------------------------------------------------------------
 // Status dot — shows health on the provider card
@@ -27,7 +28,185 @@ function statusDotColor(s: HealthStatus): string {
 }
 
 // ---------------------------------------------------------------------------
-// SnapshotView — memory hits displayed as cards (matches Notebook EntryCard style)
+// Impression card — Claude-style preview card with hover animations
+// ---------------------------------------------------------------------------
+
+function formatTimeAgo(dateStr: string | undefined, lang: 'zh' | 'en'): string {
+  if (!dateStr) return ''
+  const normalized = dateStr.includes('T') || dateStr.includes('Z') || dateStr.includes('+')
+    ? dateStr
+    : dateStr.replace(' ', 'T') + 'Z'
+  const then = new Date(normalized).getTime()
+  if (Number.isNaN(then)) return ''
+  const diffMs = Date.now() - then
+  const minutes = Math.floor(diffMs / 60_000)
+  if (minutes < 1) return lang === 'zh' ? '刚刚' : 'just now'
+  if (minutes < 60) return lang === 'zh' ? `${minutes} 分钟前` : `${minutes}m ago`
+  const hours = Math.floor(minutes / 60)
+  if (hours < 24) return lang === 'zh' ? `${hours} 小时前` : `${hours}h ago`
+  const days = Math.floor(hours / 24)
+  return lang === 'zh' ? `${days} 天前` : `${days}d ago`
+}
+
+function ImpressionCard({
+  impression,
+  updatedAt,
+  onRebuild,
+  rebuilding,
+  rebuildDone,
+  titles,
+}: {
+  impression: string
+  updatedAt?: string
+  onRebuild: () => void
+  rebuilding: boolean
+  rebuildDone: boolean
+  titles: {
+    title: string
+    updatedAgo: string
+    empty: string
+    viewEdit: string
+    rebuild: string
+    modalTitle: string
+  }
+}) {
+  const { locale } = useLocale()
+  const [hovered, setHovered] = useState(false)
+  const [miniHovered, setMiniHovered] = useState(false)
+  const [modalOpen, setModalOpen] = useState(false)
+  const timeAgo = formatTimeAgo(updatedAt, locale)
+  const hasContent = impression.trim().length > 0
+
+  const timeLabel = timeAgo
+    ? titles.updatedAgo.replace('{time}', timeAgo)
+    : ''
+
+  const lineCount = impression.split('\n').length
+  const byteSize = new TextEncoder().encode(impression).length
+
+  return (
+    <div className="flex flex-col gap-3">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <Brain size={15} className="text-[var(--c-text-secondary)]" />
+          <h4 className="text-sm font-semibold text-[var(--c-text-heading)]">Impression</h4>
+        </div>
+        <button
+          type="button"
+          onClick={onRebuild}
+          disabled={rebuilding}
+          className={secondaryButtonXsCls}
+          style={secondaryButtonBorderStyle}
+        >
+          {rebuildDone ? <Check size={13} /> : <RefreshCw size={13} className={rebuilding ? 'animate-spin' : ''} />}
+          {rebuildDone ? 'Done' : titles.rebuild}
+        </button>
+      </div>
+
+      {!hasContent ? (
+        <div
+          className="flex flex-col items-center justify-center rounded-xl py-10"
+          style={{ border: '1px solid var(--c-border-subtle)', background: 'var(--c-bg-menu)' }}
+        >
+          <Brain size={24} className="mb-2 text-[var(--c-text-muted)]" />
+          <p className="text-xs text-[var(--c-text-muted)]">{titles.empty}</p>
+        </div>
+      ) : (
+        <div
+          className="group/card cursor-pointer rounded-xl"
+          style={{
+            border: '0.5px solid var(--c-border-subtle)',
+            background: 'var(--c-bg-menu)',
+          }}
+          onClick={() => setModalOpen(true)}
+          onMouseEnter={() => setHovered(true)}
+          onMouseLeave={() => { setHovered(false); setMiniHovered(false) }}
+        >
+          <div className="flex gap-4 p-4">
+            {/* mini preview card */}
+            <div
+              className="shrink-0 overflow-hidden rounded-lg transition-shadow duration-200"
+              style={{
+                width: 120,
+                height: 80,
+                border: '0.5px solid var(--c-border-subtle)',
+                background: 'var(--c-bg-page)',
+                boxShadow: hovered
+                  ? '0 3px 6px -2px rgba(0,0,0,0.08), 1px 0 3px -2px rgba(0,0,0,0.03), -1px 0 3px -2px rgba(0,0,0,0.03)'
+                  : '0 1px 3px -1px rgba(0,0,0,0.04)',
+              }}
+              onMouseEnter={() => setMiniHovered(true)}
+              onMouseLeave={() => setMiniHovered(false)}
+            >
+              <div
+                className="overflow-hidden transition-all duration-200"
+                style={{
+                  padding: '10px 0 0 12px',
+                  fontSize: 8,
+                  lineHeight: '11px',
+                  letterSpacing: '-0.01em',
+                  color: hovered ? 'var(--c-text-secondary)' : 'var(--c-text-tertiary)',
+                  maxHeight: 80,
+                  transformOrigin: 'top left',
+                  transform: miniHovered ? 'scale(1.12)' : 'scale(1)',
+                  WebkitMaskImage: 'linear-gradient(to bottom, black 40%, transparent 90%), linear-gradient(to left, transparent 0px, black 8px)',
+                  maskImage: 'linear-gradient(to bottom, black 40%, transparent 90%), linear-gradient(to left, transparent 0px, black 8px)',
+                  WebkitMaskComposite: 'source-in',
+                  maskComposite: 'intersect',
+                }}
+              >
+                {impression.slice(0, 400)}
+              </div>
+            </div>
+
+            {/* text area */}
+            <div className="flex min-w-0 flex-1 flex-col justify-center overflow-hidden">
+              <p className="text-sm text-[var(--c-text-heading)]" style={{ fontWeight: 450 }}>
+                {titles.title}
+              </p>
+              <div className="relative h-[18px] overflow-hidden">
+                {/* default: time label */}
+                <p
+                  className="absolute inset-0 text-[11px] text-[var(--c-text-muted)] transition-all duration-150 ease-out"
+                  style={{
+                    transform: hovered ? 'translateX(-16px)' : 'translateX(0)',
+                    opacity: hovered ? 0 : 1,
+                  }}
+                >
+                  {timeLabel || '\u00a0'}
+                </p>
+                {/* hover: view and edit */}
+                <p
+                  className="absolute inset-0 text-[11px] transition-all duration-150 ease-out"
+                  style={{
+                    color: 'var(--c-text-muted)',
+                    transform: hovered ? 'translateX(0)' : 'translateX(16px)',
+                    opacity: hovered ? 1 : 0,
+                  }}
+                >
+                  {titles.viewEdit}
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {modalOpen && (
+        <PastedContentModal
+          text={impression}
+          size={byteSize}
+          lineCount={lineCount}
+          onClose={() => setModalOpen(false)}
+          title={titles.modalTitle}
+        />
+      )}
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// ModalHitCard — expandable hit card inside Memories modal (L1/L2 layers)
 // ---------------------------------------------------------------------------
 
 const CONTENT_MAX_LINES = 6
@@ -35,93 +214,7 @@ const CONTENT_LINE_HEIGHT = 20
 const CONTENT_COLLAPSED_HEIGHT = CONTENT_MAX_LINES * CONTENT_LINE_HEIGHT
 const CONTENT_FADE_HEIGHT = CONTENT_LINE_HEIGHT * 2
 
-type MemoryLayerBlockProps = {
-  label: string
-  content: string | null
-  ref?: React.Ref<HTMLPreElement>
-  collapsed?: boolean
-  collapsedHeight?: number
-  expandedHeight?: number | null
-  fadeMask?: string
-  needsTruncation?: boolean
-  contentExpanded?: boolean
-  onToggleExpand?: () => void
-}
-
-function MemoryLayerBlock({
-  label,
-  content,
-  ref,
-  collapsed,
-  collapsedHeight,
-  expandedHeight,
-  fadeMask,
-  needsTruncation,
-  contentExpanded,
-  onToggleExpand,
-}: MemoryLayerBlockProps) {
-  const resolvedMaxHeight = collapsed
-    ? `${collapsedHeight}px`
-    : expandedHeight != null
-      ? `${expandedHeight}px`
-      : undefined
-
-  if (!content) {
-    return (
-      <p className="text-xs text-[var(--c-text-muted)]">
-        <span className="font-medium">{label}</span>
-        <span className="ml-1.5">not available</span>
-      </p>
-    )
-  }
-
-  return (
-    <div>
-      <p className="mb-1.5 text-[11px] font-medium text-[var(--c-text-muted)]">{label}</p>
-      <pre
-        ref={ref}
-        className="rounded-lg p-3 text-xs leading-relaxed text-[var(--c-text-secondary)] whitespace-pre-wrap"
-        style={{
-          background: 'var(--c-bg-input)',
-          overflow: 'hidden',
-          transition: 'max-height 0.3s cubic-bezier(0.25,0.1,0.25,1), mask-image 0.25s ease, -webkit-mask-image 0.25s ease',
-          willChange: 'max-height',
-          maxHeight: resolvedMaxHeight,
-          ...(collapsed
-            ? { WebkitMaskImage: fadeMask, maskImage: fadeMask }
-            : { WebkitMaskImage: 'none', maskImage: 'none' }),
-        }}
-      >
-        {content}
-      </pre>
-      {needsTruncation && (
-        <button
-          type="button"
-          onClick={(e) => { e.stopPropagation(); onToggleExpand?.() }}
-          onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); onToggleExpand?.() } }}
-          style={{
-            display: 'inline-block',
-            marginTop: 6,
-            fontSize: 11,
-            color: 'var(--c-text-muted)',
-            background: 'none',
-            border: 'none',
-            padding: 0,
-            cursor: 'pointer',
-            userSelect: 'none',
-            WebkitUserSelect: 'none',
-            transition: 'color 150ms ease',
-          }}
-          className="hover:text-[var(--c-text-primary)]"
-        >
-          {contentExpanded ? 'Show less' : 'Show more'}
-        </button>
-      )}
-    </div>
-  )
-}
-
-function HitCard({ hit, onLoadContent }: {
+function ModalHitCard({ hit, onLoadContent }: {
   hit: SnapshotHit
   onLoadContent: (uri: string, layer: 'overview' | 'read') => Promise<string>
 }) {
@@ -136,9 +229,7 @@ function HitCard({ hit, onLoadContent }: {
   const fullRef = useRef<HTMLPreElement>(null)
 
   const loadBoth = useCallback(async () => {
-    if (loading) return
-    // 已加载且至少有一个层有内容，不重复请求
-    if (loaded && (overview || fullText)) return
+    if (loading || (loaded && (overview || fullText))) return
     setLoading(true)
     try {
       if (hit.is_leaf) {
@@ -157,7 +248,6 @@ function HitCard({ hit, onLoadContent }: {
     } catch {
       setOverview('')
       setFullText('')
-      // 不设 loaded=true，下次展开会重试
     } finally {
       setLoading(false)
     }
@@ -189,16 +279,19 @@ function HitCard({ hit, onLoadContent }: {
   const isCollapsed = needsTruncation && !fullExpanded
   const fadeMask = `linear-gradient(to bottom, black calc(100% - ${CONTENT_FADE_HEIGHT}px), transparent)`
 
+  const resolvedMaxHeight = (collapsed: boolean, h: number | null) =>
+    collapsed ? `${CONTENT_COLLAPSED_HEIGHT}px` : h != null ? `${h}px` : undefined
+
   return (
     <div
-      className="group rounded-xl"
-      style={{ border: '1px solid var(--c-border-subtle)', background: 'var(--c-bg-menu)' }}
+      className="rounded-lg"
+      style={{ border: '1px solid var(--c-border-subtle)', background: 'var(--c-bg-sub)' }}
     >
       <div
         role="button"
         tabIndex={0}
-        className="flex cursor-pointer items-start gap-3 px-4 py-3 outline-none transition-colors hover:bg-[var(--c-bg-deep)]/25 focus-visible:ring-2 focus-visible:ring-[var(--c-accent)]"
-        style={{ borderRadius: expanded ? '0.75rem 0.75rem 0 0' : '0.75rem' }}
+        className="flex cursor-pointer items-start gap-3 px-3.5 py-2.5 outline-none transition-colors hover:bg-[var(--c-bg-deep)]/25"
+        style={{ borderRadius: expanded ? '0.5rem 0.5rem 0 0' : '0.5rem' }}
         onClick={handleToggle}
         onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); handleToggle() } }}
       >
@@ -208,7 +301,7 @@ function HitCard({ hit, onLoadContent }: {
         <div className="flex min-w-0 flex-1 flex-col gap-1">
           <div className="flex flex-wrap items-center gap-1.5">
             {!hit.is_leaf && (
-              <span className="inline-flex items-center rounded-md bg-blue-500/15 px-2 py-0.5 text-xs font-medium text-blue-400">
+              <span className="inline-flex items-center rounded-md bg-blue-500/15 px-2 py-0.5 text-[10px] font-medium text-blue-400">
                 topic
               </span>
             )}
@@ -219,24 +312,53 @@ function HitCard({ hit, onLoadContent }: {
       </div>
 
       {expanded && (
-        <div className="border-t border-[var(--c-border-subtle)] px-4 py-3">
+        <div className="border-t border-[var(--c-border-subtle)] px-3.5 py-2.5">
           {loading ? (
             <div className="flex justify-center py-4"><SpinnerIcon /></div>
           ) : overview !== null && (
             <div className="flex flex-col gap-3">
-              <MemoryLayerBlock label="L1 Overview" content={overview} />
-              <MemoryLayerBlock
-                label="L2 Overview"
-                content={fullText}
-                ref={fullRef}
-                collapsed={isCollapsed}
-                collapsedHeight={CONTENT_COLLAPSED_HEIGHT}
-                expandedHeight={fullHeight}
-                fadeMask={fadeMask}
-                needsTruncation={needsTruncation}
-                contentExpanded={fullExpanded}
-                onToggleExpand={() => setFullExpanded(prev => !prev)}
-              />
+              {overview && (
+                <div>
+                  <p className="mb-1.5 text-[11px] font-medium text-[var(--c-text-muted)]">L1 Overview</p>
+                  <pre className="rounded-lg p-3 text-xs leading-relaxed text-[var(--c-text-secondary)] whitespace-pre-wrap" style={{ background: 'var(--c-bg-input)' }}>
+                    {overview}
+                  </pre>
+                </div>
+              )}
+              {fullText && (
+                <div>
+                  <p className="mb-1.5 text-[11px] font-medium text-[var(--c-text-muted)]">L2 Full</p>
+                  <pre
+                    ref={fullRef}
+                    className="rounded-lg p-3 text-xs leading-relaxed text-[var(--c-text-secondary)] whitespace-pre-wrap"
+                    style={{
+                      background: 'var(--c-bg-input)',
+                      overflow: 'hidden',
+                      transition: 'max-height 0.3s cubic-bezier(0.25,0.1,0.25,1), mask-image 0.25s ease, -webkit-mask-image 0.25s ease',
+                      willChange: 'max-height',
+                      maxHeight: resolvedMaxHeight(isCollapsed, fullHeight),
+                      ...(isCollapsed
+                        ? { WebkitMaskImage: fadeMask, maskImage: fadeMask }
+                        : { WebkitMaskImage: 'none', maskImage: 'none' }),
+                    }}
+                  >
+                    {fullText}
+                  </pre>
+                  {needsTruncation && (
+                    <button
+                      type="button"
+                      onClick={(e) => { e.stopPropagation(); setFullExpanded((v) => !v) }}
+                      style={{ display: 'inline-block', marginTop: 6, fontSize: 11, color: 'var(--c-text-muted)', background: 'none', border: 'none', padding: 0, cursor: 'pointer' }}
+                      className="hover:text-[var(--c-text-primary)]"
+                    >
+                      {fullExpanded ? 'Show less' : 'Show more'}
+                    </button>
+                  )}
+                </div>
+              )}
+              {!overview && !fullText && (
+                <p className="text-xs text-[var(--c-text-muted)]">No content available</p>
+              )}
             </div>
           )}
         </div>
@@ -245,40 +367,161 @@ function HitCard({ hit, onLoadContent }: {
   )
 }
 
-function SnapshotView({ snapshot, hits, onLoadContent }: {
-  snapshot: string
-  hits: SnapshotHit[]
-  onLoadContent: (uri: string, layer: 'overview' | 'read') => Promise<string>
-}) {
-  if (!snapshot && hits.length === 0) {
-    return (
-      <div
-        className="flex flex-col items-center justify-center rounded-xl py-14"
-        style={{ border: '1px solid var(--c-border-subtle)', background: 'var(--c-bg-menu)' }}
-      >
-        <FileText size={28} className="mb-3 text-[var(--c-text-muted)]" />
-        <p className="text-sm text-[var(--c-text-muted)]">No memory snapshot available yet.</p>
-      </div>
-    )
-  }
+// ---------------------------------------------------------------------------
+// Memories card — snapshot hits in Impression-style mini preview
+// ---------------------------------------------------------------------------
 
-  if (hits.length > 0) {
-    return (
-      <div className="flex flex-col gap-2">
-        {hits.map((hit, i) => (
-          <HitCard key={hit.uri + i} hit={hit} onLoadContent={onLoadContent} />
-        ))}
-      </div>
-    )
+function MemoriesCard({
+  hits,
+  snapshot,
+  onRebuild,
+  rebuilding,
+  onLoadContent,
+  titles,
+}: {
+  hits: SnapshotHit[]
+  snapshot: string
+  onRebuild: () => void
+  rebuilding: boolean
+  onLoadContent: (uri: string, layer: 'overview' | 'read') => Promise<string>
+  titles: {
+    title: string
+    empty: string
+    viewEdit: string
+    rebuild: string
+    modalTitle: string
   }
+}) {
+  const [hovered, setHovered] = useState(false)
+  const [miniHovered, setMiniHovered] = useState(false)
+  const [modalOpen, setModalOpen] = useState(false)
+
+  const hasContent = hits.length > 0 || snapshot.trim().length > 0
+
+  const previewLines = hits.length > 0
+    ? hits.slice(0, 7).map((h) => (h.abstract || h.uri).split('\n')[0])
+    : snapshot.split('\n').filter((l) => l.trim()).slice(0, 7)
 
   return (
-    <pre
-      className="overflow-auto rounded-xl p-4 text-xs leading-relaxed text-[var(--c-text-secondary)] whitespace-pre-wrap"
-      style={{ border: '1px solid var(--c-border-subtle)', background: 'var(--c-bg-menu)', maxHeight: 360 }}
-    >
-      {snapshot}
-    </pre>
+    <div className="flex flex-col gap-3">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <FileText size={15} className="text-[var(--c-text-secondary)]" />
+          <h4 className="text-sm font-semibold text-[var(--c-text-heading)]">{titles.title}</h4>
+        </div>
+        <button
+          type="button"
+          onClick={onRebuild}
+          disabled={rebuilding}
+          className={secondaryButtonXsCls}
+          style={secondaryButtonBorderStyle}
+        >
+          <RefreshCw size={13} className={rebuilding ? 'animate-spin' : ''} />
+          {titles.rebuild}
+        </button>
+      </div>
+
+      {!hasContent ? (
+        <div
+          className="flex flex-col items-center justify-center rounded-xl py-10"
+          style={{ border: '1px solid var(--c-border-subtle)', background: 'var(--c-bg-menu)' }}
+        >
+          <FileText size={24} className="mb-2 text-[var(--c-text-muted)]" />
+          <p className="text-xs text-[var(--c-text-muted)]">{titles.empty}</p>
+        </div>
+      ) : (
+        <div
+          className="group/card cursor-pointer rounded-xl"
+          style={{
+            border: '0.5px solid var(--c-border-subtle)',
+            background: 'var(--c-bg-menu)',
+          }}
+          onClick={() => setModalOpen(true)}
+          onMouseEnter={() => setHovered(true)}
+          onMouseLeave={() => { setHovered(false); setMiniHovered(false) }}
+        >
+          <div className="flex gap-4 p-4">
+            <div
+              className="shrink-0 overflow-hidden rounded-lg transition-shadow duration-200"
+              style={{
+                width: 120,
+                height: 80,
+                border: '0.5px solid var(--c-border-subtle)',
+                background: 'var(--c-bg-page)',
+                boxShadow: hovered
+                  ? '0 3px 6px -2px rgba(0,0,0,0.08), 1px 0 3px -2px rgba(0,0,0,0.03), -1px 0 3px -2px rgba(0,0,0,0.03)'
+                  : '0 1px 3px -1px rgba(0,0,0,0.04)',
+              }}
+              onMouseEnter={() => setMiniHovered(true)}
+              onMouseLeave={() => setMiniHovered(false)}
+            >
+              <div
+                className="overflow-hidden transition-all duration-200"
+                style={{
+                  padding: '10px 0 0 12px',
+                  fontSize: 8,
+                  lineHeight: '11px',
+                  letterSpacing: '-0.01em',
+                  color: hovered ? 'var(--c-text-secondary)' : 'var(--c-text-tertiary)',
+                  maxHeight: 80,
+                  transformOrigin: 'top left',
+                  transform: miniHovered ? 'scale(1.12)' : 'scale(1)',
+                  WebkitMaskImage: 'linear-gradient(to bottom, black 40%, transparent 90%), linear-gradient(to left, transparent 0px, black 8px)',
+                  maskImage: 'linear-gradient(to bottom, black 40%, transparent 90%), linear-gradient(to left, transparent 0px, black 8px)',
+                  WebkitMaskComposite: 'source-in',
+                  maskComposite: 'intersect',
+                }}
+              >
+                {previewLines.map((line, i) => (
+                  <div key={i} style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{line}</div>
+                ))}
+              </div>
+            </div>
+
+            <div className="flex min-w-0 flex-1 flex-col justify-center overflow-hidden">
+              <p className="text-sm text-[var(--c-text-heading)]" style={{ fontWeight: 450 }}>
+                {titles.title}
+              </p>
+              <div className="relative h-[18px] overflow-hidden">
+                <p
+                  className="absolute inset-0 text-[11px] text-[var(--c-text-muted)] transition-all duration-150 ease-out"
+                  style={{
+                    transform: hovered ? 'translateX(-16px)' : 'translateX(0)',
+                    opacity: hovered ? 0 : 1,
+                  }}
+                >
+                  {hits.length > 0 ? `${hits.length} memories` : '\u00a0'}
+                </p>
+                <p
+                  className="absolute inset-0 text-[11px] transition-all duration-150 ease-out"
+                  style={{
+                    color: 'var(--c-text-muted)',
+                    transform: hovered ? 'translateX(0)' : 'translateX(16px)',
+                    opacity: hovered ? 1 : 0,
+                  }}
+                >
+                  {titles.viewEdit}
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <Modal open={modalOpen} onClose={() => setModalOpen(false)} title={titles.modalTitle} width="560px">
+        {hits.length > 0 ? (
+          <div className="flex flex-col gap-2.5">
+            {hits.map((hit, i) => (
+              <ModalHitCard key={hit.uri + i} hit={hit} onLoadContent={onLoadContent} />
+            ))}
+          </div>
+        ) : (
+          <pre className="rounded-lg p-3 text-sm leading-relaxed text-[var(--c-text-secondary)] whitespace-pre-wrap" style={{ background: 'var(--c-bg-input)' }}>
+            {snapshot}
+          </pre>
+        )}
+      </Modal>
+    </div>
   )
 }
 
@@ -311,8 +554,12 @@ export function MemorySettings({ accessToken }: Props) {
   const [loading, setLoading] = useState(true)
   const [rebuilding, setRebuilding] = useState(false)
   const [configModalOpen, setConfigModalOpen] = useState(false)
+  const [errorsModalOpen, setErrorsModalOpen] = useState(false)
   const [memoryErrors, setMemoryErrors] = useState<MemoryErrorEvent[]>([])
-
+  const [impression, setImpression] = useState('')
+  const [impressionUpdatedAt, setImpressionUpdatedAt] = useState<string | undefined>()
+  const [rebuildingImpression, setRebuildingImpression] = useState(false)
+  const [rebuildImpressionDone, setRebuildImpressionDone] = useState(false)
   // Runtime health probe (lightweight — no full Bridge UI, just status)
   const [health, setHealth] = useState<HealthStatus>('checking')
   const [healthLabel, setHealthLabel] = useState('')
@@ -374,17 +621,24 @@ export function MemorySettings({ accessToken }: Props) {
         try {
           const errResp = await listMemoryErrors(accessToken, 5)
           setMemoryErrors(errResp.errors)
-        } catch { /* ignore */ }
+        } catch (err) { console.error('listMemoryErrors failed', err) }
       }
       if (cfg.enabled) {
         const snap = await api.memory.getSnapshot()
         setSnapshot(snap.memory_block ?? '')
         setHits(snap.hits ?? [])
+        if (api.memory.getImpression) {
+          try {
+            const imp = await api.memory.getImpression()
+            setImpression(imp.impression ?? '')
+            setImpressionUpdatedAt(imp.updated_at)
+          } catch (err) { console.error('getImpression failed', err) }
+        }
       }
-    } catch { /* ignore */ } finally {
+    } catch (err) { console.error('memory loadData failed', err) } finally {
       setLoading(false)
     }
-  }, [api, probeHealth])
+  }, [api, probeHealth, accessToken])
 
   const rebuildSnapshot = useCallback(async () => {
     if (!api?.memory?.rebuildSnapshot) return
@@ -393,8 +647,27 @@ export function MemorySettings({ accessToken }: Props) {
       const snap = await api.memory.rebuildSnapshot()
       setSnapshot(snap.memory_block ?? '')
       setHits(snap.hits ?? [])
-    } catch { /* ignore */ } finally {
+    } catch (err) { console.error('rebuildSnapshot failed', err) } finally {
       setRebuilding(false)
+    }
+  }, [api])
+
+  const rebuildImpression = useCallback(async () => {
+    if (!api?.memory?.rebuildImpression) return
+    setRebuildingImpression(true)
+    try {
+      const resp = await api.memory.rebuildImpression()
+      if (api.memory.getImpression) {
+        try {
+          const imp = await api.memory.getImpression()
+          setImpression(imp.impression ?? '')
+          setImpressionUpdatedAt(imp.updated_at ?? resp.updated_at)
+        } catch (err) { console.error('getImpression after rebuild failed', err) }
+      }
+      setRebuildImpressionDone(true)
+      setTimeout(() => setRebuildImpressionDone(false), 2000)
+    } catch (err) { console.error('rebuildImpression failed', err) } finally {
+      setRebuildingImpression(false)
     }
   }, [api])
 
@@ -411,6 +684,9 @@ export function MemorySettings({ accessToken }: Props) {
     const resp = await api.memory.getContent(uri, layer)
     return resp.content ?? ''
   }, [api])
+
+  const [enableCardHovered, setEnableCardHovered] = useState(false)
+  const [summarizeCardHovered, setSummarizeCardHovered] = useState(false)
 
   // ---------------------------------------------------------------------------
 
@@ -444,23 +720,102 @@ export function MemorySettings({ accessToken }: Props) {
     <div className="flex flex-col gap-6">
       <SettingsSectionHeader title={ds.memorySettingsTitle} description={ds.memorySettingsDesc} />
 
-      {/* Enable Memory toggle */}
-      <div
-        className="flex items-center justify-between rounded-xl px-4 py-3"
-        style={{ border: '1px solid var(--c-border-subtle)', background: 'var(--c-bg-menu)' }}
-      >
-        <div className="flex-1 pr-4">
-          <p className="text-sm font-medium text-[var(--c-text-heading)]">{ds.memoryEnabled}</p>
-          <p className="text-xs text-[var(--c-text-muted)]">{ds.memoryEnabledDesc}</p>
+      {/* Enable Memory + Auto-summarize compound card */}
+      <div className="rounded-xl border-[0.5px] border-[var(--c-border-subtle)] bg-[var(--c-bg-menu)]">
+        <div
+          role="button"
+          tabIndex={0}
+          className="flex cursor-pointer items-center justify-between gap-4 px-4 py-4 outline-none transition-colors hover:bg-[var(--c-bg-deep)]/25 focus-visible:ring-2 focus-visible:ring-[var(--c-accent)]"
+          onMouseEnter={() => setEnableCardHovered(true)}
+          onMouseLeave={() => setEnableCardHovered(false)}
+          onClick={() => { if (memConfig) void saveConfig({ ...memConfig, enabled: !enabled }) }}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+              e.preventDefault()
+              if (memConfig) void saveConfig({ ...memConfig, enabled: !enabled })
+            }
+          }}
+        >
+          <div className="min-w-0 flex-1 pr-2">
+            <p className="text-sm font-medium text-[var(--c-text-heading)]">{ds.memoryEnabled}</p>
+            <p className="mt-0.5 text-xs text-[var(--c-text-muted)]">{ds.memoryEnabledDesc}</p>
+          </div>
+          <div className="shrink-0" onClick={(e) => e.stopPropagation()}>
+            <PillToggle
+              checked={enabled}
+              onChange={(next) => { if (memConfig) void saveConfig({ ...memConfig, enabled: next }) }}
+              forceHover={enableCardHovered}
+            />
+          </div>
         </div>
-        <PillToggle
-          checked={enabled}
-          onChange={(next) => { if (memConfig) void saveConfig({ ...memConfig, enabled: next }) }}
-        />
+
+        {memConfig && (
+          <div
+            role="button"
+            tabIndex={0}
+            className={`flex cursor-pointer items-center justify-between gap-4 border-t border-[var(--c-border-subtle)] px-4 py-4 outline-none transition-all hover:bg-[var(--c-bg-deep)]/25 focus-visible:ring-2 focus-visible:ring-[var(--c-accent)] ${enabled ? '' : 'pointer-events-none opacity-40'}`}
+            onMouseEnter={() => setSummarizeCardHovered(true)}
+            onMouseLeave={() => setSummarizeCardHovered(false)}
+            onClick={() => { if (enabled) void saveConfig({ ...memConfig, memoryCommitEachTurn: memConfig.memoryCommitEachTurn === false }) }}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault()
+                if (enabled) void saveConfig({ ...memConfig, memoryCommitEachTurn: memConfig.memoryCommitEachTurn === false })
+              }
+            }}
+          >
+            <div className="min-w-0 flex-1 pr-2">
+              <p className="text-sm font-medium text-[var(--c-text-heading)]">{ds.memoryAutoSummarizeLabel}</p>
+              <p className="mt-0.5 text-xs text-[var(--c-text-muted)]">{ds.memoryAutoSummarizeDesc}</p>
+            </div>
+            <div className="shrink-0" onClick={(e) => e.stopPropagation()}>
+              <PillToggle
+                checked={memConfig.memoryCommitEachTurn !== false}
+                onChange={(next) => void saveConfig({ ...memConfig, memoryCommitEachTurn: next })}
+                forceHover={summarizeCardHovered}
+              />
+            </div>
+          </div>
+        )}
       </div>
 
       {enabled && memConfig && (
         <>
+          {/* Impression card */}
+          <ImpressionCard
+            impression={impression}
+            updatedAt={impressionUpdatedAt}
+            onRebuild={() => void rebuildImpression()}
+            rebuilding={rebuildingImpression}
+            rebuildDone={rebuildImpressionDone}
+            titles={{
+              title: ds.memoryImpressionTitle,
+              updatedAgo: ds.memoryImpressionUpdatedAgo,
+              empty: ds.memoryImpressionEmpty,
+              viewEdit: ds.memoryImpressionViewEdit,
+              rebuild: ds.memoryImpressionRebuild,
+              modalTitle: ds.memoryImpressionModalTitle,
+            }}
+          />
+
+          {/* Memories card — snapshot hits in Impression-style mini preview */}
+          {isConfigured && (
+            <MemoriesCard
+              hits={hits}
+              snapshot={snapshot}
+              onRebuild={() => void rebuildSnapshot()}
+              rebuilding={rebuilding}
+              onLoadContent={loadContent}
+              titles={{
+                title: ds.memorySnapshotTitle,
+                empty: ds.memorySnapshotEmpty,
+                viewEdit: ds.memorySnapshotViewEdit,
+                rebuild: ds.memoryRebuildSnapshot,
+                modalTitle: ds.memorySnapshotTitle,
+              }}
+            />
+          )}
+
           {/* OpenViking provider card */}
           <div
             className="rounded-xl transition-[border-color] duration-150"
@@ -484,6 +839,17 @@ export function MemorySettings({ accessToken }: Props) {
               </div>
             </div>
             <div className="flex items-center justify-end gap-3 border-t border-[var(--c-border-subtle)] px-4 py-3">
+              {memoryErrors.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => setErrorsModalOpen(true)}
+                  className={secondaryButtonSmCls}
+                  style={{ border: '0.5px solid var(--c-status-warning-text)', color: 'var(--c-status-warning-text)' }}
+                >
+                  <AlertTriangle size={14} />
+                  {ds.memoryRecentErrors}
+                </button>
+              )}
               <div className="flex items-center gap-2">
                 <div
                   className="h-2 w-2 shrink-0 rounded-full"
@@ -507,65 +873,6 @@ export function MemorySettings({ accessToken }: Props) {
               </button>
             </div>
           </div>
-
-          {memoryErrors.length > 0 && (
-            <div
-              className="flex flex-col gap-2 rounded-xl px-4 py-3"
-              style={{ border: '1px solid var(--c-status-warning)', background: 'var(--c-status-warning-bg, rgba(245,158,11,0.06))' }}
-            >
-              <div className="flex items-center gap-2">
-                <AlertTriangle size={14} style={{ color: 'var(--c-status-warning)' }} />
-                <span className="text-xs font-medium" style={{ color: 'var(--c-status-warning)' }}>
-                  {ds.memoryRecentErrors}
-                </span>
-              </div>
-              <div className="flex flex-col gap-1">
-                {memoryErrors.map((evt) => (
-                  <div key={evt.event_id} className="flex items-start gap-2 text-xs text-[var(--c-text-muted)]">
-                    <span className="shrink-0 tabular-nums">{new Date(evt.ts).toLocaleString()}</span>
-                    <span className="truncate">{memoryErrorLabel(evt.type)}: {(evt.data as Record<string, string>)?.message ?? ''}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* Auto-summarize toggle */}
-          <div
-            className="flex items-center justify-between rounded-xl px-4 py-3"
-            style={{ border: '1px solid var(--c-border-subtle)', background: 'var(--c-bg-menu)' }}
-          >
-            <div className="flex-1 pr-4">
-              <p className="text-sm font-medium text-[var(--c-text-heading)]">{ds.memoryAutoSummarizeLabel}</p>
-              <p className="text-xs text-[var(--c-text-muted)]">{ds.memoryAutoSummarizeDesc}</p>
-            </div>
-            <PillToggle
-              checked={memConfig.memoryCommitEachTurn !== false}
-              onChange={(next) => void saveConfig({ ...memConfig, memoryCommitEachTurn: next })}
-            />
-          </div>
-
-          <div className="border-t border-[var(--c-border-subtle)]" />
-
-          {/* Snapshot section header */}
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <FileText size={15} className="text-[var(--c-text-secondary)]" />
-              <h4 className="text-sm font-semibold text-[var(--c-text-heading)]">{ds.memorySnapshotTitle}</h4>
-            </div>
-            <button
-              type="button"
-              onClick={() => void rebuildSnapshot()}
-              disabled={rebuilding}
-              className={secondaryButtonXsCls}
-              style={secondaryButtonBorderStyle}
-            >
-              <RefreshCw size={13} className={rebuilding ? 'animate-spin' : ''} />
-              {ds.memoryRebuildSnapshot}
-            </button>
-          </div>
-
-          {isConfigured && <SnapshotView snapshot={snapshot} hits={hits} onLoadContent={loadContent} />}
         </>
       )}
 
@@ -576,6 +883,30 @@ export function MemorySettings({ accessToken }: Props) {
         memConfig={memConfig}
         onConfigSaved={(cfg) => { setMemConfigState(cfg); void probeHealth(cfg); void loadData(true) }}
       />
+
+      <Modal open={errorsModalOpen} onClose={() => setErrorsModalOpen(false)} title={ds.memoryErrorsModalTitle} width="520px">
+        <div className="flex flex-col gap-3">
+          {memoryErrors.map((evt) => (
+            <div
+              key={evt.event_id}
+              className="flex flex-col gap-1 rounded-lg px-3 py-2"
+              style={{ border: '1px solid var(--c-border-subtle)', background: 'var(--c-bg-sub)' }}
+            >
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-medium" style={{ color: 'var(--c-status-warning-text)' }}>
+                  {memoryErrorLabel(evt.type)}
+                </span>
+                <span className="text-xs tabular-nums text-[var(--c-text-muted)]">
+                  {new Date(evt.ts).toLocaleString()}
+                </span>
+              </div>
+              <p className="whitespace-pre-wrap break-all text-xs leading-relaxed text-[var(--c-text-secondary)]">
+                {(evt.data as Record<string, string>)?.message ?? ''}
+              </p>
+            </div>
+          ))}
+        </div>
+      </Modal>
     </div>
   )
 }

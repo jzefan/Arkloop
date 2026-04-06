@@ -168,8 +168,8 @@ function AddCredentialModal({
       }
       await createAsrCredential(req, accessToken)
       onCreated()
-    } catch {
-      /* ignore */
+    } catch (err) {
+      console.error('create ASR credential failed', err)
     } finally {
       setSaving(false)
     }
@@ -384,8 +384,8 @@ function EditCredentialModal({
       }
       await updateAsrCredential(cred.id, req, accessToken)
       onUpdated()
-    } catch {
-      /* ignore */
+    } catch (err) {
+      console.error('update ASR credential failed', err)
     } finally {
       setSaving(false)
     }
@@ -555,8 +555,8 @@ export function VoiceSettings({ accessToken, initialConfig = null }: Props) {
       await api.config.set({ ...cfg, voice: { enabled, language: voiceLanguage } })
       setVoiceEnabled(enabled)
       voiceEnabledRef.current = enabled
-    } catch {
-      /* ignore */
+    } catch (err) {
+      console.error('voice toggle failed', err)
     } finally {
       toggleSavingRef.current = false
       setToggleSaving(false)
@@ -569,8 +569,8 @@ export function VoiceSettings({ accessToken, initialConfig = null }: Props) {
       const cfg = await api.config.get()
       await api.config.set({ ...cfg, voice: { enabled: voiceEnabledRef.current, language } })
       setVoiceLanguage(language)
-    } catch {
-      /* ignore */
+    } catch (err) {
+      console.error('voice language change failed', err)
     }
   }, [api])
 
@@ -578,8 +578,8 @@ export function VoiceSettings({ accessToken, initialConfig = null }: Props) {
     try {
       await setDefaultAsrCredential(id, accessToken)
       await fetchCredentials()
-    } catch {
-      /* ignore */
+    } catch (err) {
+      console.error('set default ASR credential failed', err)
     }
   }, [accessToken, fetchCredentials])
 

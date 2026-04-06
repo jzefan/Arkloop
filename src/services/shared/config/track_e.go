@@ -61,6 +61,14 @@ func RegisterTrackE(r *Registry) error {
 			},
 		},
 		{
+			Key:         "memory.impression_score_threshold",
+			Type:        TypeInt,
+			Default:     "50",
+			Description: "impression 更新触发阈值",
+			Sensitive:   false,
+			Scope:       ScopeBoth,
+		},
+		{
 			Key:         "backpressure.enabled",
 			Type:        TypeBool,
 			Default:     "true",

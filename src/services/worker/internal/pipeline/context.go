@@ -248,6 +248,9 @@ type RunContext struct {
 	HeartbeatSilent      bool // 由 heartbeat_decision 工具执行时设置，AgentLoop 只读
 	HeartbeatToolOutcome *HeartbeatDecisionOutcome
 
+	// -- Impression --
+	ImpressionRun bool
+
 	// -- Rollout --
 	// RolloutRecorder 用于写入 rollout 日志，为 nil 时不记录
 	RolloutRecorder *rollout.Recorder

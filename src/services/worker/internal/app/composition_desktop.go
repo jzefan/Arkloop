@@ -11,6 +11,8 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -117,6 +119,25 @@ type DesktopEngine struct {
 	groupSearchExec        tools.Executor
 	mcpPool                *mcp.Pool
 	mcpDiscoveryCache      *mcp.DiscoveryCache
+}
+
+const defaultDesktopStageEventMs = 250
+
+var desktopObservedEventNames = map[string]string{
+	"input_loader":               "run.input_loader",
+	"heartbeat_schedule":         "run.heartbeat_schedule",
+	"tool_provider_bindings":     "run.tool_provider_bindings",
+	"spawn_agent":                "run.spawn_agent",
+	"persona_resolution":         "run.persona_resolution",
+	"channel_context":            "run.channel_context",
+	"channel_admin_tag":          "run.channel_admin_tag",
+	"channel_group_user_merge":   "run.channel_group_user_merge",
+	"channel_group_context_trim": "run.channel_group_context_trim",
+	"channel_telegram_tools":     "run.channel_telegram_tools",
+	"sub_agent_context":          "run.sub_agent_context",
+	"skill_context":              "run.skill_context",
+	"memory_injection":           "run.memory_injection",
+	"runtime_context":            "run.runtime_context",
 }
 
 // ComposeDesktopEngine assembles a DesktopEngine from environment configuration.
@@ -369,6 +390,9 @@ func ComposeDesktopEngine(ctx context.Context, db data.DesktopDB, bus eventbus.E
 	if err := cleanupOrphanSkillRuntimes(ctx, db); err != nil {
 		slog.WarnContext(ctx, "desktop: orphan skill runtime cleanup failed", "err", err.Error())
 	}
+	if err := recoverOrphanRuns(ctx, db); err != nil {
+		slog.WarnContext(ctx, "desktop: orphan run recovery failed", "err", err.Error())
+	}
 
 	return &DesktopEngine{
 		db:                     db,
@@ -406,6 +430,7 @@ func loadPersonaRegistryFromFS() func() *personas.Registry {
 	}
 	dirs = append(dirs, "personas", "src/personas", "../personas")
 	seen := make(map[string]struct{}, len(dirs))
+	var resolvedDir string
 	for _, dir := range dirs {
 		cleaned := filepath.Clean(strings.TrimSpace(dir))
 		if cleaned == "" {
@@ -418,10 +443,33 @@ func loadPersonaRegistryFromFS() func() *personas.Registry {
 		reg, err := personas.LoadRegistry(cleaned)
 		if err == nil && len(reg.ListIDs()) > 0 {
 			slog.Info("desktop: personas loaded from filesystem", "dir", cleaned, "count", len(reg.ListIDs()))
-			return func() *personas.Registry { return reg }
+			resolvedDir = cleaned
+			break
 		}
 	}
-	return nil
+	if resolvedDir == "" {
+		return nil
+	}
+	var (
+		cached   *personas.Registry
+		cachedAt time.Time
+		mu       sync.Mutex
+	)
+	return func() *personas.Registry {
+		mu.Lock()
+		defer mu.Unlock()
+		if cached != nil && time.Since(cachedAt) < 30*time.Second {
+			return cached
+		}
+		reg, err := personas.LoadRegistry(resolvedDir)
+		if err != nil {
+			slog.Warn("desktop: persona reload failed, using cache", "dir", resolvedDir, "err", err.Error())
+			return cached
+		}
+		cached = reg
+		cachedAt = time.Now()
+		return cached
+	}
 }
 
 // Execute runs the agent pipeline for a single run.
@@ -521,6 +569,8 @@ func (e *DesktopEngine) Execute(ctx context.Context, run data.Run, traceID strin
 	}
 
 	var memMiddleware pipeline.RunMiddleware
+	impStore := pipeline.NewDesktopImpressionStore(e.db)
+	impRefresh := newDesktopImpressionRefresh(e.db, e.jobQueue)
 	if e.useOV {
 		notebookMW := desktopMemoryInjection(e.db)
 		memoryMW := pipeline.NewMemoryMiddleware(
@@ -528,6 +578,8 @@ func (e *DesktopEngine) Execute(ctx context.Context, run data.Run, traceID strin
 			pipeline.NewDesktopMemorySnapshotStore(e.db),
 			e.db,
 			e.promptInjection.Resolver,
+			impStore,
+			impRefresh,
 		)
 		memMiddleware = func(ctx context.Context, rc *pipeline.RunContext, next pipeline.RunHandler) error {
 			return notebookMW(ctx, rc, func(ctx context.Context, rc *pipeline.RunContext) error {
@@ -541,53 +593,53 @@ func (e *DesktopEngine) Execute(ctx context.Context, run data.Run, traceID strin
 
 	middlewares := []pipeline.RunMiddleware{
 		desktopCancelGuard(e.db, e.bus),
-		desktopInputLoader(e.db, runsRepo, eventsRepo, e.messageAttachmentStore, e.rolloutStore),
-		pipeline.NewHeartbeatScheduleMiddleware(e.db),
+		desktopObservedStage("input_loader", eventsRepo, desktopInputLoader(e.db, runsRepo, eventsRepo, e.messageAttachmentStore, e.rolloutStore)),
+		desktopObservedStage("heartbeat_schedule", eventsRepo, pipeline.NewHeartbeatScheduleMiddleware(e.db)),
 		pipeline.NewMCPDiscoveryMiddleware(
 			e.mcpDiscoveryCache,
 			func(*pipeline.RunContext) mcp.DiscoveryQueryer { return e.db },
+			data.DesktopRunEventsRepository{},
 			e.toolExecutors,
 			e.allLlmSpecs,
 			e.baseAllowlist,
 			e.toolRegistry,
 		),
-		desktopToolProviderBindings(e.db),
-		pipeline.NewSpawnAgentMiddleware(),
-		desktopPersonaResolution(e.db, e.personaRegistry, runsRepo, eventsRepo),
-		desktopChannelContext(e.db),
-		pipeline.NewChannelAdminTagMiddleware(e.db),
-		pipeline.NewChannelTelegramGroupUserMergeMiddleware(),
-		pipeline.NewChannelGroupContextTrimMiddleware(pipeline.GroupContextTrimDeps{
-			Pool:            e.db,
-			MessagesRepo:    data.MessagesRepository{},
-			EventsRepo:      data.DesktopRunEventsRepository{},
-			AuxGateway:      e.auxGateway,
-			EmitDebugEvents: e.emitDebugEvents,
-			ConfigLoader:    e.routingLoader,
-		}),
-		pipeline.NewChannelTelegramToolsMiddleware(nil, nil, pipeline.ChannelTelegramToolsDeps{
+		desktopObservedStage("tool_provider_bindings", eventsRepo, desktopToolProviderBindings(e.db)),
+		desktopObservedStage("spawn_agent", eventsRepo, pipeline.NewSpawnAgentMiddleware()),
+		desktopObservedStage("persona_resolution", eventsRepo, desktopPersonaResolution(e.db, e.personaRegistry, runsRepo, eventsRepo)),
+		desktopObservedStage("channel_context", eventsRepo, desktopChannelContext(e.db)),
+		desktopObservedStage("channel_admin_tag", eventsRepo, pipeline.NewChannelAdminTagMiddleware(e.db)),
+		desktopObservedStage("channel_group_user_merge", eventsRepo, pipeline.NewChannelTelegramGroupUserMergeMiddleware()),
+		desktopObservedStage("channel_telegram_tools", eventsRepo, pipeline.NewChannelTelegramToolsMiddleware(nil, nil, pipeline.ChannelTelegramToolsDeps{
 			TokenLoader:        &desktopTelegramTokenLoader{db: e.db},
 			GroupSearchExec:    e.groupSearchExec,
 			GroupSearchLlmSpec: conversationtool.GroupSearchLlmSpec,
-		}),
-		pipeline.NewChannelQQToolsMiddleware(pipeline.ChannelQQToolsDeps{
+		})),
+		desktopObservedStage("channel_qq_tools", eventsRepo, pipeline.NewChannelQQToolsMiddleware(pipeline.ChannelQQToolsDeps{
 			ConfigLoader:    &desktopQQOneBotConfigLoader{db: e.db},
 			GroupSearchExec: e.groupSearchExec,
 			GroupSearchSpec:  conversationtool.GroupSearchLlmSpec,
-		}),
-		desktopSubAgentContext(e.db, subagentctl.NewSnapshotStorage()),
-		pipeline.NewSkillContextMiddleware(pipeline.SkillContextConfig{
+		})),
+		desktopObservedStage("sub_agent_context", eventsRepo, desktopSubAgentContext(e.db, subagentctl.NewSnapshotStorage())),
+		desktopObservedStage("skill_context", eventsRepo, pipeline.NewSkillContextMiddleware(pipeline.SkillContextConfig{
 			Resolve:        desktopSkillResolver(e.db),
 			Prepare:        desktopSkillPreparer(e.useVM),
 			LayoutResolver: e.skillLayout,
 			ExternalDirs:   desktopExternalSkillDirs(e.db),
-		}),
+		})),
 	}
 	middlewares = append(middlewares, desktopCapabilityMiddlewares(memMiddleware, e.promptInjection, eventsRepo)...)
 	middlewares = append(middlewares,
 		desktopRouting(e.auxRouter, e.auxGateway, e.emitDebugEvents, e.db, runsRepo, eventsRepo),
+		desktopObservedStage("channel_group_context_trim", eventsRepo, pipeline.NewChannelGroupContextTrimMiddleware(pipeline.GroupContextTrimDeps{
+			Pool:            e.db,
+			MessagesRepo:    data.MessagesRepository{},
+			EventsRepo:      data.DesktopRunEventsRepository{},
+			EmitDebugEvents: e.emitDebugEvents,
+		})),
 		pipeline.NewTitleSummarizerMiddleware(e.db, nil, e.auxGateway, e.emitDebugEvents, e.routingLoader),
 		pipeline.NewContextCompactMiddleware(e.db, data.MessagesRepository{}, data.DesktopRunEventsRepository{}, e.auxGateway, e.emitDebugEvents, e.routingLoader),
+		pipeline.NewImpressionPrepareMiddleware(impStore, e.db, e.auxGateway, e.emitDebugEvents, e.routingLoader),
 		pipeline.NewHeartbeatPrepareMiddleware(),
 		pipeline.NewConditionalToolsMiddleware(),
 		pipeline.NewToolBuildMiddleware(),
@@ -606,10 +658,138 @@ func desktopCapabilityMiddlewares(
 	eventsRepo data.RunEventStore,
 ) []pipeline.RunMiddleware {
 	middlewares := []pipeline.RunMiddleware{
-		memMiddleware,
-		pipeline.NewRuntimeContextMiddleware(),
+		desktopObservedStage("memory_injection", eventsRepo, memMiddleware),
+		desktopObservedStage("runtime_context", eventsRepo, pipeline.NewRuntimeContextMiddleware()),
 	}
 	return append(middlewares, promptInjection.Middlewares(eventsRepo)...)
+}
+
+func desktopObservedStage(stage string, eventsRepo data.RunEventStore, inner pipeline.RunMiddleware) pipeline.RunMiddleware {
+	if inner == nil {
+		return nil
+	}
+	stage = strings.TrimSpace(stage)
+	if stage == "" {
+		return inner
+	}
+	eventType, ok := desktopObservedEventNames[stage]
+	if !ok {
+		return inner
+	}
+	return func(ctx context.Context, rc *pipeline.RunContext, next pipeline.RunHandler) error {
+		startedAt := time.Now()
+		emitted := false
+		emit := func(status string, stageErr error) {
+			if emitted {
+				return
+			}
+			emitted = true
+			emitDesktopStageEvent(ctx, rc, eventsRepo, eventType, time.Since(startedAt).Milliseconds(), status, stageErr)
+		}
+		err := inner(ctx, rc, func(ctx context.Context, rc *pipeline.RunContext) error {
+			emit("completed", nil)
+			return next(ctx, rc)
+		})
+		if !emitted {
+			status := "completed"
+			if err != nil {
+				status = "failed"
+			}
+			emit(status, err)
+		}
+		return err
+	}
+}
+
+func emitDesktopStageEvent(
+	ctx context.Context,
+	rc *pipeline.RunContext,
+	eventsRepo data.RunEventStore,
+	eventType string,
+	durationMs int64,
+	status string,
+	stageErr error,
+) {
+	if rc == nil || eventsRepo == nil {
+		return
+	}
+	thresholdMs := loadDesktopStageEventMs()
+	if stageErr == nil && durationMs < thresholdMs {
+		return
+	}
+	db := rc.DB
+	if db == nil {
+		return
+	}
+	dataJSON := buildDesktopStageEventData(durationMs, thresholdMs, status, stageErr)
+	ev := rc.Emitter.Emit(eventType, dataJSON, nil, nil)
+	tx, err := db.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		slog.WarnContext(ctx, "desktop stage event tx begin failed", "event_type", eventType, "error", err)
+		return
+	}
+	defer tx.Rollback(ctx)
+	if _, err := eventsRepo.AppendRunEvent(ctx, tx, rc.Run.ID, ev); err != nil {
+		slog.WarnContext(ctx, "desktop stage event append failed", "event_type", eventType, "error", err)
+		return
+	}
+	if err := tx.Commit(ctx); err != nil {
+		slog.WarnContext(ctx, "desktop stage event commit failed", "event_type", eventType, "error", err)
+		return
+	}
+	if rc.EventBus != nil {
+		_ = rc.EventBus.Publish(ctx, fmt.Sprintf("run_events:%s", rc.Run.ID.String()), "")
+	}
+}
+
+func buildDesktopStageEventData(durationMs int64, thresholdMs int64, status string, stageErr error) map[string]any {
+	payload := map[string]any{
+		"duration_ms":  durationMs,
+		"threshold_ms": thresholdMs,
+		"status":       strings.TrimSpace(status),
+	}
+	if stageErr != nil {
+		payload["error_message"] = trimDesktopStageError(stageErr.Error())
+	}
+	return payload
+}
+
+func loadDesktopStageEventMs() int64 {
+	raw := strings.TrimSpace(os.Getenv("ARKLOOP_DESKTOP_STAGE_EVENT_MS"))
+	if raw == "" {
+		return defaultDesktopStageEventMs
+	}
+	value, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil || value <= 0 {
+		return defaultDesktopStageEventMs
+	}
+	return value
+}
+
+func trimDesktopStageError(message string) string {
+	message = strings.TrimSpace(message)
+	if len(message) <= 200 {
+		return message
+	}
+	return message[:200]
+}
+
+func desktopObservedEventName(stage string) (string, bool) {
+	stage = strings.TrimSpace(stage)
+	if stage == "" {
+		return "", false
+	}
+	eventType, ok := desktopObservedEventNames[stage]
+	return eventType, ok
+}
+
+func desktopObservedEventTypes() []string {
+	items := make([]string, 0, len(desktopObservedEventNames))
+	for _, eventType := range desktopObservedEventNames {
+		items = append(items, eventType)
+	}
+	slices.Sort(items)
+	return items
 }
 
 func resolveDesktopRunBindings(ctx context.Context, db data.DesktopDB, run data.Run) (data.Run, error) {
@@ -620,6 +800,25 @@ func resolveDesktopRunBindings(ctx context.Context, db data.DesktopDB, run data.
 }
 
 // --------------- desktop middleware ---------------
+
+func newDesktopImpressionRefresh(db data.DesktopDB, jq queue.JobQueue) pipeline.ImpressionRefreshFunc {
+	if db == nil || jq == nil {
+		return nil
+	}
+	return pipeline.NewImpressionRefreshFunc(pipeline.ImpressionRefreshDeps{
+		ExecSQL: func(ctx context.Context, sql string, args ...any) error {
+			_, err := db.Exec(ctx, sql, args...)
+			return err
+		},
+		QueryRowScan: func(ctx context.Context, sql string, args []any, dest ...any) error {
+			return db.QueryRow(ctx, sql, args...).Scan(dest...)
+		},
+		EnqueueRun: func(ctx context.Context, accountID, runID uuid.UUID, traceID, jobType string, payload map[string]any) error {
+			_, err := jq.EnqueueRun(ctx, accountID, runID, traceID, jobType, payload, nil)
+			return err
+		},
+	})
+}
 
 // desktopMemoryInjection reads the saved notebook block from
 // user_notebook_snapshots and appends it to the run's system prompt.
@@ -879,10 +1078,13 @@ type desktopDeliveryChannelRecord struct {
 
 func desktopChannelContext(db data.DesktopDB) pipeline.RunMiddleware {
 	return func(ctx context.Context, rc *pipeline.RunContext, next pipeline.RunHandler) error {
-		if rc == nil || len(rc.JobPayload) == 0 {
+		if rc == nil {
 			return next(ctx, rc)
 		}
 		rawDelivery, ok := rc.JobPayload["channel_delivery"].(map[string]any)
+		if !ok || len(rawDelivery) == 0 {
+			rawDelivery, ok = rc.InputJSON["channel_delivery"].(map[string]any)
+		}
 		if !ok || len(rawDelivery) == 0 {
 			return next(ctx, rc)
 		}
@@ -1484,7 +1686,9 @@ func recordDesktopChannelDeliveryFailure(db data.DesktopDB, runID uuid.UUID, err
 	}, nil, nil); appendErr != nil {
 		return
 	}
-	_ = tx.Commit(context.Background())
+	if err := tx.Commit(context.Background()); err != nil {
+		slog.Error("desktop_channel_delivery_failure_commit_failed", "run_id", runID, "err", err)
+	}
 }
 
 func recordDesktopChannelDelivery(
@@ -2065,6 +2269,15 @@ type desktopEventWriter struct {
 	pendingReplyOverride     string
 	draftVisibleContent      string
 	draftUseVisible          bool
+	pendingToolCalls         []llm.ToolCall
+	intermediateMessages     []desktopIntermediateMessage
+}
+
+type desktopIntermediateMessage struct {
+	Role        string
+	Content     string
+	ContentJSON json.RawMessage
+	ToolCallID  string
 }
 
 func (w *desktopEventWriter) telegramStreamRemainder() string {
@@ -2160,10 +2373,16 @@ func (w *desktopEventWriter) append(ctx context.Context, runID uuid.UUID, ev eve
 			flushChunk = strings.TrimSpace(strings.Join(w.assistantDeltas[w.telegramFlushSentDeltas:], ""))
 		}
 		w.toolCallCount++
+		w.collectToolCall(ev.DataJSON)
 	}
 	if ev.Type == "llm.request" {
+		w.flushPendingToolCalls()
 		w.iterationCount++
 	}
+	if ev.Type == "tool.result" {
+		w.collectToolResult(ev.DataJSON)
+	}
+
 	if ev.Type == "message.delta" {
 		if channel, _ := ev.DataJSON["channel"].(string); channel == "" {
 			if delta := desktopExtractDelta(ev.DataJSON); delta != "" {
@@ -2178,6 +2397,7 @@ func (w *desktopEventWriter) append(ctx context.Context, runID uuid.UUID, ev eve
 
 	var nextRunIDs []uuid.UUID
 	if status, ok := desktopTerminalStatuses[ev.Type]; ok {
+		w.flushPendingToolCalls()
 		if status == "completed" {
 			w.completed = true
 			w.terminalUserMessage = ""
@@ -2226,6 +2446,64 @@ func (w *desktopEventWriter) append(ctx context.Context, runID uuid.UUID, ev eve
 	}
 	w.enqueueProjectedRuns(ctx, nextRunIDs)
 	return nil
+}
+
+func (w *desktopEventWriter) collectToolCall(dataJSON map[string]any) {
+	callID, _ := dataJSON["tool_call_id"].(string)
+	toolName, _ := dataJSON["tool_name"].(string)
+	if callID == "" || toolName == "" {
+		return
+	}
+	args, _ := dataJSON["arguments"].(map[string]any)
+	w.pendingToolCalls = append(w.pendingToolCalls, llm.ToolCall{
+		ToolCallID:    callID,
+		ToolName:      toolName,
+		ArgumentsJSON: args,
+	})
+}
+
+func (w *desktopEventWriter) flushPendingToolCalls() {
+	if len(w.pendingToolCalls) == 0 {
+		return
+	}
+	msg := w.assistantMessage
+	if msg == nil {
+		msg = &llm.Message{Role: "assistant"}
+	}
+	contentJSON, err := llm.BuildIntermediateAssistantContentJSON(*msg, w.pendingToolCalls)
+	if err != nil {
+		return
+	}
+	w.intermediateMessages = append(w.intermediateMessages, desktopIntermediateMessage{
+		Role:        "assistant",
+		Content:     llm.VisibleMessageText(*msg),
+		ContentJSON: contentJSON,
+	})
+	w.pendingToolCalls = w.pendingToolCalls[:0]
+}
+
+func (w *desktopEventWriter) collectToolResult(dataJSON map[string]any) {
+	w.flushPendingToolCalls()
+	envelope := map[string]any{
+		"tool_call_id": dataJSON["tool_call_id"],
+		"tool_name":    dataJSON["tool_name"],
+	}
+	if v, ok := dataJSON["result"]; ok {
+		envelope["result"] = v
+	}
+	if v, ok := dataJSON["error"]; ok {
+		envelope["error"] = v
+	}
+	raw, err := json.Marshal(envelope)
+	if err != nil {
+		return
+	}
+	callID, _ := dataJSON["tool_call_id"].(string)
+	w.intermediateMessages = append(w.intermediateMessages, desktopIntermediateMessage{
+		Role:       "tool",
+		Content:    string(raw),
+		ToolCallID: callID,
+	})
 }
 
 func (w *desktopEventWriter) publishRunEvents(ctx context.Context) {
@@ -2543,6 +2821,12 @@ func desktopPersistFinalAssistantOutput(
 		return nil
 	}
 
+	if w.completed && w.terminalStatus == "completed" && len(w.intermediateMessages) > 0 {
+		if err := w.batchInsertIntermediateMessages(ctx, db, rc.Run.AccountID, rc.Run.ThreadID, rc.Run.ID); err != nil {
+			slog.ErrorContext(ctx, "desktop: persist intermediate messages failed", "run_id", rc.Run.ID, "err", err.Error())
+		}
+	}
+
 	metadata := map[string]any{
 		"completion_state": "incomplete",
 		"finish_reason":    w.terminalStatus,
@@ -2596,6 +2880,40 @@ func desktopPersistFinalAssistantOutput(
 		}
 	}
 	return nil
+}
+
+func (w *desktopEventWriter) batchInsertIntermediateMessages(
+	ctx context.Context,
+	db data.DesktopDB,
+	accountID, threadID, runID uuid.UUID,
+) error {
+	tx, err := db.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck
+
+	baseTime := w.run.CreatedAt.UTC().Add(time.Millisecond).Round(0)
+	repo := data.MessagesRepository{}
+	for i, msg := range w.intermediateMessages {
+		createdAt := baseTime.Add(time.Duration(i) * time.Microsecond)
+		meta := map[string]any{
+			"intermediate": "true",
+			"run_id":       runID.String(),
+		}
+		if msg.ToolCallID != "" {
+			meta["tool_call_id"] = msg.ToolCallID
+		}
+		metadataJSON, _ := json.Marshal(meta)
+		var contentJSON json.RawMessage
+		if msg.Role != "tool" {
+			contentJSON = msg.ContentJSON
+		}
+		if _, err := repo.InsertIntermediateMessage(ctx, tx, accountID, threadID, msg.Role, msg.Content, contentJSON, metadataJSON, createdAt); err != nil {
+			return err
+		}
+	}
+	return tx.Commit(ctx)
 }
 
 func desktopWriteTerminalEvent(
@@ -3004,7 +3322,9 @@ func loadDesktopRoutingConfig(ctx context.Context, db data.DesktopDB) (routing.P
 
 		var advanced map[string]any
 		if c.advancedStr != "" && c.advancedStr != "{}" {
-			_ = json.Unmarshal([]byte(c.advancedStr), &advanced)
+			if err := json.Unmarshal([]byte(c.advancedStr), &advanced); err != nil {
+				slog.WarnContext(ctx, "desktop: failed to parse credential advanced_json", "cred_id", c.id, "err", err)
+			}
 		}
 		scope := routing.CredentialScopePlatform
 		cred := routing.ProviderCredential{
@@ -3047,10 +3367,14 @@ func loadDesktopRoutingConfig(ctx context.Context, db data.DesktopDB) (routing.P
 		model = canonicalDesktopRouteModel(cred.ProviderKind, model)
 		var when, adv map[string]any
 		if whenStr != "" && whenStr != "{}" {
-			_ = json.Unmarshal([]byte(whenStr), &when)
+			if err := json.Unmarshal([]byte(whenStr), &when); err != nil {
+				slog.WarnContext(ctx, "desktop: failed to parse route when_json", "route_id", id, "err", err)
+			}
 		}
 		if advancedStr != "" && advancedStr != "{}" {
-			_ = json.Unmarshal([]byte(advancedStr), &adv)
+			if err := json.Unmarshal([]byte(advancedStr), &adv); err != nil {
+				slog.WarnContext(ctx, "desktop: failed to parse route advanced_json", "route_id", id, "err", err)
+			}
 		}
 		if multiplier <= 0 {
 			multiplier = 1.0
@@ -3093,4 +3417,28 @@ func decryptDesktopCiphertext(keyRing *sharedencryption.KeyRing, encoded string,
 		return "", err
 	}
 	return string(plain), nil
+}
+
+func recoverOrphanRuns(ctx context.Context, db data.DesktopDB) error {
+	if db == nil {
+		return nil
+	}
+	tx, err := db.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck
+	tag, err := tx.Exec(ctx,
+		`UPDATE runs SET status = 'interrupted', updated_at = datetime('now')
+		 WHERE status IN ('running', 'queued')`)
+	if err != nil {
+		return err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return err
+	}
+	if n := tag.RowsAffected(); n > 0 {
+		slog.InfoContext(ctx, "desktop: recovered orphan runs", "count", n)
+	}
+	return nil
 }

@@ -148,6 +148,11 @@ func NewAgentLoopHandler(
 		}
 		if writer.Completed() {
 			if !ShouldSuppressHeartbeatOutput(rc, writer.AssistantOutput()) {
+				if writer.terminalRunStatus == "completed" && len(writer.intermediateMessages) > 0 {
+					if err := writer.batchInsertIntermediateMessages(ctx, messagesRepo, rc.Run.AccountID, rc.Run.ThreadID, rc.Run.ID); err != nil {
+						return err
+					}
+				}
 				if writer.hasStreamedChunks() {
 					remainder := writer.telegramStreamRemainder()
 					if strings.TrimSpace(remainder) != "" {
@@ -228,6 +233,16 @@ type eventWriter struct {
 	terminalRunStatus    string
 	terminalMessage      string
 	pendingEnqueueRunIDs []uuid.UUID
+
+	pendingToolCalls     []llm.ToolCall
+	intermediateMessages []intermediateMessage
+}
+
+type intermediateMessage struct {
+	Role        string
+	Content     string
+	ContentJSON json.RawMessage
+	ToolCallID  string // tool result only
 }
 
 func newEventWriter(
@@ -440,9 +455,15 @@ func (w *eventWriter) Append(
 		}
 		w.captureReplyOverride(ev.DataJSON)
 		w.toolCallCount++
+		w.collectToolCall(ev.DataJSON)
 	}
 	if ev.Type == "llm.request" {
+		w.flushPendingToolCalls()
 		w.iterationCount++
+	}
+
+	if ev.Type == "tool.result" {
+		w.collectToolResult(ev.DataJSON)
 	}
 
 	if ev.Type == "message.delta" {
@@ -455,6 +476,7 @@ func (w *eventWriter) Append(
 	}
 
 	if status, ok := TerminalStatuses[ev.Type]; ok {
+		w.flushPendingToolCalls()
 		if status == "completed" {
 			w.completed = true
 		}
@@ -527,14 +549,20 @@ func (w *eventWriter) commit(ctx context.Context) error {
 
 	channel := fmt.Sprintf("run_events:%s", w.run.ID.String())
 	if w.eventBus != nil {
-		_ = w.eventBus.Publish(ctx, channel, "")
+		if err := w.eventBus.Publish(ctx, channel, ""); err != nil {
+			slog.Warn("event_bus_publish_failed", "channel", channel, "err", err)
+		}
 	} else {
-		_, _ = w.pool.Exec(ctx, "SELECT pg_notify($1, '')", channel)
+		if _, err := w.pool.Exec(ctx, "SELECT pg_notify($1, '')", channel); err != nil {
+			slog.Warn("pg_notify_failed", "channel", channel, "err", err)
+		}
 	}
 
 	if w.runLimiterRDB != nil {
 		redisChannel := fmt.Sprintf("arkloop:sse:run_events:%s", w.run.ID.String())
-		_, _ = w.runLimiterRDB.Publish(ctx, redisChannel, "").Result()
+		if _, err := w.runLimiterRDB.Publish(ctx, redisChannel, "").Result(); err != nil {
+			slog.Warn("redis_publish_failed", "channel", redisChannel, "err", err)
+		}
 	}
 
 	if w.hasTerminal {
@@ -682,6 +710,94 @@ func (w *eventWriter) captureReplyOverride(dataJSON map[string]any) {
 	if mid, _ := args["reply_to_message_id"].(string); strings.TrimSpace(mid) != "" {
 		w.pendingReplyOverride = strings.TrimSpace(mid)
 	}
+}
+
+func (w *eventWriter) collectToolCall(dataJSON map[string]any) {
+	callID, _ := dataJSON["tool_call_id"].(string)
+	toolName, _ := dataJSON["tool_name"].(string)
+	if callID == "" || toolName == "" {
+		return
+	}
+	args, _ := dataJSON["arguments"].(map[string]any)
+	w.pendingToolCalls = append(w.pendingToolCalls, llm.ToolCall{
+		ToolCallID:    callID,
+		ToolName:      toolName,
+		ArgumentsJSON: args,
+	})
+}
+
+func (w *eventWriter) flushPendingToolCalls() {
+	if len(w.pendingToolCalls) == 0 {
+		return
+	}
+	msg := w.assistantMessage
+	if msg == nil {
+		msg = &llm.Message{Role: "assistant"}
+	}
+	contentJSON, err := llm.BuildIntermediateAssistantContentJSON(*msg, w.pendingToolCalls)
+	if err != nil {
+		return
+	}
+	w.intermediateMessages = append(w.intermediateMessages, intermediateMessage{
+		Role:        "assistant",
+		Content:     llm.VisibleMessageText(*msg),
+		ContentJSON: contentJSON,
+	})
+	w.pendingToolCalls = w.pendingToolCalls[:0]
+}
+
+func (w *eventWriter) collectToolResult(dataJSON map[string]any) {
+	w.flushPendingToolCalls()
+	envelope := map[string]any{
+		"tool_call_id": dataJSON["tool_call_id"],
+		"tool_name":    dataJSON["tool_name"],
+	}
+	if v, ok := dataJSON["result"]; ok {
+		envelope["result"] = v
+	}
+	if v, ok := dataJSON["error"]; ok {
+		envelope["error"] = v
+	}
+	raw, err := json.Marshal(envelope)
+	if err != nil {
+		return
+	}
+	callID, _ := dataJSON["tool_call_id"].(string)
+	w.intermediateMessages = append(w.intermediateMessages, intermediateMessage{
+		Role:       "tool",
+		Content:    string(raw),
+		ToolCallID: callID,
+	})
+}
+
+func (w *eventWriter) batchInsertIntermediateMessages(
+	ctx context.Context,
+	repo data.MessagesRepository,
+	accountID, threadID, runID uuid.UUID,
+) error {
+	if err := w.ensureTx(ctx); err != nil {
+		return err
+	}
+	baseTime := w.run.CreatedAt.UTC().Add(time.Millisecond).Round(0)
+	for i, msg := range w.intermediateMessages {
+		createdAt := baseTime.Add(time.Duration(i) * time.Microsecond)
+		meta := map[string]any{
+			"intermediate": "true",
+			"run_id":       runID.String(),
+		}
+		if msg.ToolCallID != "" {
+			meta["tool_call_id"] = msg.ToolCallID
+		}
+		metadataJSON, _ := json.Marshal(meta)
+		var contentJSON json.RawMessage
+		if msg.Role != "tool" {
+			contentJSON = msg.ContentJSON
+		}
+		if _, err := repo.InsertIntermediateMessage(ctx, w.tx, accountID, threadID, msg.Role, msg.Content, contentJSON, metadataJSON, createdAt); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (w *eventWriter) Flush(ctx context.Context) error {

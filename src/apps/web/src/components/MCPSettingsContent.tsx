@@ -52,6 +52,7 @@ export function MCPSettingsContent({ accessToken }: Props) {
         formTitleCreate: '新建 MCP 服务器',
         formTitleEdit: '编辑 MCP 服务器',
         scanTitle: '从文件导入',
+        externalTitle: '外部 MCP 目录',
         fieldName: '名称',
         fieldTransport: '传输类型',
         fieldHost: '宿主要求',
@@ -105,6 +106,7 @@ export function MCPSettingsContent({ accessToken }: Props) {
       formTitleCreate: 'New MCP Server',
       formTitleEdit: 'Edit MCP Server',
       scanTitle: 'Import From File',
+      externalTitle: 'External MCP Directory',
       fieldName: 'Name',
       fieldTransport: 'Transport',
       fieldHost: 'Host Requirement',
@@ -281,7 +283,7 @@ export function MCPSettingsContent({ accessToken }: Props) {
   return (
     <div className="flex flex-col gap-4">
       {/* header */}
-      <div className="flex flex-wrap items-start justify-between gap-3">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h3 className="text-base font-semibold text-[var(--c-text-heading)]">{ds.mcpTitle}</h3>
           <p className="mt-1 text-sm text-[var(--c-text-secondary)]">{ds.mcpDesc}</p>
