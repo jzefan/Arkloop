@@ -85,11 +85,11 @@ export function DesktopPromptInjectionSettings({ accessToken }: Props) {
 
   const handleReconfigure = useCallback(async () => {
     try {
-      await deletePlatformSetting(accessToken, SETTING_KEYS.SEMANTIC_PROVIDER).catch(() => {})
-      await deletePlatformSetting(accessToken, SETTING_KEYS.SEMANTIC_API_ENDPOINT).catch(() => {})
-      await deletePlatformSetting(accessToken, SETTING_KEYS.SEMANTIC_API_KEY).catch(() => {})
-      await deletePlatformSetting(accessToken, SETTING_KEYS.SEMANTIC_API_MODEL).catch(() => {})
-      await deletePlatformSetting(accessToken, SETTING_KEYS.SEMANTIC_API_TIMEOUT_MS).catch(() => {})
+      await deletePlatformSetting(accessToken, SETTING_KEYS.SEMANTIC_PROVIDER).catch((err) => { console.error('delete semantic_provider failed', err) })
+      await deletePlatformSetting(accessToken, SETTING_KEYS.SEMANTIC_API_ENDPOINT).catch((err) => { console.error('delete semantic_api_endpoint failed', err) })
+      await deletePlatformSetting(accessToken, SETTING_KEYS.SEMANTIC_API_KEY).catch((err) => { console.error('delete semantic_api_key failed', err) })
+      await deletePlatformSetting(accessToken, SETTING_KEYS.SEMANTIC_API_MODEL).catch((err) => { console.error('delete semantic_api_model failed', err) })
+      await deletePlatformSetting(accessToken, SETTING_KEYS.SEMANTIC_API_TIMEOUT_MS).catch((err) => { console.error('delete semantic_api_timeout_ms failed', err) })
       await updatePlatformSetting(accessToken, SETTING_KEYS.SEMANTIC_ENABLED, 'false')
       setSemanticProvider('')
       setValues(prev => ({

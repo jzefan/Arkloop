@@ -26,6 +26,7 @@ import {
   getDesktopApi,
   getDesktopAccessToken,
 } from '@arkloop/shared/desktop'
+import { isApiError } from './api'
 
 const sessionRestoreRetries = 12
 const sessionRestoreDelayMs = 1000
@@ -91,7 +92,11 @@ function App() {
         writeAccessTokenToStorage(resp.access_token)
         setAccessToken(resp.access_token)
       })
-      .catch(() => {})
+      .catch((err) => {
+        if (isApiError(err) && (err.status === 401 || err.status === 403)) return
+        if (err instanceof Error && err.name === 'AbortError') return
+        console.error('session restore failed', err)
+      })
       .finally(() => {
         if (controller.signal.aborted) return
         setAuthChecked(true)

@@ -447,14 +447,20 @@ func emitTitleEvent(
 
 	channel := fmt.Sprintf("run_events:%s", runID.String())
 	if bus != nil {
-		_ = bus.Publish(ctx, channel, "")
+		if err := bus.Publish(ctx, channel, ""); err != nil {
+			slog.WarnContext(ctx, "title_event_bus_publish_failed", "channel", channel, "err", err)
+		}
 	} else {
 		pgChannel := fmt.Sprintf(`"%s"`, channel)
-		_, _ = pool.Exec(ctx, "SELECT pg_notify($1, $2)", pgChannel, "ping")
+		if _, err := pool.Exec(ctx, "SELECT pg_notify($1, $2)", pgChannel, "ping"); err != nil {
+			slog.WarnContext(ctx, "title_pg_notify_failed", "channel", channel, "err", err)
+		}
 	}
 	if rdb != nil {
 		rdbChannel := fmt.Sprintf("arkloop:sse:run_events:%s", runID.String())
-		_, _ = rdb.Publish(ctx, rdbChannel, "ping").Result()
+		if _, err := rdb.Publish(ctx, rdbChannel, "ping").Result(); err != nil {
+			slog.WarnContext(ctx, "title_redis_publish_failed", "channel", rdbChannel, "err", err)
+		}
 	}
 }
 

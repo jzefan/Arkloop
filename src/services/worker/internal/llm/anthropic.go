@@ -383,7 +383,26 @@ func toAnthropicMessages(messages []Message) ([]map[string]any, []map[string]any
 			if _, ok := lastAssistantToolUseIDs[id]; ok {
 				filtered = append(filtered, block)
 			} else {
-				slog.Warn("dropped orphan tool_result", "tool_use_id", id)
+				prevRole := ""
+				prevSummary := ""
+				if len(out) > 0 {
+					prev := out[len(out)-1]
+					prevRole, _ = prev["role"].(string)
+					if content, ok := prev["content"].([]map[string]any); ok && len(content) > 0 {
+						if t, ok := content[0]["text"].(string); ok {
+							if len(t) > 100 {
+								t = t[:100]
+							}
+							prevSummary = t
+						}
+					} else if t, ok := prev["content"].(string); ok {
+						if len(t) > 100 {
+							t = t[:100]
+						}
+						prevSummary = t
+					}
+				}
+				slog.Warn("dropped orphan tool_result", "tool_use_id", id, "prev_role", prevRole, "prev_content_summary", prevSummary)
 			}
 		}
 		pendingToolResults = []map[string]any{}
@@ -471,7 +490,20 @@ func toAnthropicMessages(messages []Message) ([]map[string]any, []map[string]any
 	}
 
 	flushToolResults()
-	return systemBlocks, out, nil
+
+	// strip 后可能出现内容为空的 assistant 消息（只有空 text block），
+	// 若与前一条 assistant 相邻会触发 Anthropic 400，将其过滤掉。
+	compacted := make([]map[string]any, 0, len(out))
+	for _, msg := range out {
+		if msg["role"] == "assistant" && isEmptyAssistantMsg(msg) {
+			if len(compacted) > 0 && compacted[len(compacted)-1]["role"] == "assistant" {
+				continue
+			}
+		}
+		compacted = append(compacted, msg)
+	}
+
+	return systemBlocks, compacted, nil
 }
 
 // stripToolUseBlocks 从 out[idx] 的 content 中移除所有 tool_use blocks。
@@ -498,6 +530,23 @@ func stripToolUseBlocks(out []map[string]any, idx int, toolUseIDs map[string]str
 		filtered = []map[string]any{{"type": "text", "text": ""}}
 	}
 	out[idx]["content"] = filtered
+}
+
+// isEmptyAssistantMsg 判断一条 assistant 消息是否仅含空 text block（strip 后的残留）。
+func isEmptyAssistantMsg(msg map[string]any) bool {
+	blocks, ok := msg["content"].([]map[string]any)
+	if !ok {
+		return false
+	}
+	for _, b := range blocks {
+		if b["type"] != "text" {
+			return false
+		}
+		if t, _ := b["text"].(string); strings.TrimSpace(t) != "" {
+			return false
+		}
+	}
+	return true
 }
 
 func anthropicContentBlocks(parts []ContentPart) ([]map[string]any, error) {

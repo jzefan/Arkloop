@@ -378,7 +378,9 @@ func emitGroupCompactFailure(ctx context.Context, dep GroupContextTrimDeps, runI
 		slog.WarnContext(ctx, "group_compact", "phase", "emit_failure_event", "err", err.Error(), "run_id", runID.String())
 		return
 	}
-	_ = tx.Commit(postCtx)
+	if err := tx.Commit(postCtx); err != nil {
+		slog.WarnContext(ctx, "group_compact", "phase", "commit_failure_event", "err", err.Error(), "run_id", runID.String())
+	}
 }
 
 func sumMessageTokens(msgs []llm.Message) int {

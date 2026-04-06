@@ -1538,7 +1538,9 @@ func recordDesktopChannelDeliveryFailure(db data.DesktopDB, runID uuid.UUID, err
 	}, nil, nil); appendErr != nil {
 		return
 	}
-	_ = tx.Commit(context.Background())
+	if err := tx.Commit(context.Background()); err != nil {
+		slog.Error("desktop_channel_delivery_failure_commit_failed", "run_id", runID, "err", err)
+	}
 }
 
 func recordDesktopChannelDelivery(
@@ -3172,7 +3174,9 @@ func loadDesktopRoutingConfig(ctx context.Context, db data.DesktopDB) (routing.P
 
 		var advanced map[string]any
 		if c.advancedStr != "" && c.advancedStr != "{}" {
-			_ = json.Unmarshal([]byte(c.advancedStr), &advanced)
+			if err := json.Unmarshal([]byte(c.advancedStr), &advanced); err != nil {
+				slog.WarnContext(ctx, "desktop: failed to parse credential advanced_json", "cred_id", c.id, "err", err)
+			}
 		}
 		scope := routing.CredentialScopePlatform
 		cred := routing.ProviderCredential{
@@ -3215,10 +3219,14 @@ func loadDesktopRoutingConfig(ctx context.Context, db data.DesktopDB) (routing.P
 		model = canonicalDesktopRouteModel(cred.ProviderKind, model)
 		var when, adv map[string]any
 		if whenStr != "" && whenStr != "{}" {
-			_ = json.Unmarshal([]byte(whenStr), &when)
+			if err := json.Unmarshal([]byte(whenStr), &when); err != nil {
+				slog.WarnContext(ctx, "desktop: failed to parse route when_json", "route_id", id, "err", err)
+			}
 		}
 		if advancedStr != "" && advancedStr != "{}" {
-			_ = json.Unmarshal([]byte(advancedStr), &adv)
+			if err := json.Unmarshal([]byte(advancedStr), &adv); err != nil {
+				slog.WarnContext(ctx, "desktop: failed to parse route advanced_json", "route_id", id, "err", err)
+			}
 		}
 		if multiplier <= 0 {
 			multiplier = 1.0

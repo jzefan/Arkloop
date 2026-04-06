@@ -466,7 +466,11 @@ func (l *Loop) Run(
 				if runCtx.RolloutRecorder != nil {
 					var outputJSON json.RawMessage
 					if toolResult.ResultJSON != nil {
-						outputJSON, _ = json.Marshal(toolResult.ResultJSON)
+						var marshalErr error
+						outputJSON, marshalErr = json.Marshal(toolResult.ResultJSON)
+						if marshalErr != nil {
+							slog.WarnContext(ctx, "rollout: failed to marshal tool result", "tool_call_id", toolResult.ToolCallID, "err", marshalErr)
+						}
 					}
 					errMsg := ""
 					if toolResult.Error != nil {
@@ -601,7 +605,11 @@ func (l *Loop) Run(
 			if runCtx.RolloutRecorder != nil {
 				var outputJSON json.RawMessage
 				if answerResult.ResultJSON != nil {
-					outputJSON, _ = json.Marshal(answerResult.ResultJSON)
+					var marshalErr error
+					outputJSON, marshalErr = json.Marshal(answerResult.ResultJSON)
+					if marshalErr != nil {
+						slog.WarnContext(ctx, "rollout: failed to marshal answer tool result", "tool_call_id", answerResult.ToolCallID, "err", marshalErr)
+					}
 				}
 				errMsg := ""
 				if answerResult.Error != nil {
@@ -1541,7 +1549,11 @@ func (l *Loop) runSingleTurn(
 			if runCtx.RolloutRecorder != nil {
 				var tcJSON json.RawMessage
 				if len(toolCalls) > 0 {
-					tcJSON, _ = json.Marshal(toolCalls)
+					var marshalErr error
+					tcJSON, marshalErr = json.Marshal(toolCalls)
+					if marshalErr != nil {
+						slog.WarnContext(ctx, "rollout: failed to marshal assistant tool_calls", "err", marshalErr)
+					}
 				}
 				appendRollout(ctx, runCtx.RolloutRecorder, MakeAssistantMessage(llm.VisibleMessageText(assistantMessageOrFallback(assistantMessage, assistantChunks)), tcJSON))
 			}
