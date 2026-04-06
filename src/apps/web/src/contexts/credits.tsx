@@ -34,7 +34,7 @@ export function CreditsProvider({ children }: { children: ReactNode }) {
       .then((resp) => {
         if (mountedRef.current) setCreditsBalance(resp.balance)
       })
-      .catch(() => {})
+      .catch((err) => { console.error('credits load failed', err) })
   }, [accessToken])
 
   const refreshCredits = useCallback(() => {
@@ -42,7 +42,7 @@ export function CreditsProvider({ children }: { children: ReactNode }) {
       .then((resp) => {
         if (mountedRef.current) setCreditsBalance(resp.balance)
       })
-      .catch(() => {})
+      .catch((err) => { console.error('credits refresh failed', err) })
   }, [accessToken])
 
   const value = useMemo<CreditsContextValue>(() => ({
