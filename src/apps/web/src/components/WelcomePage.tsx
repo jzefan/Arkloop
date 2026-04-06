@@ -1,15 +1,25 @@
 import { useState, useCallback, useMemo, useRef, useEffect, type FormEvent } from 'react'
-import { useNavigate, useOutletContext } from 'react-router-dom'
+import { useNavigate } from 'react-router-dom'
 import { Glasses } from 'lucide-react'
 import { ChatInput, type Attachment } from './ChatInput'
 import { ErrorCallout, type AppError } from './ErrorCallout'
 import { NotificationBell } from './NotificationBell'
 import { isDesktop } from '@arkloop/shared/desktop'
 import { DebugTrigger } from '@arkloop/shared'
-import { createThread, createMessage, createRun, uploadStagingAttachment, isApiError, type ThreadResponse, type MeResponse } from '../api'
+import { createThread, createMessage, createRun, uploadStagingAttachment, isApiError } from '../api'
 import { writeActiveThreadIdToStorage, addSearchThreadId, SEARCH_PERSONA_KEY, transferGlobalWorkFolderToThread, readWorkFolder, readDeveloperShowDebugPanel } from '../storage'
 import { useLocale } from '../contexts/LocaleContext'
 import { buildMessageRequest } from '../messageContent'
+import { useAuth } from '../contexts/auth'
+import { useThreadList } from '../contexts/thread-list'
+import {
+  useAppModeUI,
+  useNotificationsUI,
+  useSearchUI,
+  useSettingsUI,
+  useSkillPromptUI,
+} from '../contexts/app-ui'
+import { useCredits } from '../contexts/credits'
 
 function normalizeError(error: unknown, fallback: string): AppError {
   if (isApiError(error)) {
@@ -25,28 +35,6 @@ function deriveTitle(content: string, defaultTitle: string): string {
   const cleaned = content.trim().replace(/\s+/g, ' ')
   if (!cleaned) return defaultTitle
   return cleaned.length > 40 ? `${cleaned.slice(0, 40)}…` : cleaned
-}
-
-type OutletContext = {
-  accessToken: string
-  onLoggedOut: () => void
-  onThreadCreated: (thread: ThreadResponse) => void
-  refreshCredits: () => void
-  onOpenNotifications: () => void
-  notificationVersion: number
-  creditsBalance: number
-  me: MeResponse | null
-  isPrivateMode: boolean
-  onTogglePrivateMode: () => void
-  privateThreadIds: Set<string>
-  isSearchMode: boolean
-  onEnterSearchMode: () => void
-  onExitSearchMode: () => void
-  pendingSkillPrompt?: string | null
-  onConsumeSkillPrompt?: () => void
-  onOpenSettings?: (tab: string) => void
-  appMode?: import('../storage').AppMode
-  setTitleBarIncognitoClick?: (fn: (() => void) | null) => void
 }
 
 // 按时段、星期、节日生成问候语，全部基于浏览器本地时间。
@@ -118,7 +106,14 @@ function buildGreeting(name: string | null, now: Date): string {
 
 
 export function WelcomePage() {
-  const { accessToken, onLoggedOut, onThreadCreated, refreshCredits, onOpenNotifications, notificationVersion, creditsBalance: _creditsBalance, me, isPrivateMode, onTogglePrivateMode, isSearchMode, onEnterSearchMode, onExitSearchMode, pendingSkillPrompt, onConsumeSkillPrompt, onOpenSettings, appMode } = useOutletContext<OutletContext>()
+  const { accessToken, logout: onLoggedOut, me } = useAuth()
+  const { addThread: onThreadCreated, isPrivateMode, togglePrivateMode: onTogglePrivateMode } = useThreadList()
+  const { isSearchMode, enterSearchMode: onEnterSearchMode, exitSearchMode: onExitSearchMode } = useSearchUI()
+  const { openNotifications: onOpenNotifications, notificationVersion } = useNotificationsUI()
+  const { openSettings: onOpenSettings } = useSettingsUI()
+  const { appMode } = useAppModeUI()
+  const { pendingSkillPrompt, consumeSkillPrompt } = useSkillPromptUI()
+  const { refreshCredits } = useCredits()
   const [showDebugPanel, setShowDebugPanel] = useState(() => readDeveloperShowDebugPanel())
   const [draft, setDraft] = useState('')
   const [attachments, setAttachments] = useState<Attachment[]>([])
@@ -141,9 +136,9 @@ export function WelcomePage() {
   useEffect(() => {
     if (pendingSkillPrompt) {
       setDraft(pendingSkillPrompt)
-      onConsumeSkillPrompt?.()
+      consumeSkillPrompt()
     }
-  }, [pendingSkillPrompt, onConsumeSkillPrompt])
+  }, [pendingSkillPrompt, consumeSkillPrompt])
 
   const [typedGreeting, setTypedGreeting] = useState('')
   useEffect(() => {

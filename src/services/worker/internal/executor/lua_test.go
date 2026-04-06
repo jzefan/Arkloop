@@ -427,6 +427,10 @@ func (m *luaMemMock) Delete(_ context.Context, _ memory.MemoryIdentity, _ string
 	return m.deleteErr
 }
 
+func (m *luaMemMock) ListDir(_ context.Context, _ memory.MemoryIdentity, _ string) ([]string, error) {
+	return nil, nil
+}
+
 // buildLuaRCWithMemory 构造注入了 MemoryProvider 和 UserID 的 RunContext。
 func buildLuaRCWithMemory(mp memory.MemoryProvider) *pipeline.RunContext {
 	rc := buildLuaRC(nil)

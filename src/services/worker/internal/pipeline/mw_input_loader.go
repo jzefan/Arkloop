@@ -5,12 +5,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 
 	"arkloop/services/shared/messagecontent"
 	"arkloop/services/shared/objectstore"
 	"arkloop/services/shared/rollout"
 	"arkloop/services/worker/internal/data"
+	"arkloop/services/worker/internal/imageutil"
 	"arkloop/services/worker/internal/llm"
 	"arkloop/services/worker/internal/stablejson"
 
@@ -108,8 +110,7 @@ func NewInputLoaderMiddleware(
 		}
 
 		rc.InputJSON = loaded.InputJSON
-		rc.Messages = loaded.Messages
-		rc.ThreadMessageIDs = loaded.ThreadMessageIDs
+		rc.Messages, rc.ThreadMessageIDs = sanitizeToolPairs(loaded.Messages, loaded.ThreadMessageIDs)
 		rc.HasActiveCompactSnapshot = loaded.HasActiveCompactSnapshot
 		rc.ActiveCompactSnapshotText = loaded.ActiveCompactSnapshotText
 
@@ -173,6 +174,12 @@ func loadRunInputs(
 		}
 		if rawContinuationResponse, ok := dataJSON[runStartedContinuationResponseKey].(bool); ok {
 			inputJSON[runStartedContinuationResponseKey] = rawContinuationResponse
+		}
+		if rawRunKind, ok := dataJSON["run_kind"].(string); ok && strings.TrimSpace(rawRunKind) != "" {
+			inputJSON["run_kind"] = strings.TrimSpace(rawRunKind)
+		}
+		if rawChannelDelivery, ok := dataJSON["channel_delivery"].(map[string]any); ok && len(rawChannelDelivery) > 0 {
+			inputJSON["channel_delivery"] = rawChannelDelivery
 		}
 	}
 
@@ -238,11 +245,15 @@ func loadRunInputs(
 		if err != nil {
 			return nil, err
 		}
-		llmMessages = append(llmMessages, llm.Message{
+		lm := llm.Message{
 			Role:         msg.Role,
 			Content:      parts,
 			OutputTokens: msg.OutputTokens,
-		})
+		}
+		if msg.Role == "assistant" && len(msg.ContentJSON) > 0 {
+			lm.ToolCalls = parseToolCallsFromContentJSON(msg.ContentJSON)
+		}
+		llmMessages = append(llmMessages, lm)
 		ids = append(ids, msg.ID)
 		for _, insertion := range replayByAnchor[msg.ID] {
 			llmMessages = append(llmMessages, insertion.Messages...)
@@ -661,7 +672,9 @@ func buildReplayMessages(state *rollout.ReconstructedState) ([]llm.Message, erro
 func replayAssistantMessage(msg rollout.AssistantMessage) llm.Message {
 	var toolCalls []llm.ToolCall
 	if len(msg.ToolCalls) > 0 {
-		_ = json.Unmarshal(msg.ToolCalls, &toolCalls)
+		if err := json.Unmarshal(msg.ToolCalls, &toolCalls); err != nil {
+			slog.Warn("rollout: failed to parse assistant tool_calls", "err", err)
+		}
 	}
 	content := []llm.ContentPart(nil)
 	text := sanitizeStoredAssistantText(msg.Content)
@@ -707,6 +720,24 @@ func replayToolResultMessage(result rollout.ReplayToolResult) llm.Message {
 		Role:    "tool",
 		Content: []llm.TextPart{{Text: text, TrustSource: "tool"}},
 	}
+}
+
+func parseToolCallsFromContentJSON(raw json.RawMessage) []llm.ToolCall {
+	var parsed struct {
+		ToolCalls []map[string]any `json:"tool_calls"`
+	}
+	if err := json.Unmarshal(raw, &parsed); err != nil || len(parsed.ToolCalls) == 0 {
+		return nil
+	}
+	result := make([]llm.ToolCall, 0, len(parsed.ToolCalls))
+	for _, tc := range parsed.ToolCalls {
+		toolCall, err := llm.ToolCallFromJSONMap(tc)
+		if err != nil {
+			continue
+		}
+		result = append(result, toolCall)
+	}
+	return result
 }
 
 func BuildMessageParts(ctx context.Context, store MessageAttachmentStore, msg data.ThreadMessage) ([]llm.ContentPart, error) {
@@ -761,6 +792,7 @@ func BuildMessageParts(ctx context.Context, store MessageAttachmentStore, msg da
 			if strings.TrimSpace(contentType) != "" {
 				attachment.MimeType = strings.TrimSpace(contentType)
 			}
+			dataBytes, attachment.MimeType = imageutil.ProcessImage(dataBytes, attachment.MimeType)
 			parts = append(parts, llm.ContentPart{
 				Type:       messagecontent.PartTypeImage,
 				Attachment: &attachment,

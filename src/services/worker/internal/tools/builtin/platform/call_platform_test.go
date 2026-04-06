@@ -6,6 +6,7 @@ import (
 "testing"
 "time"
 
+"arkloop/services/shared/rollout"
 "arkloop/services/worker/internal/subagentctl"
 "arkloop/services/worker/internal/tools"
 
@@ -48,6 +49,9 @@ return subagentctl.StatusSnapshot{}, nil
 }
 func (m *mockSubAgentControl) ListChildren(ctx context.Context) ([]subagentctl.StatusSnapshot, error) {
 return nil, nil
+}
+func (m *mockSubAgentControl) GetRolloutRecorder(_ uuid.UUID) (*rollout.Recorder, bool) {
+return nil, false
 }
 
 func TestCallPlatform_NilControl(t *testing.T) {

@@ -952,6 +952,14 @@ export interface LocaleStrings {
     memoryDeleteConfirm: string;
     memorySnapshotTitle: string;
     memoryRebuildSnapshot: string;
+    memorySnapshotEmpty: string;
+    memorySnapshotViewEdit: string;
+    memoryImpressionTitle: string;
+    memoryImpressionUpdatedAgo: string;
+    memoryImpressionEmpty: string;
+    memoryImpressionViewEdit: string;
+    memoryImpressionRebuild: string;
+    memoryImpressionModalTitle: string;
     memoryEnabled: string;
     memoryEnabledDesc: string;
     memorySummarizeSectionTitle: string;
@@ -1007,16 +1015,22 @@ export interface LocaleStrings {
     notebookAddPlaceholder: string;
     notebookAddButton: string;
     notebookSearchPlaceholder: string;
+    notebookViewEdit: string;
+    notebookModalTitle: string;
+    notebookEntries: (count: number) => string;
     // memory config modal
     memoryConfigureButton: string;
     memoryConfigureModalTitle: string;
     memoryNotConfiguredHint: string;
     memoryRecentErrors: string;
+    memoryErrorsModalTitle: string;
     // tool model
     toolModel: string;
     toolModelDesc: string;
     toolModelPlatformDefault: string;
     toolModelSameAsChat: string;
+    toolModelAutoHint: string;
+    toolModelAutoSuffix: string;
     advancedTitle: string;
     advancedDesc: string;
     advancedOverview: string;

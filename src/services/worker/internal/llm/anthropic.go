@@ -8,10 +8,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"arkloop/services/worker/internal/stablejson"
 	"github.com/google/uuid"
@@ -362,16 +364,63 @@ func toAnthropicMessages(messages []Message) ([]map[string]any, []map[string]any
 	systemBlocks := []map[string]any{}
 	out := []map[string]any{}
 	pendingToolResults := []map[string]any{}
+	lastAssistantToolUseIDs := map[string]struct{}{}
+	// 记录最后一个带 tool_use 的 assistant 在 out 中的索引，便于回退
+	lastToolUseAssistantIdx := -1
 
 	flushToolResults := func() {
 		if len(pendingToolResults) == 0 {
+			// 没有 tool_result 但有 tool_use -> 回退 assistant 中的 tool_use blocks
+			if lastToolUseAssistantIdx >= 0 && lastToolUseAssistantIdx < len(out) {
+				stripToolUseBlocks(out, lastToolUseAssistantIdx, lastAssistantToolUseIDs)
+			}
+			lastAssistantToolUseIDs = map[string]struct{}{}
+			lastToolUseAssistantIdx = -1
+			return
+		}
+		filtered := make([]map[string]any, 0, len(pendingToolResults))
+		for _, block := range pendingToolResults {
+			id, _ := block["tool_use_id"].(string)
+			if _, ok := lastAssistantToolUseIDs[id]; ok {
+				filtered = append(filtered, block)
+			} else {
+				prevRole := ""
+				prevSummary := ""
+				if len(out) > 0 {
+					prev := out[len(out)-1]
+					prevRole, _ = prev["role"].(string)
+					if content, ok := prev["content"].([]map[string]any); ok && len(content) > 0 {
+						if t, ok := content[0]["text"].(string); ok {
+							if len(t) > 100 {
+								t = t[:100]
+							}
+							prevSummary = t
+						}
+					} else if t, ok := prev["content"].(string); ok {
+						if len(t) > 100 {
+							t = t[:100]
+						}
+						prevSummary = t
+					}
+				}
+				slog.Warn("dropped orphan tool_result", "tool_use_id", id, "prev_role", prevRole, "prev_content_summary", prevSummary)
+			}
+		}
+		pendingToolResults = []map[string]any{}
+		if len(filtered) == 0 {
+			if lastToolUseAssistantIdx >= 0 && lastToolUseAssistantIdx < len(out) {
+				stripToolUseBlocks(out, lastToolUseAssistantIdx, lastAssistantToolUseIDs)
+			}
+			lastAssistantToolUseIDs = map[string]struct{}{}
+			lastToolUseAssistantIdx = -1
 			return
 		}
 		out = append(out, map[string]any{
 			"role":    "user",
-			"content": pendingToolResults,
+			"content": filtered,
 		})
-		pendingToolResults = []map[string]any{}
+		lastAssistantToolUseIDs = map[string]struct{}{}
+		lastToolUseAssistantIdx = -1
 	}
 
 	for _, message := range messages {
@@ -379,7 +428,6 @@ func toAnthropicMessages(messages []Message) ([]map[string]any, []map[string]any
 		if message.Role == "system" {
 			if strings.TrimSpace(text) != "" {
 				block := map[string]any{"type": "text", "text": text}
-				// 若任意 system TextPart 带 cache_control，取第一个非空值
 				for _, part := range message.Content {
 					if part.CacheControl != nil && strings.TrimSpace(*part.CacheControl) != "" {
 						block["cache_control"] = map[string]any{"type": *part.CacheControl}
@@ -404,11 +452,13 @@ func toAnthropicMessages(messages []Message) ([]map[string]any, []map[string]any
 		flushToolResults()
 
 		if message.Role == "assistant" && len(message.ToolCalls) > 0 {
+			lastAssistantToolUseIDs = make(map[string]struct{}, len(message.ToolCalls))
 			blocks, err := anthropicContentBlocks(message.Content)
 			if err != nil {
 				return nil, nil, err
 			}
 			for _, call := range message.ToolCalls {
+				lastAssistantToolUseIDs[call.ToolCallID] = struct{}{}
 				blocks = append(blocks, map[string]any{
 					"type":  "tool_use",
 					"id":    call.ToolCallID,
@@ -416,12 +466,16 @@ func toAnthropicMessages(messages []Message) ([]map[string]any, []map[string]any
 					"input": mapOrEmpty(call.ArgumentsJSON),
 				})
 			}
+			lastToolUseAssistantIdx = len(out)
 			out = append(out, map[string]any{
 				"role":    "assistant",
 				"content": blocks,
 			})
 			continue
 		}
+
+		lastAssistantToolUseIDs = map[string]struct{}{}
+		lastToolUseAssistantIdx = -1
 
 		blocks, err := anthropicContentBlocks(message.Content)
 		if err != nil {
@@ -437,7 +491,63 @@ func toAnthropicMessages(messages []Message) ([]map[string]any, []map[string]any
 	}
 
 	flushToolResults()
-	return systemBlocks, out, nil
+
+	// strip 后可能出现内容为空的 assistant 消息（只有空 text block），
+	// 若与前一条 assistant 相邻会触发 Anthropic 400，将其过滤掉。
+	compacted := make([]map[string]any, 0, len(out))
+	for _, msg := range out {
+		if msg["role"] == "assistant" && isEmptyAssistantMsg(msg) {
+			if len(compacted) > 0 && compacted[len(compacted)-1]["role"] == "assistant" {
+				continue
+			}
+		}
+		compacted = append(compacted, msg)
+	}
+
+	return systemBlocks, compacted, nil
+}
+
+// stripToolUseBlocks 从 out[idx] 的 content 中移除所有 tool_use blocks。
+// 如果移除后 content 为空，整条消息也从 out 中清除（置为空 assistant）。
+func stripToolUseBlocks(out []map[string]any, idx int, toolUseIDs map[string]struct{}) {
+	msg := out[idx]
+	content, ok := msg["content"].([]map[string]any)
+	if !ok {
+		return
+	}
+	filtered := make([]map[string]any, 0, len(content))
+	for _, block := range content {
+		if block["type"] == "tool_use" {
+			if id, _ := block["id"].(string); id != "" {
+				if _, match := toolUseIDs[id]; match {
+					slog.Warn("stripped orphan tool_use from assistant", "tool_use_id", id)
+					continue
+				}
+			}
+		}
+		filtered = append(filtered, block)
+	}
+	if len(filtered) == 0 {
+		filtered = []map[string]any{{"type": "text", "text": ""}}
+	}
+	out[idx]["content"] = filtered
+}
+
+// isEmptyAssistantMsg 判断一条 assistant 消息是否仅含空 text block（strip 后的残留）。
+func isEmptyAssistantMsg(msg map[string]any) bool {
+	blocks, ok := msg["content"].([]map[string]any)
+	if !ok {
+		return false
+	}
+	for _, b := range blocks {
+		if b["type"] != "text" {
+			return false
+		}
+		if t, _ := b["text"].(string); strings.TrimSpace(t) != "" {
+			return false
+		}
+	}
+	return true
 }
 
 func anthropicContentBlocks(parts []ContentPart) ([]map[string]any, error) {
@@ -931,7 +1041,12 @@ func (g *AnthropicGateway) streamAnthropicSSE(ctx context.Context, body io.Reade
 			switch event.Delta.Type {
 			case "text_delta":
 				if buffer := assistantBlocks[idx]; buffer != nil {
-					buffer.Text.WriteString(event.Delta.Text)
+					newDelta := anthropicUniqueDelta(buffer.Text.String(), event.Delta.Text)
+					if newDelta == "" {
+						return nil
+					}
+					buffer.Text.WriteString(newDelta)
+					return yield(StreamMessageDelta{ContentDelta: newDelta, Role: "assistant"})
 				}
 				if event.Delta.Text == "" {
 					return nil
@@ -939,7 +1054,13 @@ func (g *AnthropicGateway) streamAnthropicSSE(ctx context.Context, body io.Reade
 				return yield(StreamMessageDelta{ContentDelta: event.Delta.Text, Role: "assistant"})
 			case "thinking_delta":
 				if buffer := assistantBlocks[idx]; buffer != nil {
-					buffer.Text.WriteString(event.Delta.Thinking)
+					newDelta := anthropicUniqueDelta(buffer.Text.String(), event.Delta.Thinking)
+					if newDelta == "" {
+						return nil
+					}
+					buffer.Text.WriteString(newDelta)
+					channel := "thinking"
+					return yield(StreamMessageDelta{ContentDelta: newDelta, Role: "assistant", Channel: &channel})
 				}
 				if event.Delta.Thinking == "" {
 					return nil
@@ -1087,6 +1208,46 @@ func anthropicAssistantMessageParts(blocks map[int]*anthropicAssistantBlock) []C
 		}
 	}
 	return parts
+}
+
+func anthropicUniqueDelta(existing string, incoming string) string {
+	if incoming == "" {
+		return ""
+	}
+	if existing == "" {
+		return incoming
+	}
+	overlap := longestAnthropicTextOverlap(existing, incoming)
+	if overlap <= 0 {
+		return incoming
+	}
+	return incoming[overlap:]
+}
+
+func longestAnthropicTextOverlap(existing string, incoming string) int {
+	incomingBoundaries := utf8Boundaries(incoming)
+	for i := len(incomingBoundaries) - 1; i >= 0; i-- {
+		overlap := incomingBoundaries[i]
+		if overlap == 0 || overlap > len(existing) {
+			continue
+		}
+		start := len(existing) - overlap
+		if !utf8.RuneStart(existing[start]) {
+			continue
+		}
+		if existing[start:] == incoming[:overlap] {
+			return overlap
+		}
+	}
+	return 0
+}
+
+func utf8Boundaries(value string) []int {
+	boundaries := make([]int, 0, len(value)+1)
+	for idx := range value {
+		boundaries = append(boundaries, idx)
+	}
+	return append(boundaries, len(value))
 }
 
 func parseAnthropicUsageMap(usageObj map[string]any) *Usage {

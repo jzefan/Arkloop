@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"arkloop/services/shared/rollout"
 	"arkloop/services/worker/internal/subagentctl"
 	"arkloop/services/worker/internal/tools"
 	"github.com/google/uuid"
@@ -38,6 +39,9 @@ func (s stubControl) GetStatus(context.Context, uuid.UUID) (subagentctl.StatusSn
 }
 func (s stubControl) ListChildren(context.Context) ([]subagentctl.StatusSnapshot, error) {
 	return nil, nil
+}
+func (s stubControl) GetRolloutRecorder(_ uuid.UUID) (*rollout.Recorder, bool) {
+	return nil, false
 }
 
 func TestToolExecutorSpawnReturnsHandle(t *testing.T) {

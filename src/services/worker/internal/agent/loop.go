@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"sort"
 	"strings"
 	"sync"
@@ -466,7 +467,11 @@ func (l *Loop) Run(
 				if runCtx.RolloutRecorder != nil {
 					var outputJSON json.RawMessage
 					if toolResult.ResultJSON != nil {
-						outputJSON, _ = json.Marshal(toolResult.ResultJSON)
+						var marshalErr error
+						outputJSON, marshalErr = json.Marshal(toolResult.ResultJSON)
+						if marshalErr != nil {
+							slog.WarnContext(ctx, "rollout: failed to marshal tool result", "tool_call_id", toolResult.ToolCallID, "err", marshalErr)
+						}
 					}
 					errMsg := ""
 					if toolResult.Error != nil {
@@ -598,6 +603,21 @@ func (l *Loop) Run(
 			}
 
 			messages = append(messages, toolResultMessage(answerResult))
+			if runCtx.RolloutRecorder != nil {
+				var outputJSON json.RawMessage
+				if answerResult.ResultJSON != nil {
+					var marshalErr error
+					outputJSON, marshalErr = json.Marshal(answerResult.ResultJSON)
+					if marshalErr != nil {
+						slog.WarnContext(ctx, "rollout: failed to marshal answer tool result", "tool_call_id", answerResult.ToolCallID, "err", marshalErr)
+					}
+				}
+				errMsg := ""
+				if answerResult.Error != nil {
+					errMsg = answerResult.Error.Message
+				}
+				appendRollout(ctx, runCtx.RolloutRecorder, MakeToolResult(answerResult.ToolCallID, outputJSON, errMsg))
+			}
 			var askErrorClass *string
 			if answerResult.Error != nil {
 				askErrorClass = stringPtr(answerResult.Error.ErrorClass)
@@ -1530,7 +1550,11 @@ func (l *Loop) runSingleTurn(
 			if runCtx.RolloutRecorder != nil {
 				var tcJSON json.RawMessage
 				if len(toolCalls) > 0 {
-					tcJSON, _ = json.Marshal(toolCalls)
+					var marshalErr error
+					tcJSON, marshalErr = json.Marshal(toolCalls)
+					if marshalErr != nil {
+						slog.WarnContext(ctx, "rollout: failed to marshal assistant tool_calls", "err", marshalErr)
+					}
 				}
 				appendRollout(ctx, runCtx.RolloutRecorder, MakeAssistantMessage(llm.VisibleMessageText(assistantMessageOrFallback(assistantMessage, assistantChunks)), tcJSON))
 			}
@@ -1687,10 +1711,15 @@ func compactedToolMessage(m llm.Message) llm.Message {
 	}
 	var envelope map[string]any
 	if err := json.Unmarshal([]byte(m.Content[0].Text), &envelope); err != nil {
-		// unparseable: emit a safe stub
+		callID := extractToolCallIDFromText(m.Content[0].Text)
+		stub := map[string]any{
+			"tool_call_id": callID,
+			"result":       map[string]any{"compacted": true},
+		}
+		text, _ := json.Marshal(stub)
 		return llm.Message{
 			Role:    "tool",
-			Content: []llm.TextPart{{Text: `{"tool_call_id":"","result":{"compacted":true}}`, TrustSource: m.Content[0].TrustSource}},
+			Content: compactedContentParts(m.Content, string(text)),
 		}
 	}
 	toolName, _ := envelope["tool_name"].(string)
@@ -1707,8 +1736,36 @@ func compactedToolMessage(m llm.Message) llm.Message {
 	text, _ := json.Marshal(stub)
 	return llm.Message{
 		Role:    "tool",
-		Content: []llm.TextPart{{Text: string(text), TrustSource: m.Content[0].TrustSource}},
+		Content: compactedContentParts(m.Content, string(text)),
 	}
+}
+
+// compactedContentParts replaces the first text part with stubText
+// while preserving non-text parts (images, attachments).
+func compactedContentParts(original []llm.ContentPart, stubText string) []llm.ContentPart {
+	parts := make([]llm.ContentPart, 0, len(original))
+	parts = append(parts, llm.ContentPart{Text: stubText, TrustSource: original[0].TrustSource})
+	for _, p := range original[1:] {
+		if p.Kind() != "text" {
+			parts = append(parts, p)
+		}
+	}
+	return parts
+}
+
+// extractToolCallIDFromText attempts to extract a tool_call_id from malformed JSON.
+func extractToolCallIDFromText(text string) string {
+	prefix := `"tool_call_id":"`
+	idx := strings.Index(text, prefix)
+	if idx < 0 {
+		return "unknown"
+	}
+	start := idx + len(prefix)
+	end := strings.Index(text[start:], `"`)
+	if end < 0 {
+		return "unknown"
+	}
+	return text[start : start+end]
 }
 
 func assistantMessage(text string, toolCalls []llm.ToolCall) llm.Message {

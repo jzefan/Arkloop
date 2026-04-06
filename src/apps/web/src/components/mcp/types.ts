@@ -166,6 +166,7 @@ export type MCPCopy = {
   formTitleCreate: string
   formTitleEdit: string
   scanTitle: string
+  externalTitle: string
   fieldName: string
   fieldTransport: string
   fieldHost: string

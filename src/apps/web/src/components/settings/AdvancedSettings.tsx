@@ -856,7 +856,6 @@ function UsagePane({
             </div>
             {chartTab !== 'model' && (
               <TabBar
-                className="!mb-0"
                 tabs={[
                   { key: 'hourly' as const, label: ds.advancedUsageTrendHourly },
                   { key: 'daily' as const, label: ds.advancedUsageTrendDaily },
@@ -867,7 +866,6 @@ function UsagePane({
             )}
           </div>
           <TabBar
-            className="!mb-0"
             tabs={chartTabs}
             active={chartTab}
             onChange={setChartTab}

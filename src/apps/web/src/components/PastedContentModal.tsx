@@ -12,10 +12,15 @@ type Props = {
   size: number
   lineCount: number
   onClose: () => void
+  title?: string
+  subtitle?: string
 }
 
-export function PastedContentModal({ text, size, lineCount, onClose }: Props) {
+export function PastedContentModal({ text, size, lineCount, onClose, title, subtitle }: Props) {
   const { t } = useLocale()
+
+  const displayTitle = title ?? t.pastedContent
+  const displaySubtitle = subtitle ?? `${formatSize(size)} · ${t.pastedLines(lineCount)}`
 
   return (
     <div
@@ -49,14 +54,14 @@ export function PastedContentModal({ text, size, lineCount, onClose }: Props) {
               lineHeight: 1.3,
               margin: 0,
             }}>
-              {t.pastedContent}
+              {displayTitle}
             </h2>
             <p style={{
               fontSize: '13px',
               color: 'var(--c-text-muted)',
               marginTop: '4px',
             }}>
-              {formatSize(size)} · {t.pastedLines(lineCount)}
+              {displaySubtitle}
             </p>
           </div>
           <button

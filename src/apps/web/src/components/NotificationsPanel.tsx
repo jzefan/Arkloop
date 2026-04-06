@@ -37,6 +37,7 @@ const ITEM_GAP_BOTTOM = 24
 export function NotificationsPanel({ accessToken, onClose, onMarkedRead }: Props) {
   const { t, locale } = useLocale()
   const [items, setItems] = useState<NotificationItem[]>([])
+  const [loadError, setLoadError] = useState(false)
   const [loading, setLoading] = useState(true)
   const mountedRef = useRef(true)
 
@@ -50,8 +51,9 @@ export function NotificationsPanel({ accessToken, onClose, onMarkedRead }: Props
       try {
         const resp = await listNotifications(accessToken)
         if (mountedRef.current) setItems(resp.data ?? [])
-      } catch {
-        // silent
+      } catch (err) {
+        console.error('notifications load failed', err)
+        if (mountedRef.current) setLoadError(true)
       } finally {
         if (mountedRef.current) setLoading(false)
       }
@@ -63,8 +65,8 @@ export function NotificationsPanel({ accessToken, onClose, onMarkedRead }: Props
       try {
         await markAllNotificationsRead(accessToken)
         onMarkedRead()
-      } catch {
-        // silent
+      } catch (err) {
+        console.error('markAllNotificationsRead failed', err)
       }
     })()
   }, [accessToken, onMarkedRead])
@@ -115,6 +117,10 @@ export function NotificationsPanel({ accessToken, onClose, onMarkedRead }: Props
           {loading ? (
             <div style={{ display: 'flex', justifyContent: 'center', padding: '80px 0', color: 'var(--c-text-muted)', fontSize: 14 }}>
               {t.loading}
+            </div>
+          ) : loadError ? (
+            <div style={{ display: 'flex', justifyContent: 'center', padding: '80px 0', color: 'var(--c-status-error-text)', fontSize: 14 }}>
+              {t.requestFailed}
             </div>
           ) : items.length === 0 ? (
             <div style={{ display: 'flex', justifyContent: 'center', padding: '80px 0', color: 'var(--c-text-muted)', fontSize: 14 }}>

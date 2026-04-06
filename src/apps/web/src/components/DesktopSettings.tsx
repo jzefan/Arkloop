@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { motion } from "framer-motion";
 import {
   ChevronLeft,
@@ -46,6 +46,7 @@ import { DeveloperSettings } from "./settings/DeveloperSettings";
 import { DesktopPromptInjectionSettings } from "./settings/DesktopPromptInjectionSettings";
 import { VoiceSettings } from "./settings/VoiceSettings";
 import { DesignTokensSettings } from "./settings/DesignTokensSettings";
+import { beginPerfTrace, endPerfTrace, isPerfDebugEnabled, recordPerfValue } from "../perfDebug";
 
 export type DesktopSettingsKey =
   | "general"
@@ -136,6 +137,10 @@ export function DesktopSettings({
   const { t } = useLocale();
   const ds = t.desktopSettings;
   const desktopApi = useMemo(() => getDesktopApi(), []);
+  const mountTraceRef = useRef<ReturnType<typeof beginPerfTrace>>(beginPerfTrace("desktop_settings_mount_commit", {
+    initialSection,
+  }));
+  const hydrationTraceRef = useRef<ReturnType<typeof beginPerfTrace>>(null);
   const [activeKey, setActiveKey] =
     useState<DesktopSettingsKey>(initialSection);
   const [scrolled, setScrolled] = useState(false);
@@ -161,6 +166,9 @@ export function DesktopSettings({
     let cancelled = false;
 
     const loadSnapshot = async () => {
+      hydrationTraceRef.current = beginPerfTrace("desktop_settings_snapshot_hydration", {
+        initialSection,
+      });
       setHydrationLoading(true);
       const [configResult, platformResult, executionResult] = await Promise.allSettled([
         desktopApi?.config.get() ?? Promise.resolve(null),
@@ -193,6 +201,13 @@ export function DesktopSettings({
             : "",
       });
       setHydrationLoading(false);
+      endPerfTrace(hydrationTraceRef.current, {
+        initialSection,
+        configStatus: configResult.status,
+        platformStatus: platformResult.status,
+        executionStatus: executionResult.status,
+      });
+      hydrationTraceRef.current = null;
     };
 
     void loadSnapshot();
@@ -201,6 +216,15 @@ export function DesktopSettings({
       cancelled = true;
     };
   }, [accessToken, desktopApi, t.requestFailed]);
+
+  useLayoutEffect(() => {
+    endPerfTrace(mountTraceRef.current, {
+      initialSection,
+      activeKey,
+      phase: "commit",
+    });
+    mountTraceRef.current = null;
+  }, [activeKey, initialSection]);
 
   useEffect(() => {
     if (!desktopApi?.config) return;
@@ -214,6 +238,16 @@ export function DesktopSettings({
     if (devMode) entries.push({ key: "developer" as DesktopSettingsKey, icon: Code2 });
     return entries;
   }, [devMode]);
+
+  useEffect(() => {
+    if (!isPerfDebugEnabled()) return;
+    recordPerfValue("desktop_settings_render_count", 1, "count", {
+      activeKey,
+      hydrationLoading,
+      devMode,
+      initialSection,
+    });
+  });
 
   const handleTabChange = (key: DesktopSettingsKey) => {
     setActiveKey(key);

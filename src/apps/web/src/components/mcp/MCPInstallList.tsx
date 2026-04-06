@@ -108,7 +108,7 @@ export function MCPInstallList({
               )}
             </div>
 
-            <div className="shrink-0" onClick={(e) => e.stopPropagation()}>
+            <div className="flex shrink-0 items-center" onClick={(e) => e.stopPropagation()}>
               <PillToggle
                 checked={install.workspace_state?.enabled ?? false}
                 disabled={busy}

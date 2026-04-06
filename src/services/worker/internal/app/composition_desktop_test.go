@@ -12,6 +12,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	nethttp "net/http"
@@ -19,6 +20,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -666,7 +668,7 @@ func TestDesktopOpenVikingMemoryMiddlewareUsesPromptInjectionResolver(t *testing
 	}
 
 	provider := &desktopMemoryProviderStub{appendCalled: make(chan struct{}, 1)}
-	mw := pipeline.NewMemoryMiddleware(provider, pipeline.NewDesktopMemorySnapshotStore(db), db, capability.Resolver)
+	mw := pipeline.NewMemoryMiddleware(provider, pipeline.NewDesktopMemorySnapshotStore(db), db, capability.Resolver, nil, nil)
 	userID := uuid.New()
 	rc := &pipeline.RunContext{
 		Run: data.Run{
@@ -772,6 +774,32 @@ func TestComposeDesktopEngineFallsBackToLocalWithoutBaseURL(t *testing.T) {
 	}
 	if engine.notebookProvider == nil {
 		t.Fatal("expected notebook provider to be configured")
+	}
+}
+
+func TestBuildDesktopStageEventDataIncludesTrimmedError(t *testing.T) {
+	eventType, ok := desktopObservedEventName("channel_group_context_trim")
+	if !ok {
+		t.Fatal("expected event name for channel_group_context_trim")
+	}
+	if eventType != "run.channel_group_context_trim" {
+		t.Fatalf("unexpected event type: %s", eventType)
+	}
+	payload := buildDesktopStageEventData(4200, 250, "failed", errors.New(strings.Repeat("x", 240)))
+
+	if got := payload["status"]; got != "failed" {
+		t.Fatalf("unexpected status: %v", got)
+	}
+	msg, _ := payload["error_message"].(string)
+	if len(msg) != 200 {
+		t.Fatalf("expected trimmed error message length 200, got %d", len(msg))
+	}
+}
+
+func TestDesktopObservedEventTypesContainChannelGroupCompactSignal(t *testing.T) {
+	items := desktopObservedEventTypes()
+	if !slices.Contains(items, "run.channel_group_context_trim") {
+		t.Fatalf("expected run.channel_group_context_trim in observed event types, got %v", items)
 	}
 }
 
@@ -3689,6 +3717,10 @@ func (s *desktopMemoryProviderStub) Find(context.Context, memory.MemoryIdentity,
 
 func (s *desktopMemoryProviderStub) Content(context.Context, memory.MemoryIdentity, string, memory.MemoryLayer) (string, error) {
 	return "", nil
+}
+
+func (s *desktopMemoryProviderStub) ListDir(context.Context, memory.MemoryIdentity, string) ([]string, error) {
+	return nil, nil
 }
 
 func (s *desktopMemoryProviderStub) AppendSessionMessages(context.Context, memory.MemoryIdentity, string, []memory.MemoryMessage) error {

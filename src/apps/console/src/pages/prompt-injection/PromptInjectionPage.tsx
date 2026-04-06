@@ -98,11 +98,11 @@ export function PromptInjectionPage() {
 
   const handleReconfigure = useCallback(async () => {
     try {
-      await deletePlatformSetting(SETTING_KEYS.SEMANTIC_PROVIDER, accessToken).catch(() => {})
-      await deletePlatformSetting(SETTING_KEYS.SEMANTIC_API_ENDPOINT, accessToken).catch(() => {})
-      await deletePlatformSetting(SETTING_KEYS.SEMANTIC_API_KEY, accessToken).catch(() => {})
-      await deletePlatformSetting(SETTING_KEYS.SEMANTIC_API_MODEL, accessToken).catch(() => {})
-      await deletePlatformSetting(SETTING_KEYS.SEMANTIC_API_TIMEOUT_MS, accessToken).catch(() => {})
+      await deletePlatformSetting(SETTING_KEYS.SEMANTIC_PROVIDER, accessToken).catch((err) => { console.error('delete semantic_provider failed', err) })
+      await deletePlatformSetting(SETTING_KEYS.SEMANTIC_API_ENDPOINT, accessToken).catch((err) => { console.error('delete semantic_api_endpoint failed', err) })
+      await deletePlatformSetting(SETTING_KEYS.SEMANTIC_API_KEY, accessToken).catch((err) => { console.error('delete semantic_api_key failed', err) })
+      await deletePlatformSetting(SETTING_KEYS.SEMANTIC_API_MODEL, accessToken).catch((err) => { console.error('delete semantic_api_model failed', err) })
+      await deletePlatformSetting(SETTING_KEYS.SEMANTIC_API_TIMEOUT_MS, accessToken).catch((err) => { console.error('delete semantic_api_timeout_ms failed', err) })
       await setPlatformSetting(SETTING_KEYS.SEMANTIC_ENABLED, 'false', accessToken)
       setSemanticProvider('')
       setSemanticEndpoint('')
@@ -133,7 +133,7 @@ export function PromptInjectionPage() {
       <div className="flex-1 overflow-y-auto p-6">
         <p className="mb-4 text-sm text-[var(--c-text-secondary)]">{tp.description}</p>
 
-        <TabBar tabs={tabItems} active={activeTab} onChange={setActiveTab} className="w-fit" />
+        <TabBar tabs={tabItems} active={activeTab} onChange={setActiveTab} className="mb-3 w-fit" />
 
         {activeTab === 'layers' && (
           loading ? (
