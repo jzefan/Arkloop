@@ -11,6 +11,8 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -98,6 +100,25 @@ type DesktopEngine struct {
 	groupSearchExec        tools.Executor
 	mcpPool                *mcp.Pool
 	mcpDiscoveryCache      *mcp.DiscoveryCache
+}
+
+const defaultDesktopStageEventMs = 250
+
+var desktopObservedEventNames = map[string]string{
+	"input_loader":               "run.input_loader",
+	"heartbeat_schedule":         "run.heartbeat_schedule",
+	"tool_provider_bindings":     "run.tool_provider_bindings",
+	"spawn_agent":                "run.spawn_agent",
+	"persona_resolution":         "run.persona_resolution",
+	"channel_context":            "run.channel_context",
+	"channel_admin_tag":          "run.channel_admin_tag",
+	"channel_group_user_merge":   "run.channel_group_user_merge",
+	"channel_group_context_trim": "run.channel_group_context_trim",
+	"channel_telegram_tools":     "run.channel_telegram_tools",
+	"sub_agent_context":          "run.sub_agent_context",
+	"skill_context":              "run.skill_context",
+	"memory_injection":           "run.memory_injection",
+	"runtime_context":            "run.runtime_context",
 }
 
 // ComposeDesktopEngine assembles a DesktopEngine from environment configuration.
@@ -526,8 +547,8 @@ func (e *DesktopEngine) Execute(ctx context.Context, run data.Run, traceID strin
 
 	middlewares := []pipeline.RunMiddleware{
 		desktopCancelGuard(e.db, e.bus),
-		desktopInputLoader(e.db, runsRepo, eventsRepo, e.messageAttachmentStore, e.rolloutStore),
-		pipeline.NewHeartbeatScheduleMiddleware(e.db),
+		desktopObservedStage("input_loader", eventsRepo, desktopInputLoader(e.db, runsRepo, eventsRepo, e.messageAttachmentStore, e.rolloutStore)),
+		desktopObservedStage("heartbeat_schedule", eventsRepo, pipeline.NewHeartbeatScheduleMiddleware(e.db)),
 		pipeline.NewMCPDiscoveryMiddleware(
 			e.mcpDiscoveryCache,
 			func(*pipeline.RunContext) mcp.DiscoveryQueryer { return e.db },
@@ -537,32 +558,32 @@ func (e *DesktopEngine) Execute(ctx context.Context, run data.Run, traceID strin
 			e.baseAllowlist,
 			e.toolRegistry,
 		),
-		desktopToolProviderBindings(e.db),
-		pipeline.NewSpawnAgentMiddleware(),
-		desktopPersonaResolution(e.db, e.personaRegistry, runsRepo, eventsRepo),
-		desktopChannelContext(e.db),
-		pipeline.NewChannelAdminTagMiddleware(e.db),
-		pipeline.NewChannelTelegramGroupUserMergeMiddleware(),
-		pipeline.NewChannelGroupContextTrimMiddleware(pipeline.GroupContextTrimDeps{
+		desktopObservedStage("tool_provider_bindings", eventsRepo, desktopToolProviderBindings(e.db)),
+		desktopObservedStage("spawn_agent", eventsRepo, pipeline.NewSpawnAgentMiddleware()),
+		desktopObservedStage("persona_resolution", eventsRepo, desktopPersonaResolution(e.db, e.personaRegistry, runsRepo, eventsRepo)),
+		desktopObservedStage("channel_context", eventsRepo, desktopChannelContext(e.db)),
+		desktopObservedStage("channel_admin_tag", eventsRepo, pipeline.NewChannelAdminTagMiddleware(e.db)),
+		desktopObservedStage("channel_group_user_merge", eventsRepo, pipeline.NewChannelTelegramGroupUserMergeMiddleware()),
+		desktopObservedStage("channel_group_context_trim", eventsRepo, pipeline.NewChannelGroupContextTrimMiddleware(pipeline.GroupContextTrimDeps{
 			Pool:            e.db,
 			MessagesRepo:    data.MessagesRepository{},
 			EventsRepo:      data.DesktopRunEventsRepository{},
 			AuxGateway:      e.auxGateway,
 			EmitDebugEvents: e.emitDebugEvents,
 			ConfigLoader:    e.routingLoader,
-		}),
-		pipeline.NewChannelTelegramToolsMiddleware(nil, nil, pipeline.ChannelTelegramToolsDeps{
+		})),
+		desktopObservedStage("channel_telegram_tools", eventsRepo, pipeline.NewChannelTelegramToolsMiddleware(nil, nil, pipeline.ChannelTelegramToolsDeps{
 			TokenLoader:        &desktopTelegramTokenLoader{db: e.db},
 			GroupSearchExec:    e.groupSearchExec,
 			GroupSearchLlmSpec: conversationtool.GroupSearchLlmSpec,
-		}),
-		desktopSubAgentContext(e.db, subagentctl.NewSnapshotStorage()),
-		pipeline.NewSkillContextMiddleware(pipeline.SkillContextConfig{
+		})),
+		desktopObservedStage("sub_agent_context", eventsRepo, desktopSubAgentContext(e.db, subagentctl.NewSnapshotStorage())),
+		desktopObservedStage("skill_context", eventsRepo, pipeline.NewSkillContextMiddleware(pipeline.SkillContextConfig{
 			Resolve:        desktopSkillResolver(e.db),
 			Prepare:        desktopSkillPreparer(e.useVM),
 			LayoutResolver: e.skillLayout,
 			ExternalDirs:   desktopExternalSkillDirs(e.db),
-		}),
+		})),
 	}
 	middlewares = append(middlewares, desktopCapabilityMiddlewares(memMiddleware, e.promptInjection, eventsRepo)...)
 	middlewares = append(middlewares,
@@ -588,10 +609,138 @@ func desktopCapabilityMiddlewares(
 	eventsRepo data.RunEventStore,
 ) []pipeline.RunMiddleware {
 	middlewares := []pipeline.RunMiddleware{
-		memMiddleware,
-		pipeline.NewRuntimeContextMiddleware(),
+		desktopObservedStage("memory_injection", eventsRepo, memMiddleware),
+		desktopObservedStage("runtime_context", eventsRepo, pipeline.NewRuntimeContextMiddleware()),
 	}
 	return append(middlewares, promptInjection.Middlewares(eventsRepo)...)
+}
+
+func desktopObservedStage(stage string, eventsRepo data.RunEventStore, inner pipeline.RunMiddleware) pipeline.RunMiddleware {
+	if inner == nil {
+		return nil
+	}
+	stage = strings.TrimSpace(stage)
+	if stage == "" {
+		return inner
+	}
+	eventType, ok := desktopObservedEventNames[stage]
+	if !ok {
+		return inner
+	}
+	return func(ctx context.Context, rc *pipeline.RunContext, next pipeline.RunHandler) error {
+		startedAt := time.Now()
+		emitted := false
+		emit := func(status string, stageErr error) {
+			if emitted {
+				return
+			}
+			emitted = true
+			emitDesktopStageEvent(ctx, rc, eventsRepo, eventType, time.Since(startedAt).Milliseconds(), status, stageErr)
+		}
+		err := inner(ctx, rc, func(ctx context.Context, rc *pipeline.RunContext) error {
+			emit("completed", nil)
+			return next(ctx, rc)
+		})
+		if !emitted {
+			status := "completed"
+			if err != nil {
+				status = "failed"
+			}
+			emit(status, err)
+		}
+		return err
+	}
+}
+
+func emitDesktopStageEvent(
+	ctx context.Context,
+	rc *pipeline.RunContext,
+	eventsRepo data.RunEventStore,
+	eventType string,
+	durationMs int64,
+	status string,
+	stageErr error,
+) {
+	if rc == nil || eventsRepo == nil {
+		return
+	}
+	thresholdMs := loadDesktopStageEventMs()
+	if stageErr == nil && durationMs < thresholdMs {
+		return
+	}
+	db := rc.DB
+	if db == nil {
+		return
+	}
+	dataJSON := buildDesktopStageEventData(durationMs, thresholdMs, status, stageErr)
+	ev := rc.Emitter.Emit(eventType, dataJSON, nil, nil)
+	tx, err := db.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		slog.WarnContext(ctx, "desktop stage event tx begin failed", "event_type", eventType, "error", err)
+		return
+	}
+	defer tx.Rollback(ctx)
+	if _, err := eventsRepo.AppendRunEvent(ctx, tx, rc.Run.ID, ev); err != nil {
+		slog.WarnContext(ctx, "desktop stage event append failed", "event_type", eventType, "error", err)
+		return
+	}
+	if err := tx.Commit(ctx); err != nil {
+		slog.WarnContext(ctx, "desktop stage event commit failed", "event_type", eventType, "error", err)
+		return
+	}
+	if rc.EventBus != nil {
+		_ = rc.EventBus.Publish(ctx, fmt.Sprintf("run_events:%s", rc.Run.ID.String()), "")
+	}
+}
+
+func buildDesktopStageEventData(durationMs int64, thresholdMs int64, status string, stageErr error) map[string]any {
+	payload := map[string]any{
+		"duration_ms":  durationMs,
+		"threshold_ms": thresholdMs,
+		"status":       strings.TrimSpace(status),
+	}
+	if stageErr != nil {
+		payload["error_message"] = trimDesktopStageError(stageErr.Error())
+	}
+	return payload
+}
+
+func loadDesktopStageEventMs() int64 {
+	raw := strings.TrimSpace(os.Getenv("ARKLOOP_DESKTOP_STAGE_EVENT_MS"))
+	if raw == "" {
+		return defaultDesktopStageEventMs
+	}
+	value, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil || value <= 0 {
+		return defaultDesktopStageEventMs
+	}
+	return value
+}
+
+func trimDesktopStageError(message string) string {
+	message = strings.TrimSpace(message)
+	if len(message) <= 200 {
+		return message
+	}
+	return message[:200]
+}
+
+func desktopObservedEventName(stage string) (string, bool) {
+	stage = strings.TrimSpace(stage)
+	if stage == "" {
+		return "", false
+	}
+	eventType, ok := desktopObservedEventNames[stage]
+	return eventType, ok
+}
+
+func desktopObservedEventTypes() []string {
+	items := make([]string, 0, len(desktopObservedEventNames))
+	for _, eventType := range desktopObservedEventNames {
+		items = append(items, eventType)
+	}
+	slices.Sort(items)
+	return items
 }
 
 func resolveDesktopRunBindings(ctx context.Context, db data.DesktopDB, run data.Run) (data.Run, error) {
@@ -2159,6 +2308,7 @@ func (w *desktopEventWriter) flushPendingToolCalls() {
 }
 
 func (w *desktopEventWriter) collectToolResult(dataJSON map[string]any) {
+	w.flushPendingToolCalls()
 	envelope := map[string]any{
 		"tool_call_id": dataJSON["tool_call_id"],
 		"tool_name":    dataJSON["tool_name"],
@@ -2568,12 +2718,12 @@ func (w *desktopEventWriter) batchInsertIntermediateMessages(
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck
 
-	baseTime := time.Now()
+	baseTime := w.run.CreatedAt.UTC().Add(time.Millisecond).Round(0)
 	repo := data.MessagesRepository{}
 	for i, msg := range w.intermediateMessages {
 		createdAt := baseTime.Add(time.Duration(i) * time.Microsecond)
 		meta := map[string]any{
-			"intermediate": true,
+			"intermediate": "true",
 			"run_id":       runID.String(),
 		}
 		if msg.ToolCallID != "" {
