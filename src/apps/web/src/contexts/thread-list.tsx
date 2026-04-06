@@ -11,11 +11,12 @@ import {
 import { listThreads, type ThreadResponse } from '../api'
 import {
   readAppModeFromStorage,
+  readThreadModes,
   writeThreadMode,
-  readThreadMode,
   type AppMode,
 } from '../storage'
 import { useAuth } from './auth'
+import { isPerfDebugEnabled, recordPerfDuration } from '../perfDebug'
 
 export interface ThreadListContextValue {
   threads: ThreadResponse[]
@@ -40,6 +41,7 @@ export function ThreadListProvider({ children }: { children: ReactNode }) {
   const mountedRef = useRef(true)
 
   const [threads, setThreads] = useState<ThreadResponse[]>([])
+  const [threadModes, setThreadModes] = useState<Record<string, AppMode>>(() => readThreadModes())
   const [runningThreadIds, setRunningThreadIds] = useState<Set<string>>(new Set())
   const [privateThreadIds, setPrivateThreadIds] = useState<Set<string>>(new Set())
   const [isPrivateMode, setIsPrivateMode] = useState(false)
@@ -70,6 +72,7 @@ export function ThreadListProvider({ children }: { children: ReactNode }) {
     }
     const mode = readAppModeFromStorage()
     writeThreadMode(thread.id, mode)
+    setThreadModes((prev) => (prev[thread.id] === mode ? prev : { ...prev, [thread.id]: mode }))
     setThreads((prev) => {
       if (prev.some((t) => t.id === thread.id)) return prev
       return [thread, ...prev]
@@ -108,10 +111,29 @@ export function ThreadListProvider({ children }: { children: ReactNode }) {
     setIsPrivateMode((prev) => !prev)
   }, [])
 
+  const threadsByMode = useMemo<Record<AppMode, ThreadResponse[]>>(() => {
+    const startedAt = typeof performance !== 'undefined' ? performance.now() : 0
+    const grouped: Record<AppMode, ThreadResponse[]> = {
+      chat: [],
+      work: [],
+    }
+    for (const thread of threads) {
+      const mode = threadModes[thread.id] ?? 'chat'
+      grouped[mode].push(thread)
+    }
+    if (isPerfDebugEnabled() && typeof performance !== 'undefined') {
+      recordPerfDuration('thread_list_mode_partition', performance.now() - startedAt, {
+        threadCount: threads.length,
+        chatCount: grouped.chat.length,
+        workCount: grouped.work.length,
+      })
+    }
+    return grouped
+  }, [threadModes, threads])
+
   const getFilteredThreads = useCallback(
-    (appMode: AppMode): ThreadResponse[] =>
-      threads.filter((t) => readThreadMode(t.id) === appMode),
-    [threads],
+    (appMode: AppMode): ThreadResponse[] => threadsByMode[appMode],
+    [threadsByMode],
   )
 
   const value = useMemo<ThreadListContextValue>(() => ({

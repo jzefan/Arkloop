@@ -567,7 +567,16 @@ func (ScheduledTriggersRepository) InsertHeartbeatRunInTx(
 		return HeartbeatRunResult{}, fmt.Errorf("insert heartbeat run: %w", err)
 	}
 
-	startedData, err := buildDesktopHeartbeatStartedData(ctx, tx, ctxData.ThreadID, row.PersonaKey, model)
+	result := HeartbeatRunResult{
+		RunID:            runID,
+		ChannelID:        ctxData.ChannelID,
+		ChannelType:      ctxData.ChannelType,
+		PlatformChatID:   ctxData.PlatformChatID,
+		IdentityID:       ctxData.IdentityID,
+		ConversationType: ctxData.ConversationType,
+	}
+
+	startedData, err := buildDesktopHeartbeatStartedData(ctx, tx, ctxData.ThreadID, row.PersonaKey, model, result)
 	if err != nil {
 		return HeartbeatRunResult{}, fmt.Errorf("build heartbeat run.started data: %w", err)
 	}
@@ -580,14 +589,7 @@ func (ScheduledTriggersRepository) InsertHeartbeatRunInTx(
 		return HeartbeatRunResult{}, fmt.Errorf("append run.started: %w", err)
 	}
 
-	return HeartbeatRunResult{
-		RunID:            runID,
-		ChannelID:        ctxData.ChannelID,
-		ChannelType:      ctxData.ChannelType,
-		PlatformChatID:   ctxData.PlatformChatID,
-		IdentityID:       ctxData.IdentityID,
-		ConversationType: ctxData.ConversationType,
-	}, nil
+	return result, nil
 }
 
 func DesktopCreateHeartbeatRunWithContext(
@@ -627,6 +629,7 @@ func buildDesktopHeartbeatStartedData(
 	threadID uuid.UUID,
 	personaKey string,
 	model string,
+	result HeartbeatRunResult,
 ) (map[string]any, error) {
 	data := map[string]any{
 		"persona_id":          personaKey,
@@ -634,6 +637,15 @@ func buildDesktopHeartbeatStartedData(
 		"run_kind":            runkind.Heartbeat,
 		"continuation_source": "none",
 		"continuation_loop":   false,
+		"channel_delivery": map[string]any{
+			"channel_id":                 result.ChannelID,
+			"channel_type":               result.ChannelType,
+			"sender_channel_identity_id": result.IdentityID,
+			"conversation_type":          result.ConversationType,
+			"conversation_ref": map[string]any{
+				"target": result.PlatformChatID,
+			},
+		},
 	}
 	msg, err := getLatestDesktopThreadMessage(ctx, tx, threadID)
 	if err != nil {

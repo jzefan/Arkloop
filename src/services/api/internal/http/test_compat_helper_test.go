@@ -27,7 +27,6 @@ import (
 	sharedexec "arkloop/services/shared/executionconfig"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // --- auth ---

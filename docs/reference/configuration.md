@@ -6,17 +6,19 @@
 | browser.enabled | bool | platform | false | false | 是否在 Worker 中注册 browser 自动化工具 |
 | budget.max_cost_micros | int | both | 0 | false | 单次 run 最大累计费用 (微美元), 0 表示不限 |
 | budget.max_total_output_tokens | int | both | 0 | false | 单次 run 最大累计输出 token 数, 0 表示不限 |
-| context.compact.enabled | bool | platform | false | false | 启用线程上下文预算裁切（在 Routing 之后） |
-| context.compact.fallback_context_window_tokens | int | platform | 200000 | false | 路由 advanced_json 未解析出上下文窗口时用于百分比换算的窗口上限 |
+| context.compact.enabled | bool | platform | true | false | 启用线程上下文预算裁切（在 Routing 之后） |
+| context.compact.fallback_context_window_tokens | int | platform | 128000 | false | 路由 advanced_json 未解析出上下文窗口时用于百分比换算的窗口上限 |
 | context.compact.max_messages | int | platform | 0 | false | compact 尾部消息条数上限，0 表示仅按 token/字节预算 |
 | context.compact.max_total_text_bytes | int | platform | 0 | false | 全消息文本字节上限，0 表示不限制 |
 | context.compact.max_total_text_tokens | int | platform | 0 | false | 全消息 tiktoken 累计上限（role+正文），0 表示不限制 |
 | context.compact.max_user_message_tokens | int | platform | 0 | false | 保留 user 的 tiktoken 累计上限（role+正文），0 表示不限制 |
 | context.compact.max_user_text_bytes | int | platform | 0 | false | 保留 user 文本字节上限，0 表示不限制 |
-| context.compact.persist_enabled | bool | platform | false | false | 超阈值时将较早消息摘要并标记 compacted（需迁移 00134） |
-| context.compact.persist_keep_last_messages | int | platform | 40 | false | 持久化摘要时保留的尾部消息条数 |
+| context.compact.microcompact_keep_recent_tools | int | platform | 8 | false | microcompact 保留最近 N 个 tool result 原文，0 = 不做 microcompact |
+| context.compact.persist_enabled | bool | platform | true | false | 超阈值时将较早消息摘要并标记 compacted（需迁移 00134） |
+| context.compact.persist_keep_last_messages | int | platform | 40 | false | 持久化摘要时保留的尾部消息条数（兜底上限） |
+| context.compact.persist_keep_tail_pct | int | platform | 25 | false | persist 时保留 context window 的百分比作为尾部 token 预算（1-100）；0 = 仅按条数 |
 | context.compact.persist_trigger_approx_tokens | int | platform | 120000 | false | 触发持久化摘要的 token 阈值（tiktoken）；PersistTriggerContextPct>0 时忽略此项 |
-| context.compact.persist_trigger_context_pct | int | platform | 0 | false | 按路由 available_catalog.context_length（否则 fallback）的百分比触发 persist，0 表示只用 persist_trigger_approx_tokens |
+| context.compact.persist_trigger_context_pct | int | platform | 80 | false | 按路由 available_catalog.context_length（否则 fallback）的百分比触发 persist，0 表示只用 persist_trigger_approx_tokens |
 | credit.deduction_policy | string | platform | {"tiers":[{"up_to_tokens":2000,"multiplier":0},{"multiplier":1}]} | false | 积分扣减策略（JSON） |
 | credit.initial_grant | int | platform | 1000 | false | 新账户初始积分发放数量 |
 | credit.invite_reward | int | platform | 500 | false | 邀请者奖励积分数量 |
@@ -39,8 +41,11 @@
 | invite.max_codes_per_user | int | both | 1 | false | 单用户可创建的邀请码数量上限 |
 | limit.agent_reasoning_iterations | int | platform | 0 | false | Agent Loop 主推理回合上限，0 表示不限 |
 | limit.concurrent_runs | int | both | 0 | false | 并发 run 上限，0 表示不限 |
+| limit.idle_heartbeat_interval_ms | int | platform | 15000 | false | 长等待期间发出活跃事件的心跳间隔（毫秒） |
 | limit.max_input_content_bytes | int | both | 32768 | false | Run input 提交内容最大字节数 |
 | limit.max_parallel_tasks | int | platform | 32 | false | Lua 并行任务/并行工具调用上限 |
+| limit.paused_input_timeout_ms | int | platform | 300000 | false | run 进入等待用户输入后的超时时间（毫秒） |
+| limit.run_wall_clock_timeout_ms | int | platform | 900000 | false | 单个 run 的 wall clock 硬截止时间（毫秒） |
 | limit.subagent_max_active_per_root_run | int | both | 20 | false | 单 root run 下最大活跃 sub-agent 数量 |
 | limit.subagent_max_depth | int | both | 5 | false | Sub-Agent 最大嵌套深度 |
 | limit.subagent_max_descendants_per_root_run | int | both | 50 | false | 单 root run 下 sub-agent 总数上限 |
@@ -53,6 +58,7 @@
 | llm.retry.base_delay_ms | int | platform | 1000 | false | LLM 重试基础延迟（毫秒） |
 | llm.retry.max_attempts | int | platform | 3 | false | LLM 重试最大次数 |
 | memory.distill_enabled | bool | both | true | false | 启用普通对话在 run 结束后的自动 Memory 提炼 |
+| memory.impression_score_threshold | int | both | 50 | false | impression 更新触发阈值 |
 | openviking.base_url | string | platform |  | false | OpenViking Base URL |
 | openviking.cost_per_commit | number | platform | 0 | false | OpenViking CommitSession Cost (USD) |
 | openviking.root_api_key | string | platform |  | true | OpenViking Root API Key |

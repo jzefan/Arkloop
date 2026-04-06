@@ -7,7 +7,11 @@ import { useChatSession } from '../contexts/chat-session'
 import { useAuth } from '../contexts/auth'
 import { useThreadList } from '../contexts/thread-list'
 import { useMessageStore } from '../contexts/message-store'
-import { useAppUI } from '../contexts/app-ui'
+import {
+  useAppModeUI,
+  useNotificationsUI,
+  useTitleBarIncognitoUI,
+} from '../contexts/app-ui'
 import { usePanels } from '../contexts/panels'
 import {
   starThread,
@@ -29,7 +33,9 @@ function ChatTitleMenuContent({ threadId }: { threadId: string | null }) {
   const { t } = useLocale()
   const threadList = useThreadList()
   const msgs = useMessageStore()
-  const appUI = useAppUI()
+  const { appMode, availableAppModes, setAppMode } = useAppModeUI()
+  const { openNotifications, notificationVersion } = useNotificationsUI()
+  const { setTitleBarIncognitoClick } = useTitleBarIncognitoUI()
   const panels = usePanels()
 
   const [titleMenuOpen, setTitleMenuOpen] = useState(false)
@@ -165,9 +171,9 @@ function ChatTitleMenuContent({ threadId }: { threadId: string | null }) {
 
   useLayoutEffect(() => {
     if (!isDesktop()) return
-    appUI.setTitleBarIncognitoClick(handleIncognitoClick)
-    return () => { appUI.setTitleBarIncognitoClick(null) }
-  }, [appUI, handleIncognitoClick])
+    setTitleBarIncognitoClick(handleIncognitoClick)
+    return () => { setTitleBarIncognitoClick(null) }
+  }, [handleIncognitoClick, setTitleBarIncognitoClick])
 
   return (
     <>
@@ -254,10 +260,10 @@ function ChatTitleMenuContent({ threadId }: { threadId: string | null }) {
         <div className="flex items-center gap-2">
           {!isDesktop() && (
             <ModeSwitch
-              mode={appUI.appMode}
-              onChange={appUI.setAppMode}
+              mode={appMode}
+              onChange={setAppMode}
               labels={{ chat: t.modeChat, work: t.modeWork }}
-              availableModes={appUI.availableAppModes}
+              availableModes={availableAppModes}
             />
           )}
           {threadId && privateThreadIds.has(threadId) && (
@@ -266,8 +272,8 @@ function ChatTitleMenuContent({ threadId }: { threadId: string | null }) {
           {!isDesktop() && (
             <NotificationBell
               accessToken={accessToken}
-              onClick={appUI.openNotifications}
-              refreshKey={appUI.notificationVersion}
+              onClick={openNotifications}
+              refreshKey={notificationVersion}
               title={t.notificationsTitle}
             />
           )}

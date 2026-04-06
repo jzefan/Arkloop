@@ -1243,11 +1243,26 @@ export function writeMsgRunEvents(messageId: string, events: MsgRunEvent[]): voi
 
 const THREAD_MODES_KEY = 'arkloop:web:thread_modes'
 
+export function readThreadModes(): Record<string, AppMode> {
+  if (!canUseLocalStorage()) return {}
+  try {
+    const raw = localStorage.getItem(THREAD_MODES_KEY)
+    if (!raw) return {}
+    const parsed = JSON.parse(raw) as Record<string, string>
+    const next: Record<string, AppMode> = {}
+    for (const [threadId, mode] of Object.entries(parsed)) {
+      next[threadId] = mode === 'work' ? 'work' : 'chat'
+    }
+    return next
+  } catch {
+    return {}
+  }
+}
+
 export function writeThreadMode(threadId: string, mode: AppMode): void {
   if (!canUseLocalStorage() || !threadId) return
   try {
-    const raw = localStorage.getItem(THREAD_MODES_KEY)
-    const map: Record<string, string> = raw ? (JSON.parse(raw) as Record<string, string>) : {}
+    const map = readThreadModes()
     map[threadId] = mode
     localStorage.setItem(THREAD_MODES_KEY, JSON.stringify(map))
   } catch { /* ignore */ }
@@ -1256,9 +1271,7 @@ export function writeThreadMode(threadId: string, mode: AppMode): void {
 export function readThreadMode(threadId: string): AppMode {
   if (!canUseLocalStorage() || !threadId) return 'chat'
   try {
-    const raw = localStorage.getItem(THREAD_MODES_KEY)
-    if (!raw) return 'chat'
-    const map = JSON.parse(raw) as Record<string, string>
+    const map = readThreadModes()
     const mode = map[threadId]
     return mode === 'work' ? 'work' : 'chat'
   } catch { return 'chat' }

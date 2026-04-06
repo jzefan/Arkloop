@@ -49,7 +49,7 @@ import { applyRunEventToWebSearchSteps } from '../webSearchTimelineFromRunEvent'
 import { useLocale } from '../contexts/LocaleContext'
 import { useAuth } from '../contexts/auth'
 import { useThreadList } from '../contexts/thread-list'
-import { useAppUI } from '../contexts/app-ui'
+import { useAppModeUI, useSettingsUI } from '../contexts/app-ui'
 import { useChatSession } from '../contexts/chat-session'
 import { useMessageStore } from '../contexts/message-store'
 import { useRunLifecycle } from '../contexts/run-lifecycle'
@@ -536,11 +536,8 @@ export function ChatView() {
     threads, addThread: onThreadCreated,
     markRunning: onRunStarted, markIdle: onRunEnded,
   } = useThreadList()
-  const {
-    appMode,
-    openSettings: onOpenSettings,
-    setAppMode,
-  } = useAppUI()
+  const { appMode, setAppMode } = useAppModeUI()
+  const { openSettings: onOpenSettings } = useSettingsUI()
   const { threadId } = useChatSession()
   const {
     messages,

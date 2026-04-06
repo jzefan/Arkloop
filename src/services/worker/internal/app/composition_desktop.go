@@ -1054,10 +1054,13 @@ type desktopDeliveryChannelRecord struct {
 
 func desktopChannelContext(db data.DesktopDB) pipeline.RunMiddleware {
 	return func(ctx context.Context, rc *pipeline.RunContext, next pipeline.RunHandler) error {
-		if rc == nil || len(rc.JobPayload) == 0 {
+		if rc == nil {
 			return next(ctx, rc)
 		}
 		rawDelivery, ok := rc.JobPayload["channel_delivery"].(map[string]any)
+		if !ok || len(rawDelivery) == 0 {
+			rawDelivery, ok = rc.InputJSON["channel_delivery"].(map[string]any)
+		}
 		if !ok || len(rawDelivery) == 0 {
 			return next(ctx, rc)
 		}
