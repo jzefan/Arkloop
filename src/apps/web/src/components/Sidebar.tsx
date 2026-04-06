@@ -13,33 +13,19 @@ import {
   Pencil,
   Trash2,
 } from 'lucide-react'
-import type { SettingsTab } from './SettingsModal'
-import type { ThreadResponse, MeResponse } from '../api'
+import type { ThreadResponse } from '../api'
 import { listStarredThreadIds, starThread, unstarThread, updateThreadTitle, deleteThread } from '../api'
 import { isLocalMode, isDesktop } from '@arkloop/shared/desktop'
 import { useLocale } from '../contexts/LocaleContext'
 import { ShareModal } from './ShareModal'
-import type { AppMode } from '../storage'
 import { beginPerfTrace, endPerfTrace, isPerfDebugEnabled, recordPerfValue } from '../perfDebug'
+import { useAuth } from '../contexts/auth'
+import { useThreadList } from '../contexts/thread-list'
+import { useAppUI } from '../contexts/app-ui'
 
 type Props = {
-  me: MeResponse | null
-  threads: ThreadResponse[]
-  runningThreadIds: Set<string>
-  isPrivateMode: boolean
-  accessToken: string
   onNewThread: () => void
-  onLogout: () => void
-  onOpenSettings: (tab?: SettingsTab) => void
-  collapsed: boolean
-  onToggleCollapse: () => void
-  onThreadTitleUpdated: (threadId: string, title: string) => void
   onThreadDeleted: (threadId: string) => void
-  narrow?: boolean
-  desktopMode?: boolean
-  appMode?: AppMode
-  /** 设置等覆盖层打开时，URL 仍在 /t/:id 但不要高亮该会话 */
-  suppressActiveThreadHighlight?: boolean
   /** 点到历史会话时先收起设置等全屏层；否则同 URL 的 navigate 不会触发，桌面端无法回到聊天 */
   beforeNavigateToThread?: () => void
 }
@@ -182,24 +168,16 @@ const SidebarThreadList = memo(function SidebarThreadList({
 })
 
 export function Sidebar({
-  me,
-  threads,
-  runningThreadIds,
-  isPrivateMode,
-  accessToken,
   onNewThread,
-  onLogout: _onLogout,
-  onOpenSettings,
-  collapsed,
-  onToggleCollapse,
-  onThreadTitleUpdated,
   onThreadDeleted,
-  narrow,
-  desktopMode,
-  appMode,
-  suppressActiveThreadHighlight,
   beforeNavigateToThread,
 }: Props) {
+  const { me, accessToken } = useAuth()
+  const { runningThreadIds, isPrivateMode, pendingIncognitoMode, updateTitle: onThreadTitleUpdated, getFilteredThreads } = useThreadList()
+  const { sidebarCollapsed: collapsed, toggleSidebar: onToggleCollapse, rightPanelOpen: narrow, settingsOpen: suppressActiveThreadHighlight, appMode, openSettings: onOpenSettings } = useAppUI()
+  const desktopMode = isDesktop()
+  const isPrivateModeEffective = isPrivateMode || pendingIncognitoMode
+  const threads = getFilteredThreads(appMode)
   const isWorkMode = appMode === 'work'
   const navigate = useNavigate()
   const location = useLocation()
@@ -324,7 +302,7 @@ export function Sidebar({
       collapsed,
       desktopMode: !!desktopMode,
       narrow: !!narrow,
-      isPrivateMode,
+      isPrivateMode: isPrivateModeEffective,
       threadCount: threads.length,
       starredCount: starredIds.length,
       runningCount: runningThreadIds.size,
@@ -376,8 +354,8 @@ export function Sidebar({
                   display: 'flex',
                   alignItems: 'center',
                   gap: '8px',
-                  opacity: isPrivateMode ? 1 : 0,
-                  transform: isPrivateMode ? 'translateX(0)' : 'translateX(14px)',
+                  opacity: isPrivateModeEffective ? 1 : 0,
+                  transform: isPrivateModeEffective ? 'translateX(0)' : 'translateX(14px)',
                   transition: 'opacity 0.18s ease, transform 0.18s ease',
                   pointerEvents: 'none',
                 }}
@@ -461,8 +439,8 @@ export function Sidebar({
           <div
             style={{
               display: 'grid',
-              gridTemplateRows: isPrivateMode ? '1fr' : '0fr',
-              opacity: isPrivateMode ? 1 : 0,
+              gridTemplateRows: isPrivateModeEffective ? '1fr' : '0fr',
+              opacity: isPrivateModeEffective ? 1 : 0,
               overflow: 'hidden',
               transition: 'grid-template-rows 0.15s ease, opacity 0.12s ease',
             }}
@@ -487,9 +465,9 @@ export function Sidebar({
             key={appMode}
             className="w-full flex flex-col gap-[2px]"
             style={{
-              opacity: isPrivateMode ? 0 : 1,
+              opacity: isPrivateModeEffective ? 0 : 1,
               transition: 'opacity 0.15s ease',
-              pointerEvents: isPrivateMode ? 'none' : 'auto',
+              pointerEvents: isPrivateModeEffective ? 'none' : 'auto',
             }}
           >
             {threads.length === 0 ? (

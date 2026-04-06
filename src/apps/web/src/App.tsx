@@ -4,7 +4,11 @@ import { LoadingPage } from '@arkloop/shared'
 import { AppLayout } from './layouts/AppLayout'
 import { AuthPage } from './components/AuthPage'
 import { WelcomePage } from './components/WelcomePage'
-import { ChatPage } from './components/ChatPage'
+import { ChatShell } from './components/ChatShell'
+import { AuthProvider } from './contexts/auth'
+import { ThreadListProvider } from './contexts/thread-list'
+import { AppUIProvider } from './contexts/app-ui'
+import { CreditsProvider } from './contexts/credits'
 import { SharePage } from './components/SharePage'
 import { VerifyEmailPage } from './components/VerifyEmailPage'
 import { OnboardingWizard } from './components/OnboardingWizard'
@@ -142,11 +146,21 @@ function App() {
         <>
           <Route path="/login" element={<Navigate to="/" replace />} />
           <Route path="/register" element={<Navigate to="/" replace />} />
-          <Route element={<AppLayout accessToken={accessToken} onLoggedOut={handleLoggedOut} />}>
+          <Route element={
+            <AuthProvider accessToken={accessToken} onLoggedOut={handleLoggedOut}>
+              <ThreadListProvider>
+                <AppUIProvider>
+                  <CreditsProvider>
+                    <AppLayout />
+                  </CreditsProvider>
+                </AppUIProvider>
+              </ThreadListProvider>
+            </AuthProvider>
+          }>
             <Route index element={<WelcomePage />} />
             <Route path="search" element={<WelcomePage />} />
-            <Route path="t/:threadId" element={<ChatPage />} />
-            <Route path="t/:threadId/search" element={<ChatPage />} />
+            <Route path="t/:threadId" element={<ChatShell />} />
+            <Route path="t/:threadId/search" element={<ChatShell />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Route>
         </>

@@ -5,6 +5,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { AppLayout } from '../layouts/AppLayout'
 import { LocaleProvider } from '../contexts/LocaleContext'
+import { AuthProvider } from '../contexts/auth'
+import { ThreadListProvider } from '../contexts/thread-list'
+import { AppUIProvider } from '../contexts/app-ui'
+import { CreditsProvider } from '../contexts/credits'
 import { getMe, listThreads, getMyCredits } from '../api'
 
 vi.mock('../api', async () => {
@@ -58,15 +62,23 @@ describe('AppLayout loading state', () => {
       root.render(
         <LocaleProvider>
           <MemoryRouter initialEntries={['/']}>
-            <Routes>
-              <Route
-                element={<AppLayout accessToken="token" onLoggedOut={vi.fn()} />}
-              >
-                <Route element={<OutletShell />}>
-                  <Route index element={<div>home</div>} />
-                </Route>
-              </Route>
-            </Routes>
+            <AuthProvider accessToken="token" onLoggedOut={vi.fn()}>
+              <ThreadListProvider>
+                <AppUIProvider>
+                  <CreditsProvider>
+                    <Routes>
+                      <Route
+                        element={<AppLayout />}
+                      >
+                        <Route element={<OutletShell />}>
+                          <Route index element={<div>home</div>} />
+                        </Route>
+                      </Route>
+                    </Routes>
+                  </CreditsProvider>
+                </AppUIProvider>
+              </ThreadListProvider>
+            </AuthProvider>
           </MemoryRouter>
         </LocaleProvider>,
       )
