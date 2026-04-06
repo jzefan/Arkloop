@@ -6,6 +6,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ChatPage } from '../components/ChatPage'
 import { extractPartialArtifactFields } from '../components/ArtifactStreamBlock'
 import { LocaleProvider } from '../contexts/LocaleContext'
+import { AuthContextBridge, type AuthContextValue } from '../contexts/auth'
+import { ThreadListContextBridge, type ThreadListContextValue } from '../contexts/thread-list'
+import { AppUIContextBridge, type AppUIContextValue } from '../contexts/app-ui'
+import { CreditsContextBridge, type CreditsContextValue } from '../contexts/credits'
 import {
   listMessages,
   listRunEvents,
@@ -273,8 +277,99 @@ function countMatches(text: string, needle: string): number {
   return text.split(needle).length - 1
 }
 
-function OutletShell({ context }: { context: Record<string, unknown> }) {
-  return <Outlet context={context} />
+type LegacyOutletContext = {
+  accessToken: string
+  onLoggedOut: () => void
+  onRunStarted: (threadId: string) => void
+  onRunEnded: (threadId: string) => void
+  onThreadCreated: (thread: ThreadListContextValue['threads'][number]) => void
+  onThreadTitleUpdated: (threadId: string, title: string) => void
+  refreshCredits: () => void
+  onOpenNotifications: () => void
+  notificationVersion: number
+  creditsBalance: number
+  isPrivateMode: boolean
+  onTogglePrivateMode: () => void
+  privateThreadIds: Set<string>
+  onSetPendingIncognito: (value: boolean) => void
+  onRightPanelChange: (open: boolean) => void
+  threads: ThreadListContextValue['threads']
+  onThreadDeleted: (threadId: string) => void
+}
+
+function OutletShell({ context }: { context: LegacyOutletContext }) {
+  const navigate = useNavigate()
+
+  const authValue: AuthContextValue = {
+    me: null,
+    meLoaded: true,
+    accessToken: context.accessToken,
+    logout: async () => { context.onLoggedOut() },
+    updateMe: () => {},
+  }
+
+  const threadListValue: ThreadListContextValue = {
+    threads: context.threads,
+    runningThreadIds: new Set(),
+    privateThreadIds: context.privateThreadIds,
+    isPrivateMode: context.isPrivateMode,
+    pendingIncognitoMode: false,
+    addThread: context.onThreadCreated,
+    removeThread: context.onThreadDeleted,
+    updateTitle: context.onThreadTitleUpdated,
+    markRunning: context.onRunStarted,
+    markIdle: context.onRunEnded,
+    togglePrivateMode: context.onTogglePrivateMode,
+    setPendingIncognito: context.onSetPendingIncognito,
+    getFilteredThreads: () => context.threads,
+  }
+
+  const appUIValue: AppUIContextValue = {
+    sidebarCollapsed: false,
+    sidebarHiddenByWidth: false,
+    rightPanelOpen: false,
+    isSearchMode: false,
+    settingsOpen: false,
+    settingsInitialTab: 'account',
+    desktopSettingsSection: 'general',
+    notificationsOpen: false,
+    notificationVersion: context.notificationVersion,
+    appMode: 'chat',
+    availableAppModes: ['chat'],
+    pendingSkillPrompt: null,
+    toggleSidebar: () => {},
+    setRightPanelOpen: context.onRightPanelChange,
+    enterSearchMode: () => {},
+    exitSearchMode: () => {},
+    openSettings: () => {},
+    closeSettings: () => {},
+    openNotifications: context.onOpenNotifications,
+    closeNotifications: () => {},
+    markNotificationRead: () => {},
+    setAppMode: () => navigate('/'),
+    queueSkillPrompt: () => {},
+    consumeSkillPrompt: () => {},
+    setTitleBarIncognitoClick: () => {},
+    triggerTitleBarIncognitoClick: (fallback) => fallback(),
+  }
+
+  const creditsValue: CreditsContextValue = {
+    creditsBalance: context.creditsBalance,
+    refreshCredits: context.refreshCredits,
+    setCreditsBalance: () => {},
+  }
+
+  return (
+    <AuthContextBridge value={authValue}>
+      <ThreadListContextBridge value={threadListValue}>
+        <AppUIContextBridge value={appUIValue}>
+          <CreditsContextBridge value={creditsValue}>
+            <Outlet />
+          </CreditsContextBridge>
+        </AppUIContextBridge>
+      </ThreadListContextBridge>
+    </AuthContextBridge>
+  )
 }
 
 function NavigateButton({ to, label }: { to: string; label: string }) {
