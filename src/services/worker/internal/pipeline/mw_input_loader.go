@@ -665,7 +665,9 @@ func buildReplayMessages(state *rollout.ReconstructedState) ([]llm.Message, erro
 func replayAssistantMessage(msg rollout.AssistantMessage) llm.Message {
 	var toolCalls []llm.ToolCall
 	if len(msg.ToolCalls) > 0 {
-		_ = json.Unmarshal(msg.ToolCalls, &toolCalls)
+		if err := json.Unmarshal(msg.ToolCalls, &toolCalls); err != nil {
+			slog.Warn("rollout: failed to parse assistant tool_calls", "err", err)
+		}
 	}
 	content := []llm.ContentPart(nil)
 	text := sanitizeStoredAssistantText(msg.Content)

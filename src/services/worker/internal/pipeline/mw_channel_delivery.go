@@ -512,7 +512,9 @@ func recordChannelDeliveryFailure(ctx context.Context, pool *pgxpool.Pool, runID
 	}, nil, nil); appendErr != nil {
 		return
 	}
-	_ = tx.Commit(context.Background())
+	if err := tx.Commit(context.Background()); err != nil {
+		slog.Warn("channel_delivery_failure_commit_failed", "run_id", runID, "err", err)
+	}
 }
 
 func recordChannelDeliverySuccess(

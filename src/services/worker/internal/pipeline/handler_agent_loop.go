@@ -549,14 +549,20 @@ func (w *eventWriter) commit(ctx context.Context) error {
 
 	channel := fmt.Sprintf("run_events:%s", w.run.ID.String())
 	if w.eventBus != nil {
-		_ = w.eventBus.Publish(ctx, channel, "")
+		if err := w.eventBus.Publish(ctx, channel, ""); err != nil {
+			slog.Warn("event_bus_publish_failed", "channel", channel, "err", err)
+		}
 	} else {
-		_, _ = w.pool.Exec(ctx, "SELECT pg_notify($1, '')", channel)
+		if _, err := w.pool.Exec(ctx, "SELECT pg_notify($1, '')", channel); err != nil {
+			slog.Warn("pg_notify_failed", "channel", channel, "err", err)
+		}
 	}
 
 	if w.runLimiterRDB != nil {
 		redisChannel := fmt.Sprintf("arkloop:sse:run_events:%s", w.run.ID.String())
-		_, _ = w.runLimiterRDB.Publish(ctx, redisChannel, "").Result()
+		if _, err := w.runLimiterRDB.Publish(ctx, redisChannel, "").Result(); err != nil {
+			slog.Warn("redis_publish_failed", "channel", redisChannel, "err", err)
+		}
 	}
 
 	if w.hasTerminal {

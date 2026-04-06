@@ -404,10 +404,14 @@ func microcompactedStub(m llm.Message) llm.Message {
 		}
 	}
 	text, _ := json.Marshal(stub)
+	var trustSource string
+	if len(m.Content) > 0 {
+		trustSource = m.Content[0].TrustSource
+	}
 	return llm.Message{
 		Role:      m.Role,
 		Phase:     m.Phase,
 		ToolCalls: m.ToolCalls,
-		Content:   []llm.ContentPart{{Type: "text", Text: string(text), TrustSource: m.Content[0].TrustSource}},
+		Content:   []llm.ContentPart{{Type: "text", Text: string(text), TrustSource: trustSource}},
 	}
 }

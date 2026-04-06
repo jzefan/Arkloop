@@ -689,7 +689,7 @@ export function useSseDispatch(params: {
               void msgs.sendMessageRef.current?.(pending)
             }
           })
-          .catch(() => {})
+          .catch((err) => console.error('persist run data failed', err))
         continue
       }
 
@@ -728,7 +728,7 @@ export function useSseDispatch(params: {
                 run.markTerminalRunHistory(assistant.id, false)
               }
             })
-            .catch(() => {})
+            .catch((err) => console.error('persist run data failed', err))
         }
         continue
       }
@@ -777,7 +777,7 @@ export function useSseDispatch(params: {
               const assistant = findAssistantMessageForRun(items, runId!)
               if (assistant) meta.persistRunDataToMessage(assistant.id, runCache, runEventsForMessage)
             })
-            .catch(() => {})
+            .catch((err) => console.error('persist run data failed', err))
         }
         continue
       }
@@ -822,7 +822,7 @@ export function useSseDispatch(params: {
               const assistant = findAssistantMessageForRun(items, runId!)
               if (assistant) meta.persistRunDataToMessage(assistant.id, runCache, runEventsForMessage)
             })
-            .catch(() => {})
+            .catch((err) => console.error('persist run data failed', err))
         }
         continue
       }
@@ -890,7 +890,7 @@ export function useSseDispatch(params: {
           meta.persistRunDataToMessage(completedAssistant.id, terminalCache, runEventsForMessage)
         }
       })
-      .catch(() => {})
+      .catch((err) => console.error('persist run data failed', err))
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [run.activeRunId, run.sse.state])
 
