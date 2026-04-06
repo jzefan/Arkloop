@@ -11,6 +11,7 @@ import (
 	"arkloop/services/shared/objectstore"
 	"arkloop/services/shared/rollout"
 	"arkloop/services/worker/internal/data"
+	"arkloop/services/worker/internal/imageutil"
 	"arkloop/services/worker/internal/llm"
 	"arkloop/services/worker/internal/stablejson"
 
@@ -783,6 +784,7 @@ func BuildMessageParts(ctx context.Context, store MessageAttachmentStore, msg da
 			if strings.TrimSpace(contentType) != "" {
 				attachment.MimeType = strings.TrimSpace(contentType)
 			}
+			dataBytes, attachment.MimeType = imageutil.ProcessImage(dataBytes, attachment.MimeType)
 			parts = append(parts, llm.ContentPart{
 				Type:       messagecontent.PartTypeImage,
 				Attachment: &attachment,
