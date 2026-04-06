@@ -165,6 +165,7 @@ func (b *SnapshotBuilder) loadMessages(ctx context.Context, tx pgx.Tx, parentRun
 			CreatedAt:       item.CreatedAt,
 		})
 	}
+	result = trimLeadingOrphanToolMessages(result)
 	return repairSpawnClosures(result), nil
 }
 
@@ -229,6 +230,19 @@ func cloneRawJSON(raw []byte) json.RawMessage {
 	cloned := make([]byte, len(raw))
 	copy(cloned, raw)
 	return json.RawMessage(cloned)
+}
+
+// trimLeadingOrphanToolMessages removes leading tool messages that have no
+// matching assistant tool_call before them (caused by LIMIT truncation).
+func trimLeadingOrphanToolMessages(msgs []ContextSnapshotMessage) []ContextSnapshotMessage {
+	start := 0
+	for start < len(msgs) && msgs[start].Role == "tool" {
+		start++
+	}
+	if start == 0 {
+		return msgs
+	}
+	return msgs[start:]
 }
 
 // repairSpawnClosures 确保 fork 出的消息历史中不存在未闭合的 spawn 工具调用。
