@@ -741,6 +741,7 @@ func (w *eventWriter) flushPendingToolCalls() {
 }
 
 func (w *eventWriter) collectToolResult(dataJSON map[string]any) {
+	w.flushPendingToolCalls()
 	envelope := map[string]any{
 		"tool_call_id": dataJSON["tool_call_id"],
 		"tool_name":    dataJSON["tool_name"],
@@ -771,11 +772,11 @@ func (w *eventWriter) batchInsertIntermediateMessages(
 	if err := w.ensureTx(ctx); err != nil {
 		return err
 	}
-	baseTime := time.Now()
+	baseTime := w.run.CreatedAt.UTC().Add(time.Millisecond).Round(0)
 	for i, msg := range w.intermediateMessages {
 		createdAt := baseTime.Add(time.Duration(i) * time.Microsecond)
 		meta := map[string]any{
-			"intermediate": true,
+			"intermediate": "true",
 			"run_id":       runID.String(),
 		}
 		if msg.ToolCallID != "" {
