@@ -12,6 +12,8 @@ import {
   writeSelectedPersonaKeyToStorage,
   readSelectedModelFromStorage,
   writeSelectedModelToStorage,
+  readThreadThinkingEnabled,
+  writeThreadThinkingEnabled,
 } from '../storage'
 import type { AppMode } from '../storage'
 import {
@@ -147,6 +149,19 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
   const [chipExiting, setChipExiting] = useState(false)
   const [selectedModel, setSelectedModel] = useState<string | null>(readSelectedModelFromStorage)
 
+  const [thinkingEnabled, setThinkingEnabled] = useState(() => {
+    if (!workThreadId) return false
+    return readThreadThinkingEnabled(workThreadId)
+  })
+
+  useEffect(() => {
+    if (!workThreadId) {
+      setThinkingEnabled(false)
+      return
+    }
+    setThinkingEnabled(readThreadThinkingEnabled(workThreadId))
+  }, [workThreadId])
+
   const { isRecording, isTranscribing, recordingSeconds, waveformBars, startRecording, stopAndTranscribe, cancelRecording } =
     useAudioRecorder({ accessTokenRef, valueRef, onChangeRef, onAsrErrorRef, onVoiceNotConfiguredRef })
 
@@ -203,7 +218,14 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
   const handleModelChange = useCallback((model: string | null) => {
     setSelectedModel(model)
     writeSelectedModelToStorage(model)
-  }, [])
+    setThinkingEnabled(false)
+    if (workThreadId) writeThreadThinkingEnabled(workThreadId, false)
+  }, [workThreadId])
+
+  const handleThinkingChange = useCallback((v: boolean) => {
+    setThinkingEnabled(v)
+    if (workThreadId) writeThreadThinkingEnabled(workThreadId, v)
+  }, [workThreadId])
 
   const isNonDefaultMode = selectedPersonaKey !== DEFAULT_PERSONA_KEY
   const showSendButton = draft.trim().length > 0 || attachments.length > 0
@@ -508,6 +530,8 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
             onModeSelect={handleModeSelect}
             onDeactivateMode={deactivateMode}
             onModelChange={handleModelChange}
+            thinkingEnabled={thinkingEnabled}
+            onThinkingChange={handleThinkingChange}
             onOpenSettings={onOpenSettings}
             onFileInputClick={() => fileInputRef.current?.click()}
             accessToken={accessToken}
