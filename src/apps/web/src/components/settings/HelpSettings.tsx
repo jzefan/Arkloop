@@ -10,7 +10,7 @@ export function HelpContent({ label }: { label: string }) {
     <div className="flex flex-col gap-2">
       <button
         type="button"
-        onClick={() => openExternal('https://docs.arkloop.com')}
+        onClick={() => openExternal('https://docs.arkloop.cn')}
         className="flex h-9 w-[240px] items-center gap-2 rounded-lg px-3 text-sm text-[var(--c-text-secondary)] transition-colors hover:bg-[var(--c-bg-deep)] hover:text-[var(--c-text-heading)]"
         style={{ border: '0.5px solid var(--c-border-subtle)', background: 'var(--c-bg-page)' }}
       >
