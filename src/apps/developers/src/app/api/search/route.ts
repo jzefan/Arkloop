@@ -1,6 +1,8 @@
 import { createSearchAPI } from 'fumadocs-core/search/server';
 import { docsZhSource, docsEnSource, apiZhSource, apiEnSource } from '@/lib/source';
 
+export const dynamic = 'force-static';
+
 export const { GET } = createSearchAPI('advanced', {
   indexes: [
     ...docsZhSource.getPages().map((page) => ({
