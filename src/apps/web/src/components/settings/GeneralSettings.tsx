@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react'
-import { Monitor, LogOut, HelpCircle, ArrowUpRight } from 'lucide-react'
+import { useEffect, useMemo, useState } from 'react'
+import { Monitor, LogOut, HelpCircle, ArrowUpRight, Zap, Loader2, X } from 'lucide-react'
 import type { MeResponse } from '../../api'
 import {
   listLlmProviders,
@@ -7,6 +7,7 @@ import {
   resolveOpenVikingConfig,
   setSpawnProfile,
   deleteSpawnProfile,
+  testLlmProviderModel,
 } from '../../api'
 import type { LlmProvider, SpawnProfile } from '../../api'
 import { useLocale } from '../../contexts/LocaleContext'
@@ -15,6 +16,8 @@ import { openExternal } from '../../openExternal'
 import { LanguageContent, ThemeModePicker } from './AppearanceSettings'
 import { bridgeClient, checkBridgeAvailable } from '../../api-bridge'
 import { SettingsModelDropdown } from './SettingsModelDropdown'
+import { AnimatedCheck } from '../AnimatedCheck'
+import { secondaryButtonBorderStyle } from '../buttonStyles'
 
 const SETTINGS_ENTER_SETTLE_DELAY_MS = 240
 
@@ -82,6 +85,23 @@ export function GeneralSettings({ me, accessToken, onLogout, onMeUpdated: _onMeU
     return nonSaaSUi ? ds.toolModelSameAsChat : ds.toolModelPlatformDefault
   })()
 
+  const effectiveToolModelValue = toolModelValue || toolProfile?.auto_model || ''
+
+  const toolModelSelection = useMemo(() => {
+    if (!effectiveToolModelValue.includes('^')) return null
+    const [providerName, ...rest] = effectiveToolModelValue.split('^')
+    const modelName = rest.join('^')
+    if (!providerName || !modelName) return null
+    const provider = providers.find((item) => item.name === providerName)
+    const model = provider?.models.find((item) => item.model === modelName)
+    if (!provider || !model) return null
+    return { provider, model }
+  }, [effectiveToolModelValue, providers])
+
+  const [testingToolModel, setTestingToolModel] = useState(false)
+  const [toolModelTestResult, setToolModelTestResult] = useState<{ success: boolean; latency?: number; error?: string } | null>(null)
+  const [showTestError, setShowTestError] = useState(false)
+
   const buildOpenVikingConfigureParams = (
     rootApiKey: string | undefined,
     vlm: NonNullable<Awaited<ReturnType<typeof resolveOpenVikingConfig>>['vlm']>,
@@ -103,6 +123,7 @@ export function GeneralSettings({ me, accessToken, onLogout, onMeUpdated: _onMeU
 
   const handleToolModelChange = async (value: string) => {
     setSavingTool(true)
+    setToolModelTestResult(null)
     try {
       if (value === '') {
         await deleteSpawnProfile(accessToken, 'tool')
@@ -114,6 +135,20 @@ export function GeneralSettings({ me, accessToken, onLogout, onMeUpdated: _onMeU
       void syncToolModelToOpenViking(value)
     } finally {
       setSavingTool(false)
+    }
+  }
+
+  const handleTestToolModel = async () => {
+    if (!toolModelSelection) return
+    setTestingToolModel(true)
+    try {
+      const result = await testLlmProviderModel(accessToken, toolModelSelection.provider.id, toolModelSelection.model.id)
+      setToolModelTestResult({ success: result.success, latency: result.latency_ms ?? undefined, error: result.error ?? undefined })
+    } catch (e) {
+      const message = e instanceof Error ? e.message : 'Unknown error'
+      setToolModelTestResult({ success: false, error: message })
+    } finally {
+      setTestingToolModel(false)
     }
   }
 
@@ -250,13 +285,66 @@ export function GeneralSettings({ me, accessToken, onLogout, onMeUpdated: _onMeU
         </p>
         <div className="flex flex-col gap-2">
           <p className="text-xs text-[var(--c-text-tertiary)]">{ds.toolModelDesc}</p>
-          <SettingsModelDropdown
-            value={toolModelValue}
-            options={modelOptions}
-            placeholder={toolModelPlaceholder}
-            disabled={savingTool}
-            onChange={handleToolModelChange}
-          />
+          <div className="flex items-center gap-2">
+            <div className="min-w-0 flex-1">
+              <SettingsModelDropdown
+                value={toolModelValue}
+                options={modelOptions}
+                placeholder={toolModelPlaceholder}
+                disabled={savingTool}
+                onChange={handleToolModelChange}
+              />
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                if (toolModelTestResult?.success) { setToolModelTestResult(null); return }
+                void handleTestToolModel()
+              }}
+              disabled={testingToolModel || (!toolModelSelection && !toolModelTestResult)}
+              className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-[var(--c-text-muted)] transition-colors hover:bg-[var(--c-bg-sub)] hover:text-[var(--c-text-secondary)] disabled:cursor-not-allowed disabled:opacity-40"
+              style={secondaryButtonBorderStyle}
+            >
+              {testingToolModel
+                ? <Loader2 size={14} className="animate-spin" />
+                : toolModelTestResult
+                  ? toolModelTestResult.success
+                    ? <AnimatedCheck size={14} color="var(--c-status-success-text)" />
+                    : <X size={14} className="text-[var(--c-status-error-text)]" />
+                  : <Zap size={14} strokeWidth={1.5} />}
+            </button>
+            {toolModelTestResult && !toolModelTestResult.success && !testingToolModel && (
+              <div className="relative">
+                <button
+                  type="button"
+                  onClick={() => setShowTestError((v) => !v)}
+                  className="inline-flex h-9 shrink-0 items-center gap-1 rounded-lg px-2.5 text-xs text-[var(--c-status-error-text)] transition-colors hover:bg-[var(--c-bg-sub)]"
+                  style={secondaryButtonBorderStyle}
+                >
+                  Error
+                </button>
+                {showTestError && (
+                  <>
+                    <div className="fixed inset-0 z-40" onClick={() => setShowTestError(false)} />
+                    <div
+                      className="dropdown-menu absolute right-0 top-[calc(100%+6px)] z-50 max-w-[320px] min-w-[200px]"
+                      style={{
+                        border: '0.5px solid var(--c-border-subtle)',
+                        borderRadius: '10px',
+                        padding: '12px',
+                        background: 'var(--c-bg-menu)',
+                        boxShadow: 'var(--c-dropdown-shadow)',
+                        maxHeight: '160px',
+                        overflowY: 'auto',
+                      }}
+                    >
+                      <pre className="whitespace-pre-wrap break-all text-xs text-[var(--c-text-secondary)]">{toolModelTestResult?.error ?? ''}</pre>
+                    </div>
+                  </>
+                )}
+              </div>
+            )}
+          </div>
           {!toolProfile?.has_override && toolProfile?.auto_model && (
             <p className="text-xs text-[var(--c-text-muted)]">{ds.toolModelAutoHint}</p>
           )}
@@ -267,7 +355,7 @@ export function GeneralSettings({ me, accessToken, onLogout, onMeUpdated: _onMeU
       <div className="flex flex-col gap-1.5">
         <button
             type="button"
-            onClick={() => openExternal('https://arkloop.ai/docs')}
+            onClick={() => openExternal('https://arkloop.cn/docs')}
             className="flex w-fit items-center gap-1.5 rounded-lg px-1 py-1 text-sm text-[var(--c-text-secondary)] hover:text-[var(--c-text-primary)]"
           >
             <HelpCircle size={14} /> {t.getHelp} <ArrowUpRight size={11} />

@@ -482,6 +482,9 @@ export interface LocaleStrings {
     applyingToAll: string
     applyDone: string
     deleteAll: string
+    deleteAllConfirmTitle: string
+    deleteAllConfirmDesc: string
+    testModel: string
     searchPlaceholder: string
     showInPicker: string
     hideFromPicker: string
@@ -490,11 +493,21 @@ export interface LocaleStrings {
     modelOptionsTitle: string
     modelOptionsFor: string
     modelCapabilities: string
+    modelType: string
+    modelTypeChat: string
+    modelTypeEmbedding: string
+    modelTypeImage: string
+    modelTypeAudio: string
+    modelTypeModeration: string
+    modelTypeOther: string
     vision: string
     imageOutput: string
     embedding: string
+    toolCalling: string
+    reasoning: string
     contextWindow: string
     maxOutputTokens: string
+    defaultTemperature: string
     providerOptionsJson: string
     providerOptionsHint: string
     reset: string
@@ -607,6 +620,7 @@ export interface LocaleStrings {
     noByok: string
     searchPlaceholder: string
     moreModels: string
+    thinking: string
   }
   // work right panel
   work: {
@@ -1153,16 +1167,29 @@ export interface LocaleStrings {
     openVikingBackendLiteLLM: string;
     advancedConfig: string;
     searchProviders: string;
+    testModel?: string;
     deleteAll?: string;
+    deleteAllConfirmTitle?: string;
+    deleteAllConfirmDesc?: string;
     importAll?: string;
     modelOptionsTitle?: string;
     modelOptionsFor?: string;
     modelCapabilities?: string;
+    modelType?: string;
+    modelTypeChat?: string;
+    modelTypeEmbedding?: string;
+    modelTypeImage?: string;
+    modelTypeAudio?: string;
+    modelTypeModeration?: string;
+    modelTypeOther?: string;
     vision?: string;
     imageOutput?: string;
     embedding?: string;
+    toolCalling?: string;
+    reasoning?: string;
     contextWindow?: string;
     maxOutputTokens?: string;
+    defaultTemperature?: string;
     providerOptionsJson?: string;
     providerOptionsHint?: string;
     reset?: string;

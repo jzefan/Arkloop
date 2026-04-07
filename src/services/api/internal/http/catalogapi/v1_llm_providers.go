@@ -873,7 +873,7 @@ func testOpenAIChat(ctx context.Context, baseURL, apiKey, model string) error {
 		"messages": []map[string]string{
 			{"role": "user", "content": "ping"},
 		},
-		"max_tokens": 1,
+		"max_tokens": 32,
 	}
 	return doTestHTTPPost(ctx, baseURL+"/chat/completions", apiKey, "Bearer", payload)
 }
@@ -882,7 +882,7 @@ func testOpenAIResponsesChat(ctx context.Context, baseURL, apiKey, model string)
 	payload := map[string]any{
 		"model":             model,
 		"input":             "ping",
-		"max_output_tokens": 1,
+		"max_output_tokens": 32,
 	}
 	return doTestHTTPPost(ctx, baseURL+"/responses", apiKey, "Bearer", payload)
 }
@@ -901,7 +901,7 @@ func testAnthropicChat(ctx context.Context, cfg llmproviders.CatalogProtocolConf
 	}
 	payload := map[string]any{
 		"model":      model,
-		"max_tokens": 1,
+		"max_tokens": 32,
 		"messages": []map[string]string{
 			{"role": "user", "content": "ping"},
 		},
@@ -933,7 +933,7 @@ func testGeminiChat(ctx context.Context, baseURL, apiKey, model string) error {
 				},
 			},
 		},
-		"generationConfig": map[string]any{"maxOutputTokens": 1},
+		"generationConfig": map[string]any{"maxOutputTokens": 32},
 	}
 	req, err := nethttp.NewRequestWithContext(ctx, nethttp.MethodPost, geminiTestEndpoint(baseURL, model, ":generateContent"), bytes.NewReader(mustJSON(payload)))
 	if err != nil {

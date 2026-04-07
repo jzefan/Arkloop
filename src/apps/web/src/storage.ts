@@ -1382,6 +1382,24 @@ export function readWorkRecentFolders(): string[] {
   } catch { return [] }
 }
 
+// -- Thread Thinking Toggle --
+
+export function readThreadThinkingEnabled(threadId: string): boolean {
+  if (!canUseLocalStorage() || !threadId) return false
+  return localStorage.getItem(`arkloop:thinking:${threadId}`) === 'true'
+}
+
+export function writeThreadThinkingEnabled(threadId: string, enabled: boolean): void {
+  if (!canUseLocalStorage() || !threadId) return
+  try {
+    if (enabled) {
+      localStorage.setItem(`arkloop:thinking:${threadId}`, 'true')
+    } else {
+      localStorage.removeItem(`arkloop:thinking:${threadId}`)
+    }
+  } catch { /* ignore */ }
+}
+
 const SEARCH_THREAD_IDS_KEY = 'arkloop:web:search_thread_ids'
 
 export function addSearchThreadId(threadId: string): void {
