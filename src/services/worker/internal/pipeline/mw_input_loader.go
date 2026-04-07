@@ -178,6 +178,9 @@ func loadRunInputs(
 		if rawWorkDir, ok := dataJSON["work_dir"].(string); ok && strings.TrimSpace(rawWorkDir) != "" {
 			inputJSON["work_dir"] = strings.TrimSpace(rawWorkDir)
 		}
+		if rawReasoningMode, ok := dataJSON["reasoning_mode"].(string); ok && strings.TrimSpace(rawReasoningMode) != "" {
+			inputJSON["reasoning_mode"] = strings.TrimSpace(rawReasoningMode)
+		}
 		if rawContinuationSource, ok := dataJSON[runStartedContinuationSourceKey].(string); ok && strings.TrimSpace(rawContinuationSource) != "" {
 			inputJSON[runStartedContinuationSourceKey] = strings.TrimSpace(rawContinuationSource)
 		}

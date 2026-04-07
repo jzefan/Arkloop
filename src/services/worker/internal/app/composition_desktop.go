@@ -1818,6 +1818,12 @@ func desktopPersonaResolution(
 		rc.Temperature = profile.Temperature
 		rc.TopP = profile.TopP
 		rc.ReasoningMode = profile.ReasoningMode
+		if override := normalizeDesktopRunReasoningMode(rc.InputJSON["reasoning_mode"]); override != "" {
+			rc.ReasoningMode = override
+			if agentConfig != nil {
+				agentConfig.ReasoningMode = override
+			}
+		}
 		rc.ToolTimeoutMs = profile.ToolTimeoutMs
 		rc.ToolBudget = profile.ToolBudget
 		rc.PerToolSoftLimits = tools.CopyPerToolSoftLimits(profile.PerToolSoftLimits)
@@ -1996,6 +2002,9 @@ func desktopRouting(
 
 		rc.Gateway = gateway
 		rc.SelectedRoute = decision.Selected
+		if rc.Temperature == nil {
+			rc.Temperature = routing.RouteDefaultTemperature(decision.Selected.Route)
+		}
 		rc.ResolveGatewayForRouteID = resolveGateway
 		rc.ResolveGatewayForAgentName = func(ctx context.Context, name string) (llm.Gateway, *routing.SelectedProviderRoute, error) {
 			cleanedSelector := strings.TrimSpace(name)
@@ -2029,6 +2038,25 @@ func desktopRouting(
 
 func desktopGatewayFromRoute(selected routing.SelectedProviderRoute, stub llm.Gateway, debug bool, maxBytes int) (llm.Gateway, error) {
 	return pipeline.GatewayFromSelectedRoute(selected, stub, debug, maxBytes)
+}
+
+func normalizeDesktopRunReasoningMode(raw any) string {
+	value, ok := raw.(string)
+	if !ok {
+		return ""
+	}
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "auto":
+		return "auto"
+	case "enabled":
+		return "enabled"
+	case "disabled":
+		return "disabled"
+	case "none":
+		return "none"
+	default:
+		return ""
+	}
 }
 
 // --------------- desktop agent loop ---------------

@@ -223,6 +223,9 @@ func NewRoutingMiddleware(
 
 		rc.Gateway = gateway
 		rc.SelectedRoute = selected
+		if rc.Temperature == nil {
+			rc.Temperature = routing.RouteDefaultTemperature(selected.Route)
+		}
 		slog.InfoContext(ctx, "routing_selected_model",
 			"run_id", rc.Run.ID.String(),
 			"thread_id", rc.Run.ThreadID.String(),
