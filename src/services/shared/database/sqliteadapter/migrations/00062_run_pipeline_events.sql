@@ -1,3 +1,5 @@
+-- +goose Up
+
 CREATE TABLE run_pipeline_events (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
@@ -11,3 +13,9 @@ CREATE TABLE run_pipeline_events (
 
 CREATE INDEX run_pipeline_events_run_id_idx ON run_pipeline_events(run_id);
 CREATE INDEX run_pipeline_events_created_at_idx ON run_pipeline_events(created_at);
+
+-- +goose Down
+
+DROP INDEX IF EXISTS run_pipeline_events_created_at_idx;
+DROP INDEX IF EXISTS run_pipeline_events_run_id_idx;
+DROP TABLE IF EXISTS run_pipeline_events;
