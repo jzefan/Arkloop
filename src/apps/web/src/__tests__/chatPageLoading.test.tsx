@@ -3127,7 +3127,7 @@ describe('ChatPage loading state', () => {
     })
 
     expect(mockedCreateMessage).toHaveBeenCalled()
-    expect(mockedCreateRun).toHaveBeenCalledWith('token', 'thread-1', 'default', undefined, undefined)
+    expect(mockedCreateRun).toHaveBeenCalledWith('token', 'thread-1', 'default', undefined, undefined, undefined)
     expect(container.querySelector('[data-testid="current-run-handoff"]')).toBeNull()
 
     act(() => {
