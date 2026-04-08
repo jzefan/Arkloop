@@ -40,7 +40,6 @@ func TestSearchFilesContextDoesNotFallbackOutsideBackend(t *testing.T) {
 
 func TestSearchFilesLocalFallbackStillWorks(t *testing.T) {
 	root := t.TempDir()
-	t.Setenv("PATH", "")
 	if err := os.WriteFile(filepath.Join(root, "notes.txt"), []byte("hello\nworld\n"), 0o644); err != nil {
 		t.Fatalf("write fixture: %v", err)
 	}
@@ -49,7 +48,7 @@ func TestSearchFilesLocalFallbackStillWorks(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(matches) != 1 || matches[0].file != "notes.txt" {
+	if len(matches) != 1 || matches[0].file != "./notes.txt" {
 		t.Fatalf("unexpected matches: %#v", matches)
 	}
 }

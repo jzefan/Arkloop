@@ -25,6 +25,7 @@ type SandboxExecBackend struct {
 	accountID    string
 	profileRef   string
 	workspaceRef string
+	workDir      string
 	client       *http.Client
 }
 
@@ -72,7 +73,10 @@ func (b *SandboxExecBackend) NormalizePath(path string) string {
 	if path == "" {
 		return ""
 	}
-	return filepath.ToSlash(filepath.Clean(path))
+	if filepath.IsAbs(path) || strings.TrimSpace(b.workDir) == "" {
+		return filepath.ToSlash(filepath.Clean(path))
+	}
+	return filepath.ToSlash(filepath.Clean(filepath.Join(b.workDir, path)))
 }
 
 func (b *SandboxExecBackend) exec(ctx context.Context, command string, timeoutMs int) (string, string, int, error) {
@@ -89,6 +93,7 @@ func (b *SandboxExecBackend) exec(ctx context.Context, command string, timeoutMs
 		WorkspaceRef: b.workspaceRef,
 		Command:      command,
 		Mode:         "buffered",
+		Cwd:          strings.TrimSpace(b.workDir),
 		TimeoutMs:    timeoutMs,
 		Tier:         "lite",
 	})

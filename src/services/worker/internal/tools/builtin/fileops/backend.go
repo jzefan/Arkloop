@@ -37,6 +37,7 @@ func ResolveBackend(snapshot *sharedtoolruntime.RuntimeSnapshot, workDir string,
 			accountID:    accountID,
 			profileRef:   profileRef,
 			workspaceRef: workspaceRef,
+			workDir:      resolvedWorkDir,
 		}
 	}
 	return &LocalBackend{WorkDir: resolvedWorkDir}
