@@ -23,7 +23,6 @@ import {
   useThinkingElapsedSeconds,
   formatThinkingHeaderLabel,
   CopTimelineHeaderLabel,
-  COP_HEADER_TRANSITION_RETAIN_MS,
 } from './CopTimelineHeader'
 import { AssistantThinkingMarkdown, CopThoughtSummaryRow, TimelineNarrativeBody } from './ThinkingBlock'
 import { SourceListCard } from './SourceList'
@@ -314,59 +313,25 @@ export function CopTimeline({ steps, sources, narratives, isComplete, codeExecut
   })
 
   const headerLabel = headerOverride ?? resolvedAutoLabel
-  const [resolvedHeaderLabel, setResolvedHeaderLabel] = useState(headerLabel)
-  const [resolvedHeaderPhaseKey, setResolvedHeaderPhaseKey] = useState(headerPhaseKey)
-  const [headerTypewriter, setHeaderTypewriter] = useState(false)
-  const previousThinkingHeaderLabelRef = useRef<string | null>(null)
-  const previousMixedWithThinkingRef = useRef(mixedSegmentWithThinking)
+  const previousStatusHeaderRef = useRef<string | null>(null)
+  const headerUsesIncrementalTypewriter =
+    !headerOverride && (
+      headerPhaseKey === 'thinking-pending'
+      || headerPhaseKey === 'thinking-live'
+      || (headerPhaseKey === 'thought' && previousStatusHeaderRef.current != null)
+    )
 
   useEffect(() => {
-    if (headerPhaseKey === 'thinking-live' && !headerOverride) {
-      previousThinkingHeaderLabelRef.current = headerLabel
-    }
-  }, [headerLabel, headerOverride, headerPhaseKey])
-
-  useEffect(() => {
-    if (headerOverride) {
-      setResolvedHeaderLabel(headerLabel)
-      setResolvedHeaderPhaseKey(headerPhaseKey)
-      setHeaderTypewriter(false)
+    if (!headerOverride && (
+      headerPhaseKey === 'thinking-pending'
+      || headerPhaseKey === 'thinking-live'
+      || headerPhaseKey === 'thought'
+    )) {
+      previousStatusHeaderRef.current = headerLabel
       return
     }
-
-    const previousThinkingHeaderLabel = previousThinkingHeaderLabelRef.current
-    const shouldDelayThoughtHeader =
-      headerPhaseKey === 'thought' &&
-      !!previousThinkingHeaderLabel &&
-      previousThinkingHeaderLabel !== headerLabel &&
-      !previousMixedWithThinkingRef.current
-
-    if (!shouldDelayThoughtHeader) {
-      setResolvedHeaderLabel(headerLabel)
-      setResolvedHeaderPhaseKey(headerPhaseKey)
-      setHeaderTypewriter(false)
-      return
-    }
-
-    setResolvedHeaderLabel(previousThinkingHeaderLabel)
-    setResolvedHeaderPhaseKey('thinking-live')
-    setHeaderTypewriter(false)
-
-    const retainTimer = window.setTimeout(() => {
-      setResolvedHeaderLabel('')
-      setResolvedHeaderPhaseKey('thought')
-      setHeaderTypewriter(true)
-      window.setTimeout(() => {
-        setResolvedHeaderLabel(headerLabel)
-      }, 0)
-    }, COP_HEADER_TRANSITION_RETAIN_MS)
-
-    return () => window.clearTimeout(retainTimer)
+    previousStatusHeaderRef.current = null
   }, [headerLabel, headerOverride, headerPhaseKey])
-
-  useEffect(() => {
-    previousMixedWithThinkingRef.current = mixedSegmentWithThinking
-  }, [mixedSegmentWithThinking])
 
   useEffect(() => {
     recordPerfCount('cop_timeline_render', 1, timelinePerfSample)
@@ -417,10 +382,10 @@ export function CopTimeline({ steps, sources, narratives, isComplete, codeExecut
         }}
       >
         <CopTimelineHeaderLabel
-          text={resolvedHeaderLabel}
-          phaseKey={resolvedHeaderPhaseKey}
+          text={headerLabel}
+          phaseKey={headerPhaseKey}
           shimmer={!!shimmer}
-          typewriter={headerTypewriter}
+          incremental={headerUsesIncrementalTypewriter}
         />
         {(isComplete || live) && hasContent && (
           <motion.div
