@@ -1,0 +1,167 @@
+from __future__ import annotations
+
+import asyncio
+import json
+import os
+import shutil
+from pathlib import Path
+
+from harbor.agents.base import BaseAgent
+from harbor.environments.base import BaseEnvironment
+from harbor.models.agent.context import AgentContext
+
+
+class ArkloopCliAgent(BaseAgent):
+    @staticmethod
+    def name() -> str:
+        return "arkloop-cli"
+
+    def version(self) -> str | None:
+        return "dev"
+
+    async def setup(self, environment: BaseEnvironment) -> None:
+        del environment
+        self.logs_dir.mkdir(parents=True, exist_ok=True)
+        self._required_env("ARKLOOP_CLI_BINARY", must_be_file=True)
+
+    async def run(
+        self,
+        instruction: str,
+        environment: BaseEnvironment,
+        context: AgentContext,
+    ) -> None:
+        self.logs_dir.mkdir(parents=True, exist_ok=True)
+
+        cli_binary = self._required_env("ARKLOOP_CLI_BINARY", must_be_file=True)
+        host = self._required_env("ARKLOOP_HOST")
+        token = self._required_env("ARKLOOP_TOKEN")
+        model = self._resolve_model()
+        persona = self._required_env("ARKLOOP_PERSONA")
+        host = self._normalize_host_for_local_cli(host)
+
+        workspace_dir = self.logs_dir / "workspace"
+        if workspace_dir.exists():
+            shutil.rmtree(workspace_dir)
+        workspace_dir.mkdir(parents=True, exist_ok=True)
+
+        await environment.download_dir("/app", workspace_dir)
+
+        original_instruction_path = self.logs_dir / "instruction.original.txt"
+        original_instruction_path.write_text(instruction, encoding="utf-8")
+
+        rewritten_instruction = self._rewrite_instruction(instruction, workspace_dir)
+        rewritten_instruction_path = self.logs_dir / "instruction.rewritten.txt"
+        rewritten_instruction_path.write_text(rewritten_instruction, encoding="utf-8")
+
+        args = [
+            cli_binary,
+            "run",
+            "--output-format",
+            "json",
+            "--prompt-file",
+            str(rewritten_instruction_path),
+            "--work-dir",
+            str(workspace_dir),
+            "--persona",
+            persona,
+            "--model",
+            model,
+        ]
+
+        env = os.environ.copy()
+        env.update(
+            {
+                "ARKLOOP_HOST": host,
+                "ARKLOOP_TOKEN": token,
+                "ARKLOOP_MODEL": model,
+                "ARKLOOP_PERSONA": persona,
+            }
+        )
+
+        process = await asyncio.create_subprocess_exec(
+            *args,
+            cwd=str(workspace_dir),
+            env=env,
+            stdin=asyncio.subprocess.DEVNULL,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout_bytes, stderr_bytes = await process.communicate()
+        stdout = stdout_bytes.decode("utf-8", errors="replace")
+        stderr = stderr_bytes.decode("utf-8", errors="replace")
+
+        await environment.upload_dir(workspace_dir, "/app")
+
+        (self.logs_dir / "arkloop.stdout.log").write_text(stdout, encoding="utf-8")
+        (self.logs_dir / "arkloop.stderr.log").write_text(stderr, encoding="utf-8")
+        payload = {
+            "return_code": process.returncode,
+            "stdout": stdout,
+            "stderr": stderr,
+            "workspace_dir": str(workspace_dir),
+        }
+        (self.logs_dir / "arkloop.exec.json").write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+
+        metadata: dict[str, object] = {
+            "return_code": process.returncode,
+            "persona": persona,
+            "model": model,
+            "workspace_dir": str(workspace_dir),
+            "stdout_log": str(self.logs_dir / "arkloop.stdout.log"),
+            "stderr_log": str(self.logs_dir / "arkloop.stderr.log"),
+            "instruction_path": str(rewritten_instruction_path),
+        }
+        parsed = self._parse_last_json(stdout)
+        if parsed is not None:
+            metadata["result"] = parsed
+        elif stdout.strip():
+            metadata["stdout_tail"] = stdout.strip().splitlines()[-1]
+        if stderr.strip():
+            metadata["stderr_tail"] = stderr.strip().splitlines()[-1]
+
+        context.metadata = metadata
+
+    def _required_env(self, name: str, must_be_file: bool = False) -> str:
+        value = os.environ.get(name, "").strip()
+        if not value:
+            raise ValueError(f"missing required env var: {name}")
+        if must_be_file and not Path(value).is_file():
+            raise ValueError(f"{name} not found: {value}")
+        return value
+
+    def _resolve_model(self) -> str:
+        if self.model_name:
+            return self.model_name
+        value = os.environ.get("ARKLOOP_MODEL", "").strip()
+        if value:
+            return value
+        raise ValueError("missing required model: pass --model or set ARKLOOP_MODEL")
+
+    def _rewrite_instruction(self, instruction: str, workspace_dir: Path) -> str:
+        workspace = workspace_dir.as_posix()
+        bridge_note = (
+            "Execution note:\n"
+            f"- The original container path `/app` is mirrored locally at `{workspace}`.\n"
+            f"- Read and write files under `{workspace}` for this run.\n"
+            f"- Any files you create there will be synchronized back to container `/app` after the run.\n\n"
+        )
+        return bridge_note + instruction.replace("/app", workspace)
+
+    def _normalize_host_for_local_cli(self, host: str) -> str:
+        if "host.docker.internal" not in host:
+            return host
+        return host.replace("host.docker.internal", "127.0.0.1")
+
+    def _parse_last_json(self, stdout: str) -> dict[str, object] | None:
+        lines = [line.strip() for line in stdout.splitlines() if line.strip()]
+        for line in reversed(lines):
+            try:
+                parsed = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(parsed, dict):
+                return parsed
+        return None
