@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	nethttp "net/http"
 	"strings"
@@ -246,66 +247,6 @@ func (c *qqConnector) HandleEvent(ctx context.Context, traceID string, ch data.C
 		}
 	}
 
-	// --- 通用命令路径: /heartbeat（私聊/群聊均可） ---
-	{
-		cmdText := stripLeadingMention(text)
-		if cmd, ok := telegramCommandBase(cmdText, ""); ok && strings.HasPrefix(cmd, "/heartbeat") {
-			slog.InfoContext(ctx, "qq_heartbeat_command",
-				"chat_type", chatType,
-				"cmd", cmd,
-				"platform_chat_id", platformChatID,
-			)
-			heartbeatIdentity := identity
-			if !isPrivate {
-				// 群聊 heartbeat 挂载在 group identity 上
-				groupIdentity, err := c.channelIdentitiesRepo.WithTx(tx).Upsert(ctx, ch.ChannelType, platformChatID, nil, nil, nil)
-				if err != nil {
-					return err
-				}
-				heartbeatIdentity = groupIdentity
-			}
-			replyText, err := handleTelegramHeartbeatCommand(
-				ctx, tx,
-				ch.ID, ch.AccountID, ch.PersonaID,
-				cfg.DefaultModel,
-				heartbeatIdentity,
-				cmdText,
-				c.channelIdentitiesRepo,
-				c.personasRepo,
-				nil,
-			)
-			if err != nil {
-				return err
-			}
-			// 群聊 heartbeat on 时预创建 thread，确保 scheduler 首次 fire 能找到
-			if !isPrivate && !strings.Contains(replyText, "已关闭") {
-				threadProjectID := derefUUID(persona.ProjectID)
-				if threadProjectID == uuid.Nil {
-					ownerUserID := uuid.Nil
-					if ch.OwnerUserID != nil {
-						ownerUserID = *ch.OwnerUserID
-					}
-					if ownerUserID != uuid.Nil {
-						if pid, err := c.personasRepo.GetOrCreateDefaultProjectIDByOwner(ctx, ch.AccountID, ownerUserID); err == nil {
-							threadProjectID = pid
-						}
-					}
-				}
-				if threadProjectID != uuid.Nil {
-					_, _ = c.resolveQQThreadID(ctx, tx, ch, persona.ID, threadProjectID, identity, false, platformChatID, "")
-				}
-			}
-			if err := tx.Commit(ctx); err != nil {
-				return err
-			}
-			if c.bus != nil {
-				_ = c.bus.Publish(ctx, pgnotify.ChannelHeartbeat, "")
-			}
-			c.sendQQReply(ctx, cfg, chatType, platformChatID, replyText)
-			return nil
-		}
-	}
-
 	// --- 私聊路径 ---
 	if isPrivate {
 		// bind 访问控制（复用 Telegram 的 bootstrap 判断）
@@ -366,6 +307,51 @@ func (c *qqConnector) HandleEvent(ctx context.Context, traceID string, ch data.C
 				}
 				if cancelRunID != uuid.Nil {
 					_, _ = c.pool.Exec(ctx, "SELECT pg_notify($1, $2)", pgnotify.ChannelRunCancel, cancelRunID.String())
+				}
+				c.sendQQReply(ctx, cfg, "group", platformChatID, replyText)
+				return nil
+
+			case strings.HasPrefix(cmd, "/heartbeat"):
+				groupIdentity, err := c.channelIdentitiesRepo.WithTx(tx).Upsert(ctx, ch.ChannelType, platformChatID, nil, nil, nil)
+				if err != nil {
+					return err
+				}
+				replyText, err := handleTelegramHeartbeatCommand(
+					ctx, tx,
+					ch.ID, ch.AccountID, ch.PersonaID,
+					cfg.DefaultModel,
+					groupIdentity,
+					cmdText,
+					c.channelIdentitiesRepo,
+					c.personasRepo,
+					nil,
+				)
+				if err != nil {
+					return err
+				}
+				// heartbeat on 时预创建 thread，确保 scheduler 首次 fire 能找到
+				if !strings.Contains(replyText, "已关闭") {
+					threadProjectID := derefUUID(persona.ProjectID)
+					if threadProjectID == uuid.Nil {
+						ownerUserID := uuid.Nil
+						if ch.OwnerUserID != nil {
+							ownerUserID = *ch.OwnerUserID
+						}
+						if ownerUserID != uuid.Nil {
+							if pid, err := c.personasRepo.GetOrCreateDefaultProjectIDByOwner(ctx, ch.AccountID, ownerUserID); err == nil {
+								threadProjectID = pid
+							}
+						}
+					}
+					if threadProjectID != uuid.Nil {
+						_, _ = c.resolveQQThreadID(ctx, tx, ch, persona.ID, threadProjectID, identity, false, platformChatID, "")
+					}
+				}
+				if err := tx.Commit(ctx); err != nil {
+					return err
+				}
+				if c.bus != nil {
+					_ = c.bus.Publish(ctx, pgnotify.ChannelHeartbeat, "")
 				}
 				c.sendQQReply(ctx, cfg, "group", platformChatID, replyText)
 				return nil
@@ -1147,8 +1133,24 @@ func qqOneBotCallbackHandler(
 	return func(w nethttp.ResponseWriter, r *nethttp.Request) {
 		traceID := observability.TraceIDFromContext(r.Context())
 
+		// 读取 body（鉴权和解析都需要原始 bytes）
+		bodyBytes, err := io.ReadAll(r.Body)
+		if err != nil {
+			httpkit.WriteError(w, nethttp.StatusBadRequest, "validation.error", "read body failed", traceID, nil)
+			return
+		}
+
+		// NapCat HTTP Client 回调鉴权（OneBot11 HMAC-SHA1 签名）
+		if mgr := getNapCatManagerIfExists(); mgr != nil {
+			xSig := strings.TrimSpace(r.Header.Get("X-Signature"))
+			if !mgr.VerifyCallbackSignature(bodyBytes, xSig) {
+				httpkit.WriteError(w, nethttp.StatusUnauthorized, "auth.error", "invalid callback signature", traceID, nil)
+				return
+			}
+		}
+
 		var event onebotclient.Event
-		if err := json.NewDecoder(r.Body).Decode(&event); err != nil {
+		if err := json.Unmarshal(bodyBytes, &event); err != nil {
 			httpkit.WriteError(w, nethttp.StatusBadRequest, "validation.error", "invalid onebot event", traceID, nil)
 			return
 		}

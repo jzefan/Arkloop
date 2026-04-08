@@ -456,6 +456,7 @@ export const zhCN: LocaleStrings = {
   otpSendingCountdown: (s: number) => `${s}s 后可重发`,
   otpVerifyBtn: '验证',
   requestFailed: '请求失败',
+  sessionExpired: '登录已过期，请重新登录',
   saved: '已保存',
   loading: '加载中',
   accessDenied: '无权限',

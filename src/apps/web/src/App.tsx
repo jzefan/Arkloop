@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Routes, Route, Navigate } from 'react-router-dom'
-import { LoadingPage } from '@arkloop/shared'
+import { LoadingPage, useToast } from '@arkloop/shared'
 import { AppLayout } from './layouts/AppLayout'
 import { AuthPage } from './components/AuthPage'
 import { WelcomePage } from './components/WelcomePage'
@@ -18,7 +18,7 @@ import {
   writeAccessTokenToStorage,
   clearAccessTokenFromStorage,
 } from './storage'
-import { setUnauthenticatedHandler, setAccessTokenHandler, restoreAccessSession } from './api'
+import { setUnauthenticatedHandler, setAccessTokenHandler, setSessionExpiredHandler, restoreAccessSession } from './api'
 import { setClientApp } from '@arkloop/shared/api'
 import {
   isLocalMode,
@@ -33,6 +33,7 @@ const sessionRestoreDelayMs = 1000
 
 function App() {
   const { t } = useLocale()
+  const { addToast } = useToast()
   const [accessToken, setAccessToken] = useState<string | null>(null)
   const [authChecked, setAuthChecked] = useState(false)
   const [onboardingDone, setOnboardingDone] = useState<boolean | null>(null)
@@ -66,6 +67,9 @@ function App() {
     setAccessTokenHandler((token: string) => {
       writeAccessTokenToStorage(token)
       setAccessToken(token)
+    })
+    setSessionExpiredHandler(() => {
+      addToast(t.sessionExpired, 'warn')
     })
 
     // Local 模式: Go 后端使用固定 token，跳过刷新流程

@@ -243,6 +243,7 @@ export const en: LocaleStrings = {
   noAccount: "No account? Register",
   hasAccount: "Have an account? Log in",
   requestFailed: "Request failed",
+  sessionExpired: "Session expired, please log in again",
   runInterrupted: "Response was interrupted",
   sseReconnectNotice: "Connection lost. Reconnecting…",
   sseReconnectFailed: "Connection lost. Retry the run.",

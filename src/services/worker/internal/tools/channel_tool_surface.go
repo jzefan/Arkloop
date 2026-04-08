@@ -9,4 +9,5 @@ type ChannelToolSurface struct {
 	PlatformChatID   string
 	InboundMessageID string
 	MessageThreadID  *string
+	ConversationType string // "private" / "group" / "supergroup" / "channel"
 }
