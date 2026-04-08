@@ -19,14 +19,28 @@ var (
 	ExecCommandSpec = tools.AgentToolSpec{
 		Name:        "exec_command",
 		Version:     "1",
-		Description: "run a command in a persistent shell session inside the isolated sandbox",
+		Description: "run a command in the isolated sandbox, either buffered or as an explicit interactive process",
 		RiskLevel:   tools.RiskLevelHigh,
 		SideEffects: true,
 	}
-	WriteStdinSpec = tools.AgentToolSpec{
-		Name:        "write_stdin",
+	ContinueProcessSpec = tools.AgentToolSpec{
+		Name:        "continue_process",
 		Version:     "1",
-		Description: "send stdin to, or poll output from, a running shell session inside the isolated sandbox",
+		Description: "continue a running sandbox process by reading output and optionally sending stdin",
+		RiskLevel:   tools.RiskLevelHigh,
+		SideEffects: true,
+	}
+	TerminateProcessSpec = tools.AgentToolSpec{
+		Name:        "terminate_process",
+		Version:     "1",
+		Description: "terminate a running sandbox process",
+		RiskLevel:   tools.RiskLevelHigh,
+		SideEffects: true,
+	}
+	ResizeProcessSpec = tools.AgentToolSpec{
+		Name:        "resize_process",
+		Version:     "1",
+		Description: "resize a running PTY sandbox process",
 		RiskLevel:   tools.RiskLevelHigh,
 		SideEffects: true,
 	}
@@ -59,23 +73,10 @@ var ExecCommandLlmSpec = llm.ToolSpec{
 	JSONSchema: map[string]any{
 		"type": "object",
 		"properties": map[string]any{
-			"session_mode": map[string]any{
+			"mode": map[string]any{
 				"type":        "string",
-				"enum":        []string{"auto", "new", "resume", "fork"},
-				"description": "how to resolve the target shell session",
-			},
-			"session_ref": map[string]any{
-				"type":        "string",
-				"description": "stable session reference used for resume or explicit attach",
-			},
-			"from_session_ref": map[string]any{
-				"type":        "string",
-				"description": "source session reference when session_mode is fork",
-			},
-			"share_scope": map[string]any{
-				"type":        "string",
-				"enum":        []string{"run", "thread", "workspace", "org"},
-				"description": "share scope used only when a new session must be created",
+				"enum":        []string{"buffered", "follow", "stdin", "pty"},
+				"description": "buffered runs one command to completion; follow keeps reading output; stdin allows later input without a PTY; pty opens a real terminal session",
 			},
 			"command": map[string]any{
 				"type":        "string",
@@ -89,22 +90,22 @@ var ExecCommandLlmSpec = llm.ToolSpec{
 				"type":        "integer",
 				"minimum":     1000,
 				"maximum":     1800000,
-				"description": "command timeout",
+				"description": "command timeout; required for follow, stdin, and pty modes",
 			},
-			"yield_time_ms": map[string]any{
-				"type":        "integer",
-				"minimum":     1,
-				"maximum":     30000,
-				"description": "time to wait for incremental output before returning",
-			},
-			"background": map[string]any{
-				"type":        "boolean",
-				"description": "start the command and return immediately without waiting for output; use write_stdin to poll",
+			"size": map[string]any{
+				"type":        "object",
+				"description": "initial terminal size; only valid for mode=pty",
+				"properties": map[string]any{
+					"rows": map[string]any{"type": "integer", "minimum": 1},
+					"cols": map[string]any{"type": "integer", "minimum": 1},
+				},
+				"required":             []string{"rows", "cols"},
+				"additionalProperties": false,
 			},
 			"env": map[string]any{
 				"type":                 "object",
-				"description":         "environment variable overrides for the command",
-				"additionalProperties": map[string]any{"type": "string"},
+				"description":         "environment variable overrides for the command; values may be strings or null to unset",
+				"additionalProperties": map[string]any{"type": []string{"string", "null"}},
 			},
 		},
 		"required":             []string{"command"},
@@ -112,28 +113,63 @@ var ExecCommandLlmSpec = llm.ToolSpec{
 	},
 }
 
-var WriteStdinLlmSpec = llm.ToolSpec{
-	Name:        "write_stdin",
-	Description: llmStringPtr(sharedtoolmeta.Must("write_stdin").LLMDescription),
+var ContinueProcessLlmSpec = llm.ToolSpec{
+	Name:        "continue_process",
+	Description: llmStringPtr(sharedtoolmeta.Must("continue_process").LLMDescription),
 	JSONSchema: map[string]any{
 		"type": "object",
 		"properties": map[string]any{
-			"session_ref": map[string]any{
+			"process_ref": map[string]any{
 				"type":        "string",
-				"description": "stable session reference returned by exec_command",
+				"description": "process reference returned by exec_command in follow, stdin, or pty mode",
 			},
-			"chars": map[string]any{
+			"cursor": map[string]any{
 				"type":        "string",
-				"description": "stdin payload; omit or set empty string to poll",
+				"description": "read output strictly after this cursor; pass the previous next_cursor value",
 			},
-			"yield_time_ms": map[string]any{
+			"wait_ms": map[string]any{
 				"type":        "integer",
 				"minimum":     1,
 				"maximum":     30000,
 				"description": "time to wait for new output before returning",
 			},
+			"stdin_text": map[string]any{"type": "string"},
+			"input_seq": map[string]any{
+				"type":        "integer",
+				"minimum":     1,
+				"description": "required when stdin_text is provided; use a stable positive integer to deduplicate retries",
+			},
+			"close_stdin": map[string]any{"type": "boolean"},
 		},
-		"required":             []string{"session_ref"},
+		"required":             []string{"process_ref", "cursor"},
+		"additionalProperties": false,
+	},
+}
+
+var TerminateProcessLlmSpec = llm.ToolSpec{
+	Name:        "terminate_process",
+	Description: llmStringPtr(sharedtoolmeta.Must("terminate_process").LLMDescription),
+	JSONSchema: map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"process_ref": map[string]any{"type": "string"},
+		},
+		"required":             []string{"process_ref"},
+		"additionalProperties": false,
+	},
+}
+
+var ResizeProcessLlmSpec = llm.ToolSpec{
+	Name:        "resize_process",
+	Description: llmStringPtr(sharedtoolmeta.Must("resize_process").LLMDescription),
+	JSONSchema: map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"process_ref": map[string]any{"type": "string"},
+			"rows":        map[string]any{"type": "integer", "minimum": 1},
+			"cols":        map[string]any{"type": "integer", "minimum": 1},
+		},
+		"required":             []string{"process_ref", "rows", "cols"},
 		"additionalProperties": false,
 	},
 }
@@ -161,11 +197,11 @@ var BrowserLlmSpec = llm.ToolSpec{
 }
 
 func AgentSpecs() []tools.AgentToolSpec {
-	return []tools.AgentToolSpec{PythonExecuteSpec, ExecCommandSpec, WriteStdinSpec}
+	return []tools.AgentToolSpec{PythonExecuteSpec, ExecCommandSpec, ContinueProcessSpec, TerminateProcessSpec, ResizeProcessSpec}
 }
 
 func LlmSpecs() []llm.ToolSpec {
-	return []llm.ToolSpec{PythonExecuteLlmSpec, ExecCommandLlmSpec, WriteStdinLlmSpec}
+	return []llm.ToolSpec{PythonExecuteLlmSpec, ExecCommandLlmSpec, ContinueProcessLlmSpec, TerminateProcessLlmSpec, ResizeProcessLlmSpec}
 }
 
 func llmStringPtr(value string) *string {

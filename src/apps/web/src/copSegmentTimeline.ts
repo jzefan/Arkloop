@@ -22,7 +22,7 @@ export type GenericToolCallRef = {
   seq?: number
 }
 
-const CODE_EXECUTION_TOOL_NAMES = new Set(['python_execute', 'exec_command', 'write_stdin'])
+const CODE_EXECUTION_TOOL_NAMES = new Set(['python_execute', 'exec_command', 'continue_process', 'terminate_process'])
 const SUB_AGENT_TOOL_NAMES = new Set([
   'spawn_agent', 'acp_agent', 'spawn_acp',
   'send_input', 'wait_agent', 'resume_agent', 'close_agent', 'interrupt_agent',

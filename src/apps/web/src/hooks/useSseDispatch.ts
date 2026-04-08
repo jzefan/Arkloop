@@ -473,7 +473,7 @@ export function useSseDispatch(params: {
           }
         }
 
-        if (obj.tool_name === 'python_execute' || obj.tool_name === 'exec_command' || obj.tool_name === 'write_stdin' || obj.tool_name === 'document_write' || obj.tool_name === 'create_artifact' || obj.tool_name === 'browser' || isWebFetchToolName(resultToolName)) {
+        if (obj.tool_name === 'python_execute' || obj.tool_name === 'exec_command' || obj.tool_name === 'continue_process' || obj.tool_name === 'terminate_process' || obj.tool_name === 'document_write' || obj.tool_name === 'create_artifact' || obj.tool_name === 'browser' || isWebFetchToolName(resultToolName)) {
           const result = obj.result as { artifacts?: unknown[] } | undefined
           if (Array.isArray(result?.artifacts)) {
             const newArtifacts: ArtifactRef[] = result.artifacts

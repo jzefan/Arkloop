@@ -324,7 +324,10 @@ export type CodeExecutionRef = {
   code?: string
   output?: string
   exitCode?: number
-  sessionId?: string
+  processRef?: string
+  cursor?: string
+  nextCursor?: string
+  processStatus?: 'running' | 'exited' | 'terminated' | 'timed_out' | 'cancelled'
   status: 'running' | 'success' | 'failed' | 'completed'
   errorClass?: string
   errorMessage?: string
@@ -344,7 +347,10 @@ function isCodeExecutionRef(value: unknown): value is CodeExecutionRef {
   if (item.code != null && typeof item.code !== 'string') return false
   if (item.output != null && typeof item.output !== 'string') return false
   if (item.exitCode != null && typeof item.exitCode !== 'number') return false
-  if (item.sessionId != null && typeof item.sessionId !== 'string') return false
+  if (item.processRef != null && typeof item.processRef !== 'string') return false
+  if (item.cursor != null && typeof item.cursor !== 'string') return false
+  if (item.nextCursor != null && typeof item.nextCursor !== 'string') return false
+  if (item.processStatus != null && item.processStatus !== 'running' && item.processStatus !== 'exited' && item.processStatus !== 'terminated' && item.processStatus !== 'timed_out' && item.processStatus !== 'cancelled') return false
   if (item.errorClass != null && typeof item.errorClass !== 'string') return false
   if (item.errorMessage != null && typeof item.errorMessage !== 'string') return false
   return true

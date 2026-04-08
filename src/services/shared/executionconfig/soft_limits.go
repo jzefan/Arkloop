@@ -2,7 +2,7 @@ package executionconfig
 
 type ToolSoftLimit struct {
 	MaxContinuations *int `json:"max_continuations,omitempty"`
-	MaxYieldTimeMs   *int `json:"max_yield_time_ms,omitempty"`
+	MaxWaitTimeMs    *int `json:"max_wait_time_ms,omitempty"`
 	MaxOutputBytes   *int `json:"max_output_bytes,omitempty"`
 }
 
@@ -10,12 +10,12 @@ type PerToolSoftLimits map[string]ToolSoftLimit
 
 const (
 	DefaultExecCommandMaxOutputBytes  = 16 * 1024
-	DefaultWriteStdinMaxContinuations = 16
-	DefaultWriteStdinMaxYieldTimeMs   = 5_000
-	DefaultWriteStdinMaxOutputBytes   = 16 * 1024
+	DefaultContinueProcessMaxContinuations = 16
+	DefaultContinueProcessMaxWaitTimeMs    = 5_000
+	DefaultContinueProcessMaxOutputBytes   = 16 * 1024
 	DefaultGenericMaxOutputBytes      = 32 * 1024
 	HardMaxToolSoftLimitContinuations = 256
-	HardMaxToolSoftLimitYieldTimeMs   = 30_000
+	HardMaxToolSoftLimitWaitTimeMs    = 30_000
 	HardMaxToolSoftLimitOutputBytes   = 65_536
 )
 
@@ -24,10 +24,10 @@ func DefaultPerToolSoftLimits() PerToolSoftLimits {
 		"exec_command": {
 			MaxOutputBytes: intPtr(DefaultExecCommandMaxOutputBytes),
 		},
-		"write_stdin": {
-			MaxContinuations: intPtr(DefaultWriteStdinMaxContinuations),
-			MaxYieldTimeMs:   intPtr(DefaultWriteStdinMaxYieldTimeMs),
-			MaxOutputBytes:   intPtr(DefaultWriteStdinMaxOutputBytes),
+		"continue_process": {
+			MaxContinuations: intPtr(DefaultContinueProcessMaxContinuations),
+			MaxWaitTimeMs:    intPtr(DefaultContinueProcessMaxWaitTimeMs),
+			MaxOutputBytes:   intPtr(DefaultContinueProcessMaxOutputBytes),
 		},
 	}
 }
@@ -40,7 +40,7 @@ func CopyPerToolSoftLimits(src PerToolSoftLimits) PerToolSoftLimits {
 	for toolName, limit := range src {
 		out[toolName] = ToolSoftLimit{
 			MaxContinuations: copyOptionalInt(limit.MaxContinuations),
-			MaxYieldTimeMs:   copyOptionalInt(limit.MaxYieldTimeMs),
+			MaxWaitTimeMs:    copyOptionalInt(limit.MaxWaitTimeMs),
 			MaxOutputBytes:   copyOptionalInt(limit.MaxOutputBytes),
 		}
 	}
@@ -67,8 +67,8 @@ func MergePerToolSoftLimits(base, override PerToolSoftLimits) PerToolSoftLimits 
 		if limit.MaxContinuations != nil {
 			merged.MaxContinuations = copyOptionalInt(limit.MaxContinuations)
 		}
-		if limit.MaxYieldTimeMs != nil {
-			merged.MaxYieldTimeMs = copyOptionalInt(limit.MaxYieldTimeMs)
+		if limit.MaxWaitTimeMs != nil {
+			merged.MaxWaitTimeMs = copyOptionalInt(limit.MaxWaitTimeMs)
 		}
 		if limit.MaxOutputBytes != nil {
 			merged.MaxOutputBytes = copyOptionalInt(limit.MaxOutputBytes)

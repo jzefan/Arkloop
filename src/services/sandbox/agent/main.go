@@ -30,6 +30,7 @@ import (
 
 	"arkloop/services/sandbox/internal/environment"
 	environmentcontract "arkloop/services/sandbox/internal/environment/contract"
+	processapi "arkloop/services/sandbox/internal/process"
 	shellapi "arkloop/services/sandbox/internal/shell"
 
 	"github.com/mdlayher/vsock"
@@ -111,20 +112,24 @@ type ExecResult struct {
 
 // AgentRequest 是 v2 协议的请求格式，通过 action 字段区分操作类型。
 type AgentRequest struct {
-	Action      string                            `json:"action"`
-	ExecJob     *ExecJob                          `json:"exec_job,omitempty"`
-	ExecCommand *shellapi.AgentExecCommandRequest `json:"exec_command,omitempty"`
-	WriteStdin  *shellapi.AgentWriteStdinRequest  `json:"write_stdin,omitempty"`
-	State       *shellapi.AgentStateRequest       `json:"state,omitempty"`
-	Environment *EnvironmentRequest               `json:"environment,omitempty"`
-	Network     *GuestNetworkRequest              `json:"network,omitempty"`
-	SkillOverlay *SkillOverlayRequest             `json:"skill_overlay,omitempty"`
-	ACPStart     *ACPStartRequest                `json:"acp_start,omitempty"`
-	ACPWrite     *ACPWriteRequest                `json:"acp_write,omitempty"`
-	ACPRead      *ACPReadRequest                 `json:"acp_read,omitempty"`
-	ACPStop      *ACPStopRequest                 `json:"acp_stop,omitempty"`
-	ACPWait      *ACPWaitRequest                 `json:"acp_wait,omitempty"`
-	ACPStatus    *ACPStatusRequest               `json:"acp_status,omitempty"`
+	Action           string                             `json:"action"`
+	ExecJob          *ExecJob                           `json:"exec_job,omitempty"`
+	ExecCommand      *shellapi.AgentExecCommandRequest  `json:"exec_command,omitempty"`
+	WriteStdin       *shellapi.AgentWriteStdinRequest   `json:"write_stdin,omitempty"`
+	ProcessExec      *processapi.AgentExecRequest       `json:"process_exec,omitempty"`
+	ProcessContinue  *processapi.ContinueProcessRequest `json:"process_continue,omitempty"`
+	ProcessTerminate *processapi.AgentRefRequest        `json:"process_terminate,omitempty"`
+	ProcessResize    *processapi.AgentResizeRequest     `json:"process_resize,omitempty"`
+	State            *shellapi.AgentStateRequest        `json:"state,omitempty"`
+	Environment      *EnvironmentRequest                `json:"environment,omitempty"`
+	Network          *GuestNetworkRequest               `json:"network,omitempty"`
+	SkillOverlay     *SkillOverlayRequest               `json:"skill_overlay,omitempty"`
+	ACPStart         *ACPStartRequest                   `json:"acp_start,omitempty"`
+	ACPWrite         *ACPWriteRequest                   `json:"acp_write,omitempty"`
+	ACPRead          *ACPReadRequest                    `json:"acp_read,omitempty"`
+	ACPStop          *ACPStopRequest                    `json:"acp_stop,omitempty"`
+	ACPWait          *ACPWaitRequest                    `json:"acp_wait,omitempty"`
+	ACPStatus        *ACPStatusRequest                  `json:"acp_status,omitempty"`
 }
 
 // AgentResponse 是 v2 协议的统一响应。
@@ -135,6 +140,7 @@ type AgentResponse struct {
 	Capabilities *AgentCapabilities             `json:"capabilities,omitempty"`
 	Environment  *EnvironmentResponse           `json:"environment,omitempty"`
 	Session      *shellapi.AgentSessionResponse `json:"session,omitempty"`
+	Process      *processapi.Response           `json:"process,omitempty"`
 	Debug        *shellapi.AgentDebugResponse   `json:"debug,omitempty"`
 	State        *shellapi.AgentStateResponse   `json:"state,omitempty"`
 	ExecOutput   *ExecOutputResponse            `json:"exec_output,omitempty"`
@@ -210,6 +216,7 @@ type FetchArtifactsResult struct {
 }
 
 var shellController = NewShellController()
+var processController = NewProcessController()
 var acpManager = NewACPManager()
 
 func main() {
@@ -298,6 +305,38 @@ func handleV2(conn net.Conn, req AgentRequest) {
 	case "write_stdin":
 		result, code, errMsg := shellController.WriteStdin(derefWriteStdin(req.WriteStdin))
 		writeJSON(conn, AgentResponse{Action: req.Action, Session: result, Code: code, Error: errMsg})
+
+	case "process_exec":
+		if req.ProcessExec == nil {
+			writeJSON(conn, AgentResponse{Action: req.Action, Error: "process_exec is required"})
+			return
+		}
+		result, code, errMsg := processController.Exec(derefProcessExec(req.ProcessExec))
+		writeJSON(conn, AgentResponse{Action: req.Action, Process: result, Code: code, Error: errMsg})
+
+	case "process_continue":
+		if req.ProcessContinue == nil {
+			writeJSON(conn, AgentResponse{Action: req.Action, Error: "process_continue is required"})
+			return
+		}
+		result, code, errMsg := processController.Continue(derefProcessContinue(req.ProcessContinue))
+		writeJSON(conn, AgentResponse{Action: req.Action, Process: result, Code: code, Error: errMsg})
+
+	case "process_terminate":
+		if req.ProcessTerminate == nil {
+			writeJSON(conn, AgentResponse{Action: req.Action, Error: "process_terminate is required"})
+			return
+		}
+		result, code, errMsg := processController.Terminate(derefProcessTerminate(req.ProcessTerminate))
+		writeJSON(conn, AgentResponse{Action: req.Action, Process: result, Code: code, Error: errMsg})
+
+	case "process_resize":
+		if req.ProcessResize == nil {
+			writeJSON(conn, AgentResponse{Action: req.Action, Error: "process_resize is required"})
+			return
+		}
+		result, code, errMsg := processController.Resize(derefProcessResize(req.ProcessResize))
+		writeJSON(conn, AgentResponse{Action: req.Action, Process: result, Code: code, Error: errMsg})
 
 	case "shell_debug_snapshot":
 		result, code, errMsg := shellController.DebugSnapshot()
@@ -469,6 +508,34 @@ func derefExecCommand(req *shellapi.AgentExecCommandRequest) shellapi.AgentExecC
 func derefWriteStdin(req *shellapi.AgentWriteStdinRequest) shellapi.AgentWriteStdinRequest {
 	if req == nil {
 		return shellapi.AgentWriteStdinRequest{}
+	}
+	return *req
+}
+
+func derefProcessExec(req *processapi.AgentExecRequest) processapi.AgentExecRequest {
+	if req == nil {
+		return processapi.AgentExecRequest{}
+	}
+	return *req
+}
+
+func derefProcessContinue(req *processapi.ContinueProcessRequest) processapi.ContinueProcessRequest {
+	if req == nil {
+		return processapi.ContinueProcessRequest{}
+	}
+	return *req
+}
+
+func derefProcessTerminate(req *processapi.AgentRefRequest) processapi.AgentRefRequest {
+	if req == nil {
+		return processapi.AgentRefRequest{}
+	}
+	return *req
+}
+
+func derefProcessResize(req *processapi.AgentResizeRequest) processapi.AgentResizeRequest {
+	if req == nil {
+		return processapi.AgentResizeRequest{}
 	}
 	return *req
 }

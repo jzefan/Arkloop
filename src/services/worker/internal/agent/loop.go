@@ -1016,7 +1016,7 @@ func updateContinuationTracking(state *continuationBudgetState, call llm.ToolCal
 		state.SessionCounts[sessionID] = 0
 		return
 	}
-	if call.ToolName == "write_stdin" {
+	if call.ToolName == "continue_process" {
 		state.SessionCounts[sessionID] = state.SessionCounts[sessionID] + 1
 	}
 }
@@ -1073,30 +1073,22 @@ func recordRuntimeUserMessages(rc *pipeline.RunContext, messages []llm.Message) 
 }
 
 func trackedSessionID(call llm.ToolCall, result tools.ExecutionResult) string {
-	if call.ToolName == "write_stdin" {
+	if call.ToolName == "continue_process" {
 		return readContinuationSessionRef(call.ArgumentsJSON)
 	}
 	if result.ResultJSON == nil {
 		return ""
 	}
-	sessionID, _ := result.ResultJSON["session_ref"].(string)
-	if strings.TrimSpace(sessionID) != "" {
-		return strings.TrimSpace(sessionID)
-	}
-	legacySessionID, _ := result.ResultJSON["session_id"].(string)
-	return strings.TrimSpace(legacySessionID)
+	processRef, _ := result.ResultJSON["process_ref"].(string)
+	return strings.TrimSpace(processRef)
 }
 
 func readContinuationSessionRef(args map[string]any) string {
 	if args == nil {
 		return ""
 	}
-	value, _ := args["session_ref"].(string)
-	if strings.TrimSpace(value) != "" {
-		return strings.TrimSpace(value)
-	}
-	legacyValue, _ := args["session_id"].(string)
-	return strings.TrimSpace(legacyValue)
+	processRef, _ := args["process_ref"].(string)
+	return strings.TrimSpace(processRef)
 }
 
 func resultRunning(result tools.ExecutionResult) bool {
@@ -1110,11 +1102,11 @@ func resultRunning(result tools.ExecutionResult) bool {
 func continuationErrorResult(errorClass string, message string, sessionID string, limit int) tools.ExecutionResult {
 	resultJSON := map[string]any{"running": false}
 	if sessionID != "" {
-		resultJSON["session_ref"] = sessionID
+		resultJSON["process_ref"] = sessionID
 	}
 	details := map[string]any{}
 	if sessionID != "" {
-		details["session_ref"] = sessionID
+		details["process_ref"] = sessionID
 	}
 	if limit > 0 {
 		details["limit"] = limit
@@ -1130,7 +1122,7 @@ func continuationErrorResult(errorClass string, message string, sessionID string
 }
 
 func isContinuationToolName(toolName string) bool {
-	return toolName == "write_stdin"
+	return toolName == "continue_process"
 }
 
 func isPureContinuationTurn(toolCalls []llm.ToolCall) bool {

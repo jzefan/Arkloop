@@ -15,6 +15,7 @@ import (
 	dockerpool "arkloop/services/sandbox/internal/docker"
 	localpool "arkloop/services/sandbox/internal/local"
 	"arkloop/services/sandbox/internal/environment"
+	processsvc "arkloop/services/sandbox/internal/process"
 	"arkloop/services/sandbox/internal/firecracker"
 	sandboxhttp "arkloop/services/sandbox/internal/http"
 	"arkloop/services/sandbox/internal/logging"
@@ -148,9 +149,10 @@ func run() error {
 	shellMgr := shell.NewManager(mgr, artifactStore, stateStore, restoreRegistry, envMgr, skillOverlay, logger, shell.Config{
 		RestoreTTL: time.Duration(cfg.RestoreTTLDays) * 24 * time.Hour,
 	})
+	processMgr := processsvc.NewManager(mgr, artifactStore, envMgr, skillOverlay, logger)
 	acpMgr := acp.NewManager(mgr, logger)
 
-	handler := sandboxhttp.NewHandler(mgr, envMgr, skillOverlay, shellMgr, acpMgr, artifactStore, logger, cfg.AuthToken)
+	handler := sandboxhttp.NewHandler(mgr, envMgr, skillOverlay, shellMgr, processMgr, acpMgr, artifactStore, logger, cfg.AuthToken)
 
 	if cfg.AuthToken == "" {
 		logger.Warn("ARKLOOP_SANDBOX_AUTH_TOKEN not set, auth disabled", logging.LogFields{}, nil)

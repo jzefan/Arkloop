@@ -183,9 +183,13 @@ func (e *ToolExecutor) Execute(
 	case "python_execute":
 		return e.executePython(ctx, args, execCtx, started)
 	case "exec_command":
-		return e.executeExecCommand(ctx, args, execCtx, toolCallID, started)
-	case "write_stdin":
-		return e.executeWriteStdin(ctx, args, execCtx, toolCallID, started)
+		return e.executeProcessCommand(ctx, args, execCtx, started)
+	case "continue_process":
+		return e.executeContinueProcess(ctx, args, execCtx, started)
+	case "terminate_process":
+		return e.executeTerminateProcess(ctx, args, execCtx, started)
+	case "resize_process":
+		return e.executeResizeProcess(ctx, args, execCtx, started)
 	case "browser":
 		return e.executeBrowser(ctx, args, execCtx, toolCallID, started)
 	default:
@@ -839,11 +843,11 @@ func (e *ToolExecutor) executeExecSessionRequest(
 }
 
 func clampYieldTimeMs(value int, limit tools.ToolSoftLimit) int {
-	if value <= 0 || limit.MaxYieldTimeMs == nil {
+	if value <= 0 || limit.MaxWaitTimeMs == nil {
 		return value
 	}
-	if value > *limit.MaxYieldTimeMs {
-		return *limit.MaxYieldTimeMs
+	if value > *limit.MaxWaitTimeMs {
+		return *limit.MaxWaitTimeMs
 	}
 	return value
 }
@@ -1354,7 +1358,8 @@ func mapHTTPError(statusCode int, body []byte, started time.Time) tools.Executio
 	if statusCode == http.StatusServiceUnavailable || statusCode == http.StatusBadGateway {
 		errorClass = errorSandboxUnavailable
 	}
-	if strings.TrimSpace(parsed.Code) == "shell.max_sessions_exceeded" {
+	switch strings.TrimSpace(parsed.Code) {
+	case "shell.max_sessions_exceeded", "process.max_sessions_exceeded":
 		errorClass = errorMaxSessionsExceeded
 	}
 

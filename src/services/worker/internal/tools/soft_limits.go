@@ -7,14 +7,14 @@ type ToolSoftLimit = sharedexec.ToolSoftLimit
 type PerToolSoftLimits = sharedexec.PerToolSoftLimits
 
 const (
-	DefaultExecCommandMaxOutputBytes  = sharedexec.DefaultExecCommandMaxOutputBytes
-	DefaultWriteStdinMaxContinuations = sharedexec.DefaultWriteStdinMaxContinuations
-	DefaultWriteStdinMaxYieldTimeMs   = sharedexec.DefaultWriteStdinMaxYieldTimeMs
-	DefaultWriteStdinMaxOutputBytes   = sharedexec.DefaultWriteStdinMaxOutputBytes
-	DefaultGenericMaxOutputBytes      = sharedexec.DefaultGenericMaxOutputBytes
-	HardMaxToolSoftLimitContinuations = sharedexec.HardMaxToolSoftLimitContinuations
-	HardMaxToolSoftLimitYieldTimeMs   = sharedexec.HardMaxToolSoftLimitYieldTimeMs
-	HardMaxToolSoftLimitOutputBytes   = sharedexec.HardMaxToolSoftLimitOutputBytes
+	DefaultExecCommandMaxOutputBytes      = sharedexec.DefaultExecCommandMaxOutputBytes
+	DefaultContinueProcessMaxContinuations = sharedexec.DefaultContinueProcessMaxContinuations
+	DefaultContinueProcessMaxWaitTimeMs    = sharedexec.DefaultContinueProcessMaxWaitTimeMs
+	DefaultContinueProcessMaxOutputBytes   = sharedexec.DefaultContinueProcessMaxOutputBytes
+	DefaultGenericMaxOutputBytes           = sharedexec.DefaultGenericMaxOutputBytes
+	HardMaxToolSoftLimitContinuations      = sharedexec.HardMaxToolSoftLimitContinuations
+	HardMaxToolSoftLimitWaitTimeMs         = sharedexec.HardMaxToolSoftLimitWaitTimeMs
+	HardMaxToolSoftLimitOutputBytes        = sharedexec.HardMaxToolSoftLimitOutputBytes
 
 	// CompressTargetBytes is the maximum ResultJSON size (in bytes) we want to
 	// send to the LLM. Kept separate from MaxOutputBytes (raw truncation limit)

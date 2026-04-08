@@ -102,6 +102,7 @@ func TestResolveBuiltinUsesEnvAndProviders(t *testing.T) {
 		"ask_user",
 		"browser",
 		"close_agent",
+		"continue_process",
 		"conversation_search",
 		"create_artifact",
 		"document_write",
@@ -117,18 +118,19 @@ func TestResolveBuiltinUsesEnvAndProviders(t *testing.T) {
 		"memory_write",
 		"python_execute",
 		"read",
+		"resize_process",
 		"resume_agent",
 		"send_input",
 		"show_widget",
 		"spawn_agent",
 		"summarize_thread",
+		"terminate_process",
 		"timeline_title",
 		"visualize_read_me",
 		"wait_agent",
 		"web_fetch",
 		"web_search",
 		"write_file",
-		"write_stdin",
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("unexpected tool names: got %v want %v", got, want)

@@ -62,15 +62,22 @@ type Manager struct {
 	creating sync.Map               // session_id -> chan *createResult
 	pending  int
 
+	beforeDeleteHooks []BeforeDeleteFunc
+
 	totalReclaimed atomic.Int64
 }
 
 // NewManager 创建 Session 管理器。
 func NewManager(cfg ManagerConfig) *Manager {
+	hooks := make([]BeforeDeleteFunc, 0, 1)
+	if cfg.BeforeDelete != nil {
+		hooks = append(hooks, cfg.BeforeDelete)
+	}
 	return &Manager{
-		cfg:      cfg,
-		sessions: make(map[string]*Session),
-		procs:    make(map[string]*os.Process),
+		cfg:               cfg,
+		sessions:          make(map[string]*Session),
+		procs:             make(map[string]*os.Process),
+		beforeDeleteHooks: hooks,
 	}
 }
 
@@ -78,6 +85,19 @@ func (m *Manager) SetBeforeDelete(fn BeforeDeleteFunc) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.cfg.BeforeDelete = fn
+	m.beforeDeleteHooks = m.beforeDeleteHooks[:0]
+	if fn != nil {
+		m.beforeDeleteHooks = append(m.beforeDeleteHooks, fn)
+	}
+}
+
+func (m *Manager) AddBeforeDelete(fn BeforeDeleteFunc) {
+	if fn == nil {
+		return
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.beforeDeleteHooks = append(m.beforeDeleteHooks, fn)
 }
 
 type createResult struct {
@@ -193,13 +213,18 @@ func (m *Manager) DeleteWithOptions(ctx context.Context, sessionID, accountID st
 	if !ok {
 		return fmt.Errorf("session not found: %s", sessionID)
 	}
-	if !opts.SkipBeforeDelete && m.cfg.BeforeDelete != nil {
-		if err := m.cfg.BeforeDelete(ctx, s, opts.Reason); err != nil && !opts.IgnoreHookError {
-			m.mu.Lock()
-			m.sessions[sessionID] = s
-			m.procs[sessionID] = proc
-			m.mu.Unlock()
-			return err
+	if !opts.SkipBeforeDelete {
+		for _, hook := range m.beforeDeleteHooks {
+			if hook == nil {
+				continue
+			}
+			if err := hook(ctx, s, opts.Reason); err != nil && !opts.IgnoreHookError {
+				m.mu.Lock()
+				m.sessions[sessionID] = s
+				m.procs[sessionID] = proc
+				m.mu.Unlock()
+				return err
+			}
 		}
 	}
 
