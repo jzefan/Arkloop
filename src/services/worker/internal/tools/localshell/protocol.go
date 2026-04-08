@@ -65,6 +65,7 @@ type Size struct {
 }
 
 type ExecCommandRequest struct {
+	RunID     string             `json:"-"`
 	Command   string             `json:"command"`
 	Mode      string             `json:"mode,omitempty"`
 	Cwd       string             `json:"cwd,omitempty"`

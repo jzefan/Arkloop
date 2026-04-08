@@ -85,11 +85,24 @@ func TestProcessControllerStdinModeAcceptsInputAndEOF(t *testing.T) {
 	if strings.TrimSpace(resp.Stdout) != "hello from stdin" {
 		t.Fatalf("expected echoed stdin, got %#v", resp.Stdout)
 	}
-	if resp.Status != processapi.StatusExited {
-		t.Fatalf("expected exited status after close_stdin, got %#v", resp)
+	if resp.Status != processapi.StatusRunning && resp.Status != processapi.StatusExited {
+		t.Fatalf("expected running or exited status after close_stdin, got %#v", resp)
 	}
 	if resp.AcceptedInputSeq == nil || *resp.AcceptedInputSeq != 1 {
 		t.Fatalf("expected accepted_input_seq=1, got %#v", resp.AcceptedInputSeq)
+	}
+	if resp.Status == processapi.StatusRunning {
+		final, code, msg := controller.Continue(processapi.ContinueProcessRequest{
+			ProcessRef: start.ProcessRef,
+			Cursor:     resp.NextCursor,
+			WaitMs:     1000,
+		})
+		if code != "" {
+			t.Fatalf("final continue failed: %s %s", code, msg)
+		}
+		if final.Status != processapi.StatusExited {
+			t.Fatalf("expected exited status after draining closed stdin, got %#v", final)
+		}
 	}
 }
 
@@ -303,6 +316,63 @@ func TestProcessControllerDuplicateInputSeqAfterCloseStdinIsIdempotent(t *testin
 	}
 	if second.Stdout != "" {
 		t.Fatalf("duplicate continue should not append output, got %#v", second.Stdout)
+	}
+}
+
+func TestProcessControllerCloseStdinDoesNotRequireImmediateExit(t *testing.T) {
+	workspace := t.TempDir()
+	bindShellDirs(t, workspace)
+	controller := NewProcessController()
+
+	start, code, msg := controller.Exec(processapi.AgentExecRequest{
+		Command:   "python3 -c 'import sys,time; sys.stdin.read(); time.sleep(3); print(\"done\")'",
+		Mode:      processapi.ModeStdin,
+		TimeoutMs: 6000,
+	})
+	if code != "" {
+		t.Fatalf("stdin exec failed: %s %s", code, msg)
+	}
+
+	payload := "hello\n"
+	resp, code, msg := controller.Continue(processapi.ContinueProcessRequest{
+		ProcessRef: start.ProcessRef,
+		Cursor:     start.NextCursor,
+		WaitMs:     100,
+		StdinText:  &payload,
+		InputSeq:   int64Ptr(1),
+		CloseStdin: true,
+	})
+	if code != "" {
+		t.Fatalf("continue failed: %s %s", code, msg)
+	}
+	if resp.Status != processapi.StatusRunning {
+		t.Fatalf("close_stdin should not force immediate terminal state, got %#v", resp)
+	}
+	if resp.AcceptedInputSeq == nil || *resp.AcceptedInputSeq != 1 {
+		t.Fatalf("expected accepted_input_seq=1, got %#v", resp.AcceptedInputSeq)
+	}
+}
+
+func TestProcessControllerCancelMarksCancelled(t *testing.T) {
+	workspace := t.TempDir()
+	bindShellDirs(t, workspace)
+	controller := NewProcessController()
+
+	start, code, msg := controller.Exec(processapi.AgentExecRequest{
+		Command:   "sleep 30",
+		Mode:      processapi.ModeFollow,
+		TimeoutMs: 5000,
+	})
+	if code != "" {
+		t.Fatalf("follow exec failed: %s %s", code, msg)
+	}
+
+	resp, code, msg := controller.Cancel(processapi.AgentRefRequest{ProcessRef: start.ProcessRef})
+	if code != "" {
+		t.Fatalf("cancel failed: %s %s", code, msg)
+	}
+	if resp.Status != processapi.StatusCancelled {
+		t.Fatalf("expected cancelled status, got %#v", resp)
 	}
 }
 

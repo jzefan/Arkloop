@@ -36,6 +36,7 @@ type managedProcess struct {
 	mu sync.Mutex
 
 	ref        string
+	runID      string
 	mode       string
 	cmd        *exec.Cmd
 	stdin      io.WriteCloser
@@ -73,7 +74,7 @@ func (c *ProcessController) Close() {
 	for _, proc := range processes {
 		proc.mu.Lock()
 		if proc.status == StatusRunning {
-			killProcessLocked(proc, StatusTerminated)
+			killProcessLocked(proc, StatusCancelled)
 		}
 		proc.mu.Unlock()
 	}
@@ -176,25 +177,26 @@ func (c *ProcessController) ContinueProcess(req ContinueProcessRequest) (*Respon
 	proc.mu.Unlock()
 
 	resp, err := c.waitForSnapshot(proc, cursor, time.Duration(NormalizeWaitMs(req.WaitMs))*time.Millisecond, accepted)
-	if err == nil && req.CloseStdin && resp != nil && resp.Status == StatusRunning {
-		resp, err = c.waitUntilStopped(proc, cursor)
-		if err == nil && resp != nil && accepted != nil {
-			value := *accepted
-			resp.AcceptedInputSeq = &value
-		}
-	}
-
 	proc.mu.Lock()
 	proc.inFlight = false
 	notifyLocked(proc)
 	proc.mu.Unlock()
+	c.releaseProcessIfDrained(proc, resp)
 
 	return resp, err
 }
 
 func (c *ProcessController) TerminateProcess(req TerminateProcessRequest) (*Response, error) {
-	req.ProcessRef = strings.TrimSpace(req.ProcessRef)
-	proc, err := c.getProcess(req.ProcessRef)
+	return c.stopProcess(req.ProcessRef, StatusTerminated)
+}
+
+func (c *ProcessController) CancelProcess(req TerminateProcessRequest) (*Response, error) {
+	return c.stopProcess(req.ProcessRef, StatusCancelled)
+}
+
+func (c *ProcessController) stopProcess(processRef string, status string) (*Response, error) {
+	processRef = strings.TrimSpace(processRef)
+	proc, err := c.getProcess(processRef)
 	if err != nil {
 		return nil, err
 	}
@@ -202,11 +204,13 @@ func (c *ProcessController) TerminateProcess(req TerminateProcessRequest) (*Resp
 	proc.mu.Lock()
 	head := proc.output.HeadSeq()
 	if proc.status == StatusRunning {
-		killProcessLocked(proc, StatusTerminated)
+		killProcessLocked(proc, status)
 	}
 	proc.mu.Unlock()
 
-	return c.waitUntilStopped(proc, head)
+	resp, err := c.waitUntilStopped(proc, head)
+	c.releaseProcessIfDrained(proc, resp)
+	return resp, err
 }
 
 func (c *ProcessController) ResizeProcess(req ResizeProcessRequest) (*Response, error) {
@@ -300,6 +304,7 @@ func (c *ProcessController) startManaged(req ExecCommandRequest) (*managedProces
 
 	proc := &managedProcess{
 		ref:               ref,
+		runID:             strings.TrimSpace(req.RunID),
 		mode:              req.Mode,
 		cmd:               cmd,
 		allowStdin:        req.Mode == ModeStdin || req.Mode == ModePTY,
@@ -462,6 +467,20 @@ func (c *ProcessController) waitForExit(proc *managedProcess, timeoutMs int) {
 	notifyLocked(proc)
 }
 
+func (c *ProcessController) releaseProcessIfDrained(proc *managedProcess, resp *Response) {
+	if proc == nil || resp == nil {
+		return
+	}
+	if resp.Status == StatusRunning || resp.HasMore {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if current, ok := c.processes[proc.ref]; ok && current == proc {
+		delete(c.processes, proc.ref)
+	}
+}
+
 func (c *ProcessController) getProcess(processRef string) (*managedProcess, error) {
 	ref := strings.TrimSpace(processRef)
 	if ref == "" {
@@ -615,6 +634,28 @@ func buildProcessEnv(extra map[string]*string, includeTerm bool) []string {
 		result = append(result, key+"="+value)
 	}
 	return result
+}
+
+func (c *ProcessController) CleanupRun(runID string) {
+	runID = strings.TrimSpace(runID)
+	if runID == "" {
+		return
+	}
+	c.mu.Lock()
+	processes := make([]*managedProcess, 0, len(c.processes))
+	for _, proc := range c.processes {
+		if proc.runID == runID {
+			processes = append(processes, proc)
+		}
+	}
+	c.mu.Unlock()
+	for _, proc := range processes {
+		proc.mu.Lock()
+		if proc.status == StatusRunning {
+			killProcessLocked(proc, StatusCancelled)
+		}
+		proc.mu.Unlock()
+	}
 }
 
 func newProcessRef() (string, error) {

@@ -118,6 +118,7 @@ type AgentRequest struct {
 	WriteStdin       *shellapi.AgentWriteStdinRequest   `json:"write_stdin,omitempty"`
 	ProcessExec      *processapi.AgentExecRequest       `json:"process_exec,omitempty"`
 	ProcessContinue  *processapi.ContinueProcessRequest `json:"process_continue,omitempty"`
+	ProcessCancel    *processapi.AgentRefRequest        `json:"process_cancel,omitempty"`
 	ProcessTerminate *processapi.AgentRefRequest        `json:"process_terminate,omitempty"`
 	ProcessResize    *processapi.AgentResizeRequest     `json:"process_resize,omitempty"`
 	State            *shellapi.AgentStateRequest        `json:"state,omitempty"`
@@ -328,6 +329,14 @@ func handleV2(conn net.Conn, req AgentRequest) {
 			return
 		}
 		result, code, errMsg := processController.Terminate(derefProcessTerminate(req.ProcessTerminate))
+		writeJSON(conn, AgentResponse{Action: req.Action, Process: result, Code: code, Error: errMsg})
+
+	case "process_cancel":
+		if req.ProcessCancel == nil {
+			writeJSON(conn, AgentResponse{Action: req.Action, Error: "process_cancel is required"})
+			return
+		}
+		result, code, errMsg := processController.Cancel(derefProcessTerminate(req.ProcessCancel))
 		writeJSON(conn, AgentResponse{Action: req.Action, Process: result, Code: code, Error: errMsg})
 
 	case "process_resize":

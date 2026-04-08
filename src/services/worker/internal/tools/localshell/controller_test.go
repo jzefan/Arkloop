@@ -81,11 +81,24 @@ func TestProcessControllerStdinModeAcceptsInputAndEOF(t *testing.T) {
 	if strings.TrimSpace(resp.Stdout) != "hello from stdin" {
 		t.Fatalf("expected echoed stdin, got %#v", resp.Stdout)
 	}
-	if resp.Status != StatusExited {
-		t.Fatalf("expected exited status after close_stdin, got %#v", resp)
+	if resp.Status != StatusRunning && resp.Status != StatusExited {
+		t.Fatalf("expected running or exited status after close_stdin, got %#v", resp)
 	}
 	if resp.AcceptedInputSeq == nil || *resp.AcceptedInputSeq != 1 {
 		t.Fatalf("expected accepted_input_seq=1, got %#v", resp.AcceptedInputSeq)
+	}
+	if resp.Status == StatusRunning {
+		final, err := controller.ContinueProcess(ContinueProcessRequest{
+			ProcessRef: start.ProcessRef,
+			Cursor:     resp.NextCursor,
+			WaitMs:     1000,
+		})
+		if err != nil {
+			t.Fatalf("final continue failed: %v", err)
+		}
+		if final.Status != StatusExited {
+			t.Fatalf("expected exited status after draining closed stdin, got %#v", final)
+		}
 	}
 }
 
@@ -225,6 +238,61 @@ func TestProcessControllerDuplicateInputSeqAfterCloseStdinIsIdempotent(t *testin
 	}
 	if second.Stdout != "" {
 		t.Fatalf("duplicate continue should not append output, got %#v", second.Stdout)
+	}
+}
+
+func TestProcessControllerCloseStdinDoesNotRequireImmediateExit(t *testing.T) {
+	controller := NewProcessController()
+
+	start, err := controller.ExecCommand(ExecCommandRequest{
+		Command:   "python3 -c 'import sys,time; sys.stdin.read(); time.sleep(3); print(\"done\")'",
+		Mode:      ModeStdin,
+		TimeoutMs: 6000,
+		Cwd:       t.TempDir(),
+	})
+	if err != nil {
+		t.Fatalf("stdin exec failed: %v", err)
+	}
+
+	payload := "hello\n"
+	resp, err := controller.ContinueProcess(ContinueProcessRequest{
+		ProcessRef: start.ProcessRef,
+		Cursor:     start.NextCursor,
+		WaitMs:     100,
+		StdinText:  &payload,
+		InputSeq:   int64Ptr(1),
+		CloseStdin: true,
+	})
+	if err != nil {
+		t.Fatalf("continue failed: %v", err)
+	}
+	if resp.Status != StatusRunning {
+		t.Fatalf("close_stdin should not force immediate terminal state, got %#v", resp)
+	}
+	if resp.AcceptedInputSeq == nil || *resp.AcceptedInputSeq != 1 {
+		t.Fatalf("expected accepted_input_seq=1, got %#v", resp.AcceptedInputSeq)
+	}
+}
+
+func TestProcessControllerCancelMarksCancelled(t *testing.T) {
+	controller := NewProcessController()
+
+	start, err := controller.ExecCommand(ExecCommandRequest{
+		Command:   "sleep 30",
+		Mode:      ModeFollow,
+		TimeoutMs: 5000,
+		Cwd:       t.TempDir(),
+	})
+	if err != nil {
+		t.Fatalf("follow exec failed: %v", err)
+	}
+
+	resp, err := controller.CancelProcess(TerminateProcessRequest{ProcessRef: start.ProcessRef})
+	if err != nil {
+		t.Fatalf("cancel failed: %v", err)
+	}
+	if resp.Status != StatusCancelled {
+		t.Fatalf("expected cancelled status, got %#v", resp)
 	}
 }
 

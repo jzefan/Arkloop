@@ -321,6 +321,7 @@ export function writeMessageBrowserActions(messageId: string, actions: BrowserAc
 export type CodeExecutionRef = {
   id: string
   language: 'python' | 'shell'
+  mode?: 'buffered' | 'follow' | 'stdin' | 'pty'
   code?: string
   output?: string
   exitCode?: number
@@ -343,6 +344,7 @@ function isCodeExecutionRef(value: unknown): value is CodeExecutionRef {
   const item = value as Record<string, unknown>
   if (typeof item.id !== 'string' || item.id.trim() === '') return false
   if (item.language !== 'python' && item.language !== 'shell') return false
+  if (item.mode != null && item.mode !== 'buffered' && item.mode !== 'follow' && item.mode !== 'stdin' && item.mode !== 'pty') return false
   if (!isCodeExecutionStatus(item.status)) return false
   if (item.code != null && typeof item.code !== 'string') return false
   if (item.output != null && typeof item.output !== 'string') return false

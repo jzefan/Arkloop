@@ -3,6 +3,7 @@ package process
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -216,11 +217,45 @@ func (m *Manager) CloseSession(ctx context.Context, sessionID, accountID string)
 	if err := ensureAccount(entry.accountID, accountID); err != nil {
 		return err
 	}
+	for processRef := range entry.processSeq {
+		if strings.TrimSpace(processRef) == "" {
+			continue
+		}
+		if _, err := m.invoke(ctx, entry, AgentRequest{
+			Action: "process_terminate",
+			TerminateProcess: &AgentRefRequest{
+				ProcessRef: processRef,
+				Status:     StatusCancelled,
+			},
+		}, defaultFollowLimit); err != nil {
+			var procErr *Error
+			if errors.As(err, &procErr) && (procErr.Code == CodeProcessNotFound || procErr.Code == CodeNotRunning) {
+				continue
+			}
+			if strings.Contains(err.Error(), "process not found") {
+				continue
+			}
+			return err
+		}
+	}
 	if m.envManager != nil {
 		if err := m.envManager.FlushNow(ctx, sessionID); err != nil {
 			return err
 		}
 		m.envManager.Drop(sessionID)
+	}
+	for processRef := range entry.processSeq {
+		if _, err := m.invoke(ctx, entry, AgentRequest{
+			Action: "process_cancel",
+			CancelProcess: &AgentRefRequest{
+				ProcessRef: processRef,
+			},
+		}, defaultFollowLimit); err != nil {
+			if procErr, ok := err.(*Error); ok && procErr.Code == CodeProcessNotFound {
+				continue
+			}
+			return err
+		}
 	}
 	m.dropEntry(sessionID, entry)
 	return nil

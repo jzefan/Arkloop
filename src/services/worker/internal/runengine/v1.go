@@ -373,6 +373,21 @@ func (e *EngineV1) Execute(ctx context.Context, pool *pgxpool.Pool, run data.Run
 	err = handler(ctx, rc)
 
 	// run 结束后清理 sandbox session（不阻塞返回结果）
+	if cleaner, ok := rc.ToolExecutors["exec_command"].(interface {
+		CleanupRun(context.Context, string, string) error
+	}); ok {
+		go func() {
+			cleanupCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			terminalStatus := ""
+			if ctx.Err() != nil {
+				terminalStatus = "cancelled"
+			}
+			if cleanupErr := cleaner.CleanupRun(cleanupCtx, run.ID.String(), terminalStatus); cleanupErr != nil {
+				slog.Warn("shell cleanup failed", "run_id", run.ID.String(), "error", cleanupErr.Error())
+			}
+		}()
+	}
 	if runtimeSnapshot.SandboxBaseURL != "" {
 		accountID := run.AccountID.String()
 		go sandbox.CleanupSession(runtimeSnapshot.SandboxBaseURL, runtimeSnapshot.SandboxAuthToken, run.ID.String(), accountID)

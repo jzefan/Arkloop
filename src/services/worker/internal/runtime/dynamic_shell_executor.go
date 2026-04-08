@@ -22,6 +22,7 @@ type DynamicShellExecutor struct {
 	vmAddr        string
 	vmToken       string
 	processOwners map[string]string
+	processRuns   map[string]string
 }
 
 func NewDynamicShellExecutor(vmAddr, vmToken string) *DynamicShellExecutor {
@@ -29,6 +30,7 @@ func NewDynamicShellExecutor(vmAddr, vmToken string) *DynamicShellExecutor {
 		vmAddr:        strings.TrimSpace(vmAddr),
 		vmToken:       vmToken,
 		processOwners: map[string]string{},
+		processRuns:   map[string]string{},
 	}
 }
 
@@ -87,7 +89,7 @@ func (e *DynamicShellExecutor) Execute(
 		result = e.ensureLocal().Execute(ctx, toolName, args, execCtx, toolCallID)
 	}
 
-	e.reconcileProcessOwner(toolName, backend, args, result)
+	e.reconcileProcessOwner(toolName, backend, execCtx, args, result)
 	return result
 }
 
@@ -124,7 +126,7 @@ func (e *DynamicShellExecutor) resolveBackend(toolName string, args map[string]a
 	}
 }
 
-func (e *DynamicShellExecutor) reconcileProcessOwner(toolName string, backend string, args map[string]any, result tools.ExecutionResult) {
+func (e *DynamicShellExecutor) reconcileProcessOwner(toolName string, backend string, execCtx tools.ExecutionContext, args map[string]any, result tools.ExecutionResult) {
 	if result.Error != nil {
 		return
 	}
@@ -136,9 +138,13 @@ func (e *DynamicShellExecutor) reconcileProcessOwner(toolName string, backend st
 		if processRef == "" {
 			return
 		}
-		e.mu.Lock()
-		e.processOwners[processRef] = backend
-		e.mu.Unlock()
+		running, _ := result.ResultJSON["running"].(bool)
+		hasMore, _ := result.ResultJSON["has_more"].(bool)
+		if !running && !hasMore {
+			e.releaseProcess(processRef)
+			return
+		}
+		e.trackProcess(execCtx.RunID.String(), processRef, backend)
 	case localshell.ContinueProcessAgentSpec.Name:
 		processRef, _ := args["process_ref"].(string)
 		processRef = strings.TrimSpace(processRef)
@@ -146,20 +152,67 @@ func (e *DynamicShellExecutor) reconcileProcessOwner(toolName string, backend st
 			return
 		}
 		running, _ := result.ResultJSON["running"].(bool)
-		if running {
+		hasMore, _ := result.ResultJSON["has_more"].(bool)
+		if running || hasMore {
 			return
 		}
-		e.mu.Lock()
-		delete(e.processOwners, processRef)
-		e.mu.Unlock()
+		e.releaseProcess(processRef)
 	case localshell.TerminateProcessAgentSpec.Name:
 		processRef, _ := args["process_ref"].(string)
 		processRef = strings.TrimSpace(processRef)
 		if processRef == "" {
 			return
 		}
-		e.mu.Lock()
-		delete(e.processOwners, processRef)
-		e.mu.Unlock()
+		e.releaseProcess(processRef)
 	}
+}
+
+func (e *DynamicShellExecutor) CleanupRun(ctx context.Context, runID string, terminalStatus string) error {
+	runID = strings.TrimSpace(runID)
+	if runID == "" {
+		return nil
+	}
+
+	e.mu.Lock()
+	localRefs := make([]string, 0)
+	for processRef, ownedRunID := range e.processRuns {
+		if ownedRunID != runID {
+			continue
+		}
+		if e.processOwners[processRef] == "local" {
+			localRefs = append(localRefs, processRef)
+		}
+		delete(e.processOwners, processRef)
+		delete(e.processRuns, processRef)
+	}
+	e.mu.Unlock()
+
+	if len(localRefs) == 0 {
+		return nil
+	}
+	return e.ensureLocal().CleanupProcesses(ctx, localRefs, terminalStatus)
+}
+
+func (e *DynamicShellExecutor) trackProcess(runID string, processRef string, backend string) {
+	processRef = strings.TrimSpace(processRef)
+	if processRef == "" {
+		return
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.processOwners[processRef] = backend
+	if strings.TrimSpace(runID) != "" {
+		e.processRuns[processRef] = strings.TrimSpace(runID)
+	}
+}
+
+func (e *DynamicShellExecutor) releaseProcess(processRef string) {
+	processRef = strings.TrimSpace(processRef)
+	if processRef == "" {
+		return
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	delete(e.processOwners, processRef)
+	delete(e.processRuns, processRef)
 }
