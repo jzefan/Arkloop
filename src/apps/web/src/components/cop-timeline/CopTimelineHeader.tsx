@@ -1,9 +1,6 @@
 import { useState, useEffect } from 'react'
 import { useLocale } from '../../contexts/LocaleContext'
-import { useTypewriter } from '../../hooks/useTypewriter'
-
-export const COP_HEADER_TRANSITION_RETAIN_MS = 320
-export const COP_SUMMARY_TRANSITION_RETAIN_MS = 100
+import { useIncrementalTypewriter } from '../../hooks/useIncrementalTypewriter'
 
 export function useThinkingElapsedSeconds(active: boolean, startedAtMs?: number): number {
   const readElapsed = () => {
@@ -38,20 +35,20 @@ export function CopTimelineHeaderLabel({
   text,
   phaseKey,
   shimmer,
-  typewriter,
+  incremental,
 }: {
   text: string
   phaseKey: string
   shimmer?: boolean
-  typewriter?: boolean
+  incremental?: boolean
 }) {
-  const displayed = useTypewriter(text, !typewriter)
+  const displayed = useIncrementalTypewriter(text, incremental)
   return (
     <span
       data-phase={phaseKey}
       className={shimmer ? 'thinking-shimmer' : undefined}
     >
-      {typewriter ? displayed : text}
+      {incremental ? displayed : text}
     </span>
   )
 }

@@ -4,7 +4,7 @@ import { ChevronDown, ChevronRight } from 'lucide-react'
 import { useTypewriter } from '../../hooks/useTypewriter'
 import { useLocale } from '../../contexts/LocaleContext'
 import { MarkdownRenderer } from '../MarkdownRenderer'
-import { CopTimelineHeaderLabel, COP_SUMMARY_TRANSITION_RETAIN_MS } from './CopTimelineHeader'
+import { CopTimelineHeaderLabel } from './CopTimelineHeader'
 
 const THINK_MAX_LINES = 10
 const THINK_LINE_HEIGHT_PX = 21.025
@@ -97,10 +97,9 @@ export function CopThoughtSummaryRow({ markdown, live, thoughtDurationSeconds, s
     ? (liveElapsed > 0 ? t.copTimelineThinkingForSeconds(liveElapsed) : t.copThinkingInlineTitle)
     : ''
   const thoughtLabel = thoughtDurationSeconds > 0 ? t.copTimelineThoughtForSeconds(thoughtDurationSeconds) : t.copTimelineThinkingDoneNoDuration
-  const [displayLabel, setDisplayLabel] = useState(live ? liveLabel : thoughtLabel)
-  const [displayPhaseKey, setDisplayPhaseKey] = useState(live ? 'thinking' : 'thought')
-  const [typewriter, setTypewriter] = useState(false)
-  const previousLiveLabelRef = useRef(liveLabel)
+  const currentLabel = live ? liveLabel : thoughtLabel
+  const previousStatusLabelRef = useRef(live ? liveLabel : '')
+  const shouldAnimateLabel = live || previousStatusLabelRef.current !== ''
 
   useEffect(() => {
     if (!live || !startedAtMs) {
@@ -115,30 +114,8 @@ export function CopThoughtSummaryRow({ markdown, live, thoughtDurationSeconds, s
   }, [live, startedAtMs])
 
   useEffect(() => {
-    if (live) {
-      previousLiveLabelRef.current = liveLabel
-      setDisplayLabel(liveLabel)
-      setDisplayPhaseKey('thinking')
-      setTypewriter(false)
-      return
-    }
-
-    const previousLiveLabel = previousLiveLabelRef.current
-    if (!previousLiveLabel || previousLiveLabel === thoughtLabel) {
-      setDisplayLabel(thoughtLabel)
-      setDisplayPhaseKey('thought')
-      setTypewriter(false)
-      return
-    }
-
-    setDisplayLabel('T')
-    setDisplayPhaseKey('thought')
-    setTypewriter(true)
-    const timer = window.setTimeout(() => {
-      setDisplayLabel(thoughtLabel)
-    }, COP_SUMMARY_TRANSITION_RETAIN_MS)
-    return () => window.clearTimeout(timer)
-  }, [live, liveLabel, thoughtLabel])
+    previousStatusLabelRef.current = currentLabel
+  }, [currentLabel])
 
   return (
     <div>
@@ -149,7 +126,11 @@ export function CopThoughtSummaryRow({ markdown, live, thoughtDurationSeconds, s
         onClick={() => setExpanded((prev) => !prev)}
       >
         <span className={live ? 'cop-thinking-card-trigger-label thinking-shimmer-dim' : 'cop-thinking-card-trigger-label'}>
-          <CopTimelineHeaderLabel text={displayLabel} phaseKey={displayPhaseKey} typewriter={typewriter} />
+          <CopTimelineHeaderLabel
+            text={currentLabel}
+            phaseKey={live ? 'thinking' : 'thought'}
+            incremental={shouldAnimateLabel}
+          />
         </span>
         {expanded ? (
           <ChevronDown size={12} style={{ flexShrink: 0, color: 'var(--c-text-muted)' }} strokeWidth={2} />

@@ -1,6 +1,6 @@
 import { act } from 'react'
 import { createRoot } from 'react-dom/client'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { CopTimeline } from '../components/CopTimeline'
 import { LocaleProvider } from '../contexts/LocaleContext'
@@ -9,8 +9,76 @@ import type { CodeExecution } from '../components/CodeExecutionCard'
 
 globalThis.scrollTo = (() => {}) as typeof globalThis.scrollTo
 
+const originalRAF = globalThis.requestAnimationFrame
+const originalCAF = globalThis.cancelAnimationFrame
+const originalMatchMedia = window.matchMedia
+const actEnvironment = globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
+const originalActEnvironment = actEnvironment.IS_REACT_ACT_ENVIRONMENT
+
+let nextFrameId = 1
+let pendingFrames = new Map<number, FrameRequestCallback>()
+
+function installAnimationFrameMock() {
+  globalThis.requestAnimationFrame = (callback: FrameRequestCallback) => {
+    const id = nextFrameId++
+    pendingFrames.set(id, callback)
+    return id
+  }
+  globalThis.cancelAnimationFrame = (id: number) => {
+    pendingFrames.delete(id)
+  }
+}
+
+function flushAnimationFrame(at: number) {
+  const frames = [...pendingFrames.entries()]
+  pendingFrames = new Map()
+  for (const [, callback] of frames) callback(at)
+}
+
+function reducedMotionMatchMedia(query: string) {
+  return {
+    matches: query === '(prefers-reduced-motion: reduce)',
+    media: query,
+    onchange: null,
+    addListener: vi.fn(),
+    removeListener: vi.fn(),
+    addEventListener: vi.fn(),
+    removeEventListener: vi.fn(),
+    dispatchEvent: vi.fn(() => false),
+  }
+}
+
+function defaultMatchMedia(query: string) {
+  return {
+    matches: false,
+    media: query,
+    onchange: null,
+    addListener: vi.fn(),
+    removeListener: vi.fn(),
+    addEventListener: vi.fn(),
+    removeEventListener: vi.fn(),
+    dispatchEvent: vi.fn(() => false),
+  }
+}
+
+beforeEach(() => {
+  actEnvironment.IS_REACT_ACT_ENVIRONMENT = true
+  nextFrameId = 1
+  pendingFrames = new Map()
+  installAnimationFrameMock()
+  window.matchMedia = vi.fn(defaultMatchMedia)
+})
+
 afterEach(() => {
   vi.useRealTimers()
+  globalThis.requestAnimationFrame = originalRAF
+  globalThis.cancelAnimationFrame = originalCAF
+  window.matchMedia = originalMatchMedia
+  if (originalActEnvironment === undefined) {
+    delete actEnvironment.IS_REACT_ACT_ENVIRONMENT
+  } else {
+    actEnvironment.IS_REACT_ACT_ENVIRONMENT = originalActEnvironment
+  }
 })
 
 function renderTimeline(params: {
@@ -31,28 +99,34 @@ function renderTimeline(params: {
   live?: boolean
   shimmer?: boolean
 }): string {
-  return renderToStaticMarkup(
-    <LocaleProvider>
-      <CopTimeline
-        steps={params.steps}
-        sources={params.sources}
-        narratives={params.narratives}
-        isComplete={params.isComplete}
-        preserveExpanded={params.preserveExpanded}
-        codeExecutions={params.codeExecutions}
-        subAgents={params.subAgents}
-        fileOps={params.fileOps}
-        webFetches={params.webFetches}
-        genericTools={params.genericTools}
-        thinkingRows={params.thinkingRows}
-        thinkingStartedAt={params.thinkingStartedAt}
-        trailingAssistantTextPresent={params.trailingAssistantTextPresent}
-        thinkingHint={params.thinkingHint}
-        live={params.live}
-        shimmer={params.shimmer}
-      />
-    </LocaleProvider>,
-  )
+  const previousMatchMedia = window.matchMedia
+  window.matchMedia = vi.fn(reducedMotionMatchMedia)
+  try {
+    return renderToStaticMarkup(
+      <LocaleProvider>
+        <CopTimeline
+          steps={params.steps}
+          sources={params.sources}
+          narratives={params.narratives}
+          isComplete={params.isComplete}
+          preserveExpanded={params.preserveExpanded}
+          codeExecutions={params.codeExecutions}
+          subAgents={params.subAgents}
+          fileOps={params.fileOps}
+          webFetches={params.webFetches}
+          genericTools={params.genericTools}
+          thinkingRows={params.thinkingRows}
+          thinkingStartedAt={params.thinkingStartedAt}
+          trailingAssistantTextPresent={params.trailingAssistantTextPresent}
+          thinkingHint={params.thinkingHint}
+          live={params.live}
+          shimmer={params.shimmer}
+        />
+      </LocaleProvider>,
+    )
+  } finally {
+    window.matchMedia = previousMatchMedia
+  }
 }
 
 async function renderTimelineDom(params: Parameters<typeof renderTimeline>[0]) {
@@ -92,6 +166,14 @@ async function renderTimelineDom(params: Parameters<typeof renderTimeline>[0]) {
       container.remove()
     },
   }
+}
+
+async function flushTypingFrames(times: number[]) {
+  await act(async () => {
+    for (const time of times) {
+      flushAnimationFrame(time)
+    }
+  })
 }
 
 describe('CopTimeline', () => {
@@ -304,6 +386,7 @@ describe('CopTimeline', () => {
 
   it('live thinking 计时递增时不应每秒重打整句', async () => {
     vi.useFakeTimers()
+    installAnimationFrameMock()
     vi.setSystemTime(new Date('2026-03-10T00:00:02Z'))
     const container = document.createElement('div')
     document.body.appendChild(container)
@@ -324,11 +407,17 @@ describe('CopTimeline', () => {
       )
     })
 
+    expect(container.textContent).toBe('')
+
+    await flushTypingFrames([60, 180, 320, 520, 760, 1040])
+
     expect(container.textContent).toContain('Planning next moves for 2s')
 
     await act(async () => {
       vi.advanceTimersByTime(1000)
     })
+
+    await flushTypingFrames([1140])
 
     expect(container.textContent).toContain('Planning next moves for 3s')
 
@@ -387,8 +476,9 @@ describe('CopTimeline', () => {
     cleanup()
   })
 
-  it('标题从 thinking 切到 thought 后显示 Thought for 2s', async () => {
+  it('标题从 thinking 切到 thought 时保留共同尾巴并增量打到 Thought for 2s', async () => {
     vi.useFakeTimers()
+    installAnimationFrameMock()
     vi.setSystemTime(new Date('2026-03-10T00:00:02Z'))
     const container = document.createElement('div')
     document.body.appendChild(container)
@@ -409,6 +499,8 @@ describe('CopTimeline', () => {
       )
     })
 
+    await flushTypingFrames([60, 180, 320, 520, 760, 1040])
+
     expect(container.textContent).toContain('Planning next moves for 2s')
 
     await act(async () => {
@@ -427,9 +519,13 @@ describe('CopTimeline', () => {
 
     expect(container.textContent).toContain('Planning next moves for 2s')
 
-    await act(async () => {
-      vi.advanceTimersByTime(2500)
-    })
+    expect(container.textContent).toContain('Planning next moves for 2s')
+
+    await flushTypingFrames([1120])
+    expect(container.textContent).toContain(' for 2s')
+    expect(container.textContent).not.toContain('Thought for 2s')
+
+    await flushTypingFrames([1240, 1360])
     expect(container.textContent).toContain('Thought for 2s')
 
     act(() => {
@@ -438,8 +534,9 @@ describe('CopTimeline', () => {
     container.remove()
   })
 
-  it('标题从提示句切到带计时时显示 Planning next moves for Ns', async () => {
+  it('标题从提示句切到带计时时只补尾巴，不硬切到 Planning next moves for Ns', async () => {
     vi.useFakeTimers()
+    installAnimationFrameMock()
     vi.setSystemTime(new Date('2026-03-10T00:00:02Z'))
     const container = document.createElement('div')
     document.body.appendChild(container)
@@ -459,6 +556,10 @@ describe('CopTimeline', () => {
         </LocaleProvider>,
       )
     })
+
+    expect(container.textContent).toBe('')
+
+    await flushTypingFrames([60, 180, 320, 520, 760])
 
     expect(container.textContent).toContain('Planning next moves...')
 
@@ -479,16 +580,9 @@ describe('CopTimeline', () => {
 
     const header = container.querySelector('button')
     expect(header?.textContent ?? '').toContain('Planning next moves')
+    expect(header?.textContent ?? '').not.toContain('Planning next moves for 2s')
 
-    await act(async () => {
-      await Promise.resolve()
-    })
-
-    expect(header?.textContent ?? '').toContain('Planning next moves for 2s')
-
-    await act(async () => {
-      vi.advanceTimersByTime(500)
-    })
+    await flushTypingFrames([860, 980, 1120])
     expect(header?.textContent ?? '').toMatch(/Planning next moves for 2s/)
 
     act(() => {
@@ -497,8 +591,9 @@ describe('CopTimeline', () => {
     container.remove()
   })
 
-  it('pending 提示句应直接显示完整文案，不走整句打字', async () => {
+  it('pending 提示句应从空串逐字打到完整文案', async () => {
     vi.useFakeTimers()
+    installAnimationFrameMock()
     const container = document.createElement('div')
     document.body.appendChild(container)
     const root = createRoot(container)
@@ -519,6 +614,13 @@ describe('CopTimeline', () => {
       )
     })
 
+    expect(container.textContent).toBe('')
+
+    await flushTypingFrames([60])
+    expect((container.textContent ?? '').length).toBeGreaterThan(0)
+    expect(container.textContent).not.toContain('Planning next moves...')
+
+    await flushTypingFrames([180, 320, 520, 760])
     expect(container.textContent).toContain('Planning next moves...')
 
     act(() => {
@@ -527,8 +629,9 @@ describe('CopTimeline', () => {
     container.remove()
   })
 
-  it('thinking live 结束过快时，标题仍至少保留一小段可见时间', async () => {
+  it('thinking live 结束时不应硬切，第一帧仍保留共同尾巴', async () => {
     vi.useFakeTimers()
+    installAnimationFrameMock()
     vi.setSystemTime(new Date('2026-03-10T00:00:02Z'))
     const container = document.createElement('div')
     document.body.appendChild(container)
@@ -548,6 +651,7 @@ describe('CopTimeline', () => {
         </LocaleProvider>,
       )
     })
+    await flushTypingFrames([60, 180, 320, 520, 760, 1040])
     expect(container.textContent).toContain('Planning next moves for 2s')
 
     await act(async () => {
@@ -565,11 +669,10 @@ describe('CopTimeline', () => {
 
     expect(container.textContent).toContain('Planning next moves for 2s')
 
-    await act(async () => {
-      vi.advanceTimersByTime(360)
-    })
+    await flushTypingFrames([1120])
+    expect(container.textContent).toContain(' for 2s')
     expect(container.textContent).not.toContain('Planning next moves for 2s')
-    expect(container.textContent).toMatch(/T|Th|Tho/)
+    expect(container.textContent).not.toContain('Thought for 2s')
 
     act(() => {
       root.unmount()
@@ -577,8 +680,9 @@ describe('CopTimeline', () => {
     container.remove()
   })
 
-  it('mixed summary 行从 Thinking 切到 Thought 时会先清空再重新打字', async () => {
+  it('mixed summary 行从 Thinking 切到 Thought 时保留共同尾巴，不先清空整句', async () => {
     vi.useFakeTimers()
+    installAnimationFrameMock()
     vi.setSystemTime(new Date('2026-03-10T00:00:02Z'))
     const container = document.createElement('div')
     document.body.appendChild(container)
@@ -593,14 +697,16 @@ describe('CopTimeline', () => {
             steps={[]}
             sources={[]}
             fileOps={[{ id: 'op1', toolName: 'grep', label: 'x', status: 'success', seq: 2 }]}
-            thinkingRows={[{ id: 't1', markdown: 'done', live: true, seq: 1 }]}
+            thinkingRows={[{ id: 't1', markdown: 'done', live: true, seq: 1, startedAtMs: new Date('2026-03-10T00:00:00Z').getTime() }]}
             thinkingStartedAt={new Date('2026-03-10T00:00:00Z').getTime()}
           />
         </LocaleProvider>,
       )
     })
 
-    expect(container.textContent).toContain('Thinking for 2s')
+    await flushTypingFrames([60, 180, 320, 520, 760])
+    const summaryButton = container.querySelector('[data-testid="cop-thought-summary-row"]')
+    expect(summaryButton?.textContent ?? '').toContain('Thinking for 2s')
 
     await act(async () => {
       root.render(
@@ -617,18 +723,12 @@ describe('CopTimeline', () => {
       )
     })
 
-    expect(container.textContent).not.toContain('Thought for 2s')
+    await flushTypingFrames([880])
+    expect(summaryButton?.textContent ?? '').toContain(' for 2s')
+    expect(summaryButton?.textContent ?? '').not.toContain('Thought for 2s')
 
-    await act(async () => {
-      vi.advanceTimersByTime(150)
-    })
-    expect(container.textContent).toMatch(/T|Th|Tho/)
-    expect(container.textContent).not.toContain('Thought for 2s')
-
-    await act(async () => {
-      vi.advanceTimersByTime(1000)
-    })
-    expect(container.textContent).toContain('Thought for 2s')
+    await flushTypingFrames([1020, 1160])
+    expect(summaryButton?.textContent ?? '').toContain('Thought for 2s')
 
     act(() => {
       root.unmount()
@@ -673,6 +773,7 @@ describe('CopTimeline', () => {
       vi.advanceTimersByTime(800)
     })
 
+    await flushTypingFrames([60, 180, 320, 520, 760, 1040])
     expect(container.textContent).toContain('load_tools "abc"')
     expect(container.textContent).toContain('Thinking for 2s')
     expect(container.textContent).not.toContain('hidden think body')
@@ -704,6 +805,7 @@ describe('CopTimeline', () => {
 
   it('segment 关闭时若用户未手动切换，应立即自动收起（title 保留，body 收起）', async () => {
     vi.useFakeTimers()
+    installAnimationFrameMock()
     vi.setSystemTime(new Date('2026-03-10T00:00:02Z'))
     const container = document.createElement('div')
     document.body.appendChild(container)
@@ -729,8 +831,6 @@ describe('CopTimeline', () => {
       vi.advanceTimersByTime(800)
     })
 
-    expect(container.textContent).toContain('load_tools "abc"')
-
     await act(async () => {
       root.render(
         <LocaleProvider>
@@ -745,6 +845,7 @@ describe('CopTimeline', () => {
       )
     })
 
+    await flushTypingFrames([1120, 1260, 1400])
     expect(container.textContent).toContain('Thought for 2s')
     act(() => {
       root.unmount()
