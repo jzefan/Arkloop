@@ -37,7 +37,6 @@ type RuntimeSnapshot struct {
 	SandboxBaseURL    string
 	SandboxAuthToken  string
 	ACPHostKind       string
-	DesktopExecutionMode string
 	MemoryBaseURL     string
 	MemoryRootAPIKey  string
 	PlatformProviders []ProviderConfig
