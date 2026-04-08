@@ -93,6 +93,12 @@ func NewChannelDeliveryMiddlewareWithOptions(pool *pgxpool.Pool, opts ChannelDel
 				return nil
 			}
 			rc.TelegramToolBoundaryFlush = streamFlush
+
+			tracker := NewTelegramProgressTracker(tgClient, preloaded.Token, ChannelDeliveryTarget{
+				ChannelType:  rc.ChannelContext.ChannelType,
+				Conversation: rc.ChannelContext.Conversation,
+			}, telegramReplyReference(rc))
+			rc.TelegramProgressTracker = tracker
 		}
 
 		var stopTyping context.CancelFunc
@@ -103,6 +109,9 @@ func NewChannelDeliveryMiddlewareWithOptions(pool *pgxpool.Pool, opts ChannelDel
 		err := next(ctx, rc)
 		if rc != nil {
 			rc.TelegramToolBoundaryFlush = nil
+			if rc.TelegramProgressTracker != nil {
+				rc.TelegramProgressTracker.Finalize(ctx)
+			}
 		}
 		if stopTyping != nil {
 			stopTyping()
