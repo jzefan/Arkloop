@@ -1,4 +1,5 @@
 import { useEffect, useReducer, useRef } from 'react'
+import { pickLogicalToolName } from '@arkloop/shared'
 import { useSSE } from './useSSE'
 import type { WebSearchPhaseStep } from '../components/CopTimeline'
 import type { WebSource } from '../storage'
@@ -121,8 +122,8 @@ function processEvent(event: RunEvent, dispatch: React.Dispatch<CopAction>): voi
   }
 
   if (event.type === 'tool.call') {
-    const obj = event.data as { tool_name?: unknown; tool_call_id?: unknown; arguments?: unknown }
-    const toolName = typeof obj.tool_name === 'string' ? obj.tool_name : ''
+    const obj = event.data as { tool_call_id?: unknown; arguments?: unknown }
+    const toolName = pickLogicalToolName(event.data, event.tool_name)
     if (isWebSearchToolName(toolName)) {
       const callId = typeof obj.tool_call_id === 'string' ? obj.tool_call_id : event.event_id
       const args = obj.arguments as Record<string, unknown> | undefined
@@ -133,8 +134,8 @@ function processEvent(event: RunEvent, dispatch: React.Dispatch<CopAction>): voi
   }
 
   if (event.type === 'tool.result') {
-    const obj = event.data as { tool_name?: unknown; tool_call_id?: unknown; result?: unknown }
-    const toolName = typeof obj.tool_name === 'string' ? obj.tool_name : ''
+    const obj = event.data as { tool_call_id?: unknown; result?: unknown }
+    const toolName = pickLogicalToolName(event.data, event.tool_name)
     if (isWebSearchToolName(toolName)) {
       const callId = typeof obj.tool_call_id === 'string' ? obj.tool_call_id : event.event_id
       const result = obj.result as { results?: unknown[] } | undefined

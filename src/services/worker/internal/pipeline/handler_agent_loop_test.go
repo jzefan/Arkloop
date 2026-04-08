@@ -339,3 +339,44 @@ func TestCaptureReplyOverride_OverwritesOnMultipleCalls(t *testing.T) {
 		t.Fatalf("expected last override=200, got %q", w.pendingReplyOverride)
 	}
 }
+
+func TestEventWriterFlushPendingToolCallsDoesNotPersistProviderToolNames(t *testing.T) {
+	w := &eventWriter{
+		assistantMessage: &llm.Message{
+			Role:    "assistant",
+			Content: []llm.TextPart{{Text: "searching"}},
+		},
+	}
+
+	w.collectToolCall(map[string]any{
+		"tool_call_id": "call_1",
+		"tool_name":    "web_search.tavily",
+		"arguments":    map[string]any{"query": "hello"},
+	})
+	w.collectToolResult(map[string]any{
+		"tool_call_id": "call_1",
+		"tool_name":    "web_search.tavily",
+		"result":       map[string]any{"items": []any{map[string]any{"title": "x"}}},
+	})
+	w.flushPendingToolCalls()
+
+	if len(w.intermediateMessages) != 2 {
+		t.Fatalf("expected assistant+tool intermediate messages, got %d", len(w.intermediateMessages))
+	}
+
+	assistantJSON := string(w.intermediateMessages[0].ContentJSON)
+	if strings.Contains(assistantJSON, "web_search.tavily") {
+		t.Fatalf("expected assistant intermediate message to hide provider tool name, got %s", assistantJSON)
+	}
+	if !strings.Contains(assistantJSON, `"tool_name":"web_search"`) {
+		t.Fatalf("expected assistant intermediate message to keep canonical tool name, got %s", assistantJSON)
+	}
+
+	toolContent := w.intermediateMessages[1].Content
+	if strings.Contains(toolContent, "web_search.tavily") {
+		t.Fatalf("expected tool intermediate message to hide provider tool name, got %s", toolContent)
+	}
+	if !strings.Contains(toolContent, `"tool_name":"web_search"`) {
+		t.Fatalf("expected tool intermediate message to keep canonical tool name, got %s", toolContent)
+	}
+}

@@ -1,5 +1,6 @@
 import { redactDataUrlsInString } from './debugPayloadRedact'
 import { isACPDelegateEventData } from './runEventDelegate'
+import { pickLogicalToolName } from './tool-names'
 
 export type RunEventRaw = {
   event_id: string
@@ -611,7 +612,7 @@ export function buildTurns(events: RunEventRaw[]): LlmTurn[] {
       flushAssistant()
       const data = event.data as Record<string, unknown>
       const toolCallId = String(data.tool_call_id ?? '')
-      const toolName = String(data.tool_name ?? event.tool_name ?? '')
+      const toolName = pickLogicalToolName(data, event.tool_name)
       const argsJSON = (data.arguments as Record<string, unknown>) ?? {}
       currentState.turn.toolCalls.push({
         toolCallId,
@@ -633,7 +634,7 @@ export function buildTurns(events: RunEventRaw[]): LlmTurn[] {
       flushAssistant()
       const data = event.data as Record<string, unknown>
       const toolCallId = String(data.tool_call_id ?? '')
-      const toolName = String(data.tool_name ?? event.tool_name ?? toolNameByCallID.get(toolCallId) ?? '')
+      const toolName = pickLogicalToolName(data, event.tool_name ?? toolNameByCallID.get(toolCallId) ?? '')
       const resultJSON = data.result as Record<string, unknown> | undefined
       const existing = currentState.turn.toolCalls.find((toolCall) => toolCall.toolCallId === toolCallId)
       if (existing) {

@@ -707,6 +707,55 @@ time: "2026-04-04T06:21:00Z"
     }
   })
 
+  it('canonicalizes provider tool names from legacy event payloads', () => {
+    const turns = buildTurns([
+      makeEvent({
+        seq: 1,
+        type: 'llm.request',
+        data: {
+          llm_call_id: 'call_1',
+          provider_kind: 'openai',
+          api_mode: 'responses',
+          payload: { input: 'fetch this page' },
+        },
+      }),
+      makeEvent({
+        seq: 2,
+        type: 'tool.call',
+        data: {
+          tool_call_id: 'tc_1',
+          resolved_tool_name: 'web_fetch.jina',
+          arguments: { url: 'https://example.com' },
+        },
+      }),
+      makeEvent({
+        seq: 3,
+        type: 'tool.result',
+        data: {
+          tool_call_id: 'tc_1',
+          resolved_tool_name: 'web_fetch.jina',
+          result: { title: 'Example' },
+        },
+      }),
+      makeEvent({ seq: 4, type: 'llm.turn.completed', data: { llm_call_id: 'call_1' } }),
+    ])
+
+    expect(turns).toHaveLength(1)
+    expect(turns[0]?.segments).toContainEqual({
+      kind: 'tool_call',
+      toolCallId: 'tc_1',
+      toolName: 'web_fetch',
+      argsJSON: { url: 'https://example.com' },
+    })
+    expect(turns[0]?.segments).toContainEqual({
+      kind: 'tool_result',
+      toolCallId: 'tc_1',
+      toolName: 'web_fetch',
+      resultJSON: { title: 'Example' },
+      errorClass: undefined,
+    })
+  })
+
   it('ignores ACP delegate deltas/tools and inner run.completed; keeps host acp_agent tool result', () => {
     const delegate = { delegate_layer: ACP_DELEGATE_LAYER }
     const turns = buildTurns([

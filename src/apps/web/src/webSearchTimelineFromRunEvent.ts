@@ -1,11 +1,11 @@
-import { isACPDelegateEventData } from '@arkloop/shared'
+import { isACPDelegateEventData, canonicalToolName, pickLogicalToolName } from '@arkloop/shared'
 import type { WebSearchPhaseStep } from './components/CopTimeline'
 import type { WebSource } from './storage'
 import type { RunEvent } from './sse'
 
 /** 不同模型/供应商可能用 web_search、web_search.tavily、大小写或连字符变体 */
 export function isWebSearchToolName(toolName: string): boolean {
-  const t = toolName.trim()
+  const t = canonicalToolName(toolName)
   if (!t) return false
   const n = t.toLowerCase().replace(/-/g, '_')
   if (n === 'web_search' || n === 'websearch') return true
@@ -88,8 +88,8 @@ export function applyRunEventToWebSearchSteps(
 
   if (event.type === 'tool.call') {
     if (isACPDelegateEventData(event.data)) return steps
-    const obj = event.data as { tool_name?: unknown; tool_call_id?: unknown; arguments?: unknown }
-    const toolName = typeof obj.tool_name === 'string' ? obj.tool_name : ''
+    const obj = event.data as { tool_call_id?: unknown; arguments?: unknown }
+    const toolName = pickLogicalToolName(event.data, event.tool_name)
     if (!isWebSearchToolName(toolName)) return steps
     const callId = typeof obj.tool_call_id === 'string' ? obj.tool_call_id : event.event_id
     if (steps.some((s) => s.id === callId)) return steps
@@ -108,8 +108,8 @@ export function applyRunEventToWebSearchSteps(
 
   if (event.type === 'tool.result') {
     if (isACPDelegateEventData(event.data)) return steps
-    const obj = event.data as { tool_name?: unknown; tool_call_id?: unknown; result?: unknown }
-    const toolName = typeof obj.tool_name === 'string' ? obj.tool_name : ''
+    const obj = event.data as { tool_call_id?: unknown; result?: unknown }
+    const toolName = pickLogicalToolName(event.data, event.tool_name)
     if (!isWebSearchToolName(toolName)) return steps
     const callId = typeof obj.tool_call_id === 'string' ? obj.tool_call_id : event.event_id
     const sources = webSearchSourcesFromResult(obj.result)

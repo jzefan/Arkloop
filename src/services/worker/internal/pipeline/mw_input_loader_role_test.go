@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -177,6 +178,104 @@ func TestLoadRunInputsReplaysInterruptedRunBeforeTrailingUserInput(t *testing.T)
 	}
 	if loaded.ThreadMessageIDs[0] != firstMessageID || loaded.ThreadMessageIDs[3] != continueMessageID {
 		t.Fatalf("unexpected preserved thread message ids: %#v", loaded.ThreadMessageIDs)
+	}
+}
+
+func TestLoadRunInputsReplayCanonicalizesProviderToolNames(t *testing.T) {
+	ctx := context.Background()
+	db := testutil.SetupPostgresDatabase(t, "pipeline_input_loader_provider_name_replay")
+	pool, err := pgxpool.New(ctx, db.DSN)
+	if err != nil {
+		t.Fatalf("pgxpool.New: %v", err)
+	}
+	t.Cleanup(pool.Close)
+
+	accountID := uuid.New()
+	projectID := uuid.New()
+	threadID := uuid.New()
+	parentRunID := uuid.New()
+	resumedRunID := uuid.New()
+	firstMessageID := uuid.New()
+	continueMessageID := uuid.New()
+
+	if _, err := pool.Exec(ctx, `INSERT INTO threads (id, account_id, project_id) VALUES ($1, $2, $3)`, threadID, accountID, projectID); err != nil {
+		t.Fatalf("insert thread: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO runs (id, account_id, thread_id, status) VALUES ($1, $2, $3, 'interrupted')`, parentRunID, accountID, threadID); err != nil {
+		t.Fatalf("insert parent run: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO runs (id, account_id, thread_id, status, resume_from_run_id) VALUES ($1, $2, $3, 'running', $4)`, resumedRunID, accountID, threadID, parentRunID); err != nil {
+		t.Fatalf("insert resumed run: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO run_events (run_id, seq, type, data_json) VALUES ($1, 1, 'run.started', $2::jsonb)`, parentRunID, `{"thread_tail_message_id":"`+firstMessageID.String()+`"}`); err != nil {
+		t.Fatalf("insert parent run started event: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO run_events (run_id, seq, type, data_json) VALUES ($1, 1, 'run.started', '{}'::jsonb)`, resumedRunID); err != nil {
+		t.Fatalf("insert resumed run started event: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO messages (id, account_id, thread_id, role, content, metadata_json, hidden) VALUES ($1, $2, $3, 'user', $4, '{}'::jsonb, false)`, firstMessageID, accountID, threadID, "fetch the page"); err != nil {
+		t.Fatalf("insert first user message: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO messages (id, account_id, thread_id, role, content, metadata_json, hidden) VALUES ($1, $2, $3, 'user', $4, '{}'::jsonb, false)`, continueMessageID, accountID, threadID, "continue"); err != nil {
+		t.Fatalf("insert trailing user message: %v", err)
+	}
+
+	storeRoot := t.TempDir()
+	store, err := objectstore.NewFilesystemOpener(storeRoot).Open(ctx, objectstore.RolloutBucket)
+	if err != nil {
+		t.Fatalf("open rollout store: %v", err)
+	}
+	blobStore, ok := store.(objectstore.BlobStore)
+	if !ok {
+		t.Fatal("expected blob store")
+	}
+
+	toolCallsJSON, err := json.Marshal([]llm.ToolCall{{
+		ToolCallID:    "call_1",
+		ToolName:      "web_fetch.jina",
+		ArgumentsJSON: map[string]any{"url": "https://example.com"},
+	}})
+	if err != nil {
+		t.Fatalf("marshal tool calls: %v", err)
+	}
+	toolInputJSON, err := json.Marshal(map[string]any{"url": "https://example.com"})
+	if err != nil {
+		t.Fatalf("marshal tool input: %v", err)
+	}
+	rolloutBody := marshalRolloutJSONL(t,
+		map[string]any{"type": "turn_start", "payload": map[string]any{"turn_index": 1, "model": "stub"}},
+		map[string]any{"type": "assistant_message", "payload": map[string]any{"content": "I am fetching", "tool_calls": json.RawMessage(toolCallsJSON)}},
+		map[string]any{"type": "tool_call", "payload": map[string]any{"call_id": "call_1", "name": "web_fetch.jina", "input": json.RawMessage(toolInputJSON)}},
+		map[string]any{"type": "run_end", "payload": map[string]any{"final_status": "interrupted"}},
+	)
+	if err := blobStore.Put(ctx, "run/"+parentRunID.String()+".jsonl", rolloutBody); err != nil {
+		t.Fatalf("write rollout: %v", err)
+	}
+
+	loaded, err := loadRunInputs(ctx, pool, data.Run{
+		ID:              resumedRunID,
+		AccountID:       accountID,
+		ThreadID:        threadID,
+		ResumeFromRunID: &parentRunID,
+	}, nil, data.RunsRepository{}, data.RunEventsRepository{}, data.MessagesRepository{}, nil, blobStore, 20)
+	if err != nil {
+		t.Fatalf("loadRunInputs failed: %v", err)
+	}
+	if len(loaded.Messages) != 4 {
+		t.Fatalf("expected 4 prompt messages, got %d", len(loaded.Messages))
+	}
+	if len(loaded.Messages[1].ToolCalls) != 1 {
+		t.Fatalf("expected replayed assistant tool call, got %#v", loaded.Messages[1].ToolCalls)
+	}
+	if got := loaded.Messages[1].ToolCalls[0].ToolName; got != "web_fetch" {
+		t.Fatalf("expected replayed assistant tool call to use canonical name, got %q", got)
+	}
+	toolText := loaded.Messages[2].Content[0].Text
+	if strings.Contains(toolText, "web_fetch.jina") {
+		t.Fatalf("expected replayed tool message to hide provider tool name, got %s", toolText)
+	}
+	if !strings.Contains(toolText, `"tool_name":"web_fetch"`) {
+		t.Fatalf("expected replayed tool message to keep canonical tool name, got %s", toolText)
 	}
 }
 

@@ -260,6 +260,9 @@ func loadRunInputs(
 		if err != nil {
 			return nil, err
 		}
+		if msg.Role == "tool" {
+			parts = canonicalizeToolMessageParts(parts)
+		}
 		lm := llm.Message{
 			Role:         msg.Role,
 			Content:      parts,
@@ -691,6 +694,7 @@ func replayAssistantMessage(msg rollout.AssistantMessage) llm.Message {
 			slog.Warn("rollout: failed to parse assistant tool_calls", "err", err)
 		}
 	}
+	toolCalls = llm.CanonicalToolCalls(toolCalls)
 	content := []llm.ContentPart(nil)
 	text := sanitizeStoredAssistantText(msg.Content)
 	if strings.TrimSpace(text) != "" {
@@ -707,8 +711,8 @@ func replayToolResultMessage(result rollout.ReplayToolResult) llm.Message {
 	envelope := map[string]any{
 		"tool_call_id": result.CallID,
 	}
-	if strings.TrimSpace(result.Name) != "" {
-		envelope["tool_name"] = strings.TrimSpace(result.Name)
+	if toolName := llm.CanonicalToolName(result.Name); toolName != "" {
+		envelope["tool_name"] = toolName
 	}
 	if len(result.Output) > 0 {
 		var output any
@@ -750,9 +754,23 @@ func parseToolCallsFromContentJSON(raw json.RawMessage) []llm.ToolCall {
 		if err != nil {
 			continue
 		}
-		result = append(result, toolCall)
+		result = append(result, llm.CanonicalToolCall(toolCall))
 	}
 	return result
+}
+
+func canonicalizeToolMessageParts(parts []llm.ContentPart) []llm.ContentPart {
+	if len(parts) == 0 {
+		return nil
+	}
+	out := append([]llm.ContentPart(nil), parts...)
+	for i := range out {
+		if out[i].Kind() != messagecontent.PartTypeText {
+			continue
+		}
+		out[i].Text = llm.CanonicalizeToolEnvelopeText(out[i].Text)
+	}
+	return out
 }
 
 func BuildMessageParts(ctx context.Context, store MessageAttachmentStore, msg data.ThreadMessage) ([]llm.ContentPart, error) {

@@ -138,8 +138,13 @@ type DispatchingExecutor struct {
 	generativeUIReadMeSeen bool
 }
 
+type toolIdentity struct {
+	LogicalName  string
+	ResolvedName string
+}
+
 func (e *DispatchingExecutor) ToolCapabilities(toolName string) ToolCapabilities {
-	resolved := e.resolveToolName(toolName)
+	resolved := e.resolveToolIdentity(toolName).ResolvedName
 	if e.registry == nil {
 		return ToolCapabilities{
 			InterruptBehavior: InterruptBehaviorBlock,
@@ -202,16 +207,19 @@ func (e *DispatchingExecutor) ToolCallEvent(
 	args map[string]any,
 	toolCallID string,
 ) events.RunEvent {
-	resolvedName := e.resolveToolName(toolName)
+	identity := e.resolveToolIdentity(toolName)
 	if e.policyEnforcer == nil {
 		payload := map[string]any{
 			"tool_call_id": strings.TrimSpace(toolCallID),
-			"tool_name":    resolvedName,
+			"tool_name":    identity.LogicalName,
 			"arguments":    args,
 		}
-		return emitter.Emit("tool.call", payload, stringPtr(resolvedName), nil)
+		if identity.ResolvedName != "" {
+			payload["resolved_tool_name"] = identity.ResolvedName
+		}
+		return emitter.Emit("tool.call", payload, stringPtr(identity.LogicalName), nil)
 	}
-	return e.policyEnforcer.BuildToolCallEvent(emitter, resolvedName, args, toolCallID)
+	return e.policyEnforcer.BuildToolCallEvent(emitter, identity.LogicalName, args, toolCallID, identity.ResolvedName)
 }
 
 func (e *DispatchingExecutor) Bind(toolName string, executor Executor) error {
@@ -243,9 +251,11 @@ func (e *DispatchingExecutor) Execute(
 ) ExecutionResult {
 	started := time.Now()
 
-	resolvedName := e.resolveToolName(toolName)
+	identity := e.resolveToolIdentity(toolName)
+	logicalName := identity.LogicalName
+	resolvedName := identity.ResolvedName
 
-	decision := e.policyEnforcer.RequestToolCall(execContext.Emitter, resolvedName, args, toolCallID)
+	decision := e.policyEnforcer.RequestToolCall(execContext.Emitter, logicalName, args, toolCallID, resolvedName)
 	policyEvents := append([]events.RunEvent{}, decision.Events...)
 
 	if !decision.Allowed {
@@ -261,7 +271,7 @@ func (e *DispatchingExecutor) Execute(
 				ErrorClass: PolicyDeniedCode,
 				Message:    "tool call denied by policy",
 				Details: map[string]any{
-					"tool_name":    resolvedName,
+					"tool_name":    logicalName,
 					"tool_call_id": decision.ToolCallID,
 					"deny_reason":  denyReason,
 				},
@@ -278,7 +288,7 @@ func (e *DispatchingExecutor) Execute(
 				ErrorClass: ErrorClassToolNotRegistered,
 				Message:    "tool executor not bound",
 				Details: map[string]any{
-					"tool_name":    resolvedName,
+					"tool_name":    logicalName,
 					"tool_call_id": decision.ToolCallID,
 				},
 			},
@@ -296,7 +306,7 @@ func (e *DispatchingExecutor) Execute(
 						ErrorClass: ErrorClassToolExecutionFailed,
 						Message:    "tool execution failed",
 						Details: map[string]any{
-							"tool_name":    resolvedName,
+							"tool_name":    logicalName,
 							"tool_call_id": decision.ToolCallID,
 							"panic":        recovered,
 						},
@@ -312,14 +322,14 @@ func (e *DispatchingExecutor) Execute(
 			execCtx, cancelTimeout = context.WithTimeout(ctx, time.Duration(*execContext.TimeoutMs)*time.Millisecond)
 		}
 		defer cancelTimeout()
-		result = runExecutorWithHardTimeout(execCtx, executor, resolvedName, args, execContext, decision.ToolCallID)
+		result = runExecutorWithHardTimeout(execCtx, executor, logicalName, resolvedName, args, execContext, decision.ToolCallID)
 		if errors.Is(execCtx.Err(), context.DeadlineExceeded) && result.Error == nil {
 			result = ExecutionResult{
 				Error: &ExecutionError{
 					ErrorClass: ErrorClassToolHardTimeout,
 					Message:    "tool execution reached hard timeout",
 					Details: map[string]any{
-						"tool_name":    resolvedName,
+						"tool_name":    logicalName,
 						"tool_call_id": decision.ToolCallID,
 						"timeout_ms":   *execContext.TimeoutMs,
 					},
@@ -330,17 +340,17 @@ func (e *DispatchingExecutor) Execute(
 
 	// Layer 1: smart truncation — use CompressTargetBytes as the LLM-facing budget,
 	// independent from the executor-level MaxOutputBytes truncation.
-	if result.ResultJSON != nil && result.Error == nil && !ShouldBypassResultCompression(resolvedName) {
-		result = CompressResult(resolvedName, result, CompressTargetBytes)
+	if result.ResultJSON != nil && result.Error == nil && !ShouldBypassResultCompression(logicalName) {
+		result = CompressResult(logicalName, result, CompressTargetBytes)
 	}
 
 	// Layer 2: LLM summarization
-	if e.summarizer != nil && result.ResultJSON != nil && result.Error == nil && !ShouldBypassResultSummarization(resolvedName) {
+	if e.summarizer != nil && result.ResultJSON != nil && result.Error == nil && !ShouldBypassResultSummarization(logicalName) {
 		if raw, _ := json.Marshal(result.ResultJSON); len(raw) > e.summarizer.threshold {
-			result = e.summarizer.Summarize(ctx, resolvedName, result)
+			result = e.summarizer.Summarize(ctx, logicalName, result)
 		}
 	}
-	if result.Error == nil && IsGenerativeUIBootstrapTool(resolvedName) {
+	if result.Error == nil && IsGenerativeUIBootstrapTool(logicalName) {
 		e.generativeUIReadMeSeen = true
 	}
 
@@ -352,7 +362,8 @@ func (e *DispatchingExecutor) Execute(
 func runExecutorWithHardTimeout(
 	ctx context.Context,
 	executor Executor,
-	toolName string,
+	logicalToolName string,
+	resolvedToolName string,
 	args map[string]any,
 	execContext ExecutionContext,
 	toolCallID string,
@@ -366,7 +377,7 @@ func runExecutorWithHardTimeout(
 						ErrorClass: ErrorClassToolExecutionFailed,
 						Message:    "tool execution failed",
 						Details: map[string]any{
-							"tool_name":    toolName,
+							"tool_name":    logicalToolName,
 							"tool_call_id": toolCallID,
 							"panic":        recovered,
 						},
@@ -374,7 +385,7 @@ func runExecutorWithHardTimeout(
 				}
 			}
 		}()
-		resultCh <- executor.Execute(ctx, toolName, args, execContext, toolCallID)
+		resultCh <- executor.Execute(ctx, resolvedToolName, args, execContext, toolCallID)
 	}()
 
 	select {
@@ -391,7 +402,7 @@ func runExecutorWithHardTimeout(
 					ErrorClass: ErrorClassToolHardTimeout,
 					Message:    "tool execution reached hard timeout",
 					Details: map[string]any{
-						"tool_name":    toolName,
+						"tool_name":    logicalToolName,
 						"tool_call_id": toolCallID,
 						"timeout_ms":   timeoutMs,
 					},
@@ -403,7 +414,7 @@ func runExecutorWithHardTimeout(
 				ErrorClass: ErrorClassToolExecutionFailed,
 				Message:    "tool execution cancelled",
 				Details: map[string]any{
-					"tool_name":    toolName,
+					"tool_name":    logicalToolName,
 					"tool_call_id": toolCallID,
 				},
 			},
@@ -412,17 +423,48 @@ func runExecutorWithHardTimeout(
 }
 
 func (e *DispatchingExecutor) resolveToolName(toolName string) string {
+	return e.resolveToolIdentity(toolName).ResolvedName
+}
+
+func (e *DispatchingExecutor) resolveToolIdentity(toolName string) toolIdentity {
 	cleaned := strings.TrimSpace(toolName)
 	if cleaned == "" {
-		return toolName
+		return toolIdentity{}
 	}
-	if e.executors[cleaned] != nil {
-		return cleaned
+	if e.registry != nil {
+		if spec, ok := e.registry.Get(cleaned); ok {
+			return toolIdentity{
+				LogicalName:  toolLogicalName(spec),
+				ResolvedName: cleaned,
+			}
+		}
 	}
 	if mapped, ok := e.llmNameIndex[cleaned]; ok && strings.TrimSpace(mapped) != "" {
-		return mapped
+		return toolIdentity{
+			LogicalName:  llm.CanonicalToolName(cleaned),
+			ResolvedName: strings.TrimSpace(mapped),
+		}
 	}
-	return cleaned
+	canonical := llm.CanonicalToolName(cleaned)
+	if canonical == "" {
+		canonical = cleaned
+	}
+	return toolIdentity{
+		LogicalName:  canonical,
+		ResolvedName: cleaned,
+	}
+}
+
+func toolLogicalName(spec AgentToolSpec) string {
+	logical := strings.TrimSpace(spec.LlmName)
+	if logical == "" {
+		logical = strings.TrimSpace(spec.Name)
+	}
+	logical = llm.CanonicalToolName(logical)
+	if logical == "" {
+		return strings.TrimSpace(spec.Name)
+	}
+	return logical
 }
 
 func durationMs(started time.Time) int {

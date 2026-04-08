@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react'
+import { canonicalToolName, pickLogicalToolName } from '@arkloop/shared'
 import { useAuth } from '../contexts/auth'
 import { useChatSession } from '../contexts/chat-session'
 import { useCredits } from '../contexts/credits'
@@ -341,7 +342,7 @@ export function useSseDispatch(params: {
             stream.streamingArtifactsRef.current = [...stream.streamingArtifactsRef.current, entry]
           }
           if (obj.tool_call_id) entry.toolCallId = obj.tool_call_id
-          if (obj.tool_name) entry.toolName = obj.tool_name
+          if (obj.tool_name) entry.toolName = canonicalToolName(obj.tool_name)
           entry.argumentsBuffer += obj.arguments_delta
 
           if (entry.toolName === 'show_widget' || entry.toolName === 'create_artifact' || (!entry.toolName && (entry.argumentsBuffer.includes('"content"') || entry.argumentsBuffer.includes('"widget_code"')))) {
@@ -361,8 +362,8 @@ export function useSseDispatch(params: {
         if (isACPDelegateEventData(event.data)) continue
         stream.setPendingThinking(false)
         run.seenFirstToolCallInRunRef.current = true
-        const obj = event.data as { tool_name?: unknown; tool_call_id?: unknown; arguments?: unknown }
-        const toolName = typeof obj.tool_name === 'string' ? obj.tool_name : event.tool_name
+        const obj = event.data as { tool_call_id?: unknown; arguments?: unknown }
+        const toolName = pickLogicalToolName(event.data, event.tool_name)
 
         const codeExecutionCall = applyCodeExecutionToolCall(meta.currentRunCodeExecutionsRef.current, event)
         if (codeExecutionCall.appended) {
@@ -463,8 +464,8 @@ export function useSseDispatch(params: {
       // ── tool.result ───────────────────────────────────────────────────────
       if (event.type === 'tool.result') {
         if (isACPDelegateEventData(event.data)) continue
-        const obj = event.data as { tool_name?: unknown; tool_call_id?: unknown; result?: unknown }
-        const resultToolName = typeof obj.tool_name === 'string' ? obj.tool_name : ''
+        const obj = event.data as { tool_call_id?: unknown; result?: unknown }
+        const resultToolName = pickLogicalToolName(event.data, event.tool_name)
 
         if (isWebSearchToolName(resultToolName)) {
           const newSources = webSearchSourcesFromResult(obj.result)
@@ -473,7 +474,7 @@ export function useSseDispatch(params: {
           }
         }
 
-        if (obj.tool_name === 'python_execute' || obj.tool_name === 'exec_command' || obj.tool_name === 'continue_process' || obj.tool_name === 'terminate_process' || obj.tool_name === 'document_write' || obj.tool_name === 'create_artifact' || obj.tool_name === 'browser' || isWebFetchToolName(resultToolName)) {
+        if (resultToolName === 'python_execute' || resultToolName === 'exec_command' || resultToolName === 'continue_process' || resultToolName === 'terminate_process' || resultToolName === 'document_write' || resultToolName === 'create_artifact' || resultToolName === 'browser' || isWebFetchToolName(resultToolName)) {
           const result = obj.result as { artifacts?: unknown[] } | undefined
           if (Array.isArray(result?.artifacts)) {
             const newArtifacts: ArtifactRef[] = result.artifacts
@@ -489,7 +490,7 @@ export function useSseDispatch(params: {
               }))
             if (newArtifacts.length > 0) {
               meta.currentRunArtifactsRef.current = [...meta.currentRunArtifactsRef.current, ...newArtifacts]
-              if (obj.tool_name === 'create_artifact') {
+              if (resultToolName === 'create_artifact') {
                 const callId = typeof obj.tool_call_id === 'string' ? obj.tool_call_id : undefined
                 for (const art of newArtifacts) {
                   const entry = callId
@@ -517,7 +518,7 @@ export function useSseDispatch(params: {
           }
         }
 
-        if (obj.tool_name === 'browser') {
+        if (resultToolName === 'browser') {
           const browserResult = applyBrowserToolResult(meta.currentRunBrowserActionsRef.current, event)
           if (browserResult.updated) meta.currentRunBrowserActionsRef.current = browserResult.nextActions
         }

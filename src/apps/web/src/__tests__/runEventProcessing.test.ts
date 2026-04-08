@@ -179,6 +179,38 @@ describe('web fetch processing', () => {
       { id: 'wf_1', url: 'https://example.com', title: 'Example', statusCode: 200, status: 'done', seq: 1 },
     ])
   })
+
+  it('在只有 resolved_tool_name 时仍能识别旧历史', () => {
+    const call = makeRunEvent({
+      runId: 'run_1',
+      seq: 1,
+      type: 'tool.call',
+      data: {
+        resolved_tool_name: 'web_fetch.jina',
+        tool_call_id: 'wf_legacy',
+        arguments: { url: 'https://example.com/legacy' },
+      },
+    })
+    const result = makeRunEvent({
+      runId: 'run_1',
+      seq: 2,
+      type: 'tool.result',
+      data: {
+        resolved_tool_name: 'web_fetch.jina',
+        tool_call_id: 'wf_legacy',
+        result: { title: 'Legacy', status_code: 200 },
+      },
+    })
+
+    const afterCall = applyWebFetchToolCall([], call)
+    expect(afterCall.nextFetches).toEqual([
+      { id: 'wf_legacy', url: 'https://example.com/legacy', status: 'fetching', seq: 1 },
+    ])
+    const afterResult = applyWebFetchToolResult(afterCall.nextFetches, result)
+    expect(afterResult.nextFetches).toEqual([
+      { id: 'wf_legacy', url: 'https://example.com/legacy', title: 'Legacy', statusCode: 200, status: 'done', seq: 1 },
+    ])
+  })
 })
 
 describe('runEventDismissesAssistantPlaceholder', () => {
