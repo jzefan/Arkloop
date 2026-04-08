@@ -2274,7 +2274,7 @@ func (w *desktopEventWriter) append(ctx context.Context, runID uuid.UUID, ev eve
 		return err
 	}
 
-	if ev.Type == "run.route.selected" && personaID != "" {
+	if ev.Type == "run.route.selected" {
 		if err := w.runsRepo.UpdateRunMetadata(ctx, tx, runID, w.model, personaID); err != nil {
 			slog.Error("desktop_update_run_metadata",
 				"run_id", runID.String(),
