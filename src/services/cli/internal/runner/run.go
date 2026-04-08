@@ -12,6 +12,12 @@ import (
 	"arkloop/services/cli/internal/sse"
 )
 
+var (
+	sseReconnectMaxAttempts = 5
+	sseReconnectBaseDelay   = 500 * time.Millisecond
+	sseReconnectMaxDelay    = 3 * time.Second
+)
+
 // RunResult 保存一次 agent run 的完整结果。
 type RunResult struct {
 	ThreadID   string `json:"thread_id"`
@@ -51,53 +57,67 @@ func Execute(ctx context.Context, c *apiclient.Client, threadID string, prompt s
 	if err != nil {
 		return RunResult{}, fmt.Errorf("runner: open event stream: %w", err)
 	}
-	defer body.Close()
+	defer func() {
+		if body != nil {
+			_ = body.Close()
+		}
+	}()
 
 	var (
-		output    strings.Builder
-		toolCalls int
-		status    string
-		runErr    string
-		streamErr error
+		output     strings.Builder
+		toolCalls  int
+		status     string
+		runErr     string
+		lastSeq    int64
+		seenSeqs   = make(map[int64]struct{})
+		reconnects int
 	)
 
-	reader := sse.NewReader(body)
-	for {
-		ev, readErr := reader.Next()
-		if readErr != nil {
-			if !errors.Is(readErr, io.EOF) {
-				streamErr = readErr
-			}
+	for status == "" {
+		reader := sse.NewReader(body)
+		streamErr := consumeStream(reader, seenSeqs, onEvent, &output, &toolCalls, &lastSeq, &status, &runErr)
+		if status != "" {
+			break
+		}
+		if ctx.Err() != nil {
 			break
 		}
 
-		if onEvent != nil {
-			onEvent(ev)
+		nextStatus, nextErr := c.GetRun(ctx, runID)
+		if nextErr != nil {
+			status = "error"
+			runErr = fmt.Sprintf("runner: get run: %v", nextErr)
+			break
+		}
+		if !isActiveRunStatus(nextStatus.Status) {
+			status = nextStatus.Status
+			break
 		}
 
-		switch ev.Type {
-		case "message.delta":
-			if delta, ok := ev.Data["content_delta"].(string); ok {
-				output.WriteString(delta)
-			}
-		case "tool.call":
-			toolCalls++
+		reconnects++
+		if reconnects > sseReconnectMaxAttempts {
+			status = "error"
+			runErr = reconnectError(streamErr, reconnects-1)
+			break
 		}
 
-		if sse.IsTerminal(ev.Type) {
-			status = terminalStatus(ev.Type)
-			if ev.Type == "run.failed" {
-				if msg, ok := ev.Data["error"].(string); ok {
-					runErr = msg
-				}
-			}
+		if closeErr := body.Close(); closeErr != nil && runErr == "" {
+			runErr = closeErr.Error()
+		}
+		body = nil
+		if err = sleepBeforeReconnect(ctx, reconnects); err != nil {
+			break
+		}
+		body, err = c.OpenEventStream(ctx, runID, lastSeq)
+		if err != nil {
+			status = "error"
+			runErr = fmt.Sprintf("runner: reopen event stream: %v", err)
 			break
 		}
 	}
 
 	durationMs := time.Since(start).Milliseconds()
 
-	// terminal event 未收到，说明被中断或意外断流
 	if status == "" {
 		switch ctx.Err() {
 		case context.DeadlineExceeded:
@@ -106,9 +126,7 @@ func Execute(ctx context.Context, c *apiclient.Client, threadID string, prompt s
 			status = "cancelled"
 		default:
 			status = "error"
-			if streamErr != nil {
-				runErr = streamErr.Error()
-			}
+			runErr = "run ended without terminal status"
 		}
 	}
 
@@ -132,7 +150,93 @@ func terminalStatus(eventType string) string {
 		return "failed"
 	case "run.cancelled":
 		return "cancelled"
+	case "run.interrupted":
+		return "interrupted"
 	default:
 		return eventType
 	}
+}
+
+func consumeStream(
+	reader *sse.Reader,
+	seenSeqs map[int64]struct{},
+	onEvent func(sse.Event),
+	output *strings.Builder,
+	toolCalls *int,
+	lastSeq *int64,
+	status *string,
+	runErr *string,
+) error {
+	for {
+		ev, err := reader.Next()
+		if err != nil {
+			if errors.Is(err, io.EOF) {
+				return io.EOF
+			}
+			return err
+		}
+
+		if ev.Seq > 0 {
+			if _, exists := seenSeqs[ev.Seq]; exists {
+				continue
+			}
+			seenSeqs[ev.Seq] = struct{}{}
+			*lastSeq = ev.Seq
+		}
+
+		if onEvent != nil {
+			onEvent(ev)
+		}
+
+		switch ev.Type {
+		case "message.delta":
+			if delta, ok := ev.Data["content_delta"].(string); ok {
+				output.WriteString(delta)
+			}
+		case "tool.call":
+			*toolCalls = *toolCalls + 1
+		}
+
+		if sse.IsTerminal(ev.Type) {
+			*status = terminalStatus(ev.Type)
+			if ev.Type == "run.failed" {
+				if msg, ok := ev.Data["error"].(string); ok {
+					*runErr = msg
+				}
+			}
+			return nil
+		}
+	}
+}
+
+func isActiveRunStatus(status string) bool {
+	switch status {
+	case "running", "cancelling":
+		return true
+	default:
+		return false
+	}
+}
+
+func sleepBeforeReconnect(ctx context.Context, attempt int) error {
+	delay := sseReconnectBaseDelay << (attempt - 1)
+	if delay > sseReconnectMaxDelay {
+		delay = sseReconnectMaxDelay
+	}
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
+}
+
+func reconnectError(streamErr error, attempts int) string {
+	if streamErr == nil {
+		return fmt.Sprintf("sse reconnect exhausted after %d attempts", attempts)
+	}
+	return fmt.Sprintf("%s (reconnect exhausted after %d attempts)", streamErr.Error(), attempts)
 }

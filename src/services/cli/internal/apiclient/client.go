@@ -76,6 +76,12 @@ type Thread struct {
 	IsPrivate   bool    `json:"is_private"`
 }
 
+type Run struct {
+	RunID    string `json:"run_id"`
+	ThreadID string `json:"thread_id"`
+	Status   string `json:"status"`
+}
+
 // NewClient 构造客户端，baseURL 和 token 必须非空。
 func NewClient(baseURL, token string) *Client {
 	return &Client{
@@ -175,6 +181,14 @@ func (c *Client) ListAllThreads(ctx context.Context) ([]Thread, error) {
 		beforeCreatedAt = last.CreatedAt
 		beforeID = last.ID
 	}
+}
+
+func (c *Client) GetRun(ctx context.Context, runID string) (Run, error) {
+	var resp Run
+	if err := c.doJSON(ctx, http.MethodGet, "/v1/runs/"+runID, nil, &resp); err != nil {
+		return Run{}, fmt.Errorf("get run: %w", err)
+	}
+	return resp, nil
 }
 
 // CreateThread 创建一个新 thread，返回 thread ID。
