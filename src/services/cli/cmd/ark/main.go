@@ -9,10 +9,12 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
 	"arkloop/services/cli/internal/apiclient"
+	"arkloop/services/cli/internal/formatter"
 	"arkloop/services/cli/internal/renderer"
 	"arkloop/services/cli/internal/repl"
 	"arkloop/services/cli/internal/runner"
@@ -24,6 +26,25 @@ type exitError struct {
 }
 
 func (e *exitError) Error() string { return fmt.Sprintf("exit %d", e.code) }
+
+const sessionListLimit = 200
+
+type commandRoute string
+
+const (
+	commandRun          commandRoute = "run"
+	commandChat         commandRoute = "chat"
+	commandStatus       commandRoute = "status"
+	commandModelsList   commandRoute = "models.list"
+	commandPersonasList commandRoute = "personas.list"
+	commandSessionsList commandRoute = "sessions.list"
+	commandSessionsChat commandRoute = "sessions.resume"
+)
+
+type routedCommand struct {
+	kind commandRoute
+	args []string
+}
 
 func main() {
 	err := run()
@@ -47,11 +68,27 @@ func run() error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 
-	switch os.Args[1] {
-	case "run":
-		return cmdRun(ctx, os.Args[2:])
-	case "chat":
-		return cmdChat(ctx, os.Args[2:])
+	route, err := routeCommand(os.Args[1:])
+	if err != nil {
+		printUsage()
+		return &exitError{2}
+	}
+
+	switch route.kind {
+	case commandRun:
+		return cmdRun(ctx, route.args)
+	case commandChat:
+		return cmdChat(ctx, route.args)
+	case commandStatus:
+		return cmdStatus(ctx, route.args)
+	case commandModelsList:
+		return cmdModelsList(ctx, route.args)
+	case commandPersonasList:
+		return cmdPersonasList(ctx, route.args)
+	case commandSessionsList:
+		return cmdSessionsList(ctx, route.args)
+	case commandSessionsChat:
+		return cmdSessionsResume(ctx, route.args)
 	default:
 		printUsage()
 		return &exitError{2}
@@ -62,8 +99,47 @@ func printUsage() {
 	fmt.Fprintln(os.Stderr, `usage: ark <command> [flags]
 
 commands:
-  run   <prompt>    execute a single run and exit
-  chat              interactive multi-turn conversation`)
+  run <prompt>                   execute a single run and exit
+  chat                           interactive multi-turn conversation
+  status                         show current desktop connection status
+  models list                    list configured models
+  personas list                  list selectable personas
+  sessions list                  list recent sessions
+  sessions resume <session-id>   resume an existing session`)
+}
+
+func routeCommand(args []string) (routedCommand, error) {
+	if len(args) == 0 {
+		return routedCommand{}, errors.New("missing command")
+	}
+
+	switch args[0] {
+	case "run":
+		return routedCommand{kind: commandRun, args: args[1:]}, nil
+	case "chat":
+		return routedCommand{kind: commandChat, args: args[1:]}, nil
+	case "status":
+		return routedCommand{kind: commandStatus, args: args[1:]}, nil
+	case "models":
+		if len(args) >= 2 && args[1] == "list" {
+			return routedCommand{kind: commandModelsList, args: args[2:]}, nil
+		}
+	case "personas":
+		if len(args) >= 2 && args[1] == "list" {
+			return routedCommand{kind: commandPersonasList, args: args[2:]}, nil
+		}
+	case "sessions":
+		if len(args) >= 2 {
+			switch args[1] {
+			case "list":
+				return routedCommand{kind: commandSessionsList, args: args[2:]}, nil
+			case "resume":
+				return routedCommand{kind: commandSessionsChat, args: args[2:]}, nil
+			}
+		}
+	}
+
+	return routedCommand{}, fmt.Errorf("unknown command")
 }
 
 // resolveToken 按优先级解析 token：flag > 环境变量 > ~/.arkloop/desktop.token > 默认值。
@@ -128,6 +204,19 @@ func flagWasProvided(fs *flag.FlagSet, name string) bool {
 	return provided
 }
 
+func newClientFromFlags(host, token string, fs *flag.FlagSet) *apiclient.Client {
+	return apiclient.NewClient(resolveHost(host, flagWasProvided(fs, "host")), resolveToken(token))
+}
+
+func ensureOutputFormat(outputFormat string) error {
+	switch outputFormat {
+	case formatter.OutputText, formatter.OutputJSON:
+		return nil
+	default:
+		return fmt.Errorf("unknown output format: %s", outputFormat)
+	}
+}
+
 func cmdRun(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("run", flag.ExitOnError)
 	host := fs.String("host", apiclient.DefaultBaseURL, "desktop API address")
@@ -147,7 +236,7 @@ func cmdRun(ctx context.Context, args []string) error {
 	}
 	prompt := fs.Arg(0)
 
-	client := apiclient.NewClient(resolveHost(*host, flagWasProvided(fs, "host")), resolveToken(*token))
+	client := newClientFromFlags(*host, *token, fs)
 	params := apiclient.RunParams{
 		PersonaID:     *persona,
 		Model:         *model,
@@ -256,6 +345,135 @@ func runStreamJSON(ctx context.Context, client *apiclient.Client, threadID, prom
 	return nil
 }
 
+func cmdStatus(ctx context.Context, args []string) error {
+	fs := flag.NewFlagSet("status", flag.ExitOnError)
+	host := fs.String("host", apiclient.DefaultBaseURL, "desktop API address")
+	token := fs.String("token", "", "bearer token")
+	outputFormat := fs.String("output-format", formatter.OutputText, "output format: text, json")
+	fs.Parse(args)
+
+	if fs.NArg() != 0 {
+		fmt.Fprintln(os.Stderr, "usage: ark status [flags]")
+		return &exitError{2}
+	}
+	if err := ensureOutputFormat(*outputFormat); err != nil {
+		return err
+	}
+
+	client := newClientFromFlags(*host, *token, fs)
+	me, err := client.GetMe(ctx)
+	if err != nil {
+		return err
+	}
+
+	return formatter.PrintStatus(os.Stdout, *outputFormat, formatter.StatusView{
+		Host:        client.BaseURL(),
+		Connected:   true,
+		UserID:      me.ID,
+		Username:    me.Username,
+		AccountID:   me.AccountID,
+		WorkEnabled: me.WorkEnabled,
+	})
+}
+
+func cmdModelsList(ctx context.Context, args []string) error {
+	fs := flag.NewFlagSet("models list", flag.ExitOnError)
+	host := fs.String("host", apiclient.DefaultBaseURL, "desktop API address")
+	token := fs.String("token", "", "bearer token")
+	outputFormat := fs.String("output-format", formatter.OutputText, "output format: text, json")
+	fs.Parse(args)
+
+	if fs.NArg() != 0 {
+		fmt.Fprintln(os.Stderr, "usage: ark models list [flags]")
+		return &exitError{2}
+	}
+	if err := ensureOutputFormat(*outputFormat); err != nil {
+		return err
+	}
+
+	client := newClientFromFlags(*host, *token, fs)
+	providers, err := client.ListLlmProviders(ctx)
+	if err != nil {
+		return err
+	}
+
+	return formatter.PrintModels(os.Stdout, *outputFormat, modelViewsFromProviders(providers))
+}
+
+func cmdPersonasList(ctx context.Context, args []string) error {
+	fs := flag.NewFlagSet("personas list", flag.ExitOnError)
+	host := fs.String("host", apiclient.DefaultBaseURL, "desktop API address")
+	token := fs.String("token", "", "bearer token")
+	outputFormat := fs.String("output-format", formatter.OutputText, "output format: text, json")
+	fs.Parse(args)
+
+	if fs.NArg() != 0 {
+		fmt.Fprintln(os.Stderr, "usage: ark personas list [flags]")
+		return &exitError{2}
+	}
+	if err := ensureOutputFormat(*outputFormat); err != nil {
+		return err
+	}
+
+	client := newClientFromFlags(*host, *token, fs)
+	personas, err := client.ListSelectablePersonas(ctx)
+	if err != nil {
+		return err
+	}
+
+	return formatter.PrintPersonas(os.Stdout, *outputFormat, personaViews(personas))
+}
+
+func cmdSessionsList(ctx context.Context, args []string) error {
+	fs := flag.NewFlagSet("sessions list", flag.ExitOnError)
+	host := fs.String("host", apiclient.DefaultBaseURL, "desktop API address")
+	token := fs.String("token", "", "bearer token")
+	outputFormat := fs.String("output-format", formatter.OutputText, "output format: text, json")
+	fs.Parse(args)
+
+	if fs.NArg() != 0 {
+		fmt.Fprintln(os.Stderr, "usage: ark sessions list [flags]")
+		return &exitError{2}
+	}
+	if err := ensureOutputFormat(*outputFormat); err != nil {
+		return err
+	}
+
+	client := newClientFromFlags(*host, *token, fs)
+	threads, err := client.ListThreads(ctx, sessionListLimit)
+	if err != nil {
+		return err
+	}
+
+	return formatter.PrintSessions(os.Stdout, *outputFormat, sessionViews(threads))
+}
+
+func cmdSessionsResume(ctx context.Context, args []string) error {
+	fs := flag.NewFlagSet("sessions resume", flag.ExitOnError)
+	host := fs.String("host", apiclient.DefaultBaseURL, "desktop API address")
+	token := fs.String("token", "", "bearer token")
+	timeout := fs.Duration("timeout", 5*time.Minute, "per-turn timeout")
+	persona := fs.String("persona", "", "persona_id")
+	model := fs.String("model", "", "model key")
+	workDir := fs.String("work-dir", "", "working directory")
+	fs.Parse(args)
+
+	if fs.NArg() != 1 {
+		fmt.Fprintln(os.Stderr, "usage: ark sessions resume [flags] <session-id>")
+		return &exitError{2}
+	}
+
+	client := newClientFromFlags(*host, *token, fs)
+	params := apiclient.RunParams{
+		PersonaID: *persona,
+		Model:     *model,
+		WorkDir:   *workDir,
+	}
+
+	r := repl.NewREPL(client, params, fs.Arg(0), *timeout)
+	return r.Run(ctx)
+}
+
 func cmdChat(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("chat", flag.ExitOnError)
 	host := fs.String("host", apiclient.DefaultBaseURL, "desktop API address")
@@ -267,7 +485,7 @@ func cmdChat(ctx context.Context, args []string) error {
 	threadID := fs.String("thread", "", "continue from existing thread")
 	fs.Parse(args)
 
-	client := apiclient.NewClient(resolveHost(*host, flagWasProvided(fs, "host")), resolveToken(*token))
+	client := newClientFromFlags(*host, *token, fs)
 	params := apiclient.RunParams{
 		PersonaID: *persona,
 		Model:     *model,
@@ -276,4 +494,113 @@ func cmdChat(ctx context.Context, args []string) error {
 
 	r := repl.NewREPL(client, params, *threadID, *timeout)
 	return r.Run(ctx)
+}
+
+func modelViewsFromProviders(providers []apiclient.LlmProvider) []formatter.ModelView {
+	views := make([]formatter.ModelView, 0)
+	for _, provider := range providers {
+		for _, model := range provider.Models {
+			tags := append([]string{}, model.Tags...)
+			views = append(views, formatter.ModelView{
+				Model:        model.Model,
+				ProviderID:   model.ProviderID,
+				ProviderName: provider.Name,
+				IsDefault:    model.IsDefault,
+				ShowInPicker: model.ShowInPicker,
+				Tags:         tags,
+			})
+		}
+	}
+
+	sort.SliceStable(views, func(i, j int) bool {
+		left := views[i]
+		right := views[j]
+		if left.IsDefault != right.IsDefault {
+			return left.IsDefault
+		}
+		if left.ShowInPicker != right.ShowInPicker {
+			return left.ShowInPicker
+		}
+		if left.ProviderName != right.ProviderName {
+			return left.ProviderName < right.ProviderName
+		}
+		return left.Model < right.Model
+	})
+	return views
+}
+
+func personaViews(personas []apiclient.Persona) []formatter.PersonaView {
+	sorted := append([]apiclient.Persona(nil), personas...)
+
+	sort.SliceStable(sorted, func(i, j int) bool {
+		left := sorted[i]
+		right := sorted[j]
+		leftOrder := left.SelectorOrder
+		if leftOrder == 0 {
+			leftOrder = 99
+		}
+		rightOrder := right.SelectorOrder
+		if rightOrder == 0 {
+			rightOrder = 99
+		}
+		if leftOrder != rightOrder {
+			return leftOrder < rightOrder
+		}
+
+		leftName := strings.TrimSpace(left.SelectorName)
+		if leftName == "" {
+			leftName = strings.TrimSpace(left.DisplayName)
+		}
+		if leftName == "" {
+			leftName = left.PersonaKey
+		}
+		rightName := strings.TrimSpace(right.SelectorName)
+		if rightName == "" {
+			rightName = strings.TrimSpace(right.DisplayName)
+		}
+		if rightName == "" {
+			rightName = right.PersonaKey
+		}
+		if leftName != rightName {
+			return leftName < rightName
+		}
+		return left.PersonaKey < right.PersonaKey
+	})
+
+	views := make([]formatter.PersonaView, 0, len(sorted))
+	for _, persona := range sorted {
+		views = append(views, formatter.PersonaView{
+			PersonaKey:    persona.PersonaKey,
+			SelectorName:  persona.SelectorName,
+			DisplayName:   persona.DisplayName,
+			Model:         persona.Model,
+			ReasoningMode: persona.ReasoningMode,
+			Source:        persona.Source,
+		})
+	}
+	return views
+}
+
+func sessionViews(threads []apiclient.Thread) []formatter.SessionView {
+	views := make([]formatter.SessionView, 0, len(threads))
+	for _, thread := range threads {
+		title := ""
+		if thread.Title != nil {
+			title = *thread.Title
+		}
+		activeRunID := ""
+		if thread.ActiveRunID != nil {
+			activeRunID = *thread.ActiveRunID
+		}
+		views = append(views, formatter.SessionView{
+			ID:          thread.ID,
+			Title:       title,
+			Mode:        thread.Mode,
+			CreatedAt:   thread.CreatedAt,
+			UpdatedAt:   thread.UpdatedAt,
+			ActiveRunID: activeRunID,
+			IsPrivate:   thread.IsPrivate,
+		})
+	}
+	return views
 }
