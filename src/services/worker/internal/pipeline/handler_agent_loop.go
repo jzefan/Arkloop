@@ -18,6 +18,8 @@ import (
 	"arkloop/services/worker/internal/llm"
 	"arkloop/services/worker/internal/queue"
 	"arkloop/services/worker/internal/subagentctl"
+	"arkloop/services/worker/internal/tools/builtin/acptool"
+	"arkloop/services/worker/internal/tools/builtin/read"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -88,6 +90,17 @@ func NewAgentLoopHandler(
 			rc.TelegramProgressTracker,
 		)
 		defer writer.Close(ctx)
+		defer func() {
+			if writer.terminalRunStatus == "" {
+				return
+			}
+			read.CleanupRunFromExecutors(rc.ToolExecutors, rc.Run.ID.String())
+			cleanupCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			if err := acptool.CleanupRunFromExecutors(cleanupCtx, rc.ToolExecutors, rc.Run.ID.String(), writer.terminalRunStatus); err != nil {
+				slog.Warn("acp cleanup failed", "run_id", rc.Run.ID.String(), "error", err.Error())
+			}
+		}()
 
 		routeData := selected.ToRunEventDataJSON()
 		if rc.AgentConfig != nil && rc.AgentConfig.Model != nil && strings.TrimSpace(*rc.AgentConfig.Model) != "" {
