@@ -113,8 +113,21 @@ func TestReadFilePathSource(t *testing.T) {
 	if !strings.Contains(content, "2|line2") {
 		t.Fatalf("unexpected content: %q", content)
 	}
-	if !tracker.HasBeenRead("sample.txt") {
-		t.Fatal("expected file tracker to record read")
+	if !tracker.HasBeenReadForRun(runID.String(), fileops.TrackingKey(workDir, "./sample.txt")) {
+		t.Fatal("expected file tracker to record read for the current run")
+	}
+}
+
+func TestReadCleanupRunClearsTrackerState(t *testing.T) {
+	tracker := fileops.NewFileTracker()
+	executor := NewToolExecutorWithTracker(tracker)
+	runID := uuid.New().String()
+	tracker.RecordReadForRun(runID, fileops.TrackingKey("/tmp/work", "./sample.txt"))
+
+	executor.CleanupRun(runID)
+
+	if tracker.HasBeenReadForRun(runID, fileops.TrackingKey("/tmp/work", "sample.txt")) {
+		t.Fatal("expected cleanup to clear tracker state for the run")
 	}
 }
 

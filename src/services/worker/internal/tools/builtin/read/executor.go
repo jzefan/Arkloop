@@ -98,6 +98,26 @@ func NewToolExecutorWithTracker(tracker *fileops.FileTracker) *Executor {
 	}
 }
 
+func (e *Executor) CleanupRun(runID string) {
+	if e == nil || e.Tracker == nil {
+		return
+	}
+	e.Tracker.CleanupRun(runID)
+}
+
+func CleanupRunFromExecutors(executors map[string]tools.Executor, runID string) {
+	if strings.TrimSpace(runID) == "" {
+		return
+	}
+	if cleaner, ok := executors[AgentSpec.Name].(interface{ CleanupRun(string) }); ok {
+		cleaner.CleanupRun(runID)
+		return
+	}
+	if cleaner, ok := executors[AgentSpecMiniMax.Name].(interface{ CleanupRun(string) }); ok {
+		cleaner.CleanupRun(runID)
+	}
+}
+
 func (e *Executor) IsNotConfigured() bool {
 	return false
 }
@@ -178,7 +198,7 @@ func (e *Executor) executeFilePath(
 	numbered := fileops.FormatWithLineNumbers(content, parsed.Offset)
 
 	if e.Tracker != nil {
-		e.Tracker.RecordRead(filePath)
+		e.Tracker.RecordReadForRun(execCtx.RunID.String(), backend.NormalizePath(filePath))
 	}
 
 	result := numbered

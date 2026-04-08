@@ -30,6 +30,14 @@ func (b *LocalBackend) ReadFile(_ context.Context, path string) ([]byte, error) 
 	return os.ReadFile(resolved)
 }
 
+func (b *LocalBackend) NormalizePath(path string) string {
+	resolved, err := b.resolvePath(path)
+	if err != nil {
+		return normalizePathKey(path)
+	}
+	return filepath.ToSlash(resolved)
+}
+
 func (b *LocalBackend) WriteFile(_ context.Context, path string, data []byte) error {
 	resolved, err := b.resolvePath(path)
 	if err != nil {
