@@ -243,6 +243,7 @@ export const zh: LocaleStrings = {
   noAccount: "没有账号？注册",
   hasAccount: "已有账号？登录",
   requestFailed: "请求失败",
+  sessionExpired: "登录已过期，请重新登录",
   runInterrupted: "回复已中断",
   sseReconnectNotice: "连接已断开，正在重连",
   sseReconnectFailed: "连接已断开，请重试本次运行",

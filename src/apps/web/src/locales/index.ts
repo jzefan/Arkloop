@@ -41,6 +41,7 @@ export interface LocaleStrings {
   suggestionSuccess: string;
   comingSoon: string;
   requestFailed: string;
+  sessionExpired: string;
   runInterrupted: string;
   sseReconnectNotice: string;
   sseReconnectFailed: string;

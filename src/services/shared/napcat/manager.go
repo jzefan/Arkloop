@@ -3,7 +3,9 @@ package napcat
 import (
 	"archive/zip"
 	"context"
+	"crypto/hmac"
 	"crypto/rand"
+	"crypto/sha1"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -190,7 +192,6 @@ func NewManager(dataDir string, logger *slog.Logger, apiPort int) *Manager {
 
 func (m *Manager) Status() Status {
 	m.mu.Lock()
-	defer m.mu.Unlock()
 
 	s := Status{
 		Installed:     m.isInstalled(),
@@ -210,15 +211,15 @@ func (m *Manager) Status() Status {
 	}
 	m.logMu.Unlock()
 
+	wsPort := m.wsPort
+	httpPort := m.httpServerPort
+	m.mu.Unlock()
+
 	if s.Running {
 		login := m.checkLoginStatus()
-		// isLogin=false + isOffline=false 意味着未登录（显示二维码）
-		// isLogin=true 意味着已登录在线
-		// isOffline=true 意味着曾登录但掉线（对我们来说也算已登录）
 		s.LoggedIn = login.IsLogin || login.IsOffline
 		s.QRCodeTextURL = login.QRCodeURL
 		s.LoginError = login.LoginError
-		// 用文件 mtime 做版本号，前端据此判断是否需要重新 fetch
 		if fi, err := os.Stat(m.qrcodePNGPath()); err == nil {
 			s.QRCodeURL = fmt.Sprintf("/v1/napcat/qrcode.png?v=%d", fi.ModTime().UnixMilli())
 		}
@@ -226,8 +227,8 @@ func (m *Manager) Status() Status {
 			info := m.getLoginInfo()
 			s.QQ = info.QQ
 			s.Nickname = info.Nickname
-			s.OneBotWSURL = fmt.Sprintf("ws://127.0.0.1:%d", m.wsPort)
-			s.OneBotHTTPURL = fmt.Sprintf("http://127.0.0.1:%d", m.httpServerPort)
+			s.OneBotWSURL = fmt.Sprintf("ws://127.0.0.1:%d", wsPort)
+			s.OneBotHTTPURL = fmt.Sprintf("http://127.0.0.1:%d", httpPort)
 		} else {
 			s.QuickLoginList = m.getQuickLoginList()
 		}
@@ -547,6 +548,40 @@ func (m *Manager) acquireCredential() {
 	}
 }
 
+// refreshCredential 同步重新获取 WebUI credential（用于 credential 过期后恢复）。
+func (m *Manager) refreshCredential() string {
+	m.mu.Lock()
+	port, token := m.webuiPort, m.webuiToken
+	m.mu.Unlock()
+
+	if port == 0 || token == "" {
+		return ""
+	}
+
+	hash := sha256Hex(token + ".napcat")
+	loginURL := fmt.Sprintf("http://127.0.0.1:%d/api/auth/login", port)
+	payload := map[string]string{"hash": hash}
+
+	body, err := m.webuiPost(loginURL, "", payload)
+	if err != nil {
+		return ""
+	}
+	var resp struct {
+		Code int `json:"code"`
+		Data struct {
+			Credential string `json:"Credential"`
+		} `json:"data"`
+	}
+	if json.Unmarshal(body, &resp) != nil || resp.Code != 0 || resp.Data.Credential == "" {
+		return ""
+	}
+
+	m.mu.Lock()
+	m.webuiCredential = resp.Data.Credential
+	m.mu.Unlock()
+	return resp.Data.Credential
+}
+
 func (m *Manager) Stop() error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -592,6 +627,52 @@ func (m *Manager) HTTPCallbackToken() string {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return m.httpCallbackToken
+}
+
+// VerifyCallbackSignature 校验 NapCat HTTP Client 的 OneBot11 HMAC-SHA1 签名。
+// NapCat 用 config.token 作为 HMAC-SHA1 key 签名 request body，
+// 签名放在 X-Signature header 中，格式为 "sha1=<hex>"。
+// token 未配置时（空字符串）跳过校验。
+func (m *Manager) VerifyCallbackSignature(body []byte, xSignature string) bool {
+	m.mu.Lock()
+	token := m.httpCallbackToken
+	m.mu.Unlock()
+
+	if token == "" {
+		return true
+	}
+
+	if verifyHMACSHA1(token, body, xSignature) {
+		return true
+	}
+
+	// 内存 token 可能过时，从磁盘 reload 重试
+	configDir := filepath.Join(m.installDir, "napcat", "config")
+	loaded, err := LoadOneBotTokens(configDir)
+	if err != nil || loaded.CallbackToken == "" {
+		return false
+	}
+	if loaded.CallbackToken == token {
+		return false
+	}
+	if !verifyHMACSHA1(loaded.CallbackToken, body, xSignature) {
+		return false
+	}
+	m.mu.Lock()
+	m.httpCallbackToken = loaded.CallbackToken
+	m.mu.Unlock()
+	return true
+}
+
+func verifyHMACSHA1(key string, body []byte, xSignature string) bool {
+	expected := strings.TrimPrefix(strings.TrimSpace(xSignature), "sha1=")
+	if expected == "" {
+		return false
+	}
+	mac := hmac.New(sha1.New, []byte(key))
+	mac.Write(body)
+	actual := hex.EncodeToString(mac.Sum(nil))
+	return hmac.Equal([]byte(actual), []byte(expected))
 }
 
 // --- internal ---
@@ -641,16 +722,19 @@ func (m *Manager) resolveEntryScript() string {
 }
 
 func (m *Manager) resolveBundledNode() string {
+	bin := "node"
+	if runtime.GOOS == "windows" {
+		bin = "node.exe"
+	}
 	for _, c := range []string{
-		filepath.Join(m.installDir, "node.exe"),
-		filepath.Join(m.installDir, "node", "node.exe"),
+		filepath.Join(m.installDir, bin),
+		filepath.Join(m.installDir, "node", bin),
 	} {
 		if _, err := os.Stat(c); err == nil {
 			return c
 		}
 	}
-	// search node-v*/node.exe (common in portable node zips)
-	matches, _ := filepath.Glob(filepath.Join(m.installDir, "node-v*", "node.exe"))
+	matches, _ := filepath.Glob(filepath.Join(m.installDir, "node-v*", bin))
 	if len(matches) > 0 {
 		return matches[0]
 	}
@@ -665,22 +749,38 @@ type loginStatusResponse struct {
 }
 
 func (m *Manager) checkLoginStatus() loginStatusResponse {
-	if m.webuiPort == 0 {
+	m.mu.Lock()
+	port, cred := m.webuiPort, m.webuiCredential
+	m.mu.Unlock()
+
+	if port == 0 {
 		return loginStatusResponse{}
 	}
-	url := fmt.Sprintf("http://127.0.0.1:%d/api/QQLogin/CheckLoginStatus", m.webuiPort)
-	body, err := m.webuiPost(url, m.webuiCredential, nil)
+	url := fmt.Sprintf("http://127.0.0.1:%d/api/QQLogin/CheckLoginStatus", port)
+	if result, ok := m.doCheckLoginStatus(url, cred); ok {
+		return result
+	}
+	if cred = m.refreshCredential(); cred != "" {
+		if result, ok := m.doCheckLoginStatus(url, cred); ok {
+			return result
+		}
+	}
+	return loginStatusResponse{}
+}
+
+func (m *Manager) doCheckLoginStatus(url, credential string) (loginStatusResponse, bool) {
+	body, err := m.webuiPost(url, credential, nil)
 	if err != nil {
-		return loginStatusResponse{}
+		return loginStatusResponse{}, false
 	}
 	var resp struct {
 		Code int                 `json:"code"`
 		Data loginStatusResponse `json:"data"`
 	}
-	if json.Unmarshal(body, &resp) != nil {
-		return loginStatusResponse{}
+	if json.Unmarshal(body, &resp) != nil || resp.Code != 0 {
+		return loginStatusResponse{}, false
 	}
-	return resp.Data
+	return resp.Data, true
 }
 
 type loginInfoResult struct {
@@ -689,8 +789,12 @@ type loginInfoResult struct {
 }
 
 func (m *Manager) getLoginInfo() loginInfoResult {
-	url := fmt.Sprintf("http://127.0.0.1:%d/api/QQLogin/GetQQLoginInfo", m.webuiPort)
-	body, err := m.webuiPost(url, m.webuiCredential, nil)
+	m.mu.Lock()
+	port, cred := m.webuiPort, m.webuiCredential
+	m.mu.Unlock()
+
+	url := fmt.Sprintf("http://127.0.0.1:%d/api/QQLogin/GetQQLoginInfo", port)
+	body, err := m.webuiPost(url, cred, nil)
 	if err != nil {
 		return loginInfoResult{}
 	}
@@ -705,11 +809,15 @@ func (m *Manager) getLoginInfo() loginInfoResult {
 }
 
 func (m *Manager) getQuickLoginList() []QuickLoginAccount {
-	if m.webuiPort == 0 {
+	m.mu.Lock()
+	port, cred := m.webuiPort, m.webuiCredential
+	m.mu.Unlock()
+
+	if port == 0 {
 		return nil
 	}
-	url := fmt.Sprintf("http://127.0.0.1:%d/api/QQLogin/GetQuickLoginListNew", m.webuiPort)
-	body, err := m.webuiGetRaw(url, m.webuiCredential)
+	url := fmt.Sprintf("http://127.0.0.1:%d/api/QQLogin/GetQuickLoginListNew", port)
+	body, err := m.webuiGetRaw(url, cred)
 	if err != nil {
 		return nil
 	}

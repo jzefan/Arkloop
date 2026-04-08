@@ -168,7 +168,6 @@ func (e *Executor) sendFile(
 	}
 
 	caption := argString(args, "caption")
-	_ = caption
 
 	var seg onebotclient.MessageSegment
 	switch kind {
@@ -190,12 +189,12 @@ func (e *Executor) sendFile(
 		msg = append(msg, onebotclient.TextSegments(caption)...)
 	}
 
-	// 根据 surface 中是否有 group 信息选择发送方式
-	// PlatformChatID 是 group_id（群消息）或 user_id（私聊）
-	// 通过 InboundMessageID 判断 -> 实际上需要 metadata 中的 message_type
-	// 简化方式：同时尝试 group，如果 chatID 格式不对会 fallback 到 private
-	resp, err := client.SendGroupMsg(ctx, chatID, msg)
-	if err != nil {
+	isGroup := strings.EqualFold(strings.TrimSpace(surface.ConversationType), "group")
+	var resp *onebotclient.SendMsgResponse
+	var err error
+	if isGroup {
+		resp, err = client.SendGroupMsg(ctx, chatID, msg)
+	} else {
 		resp, err = client.SendPrivateMsg(ctx, chatID, msg)
 	}
 	if err != nil {
