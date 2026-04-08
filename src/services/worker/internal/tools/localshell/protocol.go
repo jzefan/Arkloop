@@ -18,6 +18,7 @@ const (
 	StatusExited     = "exited"
 	StatusTerminated = "terminated"
 	StatusTimedOut   = "timed_out"
+	StatusCancelled  = "cancelled"
 
 	StreamStdout = "stdout"
 	StreamStderr = "stderr"
@@ -26,6 +27,7 @@ const (
 
 	CodeProcessNotFound       = "process.not_found"
 	CodeProcessBusy           = "process.busy"
+	CodeNotRunning            = "process.not_running"
 	CodeCursorExpired         = "process.cursor_expired"
 	CodeInvalidCursor         = "process.invalid_cursor"
 	CodeInputSeqRequired      = "process.input_seq_required"
@@ -287,7 +289,7 @@ func ValidateContinueRequest(req ContinueProcessRequest) *Error {
 		return &Error{Code: CodeInvalidCursor, Message: "cursor is invalid", HTTPStatus: 400}
 	}
 	if req.StdinText != nil {
-		if strings.TrimSpace(*req.StdinText) != "" && req.InputSeq == nil {
+		if req.InputSeq == nil {
 			return &Error{Code: CodeInputSeqRequired, Message: "input_seq is required when stdin_text is provided", HTTPStatus: 400}
 		}
 		if req.InputSeq != nil && *req.InputSeq <= 0 {

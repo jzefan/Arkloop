@@ -18,6 +18,7 @@ const (
 	StatusExited     = "exited"
 	StatusTerminated = "terminated"
 	StatusTimedOut   = "timed_out"
+	StatusCancelled  = "cancelled"
 
 	StreamStdout = "stdout"
 	StreamStderr = "stderr"
@@ -231,7 +232,7 @@ func ValidateContinueRequest(req ContinueProcessRequest) *Error {
 		return invalidCursorError()
 	}
 	if req.StdinText != nil {
-		if strings.TrimSpace(*req.StdinText) != "" && req.InputSeq == nil {
+		if req.InputSeq == nil {
 			return inputSeqRequiredError()
 		}
 		if req.InputSeq != nil && *req.InputSeq <= 0 {

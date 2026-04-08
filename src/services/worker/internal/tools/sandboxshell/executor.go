@@ -137,7 +137,7 @@ func (e *Executor) executeExecCommand(
 		"cwd", reqArgs.Cwd,
 	)
 
-	resp, postErr := e.doPost(ctx, "/v1/process/exec_command", payload)
+	resp, postErr := e.doPost(ctx, "/v1/process/exec", payload)
 	if postErr != nil {
 		return errResult(errorSandbox, postErr.Error(), started)
 	}
@@ -322,7 +322,7 @@ func parseContinueProcessArgs(args map[string]any) (continueProcessArgs, error) 
 	if req.Cursor == "" {
 		return continueProcessArgs{}, fmt.Errorf("parameter cursor is required")
 	}
-	if req.StdinText != nil && strings.TrimSpace(*req.StdinText) != "" && (req.InputSeq == nil || *req.InputSeq <= 0) {
+	if req.StdinText != nil && (req.InputSeq == nil || *req.InputSeq <= 0) {
 		return continueProcessArgs{}, fmt.Errorf("parameter input_seq is required when stdin_text is provided")
 	}
 	if req.StdinText == nil && req.InputSeq != nil {

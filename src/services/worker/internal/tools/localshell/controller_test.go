@@ -153,6 +153,81 @@ func TestProcessControllerPTYRespectsResize(t *testing.T) {
 	}
 }
 
+func TestProcessControllerContinueRequiresInputSeqForEmptyString(t *testing.T) {
+	controller := NewProcessController()
+
+	start, err := controller.ExecCommand(ExecCommandRequest{
+		Command:   "cat",
+		Mode:      ModeStdin,
+		TimeoutMs: 5000,
+		Cwd:       t.TempDir(),
+	})
+	if err != nil {
+		t.Fatalf("stdin exec failed: %v", err)
+	}
+
+	empty := ""
+	_, err = controller.ContinueProcess(ContinueProcessRequest{
+		ProcessRef: start.ProcessRef,
+		Cursor:     start.NextCursor,
+		WaitMs:     100,
+		StdinText:  &empty,
+	})
+	if err == nil {
+		t.Fatal("expected input_seq validation error")
+	}
+	if got := err.Error(); got != "input_seq is required when stdin_text is provided" {
+		t.Fatalf("unexpected error: %q", got)
+	}
+}
+
+func TestProcessControllerDuplicateInputSeqAfterCloseStdinIsIdempotent(t *testing.T) {
+	controller := NewProcessController()
+
+	start, err := controller.ExecCommand(ExecCommandRequest{
+		Command:   "cat",
+		Mode:      ModeStdin,
+		TimeoutMs: 5000,
+		Cwd:       t.TempDir(),
+	})
+	if err != nil {
+		t.Fatalf("stdin exec failed: %v", err)
+	}
+
+	text := "repeat\n"
+	first, err := controller.ContinueProcess(ContinueProcessRequest{
+		ProcessRef: start.ProcessRef,
+		Cursor:     start.NextCursor,
+		WaitMs:     1000,
+		StdinText:  &text,
+		InputSeq:   int64Ptr(1),
+		CloseStdin: true,
+	})
+	if err != nil {
+		t.Fatalf("first continue failed: %v", err)
+	}
+	if first.AcceptedInputSeq == nil || *first.AcceptedInputSeq != 1 {
+		t.Fatalf("expected accepted_input_seq=1, got %#v", first.AcceptedInputSeq)
+	}
+
+	second, err := controller.ContinueProcess(ContinueProcessRequest{
+		ProcessRef: start.ProcessRef,
+		Cursor:     first.NextCursor,
+		WaitMs:     100,
+		StdinText:  &text,
+		InputSeq:   int64Ptr(1),
+	})
+	if err != nil {
+		t.Fatalf("duplicate continue should be idempotent, got error: %v", err)
+	}
+	if second.AcceptedInputSeq == nil || *second.AcceptedInputSeq != 1 {
+		t.Fatalf("expected duplicate accepted_input_seq=1, got %#v", second.AcceptedInputSeq)
+	}
+	if second.Stdout != "" {
+		t.Fatalf("duplicate continue should not append output, got %#v", second.Stdout)
+	}
+}
+
 func TestRTKRewriteTimesOutAndFallsBack(t *testing.T) {
 	originalBin := rtkBinCache
 	originalRunner := rtkRewriteRunner
