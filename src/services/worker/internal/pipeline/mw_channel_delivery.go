@@ -94,11 +94,13 @@ func NewChannelDeliveryMiddlewareWithOptions(pool *pgxpool.Pool, opts ChannelDel
 			}
 			rc.TelegramToolBoundaryFlush = streamFlush
 
-			tracker := NewTelegramProgressTracker(tgClient, preloaded.Token, ChannelDeliveryTarget{
-				ChannelType:  rc.ChannelContext.ChannelType,
-				Conversation: rc.ChannelContext.Conversation,
-			}, telegramReplyReference(rc))
-			rc.TelegramProgressTracker = tracker
+			if ShouldShowTelegramProgress(rc) {
+				tracker := NewTelegramProgressTracker(tgClient, preloaded.Token, ChannelDeliveryTarget{
+					ChannelType:  rc.ChannelContext.ChannelType,
+					Conversation: rc.ChannelContext.Conversation,
+				}, telegramReplyReference(rc))
+				rc.TelegramProgressTracker = tracker
+			}
 		}
 
 		var stopTyping context.CancelFunc
@@ -354,6 +356,13 @@ func telegramReplyReference(rc *RunContext) *ChannelMessageRef {
 	}
 	ref := rc.ChannelContext.InboundMessage
 	return &ref
+}
+
+func ShouldShowTelegramProgress(rc *RunContext) bool {
+	if rc == nil || rc.ChannelContext == nil {
+		return false
+	}
+	return isPrivateChannelConversation(rc.ChannelContext.ConversationType)
 }
 
 // StartTelegramTypingRefresh sends Telegram typing actions until cancel (about every 4s, first immediately).

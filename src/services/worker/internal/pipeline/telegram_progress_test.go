@@ -117,8 +117,8 @@ func TestProgressTracker_TimelineTitleUsesLabel(t *testing.T) {
 	if tracker.current == nil {
 		t.Fatal("expected current segment")
 	}
-	if tracker.current.Title != "搜索 vLLM meetup 信息" {
-		t.Fatalf("expected current title from label, got %q", tracker.current.Title)
+	if tracker.current.Title != "" {
+		t.Fatalf("expected timeline_title to stay hidden, got %q", tracker.current.Title)
 	}
 }
 
@@ -134,14 +134,57 @@ func TestProgressTracker_TimelineTitleStartsNewSegmentAfterExistingTools(t *test
 
 	tracker.mu.Lock()
 	defer tracker.mu.Unlock()
-	if len(tracker.segments) != 1 {
-		t.Fatalf("expected first tool group to be flushed, got %d closed segments", len(tracker.segments))
+	if len(tracker.segments) != 0 {
+		t.Fatalf("expected hidden timeline_title to avoid splitting segments, got %d closed segments", len(tracker.segments))
 	}
-	if got := resolveSegmentTitle(tracker.segments[0]); got != "Web Search" {
-		t.Fatalf("expected first segment fallback title, got %q", got)
+	if tracker.current == nil || len(tracker.current.Entries) != 2 {
+		t.Fatalf("expected both visible tools to stay in one segment, got %#v", tracker.current)
 	}
-	if tracker.current == nil || tracker.current.Title != "第二段" {
-		t.Fatalf("expected new titled current segment, got %#v", tracker.current)
+}
+
+func TestProgressTracker_HidesTelegramInternalTools(t *testing.T) {
+	tracker, fake := newTestTelegramProgressTracker(t)
+	ctx := context.Background()
+
+	tracker.OnToolCall(ctx, "call-reply", "telegram_reply", `{"reply_to_message_id":"42"}`)
+	tracker.OnToolResult(ctx, "call-reply", "telegram_reply", "")
+	tracker.OnToolCall(ctx, "call-react", "telegram_react", `{"emoji":"👍"}`)
+	tracker.OnToolResult(ctx, "call-react", "telegram_react", "")
+	tracker.OnToolCall(ctx, "call-1", "web_search.tavily", `{"query":"first"}`)
+
+	sends, _ := fake.stats()
+	if sends != 1 {
+		t.Fatalf("expected only visible tool to trigger progress send, got %d", sends)
+	}
+
+	tracker.mu.Lock()
+	defer tracker.mu.Unlock()
+	if tracker.current == nil || len(tracker.current.Entries) != 1 {
+		t.Fatalf("expected only one visible progress entry, got %#v", tracker.current)
+	}
+	if tracker.current.Entries[0].DisplayName != "Web Search" {
+		t.Fatalf("unexpected visible progress entry: %#v", tracker.current.Entries[0])
+	}
+}
+
+func TestProgressTracker_TelegramReplyAndReactStayHidden(t *testing.T) {
+	tracker, fake := newTestTelegramProgressTracker(t)
+	ctx := context.Background()
+
+	tracker.OnToolCall(ctx, "call-reply", "telegram_reply", `{"reply_to_message_id":"42"}`)
+	tracker.OnToolResult(ctx, "call-reply", "telegram_reply", "")
+	tracker.OnToolCall(ctx, "call-react", "telegram_react", `{"emoji":"👍"}`)
+	tracker.OnToolResult(ctx, "call-react", "telegram_react", "")
+
+	sends, edits := fake.stats()
+	if sends != 0 || edits != 0 {
+		t.Fatalf("expected hidden channel tools to skip Telegram progress output, got sends=%d edits=%d", sends, edits)
+	}
+
+	tracker.mu.Lock()
+	defer tracker.mu.Unlock()
+	if len(tracker.segments) != 0 || tracker.current != nil {
+		t.Fatalf("expected hidden channel tools to leave no progress state, got segments=%d current=%#v", len(tracker.segments), tracker.current)
 	}
 }
 
@@ -187,14 +230,49 @@ func TestProgressTracker_RunSegmentBoundaryProducesSeparateSummary(t *testing.T)
 	if len(tracker.segments) != 1 {
 		t.Fatalf("expected first segment to be closed, got %d", len(tracker.segments))
 	}
-	if got := resolveSegmentTitle(tracker.segments[0]); got != "搜索第一轮" {
+	if got := resolveSegmentTitle(tracker.segments[0], true); got != "搜索第一轮" {
 		t.Fatalf("expected first closed segment label, got %q", got)
 	}
 	if tracker.current == nil {
 		t.Fatal("expected current second segment")
 	}
-	if got := resolveSegmentTitle(*tracker.current); got != "搜索第二轮" {
+	if got := resolveSegmentTitle(*tracker.current, false); got != "搜索第二轮" {
 		t.Fatalf("expected current segment label, got %q", got)
+	}
+}
+
+func TestProgressTracker_LiveFallbackTitleUsesAdaptiveProgressLabel(t *testing.T) {
+	tracker := &TelegramProgressTracker{
+		current: &TelegramProgressSegment{
+			ID: "seg-1",
+			Entries: []ProgressEntry{
+				{ToolCallID: "call-1", DisplayName: "Web Search"},
+			},
+		},
+	}
+
+	got := tracker.formatProgressLocked(false)
+	if !strings.Contains(got, "… In process") {
+		t.Fatalf("expected live adaptive title, got:\n%s", got)
+	}
+}
+
+func TestProgressTracker_CompletedFallbackTitleUsesAdaptiveSummaryLabel(t *testing.T) {
+	tracker := &TelegramProgressTracker{
+		segments: []TelegramProgressSegment{
+			{
+				ID: "seg-1",
+				Entries: []ProgressEntry{
+					{ToolCallID: "call-1", DisplayName: "Web Search", Done: true},
+				},
+				Closed: true,
+			},
+		},
+	}
+
+	got := tracker.formatProgressLocked(true)
+	if !strings.Contains(got, "✓ 1 step completed") {
+		t.Fatalf("expected completed adaptive title, got:\n%s", got)
 	}
 }
 
@@ -286,5 +364,18 @@ func TestProgressTracker_FinalizeNoOpsWhenEmpty(t *testing.T) {
 	sends, edits := fake.stats()
 	if sends != 0 || edits != 0 {
 		t.Fatalf("expected no API calls for empty tracker, got sends=%d edits=%d", sends, edits)
+	}
+}
+
+func TestProgressTracker_TimelineTitleOnlyStaysHidden(t *testing.T) {
+	tracker, fake := newTestTelegramProgressTracker(t)
+	ctx := context.Background()
+
+	tracker.OnToolCall(ctx, "call-title", "timeline_title", `{"label":"隐藏标题"}`)
+	tracker.Finalize(ctx)
+
+	sends, edits := fake.stats()
+	if sends != 0 || edits != 0 {
+		t.Fatalf("expected timeline_title to stay hidden, got sends=%d edits=%d", sends, edits)
 	}
 }
