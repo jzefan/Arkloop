@@ -675,7 +675,7 @@ func TestLoadPersonaRejectsLegacyMaxIterations(t *testing.T) {
 func TestLoadPersonaParsesLayeredBudgets(t *testing.T) {
 	dir := t.TempDir()
 	writePersonaFiles(t, dir, "layered_budget",
-		"id: layered_budget\nversion: \"1\"\ntitle: Layered\nbudgets:\n  reasoning_iterations: 6\n  tool_continuation_budget: 18\n  per_tool_soft_limits:\n    exec_command:\n      max_output_bytes: 12000\n    write_stdin:\n      max_continuations: 9\n      max_yield_time_ms: 2500\n      max_output_bytes: 15000\n",
+		"id: layered_budget\nversion: \"1\"\ntitle: Layered\nbudgets:\n  reasoning_iterations: 6\n  tool_continuation_budget: 18\n  per_tool_soft_limits:\n    exec_command:\n      max_output_bytes: 12000\n    continue_process:\n      max_continuations: 9\n      max_wait_time_ms: 2500\n      max_output_bytes: 15000\n",
 		"# prompt",
 	)
 
@@ -697,30 +697,30 @@ func TestLoadPersonaParsesLayeredBudgets(t *testing.T) {
 	if execLimit.MaxOutputBytes == nil || *execLimit.MaxOutputBytes != 12000 {
 		t.Fatalf("unexpected exec_command limit: %v", execLimit.MaxOutputBytes)
 	}
-	writeLimit := def.Budgets.PerToolSoftLimits["write_stdin"]
-	if writeLimit.MaxContinuations == nil || *writeLimit.MaxContinuations != 9 {
-		t.Fatalf("unexpected write_stdin max_continuations: %v", writeLimit.MaxContinuations)
+	continueLimit := def.Budgets.PerToolSoftLimits["continue_process"]
+	if continueLimit.MaxContinuations == nil || *continueLimit.MaxContinuations != 9 {
+		t.Fatalf("unexpected continue_process max_continuations: %v", continueLimit.MaxContinuations)
 	}
-	if writeLimit.MaxYieldTimeMs == nil || *writeLimit.MaxYieldTimeMs != 2500 {
-		t.Fatalf("unexpected write_stdin max_yield_time_ms: %v", writeLimit.MaxYieldTimeMs)
+	if continueLimit.MaxWaitTimeMs == nil || *continueLimit.MaxWaitTimeMs != 2500 {
+		t.Fatalf("unexpected continue_process max_wait_time_ms: %v", continueLimit.MaxWaitTimeMs)
 	}
-	if writeLimit.MaxOutputBytes == nil || *writeLimit.MaxOutputBytes != 15000 {
-		t.Fatalf("unexpected write_stdin max_output_bytes: %v", writeLimit.MaxOutputBytes)
+	if continueLimit.MaxOutputBytes == nil || *continueLimit.MaxOutputBytes != 15000 {
+		t.Fatalf("unexpected continue_process max_output_bytes: %v", continueLimit.MaxOutputBytes)
 	}
 }
 
 func TestLoadPersonaRejectsSoftLimitAboveHardCap(t *testing.T) {
 	dir := t.TempDir()
 	writePersonaFiles(t, dir, "bad_soft_limit",
-		"id: bad_soft_limit\nversion: \"1\"\ntitle: Bad\nbudgets:\n  per_tool_soft_limits:\n    write_stdin:\n      max_yield_time_ms: 40000\n",
+		"id: bad_soft_limit\nversion: \"1\"\ntitle: Bad\nbudgets:\n  per_tool_soft_limits:\n    continue_process:\n      max_wait_time_ms: 40000\n",
 		"# prompt",
 	)
 
 	_, err := LoadRegistry(dir)
 	if err == nil {
-		t.Fatal("expected max_yield_time_ms validation error")
+		t.Fatal("expected max_wait_time_ms validation error")
 	}
-	want := "budgets.per_tool_soft_limits.write_stdin.max_yield_time_ms must be less than or equal to 30000"
+	want := "budgets.per_tool_soft_limits.continue_process.max_wait_time_ms must be less than or equal to 30000"
 	if err.Error() != want {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -741,7 +741,7 @@ func TestLoadFromDBParsesLayeredBudgets(t *testing.T) {
 			(project_id, persona_key, version, display_name, prompt_md, tool_allowlist, tool_denylist, budgets_json, executor_type, executor_config_json)
 		 VALUES ($1, 'db-budget', '1', 'DB Budget', 'prompt', '{}', '{}', $2::jsonb, 'agent.simple', '{}'::jsonb)`,
 		projectID,
-		`{"reasoning_iterations":4,"tool_continuation_budget":12,"per_tool_soft_limits":{"write_stdin":{"max_continuations":7,"max_output_bytes":12345}}}`,
+		`{"reasoning_iterations":4,"tool_continuation_budget":12,"per_tool_soft_limits":{"continue_process":{"max_continuations":7,"max_output_bytes":12345}}}`,
 	)
 	if err != nil {
 		t.Fatalf("insert persona row failed: %v", err)
@@ -760,12 +760,12 @@ func TestLoadFromDBParsesLayeredBudgets(t *testing.T) {
 	if defs[0].Budgets.ToolContinuationBudget == nil || *defs[0].Budgets.ToolContinuationBudget != 12 {
 		t.Fatalf("unexpected tool_continuation_budget: %v", defs[0].Budgets.ToolContinuationBudget)
 	}
-	writeLimit := defs[0].Budgets.PerToolSoftLimits["write_stdin"]
-	if writeLimit.MaxContinuations == nil || *writeLimit.MaxContinuations != 7 {
-		t.Fatalf("unexpected write_stdin max_continuations: %v", writeLimit.MaxContinuations)
+	continueLimit := defs[0].Budgets.PerToolSoftLimits["continue_process"]
+	if continueLimit.MaxContinuations == nil || *continueLimit.MaxContinuations != 7 {
+		t.Fatalf("unexpected continue_process max_continuations: %v", continueLimit.MaxContinuations)
 	}
-	if writeLimit.MaxOutputBytes == nil || *writeLimit.MaxOutputBytes != 12345 {
-		t.Fatalf("unexpected write_stdin max_output_bytes: %v", writeLimit.MaxOutputBytes)
+	if continueLimit.MaxOutputBytes == nil || *continueLimit.MaxOutputBytes != 12345 {
+		t.Fatalf("unexpected continue_process max_output_bytes: %v", continueLimit.MaxOutputBytes)
 	}
 	if tools.ResolveToolSoftLimit(defs[0].Budgets.PerToolSoftLimits, "exec_command").MaxOutputBytes != nil {
 		t.Fatal("unexpected exec_command override from db budgets")

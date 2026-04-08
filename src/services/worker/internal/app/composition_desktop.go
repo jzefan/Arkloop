@@ -187,9 +187,11 @@ func ComposeDesktopEngine(ctx context.Context, db data.DesktopDB, bus eventbus.E
 		}
 	}
 
-	// Bind both tool names to DynamicShellExecutor (they share the same names)
+	// Bind shell tools to DynamicShellExecutor; local and VM backends share the same protocol.
 	executors[localshell.ExecCommandAgentSpec.Name] = shellExec
-	executors[localshell.WriteStdinAgentSpec.Name] = shellExec
+	executors[localshell.ContinueProcessAgentSpec.Name] = shellExec
+	executors[localshell.TerminateProcessAgentSpec.Name] = shellExec
+	executors[localshell.ResizeProcessAgentSpec.Name] = shellExec
 
 	var runtimeSnapshot *sharedtoolruntime.RuntimeSnapshot
 	if sandboxAddr != "" {

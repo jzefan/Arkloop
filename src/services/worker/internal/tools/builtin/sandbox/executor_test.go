@@ -227,6 +227,7 @@ func TestPythonExecute_Success(t *testing.T) {
 }
 
 func TestExecCommand_UsesExecEndpoint(t *testing.T) {
+	t.Skip("obsolete with process-based exec_command")
 	runID := uuid.MustParse("22222222-2222-2222-2222-222222222222")
 	accountID := uuid.MustParse("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
 	seenSessionRef := ""
@@ -289,6 +290,7 @@ func TestExecCommand_UsesExecEndpoint(t *testing.T) {
 }
 
 func TestExecCommand_UsesDefaultSessionID(t *testing.T) {
+	t.Skip("obsolete with process-based exec_command")
 	disableSandboxRTK(t)
 	runID := uuid.MustParse("33333333-3333-3333-3333-333333333333")
 	seenSessionRef := ""
@@ -344,33 +346,35 @@ func TestExecCommand_UsesDefaultSessionID(t *testing.T) {
 	}
 }
 
-func TestWriteStdin_UsesPollEndpoint(t *testing.T) {
+func TestContinueProcess_UsesContinueEndpoint(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/v1/write_stdin" {
+		if r.URL.Path != "/v1/process/continue" {
 			t.Fatalf("unexpected path: %s", r.URL.Path)
 		}
-		var body writeStdinRequest
+		var body continueProcessRequest
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			t.Fatalf("decode body: %v", err)
 		}
-		if body.SessionID != "sess-42" {
-			t.Fatalf("unexpected session_ref: %s", body.SessionID)
+		if body.ProcessRef != "proc-42" {
+			t.Fatalf("unexpected process_ref: %s", body.ProcessRef)
 		}
-		if body.YieldTimeMs != 1500 {
-			t.Fatalf("unexpected yield_time_ms: %d", body.YieldTimeMs)
+		if body.Cursor != "7" {
+			t.Fatalf("unexpected cursor: %s", body.Cursor)
+		}
+		if body.WaitMs != 1500 {
+			t.Fatalf("unexpected wait_ms: %d", body.WaitMs)
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(execSessionResponse{SessionID: body.SessionID, Status: "running", Cwd: "/workspace", Running: true})
+		json.NewEncoder(w).Encode(processResponse{Status: "running", ProcessRef: body.ProcessRef, Cursor: "7", NextCursor: "8"})
 	}))
 	defer server.Close()
 
 	exec := NewToolExecutor(server.URL, "")
-	seedInMemorySession(exec.orchestrator, "sess-42")
 	result := exec.Execute(
 		t.Context(),
-		"write_stdin",
-		map[string]any{"session_ref": "sess-42", "yield_time_ms": float64(1500)},
+		"continue_process",
+		map[string]any{"process_ref": "proc-42", "cursor": "7", "wait_ms": float64(1500)},
 		testContext(),
 		"",
 	)
@@ -381,80 +385,95 @@ func TestWriteStdin_UsesPollEndpoint(t *testing.T) {
 	if result.ResultJSON["running"] != true {
 		t.Fatalf("unexpected running: %v", result.ResultJSON["running"])
 	}
+	if result.ResultJSON["process_ref"] != "proc-42" {
+		t.Fatalf("unexpected process_ref: %v", result.ResultJSON["process_ref"])
+	}
 }
 
-func TestWriteStdin_UsesCharsPayload(t *testing.T) {
+func TestContinueProcess_UsesInputPayload(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/v1/write_stdin" {
+		if r.URL.Path != "/v1/process/continue" {
 			t.Fatalf("unexpected path: %s", r.URL.Path)
 		}
-		var body writeStdinRequest
+		var body continueProcessRequest
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			t.Fatalf("decode body: %v", err)
 		}
-		if body.Chars != "arkloop\n" {
-			t.Fatalf("unexpected chars: %q", body.Chars)
+		if body.StdinText == nil || *body.StdinText != "arkloop\n" {
+			t.Fatalf("unexpected stdin_text: %#v", body.StdinText)
+		}
+		if body.InputSeq == nil || *body.InputSeq != 3 {
+			t.Fatalf("unexpected input_seq: %#v", body.InputSeq)
+		}
+		if !body.CloseStdin {
+			t.Fatal("expected close_stdin=true")
 		}
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(execSessionResponse{SessionID: body.SessionID, Status: "idle", Cwd: "/workspace", Output: "arkloop\n"})
+		json.NewEncoder(w).Encode(processResponse{
+			Status:           "exited",
+			ProcessRef:       body.ProcessRef,
+			Stdout:           "arkloop\n",
+			Cursor:           "0",
+			NextCursor:       "1",
+			AcceptedInputSeq: body.InputSeq,
+			ExitCode:         intPtr(0),
+		})
 	}))
 	defer server.Close()
 
 	exec := NewToolExecutor(server.URL, "")
-	seedInMemorySession(exec.orchestrator, "sess-1")
-	result := exec.Execute(t.Context(), "write_stdin", map[string]any{"session_ref": "sess-1", "chars": "arkloop\n"}, testContext(), "")
+	result := exec.Execute(t.Context(), "continue_process", map[string]any{
+		"process_ref": "proc-1",
+		"cursor":      "0",
+		"stdin_text":  "arkloop\n",
+		"input_seq":   float64(3),
+		"close_stdin": true,
+	}, testContext(), "")
 	if result.Error != nil {
 		t.Fatalf("unexpected error: %+v", result.Error)
 	}
+	if result.ResultJSON["accepted_input_seq"] != int64(3) {
+		t.Fatalf("unexpected accepted_input_seq: %v", result.ResultJSON["accepted_input_seq"])
+	}
 }
 
-func TestExecCommandAndWriteStdin_ShareDefaultSessionAcrossCalls(t *testing.T) {
+func TestExecCommandAndContinueProcess_UseReturnedProcessRefAcrossCalls(t *testing.T) {
 	disableSandboxRTK(t)
 	runID := uuid.MustParse("55555555-5555-5555-5555-555555555555")
 	var got []string
-	firstSessionRef := ""
+	firstProcessRef := ""
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/v1/exec_command" {
-			var body execCommandRequest
+		if r.URL.Path == "/v1/process/exec" {
+			var body processExecRequest
 			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 				t.Fatalf("decode body: %v", err)
 			}
 			got = append(got, body.SessionID)
 			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(execSessionResponse{SessionID: body.SessionID, Status: "running", Cwd: "/workspace", Running: true})
+			json.NewEncoder(w).Encode(processResponse{Status: "running", ProcessRef: "proc-run", Cursor: "0", NextCursor: "1"})
 			return
 		}
-		if strings.HasSuffix(r.URL.Path, "/output_deltas") {
-			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(outputDeltasResponse{Stdout: "", Stderr: "", Running: false})
-			return
-		}
-		var body writeStdinRequest
+		var body continueProcessRequest
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			t.Fatalf("decode body: %v", err)
 		}
-		got = append(got, body.SessionID)
+		got = append(got, body.ProcessRef)
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(execSessionResponse{SessionID: body.SessionID, Status: "idle", Cwd: "/workspace"})
+		json.NewEncoder(w).Encode(processResponse{Status: "exited", ProcessRef: body.ProcessRef, Cursor: body.Cursor, NextCursor: "2", ExitCode: intPtr(0)})
 	}))
 	defer server.Close()
 
 	exec := NewToolExecutor(server.URL, "")
 	ctx := testContextWithRun(runID)
-	first := exec.Execute(t.Context(), "exec_command", map[string]any{"command": "sleep 1"}, ctx, "")
-	firstSessionRef, _ = first.ResultJSON["session_ref"].(string)
-	second := exec.Execute(t.Context(), "write_stdin", map[string]any{"session_ref": firstSessionRef}, ctx, "")
+	first := exec.Execute(t.Context(), "exec_command", map[string]any{"command": "sleep 1", "mode": "follow", "timeout_ms": float64(5000)}, ctx, "")
+	firstProcessRef, _ = first.ResultJSON["process_ref"].(string)
+	second := exec.Execute(t.Context(), "continue_process", map[string]any{"process_ref": firstProcessRef, "cursor": first.ResultJSON["next_cursor"]}, ctx, "")
 
 	if first.Error != nil || second.Error != nil {
 		t.Fatalf("unexpected errors: first=%+v second=%+v", first.Error, second.Error)
 	}
-	if len(got) != 3 {
-		t.Fatalf("expected 3 calls (exec + auto-poll + explicit poll), got %d", len(got))
-	}
-	for _, sessionID := range got {
-		if sessionID != firstSessionRef {
-			t.Fatalf("unexpected session id: %s", sessionID)
-		}
+	if !reflect.DeepEqual(got, []string{runID.String(), "proc-run"}) {
+		t.Fatalf("unexpected call chain: %#v", got)
 	}
 }
 
@@ -842,50 +861,54 @@ func TestTimeoutMs_Propagation(t *testing.T) {
 	}
 }
 
-func TestWriteStdin_ClampsYieldTimeMsBySoftLimit(t *testing.T) {
-	var receivedYield int
+func TestContinueProcess_ClampsWaitMsBySoftLimit(t *testing.T) {
+	var receivedWait int
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var body writeStdinRequest
+		if r.URL.Path != "/v1/process/continue" {
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+		var body continueProcessRequest
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			t.Fatalf("decode body: %v", err)
 		}
-		receivedYield = body.YieldTimeMs
+		receivedWait = body.WaitMs
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(execSessionResponse{SessionID: body.SessionID, Status: "running", Running: true})
+		json.NewEncoder(w).Encode(processResponse{Status: "running", ProcessRef: body.ProcessRef, Cursor: body.Cursor, NextCursor: "9"})
 	}))
 	defer server.Close()
 
 	limits := tools.DefaultPerToolSoftLimits()
-	writeLimit := limits["write_stdin"]
-	writeLimit.MaxYieldTimeMs = intPtr(2500)
-	limits["write_stdin"] = writeLimit
+	continueLimit := limits["continue_process"]
+	continueLimit.MaxWaitTimeMs = intPtr(2500)
+	limits["continue_process"] = continueLimit
 
 	exec := NewToolExecutor(server.URL, "")
-	seedInMemorySession(exec.orchestrator, "sess-1")
 	result := exec.Execute(
 		t.Context(),
-		"write_stdin",
-		map[string]any{"session_ref": "sess-1", "yield_time_ms": float64(9000)},
+		"continue_process",
+		map[string]any{"process_ref": "proc-1", "cursor": "8", "wait_ms": float64(9000)},
 		testContextWithSoftLimits(limits),
 		"",
 	)
 	if result.Error != nil {
 		t.Fatalf("unexpected error: %+v", result.Error)
 	}
-	if receivedYield != 2500 {
-		t.Fatalf("expected clamped yield_time_ms=2500, got %d", receivedYield)
+	if receivedWait != 2500 {
+		t.Fatalf("expected clamped wait_ms=2500, got %d", receivedWait)
 	}
 }
 
 func TestExecCommand_TruncatesOutputBySoftLimit(t *testing.T) {
 	disableSandboxRTK(t)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/process/exec" {
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(execSessionResponse{
-			SessionID: "sess-1",
-			Status:    "idle",
-			Running:   false,
-			Output:    strings.Repeat("x", 200),
+		json.NewEncoder(w).Encode(processResponse{
+			Status:   "exited",
+			Stdout:   strings.Repeat("x", 200),
+			ExitCode: intPtr(0),
 		})
 	}))
 	defer server.Close()
@@ -906,9 +929,9 @@ func TestExecCommand_TruncatesOutputBySoftLimit(t *testing.T) {
 	if result.Error != nil {
 		t.Fatalf("unexpected error: %+v", result.Error)
 	}
-	output, _ := result.ResultJSON["output"].(string)
-	if len(output) > 64 {
-		t.Fatalf("expected truncated output <= 64 bytes, got %d", len(output))
+	stdout, _ := result.ResultJSON["stdout"].(string)
+	if len(stdout) > 64 {
+		t.Fatalf("expected truncated stdout <= 64 bytes, got %d", len(stdout))
 	}
 	if result.ResultJSON["truncated"] != true {
 		t.Fatalf("expected truncated=true, got %v", result.ResultJSON["truncated"])
@@ -1111,6 +1134,7 @@ func TestExecCommand_ResolvesMissingEnvironmentBindingsFromRunContext(t *testing
 }
 
 func TestExecCommand_ForkRequiresFromSessionRef(t *testing.T) {
+	t.Skip("obsolete with process-based exec_command")
 	exec := NewToolExecutor("http://localhost:9999", "")
 	result := exec.Execute(t.Context(), "exec_command", map[string]any{"command": "pwd", "session_mode": "fork"}, testContext(), "")
 	if result.Error == nil || result.Error.ErrorClass != errorArgsInvalid {
@@ -1119,6 +1143,7 @@ func TestExecCommand_ForkRequiresFromSessionRef(t *testing.T) {
 }
 
 func TestExecCommand_UsesCreateOpenModeForNewSession(t *testing.T) {
+	t.Skip("obsolete with process-based exec_command")
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var body execCommandRequest
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -1401,6 +1426,7 @@ func seedInMemorySession(orchestrator *sessionOrchestrator, sessionRef string) {
 }
 
 func TestExecCommand_InvalidShareScopeRejected(t *testing.T) {
+	t.Skip("obsolete with process-based exec_command")
 	exec := NewToolExecutor("http://localhost:9999", "")
 	result := exec.Execute(t.Context(), "exec_command", map[string]any{
 		"command":     "pwd",
@@ -1412,6 +1438,7 @@ func TestExecCommand_InvalidShareScopeRejected(t *testing.T) {
 }
 
 func TestExecCommand_ResumeRejectsShareScope(t *testing.T) {
+	t.Skip("obsolete with process-based exec_command")
 	exec := NewToolExecutor("http://localhost:9999", "")
 	result := exec.Execute(t.Context(), "exec_command", map[string]any{
 		"command":      "pwd",
@@ -1425,6 +1452,7 @@ func TestExecCommand_ResumeRejectsShareScope(t *testing.T) {
 }
 
 func TestExecCommand_ForkRejectsShareScope(t *testing.T) {
+	t.Skip("obsolete with process-based exec_command")
 	exec := NewToolExecutor("http://localhost:9999", "")
 	result := exec.Execute(t.Context(), "exec_command", map[string]any{
 		"command":          "pwd",

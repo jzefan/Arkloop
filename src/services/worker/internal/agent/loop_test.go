@@ -1182,8 +1182,8 @@ func TestAgentLoopDoesNotDedupErrorToolResultMessageInjection(t *testing.T) {
 func TestAgentLoopPureContinuationDoesNotConsumeReasoningBudget(t *testing.T) {
 	loop := NewLoop(&scriptedTurnsGateway{turns: [][]llm.StreamEvent{
 		{llm.ToolCall{ToolCallID: "call_1", ToolName: "exec_command", ArgumentsJSON: map[string]any{"command": "sleep 1"}}, llm.StreamRunCompleted{}},
-		{llm.ToolCall{ToolCallID: "call_2", ToolName: "write_stdin", ArgumentsJSON: map[string]any{"session_ref": "sess-1"}}, llm.StreamRunCompleted{}},
-		{llm.ToolCall{ToolCallID: "call_3", ToolName: "write_stdin", ArgumentsJSON: map[string]any{"session_ref": "sess-1"}}, llm.StreamRunCompleted{}},
+		{llm.ToolCall{ToolCallID: "call_2", ToolName: "continue_process", ArgumentsJSON: map[string]any{"process_ref": "proc-1", "cursor": "0"}}, llm.StreamRunCompleted{}},
+		{llm.ToolCall{ToolCallID: "call_3", ToolName: "continue_process", ArgumentsJSON: map[string]any{"process_ref": "proc-1", "cursor": "1"}}, llm.StreamRunCompleted{}},
 		{llm.StreamMessageDelta{ContentDelta: "done", Role: "assistant"}, llm.StreamRunCompleted{}},
 	}}, buildContinuationDispatcher(t, []bool{true, false}))
 	emitter := events.NewEmitter("trace")
@@ -1254,8 +1254,8 @@ func TestAgentLoopContinuationBudgetExceededReturnsToolResultError(t *testing.T)
 	dispatcher := buildContinuationDispatcher(t, []bool{true})
 	loop := NewLoop(&scriptedTurnsGateway{turns: [][]llm.StreamEvent{
 		{llm.ToolCall{ToolCallID: "call_1", ToolName: "exec_command", ArgumentsJSON: map[string]any{"command": "sleep 1"}}, llm.StreamRunCompleted{}},
-		{llm.ToolCall{ToolCallID: "call_2", ToolName: "write_stdin", ArgumentsJSON: map[string]any{"session_ref": "sess-1"}}, llm.StreamRunCompleted{}},
-		{llm.ToolCall{ToolCallID: "call_3", ToolName: "write_stdin", ArgumentsJSON: map[string]any{"session_ref": "sess-1"}}, llm.StreamRunCompleted{}},
+		{llm.ToolCall{ToolCallID: "call_2", ToolName: "continue_process", ArgumentsJSON: map[string]any{"process_ref": "proc-1", "cursor": "0"}}, llm.StreamRunCompleted{}},
+		{llm.ToolCall{ToolCallID: "call_3", ToolName: "continue_process", ArgumentsJSON: map[string]any{"process_ref": "proc-1", "cursor": "1"}}, llm.StreamRunCompleted{}},
 		{llm.StreamMessageDelta{ContentDelta: "done", Role: "assistant"}, llm.StreamRunCompleted{}},
 	}}, dispatcher)
 	emitter := events.NewEmitter("trace")
@@ -1287,10 +1287,10 @@ func TestAgentLoopMixedTurnConsumesContinuationBudget(t *testing.T) {
 		{llm.ToolCall{ToolCallID: "call_1", ToolName: "exec_command", ArgumentsJSON: map[string]any{"command": "sleep 1"}}, llm.StreamRunCompleted{}},
 		{
 			llm.ToolCall{ToolCallID: "call_2", ToolName: "echo", ArgumentsJSON: map[string]any{"text": "hi"}},
-			llm.ToolCall{ToolCallID: "call_3", ToolName: "write_stdin", ArgumentsJSON: map[string]any{"session_ref": "sess-1"}},
+			llm.ToolCall{ToolCallID: "call_3", ToolName: "continue_process", ArgumentsJSON: map[string]any{"process_ref": "proc-1", "cursor": "0"}},
 			llm.StreamRunCompleted{},
 		},
-		{llm.ToolCall{ToolCallID: "call_4", ToolName: "write_stdin", ArgumentsJSON: map[string]any{"session_ref": "sess-1"}}, llm.StreamRunCompleted{}},
+		{llm.ToolCall{ToolCallID: "call_4", ToolName: "continue_process", ArgumentsJSON: map[string]any{"process_ref": "proc-1", "cursor": "1"}}, llm.StreamRunCompleted{}},
 		{llm.StreamMessageDelta{ContentDelta: "done", Role: "assistant"}, llm.StreamRunCompleted{}},
 	}}, dispatcher)
 	emitter := events.NewEmitter("trace")
@@ -1319,7 +1319,7 @@ func TestAgentLoopIterHookOnlyRunsOnReasoningTurns(t *testing.T) {
 	dispatcher := buildContinuationDispatcher(t, []bool{false})
 	loop := NewLoop(&scriptedTurnsGateway{turns: [][]llm.StreamEvent{
 		{llm.ToolCall{ToolCallID: "call_1", ToolName: "exec_command", ArgumentsJSON: map[string]any{"command": "sleep 1"}}, llm.StreamRunCompleted{}},
-		{llm.ToolCall{ToolCallID: "call_2", ToolName: "write_stdin", ArgumentsJSON: map[string]any{"session_ref": "sess-1"}}, llm.StreamRunCompleted{}},
+		{llm.ToolCall{ToolCallID: "call_2", ToolName: "continue_process", ArgumentsJSON: map[string]any{"process_ref": "proc-1", "cursor": "0"}}, llm.StreamRunCompleted{}},
 		{llm.ToolCall{ToolCallID: "call_3", ToolName: "echo", ArgumentsJSON: map[string]any{"text": "hi"}}, llm.StreamRunCompleted{}},
 		{llm.StreamMessageDelta{ContentDelta: "done", Role: "assistant"}, llm.StreamRunCompleted{}},
 	}}, dispatcher)
@@ -1623,14 +1623,14 @@ func buildEchoDispatcher(t *testing.T) *tools.DispatchingExecutor {
 
 func TestAgentLoopContinuationLimitExceededReturnsToolResultError(t *testing.T) {
 	limits := tools.DefaultPerToolSoftLimits()
-	writeLimit := limits["write_stdin"]
-	writeLimit.MaxContinuations = intPtr(1)
-	limits["write_stdin"] = writeLimit
+	continueLimit := limits["continue_process"]
+	continueLimit.MaxContinuations = intPtr(1)
+	limits["continue_process"] = continueLimit
 	dispatcher := buildContinuationDispatcher(t, []bool{true})
 	loop := NewLoop(&scriptedTurnsGateway{turns: [][]llm.StreamEvent{
 		{llm.ToolCall{ToolCallID: "call_1", ToolName: "exec_command", ArgumentsJSON: map[string]any{"command": "sleep 1"}}, llm.StreamRunCompleted{}},
-		{llm.ToolCall{ToolCallID: "call_2", ToolName: "write_stdin", ArgumentsJSON: map[string]any{"session_ref": "sess-1"}}, llm.StreamRunCompleted{}},
-		{llm.ToolCall{ToolCallID: "call_3", ToolName: "write_stdin", ArgumentsJSON: map[string]any{"session_ref": "sess-1"}}, llm.StreamRunCompleted{}},
+		{llm.ToolCall{ToolCallID: "call_2", ToolName: "continue_process", ArgumentsJSON: map[string]any{"process_ref": "proc-1", "cursor": "0"}}, llm.StreamRunCompleted{}},
+		{llm.ToolCall{ToolCallID: "call_3", ToolName: "continue_process", ArgumentsJSON: map[string]any{"process_ref": "proc-1", "cursor": "1"}}, llm.StreamRunCompleted{}},
 		{llm.StreamMessageDelta{ContentDelta: "done", Role: "assistant"}, llm.StreamRunCompleted{}},
 	}}, dispatcher)
 	emitter := events.NewEmitter("trace")
@@ -2318,14 +2318,18 @@ func (e *continuationExecutor) Execute(
 	_ = toolCallID
 	switch toolName {
 	case "exec_command":
-		return tools.ExecutionResult{ResultJSON: map[string]any{"session_ref": "sess-1", "running": true}}
-	case "write_stdin":
+		return tools.ExecutionResult{ResultJSON: map[string]any{"process_ref": "proc-1", "running": true, "next_cursor": "0"}}
+	case "continue_process":
 		idx := int(atomic.AddInt32(&e.writeCalls, 1)) - 1
 		running := false
 		if idx >= 0 && idx < len(e.writeRunning) {
 			running = e.writeRunning[idx]
 		}
-		return tools.ExecutionResult{ResultJSON: map[string]any{"session_ref": args["session_ref"], "running": running}}
+		nextCursor := "1"
+		if !running {
+			nextCursor = "2"
+		}
+		return tools.ExecutionResult{ResultJSON: map[string]any{"process_ref": args["process_ref"], "running": running, "next_cursor": nextCursor}}
 	case "echo":
 		return tools.ExecutionResult{ResultJSON: map[string]any{"text": args["text"]}}
 	default:
@@ -2338,17 +2342,17 @@ func buildContinuationDispatcher(t *testing.T, writeRunning []bool) *tools.Dispa
 	registry := tools.NewRegistry()
 	for _, spec := range []tools.AgentToolSpec{
 		{Name: "exec_command", Version: "1", Description: "exec", RiskLevel: tools.RiskLevelHigh, SideEffects: true},
-		{Name: "write_stdin", Version: "1", Description: "stdin", RiskLevel: tools.RiskLevelHigh, SideEffects: true},
+		{Name: "continue_process", Version: "1", Description: "continue", RiskLevel: tools.RiskLevelHigh, SideEffects: true},
 		builtin.EchoAgentSpec,
 	} {
 		if err := registry.Register(spec); err != nil {
 			t.Fatalf("register spec failed: %v", err)
 		}
 	}
-	allowlist := tools.AllowlistFromNames([]string{"exec_command", "write_stdin", "echo"})
+	allowlist := tools.AllowlistFromNames([]string{"exec_command", "continue_process", "echo"})
 	dispatcher := tools.NewDispatchingExecutor(registry, tools.NewPolicyEnforcer(registry, allowlist))
 	executor := &continuationExecutor{writeRunning: append([]bool{}, writeRunning...)}
-	for _, name := range []string{"exec_command", "write_stdin", "echo"} {
+	for _, name := range []string{"exec_command", "continue_process", "echo"} {
 		if err := dispatcher.Bind(name, executor); err != nil {
 			t.Fatalf("bind %s failed: %v", name, err)
 		}

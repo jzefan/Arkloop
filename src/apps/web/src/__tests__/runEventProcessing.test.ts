@@ -458,7 +458,7 @@ describe('buildMessageWidgetsFromRunEvents', () => {
 })
 
 describe('buildMessageCodeExecutionsFromRunEvents', () => {
-  it('应将 write_stdin 结果回填到原始 exec_command 记录', () => {
+  it('应将 continue_process 结果回填到原始 exec_command 记录', () => {
     const events = [
       makeRunEvent({
         runId: 'run_1',
@@ -473,23 +473,23 @@ describe('buildMessageCodeExecutionsFromRunEvents', () => {
         data: {
           tool_name: 'exec_command',
           tool_call_id: 'call_exec',
-          result: { session_id: 'sess_1', running: true, output: 'Linux ' },
+          result: { process_ref: 'proc_1', status: 'running', stdout: 'Linux ', cursor: '0', next_cursor: '1' },
         },
       }),
       makeRunEvent({
         runId: 'run_1',
         seq: 3,
         type: 'tool.call',
-        data: { tool_name: 'write_stdin', tool_call_id: 'call_write', arguments: { session_id: 'sess_1' } },
+        data: { tool_name: 'continue_process', tool_call_id: 'call_continue', arguments: { process_ref: 'proc_1', cursor: '1' } },
       }),
       makeRunEvent({
         runId: 'run_1',
         seq: 4,
         type: 'tool.result',
         data: {
-          tool_name: 'write_stdin',
-          tool_call_id: 'call_write',
-          result: { session_id: 'sess_1', running: false, output: '6.12.72', exit_code: 0 },
+          tool_name: 'continue_process',
+          tool_call_id: 'call_continue',
+          result: { process_ref: 'proc_1', status: 'exited', stdout: '6.12.72', exit_code: 0, cursor: '1', next_cursor: '2' },
         },
       }),
     ]
@@ -500,7 +500,7 @@ describe('buildMessageCodeExecutionsFromRunEvents', () => {
       id: 'call_exec',
       language: 'shell',
       code: 'uname -a',
-      sessionId: 'sess_1',
+      processRef: 'proc_1',
       output: 'Linux 6.12.72',
       exitCode: 0,
       status: 'success',
@@ -522,7 +522,7 @@ describe('buildMessageCodeExecutionsFromRunEvents', () => {
         data: {
           tool_name: 'exec_command',
           tool_call_id: 'call_exec',
-          result: { session_id: 'sess_1', running: false, output: '\u001b[?2004hLinux\n\u001b[?2004l', exit_code: 0 },
+          result: { process_ref: 'proc_1', status: 'exited', stdout: '\u001b[?2004hLinux\n\u001b[?2004l', exit_code: 0 },
         },
       }),
     ]
@@ -548,7 +548,7 @@ describe('buildMessageCodeExecutionsFromRunEvents', () => {
         data: {
           tool_name: 'exec_command',
           tool_call_id: 'call_exec',
-          result: { session_id: 'sess_1', running: true, output: 'hi' },
+          result: { process_ref: 'proc_1', status: 'running', stdout: 'hi', cursor: '0', next_cursor: '1' },
         },
       }),
       makeRunEvent({
@@ -556,9 +556,9 @@ describe('buildMessageCodeExecutionsFromRunEvents', () => {
         seq: 3,
         type: 'tool.result',
         data: {
-          tool_name: 'write_stdin',
-          tool_call_id: 'call_write',
-          result: { session_id: 'sess_1', running: false, output: 'hi there', exit_code: 0 },
+          tool_name: 'continue_process',
+          tool_call_id: 'call_continue',
+          result: { process_ref: 'proc_1', status: 'exited', stdout: 'hi there', exit_code: 0, cursor: '1', next_cursor: '2' },
         },
       }),
     ]
@@ -569,16 +569,16 @@ describe('buildMessageCodeExecutionsFromRunEvents', () => {
     expect(executions[0]?.status).toBe('success')
   })
 
-  it('缺少原始 exec_command 时，write_stdin 结果也不应丢失', () => {
+  it('缺少原始 exec_command 时，continue_process 结果也不应丢失', () => {
     const events = [
       makeRunEvent({
         runId: 'run_1',
         seq: 1,
         type: 'tool.result',
         data: {
-          tool_name: 'write_stdin',
-          tool_call_id: 'call_write',
-          result: { session_id: 'sess_orphan', running: false, output: 'done', exit_code: 0 },
+          tool_name: 'continue_process',
+          tool_call_id: 'call_continue',
+          result: { process_ref: 'proc_orphan', status: 'exited', stdout: 'done', exit_code: 0, cursor: '0', next_cursor: '1' },
         },
       }),
     ]
@@ -586,9 +586,9 @@ describe('buildMessageCodeExecutionsFromRunEvents', () => {
     const executions = buildMessageCodeExecutionsFromRunEvents(events)
     expect(executions).toHaveLength(1)
     expect(executions[0]).toMatchObject({
-      id: 'call_write',
+      id: 'call_continue',
       language: 'shell',
-      sessionId: 'sess_orphan',
+      processRef: 'proc_orphan',
       output: 'done',
       exitCode: 0,
       status: 'success',
@@ -991,7 +991,7 @@ describe('buildMessageSubAgentsFromRunEvents', () => {
 })
 
 describe('shouldReplayMessageCodeExecutions', () => {
-  it('shell 记录缺少 sessionId 时应触发回放修复', () => {
+  it('shell 记录缺少 processRef 时应触发回放修复', () => {
     expect(shouldReplayMessageCodeExecutions([{
       id: 'call_exec',
       language: 'shell',
@@ -1005,34 +1005,34 @@ describe('shouldReplayMessageCodeExecutions', () => {
     expect(shouldReplayMessageCodeExecutions([])).toBe(false)
   })
 
-  it('已有 sessionId 的 shell 记录不需要额外回放', () => {
+  it('已有 processRef 的 shell 记录不需要额外回放', () => {
     expect(shouldReplayMessageCodeExecutions([{
       id: 'call_exec',
       language: 'shell',
       code: 'uname -a',
       output: 'Linux',
-      sessionId: 'sess_1',
+      processRef: 'proc_1',
       status: 'success',
     }])).toBe(false)
   })
 })
 
 describe('patchCodeExecutionList', () => {
-  it('同一 shell session 下更新后续命令时，不应覆盖之前的命令', () => {
+  it('同一 processRef 下更新后续命令时，不应覆盖之前的命令', () => {
     const executions = [
       {
         id: 'call_exec_1',
         language: 'shell' as const,
         code: 'pwd',
         output: '/tmp',
-        sessionId: 'sess_1',
+        processRef: 'proc_1',
         status: 'success' as const,
       },
       {
         id: 'call_exec_2',
         language: 'shell' as const,
         code: 'ls',
-        sessionId: 'sess_1',
+        processRef: 'proc_1',
         status: 'running' as const,
       },
     ]
@@ -1043,7 +1043,7 @@ describe('patchCodeExecutionList', () => {
       code: 'ls',
       output: 'a.txt',
       exitCode: 0,
-      sessionId: 'sess_1',
+      processRef: 'proc_1',
       status: 'success',
     })
 
@@ -1053,7 +1053,7 @@ describe('patchCodeExecutionList', () => {
         language: 'shell',
         code: 'pwd',
         output: '/tmp',
-        sessionId: 'sess_1',
+        processRef: 'proc_1',
         status: 'success',
       },
       {
@@ -1062,7 +1062,7 @@ describe('patchCodeExecutionList', () => {
         code: 'ls',
         output: 'a.txt',
         exitCode: 0,
-        sessionId: 'sess_1',
+        processRef: 'proc_1',
         status: 'success',
       },
     ])

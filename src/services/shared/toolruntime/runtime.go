@@ -194,7 +194,7 @@ func ResolveBuiltin(input ResolveInput) BuiltinAvailability {
 		}
 	}
 	if sandboxBaseURL != "" {
-		for _, name := range []string{"python_execute", "exec_command", "write_stdin"} {
+		for _, name := range []string{"python_execute", "exec_command", "continue_process", "terminate_process", "resize_process"} {
 			available[name] = struct{}{}
 		}
 		if input.BrowserEnabled {
@@ -277,7 +277,7 @@ func (s RuntimeSnapshot) BuiltinAvailable(toolName string) bool {
 	switch name {
 	case "acp_agent":
 		return strings.TrimSpace(s.ACPHostKind) != ""
-	case "exec_command", "write_stdin":
+	case "exec_command", "continue_process", "terminate_process", "resize_process":
 		return strings.TrimSpace(s.SandboxBaseURL) != "" || strings.TrimSpace(s.ACPHostKind) == "local"
 	default:
 		return false

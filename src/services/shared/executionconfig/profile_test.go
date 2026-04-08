@@ -16,7 +16,7 @@ func TestResolveEffectiveProfileClampsBudgets(t *testing.T) {
 				MaxOutputTokens:        intPtr(8192),
 				Temperature:            floatPtr(0.4),
 				PerToolSoftLimits: PerToolSoftLimits{
-					"write_stdin": {MaxContinuations: intPtr(9)},
+					"continue_process": {MaxContinuations: intPtr(9)},
 				},
 			},
 		},
@@ -44,8 +44,8 @@ func TestResolveEffectiveProfileClampsBudgets(t *testing.T) {
 	if profile.PreferredCredentialName != "cred-a" {
 		t.Fatalf("unexpected preferred_credential_name: %q", profile.PreferredCredentialName)
 	}
-	if writeLimit := profile.PerToolSoftLimits["write_stdin"]; writeLimit.MaxContinuations == nil || *writeLimit.MaxContinuations != 9 {
-		t.Fatalf("unexpected write_stdin limit: %#v", writeLimit)
+	if continueLimit := profile.PerToolSoftLimits["continue_process"]; continueLimit.MaxContinuations == nil || *continueLimit.MaxContinuations != 9 {
+		t.Fatalf("unexpected continue_process limit: %#v", continueLimit)
 	}
 }
 
@@ -139,7 +139,7 @@ func TestResolveEffectiveProfileAllowsFinitePersonaWhenPlatformReasoningUnlimite
 }
 
 func TestParseRequestedBudgetsJSON(t *testing.T) {
-	budgets, err := ParseRequestedBudgetsJSON([]byte(`{"reasoning_iterations":4,"tool_continuation_budget":12,"per_tool_soft_limits":{"write_stdin":{"max_continuations":7,"max_output_bytes":12345}}}`))
+	budgets, err := ParseRequestedBudgetsJSON([]byte(`{"reasoning_iterations":4,"tool_continuation_budget":12,"per_tool_soft_limits":{"continue_process":{"max_continuations":7,"max_output_bytes":12345}}}`))
 	if err != nil {
 		t.Fatalf("parse budgets: %v", err)
 	}
@@ -149,17 +149,17 @@ func TestParseRequestedBudgetsJSON(t *testing.T) {
 	if budgets.ToolContinuationBudget == nil || *budgets.ToolContinuationBudget != 12 {
 		t.Fatalf("unexpected tool_continuation_budget: %v", budgets.ToolContinuationBudget)
 	}
-	if writeLimit := budgets.PerToolSoftLimits["write_stdin"]; writeLimit.MaxContinuations == nil || *writeLimit.MaxContinuations != 7 {
-		t.Fatalf("unexpected write_stdin max_continuations: %#v", writeLimit)
+	if continueLimit := budgets.PerToolSoftLimits["continue_process"]; continueLimit.MaxContinuations == nil || *continueLimit.MaxContinuations != 7 {
+		t.Fatalf("unexpected continue_process max_continuations: %#v", continueLimit)
 	}
-	if writeLimit := budgets.PerToolSoftLimits["write_stdin"]; writeLimit.MaxOutputBytes == nil || *writeLimit.MaxOutputBytes != 12345 {
-		t.Fatalf("unexpected write_stdin max_output_bytes: %#v", writeLimit)
+	if continueLimit := budgets.PerToolSoftLimits["continue_process"]; continueLimit.MaxOutputBytes == nil || *continueLimit.MaxOutputBytes != 12345 {
+		t.Fatalf("unexpected continue_process max_output_bytes: %#v", continueLimit)
 	}
 }
 
 func TestParseRequestedBudgetsRejectsInvalidSoftLimit(t *testing.T) {
-	_, err := ParseRequestedBudgetsJSON([]byte(`{"per_tool_soft_limits":{"write_stdin":{"max_yield_time_ms":40000}}}`))
-	if err == nil || err.Error() != "budgets.per_tool_soft_limits.write_stdin.max_yield_time_ms must be less than or equal to 30000" {
+	_, err := ParseRequestedBudgetsJSON([]byte(`{"per_tool_soft_limits":{"continue_process":{"max_wait_time_ms":40000}}}`))
+	if err == nil || err.Error() != "budgets.per_tool_soft_limits.continue_process.max_wait_time_ms must be less than or equal to 30000" {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }

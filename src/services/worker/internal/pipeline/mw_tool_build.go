@@ -19,6 +19,7 @@ var runtimeManagedToolNames = map[string]struct{}{
 	"create_artifact":      {},
 	"document_write":       {},
 	"exec_command":         {},
+	"continue_process":     {},
 	"group_history_search": {},
 	"memory_forget":        {},
 	"memory_edit":          {},
@@ -26,9 +27,10 @@ var runtimeManagedToolNames = map[string]struct{}{
 	"memory_search":        {},
 	"memory_write":         {},
 	"python_execute":       {},
+	"resize_process":       {},
+	"terminate_process":    {},
 	"web_fetch":            {},
 	"web_search":           {},
-	"write_stdin":          {},
 }
 
 // NewToolBuildMiddleware 根据最终的 allowlist 构建 DispatchingExecutor 和过滤后的 ToolSpecs。
