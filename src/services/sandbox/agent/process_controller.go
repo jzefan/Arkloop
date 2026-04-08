@@ -59,6 +59,24 @@ func NewProcessController() *ProcessController {
 	}
 }
 
+func (c *ProcessController) Close() {
+	c.mu.Lock()
+	processes := make([]*managedProcess, 0, len(c.processes))
+	for _, proc := range c.processes {
+		processes = append(processes, proc)
+	}
+	c.processes = map[string]*managedProcess{}
+	c.mu.Unlock()
+
+	for _, proc := range processes {
+		proc.mu.Lock()
+		if proc.status == processapi.StatusRunning {
+			killProcessLocked(proc, processapi.StatusCancelled)
+		}
+		proc.mu.Unlock()
+	}
+}
+
 func (c *ProcessController) Exec(req processapi.AgentExecRequest) (*processapi.Response, string, string) {
 	command := strings.TrimSpace(req.Command)
 	if command == "" {
@@ -175,17 +193,11 @@ func (c *ProcessController) Continue(req processapi.ContinueProcessRequest) (*pr
 	proc.mu.Unlock()
 
 	resp, err := c.waitForSnapshot(proc, cursor, time.Duration(processapi.NormalizeWaitMs(req.WaitMs))*time.Millisecond, accepted)
-	if err == nil && req.CloseStdin && resp != nil && resp.Status == processapi.StatusRunning {
-		resp, err = c.waitUntilStopped(proc, cursor)
-		if err == nil && resp != nil && accepted != nil {
-			value := *accepted
-			resp.AcceptedInputSeq = &value
-		}
-	}
 	proc.mu.Lock()
 	proc.inFlight = false
 	notifyLocked(proc)
 	proc.mu.Unlock()
+	c.releaseProcessIfDrained(proc, resp)
 	if err != nil {
 		code, message := mapProcessError(err)
 		return nil, code, message
@@ -194,7 +206,23 @@ func (c *ProcessController) Continue(req processapi.ContinueProcessRequest) (*pr
 }
 
 func (c *ProcessController) Terminate(req processapi.AgentRefRequest) (*processapi.Response, string, string) {
-	proc, err := c.getProcess(req.ProcessRef)
+	status := strings.TrimSpace(req.Status)
+	switch status {
+	case "":
+		status = processapi.StatusTerminated
+	case processapi.StatusTerminated, processapi.StatusCancelled:
+	default:
+		status = processapi.StatusTerminated
+	}
+	return c.stopProcess(req.ProcessRef, status)
+}
+
+func (c *ProcessController) Cancel(req processapi.AgentRefRequest) (*processapi.Response, string, string) {
+	return c.stopProcess(req.ProcessRef, processapi.StatusCancelled)
+}
+
+func (c *ProcessController) stopProcess(processRef string, status string) (*processapi.Response, string, string) {
+	proc, err := c.getProcess(processRef)
 	if err != nil {
 		code, message := mapProcessError(err)
 		return nil, code, message
@@ -202,11 +230,12 @@ func (c *ProcessController) Terminate(req processapi.AgentRefRequest) (*processa
 	proc.mu.Lock()
 	head := proc.output.HeadSeq()
 	if proc.status == processapi.StatusRunning {
-		killProcessLocked(proc, processapi.StatusTerminated)
+		killProcessLocked(proc, status)
 	}
 	proc.mu.Unlock()
 
 	resp, err := c.waitUntilStopped(proc, head)
+	c.releaseProcessIfDrained(proc, resp)
 	if err != nil {
 		code, message := mapProcessError(err)
 		return nil, code, message
@@ -433,6 +462,20 @@ func (c *ProcessController) waitForExit(proc *managedProcess, timeoutMs int) {
 		proc.status = processapi.StatusExited
 	}
 	notifyLocked(proc)
+}
+
+func (c *ProcessController) releaseProcessIfDrained(proc *managedProcess, resp *processapi.Response) {
+	if proc == nil || resp == nil {
+		return
+	}
+	if resp.Status == processapi.StatusRunning || resp.HasMore {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if current, ok := c.processes[proc.ref]; ok && current == proc {
+		delete(c.processes, proc.ref)
+	}
 }
 
 func (c *ProcessController) getProcess(processRef string) (*managedProcess, error) {

@@ -15,6 +15,7 @@ import {
   fileOpOutputFromResult,
   applyWebFetchToolCall,
   applyWebFetchToolResult,
+  applyCodeExecutionToolResult,
   isWebFetchToolName,
 } from '../runEventProcessing'
 import type { MessageResponse } from '../api'
@@ -499,6 +500,7 @@ describe('buildMessageCodeExecutionsFromRunEvents', () => {
     expect(executions[0]).toMatchObject({
       id: 'call_exec',
       language: 'shell',
+      mode: 'buffered',
       code: 'uname -a',
       processRef: 'proc_1',
       output: 'Linux 6.12.72',
@@ -592,6 +594,44 @@ describe('buildMessageCodeExecutionsFromRunEvents', () => {
       output: 'done',
       exitCode: 0,
       status: 'success',
+    })
+  })
+
+  it('items 输出应按 seq 保持原始交错顺序', () => {
+    const events = [
+      makeRunEvent({
+        runId: 'run_1',
+        seq: 1,
+        type: 'tool.call',
+        data: { tool_name: 'exec_command', tool_call_id: 'call_exec', arguments: { command: 'echo hi', mode: 'follow' } },
+      }),
+      makeRunEvent({
+        runId: 'run_1',
+        seq: 2,
+        type: 'tool.result',
+        data: {
+          tool_name: 'exec_command',
+          tool_call_id: 'call_exec',
+          result: {
+            process_ref: 'proc_1',
+            status: 'exited',
+            exit_code: 1,
+            items: [
+              { seq: 2, stream: 'stdout', text: 'out-1\n' },
+              { seq: 3, stream: 'stderr', text: 'err-1\n' },
+              { seq: 4, stream: 'stdout', text: 'out-2\n' },
+            ],
+          },
+        },
+      }),
+    ]
+
+    const executions = buildMessageCodeExecutionsFromRunEvents(events)
+    expect(executions[0]).toMatchObject({
+      processRef: 'proc_1',
+      mode: 'follow',
+      output: 'out-1\n[stderr]\nerr-1\nout-2\n',
+      status: 'failed',
     })
   })
 
@@ -995,6 +1035,7 @@ describe('shouldReplayMessageCodeExecutions', () => {
     expect(shouldReplayMessageCodeExecutions([{
       id: 'call_exec',
       language: 'shell',
+      mode: 'follow',
       code: 'uname -a',
       output: 'Linux',
       status: 'success',
@@ -1005,15 +1046,61 @@ describe('shouldReplayMessageCodeExecutions', () => {
     expect(shouldReplayMessageCodeExecutions([])).toBe(false)
   })
 
+  it('buffered shell 记录没有 processRef 时不应触发回放', () => {
+    expect(shouldReplayMessageCodeExecutions([{
+      id: 'call_exec',
+      language: 'shell',
+      mode: 'buffered',
+      code: 'uname -a',
+      output: 'Linux',
+      status: 'success',
+    }])).toBe(false)
+  })
+
   it('已有 processRef 的 shell 记录不需要额外回放', () => {
     expect(shouldReplayMessageCodeExecutions([{
       id: 'call_exec',
       language: 'shell',
+      mode: 'follow',
       code: 'uname -a',
       output: 'Linux',
       processRef: 'proc_1',
       status: 'success',
     }])).toBe(false)
+  })
+})
+
+describe('applyCodeExecutionToolResult', () => {
+  it('continue_process 缺少精确 processRef 时不应回退到最后一个 running shell', () => {
+    const executions = [{
+      id: 'call_exec',
+      language: 'shell' as const,
+      mode: 'follow' as const,
+      code: 'tail -f log.txt',
+      processRef: 'proc_real',
+      status: 'running' as const,
+    }]
+
+    const event = makeRunEvent({
+      runId: 'run_1',
+      seq: 10,
+      type: 'tool.result',
+      data: {
+        tool_name: 'continue_process',
+        tool_call_id: 'call_continue',
+        result: { process_ref: 'proc_other', status: 'exited', stdout: 'done', exit_code: 0, cursor: '0', next_cursor: '1' },
+      },
+    })
+
+    const result = applyCodeExecutionToolResult(executions, event)
+    expect(result.nextExecutions).toHaveLength(2)
+    expect(result.nextExecutions[0]).toEqual(executions[0])
+    expect(result.nextExecutions[1]).toMatchObject({
+      id: 'call_continue',
+      processRef: 'proc_other',
+      output: 'done',
+      status: 'success',
+    })
   })
 })
 

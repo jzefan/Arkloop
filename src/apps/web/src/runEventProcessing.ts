@@ -69,39 +69,47 @@ function sanitizeTerminalOutput(value: string): string {
   return value.replace(TERMINAL_CONTROL_SEQUENCE_PATTERN, '')
 }
 
+function pickExecCommandMode(args: Record<string, unknown> | undefined): CodeExecutionRef['mode'] {
+  const raw = typeof args?.mode === 'string' ? args.mode.trim() : ''
+  switch (raw) {
+    case 'follow':
+    case 'stdin':
+    case 'pty':
+      return raw
+    default:
+      return 'buffered'
+  }
+}
+
 function formatCodeExecutionItems(items: unknown): string {
   if (!Array.isArray(items)) return ''
-  const stdout: string[] = []
-  const stderr: string[] = []
-  const pty: string[] = []
-  const system: string[] = []
-  for (const item of items) {
+  const ordered = items
+    .filter((item): item is Record<string, unknown> => !!item && typeof item === 'object')
+    .sort((left, right) => {
+      const leftSeq = typeof left.seq === 'number' ? left.seq : Number.MAX_SAFE_INTEGER
+      const rightSeq = typeof right.seq === 'number' ? right.seq : Number.MAX_SAFE_INTEGER
+      return leftSeq - rightSeq
+    })
+  const segments: string[] = []
+  let currentTaggedStream: 'stderr' | 'system' | null = null
+  for (const item of ordered) {
     if (!item || typeof item !== 'object') continue
     const text = typeof (item as { text?: unknown }).text === 'string'
       ? sanitizeTerminalOutput((item as { text: string }).text)
       : ''
     if (!text) continue
-    switch ((item as { stream?: unknown }).stream) {
-      case 'stderr':
-        stderr.push(text)
-        break
-      case 'pty':
-        pty.push(text)
-        break
-      case 'system':
-        system.push(text)
-        break
-      default:
-        stdout.push(text)
-        break
+    const stream = typeof item.stream === 'string' ? item.stream : 'stdout'
+    if (stream === 'stderr' || stream === 'system') {
+      if (currentTaggedStream !== stream) {
+        segments.push(stream === 'stderr' ? '[stderr]\n' : '[system]\n')
+        currentTaggedStream = stream
+      }
+    } else {
+      currentTaggedStream = null
     }
+    segments.push(text)
   }
-  const segments: string[] = []
-  if (stdout.length > 0) segments.push(stdout.join(''))
-  if (pty.length > 0) segments.push(pty.join(''))
-  if (stderr.length > 0) segments.push(`[stderr]\n${stderr.join('')}`)
-  if (system.length > 0) segments.push(`[system]\n${system.join('')}`)
-  return segments.join(segments.length > 1 ? '\n' : '')
+  return segments.join('')
 }
 
 function extractCodeExecutionOutput(result: unknown): { output?: string; exitCode?: number } {
@@ -222,13 +230,6 @@ function findExecutionIndex(
   const secondary = preferProcess ? findByCallId() : findByProcess()
   if (secondary >= 0) return secondary
 
-  if (preferProcess) {
-    for (let i = executions.length - 1; i >= 0; i--) {
-      if (executions[i].language === 'shell' && executions[i].status === 'running') {
-        return i
-      }
-    }
-  }
   return -1
 }
 
@@ -352,6 +353,7 @@ export function applyCodeExecutionToolCall(
   const appended: CodeExecutionRef = {
     id: pickToolCallId(event),
     language,
+    mode: toolName === 'exec_command' ? pickExecCommandMode(args) : undefined,
     code,
     status: 'running',
     seq: event.seq,
@@ -503,7 +505,7 @@ export function patchCodeExecutionList(
 export function shouldReplayMessageCodeExecutions(executions: CodeExecutionRef[] | null | undefined): boolean {
   if (executions == null) return true
   if (executions.length === 0) return false
-  return executions.some((item) => item.language === 'shell' && !item.processRef)
+  return executions.some((item) => item.language === 'shell' && item.mode !== 'buffered' && !item.processRef)
 }
 
 export function selectFreshRunEvents(params: {

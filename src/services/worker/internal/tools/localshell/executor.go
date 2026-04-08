@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -26,6 +27,19 @@ const (
 	envLocalShellWork = "ARKLOOP_LOCAL_SHELL_WORKSPACE"
 	rtkRewriteTimeout = 1500 * time.Millisecond
 )
+
+var localShellAllowedEnvKeys = []string{
+	"HOME",
+	"LANG",
+	"LC_ALL",
+	"LOGNAME",
+	"PATH",
+	"SHELL",
+	"TEMP",
+	"TMP",
+	"TMPDIR",
+	"USER",
+}
 
 type Executor struct {
 	controller *ProcessController
@@ -71,11 +85,11 @@ func (e *Executor) Execute(
 	case ExecCommandAgentSpec.Name:
 		return e.executeExecCommand(ctx, args, execCtx, started)
 	case ContinueProcessAgentSpec.Name:
-		return e.executeContinueProcess(args, started)
+		return e.executeContinueProcess(args, execCtx, started)
 	case TerminateProcessAgentSpec.Name:
-		return e.executeTerminateProcess(args, started)
+		return e.executeTerminateProcess(args, execCtx, started)
 	case ResizeProcessAgentSpec.Name:
-		return e.executeResizeProcess(args, started)
+		return e.executeResizeProcess(args, execCtx, started)
 	default:
 		return errResult(errorArgsInvalid, fmt.Sprintf("unknown local shell tool: %s", toolName), started)
 	}
@@ -98,12 +112,13 @@ func (e *Executor) executeExecCommand(
 	}
 
 	req := ExecCommandRequest{
+		RunID:     execCtx.RunID.String(),
 		Command:   command,
 		Mode:      reqArgs.Mode,
 		Cwd:       resolveExecCwd(reqArgs.Cwd, execCtx.WorkDir, e.workDir),
 		TimeoutMs: reqArgs.TimeoutMs,
 		Size:      reqArgs.Size,
-		Env:       reqArgs.Env,
+		Env:       sanitizeLocalEnvPatches(reqArgs.Env),
 	}
 
 	slog.Info("local_shell: exec_command",
@@ -115,15 +130,19 @@ func (e *Executor) executeExecCommand(
 
 	resp, runErr := e.controller.ExecCommand(req)
 	if runErr != nil {
-		return errResult(errorShellError, runErr.Error(), started)
+		return mapLocalProcessError(runErr, started)
 	}
-	return buildProcessResult(resp, started)
+	return buildProcessResult(resp, ExecCommandAgentSpec.Name, execCtx.PerToolSoftLimits, started)
 }
 
-func (e *Executor) executeContinueProcess(args map[string]any, started time.Time) tools.ExecutionResult {
+func (e *Executor) executeContinueProcess(args map[string]any, execCtx tools.ExecutionContext, started time.Time) tools.ExecutionResult {
 	reqArgs, err := parseContinueProcessArgs(args)
 	if err != nil {
 		return errResult(errorArgsInvalid, err.Error(), started)
+	}
+	limit := tools.ResolveToolSoftLimit(execCtx.PerToolSoftLimits, ContinueProcessAgentSpec.Name)
+	if limit.MaxWaitTimeMs != nil && reqArgs.WaitMs > *limit.MaxWaitTimeMs {
+		reqArgs.WaitMs = *limit.MaxWaitTimeMs
 	}
 	resp, runErr := e.controller.ContinueProcess(ContinueProcessRequest{
 		ProcessRef: reqArgs.ProcessRef,
@@ -134,24 +153,24 @@ func (e *Executor) executeContinueProcess(args map[string]any, started time.Time
 		CloseStdin: reqArgs.CloseStdin,
 	})
 	if runErr != nil {
-		return errResult(errorShellError, runErr.Error(), started)
+		return mapLocalProcessError(runErr, started)
 	}
-	return buildProcessResult(resp, started)
+	return buildProcessResult(resp, ContinueProcessAgentSpec.Name, execCtx.PerToolSoftLimits, started)
 }
 
-func (e *Executor) executeTerminateProcess(args map[string]any, started time.Time) tools.ExecutionResult {
+func (e *Executor) executeTerminateProcess(args map[string]any, execCtx tools.ExecutionContext, started time.Time) tools.ExecutionResult {
 	reqArgs, err := parseTerminateProcessArgs(args)
 	if err != nil {
 		return errResult(errorArgsInvalid, err.Error(), started)
 	}
 	resp, runErr := e.controller.TerminateProcess(TerminateProcessRequest{ProcessRef: reqArgs.ProcessRef})
 	if runErr != nil {
-		return errResult(errorShellError, runErr.Error(), started)
+		return mapLocalProcessError(runErr, started)
 	}
-	return buildProcessResult(resp, started)
+	return buildProcessResult(resp, ContinueProcessAgentSpec.Name, execCtx.PerToolSoftLimits, started)
 }
 
-func (e *Executor) executeResizeProcess(args map[string]any, started time.Time) tools.ExecutionResult {
+func (e *Executor) executeResizeProcess(args map[string]any, execCtx tools.ExecutionContext, started time.Time) tools.ExecutionResult {
 	reqArgs, err := parseResizeProcessArgs(args)
 	if err != nil {
 		return errResult(errorArgsInvalid, err.Error(), started)
@@ -162,9 +181,9 @@ func (e *Executor) executeResizeProcess(args map[string]any, started time.Time) 
 		Cols:       reqArgs.Cols,
 	})
 	if runErr != nil {
-		return errResult(errorShellError, runErr.Error(), started)
+		return mapLocalProcessError(runErr, started)
 	}
-	return buildProcessResult(resp, started)
+	return buildProcessResult(resp, ContinueProcessAgentSpec.Name, execCtx.PerToolSoftLimits, started)
 }
 
 type execCommandArgs struct {
@@ -306,13 +325,14 @@ func parseResizeProcessArgs(args map[string]any) (resizeProcessArgs, error) {
 	return resizeProcessArgs{ProcessRef: processRef, Rows: rows, Cols: cols}, nil
 }
 
-func buildProcessResult(resp *Response, started time.Time) tools.ExecutionResult {
+func buildProcessResult(resp *Response, toolName string, limits tools.PerToolSoftLimits, started time.Time) tools.ExecutionResult {
 	if resp == nil {
 		return errResult(errorShellError, "process response is empty", started)
 	}
 
-	stdout, stdoutTruncated := truncateOutput(sanitizeOutput(resp.Stdout), maxOutputBytes)
-	stderr, stderrTruncated := truncateOutput(sanitizeOutput(resp.Stderr), maxOutputBytes)
+	outputLimit := resolveProcessOutputLimit(limits, toolName)
+	stdout, stdoutTruncated := truncateOutput(sanitizeOutput(resp.Stdout), outputLimit)
+	stderr, stderrTruncated := truncateOutput(sanitizeOutput(resp.Stderr), outputLimit)
 	items := make([]map[string]any, 0, len(resp.Items))
 	for _, item := range resp.Items {
 		items = append(items, map[string]any{
@@ -356,6 +376,40 @@ func buildProcessResult(resp *Response, started time.Time) tools.ExecutionResult
 	return tools.ExecutionResult{ResultJSON: resultJSON, DurationMs: durationMs(started)}
 }
 
+func (e *Executor) CleanupProcesses(ctx context.Context, processRefs []string, terminalStatus string) error {
+	var errs []string
+	for _, ref := range processRefs {
+		if ctx != nil {
+			select {
+			case <-ctx.Done():
+				if len(errs) > 0 {
+					return errors.New(strings.Join(errs, "; "))
+				}
+				return ctx.Err()
+			default:
+			}
+		}
+		ref = strings.TrimSpace(ref)
+		if ref == "" {
+			continue
+		}
+		var err error
+		switch strings.TrimSpace(terminalStatus) {
+		case "cancelled", "interrupted":
+			_, err = e.controller.CancelProcess(TerminateProcessRequest{ProcessRef: ref})
+		default:
+			_, err = e.controller.TerminateProcess(TerminateProcessRequest{ProcessRef: ref})
+		}
+		if err != nil && !isProcessNotFound(err) {
+			errs = append(errs, ref+": "+err.Error())
+		}
+	}
+	if len(errs) > 0 {
+		return errors.New(strings.Join(errs, "; "))
+	}
+	return nil
+}
+
 func resolveExecCwd(requested string, runWorkDir string, defaultWorkDir string) string {
 	if strings.TrimSpace(requested) != "" {
 		return strings.TrimSpace(requested)
@@ -364,6 +418,59 @@ func resolveExecCwd(requested string, runWorkDir string, defaultWorkDir string) 
 		return strings.TrimSpace(runWorkDir)
 	}
 	return strings.TrimSpace(defaultWorkDir)
+}
+
+func sanitizeLocalEnvPatches(overrides map[string]*string) map[string]*string {
+	patches := make(map[string]*string)
+	for _, pair := range os.Environ() {
+		parts := strings.SplitN(pair, "=", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		key := strings.TrimSpace(parts[0])
+		if key == "" || slices.Contains(localShellAllowedEnvKeys, key) {
+			continue
+		}
+		patches[key] = nil
+	}
+	for key, value := range overrides {
+		patches[key] = value
+	}
+	if len(patches) == 0 {
+		return nil
+	}
+	return patches
+}
+
+func resolveProcessOutputLimit(limits tools.PerToolSoftLimits, toolName string) int {
+	target := toolName
+	if target != ExecCommandAgentSpec.Name && target != ContinueProcessAgentSpec.Name {
+		target = ContinueProcessAgentSpec.Name
+	}
+	limit := tools.ResolveToolSoftLimit(limits, target)
+	if limit.MaxOutputBytes != nil && *limit.MaxOutputBytes > 0 {
+		return *limit.MaxOutputBytes
+	}
+	if target == ExecCommandAgentSpec.Name {
+		return tools.DefaultExecCommandMaxOutputBytes
+	}
+	return tools.DefaultContinueProcessMaxOutputBytes
+}
+
+func isProcessNotFound(err error) bool {
+	var procErr *Error
+	return errors.As(err, &procErr) && procErr.Code == CodeProcessNotFound
+}
+
+func mapLocalProcessError(err error, started time.Time) tools.ExecutionResult {
+	if err == nil {
+		return tools.ExecutionResult{DurationMs: durationMs(started)}
+	}
+	var procErr *Error
+	if errors.As(err, &procErr) {
+		return errResult(procErr.Code, procErr.Message, started)
+	}
+	return errResult(errorShellError, err.Error(), started)
 }
 
 func readProcessSizeArg(raw any) *Size {

@@ -47,6 +47,7 @@ import (
 	"arkloop/services/worker/internal/tools/builtin"
 	"arkloop/services/worker/internal/tools/builtin/acptool"
 	"arkloop/services/worker/internal/tools/builtin/read"
+	sandboxbuiltin "arkloop/services/worker/internal/tools/builtin/sandbox"
 	conversationtool "arkloop/services/worker/internal/tools/conversation"
 	"arkloop/services/worker/internal/tools/localshell"
 	memorytool "arkloop/services/worker/internal/tools/memory"
@@ -100,6 +101,7 @@ type DesktopEngine struct {
 	groupSearchExec        tools.Executor
 	mcpPool                *mcp.Pool
 	mcpDiscoveryCache      *mcp.DiscoveryCache
+	shellExecutor          *runtime.DynamicShellExecutor
 }
 
 const defaultDesktopStageEventMs = 250
@@ -403,6 +405,7 @@ func ComposeDesktopEngine(ctx context.Context, db data.DesktopDB, bus eventbus.E
 		groupSearchExec:        groupSearchExec,
 		mcpPool:                mcpPool,
 		mcpDiscoveryCache:      mcpDiscoveryCache,
+		shellExecutor:          shellExec,
 	}, nil
 }
 
@@ -633,7 +636,7 @@ func (e *DesktopEngine) Execute(ctx context.Context, run data.Run, traceID strin
 		pipeline.NewResultSummarizerMiddleware(nil, e.auxGateway, e.emitDebugEvents, 0, e.routingLoader),
 		desktopChannelDelivery(e.db),
 	)
-	terminal := desktopAgentLoop(e.db, e.bus, e.jobQueue, runsRepo, eventsRepo)
+	terminal := desktopAgentLoop(e.db, e.bus, e.jobQueue, runsRepo, eventsRepo, e.shellExecutor, e.runtimeSnapshot)
 	handler := pipeline.Build(middlewares, terminal)
 
 	return handler(ctx, rc)
@@ -2082,6 +2085,8 @@ func desktopAgentLoop(
 	jobQueue queue.JobQueue,
 	runsRepo data.DesktopRunsRepository,
 	eventsRepo data.DesktopRunEventsRepository,
+	shellExec *runtime.DynamicShellExecutor,
+	runtimeSnapshot *sharedtoolruntime.RuntimeSnapshot,
 ) pipeline.RunHandler {
 	return func(ctx context.Context, rc *pipeline.RunContext) error {
 		selected := rc.SelectedRoute
@@ -2143,6 +2148,7 @@ func desktopAgentLoop(
 		defer cancelExec()
 		stopCancelWatch := startDesktopRunCancelWatcher(execCtx, db, rc.Run.ID, cancelExec)
 		defer stopCancelWatch()
+		defer cleanupDesktopShellRun(rc, w)
 
 		execErr := exec.Execute(execCtx, rc, rc.Emitter, func(ev events.RunEvent) error {
 			return w.append(execCtx, rc.Run.ID, ev, "")
@@ -2169,6 +2175,26 @@ func desktopAgentLoop(
 		rc.RunToolCallCount = w.toolCallCount
 		rc.RunIterationCount = w.iterationCount
 		return nil
+	}
+}
+
+func cleanupDesktopShellRun(rc *pipeline.RunContext, writer *desktopEventWriter) {
+	if rc == nil || writer == nil {
+		return
+	}
+	if cleaner, ok := rc.ToolExecutors[localshell.ExecCommandAgentSpec.Name].(interface {
+		CleanupRun(context.Context, string, string) error
+	}); ok {
+		go func(runID string, terminalStatus string) {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			if err := cleaner.CleanupRun(ctx, runID, terminalStatus); err != nil {
+				slog.Warn("desktop shell cleanup failed", "run_id", runID, "error", err.Error())
+			}
+		}(rc.Run.ID.String(), writer.terminalStatus)
+	}
+	if rc.Runtime != nil && rc.Runtime.SandboxBaseURL != "" {
+		go sandboxbuiltin.CleanupSession(rc.Runtime.SandboxBaseURL, rc.Runtime.SandboxAuthToken, rc.Run.ID.String(), rc.Run.AccountID.String())
 	}
 }
 

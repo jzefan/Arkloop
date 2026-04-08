@@ -117,6 +117,7 @@ type AgentExecRequest struct {
 
 type AgentRefRequest struct {
 	ProcessRef string `json:"process_ref"`
+	Status     string `json:"status,omitempty"`
 }
 
 type AgentResizeRequest struct {
@@ -129,6 +130,7 @@ type AgentRequest struct {
 	Action           string                  `json:"action"`
 	ExecCommand      *AgentExecRequest       `json:"process_exec,omitempty"`
 	ContinueProcess  *ContinueProcessRequest `json:"process_continue,omitempty"`
+	CancelProcess    *AgentRefRequest        `json:"process_cancel,omitempty"`
 	TerminateProcess *AgentRefRequest        `json:"process_terminate,omitempty"`
 	ResizeProcess    *AgentResizeRequest     `json:"process_resize,omitempty"`
 }

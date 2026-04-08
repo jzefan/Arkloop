@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -63,9 +64,7 @@ func NewExecutor(sandboxBaseURL, authToken string) *Executor {
 	return &Executor{
 		sandboxBaseURL: strings.TrimRight(sandboxBaseURL, "/"),
 		authToken:      authToken,
-		client: &http.Client{
-			Timeout: 5 * time.Minute,
-		},
+		client:         &http.Client{},
 	}
 }
 
@@ -137,11 +136,13 @@ func (e *Executor) executeExecCommand(
 		"cwd", reqArgs.Cwd,
 	)
 
-	resp, postErr := e.doPost(ctx, "/v1/process/exec", payload)
+	reqCtx, cancel := withProcessTimeout(ctx, requestTimeoutForExec(reqArgs.Mode, reqArgs.TimeoutMs))
+	defer cancel()
+	resp, postErr := e.doPost(reqCtx, "/v1/process/exec", payload)
 	if postErr != nil {
 		return errResult(errorSandbox, postErr.Error(), started)
 	}
-	return buildProcessResult(resp, started)
+	return buildProcessResult(resp, ExecCommandAgentSpec.Name, execCtx.PerToolSoftLimits, started)
 }
 
 func (e *Executor) executeContinueProcess(
@@ -168,12 +169,18 @@ func (e *Executor) executeContinueProcess(
 	if reqArgs.InputSeq != nil {
 		payload["input_seq"] = *reqArgs.InputSeq
 	}
+	limit := tools.ResolveToolSoftLimit(execCtx.PerToolSoftLimits, ContinueProcessAgentSpec.Name)
+	if limit.MaxWaitTimeMs != nil && reqArgs.WaitMs > *limit.MaxWaitTimeMs {
+		payload["wait_ms"] = *limit.MaxWaitTimeMs
+	}
 
-	resp, postErr := e.doPost(ctx, "/v1/process/continue", payload)
+	reqCtx, cancel := withProcessTimeout(ctx, requestTimeoutForContinue(reqArgs.WaitMs, limit.MaxWaitTimeMs))
+	defer cancel()
+	resp, postErr := e.doPost(reqCtx, "/v1/process/continue", payload)
 	if postErr != nil {
 		return errResult(errorSandbox, postErr.Error(), started)
 	}
-	return buildProcessResult(resp, started)
+	return buildProcessResult(resp, ContinueProcessAgentSpec.Name, execCtx.PerToolSoftLimits, started)
 }
 
 func (e *Executor) executeTerminateProcess(
@@ -187,14 +194,16 @@ func (e *Executor) executeTerminateProcess(
 		return errResult(errorArgsInvalid, err.Error(), started)
 	}
 
-	resp, postErr := e.doPost(ctx, "/v1/process/terminate", map[string]any{
+	reqCtx, cancel := withProcessTimeout(ctx, 30*time.Second)
+	defer cancel()
+	resp, postErr := e.doPost(reqCtx, "/v1/process/terminate", map[string]any{
 		"session_id":  execCtx.RunID.String(),
 		"process_ref": reqArgs.ProcessRef,
 	})
 	if postErr != nil {
 		return errResult(errorSandbox, postErr.Error(), started)
 	}
-	return buildProcessResult(resp, started)
+	return buildProcessResult(resp, ContinueProcessAgentSpec.Name, execCtx.PerToolSoftLimits, started)
 }
 
 func (e *Executor) executeResizeProcess(
@@ -208,7 +217,9 @@ func (e *Executor) executeResizeProcess(
 		return errResult(errorArgsInvalid, err.Error(), started)
 	}
 
-	resp, postErr := e.doPost(ctx, "/v1/process/resize", map[string]any{
+	reqCtx, cancel := withProcessTimeout(ctx, 30*time.Second)
+	defer cancel()
+	resp, postErr := e.doPost(reqCtx, "/v1/process/resize", map[string]any{
 		"session_id":  execCtx.RunID.String(),
 		"process_ref": reqArgs.ProcessRef,
 		"rows":        reqArgs.Rows,
@@ -217,7 +228,7 @@ func (e *Executor) executeResizeProcess(
 	if postErr != nil {
 		return errResult(errorSandbox, postErr.Error(), started)
 	}
-	return buildProcessResult(resp, started)
+	return buildProcessResult(resp, ContinueProcessAgentSpec.Name, execCtx.PerToolSoftLimits, started)
 }
 
 type execCommandArgs struct {
@@ -366,9 +377,10 @@ func parseResizeProcessArgs(args map[string]any) (resizeProcessArgs, error) {
 	return resizeProcessArgs{ProcessRef: processRef, Rows: rows, Cols: cols}, nil
 }
 
-func buildProcessResult(resp processResponse, started time.Time) tools.ExecutionResult {
-	stdout, stdoutTruncated := truncateOutput(resp.Stdout, maxOutputBytes)
-	stderr, stderrTruncated := truncateOutput(resp.Stderr, maxOutputBytes)
+func buildProcessResult(resp processResponse, toolName string, limits tools.PerToolSoftLimits, started time.Time) tools.ExecutionResult {
+	outputLimit := resolveProcessOutputLimit(limits, toolName)
+	stdout, stdoutTruncated := truncateOutput(resp.Stdout, outputLimit)
+	stderr, stderrTruncated := truncateOutput(resp.Stderr, outputLimit)
 
 	resultJSON := map[string]any{
 		"status":      resp.Status,
@@ -408,6 +420,52 @@ func buildProcessResult(resp processResponse, started time.Time) tools.Execution
 	return tools.ExecutionResult{ResultJSON: resultJSON, DurationMs: durationMs(started)}
 }
 
+func resolveProcessOutputLimit(limits tools.PerToolSoftLimits, toolName string) int {
+	target := toolName
+	if target != ExecCommandAgentSpec.Name && target != ContinueProcessAgentSpec.Name {
+		target = ContinueProcessAgentSpec.Name
+	}
+	limit := tools.ResolveToolSoftLimit(limits, target)
+	if limit.MaxOutputBytes != nil && *limit.MaxOutputBytes > 0 {
+		return *limit.MaxOutputBytes
+	}
+	if target == ExecCommandAgentSpec.Name {
+		return tools.DefaultExecCommandMaxOutputBytes
+	}
+	return tools.DefaultContinueProcessMaxOutputBytes
+}
+
+func requestTimeoutForExec(mode string, timeoutMs int) time.Duration {
+	switch strings.TrimSpace(mode) {
+	case modeFollow, modeStdin, modePTY:
+		if timeoutMs <= 0 {
+			timeoutMs = maxTimeoutMs
+		}
+	default:
+		if timeoutMs <= 0 {
+			timeoutMs = 30_000
+		}
+	}
+	return time.Duration(timeoutMs)*time.Millisecond + 30*time.Second
+}
+
+func requestTimeoutForContinue(waitMs int, maxWaitMs *int) time.Duration {
+	if maxWaitMs != nil && waitMs > *maxWaitMs {
+		waitMs = *maxWaitMs
+	}
+	if waitMs <= 0 {
+		waitMs = 500
+	}
+	return time.Duration(waitMs)*time.Millisecond + 30*time.Second
+}
+
+func withProcessTimeout(ctx context.Context, timeout time.Duration) (context.Context, context.CancelFunc) {
+	if timeout <= 0 {
+		return context.WithCancel(ctx)
+	}
+	return context.WithTimeout(ctx, timeout)
+}
+
 func (e *Executor) doPost(ctx context.Context, path string, payload map[string]any) (processResponse, error) {
 	body, err := json.Marshal(payload)
 	if err != nil {
@@ -425,6 +483,9 @@ func (e *Executor) doPost(ctx context.Context, path string, payload map[string]a
 
 	resp, err := e.client.Do(req)
 	if err != nil {
+		if errors.Is(err, context.DeadlineExceeded) {
+			return processResponse{}, fmt.Errorf("sandbox request timed out: %w", err)
+		}
 		return processResponse{}, fmt.Errorf("sandbox request: %w", err)
 	}
 	defer resp.Body.Close()
