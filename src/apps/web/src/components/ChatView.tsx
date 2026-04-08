@@ -806,6 +806,7 @@ export function ChatView() {
       setUserEnterMessageId(null)
     } else if (welcomeUserMessage) {
       setMessages([welcomeUserMessage])
+      setUserEnterMessageId(welcomeUserMessage.id)
       setMessagesLoading(false)
     }
     setError(null)
