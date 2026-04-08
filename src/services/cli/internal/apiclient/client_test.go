@@ -117,6 +117,24 @@ func TestListThreadsBefore(t *testing.T) {
 	}
 }
 
+func TestGetRun(t *testing.T) {
+	client := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/runs/r1" {
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"run_id":"r1","thread_id":"t1","status":"running"}`))
+	})
+
+	got, err := client.GetRun(context.Background(), "r1")
+	if err != nil {
+		t.Fatalf("GetRun: %v", err)
+	}
+	if got.RunID != "r1" || got.ThreadID != "t1" || got.Status != "running" {
+		t.Fatalf("unexpected run: %#v", got)
+	}
+}
+
 func TestGetMeReturnsHTTPError(t *testing.T) {
 	client := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
 		http.Error(w, `{"code":"auth.invalid_token","message":"token invalid"}`, http.StatusUnauthorized)

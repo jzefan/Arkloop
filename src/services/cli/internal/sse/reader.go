@@ -104,7 +104,7 @@ func (r *Reader) Next() (Event, error) {
 // IsTerminal 报告该事件类型是否表示运行终止。
 func IsTerminal(eventType string) bool {
 	switch eventType {
-	case "run.completed", "run.failed", "run.cancelled":
+	case "run.completed", "run.failed", "run.cancelled", "run.interrupted":
 		return true
 	}
 	return false
