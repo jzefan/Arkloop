@@ -31,6 +31,49 @@ type RunParams struct {
 	ReasoningMode string
 }
 
+type Me struct {
+	ID          string `json:"id"`
+	Username    string `json:"username"`
+	AccountID   string `json:"account_id"`
+	WorkEnabled bool   `json:"work_enabled"`
+}
+
+type Persona struct {
+	ID            string `json:"id"`
+	PersonaKey    string `json:"persona_key"`
+	DisplayName   string `json:"display_name"`
+	SelectorName  string `json:"selector_name"`
+	SelectorOrder int    `json:"selector_order"`
+	Model         string `json:"model"`
+	ReasoningMode string `json:"reasoning_mode"`
+	Source        string `json:"source"`
+}
+
+type ProviderModel struct {
+	ID           string   `json:"id"`
+	ProviderID   string   `json:"provider_id"`
+	Model        string   `json:"model"`
+	IsDefault    bool     `json:"is_default"`
+	ShowInPicker bool     `json:"show_in_picker"`
+	Tags         []string `json:"tags"`
+}
+
+type LlmProvider struct {
+	ID     string          `json:"id"`
+	Name   string          `json:"name"`
+	Models []ProviderModel `json:"models"`
+}
+
+type Thread struct {
+	ID          string  `json:"id"`
+	Mode        string  `json:"mode"`
+	Title       *string `json:"title"`
+	CreatedAt   string  `json:"created_at"`
+	UpdatedAt   string  `json:"updated_at"`
+	ActiveRunID *string `json:"active_run_id"`
+	IsPrivate   bool    `json:"is_private"`
+}
+
 // NewClient 构造客户端，baseURL 和 token 必须非空。
 func NewClient(baseURL, token string) *Client {
 	return &Client{
@@ -46,6 +89,47 @@ func NewClient(baseURL, token string) *Client {
 			// body 无整体超时，由调用方通过 ctx cancel 控制
 		},
 	}
+}
+
+func (c *Client) BaseURL() string {
+	return c.baseURL
+}
+
+func (c *Client) GetMe(ctx context.Context) (Me, error) {
+	var resp Me
+	if err := c.doJSON(ctx, http.MethodGet, "/v1/me", nil, &resp); err != nil {
+		return Me{}, fmt.Errorf("get me: %w", err)
+	}
+	return resp, nil
+}
+
+func (c *Client) ListSelectablePersonas(ctx context.Context) ([]Persona, error) {
+	var resp []Persona
+	if err := c.doJSON(ctx, http.MethodGet, "/v1/me/selectable-personas", nil, &resp); err != nil {
+		return nil, fmt.Errorf("list selectable personas: %w", err)
+	}
+	return resp, nil
+}
+
+func (c *Client) ListLlmProviders(ctx context.Context) ([]LlmProvider, error) {
+	var resp []LlmProvider
+	if err := c.doJSON(ctx, http.MethodGet, "/v1/llm-providers?scope=user", nil, &resp); err != nil {
+		return nil, fmt.Errorf("list llm providers: %w", err)
+	}
+	return resp, nil
+}
+
+func (c *Client) ListThreads(ctx context.Context, limit int) ([]Thread, error) {
+	path := "/v1/threads"
+	if limit > 0 {
+		path = fmt.Sprintf("%s?limit=%d", path, limit)
+	}
+
+	var resp []Thread
+	if err := c.doJSON(ctx, http.MethodGet, path, nil, &resp); err != nil {
+		return nil, fmt.Errorf("list threads: %w", err)
+	}
+	return resp, nil
 }
 
 // CreateThread 创建一个新 thread，返回 thread ID。
