@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"arkloop/services/cli/internal/apiclient"
 )
@@ -178,5 +179,23 @@ func TestRunJSONWritesStructuredErrorOnPreRunFailure(t *testing.T) {
 	}
 	if !strings.Contains(body, `"error":"runner: create thread:`) {
 		t.Fatalf("expected pre-run error in json output: %s", body)
+	}
+}
+
+func TestWithOptionalTimeoutZeroHasNoDeadline(t *testing.T) {
+	ctx, cancel := withOptionalTimeout(context.Background(), 0)
+	defer cancel()
+
+	if _, ok := ctx.Deadline(); ok {
+		t.Fatal("expected no deadline")
+	}
+}
+
+func TestWithOptionalTimeoutPositiveSetsDeadline(t *testing.T) {
+	ctx, cancel := withOptionalTimeout(context.Background(), time.Second)
+	defer cancel()
+
+	if _, ok := ctx.Deadline(); !ok {
+		t.Fatal("expected deadline")
 	}
 }

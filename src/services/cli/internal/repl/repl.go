@@ -94,7 +94,7 @@ func (r *REPL) Run(ctx context.Context) error {
 			r.threadID = tid
 		}
 
-		runCtx, cancel := context.WithTimeout(ctx, r.timeout)
+		runCtx, cancel := withOptionalTimeout(ctx, r.timeout)
 		_, execErr := runner.Execute(runCtx, r.client, r.threadID, input, r.params, r.renderer.OnEvent)
 		cancel()
 
@@ -108,6 +108,13 @@ func (r *REPL) Run(ctx context.Context) error {
 			return nil
 		}
 	}
+}
+
+func withOptionalTimeout(ctx context.Context, timeout time.Duration) (context.Context, context.CancelFunc) {
+	if timeout <= 0 {
+		return context.WithCancel(ctx)
+	}
+	return context.WithTimeout(ctx, timeout)
 }
 
 func (r *REPL) handleCommand(ctx context.Context, input string) (bool, error) {
@@ -160,7 +167,7 @@ func (r *REPL) printStatus() error {
 		Model:     r.params.Model,
 		Persona:   r.params.PersonaID,
 		WorkDir:   r.params.WorkDir,
-		Timeout:   r.timeout.String(),
+		Timeout:   timeoutDisplay(r.timeout),
 	})
 }
 
@@ -199,4 +206,11 @@ func sessionIDValue(threadID string) string {
 		return "new"
 	}
 	return threadID
+}
+
+func timeoutDisplay(timeout time.Duration) string {
+	if timeout <= 0 {
+		return ""
+	}
+	return timeout.String()
 }

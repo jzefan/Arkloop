@@ -6,7 +6,6 @@ import (
 	"io"
 	"strings"
 	"text/tabwriter"
-	"time"
 )
 
 const (
@@ -174,7 +173,7 @@ func PrintChatStatus(w io.Writer, view ChatStatusView) error {
 		displayText(view.Model, "default"),
 		displayText(view.Persona, "default"),
 		displayText(view.WorkDir, "-"),
-		displayText(view.Timeout, time.Minute.String()),
+		displayText(view.Timeout, "none"),
 	)
 	return err
 }
