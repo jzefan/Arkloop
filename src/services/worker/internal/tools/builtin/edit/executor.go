@@ -35,10 +35,11 @@ func (e *Executor) Execute(
 
 	// old_string empty -> create new file
 	if oldString == "" {
-		return e.createFile(ctx, backend, filePath, newString, started)
+		return e.createFile(ctx, backend, execCtx, filePath, newString, started)
 	}
 
-	if !e.Tracker.HasBeenRead(filePath) {
+	trackingKey := backend.NormalizePath(filePath)
+	if e.Tracker == nil || !e.Tracker.HasBeenReadForRun(execCtx.RunID.String(), trackingKey) {
 		return errResult("must read the file before editing; use read with source.kind=file_path first", started)
 	}
 
@@ -76,7 +77,9 @@ func (e *Executor) Execute(
 		return errResult(fmt.Sprintf("write failed: %s", err.Error()), started)
 	}
 
-	e.Tracker.RecordWrite(filePath)
+	if e.Tracker != nil {
+		e.Tracker.RecordWriteForRun(execCtx.RunID.String(), trackingKey)
+	}
 
 	additions, removals := fileops.CountDiffLines(content, newContent)
 	return tools.ExecutionResult{
@@ -90,7 +93,7 @@ func (e *Executor) Execute(
 	}
 }
 
-func (e *Executor) createFile(ctx context.Context, backend fileops.Backend, filePath, content string, started time.Time) tools.ExecutionResult {
+func (e *Executor) createFile(ctx context.Context, backend fileops.Backend, execCtx tools.ExecutionContext, filePath, content string, started time.Time) tools.ExecutionResult {
 	if _, err := backend.Stat(ctx, filePath); err == nil {
 		return errResult("file already exists; use old_string to make targeted edits instead of creating", started)
 	}
@@ -98,7 +101,9 @@ func (e *Executor) createFile(ctx context.Context, backend fileops.Backend, file
 	if err := backend.WriteFile(ctx, filePath, []byte(content)); err != nil {
 		return errResult(fmt.Sprintf("create failed: %s", err.Error()), started)
 	}
-	e.Tracker.RecordWrite(filePath)
+	if e.Tracker != nil {
+		e.Tracker.RecordWriteForRun(execCtx.RunID.String(), backend.NormalizePath(filePath))
+	}
 
 	lines := strings.Count(content, "\n") + 1
 	return tools.ExecutionResult{
