@@ -1219,11 +1219,13 @@ func desktopChannelDelivery(db data.DesktopDB) pipeline.RunMiddleware {
 			}
 			rc.TelegramToolBoundaryFlush = streamFlush
 
-			tracker := pipeline.NewTelegramProgressTracker(client, preloaded.Token, pipeline.ChannelDeliveryTarget{
-				ChannelType:  rc.ChannelContext.ChannelType,
-				Conversation: rc.ChannelContext.Conversation,
-			}, desktopTelegramReplyReference(rc))
-			rc.TelegramProgressTracker = tracker
+			if pipeline.ShouldShowTelegramProgress(rc) {
+				tracker := pipeline.NewTelegramProgressTracker(client, preloaded.Token, pipeline.ChannelDeliveryTarget{
+					ChannelType:  rc.ChannelContext.ChannelType,
+					Conversation: rc.ChannelContext.Conversation,
+				}, desktopTelegramReplyReference(rc))
+				rc.TelegramProgressTracker = tracker
+			}
 		}
 
 		var stopTyping context.CancelFunc

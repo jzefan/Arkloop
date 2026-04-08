@@ -18,7 +18,8 @@ const (
 	progressMaxSegments     = 6
 	progressMaxItemsPerSeg  = 4
 	progressMaxSummaryItems = 3
-	progressFallbackTitle   = "Working"
+	progressLiveProgress    = "In process"
+	progressCompletedTitle  = "Completed"
 	progressFallbackSummary = "In progress"
 )
 
@@ -150,8 +151,7 @@ func (t *TelegramProgressTracker) OnMessageDelta(ctx context.Context, role, chan
 }
 
 func (t *TelegramProgressTracker) OnToolCall(ctx context.Context, toolCallID, toolName, argsJSON string) {
-	if isTimelineTitleTool(toolName) {
-		t.onTimelineTitleFromArgs(ctx, argsJSON)
+	if isHiddenTelegramProgressTool(toolName) {
 		return
 	}
 
@@ -173,7 +173,7 @@ func (t *TelegramProgressTracker) OnToolCall(ctx context.Context, toolCallID, to
 }
 
 func (t *TelegramProgressTracker) OnToolResult(ctx context.Context, toolCallID, toolName, errorClass string) {
-	if isTimelineTitleTool(toolName) {
+	if isHiddenTelegramProgressTool(toolName) {
 		return
 	}
 
@@ -209,30 +209,6 @@ func (t *TelegramProgressTracker) Finalize(ctx context.Context) {
 		return
 	}
 	t.tryEdit(ctx, true)
-}
-
-func (t *TelegramProgressTracker) onTimelineTitleFromArgs(ctx context.Context, argsJSON string) {
-	var args map[string]any
-	if err := json.Unmarshal([]byte(argsJSON), &args); err != nil {
-		return
-	}
-	label := strings.TrimSpace(progressStringValue(args["label"]))
-	if label == "" {
-		label = strings.TrimSpace(progressStringValue(args["title"]))
-	}
-	if label == "" {
-		return
-	}
-
-	t.mu.Lock()
-	if t.current != nil && len(t.current.Entries) > 0 {
-		t.flushCurrentLocked()
-	}
-	seg := t.ensureCurrentLocked()
-	seg.Title = label
-	t.dirty = true
-	t.mu.Unlock()
-	t.tryEdit(ctx, false)
 }
 
 func (t *TelegramProgressTracker) ensureCurrentLocked() *TelegramProgressSegment {
@@ -379,7 +355,7 @@ func (t *TelegramProgressTracker) formatProgressLocked(finalize bool) string {
 		if idx > 0 {
 			b.WriteByte('\n')
 		}
-		title := resolveSegmentTitle(seg)
+		title := resolveSegmentTitle(seg, finalize || seg.Closed)
 		if finalize || seg.Closed {
 			b.WriteString("✓ ")
 			b.WriteString(title)
@@ -478,23 +454,47 @@ func summarizeEntries(entries []ProgressEntry, limit int) string {
 	return strings.Join(parts, " · ")
 }
 
-func resolveSegmentTitle(seg TelegramProgressSegment) string {
+func resolveSegmentTitle(seg TelegramProgressSegment, completed bool) string {
 	if title := strings.TrimSpace(seg.Title); title != "" {
 		return title
 	}
 	if label := strings.TrimSpace(seg.RunSegment.Label); label != "" {
 		return label
 	}
-	if len(seg.Entries) > 0 {
-		if label := strings.TrimSpace(seg.Entries[0].DisplayName); label != "" {
-			return label
+	stepCount := segmentEffectiveStepCount(seg)
+	if completed {
+		if stepCount > 0 {
+			return formatCompletedStepCount(stepCount)
 		}
+		return progressCompletedTitle
 	}
-	return progressFallbackTitle
+	if stepCount > 0 {
+		return progressLiveProgress
+	}
+	return progressFallbackSummary
 }
 
-func isTimelineTitleTool(toolName string) bool {
-	return canonicalToolName(toolName) == "timeline_title"
+func segmentEffectiveStepCount(seg TelegramProgressSegment) int {
+	return len(seg.Entries)
+}
+
+func formatCompletedStepCount(count int) string {
+	if count <= 0 {
+		return progressCompletedTitle
+	}
+	if count == 1 {
+		return "1 step completed"
+	}
+	return fmt.Sprintf("%d steps completed", count)
+}
+
+func isHiddenTelegramProgressTool(toolName string) bool {
+	switch canonicalToolName(toolName) {
+	case "timeline_title", "telegram_reply", "telegram_react":
+		return true
+	default:
+		return false
+	}
 }
 
 func canonicalToolName(toolName string) string {

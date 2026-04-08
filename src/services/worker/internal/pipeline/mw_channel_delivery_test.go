@@ -82,6 +82,22 @@ func TestSplitDiscordMessagePrefersParagraphBoundary(t *testing.T) {
 	}
 }
 
+func TestShouldShowTelegramProgress_PrivateOnly(t *testing.T) {
+	privateRC := &RunContext{
+		ChannelContext: &ChannelContext{ConversationType: "private"},
+	}
+	if !ShouldShowTelegramProgress(privateRC) {
+		t.Fatal("expected private telegram conversation to allow progress output")
+	}
+
+	groupRC := &RunContext{
+		ChannelContext: &ChannelContext{ConversationType: "group"},
+	}
+	if ShouldShowTelegramProgress(groupRC) {
+		t.Fatal("expected group telegram conversation to suppress progress output")
+	}
+}
+
 func TestRecordChannelDeliveryFailureAppendsRunEvent(t *testing.T) {
 	db := testutil.SetupPostgresDatabase(t, "pipeline_channel_delivery")
 	pool, err := pgxpool.New(context.Background(), db.DSN)
@@ -355,6 +371,59 @@ func TestChannelDeliveryMiddlewareSendsTelegramOutputsAsSeparateMessages(t *test
 	}
 	if deliveryCount != 2 {
 		t.Fatalf("expected 2 delivery records, got %d", deliveryCount)
+	}
+}
+
+func TestChannelDeliveryMiddlewareDisablesTelegramProgressTrackerInGroups(t *testing.T) {
+	ctx := context.Background()
+	db := testutil.SetupPostgresDatabase(t, "pipeline_channel_delivery_group_progress_disabled")
+	pool, err := pgxpool.New(ctx, db.DSN)
+	if err != nil {
+		t.Fatalf("pgxpool.New: %v", err)
+	}
+	t.Cleanup(pool.Close)
+
+	keyBytes := make([]byte, 32)
+	for i := range keyBytes {
+		keyBytes[i] = byte(i + 1)
+	}
+	t.Setenv("ARKLOOP_ENCRYPTION_KEY", hex.EncodeToString(keyBytes))
+
+	accountID := uuid.New()
+	projectID := uuid.New()
+	threadID := uuid.New()
+	runID := uuid.New()
+	channelID := uuid.New()
+	secretID := uuid.New()
+
+	seedPipelineThread(t, pool, accountID, threadID, projectID)
+	seedPipelineRun(t, pool, accountID, threadID, runID, nil)
+	if _, err := pool.Exec(ctx, `INSERT INTO secrets (id, encrypted_value, key_version) VALUES ($1, $2, 1)`, secretID, encryptChannelToken(t, keyBytes, "bot-token")); err != nil {
+		t.Fatalf("insert secret: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO channels (id, channel_type, credentials_id, is_active) VALUES ($1, 'telegram', $2, TRUE)`, channelID, secretID); err != nil {
+		t.Fatalf("insert channel: %v", err)
+	}
+
+	mw := NewChannelDeliveryMiddleware(pool)
+	if err := mw(ctx, &RunContext{
+		Run: data.Run{ID: runID, AccountID: accountID, ThreadID: threadID},
+		ChannelContext: &ChannelContext{
+			ChannelID:        channelID,
+			ChannelType:      "telegram",
+			ConversationType: "supergroup",
+			Conversation:     ChannelConversationRef{Target: "10001"},
+		},
+	}, func(_ context.Context, rc *RunContext) error {
+		if rc.TelegramToolBoundaryFlush == nil {
+			t.Fatal("expected TelegramToolBoundaryFlush to be set for telegram channel")
+		}
+		if rc.TelegramProgressTracker != nil {
+			t.Fatal("expected TelegramProgressTracker to stay disabled in telegram groups")
+		}
+		return nil
+	}); err != nil {
+		t.Fatalf("middleware returned error: %v", err)
 	}
 }
 
