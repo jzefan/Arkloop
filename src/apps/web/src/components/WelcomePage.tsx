@@ -7,7 +7,16 @@ import { NotificationBell } from './NotificationBell'
 import { isDesktop } from '@arkloop/shared/desktop'
 import { DebugTrigger } from '@arkloop/shared'
 import { createThread, createMessage, createRun, uploadStagingAttachment, isApiError } from '../api'
-import { writeActiveThreadIdToStorage, addSearchThreadId, SEARCH_PERSONA_KEY, transferGlobalWorkFolderToThread, readWorkFolder, readDeveloperShowDebugPanel } from '../storage'
+import {
+  writeActiveThreadIdToStorage,
+  addSearchThreadId,
+  SEARCH_PERSONA_KEY,
+  transferGlobalWorkFolderToThread,
+  transferGlobalThinkingToThread,
+  readSelectedThinkingEnabled,
+  readWorkFolder,
+  readDeveloperShowDebugPanel,
+} from '../storage'
 import { useLocale } from '../contexts/LocaleContext'
 import { buildMessageRequest } from '../messageContent'
 import { useAuth } from '../contexts/auth'
@@ -275,7 +284,14 @@ export function WelcomePage() {
         }),
       )
       const userMessage = await createMessage(accessToken, thread.id, buildMessageRequest(text, uploaded))
-      const run = await createRun(accessToken, thread.id, personaKey, modelOverride, readWorkFolder() ?? undefined)
+      const run = await createRun(
+        accessToken,
+        thread.id,
+        personaKey,
+        modelOverride,
+        readWorkFolder() ?? undefined,
+        readSelectedThinkingEnabled() ? 'enabled' : undefined,
+      )
 
       if (personaKey === SEARCH_PERSONA_KEY) addSearchThreadId(thread.id)
       attachments.forEach((attachment) => revokeDraftAttachment(attachment))
@@ -284,6 +300,7 @@ export function WelcomePage() {
       refreshCredits()
       writeActiveThreadIdToStorage(thread.id)
       if (appMode === 'work') transferGlobalWorkFolderToThread(thread.id)
+      transferGlobalThinkingToThread(thread.id)
       onThreadCreated(thread)
       navigate(`/t/${thread.id}`, {
         state: {

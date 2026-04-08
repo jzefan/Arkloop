@@ -813,13 +813,24 @@ export type CreateRunResponse = {
   trace_id: string
 }
 
+export type RunReasoningMode =
+  | 'auto'
+  | 'enabled'
+  | 'disabled'
+  | 'none'
+  | 'minimal'
+  | 'low'
+  | 'medium'
+  | 'high'
+  | 'xhigh'
+
 export async function createRun(
   accessToken: string,
   threadId: string,
   personaId?: string,
   modelOverride?: string,
   workDir?: string,
-  reasoningMode?: 'enabled' | 'disabled',
+  reasoningMode?: RunReasoningMode,
 ): Promise<CreateRunResponse> {
   const hasBody = personaId || modelOverride || workDir || reasoningMode
   return await apiFetch<CreateRunResponse>(`/v1/threads/${threadId}/runs`, {

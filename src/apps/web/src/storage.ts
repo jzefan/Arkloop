@@ -17,6 +17,7 @@ const THEME_KEY = 'arkloop:web:theme'
 const SELECTED_PERSONA_KEY = 'arkloop:web:selected_persona_key'
 const APP_MODE_KEY = 'arkloop:web:app_mode'
 const SELECTED_MODEL_KEY = 'arkloop:web:selected_model'
+const SELECTED_THINKING_KEY = 'arkloop:web:selected_thinking'
 const FONT_SETTINGS_KEY = 'arkloop:web:font-settings'
 const THEME_PRESET_KEY = 'arkloop:web:theme-preset'
 const CUSTOM_THEME_ID_KEY = 'arkloop:web:custom-theme-id'
@@ -197,6 +198,24 @@ export function writeSelectedModelToStorage(model: string | null): void {
       localStorage.setItem(SELECTED_MODEL_KEY, model)
     } else {
       localStorage.removeItem(SELECTED_MODEL_KEY)
+    }
+  } catch {
+    // 忽略存储失败
+  }
+}
+
+export function readSelectedThinkingEnabled(): boolean {
+  if (!canUseLocalStorage()) return false
+  return localStorage.getItem(SELECTED_THINKING_KEY) === 'true'
+}
+
+export function writeSelectedThinkingEnabled(enabled: boolean): void {
+  if (!canUseLocalStorage()) return
+  try {
+    if (enabled) {
+      localStorage.setItem(SELECTED_THINKING_KEY, 'true')
+    } else {
+      localStorage.removeItem(SELECTED_THINKING_KEY)
     }
   } catch {
     // 忽略存储失败
@@ -1379,6 +1398,14 @@ export function transferGlobalWorkFolderToThread(threadId: string): void {
     localStorage.removeItem(WORK_FOLDER_KEY)
   } catch { /* ignore */ }
   window.dispatchEvent(new CustomEvent('arkloop:work-folder-changed'))
+}
+
+export function transferGlobalThinkingToThread(threadId: string): void {
+  if (!canUseLocalStorage() || !threadId) return
+  try {
+    if (localStorage.getItem(SELECTED_THINKING_KEY) !== 'true') return
+    localStorage.setItem(`arkloop:thinking:${threadId}`, 'true')
+  } catch { /* ignore */ }
 }
 
 export function readWorkRecentFolders(): string[] {

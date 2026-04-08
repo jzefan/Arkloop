@@ -180,17 +180,7 @@ func (g *OpenAIGateway) chatCompletions(ctx context.Context, request Request, yi
 			payload[k] = v
 		}
 	}
-	// reasoning_mode 控制是否发送 reasoning_effort 参数
-	switch request.ReasoningMode {
-	case "enabled":
-		if _, ok := payload["reasoning_effort"]; !ok {
-			payload["reasoning_effort"] = "medium"
-		}
-	case "disabled":
-		delete(payload, "reasoning_effort")
-	default: // "auto", "none", ""
-		// AdvancedJSON 已注入时保留
-	}
+	applyOpenAIChatReasoningMode(payload, request.ReasoningMode)
 
 	baseURL := g.transport.cfg.BaseURL
 	path := "/chat/completions"
@@ -367,26 +357,7 @@ func (g *OpenAIGateway) responses(ctx context.Context, request Request, yield fu
 			payload[k] = v
 		}
 	}
-	// reasoning_mode 控制是否发送 reasoning 参数
-	switch request.ReasoningMode {
-	case "enabled":
-		if rObj, ok := payload["reasoning"].(map[string]any); ok {
-			if _, has := rObj["summary"]; !has {
-				rObj["summary"] = "auto"
-			}
-		} else {
-			payload["reasoning"] = map[string]any{"summary": "auto"}
-		}
-	case "disabled":
-		delete(payload, "reasoning")
-	default: // "auto", "none", ""
-		// AdvancedJSON 已注入 reasoning 时，补全 summary
-		if rObj, ok := payload["reasoning"].(map[string]any); ok {
-			if _, has := rObj["summary"]; !has {
-				rObj["summary"] = "auto"
-			}
-		}
-	}
+	applyOpenAIResponsesReasoningMode(payload, request.ReasoningMode)
 
 	baseURL := g.transport.cfg.BaseURL
 	path := "/responses"
@@ -528,6 +499,68 @@ func errorClassFromStatus(status int) string {
 			return ErrorClassProviderRetryable
 		}
 		return ErrorClassProviderNonRetryable
+	}
+}
+
+func openAIReasoningEffort(mode string) (string, bool) {
+	switch strings.ToLower(strings.TrimSpace(mode)) {
+	case "enabled":
+		return "medium", true
+	case "none", "minimal", "low", "medium", "high", "xhigh":
+		return strings.ToLower(strings.TrimSpace(mode)), true
+	case "extra_high", "extra-high", "extra high":
+		return "xhigh", true
+	default:
+		return "", false
+	}
+}
+
+func openAIReasoningDisabled(mode string) bool {
+	switch strings.ToLower(strings.TrimSpace(mode)) {
+	case "disabled":
+		return true
+	default:
+		return false
+	}
+}
+
+func applyOpenAIChatReasoningMode(payload map[string]any, mode string) {
+	if effort, ok := openAIReasoningEffort(mode); ok {
+		payload["reasoning_effort"] = effort
+		return
+	}
+	if openAIReasoningDisabled(mode) {
+		delete(payload, "reasoning_effort")
+	}
+}
+
+func applyOpenAIResponsesReasoningMode(payload map[string]any, mode string) {
+	if effort, ok := openAIReasoningEffort(mode); ok {
+		rObj := map[string]any{}
+		if existing, ok := payload["reasoning"].(map[string]any); ok {
+			for key, value := range existing {
+				rObj[key] = value
+			}
+		}
+		rObj["effort"] = effort
+		if effort == "none" {
+			delete(rObj, "summary")
+		} else {
+			if _, has := rObj["summary"]; !has {
+				rObj["summary"] = "auto"
+			}
+		}
+		payload["reasoning"] = rObj
+		return
+	}
+	if openAIReasoningDisabled(mode) {
+		delete(payload, "reasoning")
+		return
+	}
+	if rObj, ok := payload["reasoning"].(map[string]any); ok {
+		if _, has := rObj["summary"]; !has {
+			rObj["summary"] = "auto"
+		}
 	}
 }
 

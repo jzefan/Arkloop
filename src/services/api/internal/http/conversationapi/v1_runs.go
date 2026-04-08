@@ -359,6 +359,16 @@ func normalizeRunReasoningMode(value string) string {
 		return "disabled"
 	case "none":
 		return "none"
+	case "minimal":
+		return "minimal"
+	case "low":
+		return "low"
+	case "medium":
+		return "medium"
+	case "high":
+		return "high"
+	case "xhigh", "extra_high", "extra-high", "extra high":
+		return "xhigh"
 	default:
 		return ""
 	}
