@@ -384,6 +384,9 @@ func parseContinueProcessArgs(args map[string]any) (continueProcessArgs, *tools.
 	if req.StdinText != nil && (req.InputSeq == nil || *req.InputSeq <= 0) {
 		return continueProcessArgs{}, sandboxArgsError("parameter input_seq is required when stdin_text is provided")
 	}
+	if req.StdinText == nil && req.InputSeq != nil {
+		return continueProcessArgs{}, sandboxArgsError("parameter input_seq is not supported without stdin_text")
+	}
 	return req, nil
 }
 

@@ -229,6 +229,83 @@ func TestProcessControllerPTYCloseStdinEndsInteractiveRead(t *testing.T) {
 	}
 }
 
+func TestProcessControllerContinueRequiresInputSeqForEmptyString(t *testing.T) {
+	workspace := t.TempDir()
+	bindShellDirs(t, workspace)
+	controller := NewProcessController()
+
+	start, code, msg := controller.Exec(processapi.AgentExecRequest{
+		Command:   "cat",
+		Mode:      processapi.ModeStdin,
+		TimeoutMs: 5000,
+	})
+	if code != "" {
+		t.Fatalf("stdin exec failed: %s %s", code, msg)
+	}
+
+	empty := ""
+	resp, code, msg := controller.Continue(processapi.ContinueProcessRequest{
+		ProcessRef: start.ProcessRef,
+		Cursor:     start.NextCursor,
+		WaitMs:     100,
+		StdinText:  &empty,
+	})
+	if resp != nil {
+		t.Fatalf("expected nil response, got %#v", resp)
+	}
+	if code != processapi.CodeInputSeqRequired {
+		t.Fatalf("expected input_seq_required, got %s %s", code, msg)
+	}
+}
+
+func TestProcessControllerDuplicateInputSeqAfterCloseStdinIsIdempotent(t *testing.T) {
+	workspace := t.TempDir()
+	bindShellDirs(t, workspace)
+	controller := NewProcessController()
+
+	start, code, msg := controller.Exec(processapi.AgentExecRequest{
+		Command:   "cat",
+		Mode:      processapi.ModeStdin,
+		TimeoutMs: 5000,
+	})
+	if code != "" {
+		t.Fatalf("stdin exec failed: %s %s", code, msg)
+	}
+
+	text := "repeat\n"
+	first, code, msg := controller.Continue(processapi.ContinueProcessRequest{
+		ProcessRef: start.ProcessRef,
+		Cursor:     start.NextCursor,
+		WaitMs:     1000,
+		StdinText:  &text,
+		InputSeq:   int64Ptr(1),
+		CloseStdin: true,
+	})
+	if code != "" {
+		t.Fatalf("first continue failed: %s %s", code, msg)
+	}
+	if first.AcceptedInputSeq == nil || *first.AcceptedInputSeq != 1 {
+		t.Fatalf("expected accepted_input_seq=1, got %#v", first.AcceptedInputSeq)
+	}
+
+	second, code, msg := controller.Continue(processapi.ContinueProcessRequest{
+		ProcessRef: start.ProcessRef,
+		Cursor:     first.NextCursor,
+		WaitMs:     100,
+		StdinText:  &text,
+		InputSeq:   int64Ptr(1),
+	})
+	if code != "" {
+		t.Fatalf("duplicate continue should be idempotent, got %s %s", code, msg)
+	}
+	if second.AcceptedInputSeq == nil || *second.AcceptedInputSeq != 1 {
+		t.Fatalf("expected duplicate accepted_input_seq=1, got %#v", second.AcceptedInputSeq)
+	}
+	if second.Stdout != "" {
+		t.Fatalf("duplicate continue should not append output, got %#v", second.Stdout)
+	}
+}
+
 func TestProcessControllerReturnsCursorExpiredAfterBufferOverflow(t *testing.T) {
 	workspace := t.TempDir()
 	bindShellDirs(t, workspace)

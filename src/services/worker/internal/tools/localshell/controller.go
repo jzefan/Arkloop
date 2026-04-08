@@ -132,27 +132,29 @@ func (c *ProcessController) ContinueProcess(req ContinueProcessRequest) (*Respon
 		return nil, err
 	}
 	proc.inFlight = true
-	if req.StdinText != nil && *req.StdinText != "" {
-		if !proc.allowStdin || proc.stdin == nil || proc.stdinClosed {
-			proc.inFlight = false
-			proc.mu.Unlock()
-			return nil, &Error{Code: CodeStdinNotSupported, Message: "process does not accept stdin", HTTPStatus: 409}
-		}
+	if req.StdinText != nil {
 		if req.InputSeq == nil || *req.InputSeq <= 0 {
 			proc.inFlight = false
 			proc.mu.Unlock()
 			return nil, &Error{Code: CodeInputSeqRequired, Message: "input_seq is required when stdin_text is provided", HTTPStatus: 400}
 		}
+		value := *req.InputSeq
+		accepted = &value
 		if _, exists := proc.acceptedInputSeqs[*req.InputSeq]; !exists {
-			if _, err := io.WriteString(proc.stdin, *req.StdinText); err != nil {
+			if !proc.allowStdin || proc.stdin == nil || proc.stdinClosed {
 				proc.inFlight = false
 				proc.mu.Unlock()
-				return nil, err
+				return nil, &Error{Code: CodeStdinNotSupported, Message: "process does not accept stdin", HTTPStatus: 409}
+			}
+			if *req.StdinText != "" {
+				if _, err := io.WriteString(proc.stdin, *req.StdinText); err != nil {
+					proc.inFlight = false
+					proc.mu.Unlock()
+					return nil, err
+				}
 			}
 			proc.acceptedInputSeqs[*req.InputSeq] = struct{}{}
 		}
-		value := *req.InputSeq
-		accepted = &value
 	}
 	if req.CloseStdin {
 		if proc.mode == ModePTY {
@@ -222,6 +224,9 @@ func (c *ProcessController) ResizeProcess(req ResizeProcessRequest) (*Response, 
 	defer proc.mu.Unlock()
 	if proc.mode != ModePTY || proc.ptyFile == nil {
 		return nil, &Error{Code: CodeResizeNotSupported, Message: "process is not a PTY session", HTTPStatus: 409}
+	}
+	if proc.status != StatusRunning {
+		return nil, &Error{Code: CodeNotRunning, Message: "process is not running", HTTPStatus: 409}
 	}
 	if err := pty.Setsize(proc.ptyFile, &pty.Winsize{Rows: uint16(req.Rows), Cols: uint16(req.Cols)}); err != nil {
 		return nil, &Error{Code: CodeResizeNotSupported, Message: err.Error(), HTTPStatus: 409}

@@ -129,28 +129,30 @@ func (c *ProcessController) Continue(req processapi.ContinueProcessRequest) (*pr
 		return nil, code, message
 	}
 	proc.inFlight = true
-	if req.StdinText != nil && *req.StdinText != "" {
-		if !proc.allowStdin || proc.stdin == nil || proc.stdinClosed {
-			proc.inFlight = false
-			proc.mu.Unlock()
-			return nil, processapi.CodeStdinNotSupported, "process does not accept stdin"
-		}
+	if req.StdinText != nil {
 		if req.InputSeq == nil || *req.InputSeq <= 0 {
 			proc.inFlight = false
 			proc.mu.Unlock()
 			return nil, processapi.CodeInputSeqRequired, "input_seq is required when stdin_text is provided"
 		}
+		value := *req.InputSeq
+		accepted = &value
 		if _, exists := proc.acceptedInputSeqs[*req.InputSeq]; !exists {
-			if _, err := io.WriteString(proc.stdin, *req.StdinText); err != nil {
+			if !proc.allowStdin || proc.stdin == nil || proc.stdinClosed {
 				proc.inFlight = false
 				proc.mu.Unlock()
-				code, message := mapProcessError(err)
-				return nil, code, message
+				return nil, processapi.CodeStdinNotSupported, "process does not accept stdin"
+			}
+			if *req.StdinText != "" {
+				if _, err := io.WriteString(proc.stdin, *req.StdinText); err != nil {
+					proc.inFlight = false
+					proc.mu.Unlock()
+					code, message := mapProcessError(err)
+					return nil, code, message
+				}
 			}
 			proc.acceptedInputSeqs[*req.InputSeq] = struct{}{}
 		}
-		value := *req.InputSeq
-		accepted = &value
 	}
 	if req.CloseStdin {
 		if proc.mode == processapi.ModePTY {
@@ -222,6 +224,9 @@ func (c *ProcessController) Resize(req processapi.AgentResizeRequest) (*processa
 	defer proc.mu.Unlock()
 	if proc.mode != processapi.ModePTY || proc.ptyFile == nil {
 		return nil, processapi.CodeResizeNotSupported, "process is not a PTY session"
+	}
+	if proc.status != processapi.StatusRunning {
+		return nil, processapi.CodeNotRunning, "process is not running"
 	}
 	if req.Rows <= 0 || req.Cols <= 0 {
 		return nil, processapi.CodeInvalidSize, "rows and cols must be positive"
