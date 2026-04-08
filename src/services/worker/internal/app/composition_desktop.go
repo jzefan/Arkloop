@@ -485,6 +485,9 @@ func (e *DesktopEngine) Execute(ctx context.Context, run data.Run, traceID strin
 		tracer = pipeline.NewBufTracer(run.ID, run.AccountID, data.NewRunPipelineEventsRepository(e.db))
 	}
 
+	runRuntime := *e.runtimeSnapshot
+	runRuntime.DesktopExecutionMode = strings.TrimSpace(desktop.GetExecutionMode())
+
 	rc := &pipeline.RunContext{
 		Run:                 run,
 		DB:                  e.db,
@@ -497,7 +500,7 @@ func (e *DesktopEngine) Execute(ctx context.Context, run data.Run, traceID strin
 		Tracer:              tracer,
 		Emitter:             emitter,
 		Router:              e.auxRouter,
-		Runtime:             e.runtimeSnapshot,
+		Runtime:             &runRuntime,
 
 		ExecutorBuilder:     e.executorRegistry,
 		ToolBudget:          map[string]any{},
