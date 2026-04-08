@@ -296,6 +296,35 @@ func TestProcessControllerCancelMarksCancelled(t *testing.T) {
 	}
 }
 
+func TestProcessControllerCleanupRunMarksCancelled(t *testing.T) {
+	controller := NewProcessController()
+
+	start, err := controller.ExecCommand(ExecCommandRequest{
+		RunID:     "run-cancel",
+		Command:   "sleep 30",
+		Mode:      ModeFollow,
+		TimeoutMs: 5000,
+		Cwd:       t.TempDir(),
+	})
+	if err != nil {
+		t.Fatalf("follow exec failed: %v", err)
+	}
+
+	controller.CleanupRun("run-cancel")
+
+	resp, err := controller.ContinueProcess(ContinueProcessRequest{
+		ProcessRef: start.ProcessRef,
+		Cursor:     start.NextCursor,
+		WaitMs:     1000,
+	})
+	if err != nil {
+		t.Fatalf("continue after cleanup failed: %v", err)
+	}
+	if resp.Status != StatusCancelled {
+		t.Fatalf("expected cancelled status after cleanup, got %#v", resp)
+	}
+}
+
 func TestProcessControllerReleasesDrainedProcess(t *testing.T) {
 	controller := NewProcessController()
 

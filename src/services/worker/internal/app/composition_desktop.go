@@ -2163,7 +2163,7 @@ func desktopAgentLoop(
 		defer cancelExec()
 		stopCancelWatch := startDesktopRunCancelWatcher(execCtx, db, rc.Run.ID, cancelExec)
 		defer stopCancelWatch()
-		defer cleanupDesktopShellRun(rc, w)
+		defer cleanupDesktopRunTools(rc, w)
 
 		execErr := exec.Execute(execCtx, rc, rc.Emitter, func(ev events.RunEvent) error {
 			return w.append(execCtx, rc.Run.ID, ev, "")
@@ -2193,10 +2193,11 @@ func desktopAgentLoop(
 	}
 }
 
-func cleanupDesktopShellRun(rc *pipeline.RunContext, writer *desktopEventWriter) {
+func cleanupDesktopRunTools(rc *pipeline.RunContext, writer *desktopEventWriter) {
 	if rc == nil || writer == nil {
 		return
 	}
+	read.CleanupRunFromExecutors(rc.ToolExecutors, rc.Run.ID.String())
 	if cleaner, ok := rc.ToolExecutors[localshell.ExecCommandAgentSpec.Name].(interface {
 		CleanupRun(context.Context, string, string) error
 	}); ok {
