@@ -431,18 +431,18 @@ func (e *DispatchingExecutor) resolveToolIdentity(toolName string) toolIdentity 
 	if cleaned == "" {
 		return toolIdentity{}
 	}
+	if mapped, ok := e.llmNameIndex[cleaned]; ok && strings.TrimSpace(mapped) != "" {
+		return toolIdentity{
+			LogicalName:  llm.CanonicalToolName(cleaned),
+			ResolvedName: strings.TrimSpace(mapped),
+		}
+	}
 	if e.registry != nil {
 		if spec, ok := e.registry.Get(cleaned); ok {
 			return toolIdentity{
 				LogicalName:  toolLogicalName(spec),
 				ResolvedName: cleaned,
 			}
-		}
-	}
-	if mapped, ok := e.llmNameIndex[cleaned]; ok && strings.TrimSpace(mapped) != "" {
-		return toolIdentity{
-			LogicalName:  llm.CanonicalToolName(cleaned),
-			ResolvedName: strings.TrimSpace(mapped),
 		}
 	}
 	canonical := llm.CanonicalToolName(cleaned)
