@@ -892,6 +892,7 @@ func (l *Loop) executeToolCall(
 	emitter events.Emitter,
 	yield func(events.RunEvent) error,
 ) tools.ExecutionResult {
+	call = llm.CanonicalToolCall(call)
 	// Rollout: 写入 ToolCall
 	if runCtx.RolloutRecorder != nil {
 		inputJSON, _ := json.Marshal(call.ArgumentsJSON)
@@ -1516,11 +1517,14 @@ func (l *Loop) runSingleTurn(
 		case llm.StreamProviderFallback:
 			return yieldOrStop(emitter.Emit("run.provider_fallback", typed.ToDataJSON(), nil, nil))
 		case llm.ToolCallArgumentDelta:
+			typed.ToolName = llm.CanonicalToolName(typed.ToolName)
 			return yieldOrStop(emitter.Emit("tool.call.delta", typed.ToDataJSON(), nil, nil))
 		case llm.ToolCall:
+			typed = llm.CanonicalToolCall(typed)
 			toolCalls = append(toolCalls, typed)
 			return nil
 		case llm.StreamToolResult:
+			typed.ToolName = llm.CanonicalToolName(typed.ToolName)
 			toolResults = append(toolResults, typed)
 			var errorClass *string
 			if typed.Error != nil {
@@ -1927,11 +1931,12 @@ func assistantMessageOrFallback(message *llm.Message, assistantChunks []string) 
 func (t turnResult) assistantHistoryMessage() llm.Message {
 	message := assistantMessageOrFallback(t.AssistantMessage, []string{t.AssistantText})
 	message.Role = "assistant"
-	message.ToolCalls = append([]llm.ToolCall{}, t.ToolCalls...)
+	message.ToolCalls = llm.CanonicalToolCalls(t.ToolCalls)
 	return message
 }
 
 func toolResultMessage(result llm.StreamToolResult) llm.Message {
+	result.ToolName = llm.CanonicalToolName(result.ToolName)
 	envelope := map[string]any{
 		"tool_call_id": result.ToolCallID,
 		"tool_name":    result.ToolName,
@@ -2117,6 +2122,7 @@ func stripWebSearchResultIDs(resultJSON map[string]any) map[string]any {
 }
 
 func toolResultMessageDedup(result llm.StreamToolResult, refToolCallID string) llm.Message {
+	result.ToolName = llm.CanonicalToolName(result.ToolName)
 	ref := strings.TrimSpace(refToolCallID)
 	if ref == "" {
 		return toolResultMessage(result)
@@ -2185,7 +2191,7 @@ func prepareToolCallStart(
 	dispatcher *tools.DispatchingExecutor,
 	call llm.ToolCall,
 ) (llm.ToolCall, events.RunEvent) {
-	call = ensureToolCallID(call)
+	call = llm.CanonicalToolCall(ensureToolCallID(call))
 	if dispatcher == nil {
 		return call, emitter.Emit("tool.call", call.ToDataJSON(), stringPtr(call.ToolName), nil)
 	}
@@ -2193,10 +2199,14 @@ func prepareToolCallStart(
 	if raw, ok := ev.DataJSON["tool_call_id"].(string); ok && strings.TrimSpace(raw) != "" {
 		call.ToolCallID = strings.TrimSpace(raw)
 	}
+	if raw, ok := ev.DataJSON["tool_name"].(string); ok && strings.TrimSpace(raw) != "" {
+		call.ToolName = llm.CanonicalToolName(raw)
+	}
 	return call, ev
 }
 
 func toolResultFromExecution(toolCallID string, toolName string, result tools.ExecutionResult) llm.StreamToolResult {
+	toolName = llm.CanonicalToolName(toolName)
 	var errObj *llm.GatewayError
 	if result.Error != nil {
 		errObj = &llm.GatewayError{

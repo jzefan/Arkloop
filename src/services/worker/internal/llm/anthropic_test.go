@@ -954,3 +954,58 @@ func TestAnthropicGateway_Stream_RefusalStopsWithoutSuccessTerminal(t *testing.T
 		t.Fatalf("unexpected stop_reason: %#v", failed.Error.Details)
 	}
 }
+
+func TestAnthropicGateway_Stream_RequestBodyDoesNotLeakProviderToolName(t *testing.T) {
+	var receivedBody []byte
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatalf("read request body failed: %v", err)
+		}
+		receivedBody = append([]byte(nil), body...)
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte(anthropicSSEBody([]string{`{"type":"message_stop"}`})))
+	}))
+	t.Cleanup(server.Close)
+
+	gateway := NewAnthropicGateway(AnthropicGatewayConfig{
+		APIKey:  "test",
+		BaseURL: server.URL,
+	})
+
+	err := gateway.Stream(context.Background(), Request{
+		Model: "claude-test",
+		Messages: []Message{
+			{Role: "user", Content: []TextPart{{Text: "hi"}}},
+			{
+				Role:    "assistant",
+				Content: []TextPart{{Text: "searching"}},
+				ToolCalls: []ToolCall{{
+					ToolCallID:    "call_1",
+					ToolName:      "web_search.tavily",
+					ArgumentsJSON: map[string]any{"query": "hello"},
+				}},
+			},
+			{
+				Role: "tool",
+				Content: []TextPart{{
+					Text: `{"tool_call_id":"call_1","tool_name":"web_search.tavily","result":{"items":[{"title":"x"}]}}`,
+				}},
+			},
+		},
+	}, func(StreamEvent) error {
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("stream failed: %v", err)
+	}
+
+	bodyText := string(receivedBody)
+	if strings.Contains(bodyText, "web_search.tavily") {
+		t.Fatalf("expected anthropic request body to hide provider tool name, got %s", bodyText)
+	}
+	if !strings.Contains(bodyText, `"name":"web_search"`) {
+		t.Fatalf("expected anthropic request body to keep canonical tool name, got %s", bodyText)
+	}
+}

@@ -438,6 +438,7 @@ func toAnthropicMessages(messages []Message) ([]map[string]any, []map[string]any
 				return nil, nil, err
 			}
 			for _, call := range message.ToolCalls {
+				call = CanonicalToolCall(call)
 				lastAssistantToolUseIDs[call.ToolCallID] = struct{}{}
 				blocks = append(blocks, map[string]any{
 					"type":  "tool_use",
@@ -674,7 +675,7 @@ func anthropicToolChoice(tc *ToolChoice) map[string]any {
 	case "required":
 		return map[string]any{"type": "any"}
 	case "specific":
-		return map[string]any{"type": "tool", "name": tc.ToolName}
+		return map[string]any{"type": "tool", "name": CanonicalToolName(tc.ToolName)}
 	default:
 		return nil
 	}
@@ -683,8 +684,12 @@ func anthropicToolChoice(tc *ToolChoice) map[string]any {
 func toAnthropicTools(specs []ToolSpec) []map[string]any {
 	out := make([]map[string]any, 0, len(specs))
 	for _, spec := range specs {
+		name := CanonicalToolName(spec.Name)
+		if name == "" {
+			name = spec.Name
+		}
 		payload := map[string]any{
-			"name":         spec.Name,
+			"name":         name,
 			"input_schema": mapOrEmpty(spec.JSONSchema),
 		}
 		if spec.Description != nil {
@@ -760,7 +765,7 @@ func parseAnthropicMessage(body []byte) (content string, thinkingText string, to
 
 		toolCalls = append(toolCalls, ToolCall{
 			ToolCallID:    toolCallID,
-			ToolName:      toolName,
+			ToolName:      CanonicalToolName(toolName),
 			ArgumentsJSON: argumentsJSON,
 		})
 	}
@@ -1062,7 +1067,7 @@ func (g *AnthropicGateway) streamAnthropicSSE(ctx context.Context, body io.Reade
 				return yield(ToolCallArgumentDelta{
 					ToolCallIndex:  idx,
 					ToolCallID:     buffer.ID,
-					ToolName:       buffer.Name,
+					ToolName:       CanonicalToolName(buffer.Name),
 					ArgumentsDelta: encoded,
 				})
 			}
@@ -1113,7 +1118,7 @@ func (g *AnthropicGateway) streamAnthropicSSE(ctx context.Context, body io.Reade
 				return yield(ToolCallArgumentDelta{
 					ToolCallIndex:  idx,
 					ToolCallID:     buffer.ID,
-					ToolName:       buffer.Name,
+					ToolName:       CanonicalToolName(buffer.Name),
 					ArgumentsDelta: event.Delta.PartialJSON,
 				})
 			}
@@ -1141,7 +1146,7 @@ func (g *AnthropicGateway) streamAnthropicSSE(ctx context.Context, body io.Reade
 			}
 			return yield(ToolCall{
 				ToolCallID:    buffer.ID,
-				ToolName:      buffer.Name,
+				ToolName:      CanonicalToolName(buffer.Name),
 				ArgumentsJSON: argumentsJSON,
 			})
 		case "message_delta":

@@ -1,4 +1,4 @@
-import { isACPDelegateEventData } from '@arkloop/shared'
+import { isACPDelegateEventData, canonicalToolName, pickLogicalToolName } from '@arkloop/shared'
 import type { MessageResponse, ThreadRunResponse } from './api'
 import type { RunEvent } from './sse'
 import type { ArtifactRef, BrowserActionRef, CodeExecutionRef, FileOpRef, MessageThinkingRef, SubAgentRef, WebFetchRef, WidgetRef } from './storage'
@@ -34,9 +34,7 @@ type CodeExecutionDeltaPatch = {
 }
 
 function pickToolName(data: unknown): string {
-  if (!data || typeof data !== 'object') return ''
-  const raw = (data as { tool_name?: unknown }).tool_name
-  return typeof raw === 'string' ? raw : ''
+  return pickLogicalToolName(data)
 }
 
 function pickToolCallId(event: RunEvent): string {
@@ -46,7 +44,7 @@ function pickToolCallId(event: RunEvent): string {
 }
 
 export function isWebFetchToolName(toolName: string): boolean {
-  const t = toolName.trim()
+  const t = canonicalToolName(toolName)
   if (!t) return false
   const n = t.toLowerCase().replace(/-/g, '_')
   if (n === 'web_fetch' || n === 'webfetch') return true
@@ -592,7 +590,7 @@ export function buildMessageWidgetsFromRunEvents(events: RunEvent[]): WidgetRef[
   for (const event of events) {
     if (event.type !== 'tool.call') continue
     if (isACPDelegateEventData(event.data)) continue
-    const toolName = pickToolName(event.data) || event.tool_name || ''
+    const toolName = pickLogicalToolName(event.data, event.tool_name)
     if (toolName !== 'show_widget') continue
 
     const { title, html } = extractWidgetArguments(event.data)

@@ -1,4 +1,4 @@
-import { isACPDelegateEventData } from '@arkloop/shared'
+import { isACPDelegateEventData, pickLogicalToolName } from '@arkloop/shared'
 import type { RunEvent } from './sse'
 
 export type TurnToolCallRef = {
@@ -37,9 +37,7 @@ export function copSegmentCalls(segment: { type: 'cop'; items: CopBlockItem[] })
 }
 
 function pickToolName(data: unknown): string {
-  if (!data || typeof data !== 'object') return ''
-  const raw = (data as { tool_name?: unknown }).tool_name
-  return typeof raw === 'string' ? raw : ''
+  return pickLogicalToolName(data)
 }
 
 function pickToolCallId(event: RunEvent): string {

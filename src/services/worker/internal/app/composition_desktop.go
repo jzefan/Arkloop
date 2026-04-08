@@ -2412,6 +2412,7 @@ func (w *desktopEventWriter) append(ctx context.Context, runID uuid.UUID, ev eve
 		if w.telegramProgressTracker != nil {
 			callID, _ := ev.DataJSON["tool_call_id"].(string)
 			toolName, _ := ev.DataJSON["tool_name"].(string)
+			toolName = llm.CanonicalToolName(toolName)
 			argsRaw, _ := json.Marshal(ev.DataJSON["arguments"])
 			w.telegramProgressTracker.OnToolCall(ctx, callID, toolName, string(argsRaw))
 		}
@@ -2425,6 +2426,7 @@ func (w *desktopEventWriter) append(ctx context.Context, runID uuid.UUID, ev eve
 		if w.telegramProgressTracker != nil {
 			callID, _ := ev.DataJSON["tool_call_id"].(string)
 			toolName, _ := ev.DataJSON["tool_name"].(string)
+			toolName = llm.CanonicalToolName(toolName)
 			errorClass := ""
 			if ev.ErrorClass != nil {
 				errorClass = *ev.ErrorClass
@@ -2508,6 +2510,7 @@ func (w *desktopEventWriter) append(ctx context.Context, runID uuid.UUID, ev eve
 func (w *desktopEventWriter) collectToolCall(dataJSON map[string]any) {
 	callID, _ := dataJSON["tool_call_id"].(string)
 	toolName, _ := dataJSON["tool_name"].(string)
+	toolName = llm.CanonicalToolName(toolName)
 	if callID == "" || toolName == "" {
 		return
 	}
@@ -2541,9 +2544,11 @@ func (w *desktopEventWriter) flushPendingToolCalls() {
 
 func (w *desktopEventWriter) collectToolResult(dataJSON map[string]any) {
 	w.flushPendingToolCalls()
+	toolName, _ := dataJSON["tool_name"].(string)
+	toolName = llm.CanonicalToolName(toolName)
 	envelope := map[string]any{
 		"tool_call_id": dataJSON["tool_call_id"],
-		"tool_name":    dataJSON["tool_name"],
+		"tool_name":    toolName,
 	}
 	if v, ok := dataJSON["result"]; ok {
 		envelope["result"] = v

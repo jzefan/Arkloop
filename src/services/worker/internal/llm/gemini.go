@@ -268,7 +268,7 @@ func (g *GeminiGateway) streamGeminiSSE(ctx context.Context, body interface{ Rea
 					}
 					toolCalls[idx] = call
 				}
-				call.ToolName = part.FunctionCall.Name
+				call.ToolName = CanonicalToolName(part.FunctionCall.Name)
 				call.ArgumentsJSON = args
 				if call.EncodedArgs == "" {
 					call.EncodedArgs = encodedArgs
@@ -311,7 +311,7 @@ func (g *GeminiGateway) streamGeminiSSE(ctx context.Context, body interface{ Rea
 				}
 				if err := yield(ToolCall{
 					ToolCallID:    call.ToolCallID,
-					ToolName:      call.ToolName,
+					ToolName:      CanonicalToolName(call.ToolName),
 					ArgumentsJSON: call.ArgumentsJSON,
 				}); err != nil {
 					return err
@@ -349,7 +349,7 @@ func (g *GeminiGateway) streamGeminiSSE(ctx context.Context, body interface{ Rea
 			}
 			if err := yield(ToolCall{
 				ToolCallID:    call.ToolCallID,
-				ToolName:      call.ToolName,
+				ToolName:      CanonicalToolName(call.ToolName),
 				ArgumentsJSON: call.ArgumentsJSON,
 			}); err != nil {
 				return err
@@ -554,6 +554,7 @@ func toGeminiContents(messages []Message) (systemInstruction map[string]any, con
 				parts = append(parts, map[string]any{"text": text})
 			}
 			for _, call := range msg.ToolCalls {
+				call = CanonicalToolCall(call)
 				parts = append(parts, map[string]any{
 					"functionCall": map[string]any{
 						"name": call.ToolName,
@@ -625,7 +626,7 @@ func geminiToolResponsePart(text string) (map[string]any, error) {
 		return nil, fmt.Errorf("tool message is not valid JSON")
 	}
 	toolName, _ := envelope["tool_name"].(string)
-	toolName = strings.TrimSpace(toolName)
+	toolName = CanonicalToolName(toolName)
 	if toolName == "" {
 		// 降级：从 tool_call_id 中能读到名字的情况
 		toolName = "unknown"
@@ -662,7 +663,7 @@ func geminiToolConfig(tc *ToolChoice) map[string]any {
 		return map[string]any{
 			"functionCallingConfig": map[string]any{
 				"mode":                 "ANY",
-				"allowedFunctionNames": []string{tc.ToolName},
+				"allowedFunctionNames": []string{CanonicalToolName(tc.ToolName)},
 			},
 		}
 	default:
@@ -673,8 +674,12 @@ func geminiToolConfig(tc *ToolChoice) map[string]any {
 func toGeminiTools(specs []ToolSpec) []map[string]any {
 	decls := make([]map[string]any, 0, len(specs))
 	for _, spec := range specs {
+		name := CanonicalToolName(spec.Name)
+		if name == "" {
+			name = spec.Name
+		}
 		decl := map[string]any{
-			"name":       spec.Name,
+			"name":       name,
 			"parameters": mapOrEmpty(spec.JSONSchema),
 		}
 		if spec.Description != nil {

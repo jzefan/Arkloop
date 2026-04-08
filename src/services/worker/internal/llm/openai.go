@@ -681,7 +681,7 @@ func (b *openAIChatToolCallBuffer) Drain() ([]ToolCall, error) {
 
 		toolCalls = append(toolCalls, ToolCall{
 			ToolCallID:    item.ID,
-			ToolName:      item.Name,
+			ToolName:      CanonicalToolName(item.Name),
 			ArgumentsJSON: argumentsJSON,
 		})
 	}
@@ -920,7 +920,7 @@ func (g *OpenAIGateway) streamChatCompletionsSSE(
 				if err := yield(ToolCallArgumentDelta{
 					ToolCallIndex:  idx,
 					ToolCallID:     toolDelta.ID,
-					ToolName:       toolDelta.Function.Name,
+					ToolName:       CanonicalToolName(toolDelta.Function.Name),
 					ArgumentsDelta: toolDelta.Function.Arguments,
 				}); err != nil {
 					return err
@@ -1397,7 +1397,7 @@ func openAIToolChoice(tc *ToolChoice) any {
 	case "specific":
 		return map[string]any{
 			"type":     "function",
-			"function": map[string]any{"name": tc.ToolName},
+			"function": map[string]any{"name": CanonicalToolName(tc.ToolName)},
 		}
 	default:
 		return "auto"
@@ -1407,8 +1407,12 @@ func openAIToolChoice(tc *ToolChoice) any {
 func toOpenAITools(specs []ToolSpec) []map[string]any {
 	out := make([]map[string]any, 0, len(specs))
 	for _, spec := range specs {
+		name := CanonicalToolName(spec.Name)
+		if name == "" {
+			name = spec.Name
+		}
 		fn := map[string]any{
-			"name":       spec.Name,
+			"name":       name,
 			"parameters": mapOrEmpty(spec.JSONSchema),
 		}
 		if spec.Description != nil {
@@ -1425,9 +1429,13 @@ func toOpenAITools(specs []ToolSpec) []map[string]any {
 func toOpenAIResponsesTools(specs []ToolSpec) []map[string]any {
 	out := make([]map[string]any, 0, len(specs))
 	for _, spec := range specs {
+		name := CanonicalToolName(spec.Name)
+		if name == "" {
+			name = spec.Name
+		}
 		payload := map[string]any{
 			"type":       "function",
-			"name":       spec.Name,
+			"name":       name,
 			"parameters": mapOrEmpty(spec.JSONSchema),
 		}
 		if spec.Description != nil {
@@ -1507,7 +1515,7 @@ func parseOpenAIChatCompletion(body []byte) (string, []ToolCall, *Usage, *Cost, 
 
 		toolCalls = append(toolCalls, ToolCall{
 			ToolCallID:    toolCallID,
-			ToolName:      toolName,
+			ToolName:      CanonicalToolName(toolName),
 			ArgumentsJSON: argumentsJSON,
 		})
 	}
@@ -1626,6 +1634,7 @@ func toOpenAIResponsesAssistantItems(message Message, index int) ([]map[string]a
 		items = append(items, item)
 	}
 	for callIndex, call := range message.ToolCalls {
+		call = CanonicalToolCall(call)
 		argumentsJSON, err := stablejson.Encode(mapOrEmpty(call.ArgumentsJSON))
 		if err != nil {
 			argumentsJSON = "{}"
@@ -1742,6 +1751,7 @@ func partDataURL(part ContentPart) (string, error) {
 func toOpenAIAssistantToolCalls(calls []ToolCall) []map[string]any {
 	out := make([]map[string]any, 0, len(calls))
 	for _, call := range calls {
+		call = CanonicalToolCall(call)
 		argumentsJSON, err := stablejson.Encode(mapOrEmpty(call.ArgumentsJSON))
 		if err != nil {
 			argumentsJSON = "{}"
@@ -1768,6 +1778,9 @@ func toOpenAIToolMessage(text string) map[string]any {
 	envelope, ok := parsed.(map[string]any)
 	if !ok {
 		return map[string]any{"role": "tool", "content": text}
+	}
+	if rawName, ok := envelope["tool_name"].(string); ok {
+		envelope["tool_name"] = CanonicalToolName(rawName)
 	}
 
 	toolCallID, _ := envelope["tool_call_id"].(string)
@@ -1950,7 +1963,7 @@ func openAIResponsesToolArgumentsDelta(
 			buffer.ToolCallID = buffer.ItemID
 		}
 		if buffer.ToolName == "" {
-			buffer.ToolName = strings.TrimSpace(stringValueFromAny(item["name"]))
+			buffer.ToolName = CanonicalToolName(stringValueFromAny(item["name"]))
 		}
 		if buffer.Arguments.Len() == 0 {
 			if arguments, ok := item["arguments"].(string); ok && arguments != "" {
@@ -1989,7 +2002,7 @@ func openAIResponsesToolArgumentsDelta(
 		return &ToolCallArgumentDelta{
 			ToolCallIndex:  buffer.OutputIndex,
 			ToolCallID:     buffer.ToolCallID,
-			ToolName:       buffer.ToolName,
+			ToolName:       CanonicalToolName(buffer.ToolName),
 			ArgumentsDelta: delta,
 		}
 	default:
@@ -2027,7 +2040,7 @@ func openAIResponsesBufferedToolCalls(toolBuffers map[int]*openAIResponsesToolBu
 			"id":        strings.TrimSpace(buffer.ItemID),
 			"call_id":   callID,
 			"type":      "function_call",
-			"name":      buffer.ToolName,
+			"name":      CanonicalToolName(buffer.ToolName),
 			"arguments": strings.TrimSpace(buffer.Arguments.String()),
 		})
 	}
@@ -2130,7 +2143,7 @@ func parseOpenAIResponsesAssistantResponse(root map[string]any) (Message, []Tool
 		if strings.TrimSpace(toolName) == "" {
 			toolName, _ = item["tool_name"].(string)
 		}
-		toolName = strings.TrimSpace(toolName)
+		toolName = CanonicalToolName(toolName)
 		if toolName == "" {
 			return Message{}, nil, nil, nil, fmt.Errorf("output[%d] missing function_call.name", idx)
 		}
@@ -2160,7 +2173,7 @@ func parseOpenAIResponsesAssistantResponse(root map[string]any) (Message, []Tool
 
 		toolCalls = append(toolCalls, ToolCall{
 			ToolCallID:    toolCallID,
-			ToolName:      toolName,
+			ToolName:      CanonicalToolName(toolName),
 			ArgumentsJSON: argumentsJSON,
 		})
 	}
@@ -2233,7 +2246,7 @@ func openAIResponsesToolCalls(output []any) ([]ToolCall, error) {
 		if strings.TrimSpace(toolName) == "" {
 			toolName, _ = item["tool_name"].(string)
 		}
-		toolName = strings.TrimSpace(toolName)
+		toolName = CanonicalToolName(toolName)
 		if toolName == "" {
 			return nil, fmt.Errorf("output[%d] missing function_call.name", idx)
 		}
@@ -2263,7 +2276,7 @@ func openAIResponsesToolCalls(output []any) ([]ToolCall, error) {
 
 		toolCalls = append(toolCalls, ToolCall{
 			ToolCallID:    toolCallID,
-			ToolName:      toolName,
+			ToolName:      CanonicalToolName(toolName),
 			ArgumentsJSON: argumentsJSON,
 		})
 	}

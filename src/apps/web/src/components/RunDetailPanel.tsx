@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { X } from 'lucide-react'
 import { useLocation } from 'react-router-dom'
-import { TurnView, buildRequestThreadTurns, buildTurns, jsonStringifyForDebugDisplay } from '@arkloop/shared'
+import { TurnView, buildRequestThreadTurns, buildTurns, jsonStringifyForDebugDisplay, pickLogicalToolName } from '@arkloop/shared'
 import type { LlmTurn, RequestThreadTurn, RunEventRaw } from '@arkloop/shared'
 import type { RunDetail, RunEvent } from '../api'
 import { getRunDetail, listRunEvents } from '../api'
@@ -53,6 +53,7 @@ function formatTime(value: string | undefined): string {
 }
 
 function formatEventJSON(event: RunEvent): string {
+  const toolName = pickLogicalToolName(event.data, event.tool_name)
   return jsonStringifyForDebugDisplay(
     {
       event_id: event.event_id,
@@ -60,12 +61,16 @@ function formatEventJSON(event: RunEvent): string {
       seq: event.seq,
       ts: event.ts,
       type: event.type,
-      tool_name: event.tool_name,
+      tool_name: toolName || event.tool_name,
       error_class: event.error_class,
       data: event.data,
     },
     2,
   )
+}
+
+function displayToolName(event: RunEvent): string {
+  return pickLogicalToolName(event.data, event.tool_name)
 }
 
 function RequestThreadTurnCard({ turn, index }: { turn: RequestThreadTurn; index: number }) {
@@ -178,7 +183,10 @@ export function RunDetailPanel({ runId, accessToken, onClose }: Props) {
   }, [load, onClose])
 
   const turns: LlmTurn[] = useMemo(
-    () => buildTurns((events ?? []) as unknown as RunEventRaw[]),
+    () => buildTurns((events ?? []).map((event) => ({
+      ...event,
+      tool_name: displayToolName(event) || event.tool_name,
+    })) as unknown as RunEventRaw[]),
     [events],
   )
   const requestThreadTurns = useMemo(() => buildRequestThreadTurns(turns), [turns])
@@ -379,9 +387,9 @@ export function RunDetailPanel({ runId, accessToken, onClose }: Props) {
                             #{event.seq}
                           </span>
                           <span className="font-mono text-[var(--c-text-secondary)]">{event.type}</span>
-                          {event.tool_name && (
+                          {displayToolName(event) && (
                             <span className="rounded bg-[var(--c-bg-sub)] px-1.5 py-0.5 text-[10px] text-[var(--c-text-muted)]">
-                              {event.tool_name}
+                              {displayToolName(event)}
                             </span>
                           )}
                           {event.error_class && (

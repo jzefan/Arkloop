@@ -36,26 +36,31 @@ func NewPolicyEnforcer(registry *Registry, allowlist Allowlist) *PolicyEnforcer 
 
 func (p *PolicyEnforcer) RequestToolCall(
 	emitter events.Emitter,
-	toolName string,
+	logicalToolName string,
 	argsJSON map[string]any,
 	toolCallID string,
+	resolvedToolNames ...string,
 ) ToolCallDecision {
-	callEvent, resolvedID, argsHash, hasSpec := p.buildToolCallEvent(emitter, toolName, argsJSON, toolCallID)
+	resolvedToolName := resolvePolicyToolName(logicalToolName, resolvedToolNames...)
+	callEvent, resolvedID, argsHash, hasSpec := p.buildToolCallEvent(emitter, logicalToolName, resolvedToolName, argsJSON, toolCallID)
+	allowlistName := strings.TrimSpace(logicalToolName)
+	if allowlistName == "" {
+		allowlistName = strings.TrimSpace(resolvedToolName)
+	}
 
 	if argsHash == "" {
-		denied := emitter.Emit(
-			"policy.denied",
-			map[string]any{
-				"code":         PolicyDeniedCode,
-				"message":      "tool arguments invalid",
-				"deny_reason":  DenyReasonToolArgsInvalid,
-				"tool_call_id": resolvedID,
-				"tool_name":    toolName,
-				"allowlist":    p.allowlist.ToSortedList(),
-			},
-			stringPtr(toolName),
-			stringPtr(PolicyDeniedCode),
-		)
+		payload := map[string]any{
+			"code":         PolicyDeniedCode,
+			"message":      "tool arguments invalid",
+			"deny_reason":  DenyReasonToolArgsInvalid,
+			"tool_call_id": resolvedID,
+			"tool_name":    logicalToolName,
+			"allowlist":    p.allowlist.ToSortedList(),
+		}
+		if strings.TrimSpace(resolvedToolName) != "" && strings.TrimSpace(resolvedToolName) != strings.TrimSpace(logicalToolName) {
+			payload["resolved_tool_name"] = strings.TrimSpace(resolvedToolName)
+		}
+		denied := emitter.Emit("policy.denied", payload, stringPtr(logicalToolName), stringPtr(PolicyDeniedCode))
 		return ToolCallDecision{
 			ToolCallID: resolvedID,
 			Allowed:    false,
@@ -64,20 +69,19 @@ func (p *PolicyEnforcer) RequestToolCall(
 	}
 
 	if !hasSpec {
-		denied := emitter.Emit(
-			"policy.denied",
-			map[string]any{
-				"code":         PolicyDeniedCode,
-				"message":      "tool not registered",
-				"deny_reason":  DenyReasonToolUnknown,
-				"tool_call_id": resolvedID,
-				"tool_name":    toolName,
-				"args_hash":    argsHash,
-				"allowlist":    p.allowlist.ToSortedList(),
-			},
-			stringPtr(toolName),
-			stringPtr(PolicyDeniedCode),
-		)
+		payload := map[string]any{
+			"code":         PolicyDeniedCode,
+			"message":      "tool not registered",
+			"deny_reason":  DenyReasonToolUnknown,
+			"tool_call_id": resolvedID,
+			"tool_name":    logicalToolName,
+			"args_hash":    argsHash,
+			"allowlist":    p.allowlist.ToSortedList(),
+		}
+		if strings.TrimSpace(resolvedToolName) != "" && strings.TrimSpace(resolvedToolName) != strings.TrimSpace(logicalToolName) {
+			payload["resolved_tool_name"] = strings.TrimSpace(resolvedToolName)
+		}
+		denied := emitter.Emit("policy.denied", payload, stringPtr(logicalToolName), stringPtr(PolicyDeniedCode))
 		return ToolCallDecision{
 			ToolCallID: resolvedID,
 			Allowed:    false,
@@ -85,25 +89,32 @@ func (p *PolicyEnforcer) RequestToolCall(
 		}
 	}
 
-	if !p.allowlist.Allows(toolName) {
+	allowed := p.allowlist.Allows(allowlistName)
+	if !allowed && strings.TrimSpace(resolvedToolName) != "" && strings.TrimSpace(resolvedToolName) != allowlistName {
+		allowed = p.allowlist.Allows(strings.TrimSpace(resolvedToolName))
+	}
+	if !allowed {
 		deniedPayload := map[string]any{
 			"code":         PolicyDeniedCode,
 			"message":      "tool not in allowlist",
 			"deny_reason":  DenyReasonToolNotInAllowlist,
 			"tool_call_id": resolvedID,
-			"tool_name":    toolName,
+			"tool_name":    logicalToolName,
 			"args_hash":    argsHash,
 			"allowlist":    p.allowlist.ToSortedList(),
 		}
-		if spec, ok := p.registry.Get(toolName); ok {
-			for key, value := range spec.ToToolCallJSON() {
+		if strings.TrimSpace(resolvedToolName) != "" && strings.TrimSpace(resolvedToolName) != strings.TrimSpace(logicalToolName) {
+			deniedPayload["resolved_tool_name"] = strings.TrimSpace(resolvedToolName)
+		}
+		if spec, ok := p.registry.Get(resolvedToolName); ok {
+			for key, value := range toolCallSpecPayload(spec) {
 				deniedPayload[key] = value
 			}
 		}
 		denied := emitter.Emit(
 			"policy.denied",
 			deniedPayload,
-			stringPtr(toolName),
+			stringPtr(logicalToolName),
 			stringPtr(PolicyDeniedCode),
 		)
 		return ToolCallDecision{
@@ -122,17 +133,20 @@ func (p *PolicyEnforcer) RequestToolCall(
 
 func (p *PolicyEnforcer) BuildToolCallEvent(
 	emitter events.Emitter,
-	toolName string,
+	logicalToolName string,
 	argsJSON map[string]any,
 	toolCallID string,
+	resolvedToolNames ...string,
 ) events.RunEvent {
-	callEvent, _, _, _ := p.buildToolCallEvent(emitter, toolName, argsJSON, toolCallID)
+	resolvedToolName := resolvePolicyToolName(logicalToolName, resolvedToolNames...)
+	callEvent, _, _, _ := p.buildToolCallEvent(emitter, logicalToolName, resolvedToolName, argsJSON, toolCallID)
 	return callEvent
 }
 
 func (p *PolicyEnforcer) buildToolCallEvent(
 	emitter events.Emitter,
-	toolName string,
+	logicalToolName string,
+	resolvedToolName string,
 	argsJSON map[string]any,
 	toolCallID string,
 ) (events.RunEvent, string, string, bool) {
@@ -143,22 +157,25 @@ func (p *PolicyEnforcer) buildToolCallEvent(
 		argsHash = ""
 	}
 
-	spec, hasSpec := p.registry.Get(toolName)
+	spec, hasSpec := p.registry.Get(resolvedToolName)
 	callPayload := map[string]any{
 		"tool_call_id": resolvedID,
-		"tool_name":    toolName,
+		"tool_name":    logicalToolName,
 		"arguments":    argsJSON,
+	}
+	if strings.TrimSpace(resolvedToolName) != "" {
+		callPayload["resolved_tool_name"] = strings.TrimSpace(resolvedToolName)
 	}
 	if argsHash != "" {
 		callPayload["args_hash"] = argsHash
 	}
 	if hasSpec {
-		for key, value := range spec.ToToolCallJSON() {
+		for key, value := range toolCallSpecPayload(spec) {
 			callPayload[key] = value
 		}
 	}
 
-	return emitter.Emit("tool.call", callPayload, stringPtr(toolName), nil), resolvedID, argsHash, hasSpec
+	return emitter.Emit("tool.call", callPayload, stringPtr(logicalToolName), nil), resolvedID, argsHash, hasSpec
 }
 
 func resolveToolCallID(toolCallID string) string {
@@ -175,4 +192,17 @@ func stringPtr(value string) *string {
 		return nil
 	}
 	return &cleaned
+}
+
+func toolCallSpecPayload(spec AgentToolSpec) map[string]any {
+	payload := spec.ToToolCallJSON()
+	delete(payload, "tool_name")
+	return payload
+}
+
+func resolvePolicyToolName(logicalToolName string, resolvedToolNames ...string) string {
+	if len(resolvedToolNames) > 0 && strings.TrimSpace(resolvedToolNames[0]) != "" {
+		return strings.TrimSpace(resolvedToolNames[0])
+	}
+	return strings.TrimSpace(logicalToolName)
 }

@@ -2007,6 +2007,46 @@ func TestDesktopPersistFinalAssistantOutputSetsReplyOverride(t *testing.T) {
 	}
 }
 
+func TestDesktopEventWriterPersistsCanonicalToolNames(t *testing.T) {
+	writer := &desktopEventWriter{
+		assistantMessage: &llm.Message{
+			Role:    "assistant",
+			Content: []llm.TextPart{{Text: "fetching"}},
+		},
+	}
+
+	writer.collectToolCall(map[string]any{
+		"tool_call_id": "call_1",
+		"tool_name":    "web_fetch.jina",
+		"arguments":    map[string]any{"url": "https://example.com"},
+	})
+	writer.collectToolResult(map[string]any{
+		"tool_call_id": "call_1",
+		"tool_name":    "web_fetch.jina",
+		"result":       map[string]any{"title": "Example"},
+	})
+
+	if len(writer.intermediateMessages) != 2 {
+		t.Fatalf("expected assistant+tool intermediate messages, got %d", len(writer.intermediateMessages))
+	}
+
+	assistantJSON := string(writer.intermediateMessages[0].ContentJSON)
+	if strings.Contains(assistantJSON, "web_fetch.jina") {
+		t.Fatalf("expected assistant intermediate message to hide provider tool name, got %s", assistantJSON)
+	}
+	if !strings.Contains(assistantJSON, `"tool_name":"web_fetch"`) {
+		t.Fatalf("expected assistant intermediate message to keep canonical tool name, got %s", assistantJSON)
+	}
+
+	toolContent := writer.intermediateMessages[1].Content
+	if strings.Contains(toolContent, "web_fetch.jina") {
+		t.Fatalf("expected tool intermediate message to hide provider tool name, got %s", toolContent)
+	}
+	if !strings.Contains(toolContent, `"tool_name":"web_fetch"`) {
+		t.Fatalf("expected tool intermediate message to keep canonical tool name, got %s", toolContent)
+	}
+}
+
 func TestDesktopEventWriterPendingTelegramFlushChunk(t *testing.T) {
 	writer := &desktopEventWriter{
 		visibleAssistantTexts:   []string{"第一段", "第二段"},
@@ -2023,7 +2063,7 @@ func TestDesktopEventWriterPendingTelegramFlushChunkFromAssistantMessage(t *test
 	// 无 delta，LLM 通过 assistantMessage 完成一轮时，captureAssistantTurnOutput 追加到 visibleAssistantTexts，
 	// pendingTelegramFlushChunk 应返回该内容
 	writer := &desktopEventWriter{
-		visibleAssistantTexts: []string{},
+		visibleAssistantTexts:   []string{},
 		telegramSentOutputCount: 0,
 		telegramBoundaryFlush:   func(_ context.Context, _ string) error { return nil },
 	}

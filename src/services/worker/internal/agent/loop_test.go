@@ -17,8 +17,8 @@ import (
 	"arkloop/services/worker/internal/security"
 	"arkloop/services/worker/internal/tools"
 	"arkloop/services/worker/internal/tools/builtin"
-	heartbeattool "arkloop/services/worker/internal/tools/builtin/heartbeat_decision"
 	channeltelegram "arkloop/services/worker/internal/tools/builtin/channel_telegram"
+	heartbeattool "arkloop/services/worker/internal/tools/builtin/heartbeat_decision"
 	"github.com/google/uuid"
 )
 
@@ -2277,6 +2277,124 @@ func TestAgentLoopPreservesCompletedAssistantMessageAcrossTurns(t *testing.T) {
 	}
 	if len(assistant.ToolCalls) != 1 || assistant.ToolCalls[0].ToolCallID != "call_1" {
 		t.Fatalf("expected preserved tool call history, got %#v", assistant.ToolCalls)
+	}
+}
+
+func TestAgentLoopSecondRequestHistoryKeepsCanonicalToolNameForProviderExecutor(t *testing.T) {
+	registry := tools.NewRegistry()
+	if err := registry.Register(tools.AgentToolSpec{
+		Name:        "web_search.tavily",
+		LlmName:     "web_search",
+		Version:     "1",
+		Description: "provider web search",
+		RiskLevel:   tools.RiskLevelLow,
+	}); err != nil {
+		t.Fatalf("register provider search failed: %v", err)
+	}
+
+	allowlist := tools.AllowlistFromNames([]string{"web_search.tavily"})
+	dispatcher := tools.NewDispatchingExecutor(registry, tools.NewPolicyEnforcer(registry, allowlist))
+	executor := &providerEchoExecutor{}
+	if err := dispatcher.Bind("web_search.tavily", executor); err != nil {
+		t.Fatalf("bind provider search failed: %v", err)
+	}
+
+	gateway := &providerHistoryCaptureGateway{}
+	loop := NewLoop(gateway, dispatcher)
+	err := loop.Run(
+		context.Background(),
+		RunContext{
+			RunID:               uuid.New(),
+			TraceID:             "trace",
+			InputJSON:           map[string]any{},
+			ReasoningIterations: 3,
+			ToolExecutor:        dispatcher,
+			ToolTimeoutMs:       intPtr(1000),
+			ToolBudget:          map[string]any{},
+			CancelSignal:        func() bool { return false },
+		},
+		llm.Request{
+			Model:    "stub",
+			Messages: []llm.Message{{Role: "user", Content: []llm.TextPart{{Text: "hi"}}}},
+		},
+		events.NewEmitter("trace"),
+		func(ev events.RunEvent) error { return nil },
+	)
+	if err != nil {
+		t.Fatalf("loop.Run failed: %v", err)
+	}
+	if executor.calledWith != "web_search.tavily" {
+		t.Fatalf("expected provider executor to run with provider tool name, got %q", executor.calledWith)
+	}
+	if len(gateway.requests) < 2 {
+		t.Fatalf("expected at least 2 requests, got %d", len(gateway.requests))
+	}
+
+	second := gateway.requests[1]
+	if len(second.Messages) < 3 {
+		t.Fatalf("expected assistant and tool history in second request, got %#v", second.Messages)
+	}
+	assistant := second.Messages[1]
+	if len(assistant.ToolCalls) != 1 {
+		t.Fatalf("expected one assistant tool call in history, got %#v", assistant.ToolCalls)
+	}
+	if got := assistant.ToolCalls[0].ToolName; got != "web_search" {
+		t.Fatalf("expected assistant history to keep canonical tool name, got %q", got)
+	}
+	toolText := second.Messages[2].Content[0].Text
+	if strings.Contains(toolText, "web_search.tavily") {
+		t.Fatalf("expected tool history to hide provider tool name, got %s", toolText)
+	}
+	if !strings.Contains(toolText, `"tool_name":"web_search"`) {
+		t.Fatalf("expected tool history to keep canonical tool name, got %s", toolText)
+	}
+}
+
+type providerHistoryCaptureGateway struct {
+	requests []llm.Request
+	calls    int
+}
+
+func (g *providerHistoryCaptureGateway) Stream(ctx context.Context, request llm.Request, yield func(llm.StreamEvent) error) error {
+	_ = ctx
+	g.requests = append(g.requests, request)
+	g.calls++
+	if g.calls == 1 {
+		if err := yield(llm.ToolCall{
+			ToolCallID:    "call_1",
+			ToolName:      "web_search",
+			ArgumentsJSON: map[string]any{"query": "hello"},
+		}); err != nil {
+			return err
+		}
+		return yield(llm.StreamRunCompleted{})
+	}
+	if err := yield(llm.StreamMessageDelta{ContentDelta: "done", Role: "assistant"}); err != nil {
+		return err
+	}
+	return yield(llm.StreamRunCompleted{})
+}
+
+type providerEchoExecutor struct {
+	calledWith string
+}
+
+func (e *providerEchoExecutor) Execute(
+	ctx context.Context,
+	toolName string,
+	args map[string]any,
+	execCtx tools.ExecutionContext,
+	toolCallID string,
+) tools.ExecutionResult {
+	_ = ctx
+	_ = execCtx
+	_ = toolCallID
+	e.calledWith = toolName
+	return tools.ExecutionResult{
+		ResultJSON: map[string]any{
+			"query": args["query"],
+			"items": []any{map[string]any{"title": "x"}},
+		},
 	}
 }
 

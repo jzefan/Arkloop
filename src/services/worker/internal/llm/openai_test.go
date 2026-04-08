@@ -874,6 +874,118 @@ func TestToOpenAIChatMessages_ToolEnvelope(t *testing.T) {
 	}
 }
 
+func TestOpenAIGateway_Stream_Responses_RequestBodyDoesNotLeakProviderToolName(t *testing.T) {
+	var receivedBody []byte
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatalf("read request body failed: %v", err)
+		}
+		receivedBody = append([]byte(nil), body...)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"ok"}]}]}`))
+	}))
+	t.Cleanup(server.Close)
+
+	gateway := NewOpenAIGateway(OpenAIGatewayConfig{
+		APIKey:  "test",
+		BaseURL: server.URL,
+		APIMode: "responses",
+	})
+
+	err := gateway.Stream(context.Background(), Request{
+		Model: "gpt-test",
+		Messages: []Message{
+			{Role: "user", Content: []TextPart{{Text: "hi"}}},
+			{
+				Role:    "assistant",
+				Content: []TextPart{{Text: "searching"}},
+				ToolCalls: []ToolCall{{
+					ToolCallID:    "call_1",
+					ToolName:      "web_search.tavily",
+					ArgumentsJSON: map[string]any{"query": "hello"},
+				}},
+			},
+			{
+				Role: "tool",
+				Content: []TextPart{{
+					Text: `{"tool_call_id":"call_1","tool_name":"web_search.tavily","result":{"items":[{"title":"x"}]}}`,
+				}},
+			},
+		},
+	}, func(StreamEvent) error {
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("stream failed: %v", err)
+	}
+
+	bodyText := string(receivedBody)
+	if strings.Contains(bodyText, "web_search.tavily") {
+		t.Fatalf("expected responses request body to hide provider tool name, got %s", bodyText)
+	}
+	if !strings.Contains(bodyText, `"name":"web_search"`) {
+		t.Fatalf("expected responses request body to keep canonical tool name, got %s", bodyText)
+	}
+}
+
+func TestOpenAIGateway_Stream_ChatCompletions_RequestBodyDoesNotLeakProviderToolName(t *testing.T) {
+	var receivedBody []byte
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatalf("read request body failed: %v", err)
+		}
+		receivedBody = append([]byte(nil), body...)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}]}`))
+	}))
+	t.Cleanup(server.Close)
+
+	gateway := NewOpenAIGateway(OpenAIGatewayConfig{
+		APIKey:  "test",
+		BaseURL: server.URL,
+		APIMode: "chat_completions",
+	})
+
+	err := gateway.Stream(context.Background(), Request{
+		Model: "gpt-test",
+		Messages: []Message{
+			{Role: "user", Content: []TextPart{{Text: "hi"}}},
+			{
+				Role:    "assistant",
+				Content: []TextPart{{Text: "fetching"}},
+				ToolCalls: []ToolCall{{
+					ToolCallID:    "call_1",
+					ToolName:      "web_fetch.jina",
+					ArgumentsJSON: map[string]any{"url": "https://example.com"},
+				}},
+			},
+			{
+				Role: "tool",
+				Content: []TextPart{{
+					Text: `{"tool_call_id":"call_1","tool_name":"web_fetch.jina","result":{"title":"Example"}}`,
+				}},
+			},
+		},
+	}, func(StreamEvent) error {
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("stream failed: %v", err)
+	}
+
+	bodyText := string(receivedBody)
+	if strings.Contains(bodyText, "web_fetch.jina") {
+		t.Fatalf("expected chat_completions request body to hide provider tool name, got %s", bodyText)
+	}
+	if !strings.Contains(bodyText, `"name":"web_fetch"`) {
+		t.Fatalf("expected chat_completions request body to keep canonical tool name, got %s", bodyText)
+	}
+}
+
 func TestOpenAIGateway_Stream_ChatCompletions_SSE_MessageDeltas(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/chat/completions" {

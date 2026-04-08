@@ -9,6 +9,7 @@ import {
   buildRequestThreadTurns,
   buildTurns,
   jsonStringifyForDebugDisplay,
+  pickLogicalToolName,
   type LlmTurn,
   type RequestThreadTurn,
 } from '@arkloop/shared'
@@ -58,6 +59,7 @@ function formatAbsoluteTime(value: string | undefined, locale: 'zh' | 'en', fall
 }
 
 function formatEventJSON(event: RunEventRaw): string {
+  const toolName = pickLogicalToolName(event.data, event.tool_name)
   return jsonStringifyForDebugDisplay(
     {
       event_id: event.event_id,
@@ -65,12 +67,16 @@ function formatEventJSON(event: RunEventRaw): string {
       seq: event.seq,
       ts: event.ts,
       type: event.type,
-      tool_name: event.tool_name,
+      tool_name: toolName || event.tool_name,
       error_class: event.error_class,
       data: event.data,
     },
     2,
   )
+}
+
+function displayToolName(event: RunEventRaw): string {
+  return pickLogicalToolName(event.data, event.tool_name)
 }
 
 
@@ -225,7 +231,13 @@ export function RunDetailPanel({ run, agentName, accessToken, onClose }: Props) 
 
   const fallback = t.runs.emptyValue
   const status = detail?.status ?? run?.status ?? 'unknown'
-  const turns: LlmTurn[] = useMemo(() => buildTurns(events ?? []), [events])
+  const turns: LlmTurn[] = useMemo(
+    () => buildTurns((events ?? []).map((event) => ({
+      ...event,
+      tool_name: displayToolName(event) || event.tool_name,
+    }))),
+    [events],
+  )
   const threadTurns = useMemo(() => buildRequestThreadTurns(turns), [turns])
   const executionTurns = useMemo(() => turns, [turns])
   const threadLabel = locale.startsWith('zh') ? '对话线程' : 'Thread'
@@ -399,9 +411,9 @@ export function RunDetailPanel({ run, agentName, accessToken, onClose }: Props) 
                           #{event.seq}
                         </span>
                         <span className="font-mono text-[var(--c-text-secondary)]">{event.type}</span>
-                        {event.tool_name && (
+                        {displayToolName(event) && (
                           <span className="rounded bg-[var(--c-bg-sub)] px-1.5 py-0.5 text-[10px] text-[var(--c-text-muted)]">
-                            {event.tool_name}
+                            {displayToolName(event)}
                           </span>
                         )}
                         {event.error_class && (
