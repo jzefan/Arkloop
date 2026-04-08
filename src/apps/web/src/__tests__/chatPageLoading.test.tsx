@@ -153,8 +153,18 @@ vi.mock('../components/ChatInput', () => ({
 }))
 
 vi.mock('../components/MessageBubble', () => ({
-  MessageBubble: ({ message, contentOverride }: { message: { content: string }; contentOverride?: string }) => (
-    <div>{contentOverride ?? message.content}</div>
+  MessageBubble: ({
+    message,
+    contentOverride,
+    animateUserEnter,
+  }: {
+    message: { content: string }
+    contentOverride?: string
+    animateUserEnter?: boolean
+  }) => (
+    <div className={animateUserEnter ? 'user-prompt-bubble-enter' : undefined}>
+      {contentOverride ?? message.content}
+    </div>
   ),
 }))
 
@@ -593,6 +603,7 @@ describe('ChatPage loading state', () => {
     })
 
     expect(container.textContent).toContain('hello')
+    expect(container.querySelector('.user-prompt-bubble-enter')).toBeTruthy()
 
     await act(async () => {
       releaseMessages?.([welcomeMessage])
