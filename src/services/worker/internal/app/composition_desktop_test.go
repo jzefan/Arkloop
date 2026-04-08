@@ -1655,6 +1655,80 @@ func TestDesktopRunCancelWatcherCancelsOnRequestedEvent(t *testing.T) {
 	}
 }
 
+func TestDesktopEventWriterPersistsModelWithoutPersona(t *testing.T) {
+	ctx := context.Background()
+
+	sqlitePool, err := sqliteadapter.AutoMigrate(ctx, filepath.Join(t.TempDir(), "desktop.db"))
+	if err != nil {
+		t.Fatalf("auto migrate sqlite: %v", err)
+	}
+	defer sqlitePool.Close()
+
+	db := sqlitepgx.New(sqlitePool.Unwrap())
+
+	accountID := uuid.New()
+	projectID := uuid.New()
+	threadID := uuid.New()
+	runID := uuid.New()
+
+	for _, stmt := range []struct {
+		sql  string
+		args []any
+	}{
+		{
+			sql:  `INSERT INTO accounts (id, slug, name, type, status) VALUES ($1, $2, $3, 'personal', 'active')`,
+			args: []any{accountID, "desktop-writer-model-" + accountID.String(), "Desktop Writer Model"},
+		},
+		{
+			sql:  `INSERT INTO projects (id, account_id, name, visibility) VALUES ($1, $2, $3, 'private')`,
+			args: []any{projectID, accountID, "Writer Project"},
+		},
+		{
+			sql:  `INSERT INTO threads (id, account_id, project_id, is_private) VALUES ($1, $2, $3, TRUE)`,
+			args: []any{threadID, accountID, projectID},
+		},
+		{
+			sql:  `INSERT INTO runs (id, account_id, thread_id, status) VALUES ($1, $2, $3, 'running')`,
+			args: []any{runID, accountID, threadID},
+		},
+	} {
+		if _, err := db.Exec(ctx, stmt.sql, stmt.args...); err != nil {
+			t.Fatalf("seed data: %v", err)
+		}
+	}
+
+	writer := &desktopEventWriter{
+		db:         db,
+		run:        data.Run{ID: runID, AccountID: accountID, ThreadID: threadID},
+		traceID:    "model-no-persona",
+		runsRepo:   data.DesktopRunsRepository{},
+		eventsRepo: data.DesktopRunEventsRepository{},
+		model:      "cery^claude-sonnet-4-6",
+	}
+
+	ev := events.NewEmitter("model-no-persona").Emit("run.route.selected", map[string]any{
+		"credential_name": "cery",
+		"model":           "claude-sonnet-4-6",
+	}, nil, nil)
+	if err := writer.append(ctx, runID, ev, ""); err != nil {
+		t.Fatalf("append run.route.selected: %v", err)
+	}
+
+	var (
+		model     *string
+		personaID *string
+	)
+	if err := db.QueryRow(ctx, `SELECT model, persona_id FROM runs WHERE id = $1`, runID).Scan(&model, &personaID); err != nil {
+		t.Fatalf("select run metadata: %v", err)
+	}
+	if model == nil || *model != "cery^claude-sonnet-4-6" {
+		t.Fatalf("expected model to persist without persona, got %#v", model)
+	}
+	if personaID != nil && *personaID != "" {
+		t.Fatalf("expected persona_id to stay empty when persona is omitted, got %#v", personaID)
+	}
+}
+
 func TestDesktopEventWriterFinalizeCancelledIfRequested(t *testing.T) {
 	ctx := context.Background()
 
