@@ -192,6 +192,49 @@ func TestDispatchingExecutorUsesLegacyNameWhenBound(t *testing.T) {
 	}
 }
 
+func TestDispatchingExecutorPrefersBoundProviderWhenLogicalAndProviderSpecsCoexist(t *testing.T) {
+	registry := NewRegistry()
+	for _, spec := range []AgentToolSpec{
+		{
+			Name:        "web_search",
+			Version:     "1",
+			Description: "logical web search",
+			RiskLevel:   RiskLevelLow,
+		},
+		{
+			Name:        "web_search.tavily",
+			LlmName:     "web_search",
+			Version:     "1",
+			Description: "provider web search",
+			RiskLevel:   RiskLevelLow,
+		},
+	} {
+		if err := registry.Register(spec); err != nil {
+			t.Fatalf("register failed: %v", err)
+		}
+	}
+
+	dispatch := NewDispatchingExecutor(registry, NewPolicyEnforcer(registry, AllowlistFromNames([]string{"web_search.tavily"})))
+	exec := &recordingExecutor{}
+	if err := dispatch.Bind("web_search.tavily", exec); err != nil {
+		t.Fatalf("bind failed: %v", err)
+	}
+
+	result := dispatch.Execute(
+		context.Background(),
+		"web_search",
+		map[string]any{"query": "x"},
+		ExecutionContext{Emitter: events.NewEmitter("trace")},
+		"call1",
+	)
+	if result.Error != nil {
+		t.Fatalf("unexpected error: %+v", result.Error)
+	}
+	if got := exec.CalledWith(); got != "web_search.tavily" {
+		t.Fatalf("expected provider executor web_search.tavily, got %q", got)
+	}
+}
+
 func TestDispatchingExecutorBypassesCompressionAndSummarizationForGenerativeUIBootstrapTools(t *testing.T) {
 	registry := NewRegistry()
 	if err := registry.Register(AgentToolSpec{
