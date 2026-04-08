@@ -37,6 +37,138 @@ func TestOpenAIToolMessage_IncludesErrorWhenResultAlsoPresent(t *testing.T) {
 	}
 }
 
+func TestOpenAIGateway_Stream_Responses_ReasoningEnabledSendsEffortAndSummary(t *testing.T) {
+	var receivedBody []byte
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/responses" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatalf("read request body failed: %v", err)
+		}
+		receivedBody = append([]byte(nil), body...)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"ok"}]}]}`))
+	}))
+	t.Cleanup(server.Close)
+
+	gateway := NewOpenAIGateway(OpenAIGatewayConfig{
+		APIKey:  "test",
+		BaseURL: server.URL,
+		APIMode: "responses",
+	})
+
+	err := gateway.Stream(context.Background(), Request{
+		Model:         "gpt-test",
+		Messages:      []Message{{Role: "user", Content: []TextPart{{Text: "hi"}}}},
+		ReasoningMode: "enabled",
+	}, func(StreamEvent) error {
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("stream failed: %v", err)
+	}
+
+	var payload map[string]any
+	if err := json.Unmarshal(receivedBody, &payload); err != nil {
+		t.Fatalf("unmarshal request failed: %v", err)
+	}
+	reasoning, ok := payload["reasoning"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected reasoning payload, got %#v", payload["reasoning"])
+	}
+	if reasoning["effort"] != "medium" {
+		t.Fatalf("expected reasoning.effort=medium, got %#v", reasoning["effort"])
+	}
+	if reasoning["summary"] != "auto" {
+		t.Fatalf("expected reasoning.summary=auto, got %#v", reasoning["summary"])
+	}
+}
+
+func TestOpenAIGateway_Stream_Responses_ReasoningHighPreservesExplicitLevel(t *testing.T) {
+	var receivedBody []byte
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatalf("read request body failed: %v", err)
+		}
+		receivedBody = append([]byte(nil), body...)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"ok"}]}]}`))
+	}))
+	t.Cleanup(server.Close)
+
+	gateway := NewOpenAIGateway(OpenAIGatewayConfig{
+		APIKey:  "test",
+		BaseURL: server.URL,
+		APIMode: "responses",
+	})
+
+	err := gateway.Stream(context.Background(), Request{
+		Model:         "gpt-test",
+		Messages:      []Message{{Role: "user", Content: []TextPart{{Text: "hi"}}}},
+		ReasoningMode: "high",
+	}, func(StreamEvent) error {
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("stream failed: %v", err)
+	}
+
+	var payload map[string]any
+	if err := json.Unmarshal(receivedBody, &payload); err != nil {
+		t.Fatalf("unmarshal request failed: %v", err)
+	}
+	reasoning := payload["reasoning"].(map[string]any)
+	if reasoning["effort"] != "high" {
+		t.Fatalf("expected reasoning.effort=high, got %#v", reasoning["effort"])
+	}
+}
+
+func TestOpenAIGateway_Stream_ChatCompletions_ReasoningNoneUsesExplicitEffort(t *testing.T) {
+	var receivedBody []byte
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatalf("read request body failed: %v", err)
+		}
+		receivedBody = append([]byte(nil), body...)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}]}`))
+	}))
+	t.Cleanup(server.Close)
+
+	gateway := NewOpenAIGateway(OpenAIGatewayConfig{
+		APIKey:  "test",
+		BaseURL: server.URL,
+		APIMode: "chat_completions",
+	})
+
+	err := gateway.Stream(context.Background(), Request{
+		Model:         "gpt-test",
+		Messages:      []Message{{Role: "user", Content: []TextPart{{Text: "hi"}}}},
+		ReasoningMode: "none",
+	}, func(StreamEvent) error {
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("stream failed: %v", err)
+	}
+
+	var payload map[string]any
+	if err := json.Unmarshal(receivedBody, &payload); err != nil {
+		t.Fatalf("unmarshal request failed: %v", err)
+	}
+	if payload["reasoning_effort"] != "none" {
+		t.Fatalf("expected reasoning_effort=none, got %#v", payload["reasoning_effort"])
+	}
+}
+
 func TestOpenAIGateway_Stream_ToolCalls(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/chat/completions" {
@@ -2231,6 +2363,112 @@ func TestOpenAIErrorMessageAndDetails(t *testing.T) {
 	}
 	if d2["provider_error_body"] != string(flat) {
 		t.Fatalf("missing provider_error_body")
+	}
+}
+
+func TestOpenAIReasoningEffort(t *testing.T) {
+	cases := map[string]string{
+		"enabled":      "medium",
+		"minimal":      "minimal",
+		"low":          "low",
+		"medium":       "medium",
+		"high":         "high",
+		"xhigh":        "xhigh",
+		"none":         "none",
+		"extra_high":   "xhigh",
+		"extra-high":   "xhigh",
+		"extra high":   "xhigh",
+		" EXTRA-HIGH ": "xhigh",
+	}
+	for input, want := range cases {
+		got, ok := openAIReasoningEffort(input)
+		if !ok || got != want {
+			t.Fatalf("mode %q => (%q, %v), want (%q, true)", input, got, ok, want)
+		}
+	}
+
+	if _, ok := openAIReasoningEffort("auto"); ok {
+		t.Fatal("auto should not force a reasoning effort")
+	}
+}
+
+func TestOpenAIReasoningDisabled(t *testing.T) {
+	if !openAIReasoningDisabled("disabled") {
+		t.Fatal("disabled should remove reasoning")
+	}
+	if openAIReasoningDisabled("enabled") {
+		t.Fatal("enabled should not remove reasoning")
+	}
+}
+
+func TestOpenAIResponsesReasoningPayloadUsesEffort(t *testing.T) {
+	payload := map[string]any{}
+	applyOpenAIResponsesReasoningMode(payload, "enabled")
+	reasoning, ok := payload["reasoning"].(map[string]any)
+	if !ok {
+		t.Fatal("expected reasoning payload")
+	}
+	if reasoning["effort"] != "medium" {
+		t.Fatalf("reasoning.effort = %#v, want medium", reasoning["effort"])
+	}
+	if reasoning["summary"] != "auto" {
+		t.Fatalf("reasoning.summary = %#v, want auto", reasoning["summary"])
+	}
+}
+
+func TestOpenAIResponsesReasoningPayloadKeepsAdvancedSummary(t *testing.T) {
+	payload := map[string]any{
+		"reasoning": map[string]any{"summary": "detailed"},
+	}
+	applyOpenAIResponsesReasoningMode(payload, "high")
+	reasoning := payload["reasoning"].(map[string]any)
+	if reasoning["effort"] != "high" {
+		t.Fatalf("reasoning.effort = %#v, want high", reasoning["effort"])
+	}
+	if reasoning["summary"] != "detailed" {
+		t.Fatalf("reasoning.summary = %#v, want detailed", reasoning["summary"])
+	}
+}
+
+func TestOpenAIResponsesReasoningPayloadSupportsNoneEffort(t *testing.T) {
+	payload := map[string]any{}
+	applyOpenAIResponsesReasoningMode(payload, "none")
+	reasoning, ok := payload["reasoning"].(map[string]any)
+	if !ok {
+		t.Fatal("expected reasoning payload")
+	}
+	if reasoning["effort"] != "none" {
+		t.Fatalf("reasoning.effort = %#v, want none", reasoning["effort"])
+	}
+}
+
+func TestOpenAIChatReasoningPayloadRemovesEffortWhenDisabled(t *testing.T) {
+	payload := map[string]any{"reasoning_effort": "high"}
+	applyOpenAIChatReasoningMode(payload, "disabled")
+	if _, ok := payload["reasoning_effort"]; ok {
+		t.Fatal("reasoning_effort should be removed when disabled")
+	}
+}
+
+func TestOpenAIResponsesReasoningPayloadNoneRemovesSummary(t *testing.T) {
+	payload := map[string]any{
+		"reasoning": map[string]any{"summary": "auto"},
+	}
+	applyOpenAIResponsesReasoningMode(payload, "none")
+	reasoning := payload["reasoning"].(map[string]any)
+	if reasoning["effort"] != "none" {
+		t.Fatalf("reasoning.effort = %#v, want none", reasoning["effort"])
+	}
+	if _, ok := reasoning["summary"]; ok {
+		t.Fatalf("reasoning.summary should be removed, got %#v", reasoning["summary"])
+	}
+}
+
+func TestOpenAIChatReasoningPayloadOverridesAdvancedJSON(t *testing.T) {
+	payload := map[string]any{"reasoning_effort": "low"}
+	applyOpenAIChatReasoningMode(payload, "high")
+	if payload["reasoning_effort"] != "high" {
+		t.Fatalf("reasoning_effort = %#v, want high", payload["reasoning_effort"])
 	}
 }
 

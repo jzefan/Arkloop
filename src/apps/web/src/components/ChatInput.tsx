@@ -12,6 +12,8 @@ import {
   writeSelectedPersonaKeyToStorage,
   readSelectedModelFromStorage,
   writeSelectedModelToStorage,
+  readSelectedThinkingEnabled,
+  writeSelectedThinkingEnabled,
   readThreadThinkingEnabled,
   writeThreadThinkingEnabled,
 } from '../storage'
@@ -150,13 +152,13 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
   const [selectedModel, setSelectedModel] = useState<string | null>(readSelectedModelFromStorage)
 
   const [thinkingEnabled, setThinkingEnabled] = useState(() => {
-    if (!workThreadId) return false
+    if (!workThreadId) return readSelectedThinkingEnabled()
     return readThreadThinkingEnabled(workThreadId)
   })
 
   useEffect(() => {
     if (!workThreadId) {
-      setThinkingEnabled(false)
+      setThinkingEnabled(readSelectedThinkingEnabled())
       return
     }
     setThinkingEnabled(readThreadThinkingEnabled(workThreadId))
@@ -219,12 +221,20 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
     setSelectedModel(model)
     writeSelectedModelToStorage(model)
     setThinkingEnabled(false)
-    if (workThreadId) writeThreadThinkingEnabled(workThreadId, false)
+    if (workThreadId) {
+      writeThreadThinkingEnabled(workThreadId, false)
+      return
+    }
+    writeSelectedThinkingEnabled(false)
   }, [workThreadId])
 
   const handleThinkingChange = useCallback((v: boolean) => {
     setThinkingEnabled(v)
-    if (workThreadId) writeThreadThinkingEnabled(workThreadId, v)
+    if (workThreadId) {
+      writeThreadThinkingEnabled(workThreadId, v)
+      return
+    }
+    writeSelectedThinkingEnabled(v)
   }, [workThreadId])
 
   const isNonDefaultMode = selectedPersonaKey !== DEFAULT_PERSONA_KEY
