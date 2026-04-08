@@ -1218,6 +1218,12 @@ func desktopChannelDelivery(db data.DesktopDB) pipeline.RunMiddleware {
 				return nil
 			}
 			rc.TelegramToolBoundaryFlush = streamFlush
+
+			tracker := pipeline.NewTelegramProgressTracker(client, preloaded.Token, pipeline.ChannelDeliveryTarget{
+				ChannelType:  rc.ChannelContext.ChannelType,
+				Conversation: rc.ChannelContext.Conversation,
+			}, desktopTelegramReplyReference(rc))
+			rc.TelegramProgressTracker = tracker
 		}
 
 		var stopTyping context.CancelFunc
@@ -1228,6 +1234,9 @@ func desktopChannelDelivery(db data.DesktopDB) pipeline.RunMiddleware {
 		err := next(ctx, rc)
 		if rc != nil {
 			rc.TelegramToolBoundaryFlush = nil
+			if rc.TelegramProgressTracker != nil {
+				rc.TelegramProgressTracker.Finalize(ctx)
+			}
 		}
 		if stopTyping != nil {
 			stopTyping()
@@ -2099,17 +2108,18 @@ func desktopAgentLoop(
 		}
 
 		w := &desktopEventWriter{
-			db:                    db,
-			bus:                   bus,
-			run:                   rc.Run,
-			traceID:               rc.TraceID,
-			model:                 selected.Route.Model,
-			runsRepo:              runsRepo,
-			eventsRepo:            eventsRepo,
-			projector:             projector,
-			usageRepo:             data.UsageRecordsRepository{},
-			responseDraftStore:    rc.ResponseDraftStore,
-			telegramBoundaryFlush: rc.TelegramToolBoundaryFlush,
+			db:                      db,
+			bus:                     bus,
+			run:                     rc.Run,
+			traceID:                 rc.TraceID,
+			model:                   selected.Route.Model,
+			runsRepo:                runsRepo,
+			eventsRepo:              eventsRepo,
+			projector:               projector,
+			usageRepo:               data.UsageRecordsRepository{},
+			responseDraftStore:      rc.ResponseDraftStore,
+			telegramBoundaryFlush:   rc.TelegramToolBoundaryFlush,
+			telegramProgressTracker: rc.TelegramProgressTracker,
 		}
 		personaID := ""
 		if rc.PersonaDefinition != nil {
@@ -2248,6 +2258,7 @@ type desktopEventWriter struct {
 	usageRepo                data.UsageRecordsRepository
 	telegramBoundaryFlush    func(context.Context, string) error
 	telegramSentOutputCount  int
+	telegramProgressTracker  *pipeline.TelegramProgressTracker
 	terminalUserMessage      string
 	terminalStatus           string
 	visibleAssistantText     string
@@ -2380,11 +2391,30 @@ func (w *desktopEventWriter) append(ctx context.Context, runID uuid.UUID, ev eve
 		w.accumUsage(ev.DataJSON)
 	}
 
+	if ev.Type == "run.segment.start" && w.telegramProgressTracker != nil {
+		segmentID, _ := ev.DataJSON["segment_id"].(string)
+		kind, _ := ev.DataJSON["kind"].(string)
+		display, _ := ev.DataJSON["display"].(map[string]any)
+		mode, _ := display["mode"].(string)
+		label, _ := display["label"].(string)
+		w.telegramProgressTracker.OnRunSegmentStart(ctx, strings.TrimSpace(segmentID), strings.TrimSpace(kind), strings.TrimSpace(mode), strings.TrimSpace(label))
+	}
+	if ev.Type == "run.segment.end" && w.telegramProgressTracker != nil {
+		segmentID, _ := ev.DataJSON["segment_id"].(string)
+		w.telegramProgressTracker.OnRunSegmentEnd(ctx, segmentID)
+	}
+
 	if ev.Type == "tool.call" {
 		w.captureChannelToolCallOutput(ev.DataJSON)
 		flushChunk = w.pendingTelegramFlushChunk()
 		w.toolCallCount++
 		w.collectToolCall(ev.DataJSON)
+		if w.telegramProgressTracker != nil {
+			callID, _ := ev.DataJSON["tool_call_id"].(string)
+			toolName, _ := ev.DataJSON["tool_name"].(string)
+			argsRaw, _ := json.Marshal(ev.DataJSON["arguments"])
+			w.telegramProgressTracker.OnToolCall(ctx, callID, toolName, string(argsRaw))
+		}
 	}
 	if ev.Type == "llm.request" {
 		w.flushPendingToolCalls()
@@ -2392,9 +2422,25 @@ func (w *desktopEventWriter) append(ctx context.Context, runID uuid.UUID, ev eve
 	}
 	if ev.Type == "tool.result" {
 		w.collectToolResult(ev.DataJSON)
+		if w.telegramProgressTracker != nil {
+			callID, _ := ev.DataJSON["tool_call_id"].(string)
+			toolName, _ := ev.DataJSON["tool_name"].(string)
+			errorClass := ""
+			if ev.ErrorClass != nil {
+				errorClass = *ev.ErrorClass
+			}
+			w.telegramProgressTracker.OnToolResult(ctx, callID, toolName, errorClass)
+		}
 	}
 
 	if ev.Type == "message.delta" {
+		if w.telegramProgressTracker != nil {
+			role, _ := ev.DataJSON["role"].(string)
+			channel, _ := ev.DataJSON["channel"].(string)
+			if delta := desktopExtractDelta(ev.DataJSON); delta != "" {
+				w.telegramProgressTracker.OnMessageDelta(ctx, role, channel, delta)
+			}
+		}
 		if channel, _ := ev.DataJSON["channel"].(string); channel == "" {
 			if delta := desktopExtractDelta(ev.DataJSON); delta != "" {
 				w.assistantDeltas = append(w.assistantDeltas, delta)

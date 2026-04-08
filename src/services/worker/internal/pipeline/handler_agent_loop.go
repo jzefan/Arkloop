@@ -85,6 +85,7 @@ func NewAgentLoopHandler(
 			policy,
 			rc.ReleaseSlot,
 			rc.TelegramToolBoundaryFlush,
+			rc.TelegramProgressTracker,
 		)
 		defer writer.Close(ctx)
 
@@ -230,6 +231,7 @@ type eventWriter struct {
 
 	telegramToolBoundaryFlush func(context.Context, string) error
 	telegramSentOutputCount   int
+	telegramProgressTracker   *TelegramProgressTracker
 	pendingReplyOverride      string
 
 	// 子 Run 完成通知：commit 时将终态状态发布到 run.child.{runID}.done
@@ -269,6 +271,7 @@ func newEventWriter(
 	policy creditpolicy.CreditDeductionPolicy,
 	releaseSlot func(),
 	telegramToolBoundaryFlush func(context.Context, string) error,
+	telegramProgressTracker *TelegramProgressTracker,
 ) *eventWriter {
 	if creditsPerUSD <= 0 {
 		creditsPerUSD = 1000.0
@@ -298,6 +301,7 @@ func newEventWriter(
 		policy:                    policy,
 		releaseSlot:               releaseSlot,
 		telegramToolBoundaryFlush: telegramToolBoundaryFlush,
+		telegramProgressTracker:   telegramProgressTracker,
 	}
 }
 
@@ -474,11 +478,27 @@ func (w *eventWriter) Append(
 		w.accumUsage(ev.DataJSON)
 	}
 
+	if ev.Type == "run.segment.start" && w.telegramProgressTracker != nil {
+		segmentID, kind, mode, label := extractProgressSegmentStart(ev.DataJSON)
+		w.telegramProgressTracker.OnRunSegmentStart(ctx, segmentID, kind, mode, label)
+	}
+
+	if ev.Type == "run.segment.end" && w.telegramProgressTracker != nil {
+		segmentID, _ := ev.DataJSON["segment_id"].(string)
+		w.telegramProgressTracker.OnRunSegmentEnd(ctx, segmentID)
+	}
+
 	if ev.Type == "tool.call" {
 		flushChunk = w.pendingTelegramFlushChunk()
 		w.captureReplyOverride(ev.DataJSON)
 		w.toolCallCount++
 		w.collectToolCall(ev.DataJSON)
+		if w.telegramProgressTracker != nil {
+			callID, _ := ev.DataJSON["tool_call_id"].(string)
+			toolName, _ := ev.DataJSON["tool_name"].(string)
+			argsRaw, _ := json.Marshal(ev.DataJSON["arguments"])
+			w.telegramProgressTracker.OnToolCall(ctx, callID, toolName, string(argsRaw))
+		}
 	}
 	if ev.Type == "llm.request" {
 		w.flushPendingToolCalls()
@@ -487,9 +507,25 @@ func (w *eventWriter) Append(
 
 	if ev.Type == "tool.result" {
 		w.collectToolResult(ev.DataJSON)
+		if w.telegramProgressTracker != nil {
+			callID, _ := ev.DataJSON["tool_call_id"].(string)
+			toolName, _ := ev.DataJSON["tool_name"].(string)
+			errorClass := ""
+			if ev.ErrorClass != nil {
+				errorClass = *ev.ErrorClass
+			}
+			w.telegramProgressTracker.OnToolResult(ctx, callID, toolName, errorClass)
+		}
 	}
 
 	if ev.Type == "message.delta" {
+		if w.telegramProgressTracker != nil {
+			role, _ := ev.DataJSON["role"].(string)
+			channel, _ := ev.DataJSON["channel"].(string)
+			if delta := extractAssistantDelta(ev.DataJSON); delta != "" {
+				w.telegramProgressTracker.OnMessageDelta(ctx, role, channel, delta)
+			}
+		}
 		// 只累积主内容，thinking channel 不计入最终消息文本
 		if channel, _ := ev.DataJSON["channel"].(string); channel == "" {
 			if delta := extractAssistantDelta(ev.DataJSON); delta != "" {
@@ -879,6 +915,21 @@ func extractAssistantDelta(dataJSON map[string]any) string {
 		return ""
 	}
 	return delta
+}
+
+func extractProgressSegmentStart(dataJSON map[string]any) (segmentID, kind, mode, label string) {
+	if dataJSON == nil {
+		return "", "", "", ""
+	}
+	segmentID, _ = dataJSON["segment_id"].(string)
+	kind, _ = dataJSON["kind"].(string)
+	display, _ := dataJSON["display"].(map[string]any)
+	if display == nil {
+		return strings.TrimSpace(segmentID), strings.TrimSpace(kind), "", ""
+	}
+	mode, _ = display["mode"].(string)
+	label, _ = display["label"].(string)
+	return strings.TrimSpace(segmentID), strings.TrimSpace(kind), strings.TrimSpace(mode), strings.TrimSpace(label)
 }
 
 func assistantMessageFromEventData(dataJSON map[string]any) (llm.Message, bool) {
