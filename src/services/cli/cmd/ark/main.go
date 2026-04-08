@@ -371,7 +371,7 @@ func cmdRun(ctx context.Context, args []string) error {
 	fs.SetOutput(io.Discard)
 	host := fs.String("host", apiclient.DefaultBaseURL, "desktop API address")
 	token := fs.String("token", "", "bearer token")
-	timeout := fs.Duration("timeout", 5*time.Minute, "run timeout")
+	timeout := fs.Duration("timeout", 0, "run timeout, 0 disables timeout")
 	persona := fs.String("persona", "", "persona_id")
 	model := fs.String("model", "", "model key")
 	workDir := fs.String("work-dir", "", "working directory")
@@ -419,7 +419,7 @@ func cmdRun(ctx context.Context, args []string) error {
 		ReasoningMode: *reasoning,
 	}
 
-	runCtx, cancel := context.WithTimeout(ctx, *timeout)
+	runCtx, cancel := withOptionalTimeout(ctx, *timeout)
 	defer cancel()
 
 	switch *outputFormat {
@@ -653,7 +653,7 @@ func cmdSessionsResume(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("sessions resume", flag.ExitOnError)
 	host := fs.String("host", apiclient.DefaultBaseURL, "desktop API address")
 	token := fs.String("token", "", "bearer token")
-	timeout := fs.Duration("timeout", 5*time.Minute, "per-turn timeout")
+	timeout := fs.Duration("timeout", 0, "per-turn timeout, 0 disables timeout")
 	persona := fs.String("persona", "", "persona_id")
 	model := fs.String("model", "", "model key")
 	workDir := fs.String("work-dir", "", "working directory")
@@ -679,7 +679,7 @@ func cmdChat(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("chat", flag.ExitOnError)
 	host := fs.String("host", apiclient.DefaultBaseURL, "desktop API address")
 	token := fs.String("token", "", "bearer token")
-	timeout := fs.Duration("timeout", 5*time.Minute, "per-turn timeout")
+	timeout := fs.Duration("timeout", 0, "per-turn timeout, 0 disables timeout")
 	persona := fs.String("persona", "", "persona_id")
 	model := fs.String("model", "", "model key")
 	workDir := fs.String("work-dir", "", "working directory")
@@ -804,4 +804,11 @@ func sessionViews(threads []apiclient.Thread) []formatter.SessionView {
 		})
 	}
 	return views
+}
+
+func withOptionalTimeout(ctx context.Context, timeout time.Duration) (context.Context, context.CancelFunc) {
+	if timeout <= 0 {
+		return context.WithCancel(ctx)
+	}
+	return context.WithTimeout(ctx, timeout)
 }

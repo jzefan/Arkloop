@@ -43,12 +43,13 @@ func TestHandleStatus(t *testing.T) {
 	repl, stderr := newTestREPL(t, func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
 	})
+	repl.timeout = 0
 
 	handled, err := repl.handleCommand(context.Background(), "/status")
 	if err != nil {
 		t.Fatalf("handleCommand: %v", err)
 	}
-	if !handled || !strings.Contains(stderr.String(), "session id: new") {
+	if !handled || !strings.Contains(stderr.String(), "session id: new") || !strings.Contains(stderr.String(), "timeout: none") {
 		t.Fatalf("unexpected status output: %s", stderr.String())
 	}
 }
