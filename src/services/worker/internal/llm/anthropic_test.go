@@ -960,6 +960,46 @@ func TestAnthropicGateway_Stream_ErrorEventStopsTerminal(t *testing.T) {
 	}
 }
 
+func TestAnthropicGateway_Stream_MissingMessageStopAfterTextIsRetryable(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte(anthropicSSEBody([]string{
+			`{"type":"content_block_start","index":0,"content_block":{"type":"text","text":"partial"}}`,
+		})))
+	}))
+	t.Cleanup(server.Close)
+
+	gateway := NewAnthropicGateway(AnthropicGatewayConfig{
+		APIKey:  "test",
+		BaseURL: server.URL,
+	})
+
+	var events []StreamEvent
+	err := gateway.Stream(context.Background(), Request{
+		Model:    "claude-test",
+		Messages: []Message{{Role: "user", Content: []TextPart{{Text: "hi"}}}},
+	}, func(ev StreamEvent) error {
+		events = append(events, ev)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("stream failed: %v", err)
+	}
+	if len(events) == 0 {
+		t.Fatal("expected events, got none")
+	}
+	failed, ok := events[len(events)-1].(StreamRunFailed)
+	if !ok {
+		t.Fatalf("expected terminal StreamRunFailed, got %T", events[len(events)-1])
+	}
+	if failed.Error.ErrorClass != ErrorClassProviderRetryable {
+		t.Fatalf("unexpected error class: %q", failed.Error.ErrorClass)
+	}
+	if failed.Error.Message != "upstream stream ended prematurely without completion" {
+		t.Fatalf("unexpected error message: %q", failed.Error.Message)
+	}
+}
+
 func TestAnthropicGateway_Stream_RefusalStopsWithoutSuccessTerminal(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")

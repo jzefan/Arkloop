@@ -1085,7 +1085,7 @@ func (g *OpenAIGateway) streamChatCompletionsSSE(
 			},
 		})
 	}
-	return yield(StreamRunFailed{LlmCallID: llmCallID, Error: InternalStreamEndedError()})
+	return yield(StreamRunFailed{LlmCallID: llmCallID, Error: RetryableStreamEndedError()})
 }
 
 func openAIChatEmptyStreamFailure(emittedAnyOutput bool, choiceChunkCount int, sawRoleDelta bool, finishReasonSeen bool) (string, string) {
@@ -1329,7 +1329,7 @@ func (g *OpenAIGateway) streamResponsesSSE(
 	if emittedTextOutput || emittedToolDelta || len(calls) > 0 {
 		return yield(StreamRunCompleted{LlmCallID: llmCallID})
 	}
-	return yield(StreamRunFailed{LlmCallID: llmCallID, Error: InternalStreamEndedError()})
+	return yield(StreamRunFailed{LlmCallID: llmCallID, Error: RetryableStreamEndedError()})
 }
 
 func toOpenAIChatMessages(messages []Message) ([]map[string]any, error) {

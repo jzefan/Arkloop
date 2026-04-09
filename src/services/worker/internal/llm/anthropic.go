@@ -1189,7 +1189,11 @@ func (g *AnthropicGateway) streamAnthropicSSE(ctx context.Context, body io.Reade
 		return err
 	}
 	if !completed {
-		return yield(StreamRunFailed{LlmCallID: llmCallID, Error: InternalStreamEndedError()})
+		streamErr := InternalStreamEndedError()
+		if usage != nil || len(assistantBlocks) > 0 || len(toolBuffers) > 0 {
+			streamErr = RetryableStreamEndedError()
+		}
+		return yield(StreamRunFailed{LlmCallID: llmCallID, Error: streamErr})
 	}
 	assistantMessage := Message{Role: "assistant", Content: anthropicAssistantMessageParts(assistantBlocks)}
 	return yield(StreamRunCompleted{LlmCallID: llmCallID, Usage: usage, AssistantMessage: &assistantMessage})
