@@ -1460,12 +1460,33 @@ func (c telegramConnector) notifyActiveRunInput(ctx context.Context, runID uuid.
 	c.inputNotify(ctx, runID)
 }
 
-func buildTelegramRunStartedData(personaRef string, defaultModel string) map[string]any {
-	dataJSON := map[string]any{"persona_id": personaRef}
+func buildChannelRunStartedData(personaRef string, defaultModel string, channelDelivery map[string]any) map[string]any {
+	dataJSON := map[string]any{
+		"persona_id":          personaRef,
+		"continuation_source": "none",
+		"continuation_loop":   false,
+	}
 	if model := strings.TrimSpace(defaultModel); model != "" {
 		dataJSON["model"] = model
 	}
+	if len(channelDelivery) > 0 {
+		dataJSON["channel_delivery"] = channelDelivery
+	}
 	return dataJSON
+}
+
+func buildTelegramRunStartedData(
+	personaRef string,
+	defaultModel string,
+	channelID uuid.UUID,
+	channelIdentityID uuid.UUID,
+	incoming telegramIncomingMessage,
+) map[string]any {
+	return buildChannelRunStartedData(
+		personaRef,
+		defaultModel,
+		buildTelegramChannelDeliveryPayload(channelID, channelIdentityID, incoming),
+	)
 }
 
 func buildTelegramChannelDeliveryPayload(

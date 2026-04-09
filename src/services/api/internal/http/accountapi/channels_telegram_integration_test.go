@@ -457,6 +457,26 @@ func TestTelegramWebhookCreatesRunAndDedupes(t *testing.T) {
 	if got := strings.TrimSpace(asString(started["model"])); got != "demo-cred^gpt-5-mini" {
 		t.Fatalf("unexpected run.started model: %q", got)
 	}
+	if got := strings.TrimSpace(asString(started["continuation_source"])); got != "none" {
+		t.Fatalf("unexpected continuation_source: %q", got)
+	}
+	if got, ok := started["continuation_loop"].(bool); !ok || got {
+		t.Fatalf("unexpected continuation_loop: %#v", started["continuation_loop"])
+	}
+	if got := strings.TrimSpace(asString(started["thread_tail_message_id"])); got == "" {
+		t.Fatalf("expected thread_tail_message_id in run.started: %#v", started)
+	}
+	startedDelivery, ok := started["channel_delivery"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected channel_delivery in run.started: %#v", started)
+	}
+	startedConversationRef, _ := startedDelivery["conversation_ref"].(map[string]any)
+	if got := asString(startedConversationRef["target"]); got != "10001" {
+		t.Fatalf("unexpected run.started conversation_ref: %#v", startedDelivery)
+	}
+	if got := asString(startedDelivery["conversation_type"]); got != "private" {
+		t.Fatalf("unexpected run.started conversation_type: %#v", startedDelivery)
+	}
 }
 
 func TestTelegramWebhookRejectsInvalidSignature(t *testing.T) {
