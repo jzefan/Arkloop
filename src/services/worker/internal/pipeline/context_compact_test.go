@@ -1,6 +1,7 @@
 package pipeline
 
 import (
+	"context"
 	"strings"
 	"testing"
 
@@ -319,6 +320,108 @@ func TestMicrocompactToolResults_NoTools(t *testing.T) {
 		if messageText(out[i]) != messageText(msgs[i]) {
 			t.Fatalf("msg[%d] changed unexpectedly", i)
 		}
+	}
+}
+
+func TestRewriteOversizeRequest_StripsOldImagesAndKeepsLatestUserImage(t *testing.T) {
+	rc := &RunContext{
+		ContextCompact: ContextCompactSettings{
+			PersistKeepLastMessages:     1,
+			MicrocompactKeepRecentTools: 1,
+		},
+	}
+	request := llm.Request{
+		Messages: []llm.Message{
+			{
+				Role: "user",
+				Content: []llm.ContentPart{
+					{
+						Type: messagecontent.PartTypeImage,
+						Attachment: &messagecontent.AttachmentRef{
+							Key: "attachments/old.png",
+						},
+					},
+				},
+			},
+			{
+				Role: "tool",
+				Content: []llm.TextPart{{
+					Text: `{"tool_call_id":"call_old","tool_name":"read","result":{"huge":true}}`,
+				}},
+			},
+			{
+				Role: "user",
+				Content: []llm.ContentPart{
+					{
+						Type: messagecontent.PartTypeImage,
+						Data: []byte("latest"),
+						Attachment: &messagecontent.AttachmentRef{
+							Key:      "attachments/latest.png",
+							MimeType: "image/png",
+						},
+					},
+				},
+			},
+		},
+	}
+
+	rewritten, stats, err := RewriteOversizeRequest(context.Background(), rc, request, nil, llm.EstimateRequestJSONBytes)
+	if err != nil {
+		t.Fatalf("RewriteOversizeRequest failed: %v", err)
+	}
+	if !stats.RewriteApplied {
+		t.Fatal("expected rewrite to apply")
+	}
+	if stats.ImagesStripped != 1 {
+		t.Fatalf("expected 1 stripped image, got %d", stats.ImagesStripped)
+	}
+	if stats.ToolResultsMicrocompacted != 0 {
+		t.Fatalf("expected no tool microcompact when only one tool result remains recent, got %d", stats.ToolResultsMicrocompacted)
+	}
+	if got := rewritten.Messages[0].Content[0].Text; got != "[image attachment_key=\"attachments/old.png\"]" {
+		t.Fatalf("unexpected old image placeholder: %q", got)
+	}
+	if rewritten.Messages[2].Content[0].Kind() != messagecontent.PartTypeImage {
+		t.Fatalf("expected latest user image to remain image, got %#v", rewritten.Messages[2].Content[0])
+	}
+}
+
+func TestRewriteOversizeRequest_MicrocompactsOldToolResults(t *testing.T) {
+	rc := &RunContext{
+		ContextCompact: ContextCompactSettings{
+			PersistKeepLastMessages:     10,
+			MicrocompactKeepRecentTools: 1,
+		},
+	}
+	request := llm.Request{
+		Messages: []llm.Message{
+			{
+				Role: "tool",
+				Content: []llm.TextPart{{
+					Text: `{"tool_call_id":"call_old","tool_name":"read","result":{"old":true}}`,
+				}},
+			},
+			{
+				Role: "tool",
+				Content: []llm.TextPart{{
+					Text: `{"tool_call_id":"call_new","tool_name":"read","result":{"new":true}}`,
+				}},
+			},
+		},
+	}
+
+	rewritten, stats, err := RewriteOversizeRequest(context.Background(), rc, request, nil, llm.EstimateRequestJSONBytes)
+	if err != nil {
+		t.Fatalf("RewriteOversizeRequest failed: %v", err)
+	}
+	if stats.ToolResultsMicrocompacted != 1 {
+		t.Fatalf("expected 1 microcompacted tool result, got %d", stats.ToolResultsMicrocompacted)
+	}
+	if !strings.Contains(messageText(rewritten.Messages[0]), `"cleared":true`) {
+		t.Fatalf("expected old tool result stub, got %q", messageText(rewritten.Messages[0]))
+	}
+	if !strings.Contains(messageText(rewritten.Messages[1]), `"new":true`) {
+		t.Fatalf("expected latest tool result preserved, got %q", messageText(rewritten.Messages[1]))
 	}
 }
 
