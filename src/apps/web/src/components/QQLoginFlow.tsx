@@ -55,6 +55,9 @@ export function QQLoginFlow({ accessToken, channelId: _channelId, onStatusChange
     return () => clearInterval(pollRef.current)
   }, [fetchStatus])
 
+  // 非 Windows 平台：只拉取 platform 信息，不展示 NapCat 管理 UI
+  const isWindows = status?.platform === 'windows'
+
   // keep log panel scrolled to bottom when new lines arrive
   useEffect(() => {
     const el = logEndRef.current?.parentElement
@@ -65,6 +68,7 @@ export function QQLoginFlow({ accessToken, channelId: _channelId, onStatusChange
 
   // fetch QR code image as blob when qrcode_url changes
   useEffect(() => {
+    if (!isWindows) return
     if (status?.logged_in) {
       setQrBlobUrl(prev => { if (prev) URL.revokeObjectURL(prev); return null })
       prevQrUrl.current = undefined
@@ -89,13 +93,23 @@ export function QQLoginFlow({ accessToken, channelId: _channelId, onStatusChange
       setQrBlobUrl(prev => { if (prev) URL.revokeObjectURL(prev); return null })
       prevQrUrl.current = undefined
     }
-  }, [status?.qrcode_url, status?.logged_in, accessToken])
+  }, [status?.qrcode_url, status?.logged_in, accessToken, isWindows])
 
   // cleanup blob URL on unmount
   useEffect(() => {
     return () => { if (qrBlobUrl) URL.revokeObjectURL(qrBlobUrl) }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  if (status && !isWindows) {
+    return (
+      <div className="flex flex-col gap-2 py-2">
+        <span className="text-xs leading-relaxed text-[var(--c-text-muted)]">
+          {ct.qqExternalOneBotHint}
+        </span>
+      </div>
+    )
+  }
 
   const handleSetup = async () => {
     setError('')

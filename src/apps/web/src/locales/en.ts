@@ -614,6 +614,7 @@ export const en: LocaleStrings = {
     qqOneBotToken: 'Token',
     qqOneBotTokenPlaceholder: 'Access token',
     qqOneBotAutoFilled: 'Auto-filled from NapCat',
+    qqExternalOneBotHint: 'Please deploy NapCat or another OneBot11 service externally, then fill in the connection info below.',
     bindingsTitle: 'Linked accounts',
     bindingsEmpty: 'No linked platform accounts.',
     generateCode: 'Generate bind code',

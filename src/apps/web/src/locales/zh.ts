@@ -608,6 +608,7 @@ export const zh: LocaleStrings = {
     qqOneBotToken: 'Token',
     qqOneBotTokenPlaceholder: '鉴权 Token',
     qqOneBotAutoFilled: '已从 NapCat 自动填充',
+    qqExternalOneBotHint: '当前平台不支持内置 QQ 管理，请自行部署 NapCat 或其他 OneBot11 服务后填写连接信息。',
     bindingsTitle: '已关联账号',
     bindingsEmpty: '暂无已关联的平台账号。',
     generateCode: '生成绑定码',

@@ -1971,6 +1971,7 @@ export async function deleteChannelBinding(accessToken: string, channelID: strin
 // --- NapCat (QQ channel) ---
 
 export type NapCatStatus = {
+  platform: string
   installed: boolean
   running: boolean
   logged_in: boolean
