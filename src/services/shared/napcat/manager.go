@@ -49,6 +49,7 @@ const (
 )
 
 type Status struct {
+	Platform       string              `json:"platform"`
 	Installed      bool                `json:"installed"`
 	Running        bool                `json:"running"`
 	LoggedIn       bool                `json:"logged_in"`
@@ -194,6 +195,7 @@ func (m *Manager) Status() Status {
 	m.mu.Lock()
 
 	s := Status{
+		Platform:      runtime.GOOS,
 		Installed:     m.isInstalled(),
 		Running:       m.cmd != nil && m.cmd.Process != nil,
 		Version:       m.version,

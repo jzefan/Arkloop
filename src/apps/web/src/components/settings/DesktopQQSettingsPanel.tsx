@@ -338,6 +338,8 @@ export function DesktopQQSettingsPanel({
     }
   }
 
+  const isWindows = napCatStatus?.platform === 'windows'
+
   return (
     <div className="flex flex-col gap-6">
       {error && (
@@ -384,7 +386,8 @@ export function DesktopQQSettingsPanel({
             <QQLoginFlow accessToken={accessToken} channelId={channel?.id ?? ''} onStatusChange={handleNapCatStatus} />
           </div>
 
-          {/* Auto re-login */}
+          {/* Auto re-login (Windows only) */}
+          {isWindows && (
           <div
             className="rounded-xl px-4 py-4"
             style={{ border: '0.5px solid var(--c-border-subtle)', background: 'var(--c-bg-page)' }}
@@ -401,6 +404,7 @@ export function DesktopQQSettingsPanel({
             />
             <p className="mt-1.5 text-[11px] leading-relaxed text-[var(--c-text-muted)]">{ct.qqAutoLoginDesc}</p>
           </div>
+          )}
 
           {/* OneBot API config */}
           <div
@@ -412,7 +416,7 @@ export function DesktopQQSettingsPanel({
                 <Zap size={14} />
               </span>
               <div className="text-sm font-medium text-[var(--c-text-heading)]">{ct.qqOneBotTitle}</div>
-              {napCatStatus?.logged_in && (napCatStatus.onebot_ws_url || napCatStatus.onebot_http_url) && (
+              {isWindows && napCatStatus?.logged_in && (napCatStatus.onebot_ws_url || napCatStatus.onebot_http_url) && (
                 <span className="ml-auto text-[10px] text-[var(--c-text-muted)]">{ct.qqOneBotAutoFilled}</span>
               )}
             </div>

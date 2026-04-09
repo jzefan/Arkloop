@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	nethttp "net/http"
 	"os"
+	"runtime"
 	"strings"
 	"sync"
 
@@ -78,6 +79,24 @@ func RegisterQQCallbackRoute(mux *nethttp.ServeMux, deps QQCallbackDeps) {
 
 // RegisterNapCatRoutes adds /v1/napcat/* endpoints to the mux.
 func RegisterNapCatRoutes(mux *nethttp.ServeMux, deps NapCatDeps) {
+	// 非 Windows 平台不启动内置 NapCat 进程管理，只提供平台信息
+	if runtime.GOOS != "windows" {
+		statusOnly := napcat.Status{Platform: runtime.GOOS}
+		mux.HandleFunc("GET /v1/napcat/status", napCatHandler(deps.AuthService, func(w nethttp.ResponseWriter, r *nethttp.Request) {
+			writeNapCatJSON(w, nethttp.StatusOK, statusOnly)
+		}))
+		notSupported := napCatHandler(deps.AuthService, func(w nethttp.ResponseWriter, r *nethttp.Request) {
+			writeNapCatJSON(w, nethttp.StatusNotImplemented, map[string]string{"error": "napcat management is only available on Windows"})
+		})
+		mux.HandleFunc("POST /v1/napcat/download", notSupported)
+		mux.HandleFunc("POST /v1/napcat/start", notSupported)
+		mux.HandleFunc("POST /v1/napcat/stop", notSupported)
+		mux.HandleFunc("POST /v1/napcat/refresh-qr", notSupported)
+		mux.HandleFunc("GET /v1/napcat/qrcode.png", notSupported)
+		mux.HandleFunc("POST /v1/napcat/quick-login", notSupported)
+		return
+	}
+
 	mgr := getOrCreateNapCatManager(deps.DataDir, deps.APIPort)
 
 	desktop.SetOneBotHTTPEndpointProvider(mgr.OneBotHTTPEndpoint)

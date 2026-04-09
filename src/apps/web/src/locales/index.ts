@@ -640,6 +640,7 @@ export interface LocaleStrings {
     qqOneBotToken: string
     qqOneBotTokenPlaceholder: string
     qqOneBotAutoFilled: string
+    qqExternalOneBotHint: string
   }
   // model picker (chat input)
   modelPicker: {
