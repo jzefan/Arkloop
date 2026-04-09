@@ -340,6 +340,7 @@ func computeTailKeepByTokenBudget(enc *tiktoken.Tiktoken, msgs []llm.Message, to
 	keep := 0
 	for i := len(msgs) - 1; i >= 0; i-- {
 		mt := tokensPerMessage + len(enc.Encode(msgs[i].Role, nil, nil)) + len(enc.Encode(messageText(msgs[i]), nil, nil))
+		mt += contextCompactImageTokens(msgs[i])
 		if keep > 0 && accum+mt > tokenBudget {
 			break
 		}

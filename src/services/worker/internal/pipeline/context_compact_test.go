@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"arkloop/services/shared/messagecontent"
 	"arkloop/services/worker/internal/llm"
 
 	"github.com/google/uuid"
@@ -69,6 +70,30 @@ func TestTrimPrefixMessagesForCompactLLM_keepsNewestUnderCap(t *testing.T) {
 	}
 	if messageText(out[0]) != "tail-marker" {
 		t.Fatalf("expected newest segment kept")
+	}
+}
+
+func TestHistoryThreadPromptTokens_CountsImageCost(t *testing.T) {
+	enc, err := tiktoken.GetEncoding(tiktoken.MODEL_O200K_BASE)
+	if err != nil {
+		t.Fatal(err)
+	}
+	textOnly := []llm.Message{
+		{Role: "user", Content: []llm.TextPart{{Text: "hello"}}},
+	}
+	withImage := []llm.Message{
+		{
+			Role: "user",
+			Content: []llm.ContentPart{
+				{Type: messagecontent.PartTypeText, Text: "hello"},
+				{Type: messagecontent.PartTypeImage},
+			},
+		},
+	}
+	base := HistoryThreadPromptTokens(enc, textOnly)
+	got := HistoryThreadPromptTokens(enc, withImage)
+	if got-base != contextCompactVisionTokensPerImage {
+		t.Fatalf("expected image cost %d, got delta %d", contextCompactVisionTokensPerImage, got-base)
 	}
 }
 
@@ -163,6 +188,27 @@ func TestComputeTailKeepByTokenBudget_ZeroBudget(t *testing.T) {
 	got := computeTailKeepByTokenBudget(enc, msgs, 0, 0)
 	if got != 0 {
 		t.Fatalf("expected 0, got %d", got)
+	}
+}
+
+func TestComputeTailKeepByTokenBudget_CountsImageCost(t *testing.T) {
+	enc, err := tiktoken.GetEncoding(tiktoken.MODEL_O200K_BASE)
+	if err != nil {
+		t.Fatal(err)
+	}
+	msgs := []llm.Message{
+		{
+			Role: "user",
+			Content: []llm.ContentPart{
+				{Type: messagecontent.PartTypeText, Text: "with image"},
+				{Type: messagecontent.PartTypeImage},
+			},
+		},
+		{Role: "user", Content: []llm.TextPart{{Text: "tail"}}},
+	}
+	got := computeTailKeepByTokenBudget(enc, msgs, 512, 0)
+	if got != 1 {
+		t.Fatalf("expected only tail kept when image cost exceeds budget, got %d", got)
 	}
 }
 
