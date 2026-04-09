@@ -2430,6 +2430,31 @@ func TestOpenAIGateway_StreamChatCompletionsSSE_CtxCanceled_YieldsRunFailed(t *t
 	}
 }
 
+func TestOpenAIGateway_StreamChatCompletionsSSE_EarlyEOFIsRetryable(t *testing.T) {
+	gateway := &OpenAIGateway{cfg: OpenAIGatewayConfig{}}
+	var events []StreamEvent
+	err := gateway.streamChatCompletionsSSE(context.Background(), strings.NewReader(""), "test", 200, func(ev StreamEvent) error {
+		events = append(events, ev)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("expected nil error from gateway, got: %v", err)
+	}
+	if len(events) == 0 {
+		t.Fatal("expected events, got none")
+	}
+	failed, ok := events[len(events)-1].(StreamRunFailed)
+	if !ok {
+		t.Fatalf("expected StreamRunFailed as last event, got %T", events[len(events)-1])
+	}
+	if failed.Error.ErrorClass != ErrorClassProviderRetryable {
+		t.Fatalf("unexpected error class: %s", failed.Error.ErrorClass)
+	}
+	if failed.Error.Message != "upstream stream ended prematurely without completion" {
+		t.Fatalf("unexpected error message: %q", failed.Error.Message)
+	}
+}
+
 func TestOpenAIGateway_StreamResponsesSSE_ReadError_YieldsRunFailed(t *testing.T) {
 	partial := "data: {\"type\":\"response.output_text.delta\",\"delta\":\"hello\"}\n\n"
 	reader := &sseErrorReader{data: []byte(partial), err: fmt.Errorf("connection reset by peer")}
@@ -2452,6 +2477,31 @@ func TestOpenAIGateway_StreamResponsesSSE_ReadError_YieldsRunFailed(t *testing.T
 	failed := events[len(events)-1].(StreamRunFailed)
 	if failed.Error.ErrorClass != ErrorClassProviderRetryable {
 		t.Fatalf("unexpected error class: %s", failed.Error.ErrorClass)
+	}
+}
+
+func TestOpenAIGateway_StreamResponsesSSE_EarlyEOFIsRetryable(t *testing.T) {
+	gateway := &OpenAIGateway{cfg: OpenAIGatewayConfig{}}
+	var events []StreamEvent
+	err := gateway.streamResponsesSSE(context.Background(), strings.NewReader(""), "test", 200, func(ev StreamEvent) error {
+		events = append(events, ev)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("expected nil error from gateway, got: %v", err)
+	}
+	if len(events) == 0 {
+		t.Fatal("expected events, got none")
+	}
+	failed, ok := events[len(events)-1].(StreamRunFailed)
+	if !ok {
+		t.Fatalf("expected StreamRunFailed as last event, got %T", events[len(events)-1])
+	}
+	if failed.Error.ErrorClass != ErrorClassProviderRetryable {
+		t.Fatalf("unexpected error class: %s", failed.Error.ErrorClass)
+	}
+	if failed.Error.Message != "upstream stream ended prematurely without completion" {
+		t.Fatalf("unexpected error message: %q", failed.Error.Message)
 	}
 }
 

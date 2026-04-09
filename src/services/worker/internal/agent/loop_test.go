@@ -1105,6 +1105,54 @@ func TestAgentLoopRetryableFailureEndsAsInterrupted(t *testing.T) {
 	}
 }
 
+func TestAgentLoopStreamEndedAfterToolProgressRetries(t *testing.T) {
+	loop := NewLoop(&partialOutputThenEOFGateway{}, nil)
+	emitter := events.NewEmitter("trace")
+
+	var got []events.RunEvent
+	err := loop.Run(
+		context.Background(),
+		RunContext{
+			RunID:               uuid.New(),
+			TraceID:             "trace",
+			InputJSON:           map[string]any{},
+			ReasoningIterations: 3,
+			LlmRetryMaxAttempts: 2,
+			LlmRetryBaseDelayMs: 1,
+			CancelSignal:        func() bool { return false },
+		},
+		llm.Request{Model: "stub"},
+		emitter,
+		func(ev events.RunEvent) error {
+			got = append(got, ev)
+			return nil
+		},
+	)
+	if err != nil {
+		t.Fatalf("loop.Run failed: %v", err)
+	}
+
+	retryCount := 0
+	interruptedCount := 0
+	for _, ev := range got {
+		if ev.Type == "run.llm.retry" {
+			retryCount++
+		}
+		if ev.Type == "run.interrupted" {
+			interruptedCount++
+			if ev.ErrorClass == nil || *ev.ErrorClass != llm.ErrorClassProviderRetryable {
+				t.Fatalf("unexpected interrupted error class: %#v", ev.ErrorClass)
+			}
+		}
+	}
+	if retryCount != 1 {
+		t.Fatalf("expected 1 run.llm.retry, got %d", retryCount)
+	}
+	if interruptedCount != 1 {
+		t.Fatalf("expected 1 run.interrupted, got %d", interruptedCount)
+	}
+}
+
 func TestRetryBackoffMsCapsAt60Seconds(t *testing.T) {
 	got := []int{
 		retryBackoffMs(1000, 1),
@@ -1951,6 +1999,10 @@ type retryableFailureGateway struct {
 	calls int
 }
 
+type partialOutputThenEOFGateway struct {
+	calls int
+}
+
 func (g *retryableFailureGateway) Stream(ctx context.Context, request llm.Request, yield func(llm.StreamEvent) error) error {
 	_ = ctx
 	_ = request
@@ -1961,6 +2013,16 @@ func (g *retryableFailureGateway) Stream(ctx context.Context, request llm.Reques
 			Message:    "provider overloaded",
 		},
 	})
+}
+
+func (g *partialOutputThenEOFGateway) Stream(ctx context.Context, request llm.Request, yield func(llm.StreamEvent) error) error {
+	_ = ctx
+	_ = request
+	g.calls++
+	if err := yield(llm.StreamMessageDelta{ContentDelta: "partial", Role: "assistant"}); err != nil {
+		return err
+	}
+	return nil
 }
 
 func (g *usageScriptedGateway) Stream(ctx context.Context, request llm.Request, yield func(llm.StreamEvent) error) error {

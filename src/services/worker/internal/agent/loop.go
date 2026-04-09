@@ -303,8 +303,11 @@ func (l *Loop) Run(
 			if runCtx.RolloutRecorder != nil {
 				appendRolloutSync(ctx, runCtx.RolloutRecorder, MakeRunEnd("failed"))
 			}
-			internal := llm.InternalStreamEndedError()
-			event := emitter.Emit("run.failed", completionTotals.Apply(internal.ToJSON()), nil, stringPtr(internal.ErrorClass))
+			streamErr := llm.InternalStreamEndedError()
+			if turnHasRecoverableProgress(turn) {
+				streamErr = llm.RetryableStreamEndedError()
+			}
+			event := emitter.Emit("run.failed", completionTotals.Apply(streamErr.ToJSON()), nil, stringPtr(streamErr.ErrorClass))
 			return yield(event)
 		}
 		completionTotals.Add(turn.CompletedDataJSON)
@@ -1582,6 +1585,15 @@ func (l *Loop) runSingleTurn(
 		}
 	}
 
+	if completed == nil && turnHasRecoverableProgressData(strings.Join(assistantChunks, ""), assistantMessage, toolCalls, toolResults) {
+		retryable := llm.RetryableStreamEndedError()
+		eventsOut = append(eventsOut, emitter.Emit("run.failed", retryable.ToJSON(), nil, stringPtr(retryable.ErrorClass)))
+		if runCtx.RolloutRecorder != nil {
+			appendRollout(ctx, runCtx.RolloutRecorder, MakeTurnEnd(turnIndex))
+		}
+		return turnResult{Events: eventsOut, Terminal: true}, nil
+	}
+
 	var completedJSON map[string]any
 	if completed != nil {
 		completedJSON = completed.ToDataJSON()
@@ -1677,6 +1689,22 @@ func traceTurnToolCalls(calls []llm.ToolCall) []string {
 		return nil
 	}
 	return names
+}
+
+func turnHasRecoverableProgress(turn turnResult) bool {
+	return turnHasRecoverableProgressData(turn.AssistantText, turn.AssistantMessage, turn.ToolCalls, turn.ToolResults)
+}
+
+func turnHasRecoverableProgressData(
+	assistantText string,
+	assistantMessage *llm.Message,
+	toolCalls []llm.ToolCall,
+	toolResults []llm.StreamToolResult,
+) bool {
+	return strings.TrimSpace(assistantText) != "" ||
+		(assistantMessage != nil && len(assistantMessage.Content) > 0) ||
+		len(toolCalls) > 0 ||
+		len(toolResults) > 0
 }
 
 func pressureAnchorFromCompleted(data map[string]any) *pipeline.ContextCompactPressureAnchor {
