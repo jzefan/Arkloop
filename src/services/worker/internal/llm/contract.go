@@ -180,9 +180,13 @@ type ToolCall struct {
 }
 
 func (c ToolCall) ToDataJSON() map[string]any {
+	toolName := CanonicalToolName(c.ToolName)
+	if toolName == "" {
+		toolName = c.ToolName
+	}
 	return map[string]any{
 		"tool_call_id": c.ToolCallID,
-		"tool_name":    c.ToolName,
+		"tool_name":    toolName,
 		"arguments":    mapOrEmpty(c.ArgumentsJSON),
 	}
 }
@@ -286,7 +290,7 @@ type Request struct {
 	ToolChoice       *ToolChoice
 	Metadata         map[string]any
 	ExperimentalJSON map[string]any
-	ReasoningMode    string // "auto" | "enabled" | "disabled" | "none"
+	ReasoningMode    string // "auto" | "enabled" | "disabled" | "none" | "minimal" | "low" | "medium" | "high" | "xhigh" (accepts aliases like "off"/"max")
 }
 
 func (r Request) ToJSON() map[string]any {
@@ -420,9 +424,13 @@ type StreamToolResult struct {
 }
 
 func (r StreamToolResult) ToDataJSON() map[string]any {
+	toolName := CanonicalToolName(r.ToolName)
+	if toolName == "" {
+		toolName = r.ToolName
+	}
 	payload := map[string]any{
 		"tool_call_id": r.ToolCallID,
-		"tool_name":    r.ToolName,
+		"tool_name":    toolName,
 	}
 	if r.ResultJSON != nil {
 		payload["result"] = r.ResultJSON
@@ -561,7 +569,7 @@ func (d ToolCallArgumentDelta) ToDataJSON() map[string]any {
 		m["tool_call_id"] = d.ToolCallID
 	}
 	if d.ToolName != "" {
-		m["tool_name"] = d.ToolName
+		m["tool_name"] = CanonicalToolName(d.ToolName)
 	}
 	return m
 }
@@ -569,6 +577,13 @@ func (d ToolCallArgumentDelta) ToDataJSON() map[string]any {
 func InternalStreamEndedError() GatewayError {
 	return GatewayError{
 		ErrorClass: ErrorClassInternalStreamEnded,
+		Message:    "upstream stream ended prematurely without completion",
+	}
+}
+
+func RetryableStreamEndedError() GatewayError {
+	return GatewayError{
+		ErrorClass: ErrorClassProviderRetryable,
 		Message:    "upstream stream ended prematurely without completion",
 	}
 }
@@ -837,7 +852,7 @@ func attachmentRefFromJSON(raw any) (*messagecontent.AttachmentRef, error) {
 
 func ToolCallFromJSONMap(raw map[string]any) (ToolCall, error) {
 	callID := strings.TrimSpace(stringValue(firstNonNil(raw["tool_call_id"], raw["call_id"], raw["id"])))
-	toolName := strings.TrimSpace(stringValue(firstNonNil(raw["tool_name"], raw["name"])))
+	toolName := CanonicalToolName(strings.TrimSpace(stringValue(firstNonNil(raw["tool_name"], raw["name"]))))
 	if callID == "" || toolName == "" {
 		return ToolCall{}, fmt.Errorf("tool call missing id or name")
 	}

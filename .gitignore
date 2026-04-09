@@ -16,6 +16,11 @@ arkilo-ui-example
 
 *.exe
 *.test
+__pycache__/
+*.pyc
+
+# Harbor 本地试炼输出（result.json 等）
+tests/bench/experiments/harbor/trials/
 
 # root-level compiled Go binaries
 /api
@@ -58,3 +63,4 @@ src/apps/desktop/resources/arkloop-sidecar
 src/services/desktop/desktop
 /sandbox
 release-files/
+ark

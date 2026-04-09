@@ -68,6 +68,15 @@ var registry = []ToolMeta{
 			"Call this before relying on a skill's instructions or specialized workflow. " +
 			"This tool only loads skills visible to the current run; it does not search the web or arbitrary filesystem paths.",
 	},
+	{
+		Name:      "arkloop_help",
+		Group:     GroupDiscovery,
+		Label:     "Arkloop help",
+		ShortDesc: "search official Arkloop product, architecture, and Desktop help text bundled with the runtime",
+		LLMDescription: "Search authoritative, version-bundled documentation about Arkloop: what the product is, service architecture, Desktop vs server, Electron (not Tauri), settings navigation, Telegram channel setup, and memory/channel identity rules. " +
+			"Call before answering questions about Arkloop itself, stack facts, or how to configure Desktop—do not invent from model weights. " +
+			"Pass the user's question or keywords in query; optional limit (1–12) caps how many text chunks are returned.",
+	},
 	// ── web ──
 	{
 		Name:      "web_search",
@@ -108,11 +117,11 @@ var registry = []ToolMeta{
 		Name:      "exec_command",
 		Group:     GroupSandbox,
 		Label:     "Command execution",
-		ShortDesc: "run a shell command in a persistent sandbox session",
-		LLMDescription: "run a shell command in a persistent sandbox session. Use session_mode=auto by default. " +
-			"Reuse the session_ref returned by the first call; do not issue a new exec_command to poll a busy session — use write_stdin instead. " +
-			"The shell keeps its state across calls. When you only need to change directories, prefer the cwd parameter instead of prefixing the command with cd &&. " +
-			"If the result shows running=true or only control sequences, continue with write_stdin. " +
+		ShortDesc: "run a shell command in the sandbox, either buffered or as an explicit interactive process",
+		LLMDescription: "run a shell command in the sandbox. Default mode is buffered, which executes one command to completion with stdin closed. " +
+			"Use follow for long-running output-only processes, stdin for non-PTY processes that need later input, and pty only for real terminal-style interaction. " +
+			"The backend returns a process_ref only for follow/stdin/pty modes. Continue those processes with continue_process, terminate them with terminate_process, and resize only pty processes with resize_process. " +
+			"When you only need to change directories, prefer the cwd parameter instead of prefixing the command with cd &&. " +
 			"Do not use for file operations — use read/write_file/edit/grep instead. " +
 			"Working files go to /workspace/; final user-visible files go to /tmp/output/ (auto-uploaded as artifacts). " +
 			"Two distinct reference formats — use the correct one:\n" +
@@ -123,16 +132,31 @@ var registry = []ToolMeta{
 			"Never output raw paths. Never invent artifact keys.",
 	},
 	{
-		Name:      "write_stdin",
+		Name:      "continue_process",
 		Group:     GroupSandbox,
-		Label:     "Shell stdin",
-		ShortDesc: "send stdin or poll output from a running shell session",
-		LLMDescription: "send stdin to, or poll output from, a running shell session. " +
-			"Pass the session_ref from exec_command. Use only when exec_command returned running=true or the process awaits stdin. " +
-			"Set chars to a non-empty string to write, or omit/empty to poll new output. " +
+		Label:     "Continue process",
+		ShortDesc: "read new output from a running process and optionally send stdin",
+		LLMDescription: "continue a running process started by exec_command in follow, stdin, or pty mode. " +
+			"Pass the process_ref and the last next_cursor you received. " +
+			"Omit stdin_text to only read new output. Provide stdin_text together with input_seq when the process accepts stdin. " +
+			"Use close_stdin when the process is waiting for EOF rather than more text. " +
 			"Working files go to /workspace/; final files go to /tmp/output/. " +
 			"Show /workspace/ files via Markdown: images ![alt](workspace:/relative/path), others [name](workspace:/relative/path). " +
 			"Never invent artifact keys.",
+	},
+	{
+		Name:      "terminate_process",
+		Group:     GroupSandbox,
+		Label:     "Terminate process",
+		ShortDesc: "terminate a running sandbox process by process_ref",
+		LLMDescription: "terminate a running process started by exec_command. Use when a follow/stdin/pty process should stop and you no longer want to wait for it. Pass the process_ref returned by exec_command.",
+	},
+	{
+		Name:      "resize_process",
+		Group:     GroupSandbox,
+		Label:     "Resize PTY",
+		ShortDesc: "resize a running PTY process by process_ref",
+		LLMDescription: "resize a running PTY process started by exec_command with mode=pty. Use only for real terminal sessions when rows or cols need to change. This tool is not for normal buffered commands.",
 	},
 	{
 		Name:      "browser",

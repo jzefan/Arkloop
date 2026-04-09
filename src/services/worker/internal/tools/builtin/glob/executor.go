@@ -17,17 +17,17 @@ const maxResults = 1000
 
 // skipDirs are directory names skipped during glob fallback walk.
 var skipDirs = map[string]struct{}{
-	".git":            {},
-	"node_modules":    {},
-	"__pycache__":     {},
-	".venv":           {},
-	"vendor":          {},
-	".idea":           {},
-	".vscode":         {},
-	"dist":            {},
-	"build":           {},
-	".next":           {},
-	".cache":          {},
+	".git":         {},
+	"node_modules": {},
+	"__pycache__":  {},
+	".venv":        {},
+	"vendor":       {},
+	".idea":        {},
+	".vscode":      {},
+	"dist":         {},
+	"build":        {},
+	".next":        {},
+	".cache":       {},
 }
 
 type Executor struct{}
@@ -75,8 +75,13 @@ func globFiles(ctx context.Context, backend fileops.Backend, pattern, searchPath
 		return matches, truncated, nil
 	}
 
-	// fallback: pure Go walk (only for LocalBackend)
-	return globWalk(searchPath, pattern)
+	localBackend, ok := backend.(*fileops.LocalBackend)
+	if !ok {
+		return nil, false, err
+	}
+
+	// fallback: pure Go walk only when the backend itself is local.
+	return globWalk(localBackend.NormalizePath(searchPath), pattern)
 }
 
 func globWithRipgrep(ctx context.Context, backend fileops.Backend, pattern, searchPath string) ([]string, error) {
@@ -149,7 +154,7 @@ func globWalk(root, pattern string) ([]string, bool, error) {
 			}
 		}
 		if matched {
-			matches = append(matches, rel)
+			matches = append(matches, filepath.ToSlash(filepath.Clean(rel)))
 		}
 		return nil
 	})

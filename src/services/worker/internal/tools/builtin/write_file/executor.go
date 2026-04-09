@@ -40,7 +40,9 @@ func (e *Executor) Execute(
 		return errResult(fmt.Sprintf("write failed: %s", err.Error()), started)
 	}
 
-	e.Tracker.RecordWrite(filePath)
+	if e.Tracker != nil {
+		e.Tracker.RecordWriteForRun(execCtx.RunID.String(), backend.NormalizePath(filePath))
+	}
 
 	result := map[string]any{
 		"file_path": filePath,

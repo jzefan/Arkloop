@@ -1,9 +1,15 @@
 import { useEffect, useReducer, useRef } from 'react'
+import { pickLogicalToolName } from '@arkloop/shared'
 import { useSSE } from './useSSE'
 import type { WebSearchPhaseStep } from '../components/CopTimeline'
 import type { WebSource } from '../storage'
 import type { RunEvent } from '../sse'
-import { isWebSearchToolName, webSearchQueriesFromArguments } from '../webSearchTimelineFromRunEvent'
+import {
+  COMPLETED_SEARCHING_LABEL,
+  DEFAULT_SEARCHING_LABEL,
+  isWebSearchToolName,
+  webSearchQueriesFromArguments,
+} from '../webSearchTimelineFromRunEvent'
 
 type CopState = {
   steps: WebSearchPhaseStep[]
@@ -53,7 +59,7 @@ function reducer(state: CopState, action: CopAction): CopState {
       const step: WebSearchPhaseStep = {
         id: action.callId,
         kind: 'searching',
-        label: 'Searching',
+        label: DEFAULT_SEARCHING_LABEL,
         status: 'active',
         queries: action.queries,
       }
@@ -62,7 +68,13 @@ function reducer(state: CopState, action: CopAction): CopState {
 
     case 'web_search_result': {
       let steps = state.steps.map((s) =>
-        s.id === action.callId ? { ...s, status: 'done' as const } : s,
+        s.id === action.callId
+          ? {
+              ...s,
+              status: 'done' as const,
+              ...(s.label.trim() === DEFAULT_SEARCHING_LABEL ? { label: COMPLETED_SEARCHING_LABEL } : {}),
+            }
+          : s,
       )
       const allSearchDone = steps
         .filter((s) => s.kind === 'searching')
@@ -121,8 +133,8 @@ function processEvent(event: RunEvent, dispatch: React.Dispatch<CopAction>): voi
   }
 
   if (event.type === 'tool.call') {
-    const obj = event.data as { tool_name?: unknown; tool_call_id?: unknown; arguments?: unknown }
-    const toolName = typeof obj.tool_name === 'string' ? obj.tool_name : ''
+    const obj = event.data as { tool_call_id?: unknown; arguments?: unknown }
+    const toolName = pickLogicalToolName(event.data, event.tool_name)
     if (isWebSearchToolName(toolName)) {
       const callId = typeof obj.tool_call_id === 'string' ? obj.tool_call_id : event.event_id
       const args = obj.arguments as Record<string, unknown> | undefined
@@ -133,8 +145,8 @@ function processEvent(event: RunEvent, dispatch: React.Dispatch<CopAction>): voi
   }
 
   if (event.type === 'tool.result') {
-    const obj = event.data as { tool_name?: unknown; tool_call_id?: unknown; result?: unknown }
-    const toolName = typeof obj.tool_name === 'string' ? obj.tool_name : ''
+    const obj = event.data as { tool_call_id?: unknown; result?: unknown }
+    const toolName = pickLogicalToolName(event.data, event.tool_name)
     if (isWebSearchToolName(toolName)) {
       const callId = typeof obj.tool_call_id === 'string' ? obj.tool_call_id : event.event_id
       const result = obj.result as { results?: unknown[] } | undefined

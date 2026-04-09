@@ -15,8 +15,11 @@ import (
 // Tx wraps *sql.Tx to satisfy the pgx.Tx interface.
 type Tx struct {
 	tx                 *sql.Tx
+	readOnly           bool
 	afterCommitHooks   []func()
 	afterRollbackHooks []func()
+	writeGuard         WriteGuard
+	writeExecutor      WriteExecutor
 }
 
 // AfterCommit registers fn to run after the transaction commits successfully.
@@ -30,6 +33,15 @@ func (t *Tx) AfterRollback(fn func()) {
 }
 
 func (t *Tx) Exec(ctx context.Context, query string, args ...any) (pgconn.CommandTag, error) {
+	if t.readOnly {
+		return pgconn.NewCommandTag(""), fmt.Errorf("sqlitepgx: write exec in read-only transaction")
+	}
+	guard, err := t.acquireExecWriteGuard(ctx)
+	if err != nil {
+		return pgconn.NewCommandTag(""), err
+	}
+	defer guard.Release()
+
 	query = rewriteSQL(query)
 	query, args = expandAnyArgs(query, args)
 	args = convertArgs(args)
@@ -45,22 +57,40 @@ func (t *Tx) Query(ctx context.Context, query string, args ...any) (pgx.Rows, er
 	query = rewriteSQL(query)
 	query, args = expandAnyArgs(query, args)
 	args = convertArgs(args)
+	if t.readOnly && queryRequiresWriteGuard(query) {
+		return &shimRows{err: fmt.Errorf("sqlitepgx: write query in read-only transaction")}, nil
+	}
+	guard, err := t.acquireQueryWriteGuard(ctx, query)
+	if err != nil {
+		return &shimRows{err: err}, nil
+	}
 	r, err := t.tx.QueryContext(ctx, query, args...)
 	if err != nil {
+		guard.Release()
 		return &shimRows{err: translateError(err)}, nil
 	}
-	return &shimRows{rows: r}, nil
+	return &shimRows{rows: r, release: guard.Release}, nil
 }
 
 func (t *Tx) QueryRow(ctx context.Context, query string, args ...any) pgx.Row {
 	query = rewriteSQL(query)
 	query, args = expandAnyArgs(query, args)
 	args = convertArgs(args)
-	return &shimRow{row: t.tx.QueryRowContext(ctx, query, args...)}
+	if t.readOnly && queryRequiresWriteGuard(query) {
+		return &shimRow{err: fmt.Errorf("sqlitepgx: write query in read-only transaction")}
+	}
+	guard, err := t.acquireQueryWriteGuard(ctx, query)
+	if err != nil {
+		return &shimRow{err: err}
+	}
+	return &shimRow{row: t.tx.QueryRowContext(ctx, query, args...), release: guard.Release}
 }
 
 func (t *Tx) Commit(_ context.Context) error {
-	if err := translateError(t.tx.Commit()); err != nil {
+	err := translateError(t.tx.Commit())
+	t.releaseWriteGuard()
+	if err != nil {
+		t.afterCommitHooks = nil
 		return err
 	}
 	for _, fn := range t.afterCommitHooks {
@@ -73,6 +103,7 @@ func (t *Tx) Commit(_ context.Context) error {
 
 func (t *Tx) Rollback(_ context.Context) error {
 	err := translateError(t.tx.Rollback())
+	t.releaseWriteGuard()
 	// 事务已结束（正常回滚或已隐式回滚），都需要执行清理 hooks
 	if err == nil || errors.Is(err, sql.ErrTxDone) {
 		for _, fn := range t.afterRollbackHooks {
@@ -108,6 +139,42 @@ func (t *Tx) Prepare(_ context.Context, _, _ string) (*pgconn.StatementDescripti
 
 func (t *Tx) Conn() *pgx.Conn {
 	return nil
+}
+
+func (t *Tx) releaseWriteGuard() {
+	if t.writeGuard == nil {
+		return
+	}
+	t.writeGuard.Release()
+	t.writeGuard = nil
+}
+
+func (t *Tx) acquireExecWriteGuard(ctx context.Context) (WriteGuard, error) {
+	if t.writeGuard != nil {
+		return noopWriteGuard{}, nil
+	}
+	executor := t.writeExecutor
+	if executor == nil {
+		executor = GetGlobalWriteExecutor()
+	}
+	if executor == nil {
+		return noopWriteGuard{}, nil
+	}
+	guard, err := executor.AcquireWrite(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if guard == nil {
+		return noopWriteGuard{}, nil
+	}
+	return guard, nil
+}
+
+func (t *Tx) acquireQueryWriteGuard(ctx context.Context, query string) (WriteGuard, error) {
+	if !queryRequiresWriteGuard(query) {
+		return noopWriteGuard{}, nil
+	}
+	return t.acquireExecWriteGuard(ctx)
 }
 
 // errBatchResults satisfies pgx.BatchResults for unsupported SendBatch calls.

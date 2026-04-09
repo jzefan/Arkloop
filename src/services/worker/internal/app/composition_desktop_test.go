@@ -223,6 +223,30 @@ func TestComposeDesktopEngineRegistersArtifactTools(t *testing.T) {
 	}
 }
 
+func TestComposeDesktopEngineRegistersArkloopHelp(t *testing.T) {
+	ctx := context.Background()
+	dataDir := t.TempDir()
+	t.Setenv("ARKLOOP_DATA_DIR", dataDir)
+
+	db, err := sqlitepgx.Open(filepath.Join(dataDir, "desktop.db"))
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	defer db.Close()
+
+	engine, err := ComposeDesktopEngine(ctx, db, eventbus.NewLocalEventBus(), executor.DefaultExecutorRegistry(), nil)
+	if err != nil {
+		t.Fatalf("compose desktop engine: %v", err)
+	}
+
+	if _, ok := engine.toolRegistry.Get("arkloop_help"); !ok {
+		t.Fatal("expected arkloop_help to be registered")
+	}
+	if _, ok := engine.baseAllowlist["arkloop_help"]; !ok {
+		t.Fatal("expected arkloop_help in desktop allowlist")
+	}
+}
+
 func TestDesktopPromptInjectionResolverReadsPlatformSettings(t *testing.T) {
 	ctx := context.Background()
 	db := openDesktopPromptInjectionTestDB(t)
@@ -1655,6 +1679,80 @@ func TestDesktopRunCancelWatcherCancelsOnRequestedEvent(t *testing.T) {
 	}
 }
 
+func TestDesktopEventWriterPersistsModelWithoutPersona(t *testing.T) {
+	ctx := context.Background()
+
+	sqlitePool, err := sqliteadapter.AutoMigrate(ctx, filepath.Join(t.TempDir(), "desktop.db"))
+	if err != nil {
+		t.Fatalf("auto migrate sqlite: %v", err)
+	}
+	defer sqlitePool.Close()
+
+	db := sqlitepgx.New(sqlitePool.Unwrap())
+
+	accountID := uuid.New()
+	projectID := uuid.New()
+	threadID := uuid.New()
+	runID := uuid.New()
+
+	for _, stmt := range []struct {
+		sql  string
+		args []any
+	}{
+		{
+			sql:  `INSERT INTO accounts (id, slug, name, type, status) VALUES ($1, $2, $3, 'personal', 'active')`,
+			args: []any{accountID, "desktop-writer-model-" + accountID.String(), "Desktop Writer Model"},
+		},
+		{
+			sql:  `INSERT INTO projects (id, account_id, name, visibility) VALUES ($1, $2, $3, 'private')`,
+			args: []any{projectID, accountID, "Writer Project"},
+		},
+		{
+			sql:  `INSERT INTO threads (id, account_id, project_id, is_private) VALUES ($1, $2, $3, TRUE)`,
+			args: []any{threadID, accountID, projectID},
+		},
+		{
+			sql:  `INSERT INTO runs (id, account_id, thread_id, status) VALUES ($1, $2, $3, 'running')`,
+			args: []any{runID, accountID, threadID},
+		},
+	} {
+		if _, err := db.Exec(ctx, stmt.sql, stmt.args...); err != nil {
+			t.Fatalf("seed data: %v", err)
+		}
+	}
+
+	writer := &desktopEventWriter{
+		db:         db,
+		run:        data.Run{ID: runID, AccountID: accountID, ThreadID: threadID},
+		traceID:    "model-no-persona",
+		runsRepo:   data.DesktopRunsRepository{},
+		eventsRepo: data.DesktopRunEventsRepository{},
+		model:      "cery^claude-sonnet-4-6",
+	}
+
+	ev := events.NewEmitter("model-no-persona").Emit("run.route.selected", map[string]any{
+		"credential_name": "cery",
+		"model":           "claude-sonnet-4-6",
+	}, nil, nil)
+	if err := writer.append(ctx, runID, ev, ""); err != nil {
+		t.Fatalf("append run.route.selected: %v", err)
+	}
+
+	var (
+		model     *string
+		personaID *string
+	)
+	if err := db.QueryRow(ctx, `SELECT model, persona_id FROM runs WHERE id = $1`, runID).Scan(&model, &personaID); err != nil {
+		t.Fatalf("select run metadata: %v", err)
+	}
+	if model == nil || *model != "cery^claude-sonnet-4-6" {
+		t.Fatalf("expected model to persist without persona, got %#v", model)
+	}
+	if personaID != nil && *personaID != "" {
+		t.Fatalf("expected persona_id to stay empty when persona is omitted, got %#v", personaID)
+	}
+}
+
 func TestDesktopEventWriterFinalizeCancelledIfRequested(t *testing.T) {
 	ctx := context.Background()
 
@@ -1933,6 +2031,117 @@ func TestDesktopPersistFinalAssistantOutputSetsReplyOverride(t *testing.T) {
 	}
 }
 
+func TestDesktopEventWriterPersistsCanonicalToolNames(t *testing.T) {
+	writer := &desktopEventWriter{
+		assistantMessage: &llm.Message{
+			Role:    "assistant",
+			Content: []llm.TextPart{{Text: "fetching"}},
+		},
+	}
+
+	writer.collectToolCall(map[string]any{
+		"tool_call_id": "call_1",
+		"tool_name":    "web_fetch.jina",
+		"arguments":    map[string]any{"url": "https://example.com"},
+	})
+	writer.collectToolResult(map[string]any{
+		"tool_call_id": "call_1",
+		"tool_name":    "web_fetch.jina",
+		"result":       map[string]any{"title": "Example"},
+	})
+	writer.flushPendingToolCalls()
+
+	if len(writer.intermediateMessages) != 2 {
+		t.Fatalf("expected assistant+tool intermediate messages, got %d", len(writer.intermediateMessages))
+	}
+
+	assistantJSON := string(writer.intermediateMessages[0].ContentJSON)
+	if strings.Contains(assistantJSON, "web_fetch.jina") {
+		t.Fatalf("expected assistant intermediate message to hide provider tool name, got %s", assistantJSON)
+	}
+	if !strings.Contains(assistantJSON, `"tool_name":"web_fetch"`) {
+		t.Fatalf("expected assistant intermediate message to keep canonical tool name, got %s", assistantJSON)
+	}
+
+	toolContent := writer.intermediateMessages[1].Content
+	if strings.Contains(toolContent, "web_fetch.jina") {
+		t.Fatalf("expected tool intermediate message to hide provider tool name, got %s", toolContent)
+	}
+	if !strings.Contains(toolContent, `"tool_name":"web_fetch"`) {
+		t.Fatalf("expected tool intermediate message to keep canonical tool name, got %s", toolContent)
+	}
+}
+
+func TestDesktopEventWriterFlushPendingToolCallsDropsUnmatchedToolCalls(t *testing.T) {
+	writer := &desktopEventWriter{
+		assistantMessage: &llm.Message{
+			Role:    "assistant",
+			Content: []llm.TextPart{{Text: "doing tools"}},
+		},
+	}
+
+	writer.collectToolCall(map[string]any{
+		"tool_call_id": "call_1",
+		"tool_name":    "telegram_react",
+		"arguments":    map[string]any{"emoji": "❤️"},
+	})
+	writer.collectToolCall(map[string]any{
+		"tool_call_id": "call_2",
+		"tool_name":    "telegram_reply",
+		"arguments":    map[string]any{"reply_to_message_id": "42"},
+	})
+	writer.collectToolResult(map[string]any{
+		"tool_call_id": "call_2",
+		"tool_name":    "telegram_reply",
+		"result":       map[string]any{"ok": true},
+	})
+	writer.flushPendingToolCalls()
+
+	if len(writer.intermediateMessages) != 2 {
+		t.Fatalf("expected assistant+tool intermediate messages, got %d", len(writer.intermediateMessages))
+	}
+	assistantJSON := string(writer.intermediateMessages[0].ContentJSON)
+	if strings.Contains(assistantJSON, `"tool_call_id":"call_1"`) {
+		t.Fatalf("expected unmatched tool call to be dropped, got %s", assistantJSON)
+	}
+	if !strings.Contains(assistantJSON, `"tool_call_id":"call_2"`) {
+		t.Fatalf("expected matched tool call to survive, got %s", assistantJSON)
+	}
+}
+
+func TestDesktopEventWriterFiltersHeartbeatDecisionFromPersistentHistory(t *testing.T) {
+	writer := &desktopEventWriter{
+		heartbeatRun: true,
+		assistantMessage: &llm.Message{
+			Role:    "assistant",
+			Content: []llm.TextPart{{Text: "replying"}},
+		},
+	}
+
+	writer.collectToolCall(map[string]any{
+		"tool_call_id": "call_1",
+		"tool_name":    "heartbeat_decision",
+		"arguments":    map[string]any{"reply": true},
+	})
+	writer.collectToolResult(map[string]any{
+		"tool_call_id": "call_1",
+		"tool_name":    "heartbeat_decision",
+		"result":       map[string]any{"ok": true, "reply": true},
+	})
+	writer.flushPendingToolCalls()
+
+	if len(writer.intermediateMessages) != 1 {
+		t.Fatalf("expected assistant-only intermediate message, got %d", len(writer.intermediateMessages))
+	}
+	if writer.intermediateMessages[0].Role != "assistant" {
+		t.Fatalf("expected assistant intermediate message, got %#v", writer.intermediateMessages[0])
+	}
+	assistantJSON := string(writer.intermediateMessages[0].ContentJSON)
+	if strings.Contains(assistantJSON, "heartbeat_decision") {
+		t.Fatalf("expected heartbeat_decision to be removed from persistent history, got %s", assistantJSON)
+	}
+}
+
 func TestDesktopEventWriterPendingTelegramFlushChunk(t *testing.T) {
 	writer := &desktopEventWriter{
 		visibleAssistantTexts:   []string{"第一段", "第二段"},
@@ -1949,7 +2158,7 @@ func TestDesktopEventWriterPendingTelegramFlushChunkFromAssistantMessage(t *test
 	// 无 delta，LLM 通过 assistantMessage 完成一轮时，captureAssistantTurnOutput 追加到 visibleAssistantTexts，
 	// pendingTelegramFlushChunk 应返回该内容
 	writer := &desktopEventWriter{
-		visibleAssistantTexts: []string{},
+		visibleAssistantTexts:   []string{},
 		telegramSentOutputCount: 0,
 		telegramBoundaryFlush:   func(_ context.Context, _ string) error { return nil },
 	}
@@ -2280,6 +2489,7 @@ func TestDesktopChannelDeliveryRecordsFailureWhenChannelMissing(t *testing.T) {
 		)`,
 		`CREATE TABLE IF NOT EXISTS secrets (
 			id TEXT PRIMARY KEY,
+			name TEXT NOT NULL,
 			encrypted_value TEXT NULL,
 			key_version INTEGER NULL
 		)`,
@@ -2381,6 +2591,7 @@ func TestDesktopChannelDeliveryPersistsLedgerRefs(t *testing.T) {
 		)`,
 		`CREATE TABLE IF NOT EXISTS secrets (
 			id TEXT PRIMARY KEY,
+			name TEXT NOT NULL,
 			encrypted_value TEXT NULL,
 			key_version INTEGER NULL
 		)`,
@@ -2558,6 +2769,7 @@ func TestDesktopChannelDeliverySkipsReplyReferenceInPrivateTelegram(t *testing.T
 		)`,
 		`CREATE TABLE IF NOT EXISTS secrets (
 			id TEXT PRIMARY KEY,
+			name TEXT NOT NULL,
 			encrypted_value TEXT NULL,
 			key_version INTEGER NULL
 		)`,
@@ -2709,6 +2921,7 @@ func TestDesktopChannelDeliveryPreservesFinalOutputsWhenNoStreamFlush(t *testing
 		)`,
 		`CREATE TABLE IF NOT EXISTS secrets (
 			id TEXT PRIMARY KEY,
+			name TEXT NOT NULL,
 			encrypted_value TEXT NULL,
 			key_version INTEGER NULL
 		)`,
@@ -2782,8 +2995,8 @@ func TestDesktopChannelDeliveryPreservesFinalOutputsWhenNoStreamFlush(t *testing
 		args []any
 	}{
 		{
-			sql:  `INSERT INTO secrets (id, encrypted_value, key_version) VALUES ($1, $2, 1)`,
-			args: []any{secretID, encryptDesktopChannelToken(t, keyBytes, "desktop-token")},
+			sql:  `INSERT INTO secrets (id, name, encrypted_value, key_version) VALUES ($1, $2, $3, 1)`,
+			args: []any{secretID, "telegram-token", encryptDesktopChannelToken(t, keyBytes, "desktop-token")},
 		},
 		{
 			sql:  `INSERT INTO channels (id, channel_type, credentials_id, config_json, is_active) VALUES ($1, 'telegram', $2, '{}', 1)`,
@@ -2829,6 +3042,90 @@ func TestDesktopChannelDeliveryPreservesFinalOutputsWhenNoStreamFlush(t *testing
 	}
 	if deliveryCount != 2 {
 		t.Fatalf("expected 2 delivery rows, got %d", deliveryCount)
+	}
+}
+
+func TestDesktopChannelDeliveryDisablesTelegramProgressTrackerInGroups(t *testing.T) {
+	ctx := context.Background()
+
+	db, err := sqlitepgx.Open(filepath.Join(t.TempDir(), "desktop.db"))
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	defer db.Close()
+
+	for _, stmt := range []string{
+		`CREATE TABLE IF NOT EXISTS channels (
+			id TEXT PRIMARY KEY,
+			channel_type TEXT NOT NULL,
+			credentials_id TEXT NULL,
+			is_active INTEGER NOT NULL DEFAULT 0,
+			config_json TEXT NOT NULL DEFAULT '{}'
+		)`,
+		`CREATE TABLE IF NOT EXISTS secrets (
+			id TEXT PRIMARY KEY,
+			name TEXT NOT NULL,
+			encrypted_value TEXT NULL,
+			key_version INTEGER NULL
+		)`,
+	} {
+		if _, err := db.Exec(ctx, stmt); err != nil {
+			t.Fatalf("create channel tables: %v", err)
+		}
+	}
+
+	keyBytes := [32]byte{}
+	for i := range keyBytes {
+		keyBytes[i] = byte(i + 61)
+	}
+	dataDir := t.TempDir()
+	t.Setenv("ARKLOOP_DATA_DIR", dataDir)
+	if err := os.WriteFile(filepath.Join(dataDir, "encryption.key"), []byte(hex.EncodeToString(keyBytes[:])), 0o600); err != nil {
+		t.Fatalf("write encryption key: %v", err)
+	}
+
+	threadID := uuid.New()
+	runID := uuid.New()
+	channelID := uuid.New()
+	secretID := uuid.New()
+
+	for _, stmt := range []struct {
+		sql  string
+		args []any
+	}{
+		{
+			sql:  `INSERT INTO secrets (id, name, encrypted_value, key_version) VALUES ($1, $2, $3, 1)`,
+			args: []any{secretID, "telegram-token", encryptDesktopChannelToken(t, keyBytes, "desktop-token")},
+		},
+		{
+			sql:  `INSERT INTO channels (id, channel_type, credentials_id, config_json, is_active) VALUES ($1, 'telegram', $2, '{}', 1)`,
+			args: []any{channelID, secretID},
+		},
+	} {
+		if _, err := db.Exec(ctx, stmt.sql, stmt.args...); err != nil {
+			t.Fatalf("seed data: %v", err)
+		}
+	}
+
+	mw := desktopChannelDelivery(db)
+	if err := mw(ctx, &pipeline.RunContext{
+		Run: data.Run{ID: runID, ThreadID: threadID},
+		ChannelContext: &pipeline.ChannelContext{
+			ChannelID:        channelID,
+			ChannelType:      "telegram",
+			ConversationType: "supergroup",
+			Conversation:     pipeline.ChannelConversationRef{Target: "10001"},
+		},
+	}, func(_ context.Context, rc *pipeline.RunContext) error {
+		if rc.TelegramToolBoundaryFlush == nil {
+			t.Fatal("expected TelegramToolBoundaryFlush to be set for telegram channel")
+		}
+		if rc.TelegramProgressTracker != nil {
+			t.Fatal("expected TelegramProgressTracker to stay disabled in telegram groups")
+		}
+		return nil
+	}); err != nil {
+		t.Fatalf("desktop channel delivery middleware failed: %v", err)
 	}
 }
 

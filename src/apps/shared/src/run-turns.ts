@@ -1,5 +1,6 @@
 import { redactDataUrlsInString } from './debugPayloadRedact'
 import { isACPDelegateEventData } from './runEventDelegate'
+import { canonicalToolName, pickLogicalToolName } from './tool-names'
 
 export type RunEventRaw = {
   event_id: string
@@ -145,13 +146,28 @@ function refreshContextTokenEstimate(turn: LlmTurn) {
 }
 
 function extractToolName(tool: Record<string, unknown>): string {
-  if (typeof tool.name === 'string') return tool.name
+  if (typeof tool.name === 'string') return canonicalToolName(tool.name)
   const fn = tool.function
   if (fn && typeof fn === 'object') {
     const name = (fn as Record<string, unknown>).name
-    if (typeof name === 'string') return name
+    if (typeof name === 'string') return canonicalToolName(name)
   }
   return ''
+}
+
+function canonicalizeToolSchemaBytesMap(raw: unknown): Record<string, number> | undefined {
+  if (!raw || typeof raw !== 'object') return undefined
+  const entries = Object.entries(raw as Record<string, unknown>)
+  if (entries.length === 0) return undefined
+
+  const out: Record<string, number> = {}
+  for (const [key, value] of entries) {
+    if (typeof value !== 'number') continue
+    const canonical = canonicalToolName(key)
+    if (!canonical) continue
+    out[canonical] = (out[canonical] ?? 0) + value
+  }
+  return Object.keys(out).length > 0 ? out : undefined
 }
 
 function readMessageText(msg: Record<string, unknown>): string {
@@ -465,7 +481,7 @@ function startTurn(
     toolsBytes: typeof requestData.tools_bytes === 'number' ? requestData.tools_bytes : undefined,
     messagesBytes: typeof requestData.messages_bytes === 'number' ? requestData.messages_bytes : undefined,
     roleBytes: requestData.role_bytes as Record<string, number> | undefined,
-    toolSchemaBytesMap: requestData.tool_schema_bytes_by_name as Record<string, number> | undefined,
+    toolSchemaBytesMap: canonicalizeToolSchemaBytesMap(requestData.tool_schema_bytes_by_name),
     stablePrefixHash:
       typeof requestData.stable_prefix_hash === 'string' ? requestData.stable_prefix_hash : undefined,
     requests: [
@@ -517,8 +533,9 @@ function mergeRequestMetadata(
   if (requestData.role_bytes && typeof requestData.role_bytes === 'object') {
     turn.roleBytes = requestData.role_bytes as Record<string, number>
   }
-  if (requestData.tool_schema_bytes_by_name && typeof requestData.tool_schema_bytes_by_name === 'object') {
-    turn.toolSchemaBytesMap = requestData.tool_schema_bytes_by_name as Record<string, number>
+  const canonicalToolSchemaBytesMap = canonicalizeToolSchemaBytesMap(requestData.tool_schema_bytes_by_name)
+  if (canonicalToolSchemaBytesMap) {
+    turn.toolSchemaBytesMap = canonicalToolSchemaBytesMap
   }
   if (typeof requestData.stable_prefix_hash === 'string') {
     turn.stablePrefixHash = requestData.stable_prefix_hash
@@ -611,7 +628,7 @@ export function buildTurns(events: RunEventRaw[]): LlmTurn[] {
       flushAssistant()
       const data = event.data as Record<string, unknown>
       const toolCallId = String(data.tool_call_id ?? '')
-      const toolName = String(data.tool_name ?? event.tool_name ?? '')
+      const toolName = pickLogicalToolName(data, event.tool_name)
       const argsJSON = (data.arguments as Record<string, unknown>) ?? {}
       currentState.turn.toolCalls.push({
         toolCallId,
@@ -633,7 +650,7 @@ export function buildTurns(events: RunEventRaw[]): LlmTurn[] {
       flushAssistant()
       const data = event.data as Record<string, unknown>
       const toolCallId = String(data.tool_call_id ?? '')
-      const toolName = String(data.tool_name ?? event.tool_name ?? toolNameByCallID.get(toolCallId) ?? '')
+      const toolName = pickLogicalToolName(data, event.tool_name ?? toolNameByCallID.get(toolCallId) ?? '')
       const resultJSON = data.result as Record<string, unknown> | undefined
       const existing = currentState.turn.toolCalls.find((toolCall) => toolCall.toolCallId === toolCallId)
       if (existing) {
@@ -661,19 +678,13 @@ export function buildTurns(events: RunEventRaw[]): LlmTurn[] {
         const inputTokens = Number(usage.input_tokens ?? 0)
         const cacheReadTokens = Number(usage.cache_read_input_tokens ?? 0)
         const cacheCreationTokens = Number(usage.cache_creation_input_tokens ?? 0)
-        requestState.turn.inputTokens = (requestState.turn.inputTokens ?? 0) + inputTokens
+        const cachedRead = Number(usage.cached_tokens ?? usage.cache_read_input_tokens ?? 0)
+        // 单次请求的窗口上下文：取最后一次 completion（多轮工具往返共用同一 LlmTurn）
+        requestState.turn.inputTokens = inputTokens
+        requestState.turn.cachedTokens = cachedRead
+        requestState.turn.cacheCreationTokens = cacheCreationTokens
+        requestState.turn.contextTokens = inputTokens + cacheReadTokens + cacheCreationTokens
         requestState.turn.outputTokens = (requestState.turn.outputTokens ?? 0) + Number(usage.output_tokens ?? 0)
-        requestState.turn.cachedTokens =
-          (requestState.turn.cachedTokens ?? 0) +
-          Number(usage.cached_tokens ?? usage.cache_read_input_tokens ?? 0)
-        requestState.turn.cacheCreationTokens =
-          (requestState.turn.cacheCreationTokens ?? 0) +
-          cacheCreationTokens
-        requestState.turn.contextTokens =
-          (requestState.turn.contextTokens ?? 0) +
-          inputTokens +
-          cacheReadTokens +
-          cacheCreationTokens
       }
       if (typeof data.last_request_context_estimate_tokens === 'number' && data.last_request_context_estimate_tokens >= 0) {
         requestState.turn.estimatedInputTokens = data.last_request_context_estimate_tokens

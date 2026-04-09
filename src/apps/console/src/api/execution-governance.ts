@@ -20,7 +20,7 @@ export type ExecutionGovernanceLimit = {
 
 export type ExecutionGovernanceToolSoftLimit = {
   max_continuations?: number
-  max_yield_time_ms?: number
+  max_wait_time_ms?: number
   max_output_bytes?: number
 }
 

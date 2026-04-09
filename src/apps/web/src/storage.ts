@@ -17,6 +17,7 @@ const THEME_KEY = 'arkloop:web:theme'
 const SELECTED_PERSONA_KEY = 'arkloop:web:selected_persona_key'
 const APP_MODE_KEY = 'arkloop:web:app_mode'
 const SELECTED_MODEL_KEY = 'arkloop:web:selected_model'
+const SELECTED_THINKING_KEY = 'arkloop:web:selected_thinking'
 const FONT_SETTINGS_KEY = 'arkloop:web:font-settings'
 const THEME_PRESET_KEY = 'arkloop:web:theme-preset'
 const CUSTOM_THEME_ID_KEY = 'arkloop:web:custom-theme-id'
@@ -203,6 +204,24 @@ export function writeSelectedModelToStorage(model: string | null): void {
   }
 }
 
+export function readSelectedThinkingEnabled(): boolean {
+  if (!canUseLocalStorage()) return false
+  return localStorage.getItem(SELECTED_THINKING_KEY) === 'true'
+}
+
+export function writeSelectedThinkingEnabled(enabled: boolean): void {
+  if (!canUseLocalStorage()) return
+  try {
+    if (enabled) {
+      localStorage.setItem(SELECTED_THINKING_KEY, 'true')
+    } else {
+      localStorage.removeItem(SELECTED_THINKING_KEY)
+    }
+  } catch {
+    // 忽略存储失败
+  }
+}
+
 export type WebSource = {
   title: string
   url: string
@@ -321,10 +340,14 @@ export function writeMessageBrowserActions(messageId: string, actions: BrowserAc
 export type CodeExecutionRef = {
   id: string
   language: 'python' | 'shell'
+  mode?: 'buffered' | 'follow' | 'stdin' | 'pty'
   code?: string
   output?: string
   exitCode?: number
-  sessionId?: string
+  processRef?: string
+  cursor?: string
+  nextCursor?: string
+  processStatus?: 'running' | 'exited' | 'terminated' | 'timed_out' | 'cancelled'
   status: 'running' | 'success' | 'failed' | 'completed'
   errorClass?: string
   errorMessage?: string
@@ -340,11 +363,15 @@ function isCodeExecutionRef(value: unknown): value is CodeExecutionRef {
   const item = value as Record<string, unknown>
   if (typeof item.id !== 'string' || item.id.trim() === '') return false
   if (item.language !== 'python' && item.language !== 'shell') return false
+  if (item.mode != null && item.mode !== 'buffered' && item.mode !== 'follow' && item.mode !== 'stdin' && item.mode !== 'pty') return false
   if (!isCodeExecutionStatus(item.status)) return false
   if (item.code != null && typeof item.code !== 'string') return false
   if (item.output != null && typeof item.output !== 'string') return false
   if (item.exitCode != null && typeof item.exitCode !== 'number') return false
-  if (item.sessionId != null && typeof item.sessionId !== 'string') return false
+  if (item.processRef != null && typeof item.processRef !== 'string') return false
+  if (item.cursor != null && typeof item.cursor !== 'string') return false
+  if (item.nextCursor != null && typeof item.nextCursor !== 'string') return false
+  if (item.processStatus != null && item.processStatus !== 'running' && item.processStatus !== 'exited' && item.processStatus !== 'terminated' && item.processStatus !== 'timed_out' && item.processStatus !== 'cancelled') return false
   if (item.errorClass != null && typeof item.errorClass !== 'string') return false
   if (item.errorMessage != null && typeof item.errorMessage !== 'string') return false
   return true
@@ -1371,6 +1398,14 @@ export function transferGlobalWorkFolderToThread(threadId: string): void {
     localStorage.removeItem(WORK_FOLDER_KEY)
   } catch { /* ignore */ }
   window.dispatchEvent(new CustomEvent('arkloop:work-folder-changed'))
+}
+
+export function transferGlobalThinkingToThread(threadId: string): void {
+  if (!canUseLocalStorage() || !threadId) return
+  try {
+    if (localStorage.getItem(SELECTED_THINKING_KEY) !== 'true') return
+    localStorage.setItem(`arkloop:thinking:${threadId}`, 'true')
+  } catch { /* ignore */ }
 }
 
 export function readWorkRecentFolders(): string[] {

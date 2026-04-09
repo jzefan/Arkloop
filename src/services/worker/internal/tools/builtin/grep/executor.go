@@ -106,7 +106,11 @@ func searchFiles(ctx context.Context, backend fileops.Backend, pattern, searchPa
 		if rErr == nil {
 			return nil, raw, false, nil
 		}
-		raw, rErr = searchWithContextFallback(searchPath, pattern, include, contextLines)
+		localBackend, ok := backend.(*fileops.LocalBackend)
+		if !ok {
+			return nil, "", false, rErr
+		}
+		raw, rErr = searchWithContextFallback(localBackend.NormalizePath(searchPath), pattern, include, contextLines)
 		if rErr != nil {
 			return nil, "", false, rErr
 		}
@@ -127,7 +131,11 @@ func searchFilesStructured(ctx context.Context, backend fileops.Backend, pattern
 		}
 		return m, truncated, nil
 	}
-	return searchWithRegex(searchPath, pattern, include)
+	localBackend, ok := backend.(*fileops.LocalBackend)
+	if !ok {
+		return nil, false, err
+	}
+	return searchWithRegex(localBackend.NormalizePath(searchPath), pattern, include)
 }
 
 func searchWithRipgrep(ctx context.Context, backend fileops.Backend, pattern, searchPath, include string) ([]grepMatch, error) {
@@ -227,7 +235,7 @@ func searchWithContextFallback(root, pattern, include string, contextLines int) 
 			return nil
 		}
 
-		fileOutput := buildContextOutput(path, re, contextLines)
+		fileOutput := buildContextOutput(path, filepath.ToSlash(filepath.Clean(rel)), re, contextLines)
 		if fileOutput == "" {
 			return nil
 		}
@@ -247,12 +255,15 @@ func searchWithContextFallback(root, pattern, include string, contextLines int) 
 
 // buildContextOutput reads a file and returns context-aware grep output for it.
 // Match lines use "file:line:text", context lines use "file-line-text", blocks separated by "--".
-func buildContextOutput(path string, re *regexp.Regexp, contextLines int) string {
+func buildContextOutput(path string, displayPath string, re *regexp.Regexp, contextLines int) string {
 	f, err := os.Open(path)
 	if err != nil {
 		return ""
 	}
 	defer f.Close()
+	if strings.TrimSpace(displayPath) == "" {
+		displayPath = filepath.ToSlash(path)
+	}
 
 	var allLines []string
 	scanner := bufio.NewScanner(f)
@@ -313,9 +324,9 @@ func buildContextOutput(path string, re *regexp.Regexp, contextLines int) string
 		for i := iv.start; i <= iv.end; i++ {
 			lineNum := i + 1
 			if matchSet[i] {
-				sb.WriteString(fmt.Sprintf("%s:%d:%s\n", path, lineNum, allLines[i]))
+				sb.WriteString(fmt.Sprintf("%s:%d:%s\n", displayPath, lineNum, allLines[i]))
 			} else {
-				sb.WriteString(fmt.Sprintf("%s-%d-%s\n", path, lineNum, allLines[i]))
+				sb.WriteString(fmt.Sprintf("%s-%d-%s\n", displayPath, lineNum, allLines[i]))
 			}
 		}
 	}
@@ -383,7 +394,7 @@ func searchWithRegex(root, pattern, include string) ([]grepMatch, bool, error) {
 			return nil
 		}
 
-		fileMatches := searchInFile(path, re, info.ModTime())
+		fileMatches := searchInFile(path, filepath.ToSlash(filepath.Clean(rel)), re, info.ModTime())
 		matches = append(matches, fileMatches...)
 		if len(matches) > maxMatches*2 {
 			return filepath.SkipAll
@@ -404,12 +415,15 @@ func searchWithRegex(root, pattern, include string) ([]grepMatch, bool, error) {
 	return matches, truncated, nil
 }
 
-func searchInFile(path string, re *regexp.Regexp, modTime time.Time) []grepMatch {
+func searchInFile(path string, displayPath string, re *regexp.Regexp, modTime time.Time) []grepMatch {
 	f, err := os.Open(path)
 	if err != nil {
 		return nil
 	}
 	defer f.Close()
+	if strings.TrimSpace(displayPath) == "" {
+		displayPath = filepath.ToSlash(path)
+	}
 
 	var matches []grepMatch
 	scanner := bufio.NewScanner(f)
@@ -419,7 +433,7 @@ func searchInFile(path string, re *regexp.Regexp, modTime time.Time) []grepMatch
 		text := scanner.Text()
 		if re.MatchString(text) {
 			matches = append(matches, grepMatch{
-				file:    path,
+				file:    displayPath,
 				line:    lineNum,
 				text:    text,
 				modTime: modTime,

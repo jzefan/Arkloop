@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"bytes"
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -47,6 +46,7 @@ const (
 // critical fields denied in advanced_json to prevent overriding core request structure
 var openAIAdvancedJSONDenylist = map[string]struct{}{
 	"model":          {},
+	"instructions":   {},
 	"messages":       {},
 	"input":          {},
 	"stream":         {},
@@ -113,8 +113,6 @@ func (g *OpenAIGateway) Stream(ctx context.Context, request Request, yield func(
 	if g.transport.baseURLErr != nil {
 		return yield(StreamRunFailed{Error: GatewayError{ErrorClass: ErrorClassInternalError, Message: "OpenAI base_url blocked", Details: map[string]any{"reason": g.transport.baseURLErr.Error()}}})
 	}
-	ctx, cancel := context.WithTimeout(ctx, g.transport.cfg.TotalTimeout)
-	defer cancel()
 
 	if g.protocol.PrimaryKind == ProtocolKindOpenAIChatCompletions {
 		return g.chatCompletions(ctx, request, yield)
@@ -180,17 +178,7 @@ func (g *OpenAIGateway) chatCompletions(ctx context.Context, request Request, yi
 			payload[k] = v
 		}
 	}
-	// reasoning_mode 控制是否发送 reasoning_effort 参数
-	switch request.ReasoningMode {
-	case "enabled":
-		if _, ok := payload["reasoning_effort"]; !ok {
-			payload["reasoning_effort"] = "medium"
-		}
-	case "disabled":
-		delete(payload, "reasoning_effort")
-	default: // "auto", "none", ""
-		// AdvancedJSON 已注入时保留
-	}
+	applyOpenAIChatReasoningMode(payload, request.ReasoningMode)
 
 	baseURL := g.transport.cfg.BaseURL
 	path := "/chat/completions"
@@ -224,6 +212,9 @@ func (g *OpenAIGateway) chatCompletions(ctx context.Context, request Request, yi
 			},
 		}
 		return yield(failed)
+	}
+	if RequestPayloadTooLarge(len(encoded)) {
+		return yield(PreflightOversizeFailure(llmCallID, len(encoded)))
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, g.transport.endpoint("/chat/completions"), bytes.NewReader(encoded))
@@ -259,6 +250,9 @@ func (g *OpenAIGateway) chatCompletions(ctx context.Context, request Request, yi
 	if status < 200 || status >= 300 {
 		body, bodyTruncated, _ := readAllWithLimit(resp.Body, openAIMaxErrorBodyBytes)
 		message, details := openAIErrorMessageAndDetails(body, status, "OpenAI request failed")
+		if status == http.StatusRequestEntityTooLarge {
+			details = OversizeFailureDetails(len(encoded), OversizePhaseProvider, details)
+		}
 
 		errClass := errorClassFromStatus(status)
 		failed := StreamRunFailed{
@@ -335,7 +329,8 @@ func (e *openAIResponsesNotSupportedError) Error() string {
 func (g *OpenAIGateway) responses(ctx context.Context, request Request, yield func(StreamEvent) error, allowFallback bool) error {
 	llmCallID := uuid.NewString()
 
-	input, err := toOpenAIResponsesInput(request.Messages)
+	instructions, inputMessages := splitOpenAIResponsesInstructions(request.Messages)
+	input, err := toOpenAIResponsesInput(inputMessages)
 	if err != nil {
 		return yield(StreamRunFailed{
 			LlmCallID: llmCallID,
@@ -352,6 +347,9 @@ func (g *OpenAIGateway) responses(ctx context.Context, request Request, yield fu
 		"input":  input,
 		"stream": true,
 	}
+	if instructions != "" {
+		payload["instructions"] = instructions
+	}
 	if request.Temperature != nil {
 		payload["temperature"] = *request.Temperature
 	}
@@ -367,26 +365,7 @@ func (g *OpenAIGateway) responses(ctx context.Context, request Request, yield fu
 			payload[k] = v
 		}
 	}
-	// reasoning_mode 控制是否发送 reasoning 参数
-	switch request.ReasoningMode {
-	case "enabled":
-		if rObj, ok := payload["reasoning"].(map[string]any); ok {
-			if _, has := rObj["summary"]; !has {
-				rObj["summary"] = "auto"
-			}
-		} else {
-			payload["reasoning"] = map[string]any{"summary": "auto"}
-		}
-	case "disabled":
-		delete(payload, "reasoning")
-	default: // "auto", "none", ""
-		// AdvancedJSON 已注入 reasoning 时，补全 summary
-		if rObj, ok := payload["reasoning"].(map[string]any); ok {
-			if _, has := rObj["summary"]; !has {
-				rObj["summary"] = "auto"
-			}
-		}
-	}
+	applyOpenAIResponsesReasoningMode(payload, request.ReasoningMode)
 
 	baseURL := g.transport.cfg.BaseURL
 	path := "/responses"
@@ -419,6 +398,9 @@ func (g *OpenAIGateway) responses(ctx context.Context, request Request, yield fu
 				Message:    "OpenAI request serialization failed",
 			},
 		})
+	}
+	if RequestPayloadTooLarge(len(encoded)) {
+		return yield(PreflightOversizeFailure(llmCallID, len(encoded)))
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, g.transport.endpoint("/responses"), bytes.NewReader(encoded))
@@ -471,6 +453,9 @@ func (g *OpenAIGateway) responses(ctx context.Context, request Request, yield fu
 
 		errClass := errorClassFromStatus(status)
 		message, details := openAIErrorMessageAndDetails(body, status, "OpenAI request failed")
+		if status == http.StatusRequestEntityTooLarge {
+			details = OversizeFailureDetails(len(encoded), OversizePhaseProvider, details)
+		}
 		return yield(StreamRunFailed{
 			LlmCallID: llmCallID,
 			Error: GatewayError{
@@ -528,6 +513,70 @@ func errorClassFromStatus(status int) string {
 			return ErrorClassProviderRetryable
 		}
 		return ErrorClassProviderNonRetryable
+	}
+}
+
+func openAIReasoningEffort(mode string) (string, bool) {
+	switch strings.ToLower(strings.TrimSpace(mode)) {
+	case "enabled":
+		return "medium", true
+	case "none", "off":
+		return "none", true
+	case "minimal", "low", "medium", "high", "xhigh":
+		return strings.ToLower(strings.TrimSpace(mode)), true
+	case "max", "maximum", "extra_high", "extra-high", "extra high":
+		return "xhigh", true
+	default:
+		return "", false
+	}
+}
+
+func openAIReasoningDisabled(mode string) bool {
+	switch strings.ToLower(strings.TrimSpace(mode)) {
+	case "disabled":
+		return true
+	default:
+		return false
+	}
+}
+
+func applyOpenAIChatReasoningMode(payload map[string]any, mode string) {
+	if effort, ok := openAIReasoningEffort(mode); ok {
+		payload["reasoning_effort"] = effort
+		return
+	}
+	if openAIReasoningDisabled(mode) {
+		delete(payload, "reasoning_effort")
+	}
+}
+
+func applyOpenAIResponsesReasoningMode(payload map[string]any, mode string) {
+	if effort, ok := openAIReasoningEffort(mode); ok {
+		rObj := map[string]any{}
+		if existing, ok := payload["reasoning"].(map[string]any); ok {
+			for key, value := range existing {
+				rObj[key] = value
+			}
+		}
+		rObj["effort"] = effort
+		if effort == "none" {
+			delete(rObj, "summary")
+		} else {
+			if _, has := rObj["summary"]; !has {
+				rObj["summary"] = "auto"
+			}
+		}
+		payload["reasoning"] = rObj
+		return
+	}
+	if openAIReasoningDisabled(mode) {
+		delete(payload, "reasoning")
+		return
+	}
+	if rObj, ok := payload["reasoning"].(map[string]any); ok {
+		if _, has := rObj["summary"]; !has {
+			rObj["summary"] = "auto"
+		}
 	}
 }
 
@@ -646,7 +695,7 @@ func (b *openAIChatToolCallBuffer) Drain() ([]ToolCall, error) {
 
 		toolCalls = append(toolCalls, ToolCall{
 			ToolCallID:    item.ID,
-			ToolName:      item.Name,
+			ToolName:      CanonicalToolName(item.Name),
 			ArgumentsJSON: argumentsJSON,
 		})
 	}
@@ -682,7 +731,7 @@ func (g *OpenAIGateway) streamChatCompletionsSSE(
 	reasoningDetailsChunkCount := 0
 	obfuscationChunkCount := 0
 
-	err := forEachSSEData(ctx, body, func(data string) (retErr error) {
+	err := forEachSSEData(ctx, body, streamActivityMarker(ctx), func(data string) (retErr error) {
 		defer func() {
 			if retErr != nil {
 				handlerFailed = true
@@ -885,7 +934,7 @@ func (g *OpenAIGateway) streamChatCompletionsSSE(
 				if err := yield(ToolCallArgumentDelta{
 					ToolCallIndex:  idx,
 					ToolCallID:     toolDelta.ID,
-					ToolName:       toolDelta.Function.Name,
+					ToolName:       CanonicalToolName(toolDelta.Function.Name),
 					ArgumentsDelta: toolDelta.Function.Arguments,
 				}); err != nil {
 					return err
@@ -1052,7 +1101,7 @@ func (g *OpenAIGateway) streamChatCompletionsSSE(
 			},
 		})
 	}
-	return yield(StreamRunFailed{LlmCallID: llmCallID, Error: InternalStreamEndedError()})
+	return yield(StreamRunFailed{LlmCallID: llmCallID, Error: RetryableStreamEndedError()})
 }
 
 func openAIChatEmptyStreamFailure(emittedAnyOutput bool, choiceChunkCount int, sawRoleDelta bool, finishReasonSeen bool) (string, string) {
@@ -1110,7 +1159,7 @@ func (g *OpenAIGateway) streamResponsesSSE(
 	emittedTextOutput := false
 	emittedToolDelta := false
 
-	err := forEachSSEData(ctx, body, func(data string) (retErr error) {
+	err := forEachSSEData(ctx, body, streamActivityMarker(ctx), func(data string) (retErr error) {
 		defer func() {
 			if retErr != nil {
 				handlerFailed = true
@@ -1296,7 +1345,7 @@ func (g *OpenAIGateway) streamResponsesSSE(
 	if emittedTextOutput || emittedToolDelta || len(calls) > 0 {
 		return yield(StreamRunCompleted{LlmCallID: llmCallID})
 	}
-	return yield(StreamRunFailed{LlmCallID: llmCallID, Error: InternalStreamEndedError()})
+	return yield(StreamRunFailed{LlmCallID: llmCallID, Error: RetryableStreamEndedError()})
 }
 
 func toOpenAIChatMessages(messages []Message) ([]map[string]any, error) {
@@ -1362,7 +1411,7 @@ func openAIToolChoice(tc *ToolChoice) any {
 	case "specific":
 		return map[string]any{
 			"type":     "function",
-			"function": map[string]any{"name": tc.ToolName},
+			"function": map[string]any{"name": CanonicalToolName(tc.ToolName)},
 		}
 	default:
 		return "auto"
@@ -1372,8 +1421,12 @@ func openAIToolChoice(tc *ToolChoice) any {
 func toOpenAITools(specs []ToolSpec) []map[string]any {
 	out := make([]map[string]any, 0, len(specs))
 	for _, spec := range specs {
+		name := CanonicalToolName(spec.Name)
+		if name == "" {
+			name = spec.Name
+		}
 		fn := map[string]any{
-			"name":       spec.Name,
+			"name":       name,
 			"parameters": mapOrEmpty(spec.JSONSchema),
 		}
 		if spec.Description != nil {
@@ -1390,9 +1443,13 @@ func toOpenAITools(specs []ToolSpec) []map[string]any {
 func toOpenAIResponsesTools(specs []ToolSpec) []map[string]any {
 	out := make([]map[string]any, 0, len(specs))
 	for _, spec := range specs {
+		name := CanonicalToolName(spec.Name)
+		if name == "" {
+			name = spec.Name
+		}
 		payload := map[string]any{
 			"type":       "function",
-			"name":       spec.Name,
+			"name":       name,
 			"parameters": mapOrEmpty(spec.JSONSchema),
 		}
 		if spec.Description != nil {
@@ -1472,7 +1529,7 @@ func parseOpenAIChatCompletion(body []byte) (string, []ToolCall, *Usage, *Cost, 
 
 		toolCalls = append(toolCalls, ToolCall{
 			ToolCallID:    toolCallID,
-			ToolName:      toolName,
+			ToolName:      CanonicalToolName(toolName),
 			ArgumentsJSON: argumentsJSON,
 		})
 	}
@@ -1519,7 +1576,9 @@ func toOpenAIResponsesInput(messages []Message) ([]map[string]any, error) {
 				"call_id": toolCallID,
 				"output":  toolOutputTextFromEnvelope(parsed),
 			})
-			if imgBlocks := collectImageBlocks(message.Content); len(imgBlocks) > 0 {
+			if imgBlocks, err := toOpenAIResponsesImageBlocks(message.Content); err != nil {
+				return nil, err
+			} else if len(imgBlocks) > 0 {
 				items = append(items, map[string]any{
 					"type":    "message",
 					"role":    "user",
@@ -1535,11 +1594,27 @@ func toOpenAIResponsesInput(messages []Message) ([]map[string]any, error) {
 		}
 		items = append(items, map[string]any{
 			"type":    "message",
-			"role":    message.Role,
+			"role":    strings.TrimSpace(message.Role),
 			"content": contentBlocks,
 		})
 	}
 	return items, nil
+}
+
+func splitOpenAIResponsesInstructions(messages []Message) (string, []Message) {
+	instructions := make([]string, 0, 1)
+	filtered := make([]Message, 0, len(messages))
+	for _, message := range messages {
+		if strings.TrimSpace(message.Role) != "system" {
+			filtered = append(filtered, message)
+			continue
+		}
+		text := strings.TrimSpace(joinParts(message.Content))
+		if text != "" {
+			instructions = append(instructions, text)
+		}
+	}
+	return strings.Join(instructions, "\n\n"), filtered
 }
 
 func toOpenAIChatContentBlocks(parts []ContentPart) ([]map[string]any, bool, error) {
@@ -1565,6 +1640,9 @@ func toOpenAIChatContentBlocks(parts []ContentPart) ([]map[string]any, bool, err
 				return nil, false, err
 			}
 			hasStructured = true
+			if text := openAIImageAttachmentKeyText(part); text != "" {
+				blocks = append(blocks, map[string]any{"type": "text", "text": text})
+			}
 			blocks = append(blocks, map[string]any{
 				"type":      "image_url",
 				"image_url": map[string]any{"url": dataURL},
@@ -1591,6 +1669,7 @@ func toOpenAIResponsesAssistantItems(message Message, index int) ([]map[string]a
 		items = append(items, item)
 	}
 	for callIndex, call := range message.ToolCalls {
+		call = CanonicalToolCall(call)
 		argumentsJSON, err := stablejson.Encode(mapOrEmpty(call.ArgumentsJSON))
 		if err != nil {
 			argumentsJSON = "{}"
@@ -1663,6 +1742,9 @@ func toOpenAIResponsesContentBlocks(parts []ContentPart) ([]map[string]any, erro
 			if err != nil {
 				return nil, err
 			}
+			if text := openAIImageAttachmentKeyText(part); text != "" {
+				blocks = append(blocks, map[string]any{"type": "input_text", "text": text})
+			}
 			blocks = append(blocks, map[string]any{"type": "input_image", "image_url": dataURL})
 		}
 	}
@@ -1670,6 +1752,17 @@ func toOpenAIResponsesContentBlocks(parts []ContentPart) ([]map[string]any, erro
 		blocks = append(blocks, map[string]any{"type": "input_text", "text": ""})
 	}
 	return blocks, nil
+}
+
+func openAIImageAttachmentKeyText(part ContentPart) string {
+	if part.Attachment == nil {
+		return ""
+	}
+	key := strings.TrimSpace(part.Attachment.Key)
+	if key == "" {
+		return ""
+	}
+	return "[attachment_key:" + key + "]"
 }
 
 func collectImageBlocks(parts []ContentPart) []map[string]any {
@@ -1690,23 +1783,32 @@ func collectImageBlocks(parts []ContentPart) []map[string]any {
 	return blocks
 }
 
+func toOpenAIResponsesImageBlocks(parts []ContentPart) ([]map[string]any, error) {
+	blocks := make([]map[string]any, 0, len(parts))
+	for _, part := range parts {
+		if part.Kind() != "image" {
+			continue
+		}
+		dataURL, err := partDataURL(part)
+		if err != nil {
+			return nil, err
+		}
+		if text := openAIImageAttachmentKeyText(part); text != "" {
+			blocks = append(blocks, map[string]any{"type": "input_text", "text": text})
+		}
+		blocks = append(blocks, map[string]any{"type": "input_image", "image_url": dataURL})
+	}
+	return blocks, nil
+}
+
 func partDataURL(part ContentPart) (string, error) {
-	if part.Attachment == nil {
-		return "", fmt.Errorf("image attachment is required")
-	}
-	if len(part.Data) == 0 {
-		return "", fmt.Errorf("image attachment data is required")
-	}
-	mimeType := strings.TrimSpace(part.Attachment.MimeType)
-	if mimeType == "" {
-		mimeType = "application/octet-stream"
-	}
-	return "data:" + mimeType + ";base64," + base64.StdEncoding.EncodeToString(part.Data), nil
+	return modelInputImageDataURL(part)
 }
 
 func toOpenAIAssistantToolCalls(calls []ToolCall) []map[string]any {
 	out := make([]map[string]any, 0, len(calls))
 	for _, call := range calls {
+		call = CanonicalToolCall(call)
 		argumentsJSON, err := stablejson.Encode(mapOrEmpty(call.ArgumentsJSON))
 		if err != nil {
 			argumentsJSON = "{}"
@@ -1733,6 +1835,9 @@ func toOpenAIToolMessage(text string) map[string]any {
 	envelope, ok := parsed.(map[string]any)
 	if !ok {
 		return map[string]any{"role": "tool", "content": text}
+	}
+	if rawName, ok := envelope["tool_name"].(string); ok {
+		envelope["tool_name"] = CanonicalToolName(rawName)
 	}
 
 	toolCallID, _ := envelope["tool_call_id"].(string)
@@ -1915,7 +2020,7 @@ func openAIResponsesToolArgumentsDelta(
 			buffer.ToolCallID = buffer.ItemID
 		}
 		if buffer.ToolName == "" {
-			buffer.ToolName = strings.TrimSpace(stringValueFromAny(item["name"]))
+			buffer.ToolName = CanonicalToolName(stringValueFromAny(item["name"]))
 		}
 		if buffer.Arguments.Len() == 0 {
 			if arguments, ok := item["arguments"].(string); ok && arguments != "" {
@@ -1954,7 +2059,7 @@ func openAIResponsesToolArgumentsDelta(
 		return &ToolCallArgumentDelta{
 			ToolCallIndex:  buffer.OutputIndex,
 			ToolCallID:     buffer.ToolCallID,
-			ToolName:       buffer.ToolName,
+			ToolName:       CanonicalToolName(buffer.ToolName),
 			ArgumentsDelta: delta,
 		}
 	default:
@@ -1992,7 +2097,7 @@ func openAIResponsesBufferedToolCalls(toolBuffers map[int]*openAIResponsesToolBu
 			"id":        strings.TrimSpace(buffer.ItemID),
 			"call_id":   callID,
 			"type":      "function_call",
-			"name":      buffer.ToolName,
+			"name":      CanonicalToolName(buffer.ToolName),
 			"arguments": strings.TrimSpace(buffer.Arguments.String()),
 		})
 	}
@@ -2095,7 +2200,7 @@ func parseOpenAIResponsesAssistantResponse(root map[string]any) (Message, []Tool
 		if strings.TrimSpace(toolName) == "" {
 			toolName, _ = item["tool_name"].(string)
 		}
-		toolName = strings.TrimSpace(toolName)
+		toolName = CanonicalToolName(toolName)
 		if toolName == "" {
 			return Message{}, nil, nil, nil, fmt.Errorf("output[%d] missing function_call.name", idx)
 		}
@@ -2125,7 +2230,7 @@ func parseOpenAIResponsesAssistantResponse(root map[string]any) (Message, []Tool
 
 		toolCalls = append(toolCalls, ToolCall{
 			ToolCallID:    toolCallID,
-			ToolName:      toolName,
+			ToolName:      CanonicalToolName(toolName),
 			ArgumentsJSON: argumentsJSON,
 		})
 	}
@@ -2198,7 +2303,7 @@ func openAIResponsesToolCalls(output []any) ([]ToolCall, error) {
 		if strings.TrimSpace(toolName) == "" {
 			toolName, _ = item["tool_name"].(string)
 		}
-		toolName = strings.TrimSpace(toolName)
+		toolName = CanonicalToolName(toolName)
 		if toolName == "" {
 			return nil, fmt.Errorf("output[%d] missing function_call.name", idx)
 		}
@@ -2228,7 +2333,7 @@ func openAIResponsesToolCalls(output []any) ([]ToolCall, error) {
 
 		toolCalls = append(toolCalls, ToolCall{
 			ToolCallID:    toolCallID,
-			ToolName:      toolName,
+			ToolName:      CanonicalToolName(toolName),
 			ArgumentsJSON: argumentsJSON,
 		})
 	}
@@ -2531,20 +2636,48 @@ func costFromFloat64(value *float64) *Cost {
 	}
 }
 
-func forEachSSEData(ctx context.Context, r io.Reader, handle func(string) error) error {
+func forEachSSEData(ctx context.Context, r io.Reader, markActivity func(), handle func(string) error) error {
 	reader := bufio.NewReader(r)
 	dataLines := []string{}
+	type readResult struct {
+		line string
+		err  error
+	}
+	var closer io.Closer
+	if c, ok := r.(io.Closer); ok {
+		closer = c
+	}
 	for {
-		if err := ctx.Err(); err != nil {
+		if err := streamContextError(ctx, nil); err != nil {
+			if closer != nil {
+				_ = closer.Close()
+			}
 			return err
 		}
 
-		line, err := reader.ReadString('\n')
-		if err != nil && err != io.EOF {
-			return err
+		resultCh := make(chan readResult, 1)
+		go func() {
+			line, err := reader.ReadString('\n')
+			resultCh <- readResult{line: line, err: err}
+		}()
+
+		var result readResult
+		select {
+		case <-ctx.Done():
+			if closer != nil {
+				_ = closer.Close()
+			}
+			return streamContextError(ctx, nil)
+		case result = <-resultCh:
+		}
+		if result.err != nil && result.err != io.EOF {
+			return streamContextError(ctx, result.err)
+		}
+		if len(result.line) > 0 && markActivity != nil {
+			markActivity()
 		}
 
-		cleaned := strings.TrimRight(line, "\r\n")
+		cleaned := strings.TrimRight(result.line, "\r\n")
 		if cleaned == "" {
 			if len(dataLines) > 0 {
 				data := strings.Join(dataLines, "\n")
@@ -2559,7 +2692,7 @@ func forEachSSEData(ctx context.Context, r io.Reader, handle func(string) error)
 			dataLines = append(dataLines, strings.TrimLeft(cleaned[len("data:"):], " "))
 		}
 
-		if err == io.EOF {
+		if result.err == io.EOF {
 			break
 		}
 	}

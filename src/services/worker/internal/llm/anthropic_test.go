@@ -105,6 +105,104 @@ func TestToAnthropicMessages_ToolEnvelope(t *testing.T) {
 	}
 }
 
+func TestAnthropicGateway_Stream_PreflightOversizeSkipsHTTP(t *testing.T) {
+	calls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	gateway := NewAnthropicGateway(AnthropicGatewayConfig{
+		APIKey:  "test-key",
+		BaseURL: server.URL,
+	})
+
+	var got []StreamEvent
+	err := gateway.Stream(context.Background(), Request{
+		Model: "claude-test",
+		Messages: []Message{{
+			Role:    "user",
+			Content: []TextPart{{Text: strings.Repeat("x", RequestPayloadLimitBytes+1024)}},
+		}},
+	}, func(ev StreamEvent) error {
+		got = append(got, ev)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("Stream failed: %v", err)
+	}
+	if calls != 0 {
+		t.Fatalf("expected no HTTP request, got %d", calls)
+	}
+	failed, ok := got[len(got)-1].(StreamRunFailed)
+	if !ok {
+		t.Fatalf("expected StreamRunFailed, got %T", got[len(got)-1])
+	}
+	if failed.Error.Details["status_code"] != http.StatusRequestEntityTooLarge {
+		t.Fatalf("unexpected details: %#v", failed.Error.Details)
+	}
+	if failed.Error.Details["oversize_phase"] != OversizePhasePreflight {
+		t.Fatalf("unexpected phase: %#v", failed.Error.Details)
+	}
+}
+
+func TestToAnthropicMessages_PartialToolResultsStripUnmatchedToolUse(t *testing.T) {
+	_, messages, err := toAnthropicMessages([]Message{
+		{
+			Role:    "assistant",
+			Content: []TextPart{{Text: "working"}},
+			ToolCalls: []ToolCall{
+				{
+					ToolCallID:    "call_1",
+					ToolName:      "telegram_react",
+					ArgumentsJSON: map[string]any{"emoji": "❤️"},
+				},
+				{
+					ToolCallID:    "call_2",
+					ToolName:      "telegram_reply",
+					ArgumentsJSON: map[string]any{"reply_to_message_id": "42"},
+				},
+			},
+		},
+		{
+			Role: "tool",
+			Content: []TextPart{{
+				Text: `{"tool_call_id":"call_2","tool_name":"telegram_reply","result":{"ok":true}}`,
+			}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("toAnthropicMessages failed: %v", err)
+	}
+	if len(messages) != 2 {
+		t.Fatalf("unexpected messages len: %d", len(messages))
+	}
+	assistant := messages[0]
+	blocks, ok := assistant["content"].([]map[string]any)
+	if !ok {
+		t.Fatalf("unexpected assistant content: %#v", assistant["content"])
+	}
+	if len(blocks) != 2 {
+		t.Fatalf("expected text + surviving tool_use blocks, got %#v", blocks)
+	}
+	if blocks[0]["type"] != "text" || blocks[1]["type"] != "tool_use" {
+		t.Fatalf("unexpected assistant blocks: %#v", blocks)
+	}
+	if blocks[1]["id"] != "call_2" {
+		t.Fatalf("expected only matched tool_use to survive, got %#v", blocks[1])
+	}
+
+	toolResult := messages[1]
+	rawToolResults, ok := toolResult["content"].([]map[string]any)
+	if !ok || len(rawToolResults) != 1 {
+		t.Fatalf("unexpected tool_result wrapper content: %#v", toolResult["content"])
+	}
+	if rawToolResults[0]["tool_use_id"] != "call_2" {
+		t.Fatalf("expected matched tool result, got %#v", rawToolResults[0])
+	}
+}
+
 func TestToAnthropicMessages_AssistantThinkingBlocksPreserved(t *testing.T) {
 	system, messages, err := toAnthropicMessages([]Message{
 		{
@@ -740,6 +838,74 @@ func TestAnthropicGateway_Stream_AdvancedJSON_CannotInjectToolsWhenRequestHasNon
 	}
 }
 
+func TestAnthropicThinkingBudget(t *testing.T) {
+	cases := map[string]int{
+		"enabled":      defaultAnthropicThinkingBudget,
+		"minimal":      anthropicMinThinkingBudget,
+		"low":          anthropicLowThinkingBudget,
+		"medium":       defaultAnthropicThinkingBudget,
+		"high":         anthropicHighThinkingBudget,
+		"max":          anthropicMaxThinkingBudget,
+		"xhigh":        anthropicMaxThinkingBudget,
+		"extra-high":   anthropicMaxThinkingBudget,
+		" EXTRA HIGH ": anthropicMaxThinkingBudget,
+	}
+
+	for input, want := range cases {
+		got, ok := anthropicThinkingBudget(input)
+		if !ok || got != want {
+			t.Fatalf("mode %q => (%d, %v), want (%d, true)", input, got, ok, want)
+		}
+	}
+
+	if _, ok := anthropicThinkingBudget("auto"); ok {
+		t.Fatal("auto should not force a thinking budget")
+	}
+}
+
+func TestAnthropicThinkingDisabled(t *testing.T) {
+	for _, input := range []string{"disabled", "none", "off"} {
+		if !anthropicThinkingDisabled(input) {
+			t.Fatalf("%q should disable thinking", input)
+		}
+	}
+	if anthropicThinkingDisabled("enabled") {
+		t.Fatal("enabled should not disable thinking")
+	}
+}
+
+func TestApplyAnthropicReasoningModeUsesMappedBudget(t *testing.T) {
+	payload := map[string]any{"max_tokens": 2048}
+	applyAnthropicReasoningMode(payload, "high")
+
+	thinking, ok := payload["thinking"].(map[string]any)
+	if !ok {
+		t.Fatal("expected thinking payload")
+	}
+	if thinking["type"] != "enabled" {
+		t.Fatalf("thinking.type = %#v, want enabled", thinking["type"])
+	}
+	if thinking["budget_tokens"] != anthropicHighThinkingBudget {
+		t.Fatalf("thinking.budget_tokens = %#v, want %d", thinking["budget_tokens"], anthropicHighThinkingBudget)
+	}
+	if got := anyToInt(payload["max_tokens"]); got <= anthropicHighThinkingBudget {
+		t.Fatalf("max_tokens should be raised above budget, got %d", got)
+	}
+}
+
+func TestApplyAnthropicReasoningModeDisablesThinking(t *testing.T) {
+	payload := map[string]any{
+		"thinking": map[string]any{
+			"type":          "enabled",
+			"budget_tokens": defaultAnthropicThinkingBudget,
+		},
+	}
+	applyAnthropicReasoningMode(payload, "off")
+	if _, ok := payload["thinking"]; ok {
+		t.Fatalf("thinking should be removed, got %#v", payload["thinking"])
+	}
+}
+
 func TestAnthropicGateway_Stream_AdvancedJSON_DeniedKeyReturnsError(t *testing.T) {
 	// denylist keys (model/max_tokens/stream/tools/system etc.) should all fail immediately
 	deniedKeys := []string{"model", "max_tokens", "system"}
@@ -836,6 +1002,46 @@ func TestAnthropicGateway_Stream_ErrorEventStopsTerminal(t *testing.T) {
 	}
 }
 
+func TestAnthropicGateway_Stream_MissingMessageStopAfterTextIsRetryable(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte(anthropicSSEBody([]string{
+			`{"type":"content_block_start","index":0,"content_block":{"type":"text","text":"partial"}}`,
+		})))
+	}))
+	t.Cleanup(server.Close)
+
+	gateway := NewAnthropicGateway(AnthropicGatewayConfig{
+		APIKey:  "test",
+		BaseURL: server.URL,
+	})
+
+	var events []StreamEvent
+	err := gateway.Stream(context.Background(), Request{
+		Model:    "claude-test",
+		Messages: []Message{{Role: "user", Content: []TextPart{{Text: "hi"}}}},
+	}, func(ev StreamEvent) error {
+		events = append(events, ev)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("stream failed: %v", err)
+	}
+	if len(events) == 0 {
+		t.Fatal("expected events, got none")
+	}
+	failed, ok := events[len(events)-1].(StreamRunFailed)
+	if !ok {
+		t.Fatalf("expected terminal StreamRunFailed, got %T", events[len(events)-1])
+	}
+	if failed.Error.ErrorClass != ErrorClassProviderRetryable {
+		t.Fatalf("unexpected error class: %q", failed.Error.ErrorClass)
+	}
+	if failed.Error.Message != "upstream stream ended prematurely without completion" {
+		t.Fatalf("unexpected error message: %q", failed.Error.Message)
+	}
+}
+
 func TestAnthropicGateway_Stream_RefusalStopsWithoutSuccessTerminal(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
@@ -884,5 +1090,60 @@ func TestAnthropicGateway_Stream_RefusalStopsWithoutSuccessTerminal(t *testing.T
 	}
 	if failed.Error.Details["stop_reason"] != "refusal" {
 		t.Fatalf("unexpected stop_reason: %#v", failed.Error.Details)
+	}
+}
+
+func TestAnthropicGateway_Stream_RequestBodyDoesNotLeakProviderToolName(t *testing.T) {
+	var receivedBody []byte
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatalf("read request body failed: %v", err)
+		}
+		receivedBody = append([]byte(nil), body...)
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte(anthropicSSEBody([]string{`{"type":"message_stop"}`})))
+	}))
+	t.Cleanup(server.Close)
+
+	gateway := NewAnthropicGateway(AnthropicGatewayConfig{
+		APIKey:  "test",
+		BaseURL: server.URL,
+	})
+
+	err := gateway.Stream(context.Background(), Request{
+		Model: "claude-test",
+		Messages: []Message{
+			{Role: "user", Content: []TextPart{{Text: "hi"}}},
+			{
+				Role:    "assistant",
+				Content: []TextPart{{Text: "searching"}},
+				ToolCalls: []ToolCall{{
+					ToolCallID:    "call_1",
+					ToolName:      "web_search.tavily",
+					ArgumentsJSON: map[string]any{"query": "hello"},
+				}},
+			},
+			{
+				Role: "tool",
+				Content: []TextPart{{
+					Text: `{"tool_call_id":"call_1","tool_name":"web_search.tavily","result":{"items":[{"title":"x"}]}}`,
+				}},
+			},
+		},
+	}, func(StreamEvent) error {
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("stream failed: %v", err)
+	}
+
+	bodyText := string(receivedBody)
+	if strings.Contains(bodyText, "web_search.tavily") {
+		t.Fatalf("expected anthropic request body to hide provider tool name, got %s", bodyText)
+	}
+	if !strings.Contains(bodyText, `"name":"web_search"`) {
+		t.Fatalf("expected anthropic request body to keep canonical tool name, got %s", bodyText)
 	}
 }

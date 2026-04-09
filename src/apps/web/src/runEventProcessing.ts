@@ -1,10 +1,10 @@
-import { isACPDelegateEventData } from '@arkloop/shared'
+import { isACPDelegateEventData, canonicalToolName, pickLogicalToolName } from '@arkloop/shared'
 import type { MessageResponse, ThreadRunResponse } from './api'
 import type { RunEvent } from './sse'
 import type { ArtifactRef, BrowserActionRef, CodeExecutionRef, FileOpRef, MessageThinkingRef, SubAgentRef, WebFetchRef, WidgetRef } from './storage'
 
 const CODE_EXECUTION_TOOL_NAMES = new Set(['python_execute', 'exec_command'])
-const CODE_EXECUTION_RESULT_TOOL_NAMES = new Set(['python_execute', 'exec_command', 'write_stdin'])
+const CODE_EXECUTION_RESULT_TOOL_NAMES = new Set(['python_execute', 'exec_command', 'continue_process', 'terminate_process'])
 const TERMINAL_CONTROL_SEQUENCE_PATTERN = new RegExp(String.raw`\u001b\[[0-9;?]*[ -/]*[@-~]`, 'g')
 
 type CodeExecutionToolCallPatch = {
@@ -34,9 +34,7 @@ type CodeExecutionDeltaPatch = {
 }
 
 function pickToolName(data: unknown): string {
-  if (!data || typeof data !== 'object') return ''
-  const raw = (data as { tool_name?: unknown }).tool_name
-  return typeof raw === 'string' ? raw : ''
+  return pickLogicalToolName(data)
 }
 
 function pickToolCallId(event: RunEvent): string {
@@ -46,27 +44,70 @@ function pickToolCallId(event: RunEvent): string {
 }
 
 export function isWebFetchToolName(toolName: string): boolean {
-  const t = toolName.trim()
+  const t = canonicalToolName(toolName)
   if (!t) return false
   const n = t.toLowerCase().replace(/-/g, '_')
   if (n === 'web_fetch' || n === 'webfetch') return true
   return n.startsWith('web_fetch.')
 }
 
-function pickSessionId(result: unknown): string | undefined {
+function pickProcessRef(result: unknown): string | undefined {
   if (!result || typeof result !== 'object') return undefined
-  const raw = (result as { session_id?: unknown }).session_id
+  const raw = (result as { process_ref?: unknown }).process_ref
   return typeof raw === 'string' && raw.trim() !== '' ? raw : undefined
 }
 
 function detectCodeExecutionLanguage(toolName: string): CodeExecutionRef['language'] | null {
   if (toolName === 'python_execute') return 'python'
-  if (toolName === 'exec_command' || toolName === 'write_stdin') return 'shell'
+  if (toolName === 'exec_command' || toolName === 'continue_process' || toolName === 'terminate_process') return 'shell'
   return null
 }
 
 function sanitizeTerminalOutput(value: string): string {
   return value.replace(TERMINAL_CONTROL_SEQUENCE_PATTERN, '')
+}
+
+function pickExecCommandMode(args: Record<string, unknown> | undefined): CodeExecutionRef['mode'] {
+  const raw = typeof args?.mode === 'string' ? args.mode.trim() : ''
+  switch (raw) {
+    case 'follow':
+    case 'stdin':
+    case 'pty':
+      return raw
+    default:
+      return 'buffered'
+  }
+}
+
+function formatCodeExecutionItems(items: unknown): string {
+  if (!Array.isArray(items)) return ''
+  const ordered = items
+    .filter((item): item is Record<string, unknown> => !!item && typeof item === 'object')
+    .sort((left, right) => {
+      const leftSeq = typeof left.seq === 'number' ? left.seq : Number.MAX_SAFE_INTEGER
+      const rightSeq = typeof right.seq === 'number' ? right.seq : Number.MAX_SAFE_INTEGER
+      return leftSeq - rightSeq
+    })
+  const segments: string[] = []
+  let currentTaggedStream: 'stderr' | 'system' | null = null
+  for (const item of ordered) {
+    if (!item || typeof item !== 'object') continue
+    const text = typeof (item as { text?: unknown }).text === 'string'
+      ? sanitizeTerminalOutput((item as { text: string }).text)
+      : ''
+    if (!text) continue
+    const stream = typeof item.stream === 'string' ? item.stream : 'stdout'
+    if (stream === 'stderr' || stream === 'system') {
+      if (currentTaggedStream !== stream) {
+        segments.push(stream === 'stderr' ? '[stderr]\n' : '[system]\n')
+        currentTaggedStream = stream
+      }
+    } else {
+      currentTaggedStream = null
+    }
+    segments.push(text)
+  }
+  return segments.join('')
 }
 
 function extractCodeExecutionOutput(result: unknown): { output?: string; exitCode?: number } {
@@ -76,14 +117,16 @@ function extractCodeExecutionOutput(result: unknown): { output?: string; exitCod
     stderr?: unknown
     output?: unknown
     exit_code?: unknown
+    items?: unknown
   }
   const exitCode = typeof typed.exit_code === 'number' ? typed.exit_code : undefined
   const stdout = typeof typed.stdout === 'string' ? sanitizeTerminalOutput(typed.stdout) : ''
   const stderr = typeof typed.stderr === 'string' ? sanitizeTerminalOutput(typed.stderr) : ''
   const fallbackOutput = typeof typed.output === 'string' ? sanitizeTerminalOutput(typed.output) : ''
+  const itemOutput = formatCodeExecutionItems(typed.items)
   const rawOutput = exitCode != null && exitCode !== 0
-    ? (stderr || stdout || fallbackOutput)
-    : (stdout || stderr || fallbackOutput)
+    ? (stderr || itemOutput || stdout || fallbackOutput)
+    : (stdout || itemOutput || stderr || fallbackOutput)
 
   return {
     output: rawOutput || undefined,
@@ -95,20 +138,30 @@ function extractCodeExecutionError(event: RunEvent): CodeExecutionErrorDetails {
   if (!event.data || typeof event.data !== 'object') {
     return {
       errorClass: typeof event.error_class === 'string' ? event.error_class : undefined,
+      errorMessage: typeof event.error_class === 'string' && event.error_class === 'process.cursor_expired'
+        ? 'cursor 已过期'
+        : undefined,
     }
   }
   const rawError = (event.data as { error?: unknown }).error
   if (!rawError || typeof rawError !== 'object') {
     return {
       errorClass: typeof event.error_class === 'string' ? event.error_class : undefined,
+      errorMessage: typeof event.error_class === 'string' && event.error_class === 'process.cursor_expired'
+        ? 'cursor 已过期'
+        : undefined,
     }
   }
   const typed = rawError as { error_class?: unknown; message?: unknown }
+  const errorClass = typeof typed.error_class === 'string'
+    ? typed.error_class
+    : typeof event.error_class === 'string' ? event.error_class : undefined
+  const errorMessage = typeof typed.message === 'string'
+    ? typed.message
+    : errorClass === 'process.cursor_expired' ? 'cursor 已过期' : undefined
   return {
-    errorClass: typeof typed.error_class === 'string'
-      ? typed.error_class
-      : typeof event.error_class === 'string' ? event.error_class : undefined,
-    errorMessage: typeof typed.message === 'string' ? typed.message : undefined,
+    errorClass,
+    errorMessage,
   }
 }
 
@@ -126,6 +179,15 @@ function resolveCodeExecutionStatus(params: {
   const error = extractCodeExecutionError(event)
   if (error.errorClass || error.errorMessage) {
     return 'failed'
+  }
+  if (result && typeof result === 'object') {
+    const processStatus = (result as { status?: unknown }).status
+    if (processStatus === 'terminated' || processStatus === 'timed_out' || processStatus === 'cancelled') {
+      return 'failed'
+    }
+    if (processStatus === 'exited') {
+      return exitCode === 0 ? 'success' : 'failed'
+    }
   }
   // exit_code 表示会话已结束；部分后端在终态仍带 running=true，必须先认 exit_code
   if (exitCode != null) {
@@ -155,32 +217,27 @@ function mergeExecutionOutput(previous: string | undefined, incoming: string | u
 
 function findExecutionIndex(
   executions: CodeExecutionRef[],
-  params: { toolCallId?: string; sessionId?: string; preferSession: boolean },
+  params: { toolCallId?: string; processRef?: string; preferProcess: boolean },
 ): number {
-  const { toolCallId, sessionId, preferSession } = params
-  const findBySession = () => sessionId ? executions.findIndex((item) => item.sessionId === sessionId) : -1
+  const { toolCallId, processRef, preferProcess } = params
+  const findByProcess = () => processRef ? executions.findIndex((item) => item.processRef === processRef) : -1
   const findByCallId = () => toolCallId ? executions.findIndex((item) => item.id === toolCallId) : -1
 
-  const primary = preferSession ? findBySession() : findByCallId()
+  const primary = preferProcess ? findByProcess() : findByCallId()
   if (primary >= 0) return primary
-  const secondary = preferSession ? findByCallId() : findBySession()
+  const secondary = preferProcess ? findByCallId() : findByProcess()
   if (secondary >= 0) return secondary
 
-  // write_stdin fallback: match last shell entry still awaiting output
-  if (preferSession) {
-    for (let i = executions.length - 1; i >= 0; i--) {
-      if (executions[i].language === 'shell' && executions[i].status === 'running') {
-        return i
-      }
-    }
-  }
   return -1
 }
 
 function patchExecution(
   execution: CodeExecutionRef,
   params: {
-    sessionId?: string
+    processRef?: string
+    cursor?: string
+    nextCursor?: string
+    processStatus?: CodeExecutionRef['processStatus']
     output?: string
     exitCode?: number
     status: CodeExecutionRef['status']
@@ -189,8 +246,17 @@ function patchExecution(
   },
 ): CodeExecutionRef {
   const next: CodeExecutionRef = { ...execution }
-  if (params.sessionId) {
-    next.sessionId = params.sessionId
+  if (params.processRef) {
+    next.processRef = params.processRef
+  }
+  if (params.cursor) {
+    next.cursor = params.cursor
+  }
+  if (params.nextCursor) {
+    next.nextCursor = params.nextCursor
+  }
+  if (params.processStatus) {
+    next.processStatus = params.processStatus
   }
   const mergedOutput = mergeExecutionOutput(execution.output, params.output)
   if (mergedOutput) {
@@ -218,16 +284,16 @@ export function applyTerminalDelta(
     return { nextExecutions: executions }
   }
 
-  const data = event.data as { session_ref?: unknown; chunk?: unknown }
-  const sessionRef = typeof data?.session_ref === 'string' ? data.session_ref : undefined
+  const data = event.data as { process_ref?: unknown; chunk?: unknown }
+  const processRef = typeof data?.process_ref === 'string' ? data.process_ref : undefined
   const chunk = typeof data?.chunk === 'string' ? data.chunk : undefined
-  if (!sessionRef || !chunk) {
+  if (!processRef || !chunk) {
     return { nextExecutions: executions }
   }
 
   const targetIndex = findExecutionIndex(executions, {
-    sessionId: sessionRef,
-    preferSession: true,
+    processRef,
+    preferProcess: true,
   })
   if (targetIndex < 0) {
     return { nextExecutions: executions }
@@ -285,6 +351,7 @@ export function applyCodeExecutionToolCall(
   const appended: CodeExecutionRef = {
     id: pickToolCallId(event),
     language,
+    mode: toolName === 'exec_command' ? pickExecCommandMode(args) : undefined,
     code,
     status: 'running',
     seq: event.seq,
@@ -315,10 +382,19 @@ export function applyCodeExecutionToolResult(
     ? event.data as { result?: unknown; tool_call_id?: unknown }
     : undefined
   const result = data?.result
-  const sessionId = pickSessionId(result)
+  const processRef = pickProcessRef(result)
   const toolCallId = pickToolCallId(event)
   const outputPatch = extractCodeExecutionOutput(result)
   const error = extractCodeExecutionError(event)
+  const cursor = result && typeof result === 'object' && typeof (result as { cursor?: unknown }).cursor === 'string'
+    ? (result as { cursor: string }).cursor
+    : undefined
+  const nextCursor = result && typeof result === 'object' && typeof (result as { next_cursor?: unknown }).next_cursor === 'string'
+    ? (result as { next_cursor: string }).next_cursor
+    : undefined
+  const processStatus = result && typeof result === 'object'
+    ? ((result as { status?: unknown }).status as CodeExecutionRef['processStatus'] | undefined)
+    : undefined
   const status = resolveCodeExecutionStatus({
     event,
     result,
@@ -327,13 +403,16 @@ export function applyCodeExecutionToolResult(
 
   const targetIndex = findExecutionIndex(executions, {
     toolCallId,
-    sessionId,
-    preferSession: toolName === 'write_stdin',
+    processRef,
+    preferProcess: toolName === 'continue_process' || toolName === 'terminate_process',
   })
 
   if (targetIndex >= 0) {
     const updated = patchExecution(executions[targetIndex], {
-      sessionId,
+      processRef,
+      cursor,
+      nextCursor,
+      processStatus,
       output: outputPatch.output,
       exitCode: outputPatch.exitCode,
       status,
@@ -344,7 +423,10 @@ export function applyCodeExecutionToolResult(
     if (
       current.output === updated.output &&
       current.exitCode === updated.exitCode &&
-      current.sessionId === updated.sessionId &&
+      current.processRef === updated.processRef &&
+      current.cursor === updated.cursor &&
+      current.nextCursor === updated.nextCursor &&
+      current.processStatus === updated.processStatus &&
       current.status === updated.status &&
       current.errorClass === updated.errorClass &&
       current.errorMessage === updated.errorMessage
@@ -358,7 +440,7 @@ export function applyCodeExecutionToolResult(
     }
   }
 
-  if (toolName !== 'write_stdin') {
+  if (toolName !== 'continue_process') {
     return { nextExecutions: executions }
   }
 
@@ -370,7 +452,10 @@ export function applyCodeExecutionToolResult(
   const appended: CodeExecutionRef = {
     id: toolCallId,
     language,
-    sessionId,
+    processRef,
+    cursor,
+    nextCursor,
+    processStatus,
     output: outputPatch.output,
     exitCode: outputPatch.exitCode,
     status,
@@ -418,7 +503,7 @@ export function patchCodeExecutionList(
 export function shouldReplayMessageCodeExecutions(executions: CodeExecutionRef[] | null | undefined): boolean {
   if (executions == null) return true
   if (executions.length === 0) return false
-  return executions.some((item) => item.language === 'shell' && !item.sessionId)
+  return executions.some((item) => item.language === 'shell' && item.mode !== 'buffered' && !item.processRef)
 }
 
 export function selectFreshRunEvents(params: {
@@ -505,7 +590,7 @@ export function buildMessageWidgetsFromRunEvents(events: RunEvent[]): WidgetRef[
   for (const event of events) {
     if (event.type !== 'tool.call') continue
     if (isACPDelegateEventData(event.data)) continue
-    const toolName = pickToolName(event.data) || event.tool_name || ''
+    const toolName = pickLogicalToolName(event.data, event.tool_name)
     if (toolName !== 'show_widget') continue
 
     const { title, html } = extractWidgetArguments(event.data)

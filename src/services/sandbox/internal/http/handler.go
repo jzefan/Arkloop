@@ -9,22 +9,27 @@ import (
 	"arkloop/services/sandbox/internal/acp"
 	"arkloop/services/sandbox/internal/environment"
 	"arkloop/services/sandbox/internal/logging"
+	processsvc "arkloop/services/sandbox/internal/process"
 	"arkloop/services/sandbox/internal/session"
 	"arkloop/services/sandbox/internal/shell"
 	sandboxskills "arkloop/services/sandbox/internal/skills"
 )
 
 // NewHandler 注册所有路由并返回 HTTP handler。
-func NewHandler(mgr *session.Manager, envMgr *environment.Manager, skillMgr *sandboxskills.OverlayManager, shellSvc shell.Service, acpSvc acp.Service, artifactStore artifactStore, logger *logging.JSONLogger, authToken string) http.Handler {
+func NewHandler(mgr *session.Manager, envMgr *environment.Manager, skillMgr *sandboxskills.OverlayManager, shellSvc shell.Service, processSvc processsvc.Service, acpSvc acp.Service, artifactStore artifactStore, logger *logging.JSONLogger, authToken string) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", healthz(mgr))
 	mux.HandleFunc("GET /v1/stats", stats(mgr))
 	mux.HandleFunc("POST /v1/exec", handleExec(mgr, envMgr, skillMgr, artifactStore, logger))
 	mux.HandleFunc("POST /v1/exec_command", handleExecCommand(shellSvc, logger))
 	mux.HandleFunc("POST /v1/write_stdin", handleWriteStdin(shellSvc, logger))
+	mux.HandleFunc("POST /v1/process/exec", handleProcessExec(processSvc))
+	mux.HandleFunc("POST /v1/process/continue", handleProcessContinue(processSvc))
+	mux.HandleFunc("POST /v1/process/terminate", handleProcessTerminate(processSvc))
+	mux.HandleFunc("POST /v1/process/resize", handleProcessResize(processSvc))
 	mux.HandleFunc("POST /v1/sessions/fork", handleForkSession(shellSvc))
 	mux.HandleFunc("GET /v1/sessions/", handleSessionInfo(shellSvc))
-	mux.HandleFunc("DELETE /v1/sessions/", handleDeleteSession(mgr, shellSvc, logger))
+	mux.HandleFunc("DELETE /v1/sessions/", handleDeleteSession(mgr, shellSvc, processSvc, logger))
 	mux.HandleFunc("POST /v1/acp/start", handleACPStart(acpSvc, logger))
 	mux.HandleFunc("POST /v1/acp/write", handleACPWrite(acpSvc, logger))
 	mux.HandleFunc("POST /v1/acp/read", handleACPRead(acpSvc, logger))

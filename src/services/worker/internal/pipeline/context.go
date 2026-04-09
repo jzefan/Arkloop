@@ -177,6 +177,8 @@ type RunContext struct {
 	SenderIsAdmin bool
 	// TelegramToolBoundaryFlush 由 Channel 投递中间件注入：每个 tool.call 前发送尚未投递的 assistant 正文（nil 表示终态一次性投递）。
 	TelegramToolBoundaryFlush func(ctx context.Context, text string) error
+	// TelegramProgressTracker 由 Channel 投递中间件注入：按 segment 发送/编辑 Telegram 进度消息（nil 表示不启用）。
+	TelegramProgressTracker *TelegramProgressTracker
 	// TelegramStreamDeliveryRemainder 由 AgentLoopHandler 写入：分段投递模式下终态只发此尾段（已 TrimSpace）。
 	TelegramStreamDeliveryRemainder string
 	// ChannelTerminalNotice 由 AgentLoopHandler 在非 completed 终局时写入，供 Channel 在无任何助手正文时仍向用户说明原因。

@@ -8,7 +8,9 @@ import { TurnView } from './TurnView'
 import {
   buildRequestThreadTurns,
   buildTurns,
+  formatDateTime,
   jsonStringifyForDebugDisplay,
+  pickLogicalToolName,
   type LlmTurn,
   type RequestThreadTurn,
 } from '@arkloop/shared'
@@ -50,14 +52,13 @@ function MetaRow({ label, value, mono = false }: { label: string; value: string;
   )
 }
 
-function formatAbsoluteTime(value: string | undefined, locale: 'zh' | 'en', fallback: string): string {
+function formatAbsoluteTime(value: string | undefined, fallback: string): string {
   if (!value) return fallback
-  const date = new Date(value)
-  if (Number.isNaN(date.getTime())) return value
-  return date.toLocaleString(locale === 'zh' ? 'zh-CN' : 'en')
+  return formatDateTime(value, { includeSeconds: true })
 }
 
 function formatEventJSON(event: RunEventRaw): string {
+  const toolName = pickLogicalToolName(event.data, event.tool_name)
   return jsonStringifyForDebugDisplay(
     {
       event_id: event.event_id,
@@ -65,12 +66,16 @@ function formatEventJSON(event: RunEventRaw): string {
       seq: event.seq,
       ts: event.ts,
       type: event.type,
-      tool_name: event.tool_name,
+      tool_name: toolName || event.tool_name,
       error_class: event.error_class,
       data: event.data,
     },
     2,
   )
+}
+
+function displayToolName(event: RunEventRaw): string {
+  return pickLogicalToolName(event.data, event.tool_name)
 }
 
 
@@ -225,7 +230,13 @@ export function RunDetailPanel({ run, agentName, accessToken, onClose }: Props) 
 
   const fallback = t.runs.emptyValue
   const status = detail?.status ?? run?.status ?? 'unknown'
-  const turns: LlmTurn[] = useMemo(() => buildTurns(events ?? []), [events])
+  const turns: LlmTurn[] = useMemo(
+    () => buildTurns((events ?? []).map((event) => ({
+      ...event,
+      tool_name: displayToolName(event) || event.tool_name,
+    }))),
+    [events],
+  )
   const threadTurns = useMemo(() => buildRequestThreadTurns(turns), [turns])
   const executionTurns = useMemo(() => turns, [turns])
   const threadLabel = locale.startsWith('zh') ? '对话线程' : 'Thread'
@@ -240,9 +251,9 @@ export function RunDetailPanel({ run, agentName, accessToken, onClose }: Props) 
       tokens: formatTokenPair(detail?.total_input_tokens ?? run.total_input_tokens, detail?.total_output_tokens ?? run.total_output_tokens, fallback),
       cacheHit: formatPercent(detail?.cache_hit_rate ?? run.cache_hit_rate, fallback),
       credits: formatCount(detail?.credits_used ?? run.credits_used, fallback),
-      created: formatAbsoluteTime(detail?.created_at ?? run.created_at, locale, fallback),
-      completed: formatAbsoluteTime(detail?.completed_at ?? run.completed_at, locale, fallback),
-      failedAt: formatAbsoluteTime(detail?.failed_at ?? run.failed_at, locale, fallback),
+      created: formatAbsoluteTime(detail?.created_at ?? run.created_at, fallback),
+      completed: formatAbsoluteTime(detail?.completed_at ?? run.completed_at, fallback),
+      failedAt: formatAbsoluteTime(detail?.failed_at ?? run.failed_at, fallback),
       threadId: detail?.thread_id ?? run.thread_id,
     }
   }, [agentName, detail, fallback, locale, run])
@@ -375,7 +386,7 @@ export function RunDetailPanel({ run, agentName, accessToken, onClose }: Props) 
             </h4>
             {!loading && events && events.length > 0 && (
               <p className="mb-2 text-[11px] text-[var(--c-text-muted)]">
-                Events are shown in sequence order. Recorded time may differ from when the model started emitting output.
+                Events are listed in sequence. Timestamps are when events were stored.
               </p>
             )}
             {loading ? (
@@ -399,9 +410,9 @@ export function RunDetailPanel({ run, agentName, accessToken, onClose }: Props) 
                           #{event.seq}
                         </span>
                         <span className="font-mono text-[var(--c-text-secondary)]">{event.type}</span>
-                        {event.tool_name && (
+                        {displayToolName(event) && (
                           <span className="rounded bg-[var(--c-bg-sub)] px-1.5 py-0.5 text-[10px] text-[var(--c-text-muted)]">
-                            {event.tool_name}
+                            {displayToolName(event)}
                           </span>
                         )}
                         {event.error_class && (
@@ -409,8 +420,8 @@ export function RunDetailPanel({ run, agentName, accessToken, onClose }: Props) 
                             {event.error_class}
                           </span>
                         )}
-                        <span className="ml-auto text-[10px] text-[var(--c-text-muted)]">
-                          recorded {formatAbsoluteTime(event.ts, locale, fallback)}
+                        <span className="ml-auto text-[10px] tabular-nums text-[var(--c-text-muted)]">
+                          {formatAbsoluteTime(event.ts, fallback)}
                         </span>
                       </div>
                     </summary>

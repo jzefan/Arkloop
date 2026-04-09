@@ -4,226 +4,404 @@ package localshell
 
 import (
 	"context"
-	"errors"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 )
 
-func TestNewShellController(t *testing.T) {
-	dir := t.TempDir()
-	ctrl := newShellController(dir)
-	if ctrl.status != statusClosed {
-		t.Errorf("expected initial status %q, got %q", statusClosed, ctrl.status)
-	}
-	if ctrl.workDir != dir {
-		t.Errorf("expected workDir %q, got %q", dir, ctrl.workDir)
-	}
-}
+func TestProcessControllerBufferedCommandCompletes(t *testing.T) {
+	controller := NewProcessController()
 
-func TestExecCommandBasic(t *testing.T) {
-	dir := t.TempDir()
-	ctrl := newShellController(dir)
-	defer ctrl.close()
-
-	resp, err := ctrl.execCommand("echo hello_test_output", "", 10000, 0, false, nil)
+	resp, err := controller.ExecCommand(ExecCommandRequest{
+		Command:   "printf 'hello\\n'",
+		Mode:      ModeBuffered,
+		TimeoutMs: 5000,
+		Cwd:       t.TempDir(),
+	})
 	if err != nil {
 		t.Fatalf("exec failed: %v", err)
 	}
-	if resp == nil {
-		t.Fatal("response is nil")
+	if resp.Status != StatusExited {
+		t.Fatalf("expected exited status, got %#v", resp)
 	}
-	if resp.Running {
-		t.Fatalf("expected finished command, still running")
+	if strings.TrimSpace(resp.Stdout) != "hello" {
+		t.Fatalf("expected stdout hello, got %#v", resp.Stdout)
 	}
-	if !strings.Contains(resp.Output, "hello_test_output") {
-		t.Errorf("expected output to contain 'hello_test_output', got %q", resp.Output)
-	}
-}
-
-func TestExecCommandExitCode(t *testing.T) {
-	dir := t.TempDir()
-	ctrl := newShellController(dir)
-	defer ctrl.close()
-
-	// Use false command which returns exit code 1
-	resp, err := ctrl.execCommand("false", "", 10000, 0, false, nil)
-	if err != nil {
-		t.Fatalf("exec failed: %v", err)
-	}
-	if resp.Running {
-		t.Fatalf("expected finished command, still running")
-	}
-	if resp.ExitCode == nil {
-		t.Fatal("expected exit code")
-	}
-	if *resp.ExitCode != 1 {
-		t.Errorf("expected exit code 1, got %d", *resp.ExitCode)
+	if resp.ProcessRef != "" {
+		t.Fatalf("buffered mode should not expose process_ref, got %q", resp.ProcessRef)
 	}
 }
 
-func TestExecCommandCatNoArgsDoesNotBlock(t *testing.T) {
-	dir := t.TempDir()
-	ctrl := newShellController(dir)
-	defer ctrl.close()
+func TestProcessControllerRejectsInvalidMode(t *testing.T) {
+	controller := NewProcessController()
 
-	resp, err := ctrl.execCommand("cat", "", 10000, 0, false, nil)
-	if err != nil {
-		t.Fatalf("exec failed: %v", err)
-	}
-	if resp.Running {
-		t.Fatalf("expected cat with stdin /dev/null to finish, still running")
-	}
-	if resp.ExitCode == nil || *resp.ExitCode != 0 {
-		t.Fatalf("expected exit 0, got %v", resp.ExitCode)
-	}
-}
-
-func TestExecCommandExceedsTimeoutSetsTimedOut(t *testing.T) {
-	dir := t.TempDir()
-	ctrl := newShellController(dir)
-	defer ctrl.close()
-
-	resp, err := ctrl.execCommand("sleep 60", "", 3000, 0, false, nil)
-	if err != nil {
-		t.Fatalf("exec failed: %v", err)
-	}
-	if resp.Running {
-		t.Fatalf("expected completed response, still running")
-	}
-	if !resp.TimedOut {
-		t.Fatalf("expected timed_out true, got false (output=%q)", resp.Output)
-	}
-}
-
-func TestExecCommandEmptyCommand(t *testing.T) {
-	dir := t.TempDir()
-	ctrl := newShellController(dir)
-	defer ctrl.close()
-
-	_, err := ctrl.execCommand("", "", 10000, 0, false, nil)
+	_, err := controller.ExecCommand(ExecCommandRequest{
+		Command:   "printf 'hello\\n'",
+		Mode:      "bogus",
+		TimeoutMs: 5000,
+		Cwd:       t.TempDir(),
+	})
 	if err == nil {
-		t.Error("expected error for empty command")
+		t.Fatal("expected invalid mode error")
+	}
+	if got := err.Error(); got != "unsupported mode: bogus" {
+		t.Fatalf("expected unsupported mode error, got %q", got)
 	}
 }
 
-func TestNormalizeTimeoutMs(t *testing.T) {
-	tests := []struct {
-		input int
-		want  int
-	}{
-		{0, defaultTimeoutMs},
-		{-1, defaultTimeoutMs},
-		{5000, 5000},
-		{2000000, maxTimeoutMs},
+func TestProcessControllerStdinModeAcceptsInputAndEOF(t *testing.T) {
+	controller := NewProcessController()
+
+	start, err := controller.ExecCommand(ExecCommandRequest{
+		Command:   "cat",
+		Mode:      ModeStdin,
+		TimeoutMs: 5000,
+		Cwd:       t.TempDir(),
+	})
+	if err != nil {
+		t.Fatalf("stdin exec failed: %v", err)
 	}
-	for _, tc := range tests {
-		got := normalizeTimeoutMs(tc.input)
-		if got != tc.want {
-			t.Errorf("normalizeTimeoutMs(%d) = %d, want %d", tc.input, got, tc.want)
+	if start.ProcessRef == "" || start.Status != StatusRunning {
+		t.Fatalf("expected running process with ref, got %#v", start)
+	}
+
+	text := "hello from stdin\n"
+	resp, err := controller.ContinueProcess(ContinueProcessRequest{
+		ProcessRef: start.ProcessRef,
+		Cursor:     start.NextCursor,
+		WaitMs:     1000,
+		StdinText:  &text,
+		InputSeq:   int64Ptr(1),
+		CloseStdin: true,
+	})
+	if err != nil {
+		t.Fatalf("continue failed: %v", err)
+	}
+	if strings.TrimSpace(resp.Stdout) != "hello from stdin" {
+		t.Fatalf("expected echoed stdin, got %#v", resp.Stdout)
+	}
+	if resp.Status != StatusRunning && resp.Status != StatusExited {
+		t.Fatalf("expected running or exited status after close_stdin, got %#v", resp)
+	}
+	if resp.AcceptedInputSeq == nil || *resp.AcceptedInputSeq != 1 {
+		t.Fatalf("expected accepted_input_seq=1, got %#v", resp.AcceptedInputSeq)
+	}
+	if resp.Status == StatusRunning {
+		final, err := controller.ContinueProcess(ContinueProcessRequest{
+			ProcessRef: start.ProcessRef,
+			Cursor:     resp.NextCursor,
+			WaitMs:     1000,
+		})
+		if err != nil {
+			t.Fatalf("final continue failed: %v", err)
+		}
+		if final.Status != StatusExited {
+			t.Fatalf("expected exited status after draining closed stdin, got %#v", final)
 		}
 	}
 }
 
-func TestNormalizeYieldTimeMs(t *testing.T) {
-	tests := []struct {
-		input int
-		want  int
-	}{
-		{0, defaultYieldTimeMs},
-		{-1, defaultYieldTimeMs},
-		{2000, 2000},
-		{50000, maxYieldTimeMs},
+func TestProcessControllerTerminateMarksTerminated(t *testing.T) {
+	controller := NewProcessController()
+
+	start, err := controller.ExecCommand(ExecCommandRequest{
+		Command:   "sleep 30",
+		Mode:      ModeFollow,
+		TimeoutMs: 5000,
+		Cwd:       t.TempDir(),
+	})
+	if err != nil {
+		t.Fatalf("follow exec failed: %v", err)
 	}
-	for _, tc := range tests {
-		got := normalizeYieldTimeMs(tc.input)
-		if got != tc.want {
-			t.Errorf("normalizeYieldTimeMs(%d) = %d, want %d", tc.input, got, tc.want)
+	if start.ProcessRef == "" {
+		t.Fatalf("expected process_ref, got %#v", start)
+	}
+
+	resp, err := controller.TerminateProcess(TerminateProcessRequest{ProcessRef: start.ProcessRef})
+	if err != nil {
+		t.Fatalf("terminate failed: %v", err)
+	}
+	if resp.Status != StatusTerminated {
+		t.Fatalf("expected terminated status, got %#v", resp)
+	}
+}
+
+func TestProcessControllerPTYRespectsResize(t *testing.T) {
+	controller := NewProcessController()
+
+	start, err := controller.ExecCommand(ExecCommandRequest{
+		Command:   "stty size; sleep 0.2",
+		Mode:      ModePTY,
+		TimeoutMs: 5000,
+		Size:      &Size{Rows: 40, Cols: 100},
+		Cwd:       t.TempDir(),
+	})
+	if err != nil {
+		t.Fatalf("pty exec failed: %v", err)
+	}
+	if start.ProcessRef == "" {
+		t.Fatalf("expected process_ref, got %#v", start)
+	}
+
+	if _, err = controller.ResizeProcess(ResizeProcessRequest{
+		ProcessRef: start.ProcessRef,
+		Rows:       50,
+		Cols:       120,
+	}); err != nil {
+		t.Fatalf("resize failed: %v", err)
+	}
+
+	time.Sleep(250 * time.Millisecond)
+	resp, err := controller.ContinueProcess(ContinueProcessRequest{
+		ProcessRef: start.ProcessRef,
+		Cursor:     start.NextCursor,
+		WaitMs:     1000,
+	})
+	if err != nil {
+		t.Fatalf("continue failed: %v", err)
+	}
+	if !strings.Contains(start.Stdout+resp.Stdout, "40 100") {
+		t.Fatalf("expected initial pty size in output, got start=%#v resp=%#v", start.Stdout, resp.Stdout)
+	}
+}
+
+func TestProcessControllerContinueRequiresInputSeqForEmptyString(t *testing.T) {
+	controller := NewProcessController()
+
+	start, err := controller.ExecCommand(ExecCommandRequest{
+		Command:   "cat",
+		Mode:      ModeStdin,
+		TimeoutMs: 5000,
+		Cwd:       t.TempDir(),
+	})
+	if err != nil {
+		t.Fatalf("stdin exec failed: %v", err)
+	}
+
+	empty := ""
+	_, err = controller.ContinueProcess(ContinueProcessRequest{
+		ProcessRef: start.ProcessRef,
+		Cursor:     start.NextCursor,
+		WaitMs:     100,
+		StdinText:  &empty,
+	})
+	if err == nil {
+		t.Fatal("expected input_seq validation error")
+	}
+	if got := err.Error(); got != "input_seq is required when stdin_text is provided" {
+		t.Fatalf("unexpected error: %q", got)
+	}
+}
+
+func TestProcessControllerDuplicateInputSeqAfterCloseStdinIsIdempotent(t *testing.T) {
+	controller := NewProcessController()
+
+	start, err := controller.ExecCommand(ExecCommandRequest{
+		Command:   "cat",
+		Mode:      ModeStdin,
+		TimeoutMs: 5000,
+		Cwd:       t.TempDir(),
+	})
+	if err != nil {
+		t.Fatalf("stdin exec failed: %v", err)
+	}
+
+	text := "repeat\n"
+	first, err := controller.ContinueProcess(ContinueProcessRequest{
+		ProcessRef: start.ProcessRef,
+		Cursor:     start.NextCursor,
+		WaitMs:     1000,
+		StdinText:  &text,
+		InputSeq:   int64Ptr(1),
+		CloseStdin: true,
+	})
+	if err != nil {
+		t.Fatalf("first continue failed: %v", err)
+	}
+	if first.AcceptedInputSeq == nil || *first.AcceptedInputSeq != 1 {
+		t.Fatalf("expected accepted_input_seq=1, got %#v", first.AcceptedInputSeq)
+	}
+
+	second, err := controller.ContinueProcess(ContinueProcessRequest{
+		ProcessRef: start.ProcessRef,
+		Cursor:     first.NextCursor,
+		WaitMs:     100,
+		StdinText:  &text,
+		InputSeq:   int64Ptr(1),
+	})
+	if err != nil {
+		t.Fatalf("duplicate continue should be idempotent, got error: %v", err)
+	}
+	if second.AcceptedInputSeq == nil || *second.AcceptedInputSeq != 1 {
+		t.Fatalf("expected duplicate accepted_input_seq=1, got %#v", second.AcceptedInputSeq)
+	}
+	if second.Stdout != "" {
+		t.Fatalf("duplicate continue should not append output, got %#v", second.Stdout)
+	}
+}
+
+func TestProcessControllerCloseStdinDoesNotRequireImmediateExit(t *testing.T) {
+	controller := NewProcessController()
+
+	start, err := controller.ExecCommand(ExecCommandRequest{
+		Command:   "python3 -c 'import sys,time; sys.stdin.read(); time.sleep(3); print(\"done\")'",
+		Mode:      ModeStdin,
+		TimeoutMs: 6000,
+		Cwd:       t.TempDir(),
+	})
+	if err != nil {
+		t.Fatalf("stdin exec failed: %v", err)
+	}
+
+	payload := "hello\n"
+	resp, err := controller.ContinueProcess(ContinueProcessRequest{
+		ProcessRef: start.ProcessRef,
+		Cursor:     start.NextCursor,
+		WaitMs:     100,
+		StdinText:  &payload,
+		InputSeq:   int64Ptr(1),
+		CloseStdin: true,
+	})
+	if err != nil {
+		t.Fatalf("continue failed: %v", err)
+	}
+	if resp.Status != StatusRunning {
+		t.Fatalf("close_stdin should not force immediate terminal state, got %#v", resp)
+	}
+	if resp.AcceptedInputSeq == nil || *resp.AcceptedInputSeq != 1 {
+		t.Fatalf("expected accepted_input_seq=1, got %#v", resp.AcceptedInputSeq)
+	}
+}
+
+func TestProcessControllerCancelMarksCancelled(t *testing.T) {
+	controller := NewProcessController()
+
+	start, err := controller.ExecCommand(ExecCommandRequest{
+		Command:   "sleep 30",
+		Mode:      ModeFollow,
+		TimeoutMs: 5000,
+		Cwd:       t.TempDir(),
+	})
+	if err != nil {
+		t.Fatalf("follow exec failed: %v", err)
+	}
+
+	resp, err := controller.CancelProcess(TerminateProcessRequest{ProcessRef: start.ProcessRef})
+	if err != nil {
+		t.Fatalf("cancel failed: %v", err)
+	}
+	if resp.Status != StatusCancelled {
+		t.Fatalf("expected cancelled status, got %#v", resp)
+	}
+}
+
+func TestProcessControllerCleanupRunMarksCancelled(t *testing.T) {
+	controller := NewProcessController()
+
+	start, err := controller.ExecCommand(ExecCommandRequest{
+		RunID:     "run-cancel",
+		Command:   "sleep 30",
+		Mode:      ModeFollow,
+		TimeoutMs: 5000,
+		Cwd:       t.TempDir(),
+	})
+	if err != nil {
+		t.Fatalf("follow exec failed: %v", err)
+	}
+
+	controller.CleanupRun("run-cancel")
+
+	resp, err := controller.ContinueProcess(ContinueProcessRequest{
+		ProcessRef: start.ProcessRef,
+		Cursor:     start.NextCursor,
+		WaitMs:     1000,
+	})
+	if err != nil {
+		t.Fatalf("continue after cleanup failed: %v", err)
+	}
+	if resp.Status != StatusCancelled {
+		t.Fatalf("expected cancelled status after cleanup, got %#v", resp)
+	}
+}
+
+func TestProcessControllerReleasesDrainedProcess(t *testing.T) {
+	controller := NewProcessController()
+
+	start, err := controller.ExecCommand(ExecCommandRequest{
+		Command:   "printf 'done\\n'",
+		Mode:      ModeFollow,
+		TimeoutMs: 5000,
+		Cwd:       t.TempDir(),
+	})
+	if err != nil {
+		t.Fatalf("follow exec failed: %v", err)
+	}
+	if start.ProcessRef == "" {
+		t.Fatalf("expected process_ref, got %#v", start)
+	}
+	if start.Status == StatusRunning {
+		final, err := controller.ContinueProcess(ContinueProcessRequest{
+			ProcessRef: start.ProcessRef,
+			Cursor:     start.NextCursor,
+			WaitMs:     1000,
+		})
+		if err != nil {
+			t.Fatalf("final continue failed: %v", err)
+		}
+		if final.Status != StatusExited {
+			t.Fatalf("expected exited status, got %#v", final)
 		}
 	}
-}
-
-func TestResolveShell(t *testing.T) {
-	path, args := resolveShell()
-	if path == "" {
-		t.Error("shell path is empty")
-	}
-	if len(args) == 0 {
-		t.Error("shell args are empty")
+	if _, err := controller.getProcess(start.ProcessRef); err == nil {
+		t.Fatalf("expected drained process %s to be released", start.ProcessRef)
 	}
 }
 
-func TestBuildWrappedCommand(t *testing.T) {
-	wrapped := buildWrappedCommand("abc123", "/tmp", "echo test")
-	if !strings.Contains(wrapped, "abc123") {
-		t.Error("wrapped command should contain the token")
-	}
-	// Markers are intentionally split via ark_mark_a variable to prevent false detection
-	if !strings.Contains(wrapped, "ark_mark_a") {
-		t.Error("wrapped command should reference ark_mark_a variable")
-	}
-	if !strings.Contains(wrapped, "_BEGIN__") {
-		t.Error("wrapped command should contain _BEGIN__ suffix")
-	}
-	if !strings.Contains(wrapped, "_END__") {
-		t.Error("wrapped command should contain _END__ suffix")
-	}
-	if !strings.Contains(wrapped, "base64") {
-		t.Error("wrapped command should use base64 encoding")
-	}
-}
+func TestProcessControllerReleasesTerminalProcessAfterRetention(t *testing.T) {
+	controller := NewProcessController()
+	originalRetention := processTerminalRetention
+	processTerminalRetention = 20 * time.Millisecond
+	defer func() {
+		processTerminalRetention = originalRetention
+	}()
 
-func TestTrailingMarkerPrefixLen(t *testing.T) {
-	tests := []struct {
-		text   string
-		marker string
-		want   int
-	}{
-		{"hello__A", "__ARK", 3},
-		{"hello", "__ARK", 0},
-		{"__ARK", "__ARK", 5},
-		{"", "__ARK", 0},
+	start, err := controller.ExecCommand(ExecCommandRequest{
+		Command:   "sleep 0.05",
+		Mode:      ModeFollow,
+		TimeoutMs: 5000,
+		Cwd:       t.TempDir(),
+	})
+	if err != nil {
+		t.Fatalf("follow exec failed: %v", err)
 	}
-	for _, tc := range tests {
-		got := trailingMarkerPrefixLen(tc.text, tc.marker)
-		if got != tc.want {
-			t.Errorf("trailingMarkerPrefixLen(%q, %q) = %d, want %d", tc.text, tc.marker, got, tc.want)
+	if start.ProcessRef == "" {
+		t.Fatalf("expected process_ref, got %#v", start)
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if _, err := controller.getProcess(start.ProcessRef); err != nil {
+			return
 		}
+		time.Sleep(20 * time.Millisecond)
 	}
+	t.Fatalf("expected terminal process %s to be released after retention", start.ProcessRef)
 }
 
-func TestShellQuote(t *testing.T) {
-	tests := []struct {
-		input string
-		want  string
-	}{
-		{"hello", "'hello'"},
-		{"it's", "'it'\\''s'"},
-		{"", "''"},
-	}
-	for _, tc := range tests {
-		got := shellQuote(tc.input)
-		if got != tc.want {
-			t.Errorf("shellQuote(%q) = %q, want %q", tc.input, got, tc.want)
-		}
-	}
-}
+func TestBuildProcessEnvDoesNotInheritHostEnvironment(t *testing.T) {
+	t.Setenv("ARKLOOP_HOST_SECRET", "host-only")
 
-func TestShouldAttemptRTKRewriteSkipsComplexShell(t *testing.T) {
-	tests := []string{
-		"cat << 'EOF' > /tmp/x\nhello\nEOF",
-		"echo hi > /tmp/x",
-		"echo 'quoted'",
-		"git status | cat",
+	env := buildProcessEnv(nil, false)
+	joined := strings.Join(env, "\n")
+	if strings.Contains(joined, "ARKLOOP_HOST_SECRET=host-only") {
+		t.Fatalf("expected host environment to be isolated, got %q", joined)
 	}
-	for _, command := range tests {
-		if shouldAttemptRTKRewrite(command) {
-			t.Fatalf("expected complex command to skip rewrite: %q", command)
-		}
+	if !strings.Contains(joined, "PATH=") {
+		t.Fatalf("expected sanitized PATH in env, got %q", joined)
 	}
-	if !shouldAttemptRTKRewrite("git status") {
-		t.Fatal("expected simple command to allow rewrite")
+	if !strings.Contains(joined, "LANG="+defaultProcessLang) {
+		t.Fatalf("expected sanitized LANG in env, got %q", joined)
 	}
 }
 
@@ -267,14 +445,20 @@ func TestRTKRewriteSkipsUnsafeCommandWithoutRunner(t *testing.T) {
 		rtkRewriteRunner = originalRunner
 	}()
 
+	called := false
 	rtkRewriteRunner = func(ctx context.Context, bin string, command string) (string, error) {
-		_ = ctx
-		_ = bin
-		_ = command
-		return "", errors.New("runner should not be called")
+		called = true
+		return "rewritten", nil
 	}
 
-	if got := rtkRewrite(context.Background(), "cat << 'EOF' > /tmp/x\nhello\nEOF"); got != "" {
+	if got := rtkRewrite(context.Background(), "echo 'quoted'"); got != "" {
 		t.Fatalf("expected empty rewrite for unsafe command, got %q", got)
 	}
+	if called {
+		t.Fatal("rewrite runner should not be called for unsafe commands")
+	}
+}
+
+func int64Ptr(value int64) *int64 {
+	return &value
 }

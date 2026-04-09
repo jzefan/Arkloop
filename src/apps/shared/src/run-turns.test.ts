@@ -391,6 +391,63 @@ conversation-title: "Arkloop"
     expect(turns[0]?.inputTokens).toBe(9000)
   })
 
+  it('uses last llm.turn.completed usage for context; sums output across tool rounds', () => {
+    const turns = buildTurns([
+      makeEvent({
+        seq: 1,
+        type: 'llm.request',
+        data: {
+          llm_call_id: 'call_1',
+          provider_kind: 'anthropic',
+          api_mode: 'messages',
+          payload: { messages: [{ role: 'user', content: 'hi' }] },
+        },
+      }),
+      makeEvent({
+        seq: 2,
+        type: 'llm.turn.completed',
+        data: {
+          llm_call_id: 'call_1',
+          usage: {
+            input_tokens: 26000,
+            cache_read_input_tokens: 0,
+            cache_creation_input_tokens: 0,
+            output_tokens: 100,
+          },
+        },
+      }),
+      makeEvent({
+        seq: 3,
+        type: 'llm.request',
+        data: {
+          llm_call_id: 'call_2',
+          provider_kind: 'anthropic',
+          api_mode: 'messages',
+          payload: { messages: [{ role: 'user', content: 'hi' }] },
+        },
+      }),
+      makeEvent({
+        seq: 4,
+        type: 'llm.turn.completed',
+        data: {
+          llm_call_id: 'call_2',
+          usage: {
+            input_tokens: 27000,
+            cache_read_input_tokens: 26000,
+            cache_creation_input_tokens: 0,
+            output_tokens: 50,
+          },
+        },
+      }),
+    ])
+
+    expect(turns).toHaveLength(1)
+    expect(turns[0]?.inputTokens).toBe(27000)
+    expect(turns[0]?.cachedTokens).toBe(26000)
+    expect(turns[0]?.contextTokens).toBe(53000)
+    expect(turns[0]?.outputTokens).toBe(150)
+  })
+
   it('captures actual request messages for each llm request', () => {
     const turns = buildTurns([
       makeEvent({
@@ -705,6 +762,65 @@ time: "2026-04-04T06:21:00Z"
       expect(firstTurnToolCalls).toHaveLength(1)
       expect(firstTurnToolResults).toHaveLength(1)
     }
+  })
+
+  it('canonicalizes provider tool names from legacy event payloads', () => {
+    const turns = buildTurns([
+      makeEvent({
+        seq: 1,
+        type: 'llm.request',
+        data: {
+          llm_call_id: 'call_1',
+          provider_kind: 'openai',
+          api_mode: 'responses',
+          payload: {
+            input: 'fetch this page',
+            tools: [
+              { type: 'function', function: { name: 'web_fetch.jina' } },
+            ],
+          },
+          tool_schema_bytes_by_name: {
+            'web_fetch.jina': 1024,
+          },
+        },
+      }),
+      makeEvent({
+        seq: 2,
+        type: 'tool.call',
+        data: {
+          tool_call_id: 'tc_1',
+          resolved_tool_name: 'web_fetch.jina',
+          arguments: { url: 'https://example.com' },
+        },
+      }),
+      makeEvent({
+        seq: 3,
+        type: 'tool.result',
+        data: {
+          tool_call_id: 'tc_1',
+          resolved_tool_name: 'web_fetch.jina',
+          result: { title: 'Example' },
+        },
+      }),
+      makeEvent({ seq: 4, type: 'llm.turn.completed', data: { llm_call_id: 'call_1' } }),
+    ])
+
+    expect(turns).toHaveLength(1)
+    expect(turns[0]?.segments).toContainEqual({
+      kind: 'tool_call',
+      toolCallId: 'tc_1',
+      toolName: 'web_fetch',
+      argsJSON: { url: 'https://example.com' },
+    })
+    expect(turns[0]?.segments).toContainEqual({
+      kind: 'tool_result',
+      toolCallId: 'tc_1',
+      toolName: 'web_fetch',
+      resultJSON: { title: 'Example' },
+      errorClass: undefined,
+    })
+    expect(turns[0]?.toolNames).toEqual(['web_fetch'])
+    expect(turns[0]?.toolSchemaBytesMap).toEqual({ web_fetch: 1024 })
   })
 
   it('ignores ACP delegate deltas/tools and inner run.completed; keeps host acp_agent tool result', () => {

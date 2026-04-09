@@ -1,4 +1,5 @@
 import { useEffect, useRef, useCallback } from 'react'
+import { canonicalToolName, pickLogicalToolName } from '@arkloop/shared'
 import { useAuth } from '../contexts/auth'
 import { useChatSession } from '../contexts/chat-session'
 import { useCredits } from '../contexts/credits'
@@ -37,31 +38,25 @@ import {
 } from '../webSearchTimelineFromRunEvent'
 import {
   isTerminalRunEventType,
-  mergeVisibleSegmentsIntoAssistantTurn,
   buildFrozenAssistantTurnFromRunEvents,
   finalizeSearchSteps,
 } from '../lib/chat-helpers'
-import { extractPartialArtifactFields } from '../components/ArtifactStreamBlock'
+import { extractPartialArtifactFields, extractPartialWidgetFields } from '../components/ArtifactStreamBlock'
 import type { ArtifactRef } from '../storage'
 import type { MsgRunEvent } from '../storage'
 import { getInjectionBlockMessage, shouldSuppressLiveRunEventAfterInjectionBlock } from '../liveRunSecurity'
 import { isACPDelegateEventData } from '@arkloop/shared'
 import type { RequestedSchema } from '../userInputTypes'
+import { noteShowWidgetDelta } from '../streamDebug'
 
 type UseThreadSseEffectDeps = {
   restoreQueuedDraftToInput: () => void
   clearQueuedDraft: () => void
-  forceInstantBottomScrollRef: React.RefObject<boolean>
-  lastUserMsgRef: React.RefObject<HTMLDivElement | null>
-  programmaticScrollDepthRef: React.MutableRefObject<number>
 }
 
 export function useThreadSseEffect({
   restoreQueuedDraftToInput,
   clearQueuedDraft,
-  forceInstantBottomScrollRef,
-  lastUserMsgRef,
-  programmaticScrollDepthRef,
 }: UseThreadSseEffectDeps): void {
   const { logout: onLoggedOut } = useAuth()
   const { threadId } = useChatSession()
@@ -144,7 +139,7 @@ export function useThreadSseEffect({
     captureTerminalRunCache,
     persistRunDataToMessage,
     persistThreadRunHandoff,
-  } = useRunTransition({ forceInstantBottomScrollRef, lastUserMsgRef, programmaticScrollDepthRef })
+  } = useRunTransition()
 
   const markTerminalRunHistory = useCallback((messageId: string | null, expanded = true) => {
     markTerminalRunHistoryState(messageId, expanded)
@@ -364,6 +359,8 @@ export function useThreadSseEffect({
         }
         setPendingThinking(false)
         if (activeSeg) {
+          const activeSegment = segmentsRef.current.find((segment) => segment.segmentId === activeSeg)
+          const activeSegmentVisible = !!activeSegment && activeSegment.mode !== 'hidden'
           requestAssistantTurnThinkingBreak(assistantTurnFoldStateRef.current)
           setSegments((prev) =>
             prev.map((s) =>
@@ -372,6 +369,10 @@ export function useThreadSseEffect({
                 : s,
             ),
           )
+          if (activeSegmentVisible) {
+            foldAssistantTurnEvent(assistantTurnFoldStateRef.current, event)
+            bumpAssistantTurnSnapshot()
+          }
           continue
         }
         foldAssistantTurnEvent(assistantTurnFoldStateRef.current, event)
@@ -389,15 +390,33 @@ export function useThreadSseEffect({
             streamingArtifactsRef.current = [...streamingArtifactsRef.current, entry]
           }
           if (obj.tool_call_id) entry.toolCallId = obj.tool_call_id
-          if (obj.tool_name) entry.toolName = obj.tool_name
+          if (obj.tool_name) entry.toolName = canonicalToolName(obj.tool_name)
           entry.argumentsBuffer += obj.arguments_delta
+          const isShowWidgetDelta = entry.toolName === 'show_widget' || canonicalToolName(obj.tool_name ?? '') === 'show_widget'
 
-          if (entry.toolName === 'show_widget' || entry.toolName === 'create_artifact' || (!entry.toolName && (entry.argumentsBuffer.includes('"content"') || entry.argumentsBuffer.includes('"widget_code"')))) {
+          if (entry.toolName === 'show_widget' || (!entry.toolName && entry.argumentsBuffer.includes('"widget_code"'))) {
+            const parsed = extractPartialWidgetFields(entry.argumentsBuffer)
+            if (parsed.title !== undefined) entry.title = parsed.title
+            if (parsed.widgetCode !== undefined) entry.content = parsed.widgetCode
+            if (parsed.loadingMessages !== undefined) entry.loadingMessages = parsed.loadingMessages
+            setStreamingArtifacts([...streamingArtifactsRef.current])
+            if (isShowWidgetDelta) {
+              noteShowWidgetDelta({
+                runId: sseRunId,
+                toolCallId: entry.toolCallId,
+                toolCallIndex: entry.toolCallIndex,
+                title: entry.title ?? null,
+                contentLength: entry.content?.length ?? 0,
+                seq: event.seq,
+              })
+            }
+          } else if (entry.toolName === 'create_artifact' || (!entry.toolName && entry.argumentsBuffer.includes('"content"'))) {
             const parsed = extractPartialArtifactFields(entry.argumentsBuffer)
             if (parsed.title !== undefined) entry.title = parsed.title
             if (parsed.filename !== undefined) entry.filename = parsed.filename
             if (parsed.display !== undefined) entry.display = parsed.display as 'inline' | 'panel'
             if (parsed.content !== undefined) entry.content = parsed.content
+            if (parsed.loadingMessages !== undefined) entry.loadingMessages = parsed.loadingMessages
             setStreamingArtifacts([...streamingArtifactsRef.current])
           }
         }
@@ -408,8 +427,8 @@ export function useThreadSseEffect({
         if (isACPDelegateEventData(event.data)) continue
         setPendingThinking(false)
         seenFirstToolCallInRunRef.current = true
-        const obj = event.data as { tool_name?: unknown; llm_name?: unknown; tool_call_id?: unknown; arguments?: unknown }
-        const toolName = typeof obj.tool_name === 'string' ? obj.tool_name : event.tool_name
+        const obj = event.data as { llm_name?: unknown; tool_call_id?: unknown; arguments?: unknown }
+        const toolName = pickLogicalToolName(event.data, event.tool_name)
         const codeExecutionCall = applyCodeExecutionToolCall(currentRunCodeExecutionsRef.current, event)
         if (codeExecutionCall.appended) {
           const entry = codeExecutionCall.appended
@@ -465,6 +484,13 @@ export function useThreadSseEffect({
           entry.toolName = 'show_widget'
           if (typeof args?.widget_code === 'string') entry.content = args.widget_code
           if (typeof args?.title === 'string') entry.title = args.title
+          if (Array.isArray(args?.loading_messages)) {
+            const messages = (args?.loading_messages as unknown[])
+              .filter((x): x is string => typeof x === 'string')
+              .map((x) => x.trim())
+              .filter((x) => x.length > 0)
+            if (messages.length > 0) entry.loadingMessages = messages
+          }
           setStreamingArtifacts([...streamingArtifactsRef.current])
         }
         if (toolName === 'create_artifact') {
@@ -489,6 +515,13 @@ export function useThreadSseEffect({
           if (typeof args?.title === 'string') entry.title = args.title
           if (typeof args?.filename === 'string') entry.filename = args.filename
           if (typeof args?.display === 'string') entry.display = args.display as 'inline' | 'panel'
+          if (Array.isArray(args?.loading_messages)) {
+            const messages = (args?.loading_messages as unknown[])
+              .filter((x): x is string => typeof x === 'string')
+              .map((x) => x.trim())
+              .filter((x) => x.length > 0)
+            if (messages.length > 0) entry.loadingMessages = messages
+          }
           setStreamingArtifacts([...streamingArtifactsRef.current])
         }
         foldAssistantTurnEvent(assistantTurnFoldStateRef.current, event)
@@ -513,15 +546,15 @@ export function useThreadSseEffect({
 
       if (event.type === 'tool.result') {
         if (isACPDelegateEventData(event.data)) continue
-        const obj = event.data as { tool_name?: unknown; tool_call_id?: unknown; result?: unknown; error?: unknown }
-        const resultToolName = typeof obj.tool_name === 'string' ? obj.tool_name : ''
+        const obj = event.data as { tool_call_id?: unknown; result?: unknown; error?: unknown }
+        const resultToolName = pickLogicalToolName(event.data, event.tool_name)
         if (isWebSearchToolName(resultToolName)) {
           const newSources = webSearchSourcesFromResult(obj.result)
           if (newSources && newSources.length > 0) {
             currentRunSourcesRef.current = [...currentRunSourcesRef.current, ...newSources]
           }
         }
-        if (obj.tool_name === 'python_execute' || obj.tool_name === 'exec_command' || obj.tool_name === 'write_stdin' || obj.tool_name === 'document_write' || obj.tool_name === 'create_artifact' || obj.tool_name === 'browser' || isWebFetchToolName(resultToolName)) {
+        if (resultToolName === 'python_execute' || resultToolName === 'exec_command' || resultToolName === 'continue_process' || resultToolName === 'terminate_process' || resultToolName === 'document_write' || resultToolName === 'create_artifact' || resultToolName === 'browser' || isWebFetchToolName(resultToolName)) {
           const result = obj.result as { artifacts?: unknown[]; stdout?: unknown; stderr?: unknown; exit_code?: unknown; output?: unknown } | undefined
           if (Array.isArray(result?.artifacts)) {
             const newArtifacts: ArtifactRef[] = result.artifacts
@@ -537,7 +570,7 @@ export function useThreadSseEffect({
               }))
             if (newArtifacts.length > 0) {
               currentRunArtifactsRef.current = [...currentRunArtifactsRef.current, ...newArtifacts]
-              if (obj.tool_name === 'create_artifact') {
+              if (resultToolName === 'create_artifact') {
                 const callId = typeof obj.tool_call_id === 'string' ? obj.tool_call_id : undefined
                 for (const art of newArtifacts) {
                   const entry = callId
@@ -568,7 +601,7 @@ export function useThreadSseEffect({
             }
           }
         }
-        if (obj.tool_name === 'browser') {
+        if (resultToolName === 'browser') {
           const browserResult = applyBrowserToolResult(currentRunBrowserActionsRef.current, event)
           if (browserResult.updated) {
             currentRunBrowserActionsRef.current = browserResult.nextActions
@@ -655,7 +688,6 @@ export function useThreadSseEffect({
 
       if (event.type === 'run.completed') {
         if (isACPDelegateEventData(event.data)) continue
-        const visibleNonTerminalSeqCutoff = freezeCutoffRef.current ?? lastVisibleNonTerminalSeqRef.current
         freezeCutoffRef.current = null
         const completedRunId = event.run_id
         injectionBlockedRunIdRef.current = null
@@ -668,17 +700,11 @@ export function useThreadSseEffect({
           if (e.run_id !== completedRunId || typeof e.seq !== 'number') {
             return false
           }
-          if (isTerminalRunEventType(e.type)) {
-            return e.seq <= event.seq
-          }
-          return e.seq <= visibleNonTerminalSeqCutoff
+          return e.seq <= event.seq
         })
         const runCache = captureTerminalRunCache('completed')
         if (runEventsForMessage.length > 0) {
-          const frozenAssistantTurn = mergeVisibleSegmentsIntoAssistantTurn(
-            buildFrozenAssistantTurnFromRunEvents(runEventsForMessage),
-            segmentsRef.current,
-          )
+          const frozenAssistantTurn = buildFrozenAssistantTurnFromRunEvents(runEventsForMessage)
           if (frozenAssistantTurn.segments.length > 0) {
             runCache.handoffAssistantTurn = frozenAssistantTurn
             runCache.runAssistantTurn = frozenAssistantTurn
@@ -729,16 +755,12 @@ export function useThreadSseEffect({
         const runId = event.run_id
         setTerminalRunDisplayId(runId)
         setTerminalRunHandoffStatus('cancelled')
-        const visibleNonTerminalSeqCutoff = freezeCutoffRef.current ?? lastVisibleNonTerminalSeqRef.current
         const runEventsForMessage = runId
           ? (sse.events as MsgRunEvent[]).filter((e) => {
             if (e.run_id !== runId || typeof e.seq !== 'number') {
               return false
             }
-            if (isTerminalRunEventType(e.type)) {
-              return e.seq <= event.seq
-            }
-            return e.seq <= visibleNonTerminalSeqCutoff
+            return e.seq <= event.seq
           })
           : []
         const runCache = captureTerminalRunCache('cancelled')
@@ -776,16 +798,12 @@ export function useThreadSseEffect({
         const runId = event.run_id
         setTerminalRunDisplayId(runId)
         setTerminalRunHandoffStatus('failed')
-        const visibleNonTerminalSeqCutoff = freezeCutoffRef.current ?? lastVisibleNonTerminalSeqRef.current
         const runEventsForMessage = runId
           ? (sse.events as MsgRunEvent[]).filter((e) => {
             if (e.run_id !== runId || typeof e.seq !== 'number') {
               return false
             }
-            if (isTerminalRunEventType(e.type)) {
-              return e.seq <= event.seq
-            }
-            return e.seq <= visibleNonTerminalSeqCutoff
+            return e.seq <= event.seq
           })
           : []
         const runCache = captureTerminalRunCache('failed')
@@ -834,16 +852,12 @@ export function useThreadSseEffect({
         const runId = event.run_id
         setTerminalRunDisplayId(runId)
         setTerminalRunHandoffStatus('interrupted')
-        const visibleNonTerminalSeqCutoff = freezeCutoffRef.current ?? lastVisibleNonTerminalSeqRef.current
         const runEventsForMessage = runId
           ? (sse.events as MsgRunEvent[]).filter((e) => {
             if (e.run_id !== runId || typeof e.seq !== 'number') {
               return false
             }
-            if (isTerminalRunEventType(e.type)) {
-              return e.seq <= event.seq
-            }
-            return e.seq <= visibleNonTerminalSeqCutoff
+            return e.seq <= event.seq
           })
           : []
         const runCache = captureTerminalRunCache('interrupted')
@@ -902,11 +916,13 @@ export function useThreadSseEffect({
 
     sseTerminalFallbackArmedRef.current = false
     sseTerminalFallbackRunIdRef.current = null
-    const visibleNonTerminalSeqCutoff = freezeCutoffRef.current ?? lastVisibleNonTerminalSeqRef.current
+    const terminalRunMaxSeq = (sse.events as MsgRunEvent[])
+      .filter((e) => e.run_id === terminalRunId && typeof e.seq === 'number')
+      .reduce((max, e) => Math.max(max, e.seq), 0)
     const runEventsForMessage = (sse.events as MsgRunEvent[]).filter((e) =>
       e.run_id === terminalRunId &&
       typeof e.seq === 'number' &&
-      e.seq <= visibleNonTerminalSeqCutoff,
+      e.seq <= terminalRunMaxSeq,
     )
     const terminalCache = captureTerminalRunCache()
     if (terminalCache.handoffAssistantTurn.segments.length === 0 && runEventsForMessage.length > 0) {

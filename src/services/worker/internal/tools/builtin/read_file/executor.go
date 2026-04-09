@@ -61,7 +61,9 @@ func (e *Executor) Execute(
 	content, totalLines, truncated := fileops.ReadLines(data, offset-1, limit)
 	numbered := fileops.FormatWithLineNumbers(content, offset)
 
-	e.Tracker.RecordRead(filePath)
+	if e.Tracker != nil {
+		e.Tracker.RecordReadForRun(execCtx.RunID.String(), backend.NormalizePath(filePath))
+	}
 
 	result := numbered
 	if truncated {

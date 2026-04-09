@@ -14,6 +14,9 @@ func TestResolveBuiltinArtifactToolsReflectStorageAvailability(t *testing.T) {
 	if _, ok := resolved.ToolNameSet()["artifact_guidelines"]; !ok {
 		t.Fatal("artifact_guidelines should be present without artifact store")
 	}
+	if _, ok := resolved.ToolNameSet()["arkloop_help"]; !ok {
+		t.Fatal("arkloop_help should be present without artifact store")
+	}
 	if _, ok := resolved.ToolNameSet()["show_widget"]; !ok {
 		t.Fatal("show_widget should be present without artifact store")
 	}
@@ -98,10 +101,12 @@ func TestResolveBuiltinUsesEnvAndProviders(t *testing.T) {
 	got := resolved.ToolNames()
 	want := []string{
 		"acp_agent",
+		"arkloop_help",
 		"artifact_guidelines",
 		"ask_user",
 		"browser",
 		"close_agent",
+		"continue_process",
 		"conversation_search",
 		"create_artifact",
 		"document_write",
@@ -117,18 +122,19 @@ func TestResolveBuiltinUsesEnvAndProviders(t *testing.T) {
 		"memory_write",
 		"python_execute",
 		"read",
+		"resize_process",
 		"resume_agent",
 		"send_input",
 		"show_widget",
 		"spawn_agent",
 		"summarize_thread",
+		"terminate_process",
 		"timeline_title",
 		"visualize_read_me",
 		"wait_agent",
 		"web_fetch",
 		"web_search",
 		"write_file",
-		"write_stdin",
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("unexpected tool names: got %v want %v", got, want)

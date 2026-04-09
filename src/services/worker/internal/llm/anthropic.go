@@ -42,7 +42,11 @@ const (
 	anthropicAdvancedKeyVersion      = "anthropic_version"
 	anthropicAdvancedKeyExtraHeaders = "extra_headers"
 	anthropicBetaHeader              = "anthropic-beta"
+	anthropicMinThinkingBudget       = 1024
+	anthropicLowThinkingBudget       = 4096
 	defaultAnthropicThinkingBudget   = 8192
+	anthropicHighThinkingBudget      = 16384
+	anthropicMaxThinkingBudget       = 32768
 )
 
 type anthropicAdvancedJSONError struct {
@@ -138,8 +142,8 @@ func (g *AnthropicGateway) Stream(ctx context.Context, request Request, yield fu
 	if g.transport.baseURLErr != nil {
 		return yield(StreamRunFailed{Error: GatewayError{ErrorClass: ErrorClassInternalError, Message: "Anthropic base_url blocked", Details: map[string]any{"reason": g.transport.baseURLErr.Error()}}})
 	}
-	ctx, cancel := context.WithTimeout(ctx, g.transport.cfg.TotalTimeout)
-	defer cancel()
+	ctx, stopTimeout, _ := withStreamIdleTimeout(ctx, g.transport.cfg.TotalTimeout)
+	defer stopTimeout()
 	llmCallID := uuid.NewString()
 
 	system, messages, err := toAnthropicMessages(request.Messages)
@@ -183,31 +187,7 @@ func (g *AnthropicGateway) Stream(ctx context.Context, request Request, yield fu
 			payload[k] = v
 		}
 	}
-	// reasoning_mode 控制是否发送 thinking 参数
-	switch request.ReasoningMode {
-	case "enabled":
-		if tObj, ok := payload["thinking"].(map[string]any); ok {
-			tObj["type"] = "enabled"
-			if _, has := tObj["budget_tokens"]; !has {
-				tObj["budget_tokens"] = defaultAnthropicThinkingBudget
-			}
-		} else {
-			payload["thinking"] = map[string]any{
-				"type":          "enabled",
-				"budget_tokens": defaultAnthropicThinkingBudget,
-			}
-		}
-		ensureAnthropicMaxTokensForThinking(payload)
-	case "disabled":
-		delete(payload, "thinking")
-	default: // "auto", "none", ""
-		if tObj, ok := payload["thinking"].(map[string]any); ok {
-			if _, has := tObj["budget_tokens"]; !has {
-				tObj["budget_tokens"] = defaultAnthropicThinkingBudget
-			}
-			ensureAnthropicMaxTokensForThinking(payload)
-		}
-	}
+	applyAnthropicReasoningMode(payload, request.ReasoningMode)
 	baseURL := g.transport.cfg.BaseURL
 	path := "/v1/messages"
 	stats := ComputeRequestStats(request)
@@ -239,6 +219,9 @@ func (g *AnthropicGateway) Stream(ctx context.Context, request Request, yield fu
 				Message:    "Anthropic request serialization failed",
 			},
 		})
+	}
+	if RequestPayloadTooLarge(len(encoded)) {
+		return yield(PreflightOversizeFailure(llmCallID, len(encoded)))
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, g.transport.endpoint("/v1/messages"), bytes.NewReader(encoded))
@@ -290,6 +273,9 @@ func (g *AnthropicGateway) Stream(ctx context.Context, request Request, yield fu
 			_ = yield(chunk)
 		}
 		message, details := anthropicErrorMessageAndDetails(body, status)
+		if status == http.StatusRequestEntityTooLarge {
+			details = OversizeFailureDetails(len(encoded), OversizePhaseProvider, details)
+		}
 		return yield(StreamRunFailed{
 			LlmCallID: llmCallID,
 			Error: GatewayError{
@@ -379,10 +365,12 @@ func toAnthropicMessages(messages []Message) ([]map[string]any, []map[string]any
 			return
 		}
 		filtered := make([]map[string]any, 0, len(pendingToolResults))
+		matchedToolUseIDs := map[string]struct{}{}
 		for _, block := range pendingToolResults {
 			id, _ := block["tool_use_id"].(string)
 			if _, ok := lastAssistantToolUseIDs[id]; ok {
 				filtered = append(filtered, block)
+				matchedToolUseIDs[id] = struct{}{}
 			} else {
 				prevRole := ""
 				prevSummary := ""
@@ -414,6 +402,9 @@ func toAnthropicMessages(messages []Message) ([]map[string]any, []map[string]any
 			lastAssistantToolUseIDs = map[string]struct{}{}
 			lastToolUseAssistantIdx = -1
 			return
+		}
+		if lastToolUseAssistantIdx >= 0 && len(matchedToolUseIDs) < len(lastAssistantToolUseIDs) {
+			stripToolUseBlocks(out, lastToolUseAssistantIdx, subtractToolUseIDs(lastAssistantToolUseIDs, matchedToolUseIDs))
 		}
 		out = append(out, map[string]any{
 			"role":    "user",
@@ -458,6 +449,7 @@ func toAnthropicMessages(messages []Message) ([]map[string]any, []map[string]any
 				return nil, nil, err
 			}
 			for _, call := range message.ToolCalls {
+				call = CanonicalToolCall(call)
 				lastAssistantToolUseIDs[call.ToolCallID] = struct{}{}
 				blocks = append(blocks, map[string]any{
 					"type":  "tool_use",
@@ -502,6 +494,20 @@ func toAnthropicMessages(messages []Message) ([]map[string]any, []map[string]any
 	}
 
 	return systemBlocks, compacted, nil
+}
+
+func subtractToolUseIDs(all map[string]struct{}, keep map[string]struct{}) map[string]struct{} {
+	if len(all) == 0 {
+		return nil
+	}
+	out := make(map[string]struct{}, len(all))
+	for id := range all {
+		if _, ok := keep[id]; ok {
+			continue
+		}
+		out[id] = struct{}{}
+	}
+	return out
 }
 
 // stripToolUseBlocks 从 out[idx] 的 content 中移除所有 tool_use blocks。
@@ -582,15 +588,9 @@ func anthropicContentBlocks(parts []ContentPart) ([]map[string]any, error) {
 			}
 			blocks = append(blocks, map[string]any{"type": "text", "text": text})
 		case "image":
-			if part.Attachment == nil {
-				return nil, fmt.Errorf("image attachment is required")
-			}
-			if len(part.Data) == 0 {
-				return nil, fmt.Errorf("image attachment data is required")
-			}
-			mimeType := strings.TrimSpace(part.Attachment.MimeType)
-			if mimeType == "" {
-				mimeType = "application/octet-stream"
+			mimeType, data, err := modelInputImage(part)
+			if err != nil {
+				return nil, err
 			}
 			if strings.TrimSpace(part.Attachment.Key) != "" {
 				blocks = append(blocks, map[string]any{
@@ -603,7 +603,7 @@ func anthropicContentBlocks(parts []ContentPart) ([]map[string]any, error) {
 				"source": map[string]any{
 					"type":       "base64",
 					"media_type": mimeType,
-					"data":       base64.StdEncoding.EncodeToString(part.Data),
+					"data":       base64.StdEncoding.EncodeToString(data),
 				},
 			})
 		}
@@ -659,16 +659,16 @@ func anthropicToolResultBlock(text string, imageParts []ContentPart) (map[string
 		{"type": "text", "text": contentText},
 	}
 	for _, part := range imageParts {
-		mimeType := strings.TrimSpace(part.Attachment.MimeType)
-		if mimeType == "" {
-			mimeType = "application/octet-stream"
+		mimeType, data, err := modelInputImage(part)
+		if err != nil {
+			return nil, err
 		}
 		contentBlocks = append(contentBlocks, map[string]any{
 			"type": "image",
 			"source": map[string]any{
 				"type":       "base64",
 				"media_type": mimeType,
-				"data":       base64.StdEncoding.EncodeToString(part.Data),
+				"data":       base64.StdEncoding.EncodeToString(data),
 			},
 		})
 	}
@@ -694,7 +694,7 @@ func anthropicToolChoice(tc *ToolChoice) map[string]any {
 	case "required":
 		return map[string]any{"type": "any"}
 	case "specific":
-		return map[string]any{"type": "tool", "name": tc.ToolName}
+		return map[string]any{"type": "tool", "name": CanonicalToolName(tc.ToolName)}
 	default:
 		return nil
 	}
@@ -703,8 +703,12 @@ func anthropicToolChoice(tc *ToolChoice) map[string]any {
 func toAnthropicTools(specs []ToolSpec) []map[string]any {
 	out := make([]map[string]any, 0, len(specs))
 	for _, spec := range specs {
+		name := CanonicalToolName(spec.Name)
+		if name == "" {
+			name = spec.Name
+		}
 		payload := map[string]any{
-			"name":         spec.Name,
+			"name":         name,
 			"input_schema": mapOrEmpty(spec.JSONSchema),
 		}
 		if spec.Description != nil {
@@ -780,7 +784,7 @@ func parseAnthropicMessage(body []byte) (content string, thinkingText string, to
 
 		toolCalls = append(toolCalls, ToolCall{
 			ToolCallID:    toolCallID,
-			ToolName:      toolName,
+			ToolName:      CanonicalToolName(toolName),
 			ArgumentsJSON: argumentsJSON,
 		})
 	}
@@ -804,6 +808,54 @@ func ensureAnthropicMaxTokensForThinking(payload map[string]any) {
 	maxTokens := anyToInt(payload["max_tokens"])
 	if maxTokens <= budget {
 		payload["max_tokens"] = budget + maxTokens
+	}
+}
+
+func anthropicThinkingBudget(mode string) (int, bool) {
+	switch strings.ToLower(strings.TrimSpace(mode)) {
+	case "enabled", "medium":
+		return defaultAnthropicThinkingBudget, true
+	case "minimal":
+		return anthropicMinThinkingBudget, true
+	case "low":
+		return anthropicLowThinkingBudget, true
+	case "high":
+		return anthropicHighThinkingBudget, true
+	case "max", "maximum", "xhigh", "extra_high", "extra-high", "extra high":
+		return anthropicMaxThinkingBudget, true
+	default:
+		return 0, false
+	}
+}
+
+func anthropicThinkingDisabled(mode string) bool {
+	switch strings.ToLower(strings.TrimSpace(mode)) {
+	case "disabled", "none", "off":
+		return true
+	default:
+		return false
+	}
+}
+
+func applyAnthropicReasoningMode(payload map[string]any, mode string) {
+	if budget, ok := anthropicThinkingBudget(mode); ok {
+		payload["thinking"] = map[string]any{
+			"type":          "enabled",
+			"budget_tokens": budget,
+		}
+		ensureAnthropicMaxTokensForThinking(payload)
+		return
+	}
+	if anthropicThinkingDisabled(mode) {
+		delete(payload, "thinking")
+		return
+	}
+	if tObj, ok := payload["thinking"].(map[string]any); ok {
+		tObj["type"] = "enabled"
+		if _, has := tObj["budget_tokens"]; !has {
+			tObj["budget_tokens"] = defaultAnthropicThinkingBudget
+		}
+		ensureAnthropicMaxTokensForThinking(payload)
 	}
 }
 
@@ -955,7 +1007,7 @@ func (g *AnthropicGateway) streamAnthropicSSE(ctx context.Context, body io.Reade
 		return errAnthropicStreamTerminated
 	}
 
-	err := forEachSSEData(ctx, body, func(data string) error {
+	err := forEachSSEData(ctx, body, streamActivityMarker(ctx), func(data string) error {
 		data = strings.TrimSpace(data)
 		if data == "" {
 			return nil
@@ -1034,7 +1086,7 @@ func (g *AnthropicGateway) streamAnthropicSSE(ctx context.Context, body io.Reade
 				return yield(ToolCallArgumentDelta{
 					ToolCallIndex:  idx,
 					ToolCallID:     buffer.ID,
-					ToolName:       buffer.Name,
+					ToolName:       CanonicalToolName(buffer.Name),
 					ArgumentsDelta: encoded,
 				})
 			}
@@ -1085,7 +1137,7 @@ func (g *AnthropicGateway) streamAnthropicSSE(ctx context.Context, body io.Reade
 				return yield(ToolCallArgumentDelta{
 					ToolCallIndex:  idx,
 					ToolCallID:     buffer.ID,
-					ToolName:       buffer.Name,
+					ToolName:       CanonicalToolName(buffer.Name),
 					ArgumentsDelta: event.Delta.PartialJSON,
 				})
 			}
@@ -1113,7 +1165,7 @@ func (g *AnthropicGateway) streamAnthropicSSE(ctx context.Context, body io.Reade
 			}
 			return yield(ToolCall{
 				ToolCallID:    buffer.ID,
-				ToolName:      buffer.Name,
+				ToolName:      CanonicalToolName(buffer.Name),
 				ArgumentsJSON: argumentsJSON,
 			})
 		case "message_delta":
@@ -1137,7 +1189,11 @@ func (g *AnthropicGateway) streamAnthropicSSE(ctx context.Context, body io.Reade
 		return err
 	}
 	if !completed {
-		return yield(StreamRunFailed{LlmCallID: llmCallID, Error: InternalStreamEndedError()})
+		streamErr := InternalStreamEndedError()
+		if usage != nil || len(assistantBlocks) > 0 || len(toolBuffers) > 0 {
+			streamErr = RetryableStreamEndedError()
+		}
+		return yield(StreamRunFailed{LlmCallID: llmCallID, Error: streamErr})
 	}
 	assistantMessage := Message{Role: "assistant", Content: anthropicAssistantMessageParts(assistantBlocks)}
 	return yield(StreamRunCompleted{LlmCallID: llmCallID, Usage: usage, AssistantMessage: &assistantMessage})

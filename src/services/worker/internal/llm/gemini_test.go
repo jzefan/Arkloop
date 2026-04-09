@@ -3,6 +3,7 @@ package llm
 import (
 	"context"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -97,6 +98,48 @@ func TestToGeminiContents_ToolEnvelope(t *testing.T) {
 	// index 3: user continue
 	if contents[3]["role"] != "user" {
 		t.Fatalf("expected user, got %v", contents[3]["role"])
+	}
+}
+
+func TestGeminiGateway_Stream_PreflightOversizeSkipsHTTP(t *testing.T) {
+	calls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	gateway := NewGeminiGateway(GeminiGatewayConfig{
+		APIKey:  "test-key",
+		BaseURL: server.URL,
+	})
+
+	var got []StreamEvent
+	err := gateway.Stream(context.Background(), Request{
+		Model: "gemini-test",
+		Messages: []Message{{
+			Role:    "user",
+			Content: []TextPart{{Text: strings.Repeat("x", RequestPayloadLimitBytes+1024)}},
+		}},
+	}, func(ev StreamEvent) error {
+		got = append(got, ev)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("Stream failed: %v", err)
+	}
+	if calls != 0 {
+		t.Fatalf("expected no HTTP request, got %d", calls)
+	}
+	failed, ok := got[len(got)-1].(StreamRunFailed)
+	if !ok {
+		t.Fatalf("expected StreamRunFailed, got %T", got[len(got)-1])
+	}
+	if failed.Error.Details["status_code"] != http.StatusRequestEntityTooLarge {
+		t.Fatalf("unexpected details: %#v", failed.Error.Details)
+	}
+	if failed.Error.Details["oversize_phase"] != OversizePhasePreflight {
+		t.Fatalf("unexpected phase: %#v", failed.Error.Details)
 	}
 }
 
@@ -204,6 +247,63 @@ func TestGeminiGateway_Stream_TextResponse(t *testing.T) {
 	}
 	if *completed.Usage.TotalTokens != 15 {
 		t.Fatalf("unexpected total_tokens: %d", *completed.Usage.TotalTokens)
+	}
+}
+
+func TestGeminiGateway_Stream_RequestBodyDoesNotLeakProviderToolName(t *testing.T) {
+	var receivedBody []byte
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatalf("read request body failed: %v", err)
+		}
+		receivedBody = append([]byte(nil), body...)
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte(sseBody([]string{
+			`{"candidates":[{"content":{"parts":[{"text":"ok"}],"role":"model"},"finishReason":"STOP"}]}`,
+		})))
+	}))
+	t.Cleanup(server.Close)
+
+	gw := NewGeminiGateway(GeminiGatewayConfig{
+		APIKey:  "test-key",
+		BaseURL: server.URL,
+	})
+
+	err := gw.Stream(context.Background(), Request{
+		Model: "gemini-2.0-flash",
+		Messages: []Message{
+			{Role: "user", Content: []TextPart{{Text: "hi"}}},
+			{
+				Role:    "assistant",
+				Content: []TextPart{{Text: "fetching"}},
+				ToolCalls: []ToolCall{{
+					ToolCallID:    "call_1",
+					ToolName:      "web_fetch.jina",
+					ArgumentsJSON: map[string]any{"url": "https://example.com"},
+				}},
+			},
+			{
+				Role: "tool",
+				Content: []TextPart{{
+					Text: `{"tool_call_id":"call_1","tool_name":"web_fetch.jina","result":{"title":"Example"}}`,
+				}},
+			},
+		},
+	}, func(StreamEvent) error {
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("stream failed: %v", err)
+	}
+
+	bodyText := string(receivedBody)
+	if strings.Contains(bodyText, "web_fetch.jina") {
+		t.Fatalf("expected gemini request body to hide provider tool name, got %s", bodyText)
+	}
+	if !strings.Contains(bodyText, `"name":"web_fetch"`) {
+		t.Fatalf("expected gemini request body to keep canonical tool name, got %s", bodyText)
 	}
 }
 

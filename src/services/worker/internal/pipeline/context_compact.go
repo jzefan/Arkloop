@@ -1,10 +1,13 @@
 package pipeline
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 
+	"arkloop/services/shared/messagecontent"
 	"arkloop/services/worker/internal/llm"
 
 	"github.com/google/uuid"
@@ -36,6 +39,15 @@ type ContextCompactSettings struct {
 
 	// MicrocompactKeepRecentTools 保留最近 N 个 tool result 原文；0 = 不做 microcompact。
 	MicrocompactKeepRecentTools int
+}
+
+type OversizeRewriteStats struct {
+	RewriteApplied            bool
+	ImagesStripped            int
+	ToolResultsMicrocompacted int
+	CompactApplied            bool
+	RequestBytesBeforeRewrite int
+	RequestBytesAfterRewrite  int
 }
 
 func approxTokensFromText(s string) int {
@@ -134,6 +146,7 @@ func sanitizeToolPairs(msgs []llm.Message, ids []uuid.UUID) ([]llm.Message, []uu
 	}
 
 	removeSet := make(map[int]struct{})
+	prunedToolCalls := make(map[int][]llm.ToolCall)
 
 	// pass 1: 标记孤立 tool 消息
 	var activeCallIDs map[string]struct{}
@@ -171,7 +184,8 @@ func sanitizeToolPairs(msgs []llm.Message, ids []uuid.UUID) ([]llm.Message, []uu
 		}
 	}
 
-	// pass 3: 标记 assistant(tool_use) 中所有 ToolCalls 都没有存活 tool 的
+	// pass 3: 仅保留 assistant(tool_use) 中仍有对应 tool result 的 ToolCalls。
+	// 如果一条 assistant 最终没有可保留的 ToolCalls，且也没有可见文本，则整条移除。
 	for i, m := range msgs {
 		if _, removed := removeSet[i]; removed {
 			continue
@@ -179,19 +193,23 @@ func sanitizeToolPairs(msgs []llm.Message, ids []uuid.UUID) ([]llm.Message, []uu
 		if m.Role != "assistant" || len(m.ToolCalls) == 0 {
 			continue
 		}
-		anyAlive := false
+		kept := make([]llm.ToolCall, 0, len(m.ToolCalls))
 		for _, tc := range m.ToolCalls {
 			if _, ok := survivingToolCallIDs[tc.ToolCallID]; ok {
-				anyAlive = true
-				break
+				kept = append(kept, tc)
 			}
 		}
-		if !anyAlive {
-			removeSet[i] = struct{}{}
+		if len(kept) == len(m.ToolCalls) {
+			continue
 		}
+		if len(kept) == 0 && strings.TrimSpace(messageText(m)) == "" {
+			removeSet[i] = struct{}{}
+			continue
+		}
+		prunedToolCalls[i] = kept
 	}
 
-	if len(removeSet) == 0 {
+	if len(removeSet) == 0 && len(prunedToolCalls) == 0 {
 		return msgs, ids
 	}
 
@@ -204,6 +222,9 @@ func sanitizeToolPairs(msgs []llm.Message, ids []uuid.UUID) ([]llm.Message, []uu
 	for i, m := range msgs {
 		if _, skip := removeSet[i]; skip {
 			continue
+		}
+		if kept, ok := prunedToolCalls[i]; ok {
+			m.ToolCalls = kept
 		}
 		outMsgs = append(outMsgs, m)
 		if alignedIDs {
@@ -331,6 +352,7 @@ func computeTailKeepByTokenBudget(enc *tiktoken.Tiktoken, msgs []llm.Message, to
 	keep := 0
 	for i := len(msgs) - 1; i >= 0; i-- {
 		mt := tokensPerMessage + len(enc.Encode(msgs[i].Role, nil, nil)) + len(enc.Encode(messageText(msgs[i]), nil, nil))
+		mt += contextCompactImageTokens(msgs[i])
 		if keep > 0 && accum+mt > tokenBudget {
 			break
 		}
@@ -355,11 +377,70 @@ func ContextCompactHasActiveBudget(cfg ContextCompactSettings) bool {
 		cfg.MaxTotalTextBytes > 0
 }
 
+func RewriteOversizeRequest(
+	ctx context.Context,
+	rc *RunContext,
+	request llm.Request,
+	anchor *ContextCompactPressureAnchor,
+	requestBytes func(llm.Request) int,
+) (llm.Request, OversizeRewriteStats, error) {
+	stats := OversizeRewriteStats{}
+	if rc == nil {
+		if requestBytes != nil {
+			stats.RequestBytesBeforeRewrite = requestBytes(request)
+			stats.RequestBytesAfterRewrite = stats.RequestBytesBeforeRewrite
+		}
+		return request, stats, nil
+	}
+	if requestBytes != nil {
+		stats.RequestBytesBeforeRewrite = requestBytes(request)
+	}
+
+	rewritten := request
+	keepTail := rc.ContextCompact.PersistKeepLastMessages
+	if keepTail <= 0 {
+		keepTail = defaultPersistKeepLastMessages
+	}
+
+	var stripped int
+	rewritten.Messages, stripped = stripOlderImagesOutsideTail(rewritten.Messages, keepTail)
+	if stripped > 0 {
+		stats.RewriteApplied = true
+		stats.ImagesStripped = stripped
+	}
+
+	var microcompacted int
+	rewritten.Messages, microcompacted = microcompactToolResultsWithCount(rewritten.Messages, rc.ContextCompact.MicrocompactKeepRecentTools)
+	if microcompacted > 0 {
+		stats.RewriteApplied = true
+		stats.ToolResultsMicrocompacted = microcompacted
+	}
+
+	compacted, _, changed, err := MaybeInlineCompactMessages(ctx, rc, rewritten.Messages, anchor)
+	if changed {
+		rewritten.Messages = compacted
+		stats.RewriteApplied = true
+		stats.CompactApplied = true
+	}
+
+	if requestBytes != nil {
+		stats.RequestBytesAfterRewrite = requestBytes(rewritten)
+	} else {
+		stats.RequestBytesAfterRewrite = stats.RequestBytesBeforeRewrite
+	}
+	return rewritten, stats, err
+}
+
 // microcompactToolResults 保留最近 keepRecent 个 role="tool" 消息原文，其余替换为占位符。
 // 返回新 slice，不修改原始数据。
 func microcompactToolResults(msgs []llm.Message, keepRecent int) []llm.Message {
+	out, _ := microcompactToolResultsWithCount(msgs, keepRecent)
+	return out
+}
+
+func microcompactToolResultsWithCount(msgs []llm.Message, keepRecent int) ([]llm.Message, int) {
 	if keepRecent <= 0 || len(msgs) == 0 {
-		return msgs
+		return msgs, 0
 	}
 
 	// 从末尾往前收集 tool 消息索引
@@ -370,7 +451,7 @@ func microcompactToolResults(msgs []llm.Message, keepRecent int) []llm.Message {
 		}
 	}
 	if len(toolIndices) <= keepRecent {
-		return msgs
+		return msgs, 0
 	}
 
 	// toolIndices[0..keepRecent-1] 是从末尾数的最近 N 个，保留；其余需清理
@@ -381,10 +462,12 @@ func microcompactToolResults(msgs []llm.Message, keepRecent int) []llm.Message {
 
 	out := make([]llm.Message, len(msgs))
 	copy(out, msgs)
+	cleared := 0
 	for idx := range clearSet {
 		out[idx] = microcompactedStub(out[idx])
+		cleared++
 	}
-	return out
+	return out, cleared
 }
 
 // microcompactedStub replaces a tool message's result with a minimal stub
@@ -414,4 +497,57 @@ func microcompactedStub(m llm.Message) llm.Message {
 		ToolCalls: m.ToolCalls,
 		Content:   []llm.ContentPart{{Type: "text", Text: string(text), TrustSource: trustSource}},
 	}
+}
+
+func stripOlderImagesOutsideTail(msgs []llm.Message, keepTail int) ([]llm.Message, int) {
+	if len(msgs) == 0 || keepTail < 0 {
+		return msgs, 0
+	}
+	boundary := len(msgs) - keepTail
+	if boundary <= 0 {
+		return msgs, 0
+	}
+	lastUserIdx := compactLastUserMessageIndex(msgs)
+	out := make([]llm.Message, len(msgs))
+	copy(out, msgs)
+	stripped := 0
+	for i := 0; i < boundary; i++ {
+		if i == lastUserIdx {
+			continue
+		}
+		parts := out[i].Content
+		replaced := false
+		for j := range parts {
+			if parts[j].Kind() != messagecontent.PartTypeImage {
+				continue
+			}
+			parts[j] = llm.ContentPart{
+				Type: messagecontent.PartTypeText,
+				Text: contextCompactImagePlaceholder(parts[j]),
+			}
+			stripped++
+			replaced = true
+		}
+		if replaced {
+			out[i].Content = parts
+		}
+	}
+	return out, stripped
+}
+
+func contextCompactImagePlaceholder(part llm.ContentPart) string {
+	tag := "[image]"
+	if part.Attachment != nil && strings.TrimSpace(part.Attachment.Key) != "" {
+		tag = "[image attachment_key=" + strconv.Quote(part.Attachment.Key) + "]"
+	}
+	return tag
+}
+
+func compactLastUserMessageIndex(msgs []llm.Message) int {
+	for i := len(msgs) - 1; i >= 0; i-- {
+		if msgs[i].Role == "user" {
+			return i
+		}
+	}
+	return -1
 }

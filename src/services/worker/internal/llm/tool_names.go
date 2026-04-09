@@ -1,0 +1,80 @@
+package llm
+
+import (
+	"encoding/json"
+	"strings"
+
+	"arkloop/services/worker/internal/stablejson"
+)
+
+var canonicalToolNameAliases = map[string]string{
+	"read.minimax":          "read",
+	"web_fetch.basic":       "web_fetch",
+	"web_fetch.firecrawl":   "web_fetch",
+	"web_fetch.jina":        "web_fetch",
+	"web_search.duckduckgo": "web_search",
+	"web_search.searxng":    "web_search",
+	"web_search.tavily":     "web_search",
+}
+
+func CanonicalToolName(raw string) string {
+	cleaned := strings.TrimSpace(raw)
+	if cleaned == "" {
+		return ""
+	}
+	if mapped, ok := canonicalToolNameAliases[strings.ToLower(cleaned)]; ok {
+		return mapped
+	}
+	return cleaned
+}
+
+func CanonicalToolCall(call ToolCall) ToolCall {
+	call.ToolName = CanonicalToolName(call.ToolName)
+	if call.ArgumentsJSON == nil {
+		call.ArgumentsJSON = map[string]any{}
+	}
+	return call
+}
+
+func CanonicalToolCalls(calls []ToolCall) []ToolCall {
+	if len(calls) == 0 {
+		return nil
+	}
+	out := append([]ToolCall(nil), calls...)
+	for i := range out {
+		out[i] = CanonicalToolCall(out[i])
+	}
+	return out
+}
+
+func CanonicalizeToolEnvelopeText(text string) string {
+	trimmed := strings.TrimSpace(text)
+	if trimmed == "" {
+		return text
+	}
+
+	var envelope map[string]any
+	if err := json.Unmarshal([]byte(trimmed), &envelope); err != nil {
+		return text
+	}
+
+	rawName, ok := envelope["tool_name"].(string)
+	if !ok {
+		return text
+	}
+	canonical := CanonicalToolName(rawName)
+	if canonical == "" || canonical == strings.TrimSpace(rawName) {
+		return text
+	}
+	envelope["tool_name"] = canonical
+
+	encoded, err := stablejson.Encode(envelope)
+	if err == nil {
+		return encoded
+	}
+	fallback, err := json.Marshal(envelope)
+	if err != nil {
+		return text
+	}
+	return string(fallback)
+}

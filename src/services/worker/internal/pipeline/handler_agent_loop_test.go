@@ -183,6 +183,45 @@ func TestEventWriterTelegramUnsentOutputsMixedScenario(t *testing.T) {
 	}
 }
 
+func TestEventWriterFlushTelegramBoundaryBeforeProgressMessage(t *testing.T) {
+	tracker, fake := newTestTelegramProgressTracker(t)
+	var order []string
+	fake.onEvent = func(event string) {
+		order = append(order, event)
+	}
+
+	w := &eventWriter{
+		assistantOutputs: []string{"中间正文"},
+		telegramToolBoundaryFlush: func(_ context.Context, text string) error {
+			order = append(order, "flush:"+text)
+			return nil
+		},
+		telegramProgressTracker: tracker,
+	}
+
+	err := w.flushTelegramBoundaryAndProgress(context.Background(), "中间正文", &pendingTelegramProgressToolCall{
+		CallID:   "call-1",
+		ToolName: "read_file",
+		ArgsJSON: `{"path":"/tmp/result.md"}`,
+	})
+	if err != nil {
+		t.Fatalf("flushTelegramBoundaryAndProgress returned error: %v", err)
+	}
+
+	if len(order) < 2 {
+		t.Fatalf("expected flush and send events, got %v", order)
+	}
+	if order[0] != "flush:中间正文" {
+		t.Fatalf("expected assistant flush first, got %v", order)
+	}
+	if !strings.HasPrefix(order[1], "send:") {
+		t.Fatalf("expected progress message send after flush, got %v", order)
+	}
+	if w.telegramSentOutputCount != 1 {
+		t.Fatalf("expected telegramSentOutputCount=1, got %d", w.telegramSentOutputCount)
+	}
+}
+
 func TestShouldSuppressHeartbeatOutput(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -337,5 +376,79 @@ func TestCaptureReplyOverride_OverwritesOnMultipleCalls(t *testing.T) {
 	})
 	if w.pendingReplyOverride != "200" {
 		t.Fatalf("expected last override=200, got %q", w.pendingReplyOverride)
+	}
+}
+
+func TestEventWriterFlushPendingToolCallsDoesNotPersistProviderToolNames(t *testing.T) {
+	w := &eventWriter{
+		assistantMessage: &llm.Message{
+			Role:    "assistant",
+			Content: []llm.TextPart{{Text: "searching"}},
+		},
+	}
+
+	w.collectToolCall(map[string]any{
+		"tool_call_id": "call_1",
+		"tool_name":    "web_search.tavily",
+		"arguments":    map[string]any{"query": "hello"},
+	})
+	w.collectToolResult(map[string]any{
+		"tool_call_id": "call_1",
+		"tool_name":    "web_search.tavily",
+		"result":       map[string]any{"items": []any{map[string]any{"title": "x"}}},
+	})
+	w.flushPendingToolCalls()
+
+	if len(w.intermediateMessages) != 2 {
+		t.Fatalf("expected assistant+tool intermediate messages, got %d", len(w.intermediateMessages))
+	}
+
+	assistantJSON := string(w.intermediateMessages[0].ContentJSON)
+	if strings.Contains(assistantJSON, "web_search.tavily") {
+		t.Fatalf("expected assistant intermediate message to hide provider tool name, got %s", assistantJSON)
+	}
+	if !strings.Contains(assistantJSON, `"tool_name":"web_search"`) {
+		t.Fatalf("expected assistant intermediate message to keep canonical tool name, got %s", assistantJSON)
+	}
+
+	toolContent := w.intermediateMessages[1].Content
+	if strings.Contains(toolContent, "web_search.tavily") {
+		t.Fatalf("expected tool intermediate message to hide provider tool name, got %s", toolContent)
+	}
+	if !strings.Contains(toolContent, `"tool_name":"web_search"`) {
+		t.Fatalf("expected tool intermediate message to keep canonical tool name, got %s", toolContent)
+	}
+}
+
+func TestEventWriterFlushPendingToolCallsFiltersHeartbeatDecisionFromPersistentHistory(t *testing.T) {
+	w := &eventWriter{
+		heartbeatRun: true,
+		assistantMessage: &llm.Message{
+			Role:    "assistant",
+			Content: []llm.TextPart{{Text: "replying"}},
+		},
+	}
+
+	w.collectToolCall(map[string]any{
+		"tool_call_id": "call_1",
+		"tool_name":    "heartbeat_decision",
+		"arguments":    map[string]any{"reply": true},
+	})
+	w.collectToolResult(map[string]any{
+		"tool_call_id": "call_1",
+		"tool_name":    "heartbeat_decision",
+		"result":       map[string]any{"ok": true, "reply": true},
+	})
+	w.flushPendingToolCalls()
+
+	if len(w.intermediateMessages) != 1 {
+		t.Fatalf("expected assistant-only intermediate message, got %d", len(w.intermediateMessages))
+	}
+	if w.intermediateMessages[0].Role != "assistant" {
+		t.Fatalf("expected assistant intermediate message, got %#v", w.intermediateMessages[0])
+	}
+	assistantJSON := string(w.intermediateMessages[0].ContentJSON)
+	if strings.Contains(assistantJSON, "heartbeat_decision") {
+		t.Fatalf("expected heartbeat_decision to be removed from persistent history, got %s", assistantJSON)
 	}
 }

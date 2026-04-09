@@ -193,29 +193,49 @@ func loadRunInputs(
 		if rawRunKind, ok := dataJSON["run_kind"].(string); ok && strings.TrimSpace(rawRunKind) != "" {
 			inputJSON["run_kind"] = strings.TrimSpace(rawRunKind)
 		}
+		if rawThreadTailID, ok := dataJSON[runStartedThreadTailMessageIDKey].(string); ok && strings.TrimSpace(rawThreadTailID) != "" {
+			inputJSON[runStartedThreadTailMessageIDKey] = strings.TrimSpace(rawThreadTailID)
+		}
 		if rawChannelDelivery, ok := dataJSON["channel_delivery"].(map[string]any); ok && len(rawChannelDelivery) > 0 {
 			inputJSON["channel_delivery"] = rawChannelDelivery
 		}
 	}
+	currentHeartbeatRun := isHeartbeatRun(inputJSON, jobPayload)
 
-	messages, err := messagesRepo.ListByThread(ctx, tx, run.AccountID, run.ThreadID, messageLimit)
+	historyUpperBoundID, hasHistoryUpperBound, err := boundedThreadHistoryUpperBound(ctx, tx, inputJSON, jobPayload)
 	if err != nil {
 		return nil, err
 	}
-	activeSnapshot, err := (data.ThreadCompactionSnapshotsRepository{}).GetActiveByThread(ctx, tx, run.AccountID, run.ThreadID)
+	if hasHistoryUpperBound {
+		inputJSON[runStartedThreadTailMessageIDKey] = historyUpperBoundID.String()
+	}
+
+	var messages []data.ThreadMessage
+	if hasHistoryUpperBound {
+		messages, err = messagesRepo.ListByThreadUpToID(ctx, tx, run.AccountID, run.ThreadID, historyUpperBoundID, messageLimit)
+	} else {
+		messages, err = messagesRepo.ListByThread(ctx, tx, run.AccountID, run.ThreadID, messageLimit)
+	}
 	if err != nil {
 		return nil, err
+	}
+	var activeSnapshot *data.ThreadCompactionSnapshotRecord
+	if !shouldSkipActiveSnapshotForBoundedHistory(inputJSON, run, jobPayload, hasHistoryUpperBound) {
+		activeSnapshot, err = (data.ThreadCompactionSnapshotsRepository{}).GetActiveByThread(ctx, tx, run.AccountID, run.ThreadID)
+		if err != nil {
+			return nil, err
+		}
 	}
 	hasActiveSnapshot := activeSnapshot != nil && strings.TrimSpace(activeSnapshot.SummaryText) != ""
 
 	replayInsertions := []resumeReplayInsertion(nil)
 	if IsRuntimeRecoveryJob(jobPayload) {
-		replayInsertions, err = loadRuntimeRecoveryReplay(ctx, tx, run, eventsRepo, rolloutStore, messages, hasActiveSnapshot)
+		replayInsertions, err = loadRuntimeRecoveryReplay(ctx, tx, run, eventsRepo, rolloutStore, messages, hasActiveSnapshot, currentHeartbeatRun)
 		if err != nil {
 			return nil, err
 		}
 	} else if run.ResumeFromRunID != nil {
-		replayInsertions, err = loadResumedReplay(ctx, tx, run, runsRepo, eventsRepo, rolloutStore, messages, hasActiveSnapshot)
+		replayInsertions, err = loadResumedReplay(ctx, tx, run, runsRepo, eventsRepo, rolloutStore, messages, hasActiveSnapshot, currentHeartbeatRun)
 		if err != nil {
 			var resumeErr *resumeUnavailableError
 			if errors.As(err, &resumeErr) {
@@ -260,6 +280,9 @@ func loadRunInputs(
 		if err != nil {
 			return nil, err
 		}
+		if msg.Role == "tool" {
+			parts = canonicalizeToolMessageParts(parts)
+		}
 		lm := llm.Message{
 			Role:         msg.Role,
 			Content:      parts,
@@ -267,6 +290,13 @@ func loadRunInputs(
 		}
 		if msg.Role == "assistant" && len(msg.ContentJSON) > 0 {
 			lm.ToolCalls = parseToolCallsFromContentJSON(msg.ContentJSON)
+		}
+		if !currentHeartbeatRun {
+			var keep bool
+			lm, keep = filterLongTermHeartbeatDecision(lm)
+			if !keep {
+				continue
+			}
 		}
 		llmMessages = append(llmMessages, lm)
 		ids = append(ids, msg.ID)
@@ -326,6 +356,136 @@ func clearContinuationMetadata(inputJSON map[string]any) {
 	delete(inputJSON, runStartedContinuationResponseKey)
 }
 
+func boundedThreadHistoryUpperBound(ctx context.Context, tx pgx.Tx, inputJSON map[string]any, jobPayload map[string]any) (uuid.UUID, bool, error) {
+	if !isBoundedChannelHistoryRun(inputJSON, jobPayload) {
+		return uuid.Nil, false, nil
+	}
+	if id, ok, err := threadHistoryUpperBoundFromValues(inputJSON, jobPayload); err != nil {
+		return uuid.Nil, false, err
+	} else if ok {
+		return id, true, nil
+	}
+	if tx == nil {
+		return uuid.Nil, false, nil
+	}
+	return lookupChannelHistoryUpperBoundFromLedger(ctx, tx, inputJSON, jobPayload)
+}
+
+func isBoundedChannelHistoryRun(inputJSON map[string]any, jobPayload map[string]any) bool {
+	if IsRuntimeRecoveryJob(jobPayload) {
+		return false
+	}
+	if continuationSource, _ := inputJSON[runStartedContinuationSourceKey].(string); strings.TrimSpace(continuationSource) != "" && strings.TrimSpace(continuationSource) != "none" {
+		return false
+	}
+	if isHeartbeatRun(inputJSON, jobPayload) {
+		return false
+	}
+	return hasChannelDeliveryPayload(inputJSON) || hasChannelDeliveryPayload(jobPayload)
+}
+
+func hasChannelDeliveryPayload(values map[string]any) bool {
+	if len(values) == 0 {
+		return false
+	}
+	raw, ok := values["channel_delivery"].(map[string]any)
+	return ok && len(raw) > 0
+}
+
+func shouldSkipActiveSnapshotForBoundedHistory(inputJSON map[string]any, run data.Run, jobPayload map[string]any, hasHistoryUpperBound bool) bool {
+	if run.ResumeFromRunID != nil {
+		return false
+	}
+	if IsRuntimeRecoveryJob(jobPayload) {
+		return false
+	}
+	if hasHistoryUpperBound {
+		return true
+	}
+	return isBoundedChannelHistoryRun(inputJSON, jobPayload)
+}
+
+func threadHistoryUpperBoundFromValues(values ...map[string]any) (uuid.UUID, bool, error) {
+	for _, value := range values {
+		raw, _ := value[runStartedThreadTailMessageIDKey].(string)
+		raw = strings.TrimSpace(raw)
+		if raw == "" {
+			continue
+		}
+		id, err := uuid.Parse(raw)
+		if err != nil {
+			return uuid.Nil, false, fmt.Errorf("invalid thread history upper bound message id: %w", err)
+		}
+		return id, true, nil
+	}
+	return uuid.Nil, false, nil
+}
+
+func lookupChannelHistoryUpperBoundFromLedger(ctx context.Context, tx pgx.Tx, inputJSON map[string]any, jobPayload map[string]any) (uuid.UUID, bool, error) {
+	channelDelivery := channelDeliveryPayload(inputJSON, jobPayload)
+	if len(channelDelivery) == 0 {
+		return uuid.Nil, false, nil
+	}
+	channelID, err := requiredUUIDValue(channelDelivery, "channel_id")
+	if err != nil {
+		return uuid.Nil, false, nil
+	}
+	conversationRef, err := parseConversationRef(channelDelivery)
+	if err != nil || strings.TrimSpace(conversationRef.Target) == "" {
+		return uuid.Nil, false, nil
+	}
+	candidates := []string{}
+	if triggerRef, err := parseOptionalMessageRef(channelDelivery, "trigger_message_ref", "reply_to_message_id"); err == nil && triggerRef != nil && strings.TrimSpace(triggerRef.MessageID) != "" {
+		candidates = append(candidates, strings.TrimSpace(triggerRef.MessageID))
+	}
+	if inboundRef, err := parseOptionalInboundMessageRef(channelDelivery); err == nil && strings.TrimSpace(inboundRef.MessageID) != "" {
+		candidates = append(candidates, strings.TrimSpace(inboundRef.MessageID))
+	}
+	seen := map[string]struct{}{}
+	for _, platformMessageID := range candidates {
+		if _, ok := seen[platformMessageID]; ok {
+			continue
+		}
+		seen[platformMessageID] = struct{}{}
+		var messageID *uuid.UUID
+		err := tx.QueryRow(
+			ctx,
+			`SELECT message_id
+			   FROM channel_message_ledger
+			  WHERE channel_id = $1
+			    AND direction = 'inbound'
+			    AND platform_conversation_id = $2
+			    AND platform_message_id = $3
+			    AND message_id IS NOT NULL
+			  ORDER BY created_at DESC
+			  LIMIT 1`,
+			channelID,
+			strings.TrimSpace(conversationRef.Target),
+			platformMessageID,
+		).Scan(&messageID)
+		if errors.Is(err, pgx.ErrNoRows) {
+			continue
+		}
+		if err != nil {
+			return uuid.Nil, false, fmt.Errorf("lookup bounded channel history upper bound: %w", err)
+		}
+		if messageID != nil && *messageID != uuid.Nil {
+			return *messageID, true, nil
+		}
+	}
+	return uuid.Nil, false, nil
+}
+
+func channelDeliveryPayload(values ...map[string]any) map[string]any {
+	for _, value := range values {
+		raw, ok := value["channel_delivery"].(map[string]any)
+		if ok && len(raw) > 0 {
+			return raw
+		}
+	}
+	return nil
+}
+
 func loadResumedReplay(
 	ctx context.Context,
 	tx pgx.Tx,
@@ -335,6 +495,7 @@ func loadResumedReplay(
 	rolloutStore objectstore.BlobStore,
 	threadMessages []data.ThreadMessage,
 	hasActiveSnapshot bool,
+	currentHeartbeatRun bool,
 ) ([]resumeReplayInsertion, error) {
 	if run.ResumeFromRunID == nil {
 		return nil, nil
@@ -360,6 +521,7 @@ func loadResumedReplay(
 		rolloutStore,
 		threadMessages,
 		hasActiveSnapshot,
+		currentHeartbeatRun,
 		map[uuid.UUID]struct{}{},
 	)
 	if err != nil {
@@ -479,6 +641,7 @@ func collectResumeReplayInsertions(
 	rolloutStore objectstore.BlobStore,
 	threadMessages []data.ThreadMessage,
 	hasActiveSnapshot bool,
+	currentHeartbeatRun bool,
 	visited map[uuid.UUID]struct{},
 ) ([]resumeReplayInsertion, error) {
 	if _, ok := visited[runID]; ok {
@@ -513,6 +676,7 @@ func collectResumeReplayInsertions(
 			rolloutStore,
 			threadMessages,
 			hasActiveSnapshot,
+			currentHeartbeatRun,
 			visited,
 		)
 		if err != nil {
@@ -541,7 +705,7 @@ func collectResumeReplayInsertions(
 		return nil, &resumeUnavailableError{reason: "resume rollout is unavailable"}
 	}
 	state := rollout.NewReader(rolloutStore).Reconstruct(items)
-	replayedMessages, err := buildReplayMessages(state)
+	replayedMessages, err := buildReplayMessages(state, currentHeartbeatRun)
 	if err != nil {
 		return nil, err
 	}
@@ -564,6 +728,7 @@ func loadRuntimeRecoveryReplay(
 	rolloutStore objectstore.BlobStore,
 	threadMessages []data.ThreadMessage,
 	hasActiveSnapshot bool,
+	currentHeartbeatRun bool,
 ) ([]resumeReplayInsertion, error) {
 	hasRecoverableOutput, err := runtimeRecoveryHasRecoverableOutput(ctx, tx, eventsRepo, run.ID)
 	if err != nil {
@@ -595,7 +760,7 @@ func loadRuntimeRecoveryReplay(
 		return nil, &resumeUnavailableError{reason: "runtime recovery rollout is unavailable"}
 	}
 	state := rollout.NewReader(rolloutStore).Reconstruct(items)
-	replayedMessages, err := buildReplayMessages(state)
+	replayedMessages, err := buildReplayMessages(state, currentHeartbeatRun)
 	if err != nil {
 		return nil, err
 	}
@@ -654,32 +819,52 @@ func threadHasAssistantMessageForRun(messages []data.ThreadMessage, runID uuid.U
 	return false
 }
 
-func buildReplayMessages(state *rollout.ReconstructedState) ([]llm.Message, error) {
+func buildReplayMessages(state *rollout.ReconstructedState, currentHeartbeatRun bool) ([]llm.Message, error) {
 	if state == nil {
 		return nil, nil
 	}
 	replayed := make([]llm.Message, 0, len(state.ReplayMessages)+len(state.PendingToolCalls))
 	for _, msg := range state.ReplayMessages {
+		var rebuilt llm.Message
+		var keep bool
 		switch msg.Role {
 		case "assistant":
 			if msg.Assistant == nil {
 				continue
 			}
-			replayed = append(replayed, replayAssistantMessage(*msg.Assistant))
+			rebuilt = replayAssistantMessage(*msg.Assistant)
 		case "tool":
 			if msg.Tool == nil {
 				continue
 			}
-			replayed = append(replayed, replayToolResultMessage(*msg.Tool))
+			rebuilt = replayToolResultMessage(*msg.Tool)
+		default:
+			continue
+		}
+		if currentHeartbeatRun {
+			replayed = append(replayed, rebuilt)
+			continue
+		}
+		rebuilt, keep = filterLongTermHeartbeatDecision(rebuilt)
+		if keep {
+			replayed = append(replayed, rebuilt)
 		}
 	}
 	for _, call := range state.PendingToolCalls {
-		replayed = append(replayed, replayToolResultMessage(rollout.ReplayToolResult{
+		rebuilt := replayToolResultMessage(rollout.ReplayToolResult{
 			CallID:    call.CallID,
 			Name:      call.Name,
 			Error:     interruptedToolErrorMessage,
 			Synthetic: true,
-		}))
+		})
+		if currentHeartbeatRun {
+			replayed = append(replayed, rebuilt)
+			continue
+		}
+		rebuilt, keep := filterLongTermHeartbeatDecision(rebuilt)
+		if keep {
+			replayed = append(replayed, rebuilt)
+		}
 	}
 	return replayed, nil
 }
@@ -691,6 +876,7 @@ func replayAssistantMessage(msg rollout.AssistantMessage) llm.Message {
 			slog.Warn("rollout: failed to parse assistant tool_calls", "err", err)
 		}
 	}
+	toolCalls = llm.CanonicalToolCalls(toolCalls)
 	content := []llm.ContentPart(nil)
 	text := sanitizeStoredAssistantText(msg.Content)
 	if strings.TrimSpace(text) != "" {
@@ -707,8 +893,8 @@ func replayToolResultMessage(result rollout.ReplayToolResult) llm.Message {
 	envelope := map[string]any{
 		"tool_call_id": result.CallID,
 	}
-	if strings.TrimSpace(result.Name) != "" {
-		envelope["tool_name"] = strings.TrimSpace(result.Name)
+	if toolName := llm.CanonicalToolName(result.Name); toolName != "" {
+		envelope["tool_name"] = toolName
 	}
 	if len(result.Output) > 0 {
 		var output any
@@ -750,9 +936,56 @@ func parseToolCallsFromContentJSON(raw json.RawMessage) []llm.ToolCall {
 		if err != nil {
 			continue
 		}
-		result = append(result, toolCall)
+		result = append(result, llm.CanonicalToolCall(toolCall))
 	}
 	return result
+}
+
+func filterLongTermHeartbeatDecision(msg llm.Message) (llm.Message, bool) {
+	if msg.Role == "assistant" && len(msg.ToolCalls) > 0 {
+		filtered := make([]llm.ToolCall, 0, len(msg.ToolCalls))
+		for _, call := range msg.ToolCalls {
+			if IsHeartbeatDecisionToolName(call.ToolName) {
+				continue
+			}
+			filtered = append(filtered, call)
+		}
+		msg.ToolCalls = filtered
+	}
+	if msg.Role == "tool" && toolMessageIsHeartbeatDecision(msg) {
+		return llm.Message{}, false
+	}
+	if msg.Role == "assistant" && len(msg.ToolCalls) == 0 && len(msg.Content) == 0 {
+		return llm.Message{}, false
+	}
+	return msg, true
+}
+
+func toolMessageIsHeartbeatDecision(msg llm.Message) bool {
+	if msg.Role != "tool" || len(msg.Content) == 0 {
+		return false
+	}
+	var envelope struct {
+		ToolName string `json:"tool_name"`
+	}
+	if json.Unmarshal([]byte(msg.Content[0].Text), &envelope) != nil {
+		return false
+	}
+	return IsHeartbeatDecisionToolName(envelope.ToolName)
+}
+
+func canonicalizeToolMessageParts(parts []llm.ContentPart) []llm.ContentPart {
+	if len(parts) == 0 {
+		return nil
+	}
+	out := append([]llm.ContentPart(nil), parts...)
+	for i := range out {
+		if out[i].Kind() != messagecontent.PartTypeText {
+			continue
+		}
+		out[i].Text = llm.CanonicalizeToolEnvelopeText(out[i].Text)
+	}
+	return out
 }
 
 func BuildMessageParts(ctx context.Context, store MessageAttachmentStore, msg data.ThreadMessage) ([]llm.ContentPart, error) {

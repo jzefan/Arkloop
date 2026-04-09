@@ -6,11 +6,13 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -21,17 +23,27 @@ import (
 const (
 	errorArgsInvalid  = "tool.args_invalid"
 	errorShellError   = "tool.local_shell_error"
-	errorDisabled     = "tool.local_shell_disabled"
 	maxOutputBytes    = 32 * 1024
 	envLocalShellWork = "ARKLOOP_LOCAL_SHELL_WORKSPACE"
 	rtkRewriteTimeout = 1500 * time.Millisecond
 )
 
-// Executor implements tools.Executor for local trusted shell execution.
+var localShellAllowedEnvKeys = []string{
+	"HOME",
+	"LANG",
+	"LC_ALL",
+	"LOGNAME",
+	"PATH",
+	"SHELL",
+	"TEMP",
+	"TMP",
+	"TMPDIR",
+	"USER",
+}
+
 type Executor struct {
-	mu          sync.Mutex
-	controllers map[string]*shellController
-	workDir     string
+	controller *ProcessController
+	workDir    string
 }
 
 var rtkRewriteRunner = func(ctx context.Context, bin string, command string) (string, error) {
@@ -54,8 +66,8 @@ func NewExecutor() *Executor {
 		}
 	}
 	return &Executor{
-		controllers: make(map[string]*shellController),
-		workDir:     workDir,
+		controller: NewProcessController(),
+		workDir:    workDir,
 	}
 }
 
@@ -66,13 +78,18 @@ func (e *Executor) Execute(
 	execCtx tools.ExecutionContext,
 	toolCallID string,
 ) tools.ExecutionResult {
+	_ = toolCallID
 	started := time.Now()
 
 	switch toolName {
-	case "exec_command":
+	case ExecCommandAgentSpec.Name:
 		return e.executeExecCommand(ctx, args, execCtx, started)
-	case "write_stdin":
-		return e.executeWriteStdin(ctx, args, execCtx, started)
+	case ContinueProcessAgentSpec.Name:
+		return e.executeContinueProcess(args, execCtx, started)
+	case TerminateProcessAgentSpec.Name:
+		return e.executeTerminateProcess(args, execCtx, started)
+	case ResizeProcessAgentSpec.Name:
+		return e.executeResizeProcess(args, execCtx, started)
 	default:
 		return errResult(errorArgsInvalid, fmt.Sprintf("unknown local shell tool: %s", toolName), started)
 	}
@@ -84,147 +101,422 @@ func (e *Executor) executeExecCommand(
 	execCtx tools.ExecutionContext,
 	started time.Time,
 ) tools.ExecutionResult {
-	reqArgs, argErr := parseExecCommandArgs(args)
-	if argErr != nil {
-		return errResult(errorArgsInvalid, argErr.Error(), started)
+	reqArgs, err := parseExecCommandArgs(args)
+	if err != nil {
+		return errResult(errorArgsInvalid, err.Error(), started)
 	}
-
-	controller := e.getOrCreateController(execCtx.RunID.String(), execCtx.WorkDir)
 
 	command := reqArgs.Command
 	if rewritten := rtkRewrite(ctx, command); rewritten != "" {
 		command = rewritten
 	}
 
-	slog.Info("local_shell: exec_command",
-		"run_id", execCtx.RunID.String(),
-		"command_len", len(command),
-		"cwd", reqArgs.Cwd,
-	)
-
-	resp, err := controller.execCommand(command, reqArgs.Cwd, reqArgs.TimeoutMs, reqArgs.YieldTimeMs, reqArgs.Background, reqArgs.Env)
-	if err != nil {
-		return errResult(errorShellError, err.Error(), started)
+	req := ExecCommandRequest{
+		RunID:     execCtx.RunID.String(),
+		Command:   command,
+		Mode:      reqArgs.Mode,
+		Cwd:       resolveExecCwd(reqArgs.Cwd, execCtx.WorkDir, e.workDir),
+		TimeoutMs: reqArgs.TimeoutMs,
+		Size:      reqArgs.Size,
+		Env:       sanitizeLocalEnvPatches(reqArgs.Env),
 	}
 
-	return buildResult(resp, execCtx.RunID.String(), started)
+	slog.Info("local_shell: exec_command",
+		"run_id", execCtx.RunID.String(),
+		"mode", req.Mode,
+		"command_len", len(command),
+		"cwd", req.Cwd,
+	)
+
+	resp, runErr := e.controller.ExecCommand(req)
+	if runErr != nil {
+		return mapLocalProcessError(runErr, started)
+	}
+	return buildProcessResult(resp, ExecCommandAgentSpec.Name, execCtx.PerToolSoftLimits, started)
+}
+
+func (e *Executor) executeContinueProcess(args map[string]any, execCtx tools.ExecutionContext, started time.Time) tools.ExecutionResult {
+	reqArgs, err := parseContinueProcessArgs(args)
+	if err != nil {
+		return errResult(errorArgsInvalid, err.Error(), started)
+	}
+	limit := tools.ResolveToolSoftLimit(execCtx.PerToolSoftLimits, ContinueProcessAgentSpec.Name)
+	if limit.MaxWaitTimeMs != nil && reqArgs.WaitMs > *limit.MaxWaitTimeMs {
+		reqArgs.WaitMs = *limit.MaxWaitTimeMs
+	}
+	resp, runErr := e.controller.ContinueProcess(ContinueProcessRequest{
+		ProcessRef: reqArgs.ProcessRef,
+		Cursor:     reqArgs.Cursor,
+		WaitMs:     reqArgs.WaitMs,
+		StdinText:  reqArgs.StdinText,
+		InputSeq:   reqArgs.InputSeq,
+		CloseStdin: reqArgs.CloseStdin,
+	})
+	if runErr != nil {
+		return mapLocalProcessError(runErr, started)
+	}
+	return buildProcessResult(resp, ContinueProcessAgentSpec.Name, execCtx.PerToolSoftLimits, started)
+}
+
+func (e *Executor) executeTerminateProcess(args map[string]any, execCtx tools.ExecutionContext, started time.Time) tools.ExecutionResult {
+	reqArgs, err := parseTerminateProcessArgs(args)
+	if err != nil {
+		return errResult(errorArgsInvalid, err.Error(), started)
+	}
+	resp, runErr := e.controller.TerminateProcess(TerminateProcessRequest{ProcessRef: reqArgs.ProcessRef})
+	if runErr != nil {
+		return mapLocalProcessError(runErr, started)
+	}
+	return buildProcessResult(resp, ContinueProcessAgentSpec.Name, execCtx.PerToolSoftLimits, started)
+}
+
+func (e *Executor) executeResizeProcess(args map[string]any, execCtx tools.ExecutionContext, started time.Time) tools.ExecutionResult {
+	reqArgs, err := parseResizeProcessArgs(args)
+	if err != nil {
+		return errResult(errorArgsInvalid, err.Error(), started)
+	}
+	resp, runErr := e.controller.ResizeProcess(ResizeProcessRequest{
+		ProcessRef: reqArgs.ProcessRef,
+		Rows:       reqArgs.Rows,
+		Cols:       reqArgs.Cols,
+	})
+	if runErr != nil {
+		return mapLocalProcessError(runErr, started)
+	}
+	return buildProcessResult(resp, ContinueProcessAgentSpec.Name, execCtx.PerToolSoftLimits, started)
 }
 
 type execCommandArgs struct {
-	Cwd         string
-	Command     string
-	TimeoutMs   int
-	YieldTimeMs int
-	Background  bool
-	Env         map[string]string
+	Command   string
+	Mode      string
+	Cwd       string
+	TimeoutMs int
+	Size      *Size
+	Env       map[string]*string
+}
+
+type continueProcessArgs struct {
+	ProcessRef string
+	Cursor     string
+	WaitMs     int
+	StdinText  *string
+	InputSeq   *int64
+	CloseStdin bool
+}
+
+type terminateProcessArgs struct {
+	ProcessRef string
+}
+
+type resizeProcessArgs struct {
+	ProcessRef string
+	Rows       int
+	Cols       int
 }
 
 func parseExecCommandArgs(args map[string]any) (execCommandArgs, error) {
-	command := readStringArg(args, "command")
-	if strings.TrimSpace(command) == "" {
-		return execCommandArgs{}, fmt.Errorf("parameter command is required")
-	}
-	reqArgs := execCommandArgs{
-		Cwd:         readStringArg(args, "cwd"),
-		Command:     command,
-		TimeoutMs:   readIntArg(args, "timeout_ms"),
-		YieldTimeMs: readIntArg(args, "yield_time_ms"),
-		Background:  readBoolArg(args, "background"),
-		Env:         readMapStringArg(args, "env"),
-	}
-	if reqArgs.Background {
-		reqArgs.YieldTimeMs = 1
-	} else if reqArgs.YieldTimeMs <= 0 {
-		reqArgs.YieldTimeMs = min(reqArgs.TimeoutMs, 30_000)
-		if reqArgs.YieldTimeMs <= 0 {
-			reqArgs.YieldTimeMs = 30_000
+	for key := range args {
+		switch key {
+		case "command", "mode", "cwd", "timeout_ms", "size", "env":
+		case "session_mode", "session_ref", "from_session_ref", "share_scope", "yield_time_ms", "background", "chars":
+			return execCommandArgs{}, fmt.Errorf("parameter %s is not supported", key)
+		default:
+			return execCommandArgs{}, fmt.Errorf("parameter %s is not supported", key)
 		}
 	}
-	return reqArgs, nil
+
+	req := execCommandArgs{
+		Command:   readStringArg(args, "command"),
+		Mode:      strings.TrimSpace(readStringArg(args, "mode")),
+		Cwd:       readStringArg(args, "cwd"),
+		TimeoutMs: readIntArg(args, "timeout_ms"),
+		Size:      readProcessSizeArg(args["size"]),
+		Env:       readNullableStringMapArg(args["env"]),
+	}
+	if req.Mode == "" {
+		req.Mode = ModeBuffered
+	}
+	payload := ExecCommandRequest{
+		Command:   req.Command,
+		Mode:      req.Mode,
+		Cwd:       req.Cwd,
+		TimeoutMs: req.TimeoutMs,
+		Size:      req.Size,
+		Env:       req.Env,
+	}
+	if err := ValidateExecRequest(payload); err != nil {
+		return execCommandArgs{}, errors.New(err.Message)
+	}
+	return req, nil
 }
 
-func (e *Executor) executeWriteStdin(
-	_ context.Context,
-	args map[string]any,
-	execCtx tools.ExecutionContext,
-	started time.Time,
-) tools.ExecutionResult {
-	chars := readStringArg(args, "chars")
-	yieldTimeMs := readIntArg(args, "yield_time_ms")
-
-	controller := e.getOrCreateController(execCtx.RunID.String(), execCtx.WorkDir)
-
-	if chars != "" {
-		slog.Info("local_shell: write_stdin",
-			"run_id", execCtx.RunID.String(),
-			"chars_len", len(chars),
-		)
-	}
-
-	resp, err := controller.writeStdin(chars, yieldTimeMs)
-	if err != nil {
-		return errResult(errorShellError, err.Error(), started)
-	}
-
-	return buildResult(resp, execCtx.RunID.String(), started)
-}
-
-func (e *Executor) getOrCreateController(runID string, workDir string) *shellController {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	if ctrl, ok := e.controllers[runID]; ok {
-		return ctrl
-	}
-	wd := workDir
-	if wd == "" {
-		wd = e.workDir
-	}
-	ctrl := newShellController(wd)
-	e.controllers[runID] = ctrl
-	return ctrl
-}
-
-// CloseSession terminates the shell session for a given run.
-func (e *Executor) CloseSession(runID string) {
-	e.mu.Lock()
-	ctrl, ok := e.controllers[runID]
-	if ok {
-		delete(e.controllers, runID)
-	}
-	e.mu.Unlock()
-	if ctrl != nil {
-		ctrl.close()
-	}
-}
-
-func buildResult(resp *shellResponse, runID string, started time.Time) tools.ExecutionResult {
-	output := sanitizeOutput(resp.Output)
-	truncated := false
-	if len(output) > maxOutputBytes {
-		marker := fmt.Sprintf("\n...[truncated %d bytes]", len(output)-maxOutputBytes)
-		allowed := maxOutputBytes - len(marker)
-		if allowed < 0 {
-			allowed = 0
+func parseContinueProcessArgs(args map[string]any) (continueProcessArgs, error) {
+	for key := range args {
+		switch key {
+		case "process_ref", "cursor", "wait_ms", "stdin_text", "input_seq", "close_stdin":
+		case "session_ref", "chars", "yield_time_ms":
+			return continueProcessArgs{}, fmt.Errorf("parameter %s is not supported", key)
+		default:
+			return continueProcessArgs{}, fmt.Errorf("parameter %s is not supported", key)
 		}
-		output = output[:allowed] + marker
-		truncated = true
+	}
+
+	req := continueProcessArgs{
+		ProcessRef: strings.TrimSpace(readStringArg(args, "process_ref")),
+		Cursor:     strings.TrimSpace(readStringArg(args, "cursor")),
+		WaitMs:     readIntArg(args, "wait_ms"),
+		CloseStdin: readBoolArg(args, "close_stdin"),
+	}
+	if raw, ok := args["stdin_text"]; ok {
+		if text, ok := raw.(string); ok {
+			req.StdinText = &text
+		}
+	}
+	if raw, ok := args["input_seq"]; ok {
+		value := int64(readIntArg(map[string]any{"input_seq": raw}, "input_seq"))
+		req.InputSeq = &value
+	}
+	payload := ContinueProcessRequest{
+		ProcessRef: req.ProcessRef,
+		Cursor:     req.Cursor,
+		WaitMs:     req.WaitMs,
+		StdinText:  req.StdinText,
+		InputSeq:   req.InputSeq,
+		CloseStdin: req.CloseStdin,
+	}
+	if err := ValidateContinueRequest(payload); err != nil {
+		return continueProcessArgs{}, errors.New(err.Message)
+	}
+	return req, nil
+}
+
+func parseTerminateProcessArgs(args map[string]any) (terminateProcessArgs, error) {
+	if len(args) != 1 {
+		for key := range args {
+			if key != "process_ref" {
+				return terminateProcessArgs{}, fmt.Errorf("parameter %s is not supported", key)
+			}
+		}
+	}
+	processRef := strings.TrimSpace(readStringArg(args, "process_ref"))
+	if processRef == "" {
+		return terminateProcessArgs{}, fmt.Errorf("parameter process_ref is required")
+	}
+	return terminateProcessArgs{ProcessRef: processRef}, nil
+}
+
+func parseResizeProcessArgs(args map[string]any) (resizeProcessArgs, error) {
+	for key := range args {
+		switch key {
+		case "process_ref", "rows", "cols":
+		default:
+			return resizeProcessArgs{}, fmt.Errorf("parameter %s is not supported", key)
+		}
+	}
+	processRef := strings.TrimSpace(readStringArg(args, "process_ref"))
+	if processRef == "" {
+		return resizeProcessArgs{}, fmt.Errorf("parameter process_ref is required")
+	}
+	rows := readIntArg(args, "rows")
+	cols := readIntArg(args, "cols")
+	if rows <= 0 || cols <= 0 {
+		return resizeProcessArgs{}, fmt.Errorf("parameters rows and cols must be greater than 0")
+	}
+	return resizeProcessArgs{ProcessRef: processRef, Rows: rows, Cols: cols}, nil
+}
+
+func buildProcessResult(resp *Response, toolName string, limits tools.PerToolSoftLimits, started time.Time) tools.ExecutionResult {
+	if resp == nil {
+		return errResult(errorShellError, "process response is empty", started)
+	}
+
+	outputLimit := resolveProcessOutputLimit(limits, toolName)
+	stdout, stdoutTruncated := truncateOutput(sanitizeOutput(resp.Stdout), outputLimit)
+	stderr, stderrTruncated := truncateOutput(sanitizeOutput(resp.Stderr), outputLimit)
+	items := make([]map[string]any, 0, len(resp.Items))
+	for _, item := range resp.Items {
+		items = append(items, map[string]any{
+			"seq":    item.Seq,
+			"stream": item.Stream,
+			"text":   sanitizeOutput(item.Text),
+		})
 	}
 
 	resultJSON := map[string]any{
-		"status":    resp.Status,
-		"cwd":       resp.Cwd,
-		"output":    output,
-		"running":   resp.Running,
-		"timed_out": resp.TimedOut,
-		"truncated": truncated,
+		"status":      resp.Status,
+		"stdout":      stdout,
+		"stderr":      stderr,
+		"running":     resp.Status == StatusRunning,
+		"cursor":      resp.Cursor,
+		"next_cursor": resp.NextCursor,
+		"items":       items,
+		"has_more":    resp.HasMore,
+		"truncated":   resp.Truncated || stdoutTruncated || stderrTruncated,
+		"duration_ms": durationMs(started),
+	}
+	if strings.TrimSpace(resp.ProcessRef) != "" {
+		resultJSON["process_ref"] = strings.TrimSpace(resp.ProcessRef)
 	}
 	if resp.ExitCode != nil {
 		resultJSON["exit_code"] = *resp.ExitCode
 	}
-	return tools.ExecutionResult{
-		ResultJSON: resultJSON,
-		DurationMs: durationMs(started),
+	if resp.AcceptedInputSeq != nil {
+		resultJSON["accepted_input_seq"] = *resp.AcceptedInputSeq
 	}
+	outputRef := strings.TrimSpace(resp.OutputRef)
+	if outputRef == "" && (resp.Truncated || stdoutTruncated || stderrTruncated) {
+		outputRef = buildOutputRef(strings.TrimSpace(resp.ProcessRef), 0, 0)
+	}
+	if outputRef != "" {
+		resultJSON["output_ref"] = outputRef
+	}
+	if len(resp.Artifacts) > 0 {
+		resultJSON["artifacts"] = resp.Artifacts
+	}
+	return tools.ExecutionResult{ResultJSON: resultJSON, DurationMs: durationMs(started)}
+}
+
+func (e *Executor) CleanupProcesses(ctx context.Context, processRefs []string, terminalStatus string) error {
+	var errs []string
+	for _, ref := range processRefs {
+		if ctx != nil {
+			select {
+			case <-ctx.Done():
+				if len(errs) > 0 {
+					return errors.New(strings.Join(errs, "; "))
+				}
+				return ctx.Err()
+			default:
+			}
+		}
+		ref = strings.TrimSpace(ref)
+		if ref == "" {
+			continue
+		}
+		var err error
+		switch strings.TrimSpace(terminalStatus) {
+		case "cancelled", "interrupted":
+			_, err = e.controller.CancelProcess(TerminateProcessRequest{ProcessRef: ref})
+		default:
+			_, err = e.controller.TerminateProcess(TerminateProcessRequest{ProcessRef: ref})
+		}
+		if err != nil && !isProcessNotFound(err) {
+			errs = append(errs, ref+": "+err.Error())
+		}
+	}
+	if len(errs) > 0 {
+		return errors.New(strings.Join(errs, "; "))
+	}
+	return nil
+}
+
+func resolveExecCwd(requested string, runWorkDir string, defaultWorkDir string) string {
+	if strings.TrimSpace(requested) != "" {
+		return strings.TrimSpace(requested)
+	}
+	if strings.TrimSpace(runWorkDir) != "" {
+		return strings.TrimSpace(runWorkDir)
+	}
+	return strings.TrimSpace(defaultWorkDir)
+}
+
+func sanitizeLocalEnvPatches(overrides map[string]*string) map[string]*string {
+	patches := make(map[string]*string)
+	for _, pair := range os.Environ() {
+		parts := strings.SplitN(pair, "=", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		key := strings.TrimSpace(parts[0])
+		if key == "" || slices.Contains(localShellAllowedEnvKeys, key) {
+			continue
+		}
+		patches[key] = nil
+	}
+	for key, value := range overrides {
+		patches[key] = value
+	}
+	if len(patches) == 0 {
+		return nil
+	}
+	return patches
+}
+
+func resolveProcessOutputLimit(limits tools.PerToolSoftLimits, toolName string) int {
+	target := toolName
+	if target != ExecCommandAgentSpec.Name && target != ContinueProcessAgentSpec.Name {
+		target = ContinueProcessAgentSpec.Name
+	}
+	limit := tools.ResolveToolSoftLimit(limits, target)
+	if limit.MaxOutputBytes != nil && *limit.MaxOutputBytes > 0 {
+		return *limit.MaxOutputBytes
+	}
+	if target == ExecCommandAgentSpec.Name {
+		return tools.DefaultExecCommandMaxOutputBytes
+	}
+	return tools.DefaultContinueProcessMaxOutputBytes
+}
+
+func isProcessNotFound(err error) bool {
+	var procErr *Error
+	return errors.As(err, &procErr) && procErr.Code == CodeProcessNotFound
+}
+
+func mapLocalProcessError(err error, started time.Time) tools.ExecutionResult {
+	if err == nil {
+		return tools.ExecutionResult{DurationMs: durationMs(started)}
+	}
+	var procErr *Error
+	if errors.As(err, &procErr) {
+		return errResult(procErr.Code, procErr.Message, started)
+	}
+	return errResult(errorShellError, err.Error(), started)
+}
+
+func readProcessSizeArg(raw any) *Size {
+	obj, ok := raw.(map[string]any)
+	if !ok || obj == nil {
+		return nil
+	}
+	rows := readIntArg(obj, "rows")
+	cols := readIntArg(obj, "cols")
+	if rows <= 0 || cols <= 0 {
+		return nil
+	}
+	return &Size{Rows: rows, Cols: cols}
+}
+
+func readNullableStringMapArg(raw any) map[string]*string {
+	obj, ok := raw.(map[string]any)
+	if !ok || len(obj) == 0 {
+		return nil
+	}
+	out := make(map[string]*string, len(obj))
+	for key, value := range obj {
+		switch typed := value.(type) {
+		case string:
+			copyValue := typed
+			out[key] = &copyValue
+		case nil:
+			out[key] = nil
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func truncateOutput(value string, limit int) (string, bool) {
+	if limit <= 0 || len(value) <= limit {
+		return value, false
+	}
+	marker := fmt.Sprintf("\n...[truncated %d bytes]", len(value)-limit)
+	allowed := limit - len(marker)
+	if allowed < 0 {
+		allowed = 0
+	}
+	return value[:allowed] + marker, true
 }
 
 func errResult(errorClass, message string, started time.Time) tools.ExecutionResult {
@@ -245,23 +537,6 @@ func durationMs(started time.Time) int {
 func readStringArg(args map[string]any, key string) string {
 	v, _ := args[key].(string)
 	return v
-}
-
-func readMapStringArg(args map[string]any, key string) map[string]string {
-	raw, ok := args[key].(map[string]any)
-	if !ok || len(raw) == 0 {
-		return nil
-	}
-	result := make(map[string]string, len(raw))
-	for k, v := range raw {
-		if s, ok := v.(string); ok {
-			result[k] = s
-		}
-	}
-	if len(result) == 0 {
-		return nil
-	}
-	return result
 }
 
 func readBoolArg(args map[string]any, key string) bool {
@@ -290,16 +565,14 @@ func readIntArg(args map[string]any, key string) int {
 	return 0
 }
 
-// sanitizeOutput strips ANSI escape codes and collapses carriage-return overwrites.
 func sanitizeOutput(s string) string {
-	// Collapse \r overwrites (progress bars, spinners).
 	lines := strings.Split(s, "\n")
 	for i, line := range lines {
 		parts := strings.Split(line, "\r")
 		lines[i] = parts[len(parts)-1]
 	}
 	s = strings.Join(lines, "\n")
-	// Strip ANSI escape sequences.
+
 	var out strings.Builder
 	out.Grow(len(s))
 	i := 0
@@ -309,7 +582,7 @@ func sanitizeOutput(s string) string {
 			for i < len(s) && s[i] != 'm' && s[i] != 'J' && s[i] != 'K' && s[i] != 'H' && s[i] != 'A' && s[i] != 'B' && s[i] != 'C' && s[i] != 'D' {
 				i++
 			}
-			i++ // skip terminator
+			i++
 			continue
 		}
 		out.WriteByte(s[i])
@@ -318,8 +591,6 @@ func sanitizeOutput(s string) string {
 	return out.String()
 }
 
-// rtkRewrite returns the RTK-optimized version of a simple shell command, or
-// "" if RTK is unavailable, times out, or the command requires full shell parsing.
 func rtkRewrite(ctx context.Context, command string) string {
 	if ctx == nil {
 		ctx = context.Background()
@@ -335,7 +606,6 @@ func rtkRewrite(ctx context.Context, command string) string {
 	defer cancel()
 	rewritten, err := rtkRewriteRunner(rewriteCtx, bin, command)
 	if err != nil {
-		// exit 1 / timeout / cancellation 都视为放弃重写，保持原命令
 		return ""
 	}
 	return rewritten
@@ -380,11 +650,4 @@ func toolsDesktopRTKBinaryName() string {
 		return "rtk.exe"
 	}
 	return "rtk"
-}
-
-func truncateForLog(s string, maxLen int) string {
-	if len(s) <= maxLen {
-		return s
-	}
-	return s[:maxLen] + "..."
 }

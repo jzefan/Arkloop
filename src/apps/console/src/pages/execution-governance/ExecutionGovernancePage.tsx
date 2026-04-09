@@ -24,7 +24,7 @@ function formatSoftLimit(limit?: ExecutionGovernanceToolSoftLimit, fallback = '-
   const parts: string[] = []
   if (limit.max_output_bytes != null) parts.push(`output=${limit.max_output_bytes}`)
   if (limit.max_continuations != null) parts.push(`continue=${limit.max_continuations}`)
-  if (limit.max_yield_time_ms != null) parts.push(`yield=${limit.max_yield_time_ms}`)
+  if (limit.max_wait_time_ms != null) parts.push(`wait=${limit.max_wait_time_ms}`)
   return parts.length > 0 ? parts.join(' · ') : fallback
 }
 
@@ -55,7 +55,7 @@ function formatEffectiveBudget(persona: ExecutionGovernancePersona, fallback: st
 function formatEffectiveSoftLimits(persona: ExecutionGovernancePersona, fallback: string) {
   const limits = persona.effective.per_tool_soft_limits
   const parts: string[] = []
-  if (limits?.write_stdin) parts.push(`write_stdin: ${formatSoftLimit(limits.write_stdin, fallback)}`)
+  if (limits?.continue_process) parts.push(`continue_process: ${formatSoftLimit(limits.continue_process, fallback)}`)
   if (limits?.exec_command) parts.push(`exec_command: ${formatSoftLimit(limits.exec_command, fallback)}`)
   return parts.length > 0 ? parts.join(' / ') : fallback
 }
