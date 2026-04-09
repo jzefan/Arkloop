@@ -29,11 +29,12 @@ var (
 	bannerForeground = color.Black
 )
 
-// PrepareModelInputImage returns a temporary, model-only image variant that
-// shows the attachment key in a top banner. Failures fall back to the original.
+// PrepareModelInputImage returns a temporary, model-only image variant.
+// When an attachment key is present, it adds a top banner for the model.
+// The final bytes are always squeezed back under the model input budget.
 func PrepareModelInputImage(data []byte, mimeType, attachmentKey string) ([]byte, string) {
 	key := strings.TrimSpace(attachmentKey)
-	if key == "" || len(data) == 0 {
+	if len(data) == 0 {
 		return data, mimeType
 	}
 
@@ -41,17 +42,20 @@ func PrepareModelInputImage(data []byte, mimeType, attachmentKey string) ([]byte
 	if cleanedMime == "image/gif" {
 		return data, mimeType
 	}
+	if key == "" {
+		return ProcessModelInputImage(data, mimeType)
+	}
 
 	img, _, err := image.Decode(bytes.NewReader(data))
 	if err != nil {
-		return data, mimeType
+		return ProcessModelInputImage(data, mimeType)
 	}
 
 	rendered, err := renderAttachmentKeyBanner(img, "attachment_key: "+key)
 	if err != nil {
-		return data, mimeType
+		return ProcessModelInputImage(data, mimeType)
 	}
-	return rendered, "image/jpeg"
+	return ProcessModelInputImage(rendered, "image/jpeg")
 }
 
 func renderAttachmentKeyBanner(img image.Image, bannerText string) ([]byte, error) {

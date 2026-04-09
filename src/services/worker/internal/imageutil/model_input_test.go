@@ -107,3 +107,18 @@ func TestPrepareModelInputImageBannerUsesOriginalImageOffset(t *testing.T) {
 		t.Fatalf("expected dark original pixel below banner, got %#v", got)
 	}
 }
+
+func TestPrepareModelInputImage_RecompressesAfterBanner(t *testing.T) {
+	source := makePNG(4000, 3000)
+	if len(source) <= modelInputMaxBytes {
+		t.Skip("test PNG not large enough")
+	}
+
+	out, mime := PrepareModelInputImage(source, "image/png", "attachments/account/thread/image.png")
+	if mime != "image/jpeg" {
+		t.Fatalf("unexpected mime: %q", mime)
+	}
+	if len(out) > modelInputMaxBytes {
+		t.Fatalf("expected model input image <= %d bytes, got %d", modelInputMaxBytes, len(out))
+	}
+}
