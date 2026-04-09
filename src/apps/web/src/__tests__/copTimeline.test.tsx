@@ -505,6 +505,9 @@ describe('CopTimeline', () => {
     })
 
     await flushTypingFrames([1140])
+    expect(container.textContent).toContain('Planning next moves for 2s')
+
+    await flushTypingFrames([1280])
 
     expect(container.textContent).toContain('Planning next moves for 3s')
 
@@ -678,6 +681,112 @@ describe('CopTimeline', () => {
     container.remove()
   })
 
+  it('自定义动态标题切换时应继续打字，而不是整句硬切', async () => {
+    vi.useFakeTimers()
+    installAnimationFrameMock()
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const root = createRoot(container)
+
+    await act(async () => {
+      root.render(
+        <LocaleProvider>
+          <CopTimeline
+            isComplete={false}
+            live
+            steps={[]}
+            sources={[]}
+            headerOverride="Impressions"
+          />
+        </LocaleProvider>,
+      )
+    })
+
+    await flushTypingFrames([60, 180, 320, 520])
+    expect(container.textContent).toContain('Impressions')
+
+    await act(async () => {
+      root.render(
+        <LocaleProvider>
+          <CopTimeline
+            isComplete={false}
+            live
+            steps={[]}
+            sources={[]}
+            headerOverride="Translating thoughts to words for 4s"
+          />
+        </LocaleProvider>,
+      )
+    })
+
+    expect(container.textContent).toContain('Impressions')
+    expect(container.textContent).not.toContain('Translating thoughts to words for 4s')
+
+    await flushTypingFrames([620])
+    expect(container.textContent).not.toContain('Translating thoughts to words for 4s')
+
+    await flushTypingFrames([760, 940, 1180, 1460, 1700])
+    expect(container.textContent).toContain('Translating thoughts to words for 4s')
+
+    act(() => {
+      root.unmount()
+    })
+    container.remove()
+  })
+
+  it('自定义标题补秒数时只改数字，不在第一帧硬切到新秒数', async () => {
+    vi.useFakeTimers()
+    installAnimationFrameMock()
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const root = createRoot(container)
+
+    await act(async () => {
+      root.render(
+        <LocaleProvider>
+          <CopTimeline
+            isComplete={false}
+            live
+            steps={[]}
+            sources={[]}
+            headerOverride="Translating thoughts to words for 4s"
+          />
+        </LocaleProvider>,
+      )
+    })
+
+    await flushTypingFrames([60, 180, 320, 520, 760, 1040, 1320])
+    expect(container.textContent).toContain('Translating thoughts to words for 4s')
+
+    await act(async () => {
+      root.render(
+        <LocaleProvider>
+          <CopTimeline
+            isComplete={false}
+            live
+            steps={[]}
+            sources={[]}
+            headerOverride="Translating thoughts to words for 5s"
+          />
+        </LocaleProvider>,
+      )
+    })
+
+    expect(container.textContent).toContain('Translating thoughts to words for 4s')
+
+    await flushTypingFrames([1380])
+    expect(container.textContent).toContain('Translating thoughts to words for 4s')
+    expect(container.textContent).not.toContain('Translating thoughts to words for 5s')
+
+    await flushTypingFrames([1520])
+    expect(container.textContent).toContain('Translating thoughts to words for 5s')
+
+    act(() => {
+      root.unmount()
+    })
+    container.remove()
+  })
+
   it('pending 提示句应从空串逐字打到完整文案', async () => {
     vi.useFakeTimers()
     installAnimationFrameMock()
@@ -756,7 +865,7 @@ describe('CopTimeline', () => {
 
     expect(container.textContent).toContain('Planning next moves for 2s')
 
-    await flushTypingFrames([1120])
+    await flushTypingFrames([1240])
     expect(container.textContent).toContain(' for 2s')
     expect(container.textContent).not.toContain('Planning next moves for 2s')
     expect(container.textContent).not.toContain('Thought for 2s')
