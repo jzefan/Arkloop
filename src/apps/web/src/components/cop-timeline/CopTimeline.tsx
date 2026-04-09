@@ -313,8 +313,9 @@ export function CopTimeline({ steps, sources, narratives, isComplete, codeExecut
   })
 
   const headerLabel = headerOverride ?? resolvedAutoLabel
+  const previousHeaderLabelRef = useRef<string | null>(null)
   const previousStatusHeaderRef = useRef<string | null>(null)
-  const headerUsesIncrementalTypewriter =
+  const seededStatusAnimation =
     !!live || !!shimmer || (
       !headerOverride && (
         headerPhaseKey === 'thinking-pending'
@@ -322,6 +323,11 @@ export function CopTimeline({ steps, sources, narratives, isComplete, codeExecut
         || (headerPhaseKey === 'thought' && previousStatusHeaderRef.current != null)
       )
     )
+  const carriesForwardHeaderAnimation =
+    previousHeaderLabelRef.current != null &&
+    previousHeaderLabelRef.current !== headerLabel
+  const headerUsesIncrementalTypewriter =
+    seededStatusAnimation || carriesForwardHeaderAnimation
 
   useEffect(() => {
     if (!headerOverride && (
@@ -334,6 +340,10 @@ export function CopTimeline({ steps, sources, narratives, isComplete, codeExecut
     }
     previousStatusHeaderRef.current = null
   }, [headerLabel, headerOverride, headerPhaseKey])
+
+  useEffect(() => {
+    previousHeaderLabelRef.current = headerLabel
+  }, [headerLabel])
 
   useEffect(() => {
     recordPerfCount('cop_timeline_render', 1, timelinePerfSample)
