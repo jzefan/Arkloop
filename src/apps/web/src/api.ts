@@ -980,10 +980,12 @@ export type ContinueThreadResponse = RetryThreadResponse
 export async function retryThread(
   accessToken: string,
   threadId: string,
+  modelOverride?: string,
 ): Promise<RetryThreadResponse> {
   return await apiFetch<RetryThreadResponse>(`/v1/threads/${threadId}:retry`, {
     method: 'POST',
     accessToken,
+    body: modelOverride ? JSON.stringify({ model: modelOverride }) : undefined,
   })
 }
 
