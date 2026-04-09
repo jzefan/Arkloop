@@ -74,6 +74,8 @@ export type MeResponse = {
   email_verified: boolean
   email_verification_required: boolean
   work_enabled: boolean
+  timezone?: string | null
+  account_timezone?: string | null
 }
 
 export type SkillReference = {
@@ -442,11 +444,16 @@ export async function listSelectablePersonas(accessToken: string): Promise<Selec
     })
 }
 
-export async function updateMe(accessToken: string, username: string): Promise<{ username: string }> {
-  return await apiFetch<{ username: string }>('/v1/me', {
+export type UpdateMeRequest = {
+  username?: string
+  timezone?: string
+}
+
+export async function updateMe(accessToken: string, payload: UpdateMeRequest): Promise<{ username: string; timezone?: string | null }> {
+  return await apiFetch<{ username: string; timezone?: string | null }>('/v1/me', {
     method: 'PATCH',
     accessToken,
-    body: JSON.stringify({ username }),
+    body: JSON.stringify(payload),
   })
 }
 
@@ -815,13 +822,26 @@ export type CreateRunResponse = {
   trace_id: string
 }
 
+export type RunReasoningMode =
+  | 'auto'
+  | 'enabled'
+  | 'disabled'
+  | 'none'
+  | 'off'
+  | 'minimal'
+  | 'low'
+  | 'medium'
+  | 'high'
+  | 'max'
+  | 'xhigh'
+
 export async function createRun(
   accessToken: string,
   threadId: string,
   personaId?: string,
   modelOverride?: string,
   workDir?: string,
-  reasoningMode?: 'enabled' | 'disabled',
+  reasoningMode?: RunReasoningMode,
 ): Promise<CreateRunResponse> {
   const hasBody = personaId || modelOverride || workDir || reasoningMode
   return await apiFetch<CreateRunResponse>(`/v1/threads/${threadId}/runs`, {
@@ -962,10 +982,12 @@ export type ContinueThreadResponse = RetryThreadResponse
 export async function retryThread(
   accessToken: string,
   threadId: string,
+  modelOverride?: string,
 ): Promise<RetryThreadResponse> {
   return await apiFetch<RetryThreadResponse>(`/v1/threads/${threadId}:retry`, {
     method: 'POST',
     accessToken,
+    body: modelOverride ? JSON.stringify({ model: modelOverride }) : undefined,
   })
 }
 

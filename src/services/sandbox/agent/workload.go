@@ -12,19 +12,19 @@ import (
 )
 
 const (
-	workloadUID          = 1000
-	workloadGID          = 1000
-	workloadUser         = "arkloop"
-	python3Bin           = "/usr/local/bin/python3"
-	chartPreludePath     = "/usr/local/share/arkloop/chart_prelude.py"
-	chartPreludeStmt     = "try:\n exec(open('" + chartPreludePath + "').read())\nexcept FileNotFoundError:\n pass\n"
-	defaultWorkloadCwd   = "/workspace"
-	defaultWorkloadHome  = "/home/arkloop"
-	defaultSkillsRoot    = "/opt/arkloop/skills"
-	defaultWorkloadTmp   = "/tmp/arkloop"
-	defaultWorkloadPath  = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
-	defaultWorkloadLang  = "C.UTF-8"
-	matplotlibConfigDir  = "/tmp/matplotlib"
+	workloadUID         = 1000
+	workloadGID         = 1000
+	workloadUser        = "arkloop"
+	python3Bin          = "/usr/local/bin/python3"
+	chartPreludePath    = "/usr/local/share/arkloop/chart_prelude.py"
+	chartPreludeStmt    = "try:\n exec(open('" + chartPreludePath + "').read())\nexcept FileNotFoundError:\n pass\n"
+	defaultWorkloadCwd  = "/workspace"
+	defaultWorkloadHome = "/home/arkloop"
+	defaultSkillsRoot   = "/opt/arkloop/skills"
+	defaultWorkloadTmp  = "/tmp/arkloop"
+	defaultWorkloadPath = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+	defaultWorkloadLang = "C.UTF-8"
+	matplotlibConfigDir = "/tmp/matplotlib"
 )
 
 var shellWorkspaceDir = defaultWorkloadCwd
@@ -77,6 +77,31 @@ func buildWorkloadEnv(overrides map[string]string) []string {
 	return result
 }
 
+func buildWorkloadEnvPatches(patches map[string]*string) []string {
+	env := baseWorkloadEnv()
+	for key, value := range patches {
+		key = strings.TrimSpace(key)
+		if key == "" || strings.ContainsRune(key, '=') {
+			continue
+		}
+		if value == nil {
+			delete(env, key)
+			continue
+		}
+		env[key] = *value
+	}
+	keys := make([]string, 0, len(env))
+	for key := range env {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	result := make([]string, 0, len(keys))
+	for _, key := range keys {
+		result = append(result, key+"="+env[key])
+	}
+	return result
+}
+
 func prepareWorkloadCmd(cmd *exec.Cmd, cwd string, extraEnv map[string]string) {
 	if strings.TrimSpace(cwd) == "" {
 		cwd = shellWorkspaceDir
@@ -91,6 +116,22 @@ func prepareWorkloadCmd(cmd *exec.Cmd, cwd string, extraEnv map[string]string) {
 			},
 		}
 	}
+}
+
+func prepareWorkloadProcessCmd(cmd *exec.Cmd, cwd string, envPatches map[string]*string) {
+	if strings.TrimSpace(cwd) == "" {
+		cwd = shellWorkspaceDir
+	}
+	cmd.Dir = cwd
+	cmd.Env = buildWorkloadEnvPatches(envPatches)
+	attr := &syscall.SysProcAttr{Setpgid: true}
+	if os.Geteuid() == 0 {
+		attr.Credential = &syscall.Credential{
+			Uid: workloadUID,
+			Gid: workloadGID,
+		}
+	}
+	cmd.SysProcAttr = attr
 }
 
 func chownIfPossible(path string) error {

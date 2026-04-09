@@ -106,8 +106,8 @@ func (g *GeminiGateway) Stream(ctx context.Context, request Request, yield func(
 			Details:    map[string]any{"reason": g.transport.baseURLErr.Error()},
 		}})
 	}
-	ctx, cancel := context.WithTimeout(ctx, g.transport.cfg.TotalTimeout)
-	defer cancel()
+	ctx, stopTimeout, _ := withStreamIdleTimeout(ctx, g.transport.cfg.TotalTimeout)
+	defer stopTimeout()
 	llmCallID := uuid.NewString()
 
 	payload, err := toGeminiPayload(request, g.protocol.AdvancedPayloadJSON)
@@ -148,6 +148,9 @@ func (g *GeminiGateway) Stream(ctx context.Context, request Request, yield func(
 			Message:    "Gemini request serialization failed",
 		}})
 	}
+	if RequestPayloadTooLarge(len(encoded)) {
+		return yield(PreflightOversizeFailure(llmCallID, len(encoded)))
+	}
 
 	resourcePath := geminiVersionedPath(g.transport.cfg.BaseURL, g.protocol.APIVersion, fmt.Sprintf("/models/%s:streamGenerateContent?alt=sse", request.Model))
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, g.transport.endpoint(resourcePath), bytes.NewReader(encoded))
@@ -187,6 +190,9 @@ func (g *GeminiGateway) Stream(ctx context.Context, request Request, yield func(
 			})
 		}
 		message, details := geminiErrorMessageAndDetails(body, status)
+		if status == http.StatusRequestEntityTooLarge {
+			details = OversizeFailureDetails(len(encoded), OversizePhaseProvider, details)
+		}
 		return yield(StreamRunFailed{LlmCallID: llmCallID, Error: GatewayError{
 			ErrorClass: errorClassFromStatus(status),
 			Message:    message,
@@ -203,7 +209,7 @@ func (g *GeminiGateway) streamGeminiSSE(ctx context.Context, body interface{ Rea
 	toolCalls := map[int]*geminiStreamingToolCall{}
 
 	var parseErr error
-	sseErr := forEachSSEData(ctx, body, func(data string) error {
+	sseErr := forEachSSEData(ctx, body, streamActivityMarker(ctx), func(data string) error {
 		data = strings.TrimSpace(data)
 		if data == "" {
 			return nil
@@ -268,7 +274,7 @@ func (g *GeminiGateway) streamGeminiSSE(ctx context.Context, body interface{ Rea
 					}
 					toolCalls[idx] = call
 				}
-				call.ToolName = part.FunctionCall.Name
+				call.ToolName = CanonicalToolName(part.FunctionCall.Name)
 				call.ArgumentsJSON = args
 				if call.EncodedArgs == "" {
 					call.EncodedArgs = encodedArgs
@@ -311,7 +317,7 @@ func (g *GeminiGateway) streamGeminiSSE(ctx context.Context, body interface{ Rea
 				}
 				if err := yield(ToolCall{
 					ToolCallID:    call.ToolCallID,
-					ToolName:      call.ToolName,
+					ToolName:      CanonicalToolName(call.ToolName),
 					ArgumentsJSON: call.ArgumentsJSON,
 				}); err != nil {
 					return err
@@ -349,7 +355,7 @@ func (g *GeminiGateway) streamGeminiSSE(ctx context.Context, body interface{ Rea
 			}
 			if err := yield(ToolCall{
 				ToolCallID:    call.ToolCallID,
-				ToolName:      call.ToolName,
+				ToolName:      CanonicalToolName(call.ToolName),
 				ArgumentsJSON: call.ArgumentsJSON,
 			}); err != nil {
 				return err
@@ -530,14 +536,15 @@ func toGeminiContents(messages []Message) (systemInstruction map[string]any, con
 				if cp.Kind() != "image" || cp.Attachment == nil || len(cp.Data) == 0 {
 					continue
 				}
-				mimeType := strings.TrimSpace(cp.Attachment.MimeType)
-				if mimeType == "" {
-					mimeType = "application/octet-stream"
+				mimeType, data, imageErr := modelInputImage(cp)
+				if imageErr != nil {
+					err = imageErr
+					return
 				}
 				pendingToolParts = append(pendingToolParts, map[string]any{
 					"inlineData": map[string]any{
 						"mimeType": mimeType,
-						"data":     base64.StdEncoding.EncodeToString(cp.Data),
+						"data":     base64.StdEncoding.EncodeToString(data),
 					},
 				})
 			}
@@ -554,6 +561,7 @@ func toGeminiContents(messages []Message) (systemInstruction map[string]any, con
 				parts = append(parts, map[string]any{"text": text})
 			}
 			for _, call := range msg.ToolCalls {
+				call = CanonicalToolCall(call)
 				parts = append(parts, map[string]any{
 					"functionCall": map[string]any{
 						"name": call.ToolName,
@@ -598,17 +606,14 @@ func geminiUserParts(content []ContentPart) ([]map[string]any, error) {
 				parts = append(parts, map[string]any{"text": t})
 			}
 		case "image":
-			if p.Attachment == nil || len(p.Data) == 0 {
+			mimeType, data, err := modelInputImage(p)
+			if err != nil {
 				return nil, fmt.Errorf("image part missing data")
-			}
-			mimeType := strings.TrimSpace(p.Attachment.MimeType)
-			if mimeType == "" {
-				mimeType = "application/octet-stream"
 			}
 			parts = append(parts, map[string]any{
 				"inlineData": map[string]any{
 					"mimeType": mimeType,
-					"data":     base64.StdEncoding.EncodeToString(p.Data),
+					"data":     base64.StdEncoding.EncodeToString(data),
 				},
 			})
 		}
@@ -625,7 +630,7 @@ func geminiToolResponsePart(text string) (map[string]any, error) {
 		return nil, fmt.Errorf("tool message is not valid JSON")
 	}
 	toolName, _ := envelope["tool_name"].(string)
-	toolName = strings.TrimSpace(toolName)
+	toolName = CanonicalToolName(toolName)
 	if toolName == "" {
 		// 降级：从 tool_call_id 中能读到名字的情况
 		toolName = "unknown"
@@ -662,7 +667,7 @@ func geminiToolConfig(tc *ToolChoice) map[string]any {
 		return map[string]any{
 			"functionCallingConfig": map[string]any{
 				"mode":                 "ANY",
-				"allowedFunctionNames": []string{tc.ToolName},
+				"allowedFunctionNames": []string{CanonicalToolName(tc.ToolName)},
 			},
 		}
 	default:
@@ -673,8 +678,12 @@ func geminiToolConfig(tc *ToolChoice) map[string]any {
 func toGeminiTools(specs []ToolSpec) []map[string]any {
 	decls := make([]map[string]any, 0, len(specs))
 	for _, spec := range specs {
+		name := CanonicalToolName(spec.Name)
+		if name == "" {
+			name = spec.Name
+		}
 		decl := map[string]any{
-			"name":       spec.Name,
+			"name":       name,
 			"parameters": mapOrEmpty(spec.JSONSchema),
 		}
 		if spec.Description != nil {

@@ -15,6 +15,7 @@ type Backend interface {
 	WriteFile(ctx context.Context, path string, data []byte) error
 	Stat(ctx context.Context, path string) (FileInfo, error)
 	Exec(ctx context.Context, command string) (stdout, stderr string, exitCode int, err error)
+	NormalizePath(path string) string
 }
 
 type FileInfo struct {
@@ -23,10 +24,12 @@ type FileInfo struct {
 	ModTime time.Time
 }
 
-// ResolveBackend returns a SandboxExecBackend when a sandbox service is
-// reachable, otherwise falls back to a LocalBackend rooted at workDir.
+// ResolveBackend returns a SandboxExecBackend only when the current runtime
+// should execute file operations in sandbox, otherwise it falls back to a
+// LocalBackend rooted at workDir.
 func ResolveBackend(snapshot *sharedtoolruntime.RuntimeSnapshot, workDir string, runID, accountID, profileRef, workspaceRef string) Backend {
-	if snapshot != nil && snapshot.SandboxBaseURL != "" {
+	resolvedWorkDir := resolveWorkDir(workDir)
+	if useSandboxBackend(snapshot) {
 		return &SandboxExecBackend{
 			baseURL:      snapshot.SandboxBaseURL,
 			authToken:    snapshot.SandboxAuthToken,
@@ -36,6 +39,15 @@ func ResolveBackend(snapshot *sharedtoolruntime.RuntimeSnapshot, workDir string,
 			workspaceRef: workspaceRef,
 		}
 	}
+	return &LocalBackend{WorkDir: resolvedWorkDir}
+}
+
+func IsLocalBackend(backend Backend) bool {
+	_, ok := backend.(*LocalBackend)
+	return ok
+}
+
+func resolveWorkDir(workDir string) string {
 	if workDir == "" {
 		workDir = os.Getenv("ARKLOOP_WORKING_DIR")
 	}
@@ -47,5 +59,5 @@ func ResolveBackend(snapshot *sharedtoolruntime.RuntimeSnapshot, workDir string,
 			workDir = wd
 		}
 	}
-	return &LocalBackend{WorkDir: workDir}
+	return workDir
 }

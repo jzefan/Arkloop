@@ -9,6 +9,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"arkloop/services/shared/messagecontent"
 )
 
 func TestOpenAIToolMessage_IncludesErrorWhenResultAlsoPresent(t *testing.T) {
@@ -34,6 +36,334 @@ func TestOpenAIToolMessage_IncludesErrorWhenResultAlsoPresent(t *testing.T) {
 	content, _ := msg["content"].(string)
 	if !strings.Contains(content, "tool.memory_provider_error") {
 		t.Fatalf("expected error info in tool content, got %q", content)
+	}
+}
+
+func TestToOpenAIChatContentBlocks_PrependsAttachmentKeyForImages(t *testing.T) {
+	blocks, hasStructured, err := toOpenAIChatContentBlocks([]ContentPart{
+		{
+			Type: messagecontent.PartTypeImage,
+			Data: []byte("img"),
+			Attachment: &messagecontent.AttachmentRef{
+				Key:      "attachments/test/image.png",
+				MimeType: "image/png",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("toOpenAIChatContentBlocks failed: %v", err)
+	}
+	if !hasStructured {
+		t.Fatalf("expected structured content")
+	}
+	if len(blocks) != 2 {
+		t.Fatalf("expected 2 blocks, got %d: %#v", len(blocks), blocks)
+	}
+	if blocks[0]["type"] != "text" {
+		t.Fatalf("expected text block first, got %#v", blocks[0])
+	}
+	if blocks[0]["text"] != "[attachment_key:attachments/test/image.png]" {
+		t.Fatalf("unexpected attachment key text: %#v", blocks[0]["text"])
+	}
+	if blocks[1]["type"] != "image_url" {
+		t.Fatalf("expected image block second, got %#v", blocks[1])
+	}
+}
+
+func TestToOpenAIResponsesContentBlocks_PrependsAttachmentKeyForImages(t *testing.T) {
+	blocks, err := toOpenAIResponsesContentBlocks([]ContentPart{
+		{
+			Type: messagecontent.PartTypeImage,
+			Data: []byte("img"),
+			Attachment: &messagecontent.AttachmentRef{
+				Key:      "attachments/test/image.png",
+				MimeType: "image/png",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("toOpenAIResponsesContentBlocks failed: %v", err)
+	}
+	if len(blocks) != 2 {
+		t.Fatalf("expected 2 blocks, got %d: %#v", len(blocks), blocks)
+	}
+	if blocks[0]["type"] != "input_text" {
+		t.Fatalf("expected input_text block first, got %#v", blocks[0])
+	}
+	if blocks[0]["text"] != "[attachment_key:attachments/test/image.png]" {
+		t.Fatalf("unexpected attachment key text: %#v", blocks[0]["text"])
+	}
+	if blocks[1]["type"] != "input_image" {
+		t.Fatalf("expected input_image block second, got %#v", blocks[1])
+	}
+}
+
+func TestToOpenAIResponsesInput_ToolImageReplayUsesResponsesBlocks(t *testing.T) {
+	raw, err := json.Marshal(map[string]any{
+		"tool_call_id": "call_1",
+		"tool_name":    "read",
+		"result": map[string]any{
+			"attachment_key": "attachments/test/image.png",
+		},
+	})
+	if err != nil {
+		t.Fatalf("marshal failed: %v", err)
+	}
+
+	items, err := toOpenAIResponsesInput([]Message{
+		{
+			Role: "tool",
+			Content: []ContentPart{
+				{Type: messagecontent.PartTypeText, Text: string(raw)},
+				{
+					Type: messagecontent.PartTypeImage,
+					Data: []byte("img"),
+					Attachment: &messagecontent.AttachmentRef{
+						Key:      "attachments/test/image.png",
+						MimeType: "image/png",
+					},
+				},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("toOpenAIResponsesInput failed: %v", err)
+	}
+	if len(items) != 2 {
+		t.Fatalf("expected 2 items, got %d: %#v", len(items), items)
+	}
+	msg := items[1]
+	if msg["type"] != "message" || msg["role"] != "user" {
+		t.Fatalf("unexpected replay message: %#v", msg)
+	}
+	content, ok := msg["content"].([]map[string]any)
+	if !ok {
+		t.Fatalf("expected content blocks, got %#v", msg["content"])
+	}
+	if len(content) != 2 {
+		t.Fatalf("expected 2 content blocks, got %d: %#v", len(content), content)
+	}
+	if content[0]["type"] != "input_text" {
+		t.Fatalf("expected input_text first, got %#v", content[0])
+	}
+	if content[1]["type"] != "input_image" {
+		t.Fatalf("expected input_image second, got %#v", content[1])
+	}
+}
+
+func TestOpenAIGateway_Stream_PreflightOversizeSkipsHTTP(t *testing.T) {
+	calls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	gateway := NewOpenAIGateway(OpenAIGatewayConfig{
+		APIKey:  "test-key",
+		BaseURL: server.URL,
+		APIMode: "chat_completions",
+	})
+
+	var events []StreamEvent
+	err := gateway.Stream(context.Background(), Request{
+		Model: "gpt-test",
+		Messages: []Message{{
+			Role:    "user",
+			Content: []TextPart{{Text: strings.Repeat("x", RequestPayloadLimitBytes+1024)}},
+		}},
+	}, func(ev StreamEvent) error {
+		events = append(events, ev)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("Stream failed: %v", err)
+	}
+	if calls != 0 {
+		t.Fatalf("expected no HTTP request, got %d", calls)
+	}
+	failed, ok := events[len(events)-1].(StreamRunFailed)
+	if !ok {
+		t.Fatalf("expected StreamRunFailed, got %T", events[len(events)-1])
+	}
+	if failed.Error.Details["status_code"] != http.StatusRequestEntityTooLarge {
+		t.Fatalf("unexpected status_code: %#v", failed.Error.Details)
+	}
+	if failed.Error.Details["oversize_phase"] != OversizePhasePreflight {
+		t.Fatalf("unexpected oversize phase: %#v", failed.Error.Details)
+	}
+}
+
+func TestOpenAIGateway_Stream_Provider413AddsOversizeDetails(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, `{"error":{"message":"too large","type":"invalid_request_error"}}`, http.StatusRequestEntityTooLarge)
+	}))
+	defer server.Close()
+
+	gateway := NewOpenAIGateway(OpenAIGatewayConfig{
+		APIKey:  "test-key",
+		BaseURL: server.URL,
+		APIMode: "chat_completions",
+	})
+
+	var events []StreamEvent
+	err := gateway.Stream(context.Background(), Request{
+		Model: "gpt-test",
+		Messages: []Message{{
+			Role:    "user",
+			Content: []TextPart{{Text: "hello"}},
+		}},
+	}, func(ev StreamEvent) error {
+		events = append(events, ev)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("Stream failed: %v", err)
+	}
+	failed, ok := events[len(events)-1].(StreamRunFailed)
+	if !ok {
+		t.Fatalf("expected StreamRunFailed, got %T", events[len(events)-1])
+	}
+	if failed.Error.Details["status_code"] != http.StatusRequestEntityTooLarge {
+		t.Fatalf("unexpected status_code: %#v", failed.Error.Details)
+	}
+	if failed.Error.Details["oversize_phase"] != OversizePhaseProvider {
+		t.Fatalf("unexpected oversize phase: %#v", failed.Error.Details)
+	}
+	if _, ok := failed.Error.Details["payload_bytes"]; !ok {
+		t.Fatalf("expected payload_bytes in details: %#v", failed.Error.Details)
+	}
+}
+
+func TestOpenAIGateway_Stream_Responses_ReasoningEnabledSendsEffortAndSummary(t *testing.T) {
+	var receivedBody []byte
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/responses" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatalf("read request body failed: %v", err)
+		}
+		receivedBody = append([]byte(nil), body...)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"ok"}]}]}`))
+	}))
+	t.Cleanup(server.Close)
+
+	gateway := NewOpenAIGateway(OpenAIGatewayConfig{
+		APIKey:  "test",
+		BaseURL: server.URL,
+		APIMode: "responses",
+	})
+
+	err := gateway.Stream(context.Background(), Request{
+		Model:         "gpt-test",
+		Messages:      []Message{{Role: "user", Content: []TextPart{{Text: "hi"}}}},
+		ReasoningMode: "enabled",
+	}, func(StreamEvent) error {
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("stream failed: %v", err)
+	}
+
+	var payload map[string]any
+	if err := json.Unmarshal(receivedBody, &payload); err != nil {
+		t.Fatalf("unmarshal request failed: %v", err)
+	}
+	reasoning, ok := payload["reasoning"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected reasoning payload, got %#v", payload["reasoning"])
+	}
+	if reasoning["effort"] != "medium" {
+		t.Fatalf("expected reasoning.effort=medium, got %#v", reasoning["effort"])
+	}
+	if reasoning["summary"] != "auto" {
+		t.Fatalf("expected reasoning.summary=auto, got %#v", reasoning["summary"])
+	}
+}
+
+func TestOpenAIGateway_Stream_Responses_ReasoningHighPreservesExplicitLevel(t *testing.T) {
+	var receivedBody []byte
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatalf("read request body failed: %v", err)
+		}
+		receivedBody = append([]byte(nil), body...)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"ok"}]}]}`))
+	}))
+	t.Cleanup(server.Close)
+
+	gateway := NewOpenAIGateway(OpenAIGatewayConfig{
+		APIKey:  "test",
+		BaseURL: server.URL,
+		APIMode: "responses",
+	})
+
+	err := gateway.Stream(context.Background(), Request{
+		Model:         "gpt-test",
+		Messages:      []Message{{Role: "user", Content: []TextPart{{Text: "hi"}}}},
+		ReasoningMode: "high",
+	}, func(StreamEvent) error {
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("stream failed: %v", err)
+	}
+
+	var payload map[string]any
+	if err := json.Unmarshal(receivedBody, &payload); err != nil {
+		t.Fatalf("unmarshal request failed: %v", err)
+	}
+	reasoning := payload["reasoning"].(map[string]any)
+	if reasoning["effort"] != "high" {
+		t.Fatalf("expected reasoning.effort=high, got %#v", reasoning["effort"])
+	}
+}
+
+func TestOpenAIGateway_Stream_ChatCompletions_ReasoningNoneUsesExplicitEffort(t *testing.T) {
+	var receivedBody []byte
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatalf("read request body failed: %v", err)
+		}
+		receivedBody = append([]byte(nil), body...)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}]}`))
+	}))
+	t.Cleanup(server.Close)
+
+	gateway := NewOpenAIGateway(OpenAIGatewayConfig{
+		APIKey:  "test",
+		BaseURL: server.URL,
+		APIMode: "chat_completions",
+	})
+
+	err := gateway.Stream(context.Background(), Request{
+		Model:         "gpt-test",
+		Messages:      []Message{{Role: "user", Content: []TextPart{{Text: "hi"}}}},
+		ReasoningMode: "none",
+	}, func(StreamEvent) error {
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("stream failed: %v", err)
+	}
+
+	var payload map[string]any
+	if err := json.Unmarshal(receivedBody, &payload); err != nil {
+		t.Fatalf("unmarshal request failed: %v", err)
+	}
+	if payload["reasoning_effort"] != "none" {
+		t.Fatalf("expected reasoning_effort=none, got %#v", payload["reasoning_effort"])
 	}
 }
 
@@ -318,20 +648,23 @@ func TestOpenAIGateway_Stream_Responses_RequestBody_MultiTurnWithToolHistory(t *
 	if gotBody["model"] != "gpt-test" {
 		t.Fatalf("unexpected model: %#v", gotBody)
 	}
+	if gotBody["instructions"] != "be helpful" {
+		t.Fatalf("expected instructions to carry system prompt, got %#v", gotBody["instructions"])
+	}
 	input, ok := gotBody["input"].([]any)
 	if !ok {
 		t.Fatalf("missing input: %#v", gotBody)
 	}
-	if len(input) != 7 {
+	if len(input) != 6 {
 		t.Fatalf("unexpected input len: %d %#v", len(input), input)
 	}
 
-	systemMsg, _ := input[0].(map[string]any)
-	if systemMsg["type"] != "message" || systemMsg["role"] != "system" {
-		t.Fatalf("unexpected system item: %#v", systemMsg)
+	firstUser, _ := input[0].(map[string]any)
+	if firstUser["type"] != "message" || firstUser["role"] != "user" {
+		t.Fatalf("unexpected first user item: %#v", firstUser)
 	}
 
-	assistantMsg, _ := input[2].(map[string]any)
+	assistantMsg, _ := input[1].(map[string]any)
 	if assistantMsg["type"] != "message" || assistantMsg["role"] != "assistant" || assistantMsg["status"] != "completed" {
 		t.Fatalf("unexpected assistant history item: %#v", assistantMsg)
 	}
@@ -341,12 +674,12 @@ func TestOpenAIGateway_Stream_Responses_RequestBody_MultiTurnWithToolHistory(t *
 		t.Fatalf("unexpected assistant content block: %#v", assistantContent)
 	}
 
-	functionCall, _ := input[3].(map[string]any)
+	functionCall, _ := input[2].(map[string]any)
 	if functionCall["type"] != "function_call" || functionCall["call_id"] != "call_1" || functionCall["name"] != "web_search" {
 		t.Fatalf("unexpected function_call item: %#v", functionCall)
 	}
 
-	functionOutput, _ := input[4].(map[string]any)
+	functionOutput, _ := input[3].(map[string]any)
 	if functionOutput["type"] != "function_call_output" || functionOutput["call_id"] != "call_1" {
 		t.Fatalf("unexpected function_call_output item: %#v", functionOutput)
 	}
@@ -354,14 +687,33 @@ func TestOpenAIGateway_Stream_Responses_RequestBody_MultiTurnWithToolHistory(t *
 		t.Fatalf("unexpected function_call_output payload: %#v", functionOutput["output"])
 	}
 
-	secondAssistant, _ := input[5].(map[string]any)
+	secondAssistant, _ := input[4].(map[string]any)
 	if secondAssistant["type"] != "message" || secondAssistant["role"] != "assistant" || secondAssistant["status"] != "completed" {
 		t.Fatalf("unexpected second assistant item: %#v", secondAssistant)
 	}
 
-	lastUser, _ := input[6].(map[string]any)
+	lastUser, _ := input[5].(map[string]any)
 	if lastUser["type"] != "message" || lastUser["role"] != "user" {
 		t.Fatalf("unexpected last user item: %#v", lastUser)
+	}
+}
+
+func TestSplitOpenAIResponsesInstructions_RemovesSystemMessages(t *testing.T) {
+	instructions, filtered := splitOpenAIResponsesInstructions([]Message{
+		{Role: "system", Content: []TextPart{{Text: "base rules"}}},
+		{Role: "user", Content: []TextPart{{Text: "hi"}}},
+		{Role: "system", Content: []TextPart{{Text: "more rules"}}},
+		{Role: "assistant", Content: []TextPart{{Text: "hello"}}},
+	})
+
+	if instructions != "base rules\n\nmore rules" {
+		t.Fatalf("unexpected instructions: %q", instructions)
+	}
+	if len(filtered) != 2 {
+		t.Fatalf("unexpected filtered messages: %#v", filtered)
+	}
+	if filtered[0].Role != "user" || filtered[1].Role != "assistant" {
+		t.Fatalf("unexpected filtered roles: %#v", filtered)
 	}
 }
 
@@ -739,6 +1091,194 @@ func TestToOpenAIChatMessages_ToolEnvelope(t *testing.T) {
 	}
 	if _, ok := parsedContent["items"]; !ok {
 		t.Fatalf("expected items in tool content, got %#v", parsedContent)
+	}
+}
+
+func TestToOpenAIChatMessages_UserImageIncludesAttachmentKeyText(t *testing.T) {
+	out, err := toOpenAIChatMessages([]Message{{
+		Role: "user",
+		Content: []ContentPart{
+			{Type: "text", Text: "看这张图"},
+			{
+				Type: "image",
+				Attachment: &messagecontent.AttachmentRef{
+					Key:      "attachments/acc/thread/image.png",
+					Filename: "image.png",
+					MimeType: "image/png",
+				},
+				Data: makeVisionTestPNG(t, 64, 64),
+			},
+		},
+	}})
+	if err != nil {
+		t.Fatalf("toOpenAIChatMessages failed: %v", err)
+	}
+	if len(out) != 1 {
+		t.Fatalf("unexpected messages len: %d", len(out))
+	}
+
+	content, ok := out[0]["content"].([]map[string]any)
+	if !ok {
+		t.Fatalf("unexpected content payload: %#v", out[0]["content"])
+	}
+	if len(content) != 3 {
+		t.Fatalf("unexpected content blocks: %#v", content)
+	}
+	if content[1]["type"] != "text" || content[1]["text"] != "[attachment_key:attachments/acc/thread/image.png]" {
+		t.Fatalf("missing attachment key text block: %#v", content)
+	}
+	if content[2]["type"] != "image_url" {
+		t.Fatalf("missing image block: %#v", content)
+	}
+}
+
+func TestToOpenAIResponsesInput_UserImageIncludesAttachmentKeyText(t *testing.T) {
+	items, err := toOpenAIResponsesInput([]Message{{
+		Role: "user",
+		Content: []ContentPart{
+			{Type: "text", Text: "看这张图"},
+			{
+				Type: "image",
+				Attachment: &messagecontent.AttachmentRef{
+					Key:      "attachments/acc/thread/image.png",
+					Filename: "image.png",
+					MimeType: "image/png",
+				},
+				Data: makeVisionTestPNG(t, 64, 64),
+			},
+		},
+	}})
+	if err != nil {
+		t.Fatalf("toOpenAIResponsesInput failed: %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("unexpected items len: %d", len(items))
+	}
+
+	content, ok := items[0]["content"].([]map[string]any)
+	if !ok {
+		t.Fatalf("unexpected content payload: %#v", items[0]["content"])
+	}
+	if len(content) != 3 {
+		t.Fatalf("unexpected content blocks: %#v", content)
+	}
+	if content[1]["type"] != "input_text" || content[1]["text"] != "[attachment_key:attachments/acc/thread/image.png]" {
+		t.Fatalf("missing attachment key text block: %#v", content)
+	}
+	if content[2]["type"] != "input_image" {
+		t.Fatalf("missing input_image block: %#v", content)
+	}
+}
+
+func TestOpenAIGateway_Stream_Responses_RequestBodyDoesNotLeakProviderToolName(t *testing.T) {
+	var receivedBody []byte
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatalf("read request body failed: %v", err)
+		}
+		receivedBody = append([]byte(nil), body...)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"ok"}]}]}`))
+	}))
+	t.Cleanup(server.Close)
+
+	gateway := NewOpenAIGateway(OpenAIGatewayConfig{
+		APIKey:  "test",
+		BaseURL: server.URL,
+		APIMode: "responses",
+	})
+
+	err := gateway.Stream(context.Background(), Request{
+		Model: "gpt-test",
+		Messages: []Message{
+			{Role: "user", Content: []TextPart{{Text: "hi"}}},
+			{
+				Role:    "assistant",
+				Content: []TextPart{{Text: "searching"}},
+				ToolCalls: []ToolCall{{
+					ToolCallID:    "call_1",
+					ToolName:      "web_search.tavily",
+					ArgumentsJSON: map[string]any{"query": "hello"},
+				}},
+			},
+			{
+				Role: "tool",
+				Content: []TextPart{{
+					Text: `{"tool_call_id":"call_1","tool_name":"web_search.tavily","result":{"items":[{"title":"x"}]}}`,
+				}},
+			},
+		},
+	}, func(StreamEvent) error {
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("stream failed: %v", err)
+	}
+
+	bodyText := string(receivedBody)
+	if strings.Contains(bodyText, "web_search.tavily") {
+		t.Fatalf("expected responses request body to hide provider tool name, got %s", bodyText)
+	}
+	if !strings.Contains(bodyText, `"name":"web_search"`) {
+		t.Fatalf("expected responses request body to keep canonical tool name, got %s", bodyText)
+	}
+}
+
+func TestOpenAIGateway_Stream_ChatCompletions_RequestBodyDoesNotLeakProviderToolName(t *testing.T) {
+	var receivedBody []byte
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatalf("read request body failed: %v", err)
+		}
+		receivedBody = append([]byte(nil), body...)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}]}`))
+	}))
+	t.Cleanup(server.Close)
+
+	gateway := NewOpenAIGateway(OpenAIGatewayConfig{
+		APIKey:  "test",
+		BaseURL: server.URL,
+		APIMode: "chat_completions",
+	})
+
+	err := gateway.Stream(context.Background(), Request{
+		Model: "gpt-test",
+		Messages: []Message{
+			{Role: "user", Content: []TextPart{{Text: "hi"}}},
+			{
+				Role:    "assistant",
+				Content: []TextPart{{Text: "fetching"}},
+				ToolCalls: []ToolCall{{
+					ToolCallID:    "call_1",
+					ToolName:      "web_fetch.jina",
+					ArgumentsJSON: map[string]any{"url": "https://example.com"},
+				}},
+			},
+			{
+				Role: "tool",
+				Content: []TextPart{{
+					Text: `{"tool_call_id":"call_1","tool_name":"web_fetch.jina","result":{"title":"Example"}}`,
+				}},
+			},
+		},
+	}, func(StreamEvent) error {
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("stream failed: %v", err)
+	}
+
+	bodyText := string(receivedBody)
+	if strings.Contains(bodyText, "web_fetch.jina") {
+		t.Fatalf("expected chat_completions request body to hide provider tool name, got %s", bodyText)
+	}
+	if !strings.Contains(bodyText, `"name":"web_fetch"`) {
+		t.Fatalf("expected chat_completions request body to keep canonical tool name, got %s", bodyText)
 	}
 }
 
@@ -2186,6 +2726,31 @@ func TestOpenAIGateway_StreamChatCompletionsSSE_CtxCanceled_YieldsRunFailed(t *t
 	}
 }
 
+func TestOpenAIGateway_StreamChatCompletionsSSE_EarlyEOFIsRetryable(t *testing.T) {
+	gateway := &OpenAIGateway{cfg: OpenAIGatewayConfig{}}
+	var events []StreamEvent
+	err := gateway.streamChatCompletionsSSE(context.Background(), strings.NewReader(""), "test", 200, func(ev StreamEvent) error {
+		events = append(events, ev)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("expected nil error from gateway, got: %v", err)
+	}
+	if len(events) == 0 {
+		t.Fatal("expected events, got none")
+	}
+	failed, ok := events[len(events)-1].(StreamRunFailed)
+	if !ok {
+		t.Fatalf("expected StreamRunFailed as last event, got %T", events[len(events)-1])
+	}
+	if failed.Error.ErrorClass != ErrorClassProviderRetryable {
+		t.Fatalf("unexpected error class: %s", failed.Error.ErrorClass)
+	}
+	if failed.Error.Message != "upstream stream ended prematurely without completion" {
+		t.Fatalf("unexpected error message: %q", failed.Error.Message)
+	}
+}
+
 func TestOpenAIGateway_StreamResponsesSSE_ReadError_YieldsRunFailed(t *testing.T) {
 	partial := "data: {\"type\":\"response.output_text.delta\",\"delta\":\"hello\"}\n\n"
 	reader := &sseErrorReader{data: []byte(partial), err: fmt.Errorf("connection reset by peer")}
@@ -2211,6 +2776,31 @@ func TestOpenAIGateway_StreamResponsesSSE_ReadError_YieldsRunFailed(t *testing.T
 	}
 }
 
+func TestOpenAIGateway_StreamResponsesSSE_EarlyEOFIsRetryable(t *testing.T) {
+	gateway := &OpenAIGateway{cfg: OpenAIGatewayConfig{}}
+	var events []StreamEvent
+	err := gateway.streamResponsesSSE(context.Background(), strings.NewReader(""), "test", 200, func(ev StreamEvent) error {
+		events = append(events, ev)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("expected nil error from gateway, got: %v", err)
+	}
+	if len(events) == 0 {
+		t.Fatal("expected events, got none")
+	}
+	failed, ok := events[len(events)-1].(StreamRunFailed)
+	if !ok {
+		t.Fatalf("expected StreamRunFailed as last event, got %T", events[len(events)-1])
+	}
+	if failed.Error.ErrorClass != ErrorClassProviderRetryable {
+		t.Fatalf("unexpected error class: %s", failed.Error.ErrorClass)
+	}
+	if failed.Error.Message != "upstream stream ended prematurely without completion" {
+		t.Fatalf("unexpected error message: %q", failed.Error.Message)
+	}
+}
+
 func TestOpenAIErrorMessageAndDetails(t *testing.T) {
 	body := []byte(`{"error":{"type":"invalid_request_error","code":400,"param":"tools[0]","message":""}}`)
 	msg, details := openAIErrorMessageAndDetails(body, 400, "fallback")
@@ -2231,6 +2821,114 @@ func TestOpenAIErrorMessageAndDetails(t *testing.T) {
 	}
 	if d2["provider_error_body"] != string(flat) {
 		t.Fatalf("missing provider_error_body")
+	}
+}
+
+func TestOpenAIReasoningEffort(t *testing.T) {
+	cases := map[string]string{
+		"enabled":      "medium",
+		"off":          "none",
+		"minimal":      "minimal",
+		"low":          "low",
+		"medium":       "medium",
+		"high":         "high",
+		"max":          "xhigh",
+		"xhigh":        "xhigh",
+		"none":         "none",
+		"extra_high":   "xhigh",
+		"extra-high":   "xhigh",
+		"extra high":   "xhigh",
+		" EXTRA-HIGH ": "xhigh",
+	}
+	for input, want := range cases {
+		got, ok := openAIReasoningEffort(input)
+		if !ok || got != want {
+			t.Fatalf("mode %q => (%q, %v), want (%q, true)", input, got, ok, want)
+		}
+	}
+
+	if _, ok := openAIReasoningEffort("auto"); ok {
+		t.Fatal("auto should not force a reasoning effort")
+	}
+}
+
+func TestOpenAIReasoningDisabled(t *testing.T) {
+	if !openAIReasoningDisabled("disabled") {
+		t.Fatal("disabled should remove reasoning")
+	}
+	if openAIReasoningDisabled("enabled") {
+		t.Fatal("enabled should not remove reasoning")
+	}
+}
+
+func TestOpenAIResponsesReasoningPayloadUsesEffort(t *testing.T) {
+	payload := map[string]any{}
+	applyOpenAIResponsesReasoningMode(payload, "enabled")
+	reasoning, ok := payload["reasoning"].(map[string]any)
+	if !ok {
+		t.Fatal("expected reasoning payload")
+	}
+	if reasoning["effort"] != "medium" {
+		t.Fatalf("reasoning.effort = %#v, want medium", reasoning["effort"])
+	}
+	if reasoning["summary"] != "auto" {
+		t.Fatalf("reasoning.summary = %#v, want auto", reasoning["summary"])
+	}
+}
+
+func TestOpenAIResponsesReasoningPayloadKeepsAdvancedSummary(t *testing.T) {
+	payload := map[string]any{
+		"reasoning": map[string]any{"summary": "detailed"},
+	}
+	applyOpenAIResponsesReasoningMode(payload, "high")
+	reasoning := payload["reasoning"].(map[string]any)
+	if reasoning["effort"] != "high" {
+		t.Fatalf("reasoning.effort = %#v, want high", reasoning["effort"])
+	}
+	if reasoning["summary"] != "detailed" {
+		t.Fatalf("reasoning.summary = %#v, want detailed", reasoning["summary"])
+	}
+}
+
+func TestOpenAIResponsesReasoningPayloadSupportsNoneEffort(t *testing.T) {
+	payload := map[string]any{}
+	applyOpenAIResponsesReasoningMode(payload, "none")
+	reasoning, ok := payload["reasoning"].(map[string]any)
+	if !ok {
+		t.Fatal("expected reasoning payload")
+	}
+	if reasoning["effort"] != "none" {
+		t.Fatalf("reasoning.effort = %#v, want none", reasoning["effort"])
+	}
+}
+
+func TestOpenAIChatReasoningPayloadRemovesEffortWhenDisabled(t *testing.T) {
+	payload := map[string]any{"reasoning_effort": "high"}
+	applyOpenAIChatReasoningMode(payload, "disabled")
+	if _, ok := payload["reasoning_effort"]; ok {
+		t.Fatal("reasoning_effort should be removed when disabled")
+	}
+}
+
+func TestOpenAIResponsesReasoningPayloadNoneRemovesSummary(t *testing.T) {
+	payload := map[string]any{
+		"reasoning": map[string]any{"summary": "auto"},
+	}
+	applyOpenAIResponsesReasoningMode(payload, "none")
+	reasoning := payload["reasoning"].(map[string]any)
+	if reasoning["effort"] != "none" {
+		t.Fatalf("reasoning.effort = %#v, want none", reasoning["effort"])
+	}
+	if _, ok := reasoning["summary"]; ok {
+		t.Fatalf("reasoning.summary should be removed, got %#v", reasoning["summary"])
+	}
+}
+
+func TestOpenAIChatReasoningPayloadOverridesAdvancedJSON(t *testing.T) {
+	payload := map[string]any{"reasoning_effort": "low"}
+	applyOpenAIChatReasoningMode(payload, "high")
+	if payload["reasoning_effort"] != "high" {
+		t.Fatalf("reasoning_effort = %#v, want high", payload["reasoning_effort"])
 	}
 }
 

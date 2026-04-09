@@ -34,6 +34,7 @@ import (
 	"arkloop/services/shared/eventbus"
 	sharedlog "arkloop/services/shared/log"
 	"arkloop/services/shared/objectstore"
+	"arkloop/services/shared/telegrambot"
 )
 
 func desktopJWTSecretValue() string {
@@ -87,7 +88,13 @@ func RunDesktop(ctx context.Context) error {
 	}()
 
 	sqlitepgx.ConfigureDesktopSQLPool(dbPool.Unwrap())
-	pgxPool := sqlitepgx.New(dbPool.Unwrap())
+	writeExecutor := desktop.GetSharedSQLiteWriteExecutor()
+	if writeExecutor == nil {
+		writeExecutor = sqlitepgx.NewSerialWriteExecutor()
+		desktop.SetSharedSQLiteWriteExecutor(writeExecutor)
+	}
+	sqlitepgx.SetGlobalWriteExecutor(writeExecutor)
+	pgxPool := sqlitepgx.NewWithWriteExecutor(dbPool.Unwrap(), writeExecutor)
 	desktop.SetSharedSQLitePool(pgxPool)
 
 	// ---- seed data ----
@@ -100,7 +107,7 @@ func RunDesktop(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("personas root: %w", err)
 	}
-	if err := personasync.SeedDesktopPersonas(ctx, dbPool, personasRoot); err != nil {
+	if err := personasync.SeedDesktopPersonas(ctx, pgxPool, personasRoot); err != nil {
 		return fmt.Errorf("seed personas: %w", err)
 	}
 
@@ -432,6 +439,7 @@ func RunDesktop(ctx context.Context) error {
 	}
 	mcpDiscoveryService.StartWatcher(ctx, auth.DesktopAccountID, profileRef, 3*time.Second)
 
+	telegramClient := telegrambot.NewClient("", nil)
 	discordClient := discordbot.NewClient("", nil)
 	handler := apihttp.NewHandler(apihttp.HandlerConfig{
 		Logger:               logger,
@@ -542,49 +550,78 @@ func RunDesktop(ctx context.Context) error {
 	}
 
 	accountapi.StartTelegramDesktopPoller(ctx, accountapi.TelegramDesktopPollerDeps{
-		ChannelsRepo:            channelsRepo,
-		ChannelIdentitiesRepo:   channelIdentitiesRepo,
+		ChannelsRepo:             channelsRepo,
+		ChannelIdentitiesRepo:    channelIdentitiesRepo,
 		ChannelIdentityLinksRepo: channelIdentityLinksRepo,
-		ChannelBindCodesRepo:    channelBindCodesRepo,
-		ChannelDMThreadsRepo:    channelDMThreadsRepo,
-		ChannelGroupThreadsRepo: channelGroupThreadsRepo,
-		ChannelReceiptsRepo:     channelReceiptsRepo,
-		SecretsRepo:             secretsRepo,
-		PersonasRepo:            personasRepo,
-		UsersRepo:               userRepo,
-		AccountRepo:             accountRepo,
-		AccountMembershipRepo:   membershipRepo,
-		ProjectRepo:             projectRepo,
-		ThreadRepo:              threadRepo,
-		MessageRepo:             messageRepo,
-		RunEventRepo:            runEventRepo,
-		JobRepo:                 jobRepo,
-		CreditsRepo:             creditsRepo,
-		Pool:                    pgxPool,
-		EntitlementService:      entitlementService,
-		MessageAttachmentStore:  messageAttachmentStore,
-		TelegramMode:            "polling",
-		Bus:                     desktopBus,
+		ChannelBindCodesRepo:     channelBindCodesRepo,
+		ChannelDMThreadsRepo:     channelDMThreadsRepo,
+		ChannelGroupThreadsRepo:  channelGroupThreadsRepo,
+		ChannelReceiptsRepo:      channelReceiptsRepo,
+		SecretsRepo:              secretsRepo,
+		PersonasRepo:             personasRepo,
+		UsersRepo:                userRepo,
+		AccountRepo:              accountRepo,
+		AccountMembershipRepo:    membershipRepo,
+		ProjectRepo:              projectRepo,
+		ThreadRepo:               threadRepo,
+		MessageRepo:              messageRepo,
+		RunEventRepo:             runEventRepo,
+		JobRepo:                  jobRepo,
+		CreditsRepo:              creditsRepo,
+		Pool:                     pgxPool,
+		EntitlementService:       entitlementService,
+		MessageAttachmentStore:   messageAttachmentStore,
+		TelegramMode:             "polling",
+		Bus:                      desktopBus,
+	})
+	accountapi.StartChannelInboundBurstRunner(ctx, accountapi.ChannelInboundBurstRunnerDeps{
+		ChannelsRepo:             channelsRepo,
+		ChannelIdentitiesRepo:    channelIdentitiesRepo,
+		ChannelIdentityLinksRepo: channelIdentityLinksRepo,
+		ChannelBindCodesRepo:     channelBindCodesRepo,
+		ChannelDMThreadsRepo:     channelDMThreadsRepo,
+		ChannelGroupThreadsRepo:  channelGroupThreadsRepo,
+		ChannelReceiptsRepo:      channelReceiptsRepo,
+		ChannelLedgerRepo:        channelLedgerRepo,
+		SecretsRepo:              secretsRepo,
+		PersonasRepo:             personasRepo,
+		UsersRepo:                userRepo,
+		AccountRepo:              accountRepo,
+		AccountMembershipRepo:    membershipRepo,
+		ProjectRepo:              projectRepo,
+		ThreadRepo:               threadRepo,
+		MessageRepo:              messageRepo,
+		RunEventRepo:             runEventRepo,
+		JobRepo:                  jobRepo,
+		CreditsRepo:              creditsRepo,
+		Pool:                     pgxPool,
+		EntitlementService:       entitlementService,
+		TelegramBotClient:        telegramClient,
+		DiscordBotClient:         discordClient,
+		MessageAttachmentStore:   messageAttachmentStore,
+		Bus:                      desktopBus,
 	})
 	accountapi.StartDiscordIngressRunner(ctx, accountapi.DiscordIngressRunnerDeps{
-		ChannelsRepo:          channelsRepo,
-		ChannelIdentitiesRepo: channelIdentitiesRepo,
+		ChannelsRepo:             channelsRepo,
+		ChannelIdentitiesRepo:    channelIdentitiesRepo,
 		ChannelIdentityLinksRepo: channelIdentityLinksRepo,
-		ChannelBindCodesRepo:  channelBindCodesRepo,
-		ChannelDMThreadsRepo:  channelDMThreadsRepo,
-		ChannelReceiptsRepo:   channelReceiptsRepo,
-		ChannelLedgerRepo:     channelLedgerRepo,
-		SecretsRepo:           secretsRepo,
-		PersonasRepo:          personasRepo,
-		ThreadRepo:            threadRepo,
-		MessageRepo:           messageRepo,
-		RunEventRepo:          runEventRepo,
-		JobRepo:               jobRepo,
-		CreditsRepo:           creditsRepo,
-		Pool:                  pgxPool,
-		EntitlementService:    entitlementService,
-		DiscordClient:         discordClient,
-		Bus:                   desktopBus,
+		ChannelBindCodesRepo:     channelBindCodesRepo,
+		ChannelDMThreadsRepo:     channelDMThreadsRepo,
+		ChannelReceiptsRepo:      channelReceiptsRepo,
+		ChannelLedgerRepo:        channelLedgerRepo,
+		SecretsRepo:              secretsRepo,
+		PersonasRepo:             personasRepo,
+		UsersRepo:                userRepo,
+		AccountRepo:              accountRepo,
+		ThreadRepo:               threadRepo,
+		MessageRepo:              messageRepo,
+		RunEventRepo:             runEventRepo,
+		JobRepo:                  jobRepo,
+		CreditsRepo:              creditsRepo,
+		Pool:                     pgxPool,
+		EntitlementService:       entitlementService,
+		DiscordClient:            discordClient,
+		Bus:                      desktopBus,
 	})
 
 	accountapi.StartQQOneBotWSListener(ctx, accountapi.QQOneBotWSListenerDeps{

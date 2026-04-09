@@ -30,6 +30,19 @@ export type { Theme } from './contexts/ThemeContext'
 
 export { createLocaleContext } from './contexts/LocaleContext'
 export type { Locale } from './contexts/LocaleContext'
+export { TimeZoneProvider, useTimeZone } from './contexts/TimeZoneContext'
+export {
+  detectDeviceTimeZone,
+  formatDateTime,
+  formatMonthDay,
+  parseDateTimeLocalToUTC,
+  formatTimeZoneOffset,
+  getActiveTimeZone,
+  isSameCalendarDay,
+  listSupportedTimeZones,
+  normalizeTimeZone,
+  resolveTimeZone,
+} from './timezone'
 
 export { Turnstile } from './components/Turnstile'
 export { ToastProvider } from './components/Toast'
@@ -110,6 +123,7 @@ export { buildTurns, normalizeChannelEnvelopeText } from './run-turns'
 export type { LlmTurn, RunEventRaw } from './run-turns'
 export { ACP_DELEGATE_LAYER, isACPDelegateEventData } from './runEventDelegate'
 export { buildThreadTurns, buildRequestThreadTurns, threadMessageTextContent } from './thread-turns'
+export { canonicalToolName, pickLogicalToolName } from './tool-names'
 export type { ThreadMessage, ThreadTurn, RequestThreadTurn } from './thread-turns'
 export { redactDataUrlsInString, jsonStringifyForDebugDisplay } from './debugPayloadRedact'
 export { measureTextareaHeight } from './text/measureTextareaHeight'

@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"arkloop/services/sandbox/internal/logging"
+	processapi "arkloop/services/sandbox/internal/process"
 	"arkloop/services/sandbox/internal/session"
 	"arkloop/services/sandbox/internal/shell"
 )
@@ -88,7 +89,7 @@ func handleForkSession(shellSvc shell.Service) http.HandlerFunc {
 	}
 }
 
-func handleDeleteSession(mgr *session.Manager, shellSvc shell.Service, logger *logging.JSONLogger) http.HandlerFunc {
+func handleDeleteSession(mgr *session.Manager, shellSvc shell.Service, processSvc processapi.Service, logger *logging.JSONLogger) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id := strings.TrimPrefix(r.URL.Path, "/v1/sessions/")
 		id = strings.TrimSpace(id)
@@ -98,6 +99,14 @@ func handleDeleteSession(mgr *session.Manager, shellSvc shell.Service, logger *l
 		}
 
 		accountID := strings.TrimSpace(r.Header.Get("X-Account-ID"))
+		if processSvc != nil {
+			if err := processSvc.CloseSession(r.Context(), id, accountID); err != nil {
+				if procErr, ok := err.(*processapi.Error); ok && procErr.Code == processapi.CodeAccountMismatch {
+					writeError(w, http.StatusForbidden, procErr.Code, procErr.Message)
+					return
+				}
+			}
+		}
 		if shellSvc != nil {
 			if err := shellSvc.Close(r.Context(), id, accountID); err == nil {
 				w.WriteHeader(http.StatusNoContent)

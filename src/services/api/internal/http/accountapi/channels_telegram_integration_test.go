@@ -10,6 +10,7 @@ import (
 	nethttp "net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -455,6 +456,26 @@ func TestTelegramWebhookCreatesRunAndDedupes(t *testing.T) {
 	}
 	if got := strings.TrimSpace(asString(started["model"])); got != "demo-cred^gpt-5-mini" {
 		t.Fatalf("unexpected run.started model: %q", got)
+	}
+	if got := strings.TrimSpace(asString(started["continuation_source"])); got != "none" {
+		t.Fatalf("unexpected continuation_source: %q", got)
+	}
+	if got, ok := started["continuation_loop"].(bool); !ok || got {
+		t.Fatalf("unexpected continuation_loop: %#v", started["continuation_loop"])
+	}
+	if got := strings.TrimSpace(asString(started["thread_tail_message_id"])); got == "" {
+		t.Fatalf("expected thread_tail_message_id in run.started: %#v", started)
+	}
+	startedDelivery, ok := started["channel_delivery"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected channel_delivery in run.started: %#v", started)
+	}
+	startedConversationRef, _ := startedDelivery["conversation_ref"].(map[string]any)
+	if got := asString(startedConversationRef["target"]); got != "10001" {
+		t.Fatalf("unexpected run.started conversation_ref: %#v", startedDelivery)
+	}
+	if got := asString(startedDelivery["conversation_type"]); got != "private" {
+		t.Fatalf("unexpected run.started conversation_type: %#v", startedDelivery)
 	}
 }
 
@@ -983,6 +1004,9 @@ func TestTelegramWebhookNewCommandStartsFreshDMThread(t *testing.T) {
 
 func TestTelegramWebhookStoresStructuredInboundMessage(t *testing.T) {
 	env := setupTelegramChannelsTestEnv(t, telegrambot.NewClient("https://api.telegram.org", nil))
+	if _, err := env.pool.Exec(context.Background(), `UPDATE users SET timezone = 'Asia/Shanghai' WHERE id = $1`, env.userID); err != nil {
+		t.Fatalf("seed user timezone: %v", err)
+	}
 	channel := createActiveTelegramChannelWithConfig(t, env, "bot-token", map[string]any{
 		"allowed_user_ids": []string{"10001"},
 	})
@@ -1062,6 +1086,78 @@ func TestTelegramWebhookStoresStructuredInboundMessage(t *testing.T) {
 	}
 	if got := asString(metadata["platform_message_id"]); got != "7" {
 		t.Fatalf("unexpected platform_message_id: %q", got)
+	}
+	if got := asString(metadata["time_local"]); got != "2024-03-09 00:00:00 [UTC+8]" {
+		t.Fatalf("unexpected time_local: %q", got)
+	}
+	if got := asString(metadata["time_utc"]); got != "2024-03-08T16:00:00Z" {
+		t.Fatalf("unexpected time_utc: %q", got)
+	}
+	if !strings.Contains(content.Parts[0].Text, `time: "2024-03-09 00:00:00 [UTC+8]"`) {
+		t.Fatalf("expected localized time in envelope, got %s", content.Parts[0].Text)
+	}
+	if !strings.Contains(content.Parts[0].Text, `time_utc: "2024-03-08T16:00:00Z"`) {
+		t.Fatalf("expected utc time in envelope, got %s", content.Parts[0].Text)
+	}
+}
+
+func TestTelegramWebhookRespectsOwnerTimezoneWithDST(t *testing.T) {
+	env := setupTelegramChannelsTestEnv(t, telegrambot.NewClient("https://api.telegram.org", nil))
+	if _, err := env.pool.Exec(context.Background(), `UPDATE users SET timezone = 'America/Los_Angeles' WHERE id = $1`, env.userID); err != nil {
+		t.Fatalf("seed user timezone: %v", err)
+	}
+	channel := createActiveTelegramChannelWithConfig(t, env, "bot-token", map[string]any{
+		"allowed_user_ids": []string{"10001"},
+	})
+
+	ts := time.Date(2024, time.July, 4, 12, 0, 0, 0, time.UTC)
+	resp := doJSONAccount(
+		env.handler,
+		nethttp.MethodPost,
+		"/v1/channels/telegram/"+channel.ID.String()+"/webhook",
+		map[string]any{
+			"message": map[string]any{
+				"message_id": 123,
+				"date":       ts.Unix(),
+				"chat": map[string]any{
+					"id":   10001,
+					"type": "private",
+				},
+				"from": map[string]any{
+					"id":     10001,
+					"is_bot": false,
+				},
+				"text": "dst check",
+			},
+		},
+		nil,
+	)
+	if resp.Code != nethttp.StatusOK {
+		t.Fatalf("webhook status: %d %s", resp.Code, resp.Body.String())
+	}
+
+	var metadataJSON []byte
+	if err := env.pool.QueryRow(context.Background(), `
+		SELECT metadata_json::text::jsonb
+		  FROM messages
+		 ORDER BY created_at DESC
+		 LIMIT 1
+	`).Scan(&metadataJSON); err != nil {
+		t.Fatalf("query metadata_json: %v", err)
+	}
+
+	var metadata map[string]any
+	if err := json.Unmarshal(metadataJSON, &metadata); err != nil {
+		t.Fatalf("decode metadata_json: %v", err)
+	}
+	if got := asString(metadata["timezone"]); got != "America/Los_Angeles" {
+		t.Fatalf("unexpected timezone: %q", got)
+	}
+	if got := asString(metadata["time_local"]); got != "2024-07-04 05:00:00 [UTC-7]" {
+		t.Fatalf("unexpected time_local: %q", got)
+	}
+	if got := asString(metadata["time_utc"]); got != "2024-07-04T12:00:00Z" {
+		t.Fatalf("unexpected time_utc: %q", got)
 	}
 }
 
@@ -1158,6 +1254,9 @@ func TestTelegramWebhookHeartbeatCommandDoesNotSendImmediateTyping(t *testing.T)
 
 func TestTelegramWebhookGroupMessagePassiveAndActive(t *testing.T) {
 	env := setupTelegramChannelsTestEnv(t, telegrambot.NewClient("https://api.telegram.org", nil))
+	if _, err := env.pool.Exec(context.Background(), `UPDATE users SET timezone = 'Asia/Shanghai' WHERE id = $1`, env.userID); err != nil {
+		t.Fatalf("seed user timezone: %v", err)
+	}
 	channel := createActiveTelegramChannelWithConfig(t, env, "bot-token", map[string]any{
 		"allowed_user_ids": []string{"10001"},
 		"bot_username":     "arkloopbot",
@@ -1280,6 +1379,9 @@ func TestTelegramWebhookGroupMessagePassiveAndActive(t *testing.T) {
 	}
 	if !strings.Contains(content.Parts[0].Text, `message-id: "`) {
 		t.Fatalf("expected group prompt header to contain message-id field")
+	}
+	if !strings.Contains(content.Parts[0].Text, `time: "2024-03-09 00:00:01 [UTC+8]"`) {
+		t.Fatalf("expected group prompt header to localize time, got %s", content.Parts[0].Text)
 	}
 }
 
@@ -1407,7 +1509,7 @@ func TestTelegramWebhookPassiveMediaFailureDoesNotPersistReceipt(t *testing.T) {
 	assertCountAccount(t, env.pool, `SELECT COUNT(*) FROM messages`, 0)
 }
 
-func TestTelegramWebhookActiveRunSecondMessageUsesProvidedInput(t *testing.T) {
+func TestTelegramWebhookActiveRunSecondMessageKeepsPendingAndNoInput(t *testing.T) {
 	env := setupTelegramChannelsTestEnv(t, telegrambot.NewClient("https://api.telegram.org", nil))
 	channel := createActiveTelegramChannel(t, env, "tg-token-active-run", nil, "")
 	headers := map[string]string{"X-Telegram-Bot-Api-Secret-Token": derefString(t, channel.WebhookSecret)}
@@ -1436,8 +1538,40 @@ func TestTelegramWebhookActiveRunSecondMessageUsesProvidedInput(t *testing.T) {
 	if resp.Code != nethttp.StatusOK {
 		t.Fatalf("first webhook status: %d %s", resp.Code, resp.Body.String())
 	}
-	assertCountAccount(t, env.pool, `SELECT COUNT(*) FROM runs`, 1)
-	assertCountAccount(t, env.pool, `SELECT COUNT(*) FROM jobs`, 1)
+	assertCountAccount(t, env.pool, `SELECT COUNT(*) FROM runs`, 0)
+	assertCountAccount(t, env.pool, `SELECT COUNT(*) FROM jobs`, 0)
+	assertCountAccount(t, env.pool, `SELECT COUNT(*) FROM channel_message_ledger WHERE direction = 'inbound' AND metadata_json->>'ingress_state' = '`+inboundStatePendingDispatch+`'`, 1)
+
+	var threadID uuid.UUID
+	if err := env.pool.QueryRow(
+		context.Background(),
+		`SELECT thread_id
+		   FROM channel_group_threads
+		  WHERE channel_id = $1
+		    AND platform_chat_id = $2
+		    AND persona_id = $3
+		  LIMIT 1`,
+		channel.ID,
+		"-20002",
+		env.personaID,
+	).Scan(&threadID); err != nil {
+		t.Fatalf("query group thread: %v", err)
+	}
+	runEventRepo, err := data.NewRunEventRepository(env.pool)
+	if err != nil {
+		t.Fatalf("run event repo: %v", err)
+	}
+	activeRun, _, err := runEventRepo.CreateRunWithStartedEvent(
+		context.Background(),
+		env.accountID,
+		threadID,
+		&env.userID,
+		"run.started",
+		map[string]any{"persona_id": env.personaID.String()},
+	)
+	if err != nil {
+		t.Fatalf("create active run: %v", err)
+	}
 
 	second := map[string]any{
 		"message": map[string]any{
@@ -1465,9 +1599,10 @@ func TestTelegramWebhookActiveRunSecondMessageUsesProvidedInput(t *testing.T) {
 	}
 
 	assertCountAccount(t, env.pool, `SELECT COUNT(*) FROM runs`, 1)
-	assertCountAccount(t, env.pool, `SELECT COUNT(*) FROM jobs`, 1)
+	assertCountAccount(t, env.pool, `SELECT COUNT(*) FROM jobs`, 0)
 	assertCountAccount(t, env.pool, `SELECT COUNT(*) FROM messages`, 2)
-	assertCountAccount(t, env.pool, `SELECT COUNT(*) FROM run_events WHERE type = 'run.input_provided'`, 1)
+	assertCountAccount(t, env.pool, `SELECT COUNT(*) FROM run_events WHERE run_id = '`+activeRun.ID.String()+`' AND type = 'run.input_provided'`, 0)
+	assertCountAccount(t, env.pool, `SELECT COUNT(*) FROM channel_message_ledger WHERE direction = 'inbound' AND metadata_json->>'ingress_state' = '`+inboundStatePendingDispatch+`'`, 2)
 }
 
 func TestTelegramWebhookMentionDoesNotInjectIntoActiveHeartbeatRun(t *testing.T) {
@@ -1650,6 +1785,518 @@ func TestTelegramPollPassiveMediaFailureDoesNotPersistReceipt(t *testing.T) {
 	assertCountAccount(t, env.pool, `SELECT COUNT(*) FROM channel_message_receipts`, 0)
 	assertCountAccount(t, env.pool, `SELECT COUNT(*) FROM channel_message_ledger WHERE direction = 'inbound'`, 0)
 	assertCountAccount(t, env.pool, `SELECT COUNT(*) FROM messages`, 0)
+
+	err = connector.HandleUpdateForPoll(context.Background(), uuid.NewString(), channel, "bot-token", update)
+	if err == nil {
+		t.Fatal("expected second poll passive media failure")
+	}
+
+	assertCountAccount(t, env.pool, `SELECT COUNT(*) FROM channel_message_receipts`, 0)
+	assertCountAccount(t, env.pool, `SELECT COUNT(*) FROM channel_message_ledger WHERE direction = 'inbound'`, 0)
+	assertCountAccount(t, env.pool, `SELECT COUNT(*) FROM messages`, 0)
+}
+
+func TestTelegramPollDuplicateMessageCreatesSingleRun(t *testing.T) {
+	env := setupTelegramChannelsTestEnv(t, telegrambot.NewClient("https://api.telegram.org", nil))
+	channel := createActiveTelegramChannel(t, env, "bot-token", []string{"10001"}, "demo-cred^gpt-5-mini")
+
+	channelIdentitiesRepo, err := data.NewChannelIdentitiesRepository(env.pool)
+	if err != nil {
+		t.Fatalf("channel identities repo: %v", err)
+	}
+	channelIdentityLinksRepo, err := data.NewChannelIdentityLinksRepository(env.pool)
+	if err != nil {
+		t.Fatalf("channel identity links repo: %v", err)
+	}
+	channelBindCodesRepo, err := data.NewChannelBindCodesRepository(env.pool)
+	if err != nil {
+		t.Fatalf("channel bind repo: %v", err)
+	}
+	channelDMThreadsRepo, err := data.NewChannelDMThreadsRepository(env.pool)
+	if err != nil {
+		t.Fatalf("channel dm threads repo: %v", err)
+	}
+	channelGroupThreadsRepo, err := data.NewChannelGroupThreadsRepository(env.pool)
+	if err != nil {
+		t.Fatalf("channel group threads repo: %v", err)
+	}
+	channelReceiptsRepo, err := data.NewChannelMessageReceiptsRepository(env.pool)
+	if err != nil {
+		t.Fatalf("channel receipts repo: %v", err)
+	}
+	channelLedgerRepo, err := data.NewChannelMessageLedgerRepository(env.pool)
+	if err != nil {
+		t.Fatalf("channel ledger repo: %v", err)
+	}
+	threadRepo, err := data.NewThreadRepository(env.pool)
+	if err != nil {
+		t.Fatalf("thread repo: %v", err)
+	}
+	messageRepo, err := data.NewMessageRepository(env.pool)
+	if err != nil {
+		t.Fatalf("message repo: %v", err)
+	}
+	runEventRepo, err := data.NewRunEventRepository(env.pool)
+	if err != nil {
+		t.Fatalf("run event repo: %v", err)
+	}
+	jobRepo, err := data.NewJobRepository(env.pool)
+	if err != nil {
+		t.Fatalf("job repo: %v", err)
+	}
+	personasRepo, err := data.NewPersonasRepository(env.pool)
+	if err != nil {
+		t.Fatalf("personas repo: %v", err)
+	}
+
+	connector := telegramConnector{
+		channelsRepo:             env.channelsRepo,
+		channelIdentitiesRepo:    channelIdentitiesRepo,
+		channelIdentityLinksRepo: channelIdentityLinksRepo,
+		channelBindCodesRepo:     channelBindCodesRepo,
+		channelDMThreadsRepo:     channelDMThreadsRepo,
+		channelGroupThreadsRepo:  channelGroupThreadsRepo,
+		channelReceiptsRepo:      channelReceiptsRepo,
+		channelLedgerRepo:        channelLedgerRepo,
+		personasRepo:             personasRepo,
+		threadRepo:               threadRepo,
+		messageRepo:              messageRepo,
+		runEventRepo:             runEventRepo,
+		jobRepo:                  jobRepo,
+		pool:                     env.pool,
+		telegramClient:           telegrambot.NewClient("https://api.telegram.org", nil),
+	}
+
+	update := telegramUpdate{
+		UpdateID: 7,
+		Message: &telegramMessage{
+			MessageID: 42,
+			Date:      1710000000,
+			Text:      "hello from telegram",
+			Chat: telegramChat{
+				ID:   10001,
+				Type: "private",
+			},
+			From: &telegramUser{
+				ID:        10001,
+				IsBot:     false,
+				FirstName: func() *string { value := "Alice"; return &value }(),
+				Username:  func() *string { value := "alice"; return &value }(),
+				LastName:  nil,
+			},
+		},
+	}
+
+	if err := connector.HandleUpdateForPoll(context.Background(), uuid.NewString(), channel, "bot-token", update); err != nil {
+		t.Fatalf("first poll update: %v", err)
+	}
+	if err := connector.HandleUpdateForPoll(context.Background(), uuid.NewString(), channel, "bot-token", update); err != nil {
+		t.Fatalf("duplicate poll update: %v", err)
+	}
+
+	assertCountAccount(t, env.pool, `SELECT COUNT(*) FROM channel_message_receipts`, 0)
+	assertCountAccount(t, env.pool, `SELECT COUNT(*) FROM channel_identities`, 1)
+	assertCountAccount(t, env.pool, `SELECT COUNT(*) FROM channel_dm_threads`, 1)
+	assertCountAccount(t, env.pool, `SELECT COUNT(*) FROM channel_message_ledger WHERE direction = 'inbound'`, 1)
+	assertCountAccount(t, env.pool, `SELECT COUNT(*) FROM channel_message_ledger WHERE direction = 'inbound' AND run_id IS NOT NULL`, 1)
+	assertCountAccount(t, env.pool, `SELECT COUNT(*) FROM messages`, 1)
+	assertCountAccount(t, env.pool, `SELECT COUNT(*) FROM runs`, 1)
+	assertCountAccount(t, env.pool, `SELECT COUNT(*) FROM jobs`, 1)
+}
+
+func TestTelegramPollDuplicateStopCommandCancelsOnce(t *testing.T) {
+	env := setupTelegramChannelsTestEnv(t, telegrambot.NewClient("https://api.telegram.org", nil))
+	channel := createActiveTelegramChannel(t, env, "bot-token", []string{"10001"}, "demo-cred^gpt-5-mini")
+
+	channelIdentitiesRepo, err := data.NewChannelIdentitiesRepository(env.pool)
+	if err != nil {
+		t.Fatalf("channel identities repo: %v", err)
+	}
+	channelIdentityLinksRepo, err := data.NewChannelIdentityLinksRepository(env.pool)
+	if err != nil {
+		t.Fatalf("channel identity links repo: %v", err)
+	}
+	channelBindCodesRepo, err := data.NewChannelBindCodesRepository(env.pool)
+	if err != nil {
+		t.Fatalf("channel bind repo: %v", err)
+	}
+	channelDMThreadsRepo, err := data.NewChannelDMThreadsRepository(env.pool)
+	if err != nil {
+		t.Fatalf("channel dm threads repo: %v", err)
+	}
+	channelGroupThreadsRepo, err := data.NewChannelGroupThreadsRepository(env.pool)
+	if err != nil {
+		t.Fatalf("channel group threads repo: %v", err)
+	}
+	channelReceiptsRepo, err := data.NewChannelMessageReceiptsRepository(env.pool)
+	if err != nil {
+		t.Fatalf("channel receipts repo: %v", err)
+	}
+	channelLedgerRepo, err := data.NewChannelMessageLedgerRepository(env.pool)
+	if err != nil {
+		t.Fatalf("channel ledger repo: %v", err)
+	}
+	threadRepo, err := data.NewThreadRepository(env.pool)
+	if err != nil {
+		t.Fatalf("thread repo: %v", err)
+	}
+	messageRepo, err := data.NewMessageRepository(env.pool)
+	if err != nil {
+		t.Fatalf("message repo: %v", err)
+	}
+	runEventRepo, err := data.NewRunEventRepository(env.pool)
+	if err != nil {
+		t.Fatalf("run event repo: %v", err)
+	}
+	jobRepo, err := data.NewJobRepository(env.pool)
+	if err != nil {
+		t.Fatalf("job repo: %v", err)
+	}
+	personasRepo, err := data.NewPersonasRepository(env.pool)
+	if err != nil {
+		t.Fatalf("personas repo: %v", err)
+	}
+
+	connector := telegramConnector{
+		channelsRepo:             env.channelsRepo,
+		channelIdentitiesRepo:    channelIdentitiesRepo,
+		channelIdentityLinksRepo: channelIdentityLinksRepo,
+		channelBindCodesRepo:     channelBindCodesRepo,
+		channelDMThreadsRepo:     channelDMThreadsRepo,
+		channelGroupThreadsRepo:  channelGroupThreadsRepo,
+		channelReceiptsRepo:      channelReceiptsRepo,
+		channelLedgerRepo:        channelLedgerRepo,
+		personasRepo:             personasRepo,
+		threadRepo:               threadRepo,
+		messageRepo:              messageRepo,
+		runEventRepo:             runEventRepo,
+		jobRepo:                  jobRepo,
+		pool:                     env.pool,
+		telegramClient:           telegrambot.NewClient("https://api.telegram.org", nil),
+	}
+
+	firstName := "Alice"
+	identity, err := upsertTelegramIdentity(context.Background(), channelIdentitiesRepo, &telegramUser{
+		ID:        10001,
+		IsBot:     false,
+		FirstName: &firstName,
+	})
+	if err != nil {
+		t.Fatalf("upsert telegram identity: %v", err)
+	}
+	if _, err := channelIdentityLinksRepo.Upsert(context.Background(), channel.ID, identity.ID); err != nil {
+		t.Fatalf("link telegram identity: %v", err)
+	}
+
+	thread, err := threadRepo.Create(context.Background(), env.accountID, identity.UserID, env.projectID, nil, false)
+	if err != nil {
+		t.Fatalf("create thread: %v", err)
+	}
+	if _, err := channelDMThreadsRepo.Create(context.Background(), channel.ID, identity.ID, env.personaID, thread.ID); err != nil {
+		t.Fatalf("create dm thread binding: %v", err)
+	}
+	run, _, err := runEventRepo.CreateRunWithStartedEvent(
+		context.Background(),
+		env.accountID,
+		thread.ID,
+		identity.UserID,
+		"run.started",
+		map[string]any{"persona_id": env.personaID.String()},
+	)
+	if err != nil {
+		t.Fatalf("create active run: %v", err)
+	}
+
+	update := telegramUpdate{
+		UpdateID: 8,
+		Message: &telegramMessage{
+			MessageID: 51,
+			Date:      1710000400,
+			Text:      "/stop",
+			Chat: telegramChat{
+				ID:   10001,
+				Type: "private",
+			},
+			From: &telegramUser{
+				ID:        10001,
+				IsBot:     false,
+				FirstName: &firstName,
+			},
+		},
+	}
+
+	if err := connector.HandleUpdateForPoll(context.Background(), uuid.NewString(), channel, "bot-token", update); err != nil {
+		t.Fatalf("first stop command: %v", err)
+	}
+	if err := connector.HandleUpdateForPoll(context.Background(), uuid.NewString(), channel, "bot-token", update); err != nil {
+		t.Fatalf("duplicate stop command: %v", err)
+	}
+
+	assertCountAccount(t, env.pool, `SELECT COUNT(*) FROM run_events WHERE run_id = '`+run.ID.String()+`' AND type = 'run.cancel_requested'`, 1)
+	assertCountAccount(t, env.pool, `SELECT COUNT(*) FROM channel_message_ledger WHERE channel_id = '`+channel.ID.String()+`' AND direction = 'inbound' AND metadata_json->>'ingress_state' = '`+inboundStateCommandHandled+`'`, 1)
+}
+
+func TestTelegramPollThrottleRetryCreatesRunAfterWindowOpens(t *testing.T) {
+	setChannelInboundBurstWindowForTest(t, 25*time.Millisecond)
+
+	env := setupTelegramChannelsTestEnv(t, telegrambot.NewClient("https://api.telegram.org", nil))
+	channel := createActiveTelegramChannel(t, env, "bot-token", []string{"10001"}, "demo-cred^gpt-5-mini")
+
+	channelIdentitiesRepo, err := data.NewChannelIdentitiesRepository(env.pool)
+	if err != nil {
+		t.Fatalf("channel identities repo: %v", err)
+	}
+	channelIdentityLinksRepo, err := data.NewChannelIdentityLinksRepository(env.pool)
+	if err != nil {
+		t.Fatalf("channel identity links repo: %v", err)
+	}
+	channelBindCodesRepo, err := data.NewChannelBindCodesRepository(env.pool)
+	if err != nil {
+		t.Fatalf("channel bind repo: %v", err)
+	}
+	channelDMThreadsRepo, err := data.NewChannelDMThreadsRepository(env.pool)
+	if err != nil {
+		t.Fatalf("channel dm threads repo: %v", err)
+	}
+	channelGroupThreadsRepo, err := data.NewChannelGroupThreadsRepository(env.pool)
+	if err != nil {
+		t.Fatalf("channel group threads repo: %v", err)
+	}
+	channelReceiptsRepo, err := data.NewChannelMessageReceiptsRepository(env.pool)
+	if err != nil {
+		t.Fatalf("channel receipts repo: %v", err)
+	}
+	channelLedgerRepo, err := data.NewChannelMessageLedgerRepository(env.pool)
+	if err != nil {
+		t.Fatalf("channel ledger repo: %v", err)
+	}
+	threadRepo, err := data.NewThreadRepository(env.pool)
+	if err != nil {
+		t.Fatalf("thread repo: %v", err)
+	}
+	messageRepo, err := data.NewMessageRepository(env.pool)
+	if err != nil {
+		t.Fatalf("message repo: %v", err)
+	}
+	runEventRepo, err := data.NewRunEventRepository(env.pool)
+	if err != nil {
+		t.Fatalf("run event repo: %v", err)
+	}
+	jobRepo, err := data.NewJobRepository(env.pool)
+	if err != nil {
+		t.Fatalf("job repo: %v", err)
+	}
+	personasRepo, err := data.NewPersonasRepository(env.pool)
+	if err != nil {
+		t.Fatalf("personas repo: %v", err)
+	}
+
+	connector := telegramConnector{
+		channelsRepo:             env.channelsRepo,
+		channelIdentitiesRepo:    channelIdentitiesRepo,
+		channelIdentityLinksRepo: channelIdentityLinksRepo,
+		channelBindCodesRepo:     channelBindCodesRepo,
+		channelDMThreadsRepo:     channelDMThreadsRepo,
+		channelGroupThreadsRepo:  channelGroupThreadsRepo,
+		channelReceiptsRepo:      channelReceiptsRepo,
+		channelLedgerRepo:        channelLedgerRepo,
+		personasRepo:             personasRepo,
+		threadRepo:               threadRepo,
+		messageRepo:              messageRepo,
+		runEventRepo:             runEventRepo,
+		jobRepo:                  jobRepo,
+		pool:                     env.pool,
+		telegramClient:           telegrambot.NewClient("https://api.telegram.org", nil),
+	}
+
+	update := telegramUpdate{
+		UpdateID: 9,
+		Message: &telegramMessage{
+			MessageID: 61,
+			Date:      1710000500,
+			Text:      "hello after throttle",
+			Chat: telegramChat{
+				ID:   10001,
+				Type: "private",
+			},
+			From: &telegramUser{
+				ID:        10001,
+				IsBot:     false,
+				FirstName: func() *string { value := "Alice"; return &value }(),
+				Username:  func() *string { value := "alice"; return &value }(),
+				LastName:  nil,
+			},
+		},
+	}
+
+	if err := connector.HandleUpdateForPoll(context.Background(), uuid.NewString(), channel, "bot-token", update); err != nil {
+		t.Fatalf("handle poll update: %v", err)
+	}
+
+	assertCountAccount(t, env.pool, `SELECT COUNT(*) FROM channel_message_ledger WHERE direction = 'inbound' AND metadata_json->>'ingress_state' = '`+inboundStatePendingDispatch+`'`, 1)
+	assertCountAccount(t, env.pool, `SELECT COUNT(*) FROM runs`, 0)
+	assertCountAccount(t, env.pool, `SELECT COUNT(*) FROM jobs`, 0)
+
+	var dispatchAfter int64
+	if err := env.pool.QueryRow(
+		context.Background(),
+		`SELECT COALESCE((metadata_json->>'dispatch_after_unix_ms')::bigint, 0)
+		   FROM channel_message_ledger
+		  WHERE channel_id = $1
+		    AND direction = 'inbound'
+		    AND platform_conversation_id = $2
+		    AND platform_message_id = $3`,
+		channel.ID,
+		"10001",
+		"61",
+	).Scan(&dispatchAfter); err != nil {
+		t.Fatalf("query dispatch_after_unix_ms: %v", err)
+	}
+	if dispatchAfter <= time.Now().UTC().UnixMilli() {
+		t.Fatalf("expected dispatch_after_unix_ms in future, got %d", dispatchAfter)
+	}
+
+	time.Sleep(40 * time.Millisecond)
+	if err := connector.recoverPendingTelegramInboundDispatches(context.Background(), channel.ID); err != nil {
+		t.Fatalf("recover pending telegram dispatches: %v", err)
+	}
+
+	assertCountAccount(t, env.pool, `SELECT COUNT(*) FROM runs`, 1)
+	assertCountAccount(t, env.pool, `SELECT COUNT(*) FROM jobs`, 1)
+	assertCountAccount(t, env.pool, `SELECT COUNT(*) FROM channel_message_ledger WHERE direction = 'inbound' AND run_id IS NOT NULL`, 1)
+
+	if err := connector.recoverPendingTelegramInboundDispatches(context.Background(), channel.ID); err != nil {
+		t.Fatalf("recover pending telegram dispatches second pass: %v", err)
+	}
+	assertCountAccount(t, env.pool, `SELECT COUNT(*) FROM runs`, 1)
+}
+
+func TestTelegramPollConcurrentDuplicateMessageCreatesSingleRun(t *testing.T) {
+	setChannelInboundBurstWindowForTest(t, 20*time.Millisecond)
+
+	env := setupTelegramChannelsTestEnv(t, telegrambot.NewClient("https://api.telegram.org", nil))
+	channel := createActiveTelegramChannel(t, env, "bot-token", []string{"10001"}, "demo-cred^gpt-5-mini")
+
+	channelIdentitiesRepo, err := data.NewChannelIdentitiesRepository(env.pool)
+	if err != nil {
+		t.Fatalf("channel identities repo: %v", err)
+	}
+	channelIdentityLinksRepo, err := data.NewChannelIdentityLinksRepository(env.pool)
+	if err != nil {
+		t.Fatalf("channel identity links repo: %v", err)
+	}
+	channelBindCodesRepo, err := data.NewChannelBindCodesRepository(env.pool)
+	if err != nil {
+		t.Fatalf("channel bind repo: %v", err)
+	}
+	channelDMThreadsRepo, err := data.NewChannelDMThreadsRepository(env.pool)
+	if err != nil {
+		t.Fatalf("channel dm threads repo: %v", err)
+	}
+	channelGroupThreadsRepo, err := data.NewChannelGroupThreadsRepository(env.pool)
+	if err != nil {
+		t.Fatalf("channel group threads repo: %v", err)
+	}
+	channelReceiptsRepo, err := data.NewChannelMessageReceiptsRepository(env.pool)
+	if err != nil {
+		t.Fatalf("channel receipts repo: %v", err)
+	}
+	channelLedgerRepo, err := data.NewChannelMessageLedgerRepository(env.pool)
+	if err != nil {
+		t.Fatalf("channel ledger repo: %v", err)
+	}
+	threadRepo, err := data.NewThreadRepository(env.pool)
+	if err != nil {
+		t.Fatalf("thread repo: %v", err)
+	}
+	messageRepo, err := data.NewMessageRepository(env.pool)
+	if err != nil {
+		t.Fatalf("message repo: %v", err)
+	}
+	runEventRepo, err := data.NewRunEventRepository(env.pool)
+	if err != nil {
+		t.Fatalf("run event repo: %v", err)
+	}
+	jobRepo, err := data.NewJobRepository(env.pool)
+	if err != nil {
+		t.Fatalf("job repo: %v", err)
+	}
+	personasRepo, err := data.NewPersonasRepository(env.pool)
+	if err != nil {
+		t.Fatalf("personas repo: %v", err)
+	}
+
+	connector := telegramConnector{
+		channelsRepo:             env.channelsRepo,
+		channelIdentitiesRepo:    channelIdentitiesRepo,
+		channelIdentityLinksRepo: channelIdentityLinksRepo,
+		channelBindCodesRepo:     channelBindCodesRepo,
+		channelDMThreadsRepo:     channelDMThreadsRepo,
+		channelGroupThreadsRepo:  channelGroupThreadsRepo,
+		channelReceiptsRepo:      channelReceiptsRepo,
+		channelLedgerRepo:        channelLedgerRepo,
+		personasRepo:             personasRepo,
+		threadRepo:               threadRepo,
+		messageRepo:              messageRepo,
+		runEventRepo:             runEventRepo,
+		jobRepo:                  jobRepo,
+		pool:                     env.pool,
+		telegramClient:           telegrambot.NewClient("https://api.telegram.org", nil),
+	}
+
+	update := telegramUpdate{
+		UpdateID: 10,
+		Message: &telegramMessage{
+			MessageID: 62,
+			Date:      1710000600,
+			Text:      "hello concurrently",
+			Chat: telegramChat{
+				ID:   10001,
+				Type: "private",
+			},
+			From: &telegramUser{
+				ID:        10001,
+				IsBot:     false,
+				FirstName: func() *string { value := "Alice"; return &value }(),
+				Username:  func() *string { value := "alice"; return &value }(),
+				LastName:  nil,
+			},
+		},
+	}
+
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	errs := make(chan error, 2)
+	for i := 0; i < 2; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			errs <- connector.HandleUpdateForPoll(context.Background(), uuid.NewString(), channel, "bot-token", update)
+		}()
+	}
+	close(start)
+	wg.Wait()
+	close(errs)
+
+	for err := range errs {
+		if err != nil {
+			t.Fatalf("concurrent duplicate poll update: %v", err)
+		}
+	}
+
+	assertCountAccount(t, env.pool, `SELECT COUNT(*) FROM channel_message_ledger WHERE direction = 'inbound'`, 1)
+	assertCountAccount(t, env.pool, `SELECT COUNT(*) FROM messages`, 1)
+	assertCountAccount(t, env.pool, `SELECT COUNT(*) FROM runs`, 0)
+	assertCountAccount(t, env.pool, `SELECT COUNT(*) FROM jobs`, 0)
+	assertCountAccount(t, env.pool, `SELECT COUNT(*) FROM run_events WHERE type = 'run.input_provided'`, 0)
+
+	time.Sleep(30 * time.Millisecond)
+	if err := connector.recoverPendingTelegramInboundDispatches(context.Background(), channel.ID); err != nil {
+		t.Fatalf("recover pending telegram dispatches: %v", err)
+	}
+	assertCountAccount(t, env.pool, `SELECT COUNT(*) FROM runs`, 1)
+	assertCountAccount(t, env.pool, `SELECT COUNT(*) FROM jobs`, 1)
 }
 
 func TestTelegramWebhookGroupNewDeniedWithoutBind(t *testing.T) {

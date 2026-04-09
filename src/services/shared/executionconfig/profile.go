@@ -258,7 +258,7 @@ func asPerToolSoftLimits(value any) (PerToolSoftLimits, error) {
 	}
 	result := PerToolSoftLimits{}
 	for toolName, rawLimit := range raw {
-		if toolName != "exec_command" && toolName != "write_stdin" {
+		if toolName != "exec_command" && toolName != "continue_process" {
 			return nil, fmt.Errorf("budgets.per_tool_soft_limits.%s is unsupported", toolName)
 		}
 		limitMap, ok := rawLimit.(map[string]any)
@@ -276,9 +276,9 @@ func asPerToolSoftLimits(value any) (PerToolSoftLimits, error) {
 
 func asToolSoftLimit(toolName string, raw map[string]any) (ToolSoftLimit, error) {
 	allowed := map[string]struct{}{"max_output_bytes": {}}
-	if toolName == "write_stdin" {
+	if toolName == "continue_process" {
 		allowed["max_continuations"] = struct{}{}
-		allowed["max_yield_time_ms"] = struct{}{}
+		allowed["max_wait_time_ms"] = struct{}{}
 	}
 	for key := range raw {
 		if _, ok := allowed[key]; !ok {
@@ -290,17 +290,17 @@ func asToolSoftLimit(toolName string, raw map[string]any) (ToolSoftLimit, error)
 		return ToolSoftLimit{}, err
 	}
 	limit := ToolSoftLimit{MaxOutputBytes: maxOutputBytes}
-	if toolName == "write_stdin" {
-		maxContinuations, err := asOptionalBoundedPositiveInt(raw["max_continuations"], "budgets.per_tool_soft_limits.write_stdin.max_continuations", HardMaxToolSoftLimitContinuations)
+	if toolName == "continue_process" {
+		maxContinuations, err := asOptionalBoundedPositiveInt(raw["max_continuations"], "budgets.per_tool_soft_limits.continue_process.max_continuations", HardMaxToolSoftLimitContinuations)
 		if err != nil {
 			return ToolSoftLimit{}, err
 		}
-		maxYieldTimeMs, err := asOptionalBoundedPositiveInt(raw["max_yield_time_ms"], "budgets.per_tool_soft_limits.write_stdin.max_yield_time_ms", HardMaxToolSoftLimitYieldTimeMs)
+		maxWaitTimeMs, err := asOptionalBoundedPositiveInt(raw["max_wait_time_ms"], "budgets.per_tool_soft_limits.continue_process.max_wait_time_ms", HardMaxToolSoftLimitWaitTimeMs)
 		if err != nil {
 			return ToolSoftLimit{}, err
 		}
 		limit.MaxContinuations = maxContinuations
-		limit.MaxYieldTimeMs = maxYieldTimeMs
+		limit.MaxWaitTimeMs = maxWaitTimeMs
 	}
 	return limit, nil
 }

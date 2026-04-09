@@ -18,9 +18,9 @@ func TestSandboxToolDescriptionsExplainWorkspaceAndArtifacts(t *testing.T) {
 		t.Fatalf("exec_command description should mention /workspace/ and /tmp/output/: %s", execDesc)
 	}
 
-	stdinDesc := Must("write_stdin").LLMDescription
-	if !strings.Contains(stdinDesc, "session_ref") || !strings.Contains(stdinDesc, "/workspace") {
-		t.Fatalf("write_stdin description should mention session_ref and /workspace: %s", stdinDesc)
+	continueDesc := Must("continue_process").LLMDescription
+	if !strings.Contains(continueDesc, "process_ref") || !strings.Contains(continueDesc, "/workspace") {
+		t.Fatalf("continue_process description should mention process_ref and /workspace: %s", continueDesc)
 	}
 
 	browserDesc := Must("browser").LLMDescription
@@ -40,7 +40,7 @@ func TestSandboxToolDescriptionsExplainWorkspaceAndArtifacts(t *testing.T) {
 		t.Fatalf("browser description should forbid unsupported mode fields and invented artifacts: %s", browserDesc)
 	}
 
-	for _, desc := range []string{python, execDesc, stdinDesc} {
+	for _, desc := range []string{python, execDesc, continueDesc} {
 		if !strings.Contains(desc, "workspace:/relative/path") {
 			t.Fatalf("sandbox tool description should mention workspace protocol: %s", desc)
 		}

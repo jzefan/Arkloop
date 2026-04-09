@@ -266,6 +266,9 @@ export interface LocaleStrings {
   profileSave: string;
   profileSaved: string;
   profileEmail: string;
+  timezone: string;
+  timezoneUseDevice: string;
+  timezoneUseAccountDefault: string;
   emailUnverified: string;
   emailVerified: string;
   emailVerifySend: string;

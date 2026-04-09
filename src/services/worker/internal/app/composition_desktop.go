@@ -48,6 +48,7 @@ import (
 	"arkloop/services/worker/internal/tools/builtin"
 	"arkloop/services/worker/internal/tools/builtin/acptool"
 	"arkloop/services/worker/internal/tools/builtin/read"
+	sandboxbuiltin "arkloop/services/worker/internal/tools/builtin/sandbox"
 	conversationtool "arkloop/services/worker/internal/tools/conversation"
 	"arkloop/services/worker/internal/tools/localshell"
 	memorytool "arkloop/services/worker/internal/tools/memory"
@@ -119,6 +120,7 @@ type DesktopEngine struct {
 	groupSearchExec        tools.Executor
 	mcpPool                *mcp.Pool
 	mcpDiscoveryCache      *mcp.DiscoveryCache
+	shellExecutor          *runtime.DynamicShellExecutor
 }
 
 const defaultDesktopStageEventMs = 250
@@ -206,9 +208,11 @@ func ComposeDesktopEngine(ctx context.Context, db data.DesktopDB, bus eventbus.E
 		}
 	}
 
-	// Bind both tool names to DynamicShellExecutor (they share the same names)
+	// Bind shell tools to DynamicShellExecutor; local and VM backends share the same protocol.
 	executors[localshell.ExecCommandAgentSpec.Name] = shellExec
-	executors[localshell.WriteStdinAgentSpec.Name] = shellExec
+	executors[localshell.ContinueProcessAgentSpec.Name] = shellExec
+	executors[localshell.TerminateProcessAgentSpec.Name] = shellExec
+	executors[localshell.ResizeProcessAgentSpec.Name] = shellExec
 
 	var runtimeSnapshot *sharedtoolruntime.RuntimeSnapshot
 	if sandboxAddr != "" {
@@ -420,6 +424,7 @@ func ComposeDesktopEngine(ctx context.Context, db data.DesktopDB, bus eventbus.E
 		groupSearchExec:        groupSearchExec,
 		mcpPool:                mcpPool,
 		mcpDiscoveryCache:      mcpDiscoveryCache,
+		shellExecutor:          shellExec,
 	}, nil
 }
 
@@ -499,6 +504,9 @@ func (e *DesktopEngine) Execute(ctx context.Context, run data.Run, traceID strin
 		tracer = pipeline.NewBufTracer(run.ID, run.AccountID, data.NewRunPipelineEventsRepository(e.db))
 	}
 
+	runRuntime := *e.runtimeSnapshot
+	runRuntime.DesktopExecutionMode = strings.TrimSpace(desktop.GetExecutionMode())
+
 	rc := &pipeline.RunContext{
 		Run:                 run,
 		DB:                  e.db,
@@ -511,7 +519,7 @@ func (e *DesktopEngine) Execute(ctx context.Context, run data.Run, traceID strin
 		Tracer:              tracer,
 		Emitter:             emitter,
 		Router:              e.auxRouter,
-		Runtime:             e.runtimeSnapshot,
+		Runtime:             &runRuntime,
 
 		ExecutorBuilder:     e.executorRegistry,
 		ToolBudget:          map[string]any{},
@@ -655,7 +663,7 @@ func (e *DesktopEngine) Execute(ctx context.Context, run data.Run, traceID strin
 		pipeline.NewResultSummarizerMiddleware(nil, e.auxGateway, e.emitDebugEvents, 0, e.routingLoader),
 		desktopChannelDelivery(e.db),
 	)
-	terminal := desktopAgentLoop(e.db, e.bus, e.jobQueue, runsRepo, eventsRepo)
+	terminal := desktopAgentLoop(e.db, e.bus, e.jobQueue, runsRepo, eventsRepo, e.shellExecutor, e.runtimeSnapshot)
 	handler := pipeline.Build(middlewares, terminal)
 
 	return handler(ctx, rc)
@@ -1001,13 +1009,19 @@ func fetchLatestDesktopInput(ctx context.Context, db data.DesktopDB, runID uuid.
 	if db == nil || runID == uuid.Nil {
 		return "", 0, false
 	}
+	tx, err := db.BeginTx(ctx, pgx.TxOptions{AccessMode: pgx.ReadOnly})
+	if err != nil {
+		return "", 0, false
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck
+
 	var rawJSON []byte
 	var seq int64
-	err := db.QueryRow(
+	err = tx.QueryRow(
 		ctx,
 		`SELECT data_json, seq
-		 FROM run_events
-		 WHERE run_id = $1
+			 FROM run_events
+			 WHERE run_id = $1
 		   AND type = $2
 		   AND seq > $3
 		 ORDER BY seq ASC
@@ -1237,6 +1251,14 @@ func desktopChannelDelivery(db data.DesktopDB) pipeline.RunMiddleware {
 				return nil
 			}
 			rc.TelegramToolBoundaryFlush = streamFlush
+
+			if pipeline.ShouldShowTelegramProgress(rc) {
+				tracker := pipeline.NewTelegramProgressTracker(client, preloaded.Token, pipeline.ChannelDeliveryTarget{
+					ChannelType:  rc.ChannelContext.ChannelType,
+					Conversation: rc.ChannelContext.Conversation,
+				}, desktopTelegramReplyReference(rc))
+				rc.TelegramProgressTracker = tracker
+			}
 		}
 
 		var stopTyping context.CancelFunc
@@ -1247,6 +1269,9 @@ func desktopChannelDelivery(db data.DesktopDB) pipeline.RunMiddleware {
 		err := next(ctx, rc)
 		if rc != nil {
 			rc.TelegramToolBoundaryFlush = nil
+			if rc.TelegramProgressTracker != nil {
+				rc.TelegramProgressTracker.Finalize(ctx)
+			}
 		}
 		if stopTyping != nil {
 			stopTyping()
@@ -2199,6 +2224,16 @@ func normalizeDesktopRunReasoningMode(raw any) string {
 		return "disabled"
 	case "none":
 		return "none"
+	case "minimal":
+		return "minimal"
+	case "low":
+		return "low"
+	case "medium":
+		return "medium"
+	case "high":
+		return "high"
+	case "xhigh", "extra_high", "extra-high", "extra high":
+		return "xhigh"
 	default:
 		return ""
 	}
@@ -2219,6 +2254,8 @@ func desktopAgentLoop(
 	jobQueue queue.JobQueue,
 	runsRepo data.DesktopRunsRepository,
 	eventsRepo data.DesktopRunEventsRepository,
+	shellExec *runtime.DynamicShellExecutor,
+	runtimeSnapshot *sharedtoolruntime.RuntimeSnapshot,
 ) pipeline.RunHandler {
 	return func(ctx context.Context, rc *pipeline.RunContext) error {
 		selected := rc.SelectedRoute
@@ -2228,17 +2265,19 @@ func desktopAgentLoop(
 		}
 
 		w := &desktopEventWriter{
-			db:                    db,
-			bus:                   bus,
-			run:                   rc.Run,
-			traceID:               rc.TraceID,
-			model:                 selected.Route.Model,
-			runsRepo:              runsRepo,
-			eventsRepo:            eventsRepo,
-			projector:             projector,
-			usageRepo:             data.UsageRecordsRepository{},
-			responseDraftStore:    rc.ResponseDraftStore,
-			telegramBoundaryFlush: rc.TelegramToolBoundaryFlush,
+			db:                      db,
+			bus:                     bus,
+			run:                     rc.Run,
+			traceID:                 rc.TraceID,
+			model:                   selected.Route.Model,
+			runsRepo:                runsRepo,
+			eventsRepo:              eventsRepo,
+			projector:               projector,
+			usageRepo:               data.UsageRecordsRepository{},
+			responseDraftStore:      rc.ResponseDraftStore,
+			telegramBoundaryFlush:   rc.TelegramToolBoundaryFlush,
+			telegramProgressTracker: rc.TelegramProgressTracker,
+			heartbeatRun:            pipeline.IsHeartbeatRunContext(rc),
 		}
 		personaID := ""
 		if rc.PersonaDefinition != nil {
@@ -2280,6 +2319,7 @@ func desktopAgentLoop(
 		defer cancelExec()
 		stopCancelWatch := startDesktopRunCancelWatcher(execCtx, db, rc.Run.ID, cancelExec)
 		defer stopCancelWatch()
+		defer cleanupDesktopRunTools(rc, w)
 
 		execErr := exec.Execute(execCtx, rc, rc.Emitter, func(ev events.RunEvent) error {
 			return w.append(execCtx, rc.Run.ID, ev, "")
@@ -2306,6 +2346,41 @@ func desktopAgentLoop(
 		rc.RunToolCallCount = w.toolCallCount
 		rc.RunIterationCount = w.iterationCount
 		return nil
+	}
+}
+
+func cleanupDesktopRunTools(rc *pipeline.RunContext, writer *desktopEventWriter) {
+	if rc == nil || writer == nil {
+		return
+	}
+	read.CleanupRunFromExecutors(rc.ToolExecutors, rc.Run.ID.String())
+	if cleaner, ok := rc.ToolExecutors[localshell.ExecCommandAgentSpec.Name].(interface {
+		CleanupRun(context.Context, string, string) error
+	}); ok {
+		go func(runID string, terminalStatus string) {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			if err := cleaner.CleanupRun(ctx, runID, terminalStatus); err != nil {
+				slog.Warn("desktop shell cleanup failed", "run_id", runID, "error", err.Error())
+			}
+		}(rc.Run.ID.String(), writer.terminalStatus)
+	}
+	if cleaner, ok := rc.ToolExecutors[acptool.SpawnACPAgentSpec.Name].(interface {
+		CleanupRun(context.Context, string, string) error
+	}); ok {
+		go func(runID string, terminalStatus string) {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			if err := cleaner.CleanupRun(ctx, runID, terminalStatus); err != nil {
+				slog.Warn("desktop acp cleanup failed", "run_id", runID, "error", err.Error())
+			}
+		}(rc.Run.ID.String(), writer.terminalStatus)
+	}
+	if cleaner, ok := rc.ToolExecutors[read.AgentSpec.Name].(interface{ CleanupRun(string) }); ok {
+		cleaner.CleanupRun(rc.Run.ID.String())
+	}
+	if rc.Runtime != nil && rc.Runtime.SandboxBaseURL != "" {
+		go sandboxbuiltin.CleanupSession(rc.Runtime.SandboxBaseURL, rc.Runtime.SandboxAuthToken, rc.Run.ID.String(), rc.Run.AccountID.String())
 	}
 }
 
@@ -2342,6 +2417,7 @@ type desktopEventWriter struct {
 	usageRepo                data.UsageRecordsRepository
 	telegramBoundaryFlush    func(context.Context, string) error
 	telegramSentOutputCount  int
+	telegramProgressTracker  *pipeline.TelegramProgressTracker
 	terminalUserMessage      string
 	terminalStatus           string
 	visibleAssistantText     string
@@ -2350,7 +2426,9 @@ type desktopEventWriter struct {
 	pendingReplyOverride     string
 	draftVisibleContent      string
 	draftUseVisible          bool
+	heartbeatRun             bool
 	pendingToolCalls         []llm.ToolCall
+	pendingToolResults       []desktopIntermediateMessage
 	intermediateMessages     []desktopIntermediateMessage
 }
 
@@ -2359,6 +2437,12 @@ type desktopIntermediateMessage struct {
 	Content     string
 	ContentJSON json.RawMessage
 	ToolCallID  string
+}
+
+type pendingDesktopTelegramProgressCall struct {
+	CallID   string
+	ToolName string
+	ArgsJSON string
 }
 
 func (w *desktopEventWriter) telegramStreamRemainder() string {
@@ -2399,6 +2483,23 @@ func (w *desktopEventWriter) telegramUnsentOutputs() []string {
 	return out
 }
 
+func (w *desktopEventWriter) flushTelegramBoundaryAndProgress(
+	ctx context.Context,
+	flushChunk string,
+	progressCall *pendingDesktopTelegramProgressCall,
+) error {
+	if flushChunk != "" && w.telegramBoundaryFlush != nil {
+		if err := w.telegramBoundaryFlush(ctx, flushChunk); err != nil {
+			return err
+		}
+		w.telegramSentOutputCount = len(w.visibleAssistantTexts)
+	}
+	if progressCall != nil && w.telegramProgressTracker != nil {
+		w.telegramProgressTracker.OnToolCall(ctx, progressCall.CallID, progressCall.ToolName, progressCall.ArgsJSON)
+	}
+	return nil
+}
+
 func (w *desktopEventWriter) append(ctx context.Context, runID uuid.UUID, ev events.RunEvent, personaID string) error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
@@ -2413,7 +2514,7 @@ func (w *desktopEventWriter) append(ctx context.Context, runID uuid.UUID, ev eve
 		return err
 	}
 
-	if ev.Type == "run.route.selected" && personaID != "" {
+	if ev.Type == "run.route.selected" {
 		if err := w.runsRepo.UpdateRunMetadata(ctx, tx, runID, w.model, personaID); err != nil {
 			slog.Error("desktop_update_run_metadata",
 				"run_id", runID.String(),
@@ -2465,6 +2566,7 @@ func (w *desktopEventWriter) append(ctx context.Context, runID uuid.UUID, ev eve
 		w.assistantMessageFresh = true
 	}
 	flushChunk := ""
+	var pendingProgressCall *pendingDesktopTelegramProgressCall
 	if ev.Type == "llm.turn.completed" {
 		w.captureAssistantTurnOutput()
 		flushChunk = w.pendingTelegramFlushChunk()
@@ -2474,11 +2576,35 @@ func (w *desktopEventWriter) append(ctx context.Context, runID uuid.UUID, ev eve
 		w.accumUsage(ev.DataJSON)
 	}
 
+	if ev.Type == "run.segment.start" && w.telegramProgressTracker != nil {
+		segmentID, _ := ev.DataJSON["segment_id"].(string)
+		kind, _ := ev.DataJSON["kind"].(string)
+		display, _ := ev.DataJSON["display"].(map[string]any)
+		mode, _ := display["mode"].(string)
+		label, _ := display["label"].(string)
+		w.telegramProgressTracker.OnRunSegmentStart(ctx, strings.TrimSpace(segmentID), strings.TrimSpace(kind), strings.TrimSpace(mode), strings.TrimSpace(label))
+	}
+	if ev.Type == "run.segment.end" && w.telegramProgressTracker != nil {
+		segmentID, _ := ev.DataJSON["segment_id"].(string)
+		w.telegramProgressTracker.OnRunSegmentEnd(ctx, segmentID)
+	}
+
 	if ev.Type == "tool.call" {
 		w.captureChannelToolCallOutput(ev.DataJSON)
 		flushChunk = w.pendingTelegramFlushChunk()
 		w.toolCallCount++
 		w.collectToolCall(ev.DataJSON)
+		if w.telegramProgressTracker != nil {
+			callID, _ := ev.DataJSON["tool_call_id"].(string)
+			toolName, _ := ev.DataJSON["tool_name"].(string)
+			toolName = llm.CanonicalToolName(toolName)
+			argsRaw, _ := json.Marshal(ev.DataJSON["arguments"])
+			pendingProgressCall = &pendingDesktopTelegramProgressCall{
+				CallID:   callID,
+				ToolName: toolName,
+				ArgsJSON: string(argsRaw),
+			}
+		}
 	}
 	if ev.Type == "llm.request" {
 		w.flushPendingToolCalls()
@@ -2486,9 +2612,26 @@ func (w *desktopEventWriter) append(ctx context.Context, runID uuid.UUID, ev eve
 	}
 	if ev.Type == "tool.result" {
 		w.collectToolResult(ev.DataJSON)
+		if w.telegramProgressTracker != nil {
+			callID, _ := ev.DataJSON["tool_call_id"].(string)
+			toolName, _ := ev.DataJSON["tool_name"].(string)
+			toolName = llm.CanonicalToolName(toolName)
+			errorClass := ""
+			if ev.ErrorClass != nil {
+				errorClass = *ev.ErrorClass
+			}
+			w.telegramProgressTracker.OnToolResult(ctx, callID, toolName, errorClass)
+		}
 	}
 
 	if ev.Type == "message.delta" {
+		if w.telegramProgressTracker != nil {
+			role, _ := ev.DataJSON["role"].(string)
+			channel, _ := ev.DataJSON["channel"].(string)
+			if delta := desktopExtractDelta(ev.DataJSON); delta != "" {
+				w.telegramProgressTracker.OnMessageDelta(ctx, role, channel, delta)
+			}
+		}
 		if channel, _ := ev.DataJSON["channel"].(string); channel == "" {
 			if delta := desktopExtractDelta(ev.DataJSON); delta != "" {
 				w.assistantDeltas = append(w.assistantDeltas, delta)
@@ -2543,11 +2686,8 @@ func (w *desktopEventWriter) append(ctx context.Context, runID uuid.UUID, ev eve
 		return err
 	}
 	w.publishRunEvents(ctx)
-	if flushChunk != "" && w.telegramBoundaryFlush != nil {
-		if err := w.telegramBoundaryFlush(ctx, flushChunk); err != nil {
-			return err
-		}
-		w.telegramSentOutputCount = len(w.visibleAssistantTexts)
+	if err := w.flushTelegramBoundaryAndProgress(ctx, flushChunk, pendingProgressCall); err != nil {
+		return err
 	}
 	w.enqueueProjectedRuns(ctx, nextRunIDs)
 	return nil
@@ -2556,6 +2696,7 @@ func (w *desktopEventWriter) append(ctx context.Context, runID uuid.UUID, ev eve
 func (w *desktopEventWriter) collectToolCall(dataJSON map[string]any) {
 	callID, _ := dataJSON["tool_call_id"].(string)
 	toolName, _ := dataJSON["tool_name"].(string)
+	toolName = llm.CanonicalToolName(toolName)
 	if callID == "" || toolName == "" {
 		return
 	}
@@ -2569,13 +2710,45 @@ func (w *desktopEventWriter) collectToolCall(dataJSON map[string]any) {
 
 func (w *desktopEventWriter) flushPendingToolCalls() {
 	if len(w.pendingToolCalls) == 0 {
+		w.pendingToolResults = w.pendingToolResults[:0]
 		return
 	}
+
+	resolved := make(map[string]struct{}, len(w.pendingToolResults))
+	for _, result := range w.pendingToolResults {
+		resolved[result.ToolCallID] = struct{}{}
+	}
+	filteredCalls := make([]llm.ToolCall, 0, len(w.pendingToolCalls))
+	keptCallIDs := make(map[string]struct{}, len(w.pendingToolCalls))
+	for _, call := range w.pendingToolCalls {
+		if _, ok := resolved[call.ToolCallID]; ok {
+			if w.heartbeatRun && pipeline.IsHeartbeatDecisionToolName(call.ToolName) {
+				continue
+			}
+			filteredCalls = append(filteredCalls, call)
+			keptCallIDs[call.ToolCallID] = struct{}{}
+		}
+	}
+
+	w.pendingToolCalls = w.pendingToolCalls[:0]
+	results := w.pendingToolResults
+	w.pendingToolResults = w.pendingToolResults[:0]
+	filteredResults := make([]desktopIntermediateMessage, 0, len(results))
+	for _, result := range results {
+		if _, ok := keptCallIDs[result.ToolCallID]; ok {
+			filteredResults = append(filteredResults, result)
+		}
+	}
 	msg := w.assistantMessage
+	hasVisibleParts := msg != nil && len(llm.VisibleContentParts(msg.Content)) > 0
+	if len(filteredCalls) == 0 && !hasVisibleParts {
+		return
+	}
+
 	if msg == nil {
 		msg = &llm.Message{Role: "assistant"}
 	}
-	contentJSON, err := llm.BuildIntermediateAssistantContentJSON(*msg, w.pendingToolCalls)
+	contentJSON, err := llm.BuildIntermediateAssistantContentJSON(*msg, filteredCalls)
 	if err != nil {
 		return
 	}
@@ -2584,14 +2757,15 @@ func (w *desktopEventWriter) flushPendingToolCalls() {
 		Content:     llm.VisibleMessageText(*msg),
 		ContentJSON: contentJSON,
 	})
-	w.pendingToolCalls = w.pendingToolCalls[:0]
+	w.intermediateMessages = append(w.intermediateMessages, filteredResults...)
 }
 
 func (w *desktopEventWriter) collectToolResult(dataJSON map[string]any) {
-	w.flushPendingToolCalls()
+	toolName, _ := dataJSON["tool_name"].(string)
+	toolName = llm.CanonicalToolName(toolName)
 	envelope := map[string]any{
 		"tool_call_id": dataJSON["tool_call_id"],
-		"tool_name":    dataJSON["tool_name"],
+		"tool_name":    toolName,
 	}
 	if v, ok := dataJSON["result"]; ok {
 		envelope["result"] = v
@@ -2604,7 +2778,7 @@ func (w *desktopEventWriter) collectToolResult(dataJSON map[string]any) {
 		return
 	}
 	callID, _ := dataJSON["tool_call_id"].(string)
-	w.intermediateMessages = append(w.intermediateMessages, desktopIntermediateMessage{
+	w.pendingToolResults = append(w.pendingToolResults, desktopIntermediateMessage{
 		Role:       "tool",
 		Content:    string(raw),
 		ToolCallID: callID,
@@ -3117,7 +3291,7 @@ func startDesktopRunCancelWatcher(
 }
 
 func readDesktopCancelEvent(ctx context.Context, db data.DesktopDB, runID uuid.UUID) (string, error) {
-	tx, err := db.BeginTx(ctx, pgx.TxOptions{})
+	tx, err := db.BeginTx(ctx, pgx.TxOptions{AccessMode: pgx.ReadOnly})
 	if err != nil {
 		return "", err
 	}
@@ -3382,7 +3556,7 @@ func loadDesktopRoutingConfig(ctx context.Context, db data.DesktopDB) (routing.P
 		return routing.ProviderRoutingConfig{}, fmt.Errorf("load encryption key: %w", err)
 	}
 
-	tx, err := db.BeginTx(ctx, pgx.TxOptions{})
+	tx, err := db.BeginTx(ctx, pgx.TxOptions{AccessMode: pgx.ReadOnly})
 	if err != nil {
 		return routing.ProviderRoutingConfig{}, fmt.Errorf("begin tx: %w", err)
 	}

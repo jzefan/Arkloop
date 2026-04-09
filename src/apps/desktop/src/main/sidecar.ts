@@ -62,6 +62,7 @@ const DEFAULT_GITHUB_REPO = 'qqqqqf-q/Arkloop'
 const DEFAULT_DOWNLOAD_BASE = `https://github.com/${DEFAULT_GITHUB_REPO}/releases/download`
 const GITHUB_API_LATEST_RELEASE = `https://api.github.com/repos/${DEFAULT_GITHUB_REPO}/releases/latest`
 const desktopAccessToken = `arkloop-desktop-${randomBytes(24).toString('hex')}`
+const DESKTOP_TOKEN_FILE = path.join(os.homedir(), '.arkloop', 'desktop.token')
 
 let proc: ChildProcess | null = null
 let restartCount = 0
@@ -750,6 +751,14 @@ function desktopTitleDebugFlag(): string {
   return !app.isPackaged ? '1' : '0'
 }
 
+function desktopOsUsername(): string {
+  try {
+    return os.userInfo().username.trim()
+  } catch {
+    return os.hostname().trim()
+  }
+}
+
 type BridgeModuleRow = { id: string; status: string }
 
 async function waitForBridgeReady(): Promise<boolean> {
@@ -1172,6 +1181,7 @@ async function launchOnPort(port: number, portMode: LocalPortMode): Promise<Side
       ...process.env,
       ARKLOOP_API_GO_ADDR: `127.0.0.1:${port}`,
       ARKLOOP_DESKTOP_TOKEN: desktopAccessToken,
+      ARKLOOP_DESKTOP_OS_USERNAME: desktopOsUsername(),
       ARKLOOP_OUTBOUND_TRUST_FAKE_IP: process.env.ARKLOOP_OUTBOUND_TRUST_FAKE_IP ?? 'true',
       ...buildRuntimeResourceEnv(projectDir),
       ...buildWorkspaceEnv(projectDir),
@@ -1264,6 +1274,13 @@ async function launchOnPort(port: number, portMode: LocalPortMode): Promise<Side
 export async function startSidecar(preferredPort: number, portMode: LocalPortMode = 'auto'): Promise<SidecarRuntime> {
   if (proc) return getSidecarRuntime()
 
+  try {
+    fs.mkdirSync(path.dirname(DESKTOP_TOKEN_FILE), { recursive: true })
+    fs.writeFileSync(DESKTOP_TOKEN_FILE, desktopAccessToken, { mode: 0o600 })
+  } catch {
+    // best-effort
+  }
+
   let nextPreferredPort = preferredPort
 
   for (let attempt = 0; attempt < MAX_AUTO_PORT_RETRIES; attempt++) {
@@ -1296,6 +1313,7 @@ export function stopSidecar(): Promise<void> {
   return new Promise((resolve) => {
     stopping = true
     restartCount = 0
+    removeTokenFile()
 
     if (!proc) {
       setRuntime({ status: 'stopped', lastError: undefined })
@@ -1322,4 +1340,8 @@ export function stopSidecar(): Promise<void> {
 
     try { child.kill('SIGTERM') } catch {}
   })
+}
+
+function removeTokenFile(): void {
+  try { fs.unlinkSync(DESKTOP_TOKEN_FILE) } catch {}
 }

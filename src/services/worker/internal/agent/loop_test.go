@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"arkloop/services/shared/messagecontent"
 	"arkloop/services/worker/internal/events"
 	"arkloop/services/worker/internal/llm"
 	"arkloop/services/worker/internal/pipeline"
@@ -17,8 +18,8 @@ import (
 	"arkloop/services/worker/internal/security"
 	"arkloop/services/worker/internal/tools"
 	"arkloop/services/worker/internal/tools/builtin"
-	heartbeattool "arkloop/services/worker/internal/tools/builtin/heartbeat_decision"
 	channeltelegram "arkloop/services/worker/internal/tools/builtin/channel_telegram"
+	heartbeattool "arkloop/services/worker/internal/tools/builtin/heartbeat_decision"
 	"github.com/google/uuid"
 )
 
@@ -145,6 +146,43 @@ func TestAgentLoopExecutesToolCalls(t *testing.T) {
 	}
 	if !seenCompleted {
 		t.Fatalf("expected run.completed")
+	}
+}
+
+func TestToolResultFromExecutionPreservesAttachmentKey(t *testing.T) {
+	toolCallID := "call_123"
+	toolName := "read"
+	expectedKey := "attachments/a/b/image.jpg"
+	result := tools.ExecutionResult{
+		ResultJSON: map[string]any{"ok": true},
+		ContentParts: []tools.ContentAttachment{
+			{
+				MimeType:      "image/jpeg",
+				Data:          []byte{0x1, 0x2, 0x3},
+				AttachmentKey: expectedKey,
+			},
+		},
+	}
+
+	got := toolResultFromExecution(toolCallID, toolName, result)
+	if got.ToolCallID != toolCallID {
+		t.Fatalf("unexpected tool call id: %q", got.ToolCallID)
+	}
+	if got.ToolName != toolName {
+		t.Fatalf("unexpected tool name: %q", got.ToolName)
+	}
+	if len(got.ContentParts) != 1 {
+		t.Fatalf("expected one content part, got %d", len(got.ContentParts))
+	}
+	part := got.ContentParts[0]
+	if part.Attachment == nil {
+		t.Fatal("expected attachment to be present")
+	}
+	if part.Attachment.Key != expectedKey {
+		t.Fatalf("unexpected attachment key: %q", part.Attachment.Key)
+	}
+	if len(part.Data) != 3 {
+		t.Fatalf("unexpected content part bytes length: %d", len(part.Data))
 	}
 }
 
@@ -362,7 +400,79 @@ func TestAgentLoopTelegramReplyFailureContinues(t *testing.T) {
 	assertHasEvent(t, got, "run.completed")
 }
 
-func TestAgentLoopTelegramSendFileSuccessStopsWithoutReplay(t *testing.T) {
+func TestAgentLoopTelegramReactAndReplyKeepBothToolResultsInHistory(t *testing.T) {
+	registry := tools.NewRegistry()
+	if err := registry.Register(channeltelegram.ReactAgentSpec); err != nil {
+		t.Fatalf("register telegram_react failed: %v", err)
+	}
+	if err := registry.Register(channeltelegram.ReplyAgentSpec); err != nil {
+		t.Fatalf("register telegram_reply failed: %v", err)
+	}
+
+	allowlist := tools.AllowlistFromNames([]string{channeltelegram.ToolReact, channeltelegram.ToolReply})
+	policy := tools.NewPolicyEnforcer(registry, allowlist)
+	executor := tools.NewDispatchingExecutor(registry, policy)
+	if err := executor.Bind(channeltelegram.ToolReact, stubToolExecutor{
+		result: tools.ExecutionResult{
+			ResultJSON: map[string]any{"ok": true, "message_id": "7625", "emoji": "❤️"},
+		},
+	}); err != nil {
+		t.Fatalf("bind telegram_react failed: %v", err)
+	}
+	if err := executor.Bind(channeltelegram.ToolReply, stubToolExecutor{
+		result: tools.ExecutionResult{
+			ResultJSON: map[string]any{"ok": true, "reply_to_set": true, "reply_to_message_id": "7625"},
+		},
+	}); err != nil {
+		t.Fatalf("bind telegram_reply failed: %v", err)
+	}
+
+	gateway := &telegramReactReplyCaptureGateway{}
+	loop := NewLoop(gateway, executor)
+	err := loop.Run(
+		context.Background(),
+		RunContext{
+			RunID:               uuid.New(),
+			TraceID:             "trace",
+			InputJSON:           map[string]any{},
+			ReasoningIterations: 3,
+			ToolExecutor:        executor,
+			CancelSignal:        func() bool { return false },
+		},
+		llm.Request{
+			Model:    "stub",
+			Messages: []llm.Message{{Role: "user", Content: []llm.TextPart{{Text: "hi"}}}},
+		},
+		events.NewEmitter("trace"),
+		func(events.RunEvent) error { return nil },
+	)
+	if err != nil {
+		t.Fatalf("loop.Run failed: %v", err)
+	}
+	if len(gateway.requests) < 2 {
+		t.Fatalf("expected second llm request, got %d", len(gateway.requests))
+	}
+
+	second := gateway.requests[1]
+	if len(second.Messages) != 4 {
+		t.Fatalf("expected user + assistant + 2 tool results in second request, got %#v", second.Messages)
+	}
+	assistant := second.Messages[1]
+	if len(assistant.ToolCalls) != 2 {
+		t.Fatalf("expected both tool calls preserved, got %#v", assistant.ToolCalls)
+	}
+
+	reactResult := second.Messages[2]
+	if reactResult.Role != "tool" || !strings.Contains(reactResult.Content[0].Text, `"tool_call_id":"tg_react_1"`) {
+		t.Fatalf("expected telegram_react tool result in history, got %#v", reactResult)
+	}
+	replyResult := second.Messages[3]
+	if replyResult.Role != "tool" || !strings.Contains(replyResult.Content[0].Text, `"tool_call_id":"tg_reply_1"`) {
+		t.Fatalf("expected telegram_reply tool result in history, got %#v", replyResult)
+	}
+}
+
+func TestAgentLoopTelegramSendFileSuccessStopsAfterEmittingToolResult(t *testing.T) {
 	registry := tools.NewRegistry()
 	if err := registry.Register(channeltelegram.SendFileAgentSpec); err != nil {
 		t.Fatalf("register telegram_send_file failed: %v", err)
@@ -408,11 +518,7 @@ func TestAgentLoopTelegramSendFileSuccessStopsWithoutReplay(t *testing.T) {
 		t.Fatalf("expected telegram_send_file success to stop after first llm call, got %d calls", gateway.calls)
 	}
 	assertHasEvent(t, got, "run.completed")
-	for _, ev := range got {
-		if ev.Type == "tool.result" {
-			t.Fatalf("telegram_send_file success should not emit tool.result: %#v", got)
-		}
-	}
+	assertHasEvent(t, got, "tool.result")
 }
 
 func TestAgentLoopTelegramSendFileFailureKeepsToolResultReplay(t *testing.T) {
@@ -1037,6 +1143,238 @@ func TestAgentLoopRetryableFailureEndsAsInterrupted(t *testing.T) {
 	}
 }
 
+func TestAgentLoopStreamEndedAfterToolProgressRetries(t *testing.T) {
+	loop := NewLoop(&partialOutputThenEOFGateway{}, nil)
+	emitter := events.NewEmitter("trace")
+
+	var got []events.RunEvent
+	err := loop.Run(
+		context.Background(),
+		RunContext{
+			RunID:               uuid.New(),
+			TraceID:             "trace",
+			InputJSON:           map[string]any{},
+			ReasoningIterations: 3,
+			LlmRetryMaxAttempts: 2,
+			LlmRetryBaseDelayMs: 1,
+			CancelSignal:        func() bool { return false },
+		},
+		llm.Request{Model: "stub"},
+		emitter,
+		func(ev events.RunEvent) error {
+			got = append(got, ev)
+			return nil
+		},
+	)
+	if err != nil {
+		t.Fatalf("loop.Run failed: %v", err)
+	}
+
+	retryCount := 0
+	interruptedCount := 0
+	for _, ev := range got {
+		if ev.Type == "run.llm.retry" {
+			retryCount++
+		}
+		if ev.Type == "run.interrupted" {
+			interruptedCount++
+			if ev.ErrorClass == nil || *ev.ErrorClass != llm.ErrorClassProviderRetryable {
+				t.Fatalf("unexpected interrupted error class: %#v", ev.ErrorClass)
+			}
+		}
+	}
+	if retryCount != 1 {
+		t.Fatalf("expected 1 run.llm.retry, got %d", retryCount)
+	}
+	if interruptedCount != 1 {
+		t.Fatalf("expected 1 run.interrupted, got %d", interruptedCount)
+	}
+}
+
+func TestAgentLoopPreflightOversizeRewritesBeforeFirstProviderRequest(t *testing.T) {
+	primary := &oversizeSuccessGateway{phase: llm.OversizePhasePreflight}
+	loop := NewLoop(primary, nil)
+	emitter := events.NewEmitter("trace")
+
+	var got []events.RunEvent
+	_, err := loop.runTurnWithRetry(
+		context.Background(),
+		RunContext{
+			RunID:               uuid.New(),
+			TraceID:             "trace",
+			InputJSON:           map[string]any{},
+			ReasoningIterations: 1,
+			CancelSignal:        func() bool { return false },
+			PipelineRC: &pipeline.RunContext{
+				ContextCompact: pipeline.ContextCompactSettings{
+					PersistEnabled:              false,
+					MicrocompactKeepRecentTools: 1,
+				},
+			},
+		},
+		llm.Request{
+			Model: "stub",
+			Messages: []llm.Message{
+				{Role: "tool", Content: []llm.TextPart{{Text: `{"tool_call_id":"call_old","tool_name":"read","result":"` + strings.Repeat("x", llm.RequestPayloadLimitBytes+2048) + `"}`}}},
+				{Role: "tool", Content: []llm.TextPart{{Text: `{"tool_call_id":"call_new","tool_name":"read","result":{"ok":true}}`}}},
+				{Role: "user", Content: []llm.TextPart{{Text: "tail"}}},
+			},
+		},
+		emitter,
+		func(ev events.RunEvent) error {
+			got = append(got, ev)
+			return nil
+		},
+		1,
+	)
+	if err != nil {
+		t.Fatalf("runTurnWithRetry failed: %v", err)
+	}
+	if primary.calls != 1 {
+		t.Fatalf("expected 1 provider call after preflight rewrite, got %d", primary.calls)
+	}
+	if !hasEventType(got, "run.context_compact") {
+		t.Fatalf("expected rewrite event, got %#v", got)
+	}
+	if primary.requests[0].Messages[0].Role != "tool" || !strings.Contains(joinTestMessageText(primary.requests[0].Messages[0]), `"cleared":true`) {
+		t.Fatalf("expected first tool message microcompacted, got %#v", primary.requests[0].Messages[0])
+	}
+}
+
+func TestAgentLoopProvider413RecoversOnceAndRewritesHistory(t *testing.T) {
+	primary := &oversizeThenSuccessGateway{phase: llm.OversizePhaseProvider}
+	compact := &compactSummaryGateway{}
+	loop := NewLoop(primary, nil)
+	emitter := events.NewEmitter("trace")
+
+	var got []events.RunEvent
+	err := loop.Run(
+		context.Background(),
+		RunContext{
+			RunID:               uuid.New(),
+			TraceID:             "trace",
+			InputJSON:           map[string]any{},
+			ReasoningIterations: 1,
+			CancelSignal:        func() bool { return false },
+			PipelineRC:          newCompactPipelineRC(compact, 1, 1),
+		},
+		llm.Request{
+			Model: "stub",
+			Messages: []llm.Message{
+				{
+					Role: "user",
+					Content: []llm.ContentPart{{
+						Type: messagecontent.PartTypeImage,
+						Data: []byte("old-image"),
+						Attachment: &messagecontent.AttachmentRef{
+							Key:      "attachments/old.png",
+							MimeType: "image/png",
+						},
+					}},
+				},
+				{Role: "tool", Content: []llm.TextPart{{Text: `{"tool_call_id":"call_old","tool_name":"read","result":{"old":true}}`}}},
+				{Role: "tool", Content: []llm.TextPart{{Text: `{"tool_call_id":"call_new","tool_name":"read","result":{"new":true}}`}}},
+				{
+					Role: "user",
+					Content: []llm.ContentPart{{
+						Type: messagecontent.PartTypeImage,
+						Data: []byte("latest-image"),
+						Attachment: &messagecontent.AttachmentRef{
+							Key:      "attachments/latest.png",
+							MimeType: "image/png",
+						},
+					}},
+				},
+			},
+		},
+		emitter,
+		func(ev events.RunEvent) error {
+			got = append(got, ev)
+			return nil
+		},
+	)
+	if err != nil {
+		t.Fatalf("loop.Run failed: %v", err)
+	}
+	if primary.calls != 2 {
+		t.Fatalf("expected 2 provider calls, got %d", primary.calls)
+	}
+	if compact.calls != 1 {
+		t.Fatalf("expected compact to run once, got %d", compact.calls)
+	}
+	if !strings.Contains(compact.lastConversation(), `[image attachment_key="attachments/old.png"]`) {
+		t.Fatalf("expected old image placeholder in compact request, got %q", compact.lastConversation())
+	}
+	if !strings.Contains(compact.lastConversation(), `"cleared":true`) {
+		t.Fatalf("expected microcompacted tool result in compact request, got %q", compact.lastConversation())
+	}
+	lastRequest := primary.requests[len(primary.requests)-1]
+	lastMessage := lastRequest.Messages[len(lastRequest.Messages)-1]
+	if lastMessage.Content[0].Kind() != messagecontent.PartTypeImage {
+		t.Fatalf("expected latest user image to survive rewrite, got %#v", lastMessage.Content[0])
+	}
+	if countEventType(got, "run.context_compact") != 1 {
+		t.Fatalf("expected exactly one rewrite event, got %#v", got)
+	}
+	if got[len(got)-1].Type != "run.completed" {
+		t.Fatalf("expected final run.completed, got %s", got[len(got)-1].Type)
+	}
+}
+
+func TestAgentLoopProvider413StopsAfterSingleRecovery(t *testing.T) {
+	primary := &alwaysOversizeGateway{phase: llm.OversizePhaseProvider}
+	compact := &compactSummaryGateway{}
+	loop := NewLoop(primary, nil)
+	emitter := events.NewEmitter("trace")
+
+	var got []events.RunEvent
+	err := loop.Run(
+		context.Background(),
+		RunContext{
+			RunID:               uuid.New(),
+			TraceID:             "trace",
+			InputJSON:           map[string]any{},
+			ReasoningIterations: 1,
+			CancelSignal:        func() bool { return false },
+			PipelineRC:          newCompactPipelineRC(compact, 1, 1),
+		},
+		llm.Request{
+			Model: "stub",
+			Messages: []llm.Message{
+				{
+					Role: "user",
+					Content: []llm.ContentPart{{
+						Type: messagecontent.PartTypeImage,
+						Data: []byte("old-image"),
+						Attachment: &messagecontent.AttachmentRef{
+							Key:      "attachments/old.png",
+							MimeType: "image/png",
+						},
+					}},
+				},
+				{Role: "user", Content: []llm.TextPart{{Text: "tail"}}},
+			},
+		},
+		emitter,
+		func(ev events.RunEvent) error {
+			got = append(got, ev)
+			return nil
+		},
+	)
+	if err != nil {
+		t.Fatalf("loop.Run failed: %v", err)
+	}
+	if primary.calls != 2 {
+		t.Fatalf("expected exactly 2 provider calls, got %d", primary.calls)
+	}
+	if countEventType(got, "run.context_compact") != 1 {
+		t.Fatalf("expected one rewrite event, got %#v", got)
+	}
+	if got[len(got)-1].Type != "run.failed" {
+		t.Fatalf("expected final run.failed, got %s", got[len(got)-1].Type)
+	}
+}
+
 func TestRetryBackoffMsCapsAt60Seconds(t *testing.T) {
 	got := []int{
 		retryBackoffMs(1000, 1),
@@ -1182,8 +1520,8 @@ func TestAgentLoopDoesNotDedupErrorToolResultMessageInjection(t *testing.T) {
 func TestAgentLoopPureContinuationDoesNotConsumeReasoningBudget(t *testing.T) {
 	loop := NewLoop(&scriptedTurnsGateway{turns: [][]llm.StreamEvent{
 		{llm.ToolCall{ToolCallID: "call_1", ToolName: "exec_command", ArgumentsJSON: map[string]any{"command": "sleep 1"}}, llm.StreamRunCompleted{}},
-		{llm.ToolCall{ToolCallID: "call_2", ToolName: "write_stdin", ArgumentsJSON: map[string]any{"session_ref": "sess-1"}}, llm.StreamRunCompleted{}},
-		{llm.ToolCall{ToolCallID: "call_3", ToolName: "write_stdin", ArgumentsJSON: map[string]any{"session_ref": "sess-1"}}, llm.StreamRunCompleted{}},
+		{llm.ToolCall{ToolCallID: "call_2", ToolName: "continue_process", ArgumentsJSON: map[string]any{"process_ref": "proc-1", "cursor": "0"}}, llm.StreamRunCompleted{}},
+		{llm.ToolCall{ToolCallID: "call_3", ToolName: "continue_process", ArgumentsJSON: map[string]any{"process_ref": "proc-1", "cursor": "1"}}, llm.StreamRunCompleted{}},
 		{llm.StreamMessageDelta{ContentDelta: "done", Role: "assistant"}, llm.StreamRunCompleted{}},
 	}}, buildContinuationDispatcher(t, []bool{true, false}))
 	emitter := events.NewEmitter("trace")
@@ -1254,8 +1592,8 @@ func TestAgentLoopContinuationBudgetExceededReturnsToolResultError(t *testing.T)
 	dispatcher := buildContinuationDispatcher(t, []bool{true})
 	loop := NewLoop(&scriptedTurnsGateway{turns: [][]llm.StreamEvent{
 		{llm.ToolCall{ToolCallID: "call_1", ToolName: "exec_command", ArgumentsJSON: map[string]any{"command": "sleep 1"}}, llm.StreamRunCompleted{}},
-		{llm.ToolCall{ToolCallID: "call_2", ToolName: "write_stdin", ArgumentsJSON: map[string]any{"session_ref": "sess-1"}}, llm.StreamRunCompleted{}},
-		{llm.ToolCall{ToolCallID: "call_3", ToolName: "write_stdin", ArgumentsJSON: map[string]any{"session_ref": "sess-1"}}, llm.StreamRunCompleted{}},
+		{llm.ToolCall{ToolCallID: "call_2", ToolName: "continue_process", ArgumentsJSON: map[string]any{"process_ref": "proc-1", "cursor": "0"}}, llm.StreamRunCompleted{}},
+		{llm.ToolCall{ToolCallID: "call_3", ToolName: "continue_process", ArgumentsJSON: map[string]any{"process_ref": "proc-1", "cursor": "1"}}, llm.StreamRunCompleted{}},
 		{llm.StreamMessageDelta{ContentDelta: "done", Role: "assistant"}, llm.StreamRunCompleted{}},
 	}}, dispatcher)
 	emitter := events.NewEmitter("trace")
@@ -1287,10 +1625,10 @@ func TestAgentLoopMixedTurnConsumesContinuationBudget(t *testing.T) {
 		{llm.ToolCall{ToolCallID: "call_1", ToolName: "exec_command", ArgumentsJSON: map[string]any{"command": "sleep 1"}}, llm.StreamRunCompleted{}},
 		{
 			llm.ToolCall{ToolCallID: "call_2", ToolName: "echo", ArgumentsJSON: map[string]any{"text": "hi"}},
-			llm.ToolCall{ToolCallID: "call_3", ToolName: "write_stdin", ArgumentsJSON: map[string]any{"session_ref": "sess-1"}},
+			llm.ToolCall{ToolCallID: "call_3", ToolName: "continue_process", ArgumentsJSON: map[string]any{"process_ref": "proc-1", "cursor": "0"}},
 			llm.StreamRunCompleted{},
 		},
-		{llm.ToolCall{ToolCallID: "call_4", ToolName: "write_stdin", ArgumentsJSON: map[string]any{"session_ref": "sess-1"}}, llm.StreamRunCompleted{}},
+		{llm.ToolCall{ToolCallID: "call_4", ToolName: "continue_process", ArgumentsJSON: map[string]any{"process_ref": "proc-1", "cursor": "1"}}, llm.StreamRunCompleted{}},
 		{llm.StreamMessageDelta{ContentDelta: "done", Role: "assistant"}, llm.StreamRunCompleted{}},
 	}}, dispatcher)
 	emitter := events.NewEmitter("trace")
@@ -1319,7 +1657,7 @@ func TestAgentLoopIterHookOnlyRunsOnReasoningTurns(t *testing.T) {
 	dispatcher := buildContinuationDispatcher(t, []bool{false})
 	loop := NewLoop(&scriptedTurnsGateway{turns: [][]llm.StreamEvent{
 		{llm.ToolCall{ToolCallID: "call_1", ToolName: "exec_command", ArgumentsJSON: map[string]any{"command": "sleep 1"}}, llm.StreamRunCompleted{}},
-		{llm.ToolCall{ToolCallID: "call_2", ToolName: "write_stdin", ArgumentsJSON: map[string]any{"session_ref": "sess-1"}}, llm.StreamRunCompleted{}},
+		{llm.ToolCall{ToolCallID: "call_2", ToolName: "continue_process", ArgumentsJSON: map[string]any{"process_ref": "proc-1", "cursor": "0"}}, llm.StreamRunCompleted{}},
 		{llm.ToolCall{ToolCallID: "call_3", ToolName: "echo", ArgumentsJSON: map[string]any{"text": "hi"}}, llm.StreamRunCompleted{}},
 		{llm.StreamMessageDelta{ContentDelta: "done", Role: "assistant"}, llm.StreamRunCompleted{}},
 	}}, dispatcher)
@@ -1623,14 +1961,14 @@ func buildEchoDispatcher(t *testing.T) *tools.DispatchingExecutor {
 
 func TestAgentLoopContinuationLimitExceededReturnsToolResultError(t *testing.T) {
 	limits := tools.DefaultPerToolSoftLimits()
-	writeLimit := limits["write_stdin"]
-	writeLimit.MaxContinuations = intPtr(1)
-	limits["write_stdin"] = writeLimit
+	continueLimit := limits["continue_process"]
+	continueLimit.MaxContinuations = intPtr(1)
+	limits["continue_process"] = continueLimit
 	dispatcher := buildContinuationDispatcher(t, []bool{true})
 	loop := NewLoop(&scriptedTurnsGateway{turns: [][]llm.StreamEvent{
 		{llm.ToolCall{ToolCallID: "call_1", ToolName: "exec_command", ArgumentsJSON: map[string]any{"command": "sleep 1"}}, llm.StreamRunCompleted{}},
-		{llm.ToolCall{ToolCallID: "call_2", ToolName: "write_stdin", ArgumentsJSON: map[string]any{"session_ref": "sess-1"}}, llm.StreamRunCompleted{}},
-		{llm.ToolCall{ToolCallID: "call_3", ToolName: "write_stdin", ArgumentsJSON: map[string]any{"session_ref": "sess-1"}}, llm.StreamRunCompleted{}},
+		{llm.ToolCall{ToolCallID: "call_2", ToolName: "continue_process", ArgumentsJSON: map[string]any{"process_ref": "proc-1", "cursor": "0"}}, llm.StreamRunCompleted{}},
+		{llm.ToolCall{ToolCallID: "call_3", ToolName: "continue_process", ArgumentsJSON: map[string]any{"process_ref": "proc-1", "cursor": "1"}}, llm.StreamRunCompleted{}},
 		{llm.StreamMessageDelta{ContentDelta: "done", Role: "assistant"}, llm.StreamRunCompleted{}},
 	}}, dispatcher)
 	emitter := events.NewEmitter("trace")
@@ -1675,6 +2013,11 @@ type singleTelegramReplyGateway struct {
 
 type singleTelegramSendFileGateway struct {
 	calls int
+}
+
+type telegramReactReplyCaptureGateway struct {
+	requests []llm.Request
+	calls    int
 }
 
 type stubToolExecutor struct {
@@ -1811,6 +2154,33 @@ func (g *singleTelegramSendFileGateway) Stream(ctx context.Context, request llm.
 	return errRetryGatewayCalled
 }
 
+func (g *telegramReactReplyCaptureGateway) Stream(ctx context.Context, request llm.Request, yield func(llm.StreamEvent) error) error {
+	_ = ctx
+	g.requests = append(g.requests, request)
+	g.calls++
+	if g.calls == 1 {
+		if err := yield(llm.ToolCall{
+			ToolCallID:    "tg_react_1",
+			ToolName:      channeltelegram.ToolReact,
+			ArgumentsJSON: map[string]any{"emoji": "❤️", "message_id": "7625"},
+		}); err != nil {
+			return err
+		}
+		if err := yield(llm.ToolCall{
+			ToolCallID:    "tg_reply_1",
+			ToolName:      channeltelegram.ToolReply,
+			ArgumentsJSON: map[string]any{"reply_to_message_id": "7625"},
+		}); err != nil {
+			return err
+		}
+		return yield(llm.StreamRunCompleted{})
+	}
+	if err := yield(llm.StreamMessageDelta{ContentDelta: "done", Role: "assistant"}); err != nil {
+		return err
+	}
+	return yield(llm.StreamRunCompleted{})
+}
+
 type multiToolCallGateway struct {
 	calls int
 }
@@ -1847,7 +2217,34 @@ type usageScriptedGateway struct {
 	calls int
 }
 
+type oversizeSuccessGateway struct {
+	calls    int
+	phase    string
+	requests []llm.Request
+}
+
+type oversizeThenSuccessGateway struct {
+	calls    int
+	phase    string
+	requests []llm.Request
+}
+
+type alwaysOversizeGateway struct {
+	calls    int
+	phase    string
+	requests []llm.Request
+}
+
+type compactSummaryGateway struct {
+	calls    int
+	requests []llm.Request
+}
+
 type retryableFailureGateway struct {
+	calls int
+}
+
+type partialOutputThenEOFGateway struct {
 	calls int
 }
 
@@ -1861,6 +2258,75 @@ func (g *retryableFailureGateway) Stream(ctx context.Context, request llm.Reques
 			Message:    "provider overloaded",
 		},
 	})
+}
+
+func (g *oversizeSuccessGateway) Stream(ctx context.Context, request llm.Request, yield func(llm.StreamEvent) error) error {
+	_ = ctx
+	g.calls++
+	g.requests = append(g.requests, request)
+	if err := yield(llm.StreamMessageDelta{ContentDelta: "done", Role: "assistant"}); err != nil {
+		return err
+	}
+	return yield(llm.StreamRunCompleted{})
+}
+
+func (g *oversizeThenSuccessGateway) Stream(ctx context.Context, request llm.Request, yield func(llm.StreamEvent) error) error {
+	_ = ctx
+	g.calls++
+	g.requests = append(g.requests, request)
+	if g.calls == 1 {
+		return yield(llm.StreamRunFailed{
+			Error: llm.GatewayError{
+				ErrorClass: llm.ErrorClassProviderNonRetryable,
+				Message:    "payload too large",
+				Details:    llm.OversizeFailureDetails(llm.RequestPayloadLimitBytes+1, g.phase, nil),
+			},
+		})
+	}
+	if err := yield(llm.StreamMessageDelta{ContentDelta: "done", Role: "assistant"}); err != nil {
+		return err
+	}
+	return yield(llm.StreamRunCompleted{})
+}
+
+func (g *alwaysOversizeGateway) Stream(ctx context.Context, request llm.Request, yield func(llm.StreamEvent) error) error {
+	_ = ctx
+	g.calls++
+	g.requests = append(g.requests, request)
+	return yield(llm.StreamRunFailed{
+		Error: llm.GatewayError{
+			ErrorClass: llm.ErrorClassProviderNonRetryable,
+			Message:    "payload too large",
+			Details:    llm.OversizeFailureDetails(llm.RequestPayloadLimitBytes+1, g.phase, nil),
+		},
+	})
+}
+
+func (g *compactSummaryGateway) Stream(ctx context.Context, request llm.Request, yield func(llm.StreamEvent) error) error {
+	_ = ctx
+	g.calls++
+	g.requests = append(g.requests, request)
+	if err := yield(llm.StreamMessageDelta{ContentDelta: "summary", Role: "assistant"}); err != nil {
+		return err
+	}
+	return yield(llm.StreamRunCompleted{})
+}
+
+func (g *compactSummaryGateway) lastConversation() string {
+	if len(g.requests) == 0 || len(g.requests[len(g.requests)-1].Messages) < 2 || len(g.requests[len(g.requests)-1].Messages[1].Content) == 0 {
+		return ""
+	}
+	return g.requests[len(g.requests)-1].Messages[1].Content[0].Text
+}
+
+func (g *partialOutputThenEOFGateway) Stream(ctx context.Context, request llm.Request, yield func(llm.StreamEvent) error) error {
+	_ = ctx
+	_ = request
+	g.calls++
+	if err := yield(llm.StreamMessageDelta{ContentDelta: "partial", Role: "assistant"}); err != nil {
+		return err
+	}
+	return nil
 }
 
 func (g *usageScriptedGateway) Stream(ctx context.Context, request llm.Request, yield func(llm.StreamEvent) error) error {
@@ -2280,6 +2746,124 @@ func TestAgentLoopPreservesCompletedAssistantMessageAcrossTurns(t *testing.T) {
 	}
 }
 
+func TestAgentLoopSecondRequestHistoryKeepsCanonicalToolNameForProviderExecutor(t *testing.T) {
+	registry := tools.NewRegistry()
+	if err := registry.Register(tools.AgentToolSpec{
+		Name:        "web_search.tavily",
+		LlmName:     "web_search",
+		Version:     "1",
+		Description: "provider web search",
+		RiskLevel:   tools.RiskLevelLow,
+	}); err != nil {
+		t.Fatalf("register provider search failed: %v", err)
+	}
+
+	allowlist := tools.AllowlistFromNames([]string{"web_search.tavily"})
+	dispatcher := tools.NewDispatchingExecutor(registry, tools.NewPolicyEnforcer(registry, allowlist))
+	executor := &providerEchoExecutor{}
+	if err := dispatcher.Bind("web_search.tavily", executor); err != nil {
+		t.Fatalf("bind provider search failed: %v", err)
+	}
+
+	gateway := &providerHistoryCaptureGateway{}
+	loop := NewLoop(gateway, dispatcher)
+	err := loop.Run(
+		context.Background(),
+		RunContext{
+			RunID:               uuid.New(),
+			TraceID:             "trace",
+			InputJSON:           map[string]any{},
+			ReasoningIterations: 3,
+			ToolExecutor:        dispatcher,
+			ToolTimeoutMs:       intPtr(1000),
+			ToolBudget:          map[string]any{},
+			CancelSignal:        func() bool { return false },
+		},
+		llm.Request{
+			Model:    "stub",
+			Messages: []llm.Message{{Role: "user", Content: []llm.TextPart{{Text: "hi"}}}},
+		},
+		events.NewEmitter("trace"),
+		func(ev events.RunEvent) error { return nil },
+	)
+	if err != nil {
+		t.Fatalf("loop.Run failed: %v", err)
+	}
+	if executor.calledWith != "web_search.tavily" {
+		t.Fatalf("expected provider executor to run with provider tool name, got %q", executor.calledWith)
+	}
+	if len(gateway.requests) < 2 {
+		t.Fatalf("expected at least 2 requests, got %d", len(gateway.requests))
+	}
+
+	second := gateway.requests[1]
+	if len(second.Messages) < 3 {
+		t.Fatalf("expected assistant and tool history in second request, got %#v", second.Messages)
+	}
+	assistant := second.Messages[1]
+	if len(assistant.ToolCalls) != 1 {
+		t.Fatalf("expected one assistant tool call in history, got %#v", assistant.ToolCalls)
+	}
+	if got := assistant.ToolCalls[0].ToolName; got != "web_search" {
+		t.Fatalf("expected assistant history to keep canonical tool name, got %q", got)
+	}
+	toolText := second.Messages[2].Content[0].Text
+	if strings.Contains(toolText, "web_search.tavily") {
+		t.Fatalf("expected tool history to hide provider tool name, got %s", toolText)
+	}
+	if !strings.Contains(toolText, `"tool_name":"web_search"`) {
+		t.Fatalf("expected tool history to keep canonical tool name, got %s", toolText)
+	}
+}
+
+type providerHistoryCaptureGateway struct {
+	requests []llm.Request
+	calls    int
+}
+
+func (g *providerHistoryCaptureGateway) Stream(ctx context.Context, request llm.Request, yield func(llm.StreamEvent) error) error {
+	_ = ctx
+	g.requests = append(g.requests, request)
+	g.calls++
+	if g.calls == 1 {
+		if err := yield(llm.ToolCall{
+			ToolCallID:    "call_1",
+			ToolName:      "web_search",
+			ArgumentsJSON: map[string]any{"query": "hello"},
+		}); err != nil {
+			return err
+		}
+		return yield(llm.StreamRunCompleted{})
+	}
+	if err := yield(llm.StreamMessageDelta{ContentDelta: "done", Role: "assistant"}); err != nil {
+		return err
+	}
+	return yield(llm.StreamRunCompleted{})
+}
+
+type providerEchoExecutor struct {
+	calledWith string
+}
+
+func (e *providerEchoExecutor) Execute(
+	ctx context.Context,
+	toolName string,
+	args map[string]any,
+	execCtx tools.ExecutionContext,
+	toolCallID string,
+) tools.ExecutionResult {
+	_ = ctx
+	_ = execCtx
+	_ = toolCallID
+	e.calledWith = toolName
+	return tools.ExecutionResult{
+		ResultJSON: map[string]any{
+			"query": args["query"],
+			"items": []any{map[string]any{"title": "x"}},
+		},
+	}
+}
+
 type scriptedTurnsGateway struct {
 	turns [][]llm.StreamEvent
 	calls int
@@ -2318,14 +2902,18 @@ func (e *continuationExecutor) Execute(
 	_ = toolCallID
 	switch toolName {
 	case "exec_command":
-		return tools.ExecutionResult{ResultJSON: map[string]any{"session_ref": "sess-1", "running": true}}
-	case "write_stdin":
+		return tools.ExecutionResult{ResultJSON: map[string]any{"process_ref": "proc-1", "running": true, "next_cursor": "0"}}
+	case "continue_process":
 		idx := int(atomic.AddInt32(&e.writeCalls, 1)) - 1
 		running := false
 		if idx >= 0 && idx < len(e.writeRunning) {
 			running = e.writeRunning[idx]
 		}
-		return tools.ExecutionResult{ResultJSON: map[string]any{"session_ref": args["session_ref"], "running": running}}
+		nextCursor := "1"
+		if !running {
+			nextCursor = "2"
+		}
+		return tools.ExecutionResult{ResultJSON: map[string]any{"process_ref": args["process_ref"], "running": running, "next_cursor": nextCursor}}
 	case "echo":
 		return tools.ExecutionResult{ResultJSON: map[string]any{"text": args["text"]}}
 	default:
@@ -2338,17 +2926,17 @@ func buildContinuationDispatcher(t *testing.T, writeRunning []bool) *tools.Dispa
 	registry := tools.NewRegistry()
 	for _, spec := range []tools.AgentToolSpec{
 		{Name: "exec_command", Version: "1", Description: "exec", RiskLevel: tools.RiskLevelHigh, SideEffects: true},
-		{Name: "write_stdin", Version: "1", Description: "stdin", RiskLevel: tools.RiskLevelHigh, SideEffects: true},
+		{Name: "continue_process", Version: "1", Description: "continue", RiskLevel: tools.RiskLevelHigh, SideEffects: true},
 		builtin.EchoAgentSpec,
 	} {
 		if err := registry.Register(spec); err != nil {
 			t.Fatalf("register spec failed: %v", err)
 		}
 	}
-	allowlist := tools.AllowlistFromNames([]string{"exec_command", "write_stdin", "echo"})
+	allowlist := tools.AllowlistFromNames([]string{"exec_command", "continue_process", "echo"})
 	dispatcher := tools.NewDispatchingExecutor(registry, tools.NewPolicyEnforcer(registry, allowlist))
 	executor := &continuationExecutor{writeRunning: append([]bool{}, writeRunning...)}
-	for _, name := range []string{"exec_command", "write_stdin", "echo"} {
+	for _, name := range []string{"exec_command", "continue_process", "echo"} {
 		if err := dispatcher.Bind(name, executor); err != nil {
 			t.Fatalf("bind %s failed: %v", name, err)
 		}
@@ -3012,4 +3600,43 @@ func TestScanToolOutputPassesDecodedTextToScanner(t *testing.T) {
 	if !strings.Contains(scanned, "<string>:81: warning kaleido>=1.0.0") {
 		t.Fatalf("expected decoded stderr, got %q", scanned)
 	}
+}
+
+func newCompactPipelineRC(gateway llm.Gateway, keepLast int, keepTools int) *pipeline.RunContext {
+	return &pipeline.RunContext{
+		ContextCompact: pipeline.ContextCompactSettings{
+			PersistEnabled:              true,
+			PersistTriggerApproxTokens:  1,
+			PersistKeepLastMessages:     keepLast,
+			MicrocompactKeepRecentTools: keepTools,
+		},
+		Gateway: gateway,
+		SelectedRoute: &routing.SelectedProviderRoute{
+			Route: routing.ProviderRouteRule{
+				Model: "compact-model",
+			},
+		},
+	}
+}
+
+func hasEventType(events []events.RunEvent, typ string) bool {
+	return countEventType(events, typ) > 0
+}
+
+func countEventType(events []events.RunEvent, typ string) int {
+	count := 0
+	for _, ev := range events {
+		if ev.Type == typ {
+			count++
+		}
+	}
+	return count
+}
+
+func joinTestMessageText(message llm.Message) string {
+	var b strings.Builder
+	for _, part := range message.Content {
+		b.WriteString(part.Text)
+	}
+	return b.String()
 }

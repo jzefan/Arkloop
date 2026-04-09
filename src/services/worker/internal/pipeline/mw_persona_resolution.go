@@ -234,8 +234,18 @@ func normalizeRunReasoningModeOverride(raw any) string {
 		return "enabled"
 	case "disabled":
 		return "disabled"
-	case "none":
+	case "none", "off":
 		return "none"
+	case "minimal":
+		return "minimal"
+	case "low":
+		return "low"
+	case "medium":
+		return "medium"
+	case "high":
+		return "high"
+	case "max", "xhigh", "extra_high", "extra-high", "extra high":
+		return "xhigh"
 	default:
 		return ""
 	}

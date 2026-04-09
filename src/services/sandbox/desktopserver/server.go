@@ -16,6 +16,7 @@ import (
 	"arkloop/services/sandbox/internal/acp"
 	sandboxhttp "arkloop/services/sandbox/internal/http"
 	"arkloop/services/sandbox/internal/logging"
+	processsvc "arkloop/services/sandbox/internal/process"
 	"arkloop/services/sandbox/internal/session"
 	"arkloop/services/sandbox/internal/shell"
 	sandboxskills "arkloop/services/sandbox/internal/skills"
@@ -79,10 +80,11 @@ func New(cfg Config) (*Server, error) {
 
 	restoreRegistry := shell.NewMemorySessionRestoreRegistry()
 	shellMgr := shell.NewManager(sessMgr, nil, nil, restoreRegistry, nil, nil, logger, shell.Config{})
+	processMgr := processsvc.NewManager(sessMgr, nil, nil, nil, logger)
 	acpSvc := acp.NewManager(sessMgr, logger)
 	skillMgr := sandboxskills.NewOverlayManager(nil)
 
-	handler := sandboxhttp.NewHandler(sessMgr, nil, skillMgr, shellMgr, acpSvc, nil, logger, cfg.AuthToken)
+	handler := sandboxhttp.NewHandler(sessMgr, nil, skillMgr, shellMgr, processMgr, acpSvc, nil, logger, cfg.AuthToken)
 
 	return &Server{
 		cfg:     cfg,

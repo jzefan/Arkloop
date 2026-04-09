@@ -303,8 +303,11 @@ func (l *Loop) Run(
 			if runCtx.RolloutRecorder != nil {
 				appendRolloutSync(ctx, runCtx.RolloutRecorder, MakeRunEnd("failed"))
 			}
-			internal := llm.InternalStreamEndedError()
-			event := emitter.Emit("run.failed", completionTotals.Apply(internal.ToJSON()), nil, stringPtr(internal.ErrorClass))
+			streamErr := llm.InternalStreamEndedError()
+			if turnHasRecoverableProgress(turn) {
+				streamErr = llm.RetryableStreamEndedError()
+			}
+			event := emitter.Emit("run.failed", completionTotals.Apply(streamErr.ToJSON()), nil, stringPtr(streamErr.ErrorClass))
 			return yield(event)
 		}
 		completionTotals.Add(turn.CompletedDataJSON)
@@ -892,6 +895,7 @@ func (l *Loop) executeToolCall(
 	emitter events.Emitter,
 	yield func(events.RunEvent) error,
 ) tools.ExecutionResult {
+	call = llm.CanonicalToolCall(call)
 	// Rollout: 写入 ToolCall
 	if runCtx.RolloutRecorder != nil {
 		inputJSON, _ := json.Marshal(call.ArgumentsJSON)
@@ -1016,7 +1020,7 @@ func updateContinuationTracking(state *continuationBudgetState, call llm.ToolCal
 		state.SessionCounts[sessionID] = 0
 		return
 	}
-	if call.ToolName == "write_stdin" {
+	if call.ToolName == "continue_process" {
 		state.SessionCounts[sessionID] = state.SessionCounts[sessionID] + 1
 	}
 }
@@ -1073,30 +1077,22 @@ func recordRuntimeUserMessages(rc *pipeline.RunContext, messages []llm.Message) 
 }
 
 func trackedSessionID(call llm.ToolCall, result tools.ExecutionResult) string {
-	if call.ToolName == "write_stdin" {
+	if call.ToolName == "continue_process" {
 		return readContinuationSessionRef(call.ArgumentsJSON)
 	}
 	if result.ResultJSON == nil {
 		return ""
 	}
-	sessionID, _ := result.ResultJSON["session_ref"].(string)
-	if strings.TrimSpace(sessionID) != "" {
-		return strings.TrimSpace(sessionID)
-	}
-	legacySessionID, _ := result.ResultJSON["session_id"].(string)
-	return strings.TrimSpace(legacySessionID)
+	processRef, _ := result.ResultJSON["process_ref"].(string)
+	return strings.TrimSpace(processRef)
 }
 
 func readContinuationSessionRef(args map[string]any) string {
 	if args == nil {
 		return ""
 	}
-	value, _ := args["session_ref"].(string)
-	if strings.TrimSpace(value) != "" {
-		return strings.TrimSpace(value)
-	}
-	legacyValue, _ := args["session_id"].(string)
-	return strings.TrimSpace(legacyValue)
+	processRef, _ := args["process_ref"].(string)
+	return strings.TrimSpace(processRef)
 }
 
 func resultRunning(result tools.ExecutionResult) bool {
@@ -1110,11 +1106,11 @@ func resultRunning(result tools.ExecutionResult) bool {
 func continuationErrorResult(errorClass string, message string, sessionID string, limit int) tools.ExecutionResult {
 	resultJSON := map[string]any{"running": false}
 	if sessionID != "" {
-		resultJSON["session_ref"] = sessionID
+		resultJSON["process_ref"] = sessionID
 	}
 	details := map[string]any{}
 	if sessionID != "" {
-		details["session_ref"] = sessionID
+		details["process_ref"] = sessionID
 	}
 	if limit > 0 {
 		details["limit"] = limit
@@ -1130,7 +1126,7 @@ func continuationErrorResult(errorClass string, message string, sessionID string
 }
 
 func isContinuationToolName(toolName string) bool {
-	return toolName == "write_stdin"
+	return toolName == "continue_process"
 }
 
 func isPureContinuationTurn(toolCalls []llm.ToolCall) bool {
@@ -1318,11 +1314,36 @@ func (l *Loop) runTurnWithRetry(
 	if baseDelayMs <= 0 {
 		baseDelayMs = 1000
 	}
+	currentRequest := turnRequest
+	oversizeRecovered := false
 
-	for attempt := 1; attempt <= maxAttempts; attempt++ {
-		turn, err := l.runSingleTurn(ctx, runCtx, turnRequest, emitter, yield, turnIndex)
+	for attempt := 1; attempt <= maxAttempts; {
+		if !oversizeRecovered && llm.RequestPayloadTooLarge(llm.EstimateRequestJSONBytes(currentRequest)) {
+			rewritten, recovered, err := maybeRecoverOversizeRequest(ctx, runCtx, currentRequest, nil, emitter, yield, turnIndex, "preflight")
+			if err != nil {
+				return turnResult{}, err
+			}
+			if recovered {
+				currentRequest = rewritten
+				oversizeRecovered = true
+				continue
+			}
+		}
+
+		turn, err := l.runSingleTurn(ctx, runCtx, currentRequest, emitter, yield, turnIndex)
 		if err != nil {
 			return turnResult{}, err
+		}
+		if !oversizeRecovered && isOversizeTurn(turn) {
+			rewritten, recovered, err := maybeRecoverOversizeRequest(ctx, runCtx, currentRequest, &turn, emitter, yield, turnIndex, "provider")
+			if err != nil {
+				return turnResult{}, err
+			}
+			if recovered {
+				currentRequest = rewritten
+				oversizeRecovered = true
+				continue
+			}
 		}
 
 		if turn.Terminal && attempt >= maxAttempts && isRetryableTurn(turn) {
@@ -1354,9 +1375,69 @@ func (l *Loop) runTurnWithRetry(
 		case <-ctx.Done():
 			return turnResult{Cancelled: true}, nil
 		}
+		attempt++
 	}
 
 	return turnResult{}, fmt.Errorf("retry loop exited unexpectedly")
+}
+
+func maybeRecoverOversizeRequest(
+	ctx context.Context,
+	runCtx RunContext,
+	request llm.Request,
+	turn *turnResult,
+	emitter events.Emitter,
+	yield func(events.RunEvent) error,
+	turnIndex int,
+	triggerPhase string,
+) (llm.Request, bool, error) {
+	if runCtx.PipelineRC == nil {
+		return request, false, nil
+	}
+	rewritten, stats, rewriteErr := pipeline.RewriteOversizeRequest(
+		ctx,
+		runCtx.PipelineRC,
+		request,
+		currentContextCompactAnchor(runCtx),
+		llm.EstimateRequestJSONBytes,
+	)
+	if !stats.RewriteApplied {
+		return request, false, nil
+	}
+	phase := "completed"
+	if rewriteErr != nil {
+		phase = "llm_failed"
+	}
+	ev := emitter.Emit("run.context_compact", map[string]any{
+		"op":                           "rewrite",
+		"phase":                        phase,
+		"turn_index":                   turnIndex,
+		"trigger_phase":                triggerPhase,
+		"rewrite_applied":              stats.RewriteApplied,
+		"images_stripped":              stats.ImagesStripped,
+		"tool_results_microcompacted":  stats.ToolResultsMicrocompacted,
+		"compact_applied":              stats.CompactApplied,
+		"request_bytes_before_rewrite": stats.RequestBytesBeforeRewrite,
+		"request_bytes_after_rewrite":  stats.RequestBytesAfterRewrite,
+	}, nil, nil)
+	if turn != nil && len(turn.Events) > 0 {
+		last := turn.Events[len(turn.Events)-1]
+		if details, ok := last.DataJSON["details"].(map[string]any); ok {
+			if statusCode, ok := anyToInt64(details["status_code"]); ok {
+				ev.DataJSON["status_code"] = statusCode
+			}
+			if oversizePhase, ok := details["oversize_phase"].(string); ok && strings.TrimSpace(oversizePhase) != "" {
+				ev.DataJSON["oversize_phase"] = strings.TrimSpace(oversizePhase)
+			}
+		}
+	}
+	if rewriteErr != nil {
+		ev.DataJSON["llm_error"] = rewriteErr.Error()
+	}
+	if err := yield(ev); err != nil {
+		return request, false, err
+	}
+	return rewritten, true, nil
 }
 
 func isRetryableTurn(turn turnResult) bool {
@@ -1367,6 +1448,29 @@ func isRetryableTurn(turn turnResult) bool {
 	return last.Type == "run.failed" &&
 		last.ErrorClass != nil &&
 		*last.ErrorClass == llm.ErrorClassProviderRetryable
+}
+
+func isOversizeTurn(turn turnResult) bool {
+	if len(turn.Events) == 0 {
+		return false
+	}
+	last := turn.Events[len(turn.Events)-1]
+	if last.Type != "run.failed" || last.ErrorClass == nil || *last.ErrorClass != llm.ErrorClassProviderNonRetryable {
+		return false
+	}
+	details, _ := last.DataJSON["details"].(map[string]any)
+	statusCode, ok := anyToInt64(details["status_code"])
+	return ok && statusCode == 413
+}
+
+func currentContextCompactAnchor(runCtx RunContext) *pipeline.ContextCompactPressureAnchor {
+	if runCtx.PipelineRC == nil || !runCtx.PipelineRC.HasContextCompactAnchor {
+		return nil
+	}
+	return &pipeline.ContextCompactPressureAnchor{
+		LastRealPromptTokens:             runCtx.PipelineRC.LastRealPromptTokens,
+		LastRequestContextEstimateTokens: runCtx.PipelineRC.LastRequestContextEstimateTokens,
+	}
 }
 
 func markTurnInterrupted(turn turnResult) turnResult {
@@ -1524,11 +1628,14 @@ func (l *Loop) runSingleTurn(
 		case llm.StreamProviderFallback:
 			return yieldOrStop(emitter.Emit("run.provider_fallback", typed.ToDataJSON(), nil, nil))
 		case llm.ToolCallArgumentDelta:
+			typed.ToolName = llm.CanonicalToolName(typed.ToolName)
 			return yieldOrStop(emitter.Emit("tool.call.delta", typed.ToDataJSON(), nil, nil))
 		case llm.ToolCall:
+			typed = llm.CanonicalToolCall(typed)
 			toolCalls = append(toolCalls, typed)
 			return nil
 		case llm.StreamToolResult:
+			typed.ToolName = llm.CanonicalToolName(typed.ToolName)
 			toolResults = append(toolResults, typed)
 			var errorClass *string
 			if typed.Error != nil {
@@ -1584,6 +1691,15 @@ func (l *Loop) runSingleTurn(
 			}
 			return turnResult{Events: eventsOut, Terminal: true}, nil
 		}
+	}
+
+	if completed == nil && turnHasRecoverableProgressData(strings.Join(assistantChunks, ""), assistantMessage, toolCalls, toolResults) {
+		retryable := llm.RetryableStreamEndedError()
+		eventsOut = append(eventsOut, emitter.Emit("run.failed", retryable.ToJSON(), nil, stringPtr(retryable.ErrorClass)))
+		if runCtx.RolloutRecorder != nil {
+			appendRollout(ctx, runCtx.RolloutRecorder, MakeTurnEnd(turnIndex))
+		}
+		return turnResult{Events: eventsOut, Terminal: true}, nil
 	}
 
 	var completedJSON map[string]any
@@ -1681,6 +1797,22 @@ func traceTurnToolCalls(calls []llm.ToolCall) []string {
 		return nil
 	}
 	return names
+}
+
+func turnHasRecoverableProgress(turn turnResult) bool {
+	return turnHasRecoverableProgressData(turn.AssistantText, turn.AssistantMessage, turn.ToolCalls, turn.ToolResults)
+}
+
+func turnHasRecoverableProgressData(
+	assistantText string,
+	assistantMessage *llm.Message,
+	toolCalls []llm.ToolCall,
+	toolResults []llm.StreamToolResult,
+) bool {
+	return strings.TrimSpace(assistantText) != "" ||
+		(assistantMessage != nil && len(assistantMessage.Content) > 0) ||
+		len(toolCalls) > 0 ||
+		len(toolResults) > 0
 }
 
 func pressureAnchorFromCompleted(data map[string]any) *pipeline.ContextCompactPressureAnchor {
@@ -1906,7 +2038,7 @@ func shouldSuppressToolResultReplay(runCtx RunContext, toolName string, success 
 		}
 		return true
 	}
-	return isTerminalSideEffectTool(toolName)
+	return false
 }
 
 func isTerminalSideEffectTool(toolName string) bool {
@@ -1935,11 +2067,12 @@ func assistantMessageOrFallback(message *llm.Message, assistantChunks []string) 
 func (t turnResult) assistantHistoryMessage() llm.Message {
 	message := assistantMessageOrFallback(t.AssistantMessage, []string{t.AssistantText})
 	message.Role = "assistant"
-	message.ToolCalls = append([]llm.ToolCall{}, t.ToolCalls...)
+	message.ToolCalls = llm.CanonicalToolCalls(t.ToolCalls)
 	return message
 }
 
 func toolResultMessage(result llm.StreamToolResult) llm.Message {
+	result.ToolName = llm.CanonicalToolName(result.ToolName)
 	envelope := map[string]any{
 		"tool_call_id": result.ToolCallID,
 		"tool_name":    result.ToolName,
@@ -2125,6 +2258,7 @@ func stripWebSearchResultIDs(resultJSON map[string]any) map[string]any {
 }
 
 func toolResultMessageDedup(result llm.StreamToolResult, refToolCallID string) llm.Message {
+	result.ToolName = llm.CanonicalToolName(result.ToolName)
 	ref := strings.TrimSpace(refToolCallID)
 	if ref == "" {
 		return toolResultMessage(result)
@@ -2193,7 +2327,7 @@ func prepareToolCallStart(
 	dispatcher *tools.DispatchingExecutor,
 	call llm.ToolCall,
 ) (llm.ToolCall, events.RunEvent) {
-	call = ensureToolCallID(call)
+	call = llm.CanonicalToolCall(ensureToolCallID(call))
 	if dispatcher == nil {
 		return call, emitter.Emit("tool.call", call.ToDataJSON(), stringPtr(call.ToolName), nil)
 	}
@@ -2201,10 +2335,14 @@ func prepareToolCallStart(
 	if raw, ok := ev.DataJSON["tool_call_id"].(string); ok && strings.TrimSpace(raw) != "" {
 		call.ToolCallID = strings.TrimSpace(raw)
 	}
+	if raw, ok := ev.DataJSON["tool_name"].(string); ok && strings.TrimSpace(raw) != "" {
+		call.ToolName = llm.CanonicalToolName(raw)
+	}
 	return call, ev
 }
 
 func toolResultFromExecution(toolCallID string, toolName string, result tools.ExecutionResult) llm.StreamToolResult {
+	toolName = llm.CanonicalToolName(toolName)
 	var errObj *llm.GatewayError
 	if result.Error != nil {
 		errObj = &llm.GatewayError{
@@ -2219,12 +2357,16 @@ func toolResultFromExecution(toolCallID string, toolName string, result tools.Ex
 	}
 	var contentParts []llm.ContentPart
 	for _, att := range result.ContentParts {
+		attachment := &messagecontent.AttachmentRef{
+			MimeType: att.MimeType,
+		}
+		if key := strings.TrimSpace(att.AttachmentKey); key != "" {
+			attachment.Key = key
+		}
 		contentParts = append(contentParts, llm.ContentPart{
-			Type: messagecontent.PartTypeImage,
-			Data: att.Data,
-			Attachment: &messagecontent.AttachmentRef{
-				MimeType: att.MimeType,
-			},
+			Type:       messagecontent.PartTypeImage,
+			Data:       att.Data,
+			Attachment: attachment,
 		})
 	}
 	return llm.StreamToolResult{

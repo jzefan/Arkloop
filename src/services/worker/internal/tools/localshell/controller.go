@@ -3,740 +3,725 @@
 package localshell
 
 import (
+	"bytes"
 	"crypto/rand"
-	"encoding/base64"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"io"
-	"log/slog"
 	"os"
 	"os/exec"
-	"path/filepath"
-	"strconv"
+	"sort"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/creack/pty"
-	"golang.org/x/term"
 )
 
 const (
-	statusIdle    = "idle"
-	statusRunning = "running"
-	statusClosed  = "closed"
-
-	defaultYieldTimeMs    = 1000
-	maxYieldTimeMs        = 30000
-	defaultTimeoutMs      = 30000
-	maxTimeoutMs          = 1800000
-	defaultControlTimeout = 5000
-
-	ringBufferSize   = 1 << 20 // 1 MiB
-	readChunkSize    = 64 * 1024
-	quietWindow      = 100 * time.Millisecond
-	trailingGrace    = 100 * time.Millisecond
-	timeoutKillDelay = 2 * time.Second
+	processStartupWait = 150 * time.Millisecond
+	processDrainGrace  = 100 * time.Millisecond
+	processKillGrace   = 2 * time.Second
+	processPollTick    = 100 * time.Millisecond
+	processRingBytes   = 1 << 20
+	defaultProcessHome = "/tmp"
+	defaultProcessTmp  = "/tmp"
+	defaultProcessPath = "/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+	defaultProcessLang = "C.UTF-8"
+	processUserName    = "arkloop"
 )
 
-type shellResponse struct {
-	Status   string `json:"status"`
-	Cwd      string `json:"cwd"`
-	Output   string `json:"output"`
-	Running  bool   `json:"running"`
-	TimedOut bool   `json:"timed_out"`
-	ExitCode *int   `json:"exit_code,omitempty"`
+var processTerminalRetention = 30 * time.Second
+
+type ProcessController struct {
+	mu        sync.Mutex
+	processes map[string]*managedProcess
 }
 
-type shellController struct {
-	mu       sync.Mutex
-	cmd      *exec.Cmd
-	ptyFile  *os.File
-	buf      []byte
-	cursor   uint64
-	endPos   uint64
-	status   string
-	cwd      string
-	current  *pendingCommand
-	lastExit *int
-	lastTO   bool
-	updateCh chan struct{}
-	workDir  string
+type managedProcess struct {
+	mu sync.Mutex
+
+	ref        string
+	runID      string
+	mode       string
+	cmd        *exec.Cmd
+	stdin      io.WriteCloser
+	ptyFile    *os.File
+	allowStdin bool
+
+	stdinClosed bool
+	status      string
+	exitCode    *int
+
+	requestedStatus string
+	inFlight        bool
+
+	acceptedInputSeqs map[int64]struct{}
+	output            *ItemBuffer
+	updateCh          chan struct{}
+	readerWG          sync.WaitGroup
 }
 
-type pendingCommand struct {
-	token       string
-	beginMarker string
-	endPrefix   string
-	raw         string
-	startSeen   bool
-	suppress    bool
-	timer       *time.Timer
-	timedOut    bool
-}
-
-func newShellController(workDir string) *shellController {
-	return &shellController{
-		status:   statusClosed,
-		cwd:      workDir,
-		workDir:  workDir,
-		buf:      make([]byte, 0, 4096),
-		updateCh: make(chan struct{}),
+func NewProcessController() *ProcessController {
+	return &ProcessController{
+		processes: map[string]*managedProcess{},
 	}
 }
 
-func (c *shellController) execCommand(command, cwd string, timeoutMs, yieldTimeMs int, background bool, env map[string]string) (*shellResponse, error) {
-	command = strings.TrimSpace(command)
-	if command == "" {
-		return nil, errors.New("command is required")
-	}
-	if err := c.ensureStarted(env); err != nil {
-		return nil, err
-	}
-	tm := normalizeTimeoutMs(timeoutMs)
-	if err := c.startCommand(command, cwd, tm, false); err != nil {
-		return nil, err
-	}
-	first := c.waitForDelivery(normalizeYieldTimeMs(yieldTimeMs))
-	if background {
-		return first, nil
-	}
-	return c.drainUntilIdle(first, tm), nil
-}
-
-// drainUntilIdle extends the first exec yield with write_stdin polls (same idea as sandbox
-// pollExecUntilOutputOrDone) so a single exec_command tool result usually ends with running=false,
-// including after timeout kills the PTY.
-func (c *shellController) drainUntilIdle(first *shellResponse, commandTimeoutMs int) *shellResponse {
-	if first == nil || !first.Running {
-		return first
-	}
-	var out strings.Builder
-	out.WriteString(first.Output)
-	last := first
-	pollYield := normalizeYieldTimeMs(defaultYieldTimeMs)
-	if pollYield < 2000 {
-		pollYield = 2000
-	}
-	deadline := time.Now().Add(time.Duration(commandTimeoutMs)*time.Millisecond + timeoutKillDelay + 2*time.Second)
-
-	for last.Running {
-		if time.Now().After(deadline) {
-			break
-		}
-		next, err := c.writeStdin("", pollYield)
-		if err != nil {
-			return c.mergeClosedShellResponse(&out)
-		}
-		out.WriteString(next.Output)
-		last = next
-	}
-	last.Output = out.String()
-	if last.Running {
-		// Past overall deadline; avoid returning running=true if the PTY wedged.
-		last.Running = false
-		if last.ExitCode == nil {
-			x := 1
-			last.ExitCode = &x
-		}
-	}
-	return last
-}
-
-func (c *shellController) mergeClosedShellResponse(out *strings.Builder) *shellResponse {
+func (c *ProcessController) Close() {
 	c.mu.Lock()
-	if int(c.cursor) < len(c.buf) {
-		out.WriteString(string(c.buf[c.cursor:]))
-		c.cursor = uint64(len(c.buf))
+	processes := make([]*managedProcess, 0, len(c.processes))
+	for _, proc := range c.processes {
+		processes = append(processes, proc)
 	}
-	timedOut := c.lastTO
-	var exitCode *int
-	if c.lastExit != nil {
-		exitCode = c.lastExit
-	} else if timedOut {
-		x := 124
-		exitCode = &x
-	} else {
-		x := 1
-		exitCode = &x
-	}
-	cwd := c.cwd
+	c.processes = map[string]*managedProcess{}
 	c.mu.Unlock()
 
-	return &shellResponse{
-		Status:   statusIdle,
-		Cwd:      cwd,
-		Output:   out.String(),
-		Running:  false,
-		TimedOut: timedOut,
-		ExitCode: exitCode,
+	for _, proc := range processes {
+		proc.mu.Lock()
+		if proc.status == StatusRunning {
+			killProcessLocked(proc, StatusCancelled)
+		}
+		proc.mu.Unlock()
 	}
 }
 
-func (c *shellController) writeStdin(chars string, yieldTimeMs int) (*shellResponse, error) {
-	c.mu.Lock()
-	if c.status == statusClosed || c.cmd == nil || c.ptyFile == nil {
-		c.mu.Unlock()
-		return nil, errors.New("shell session not found")
+func (c *ProcessController) ExecCommand(req ExecCommandRequest) (*Response, error) {
+	req.Mode = NormalizeMode(strings.TrimSpace(req.Mode))
+	req.Command = strings.TrimSpace(req.Command)
+	req.Cwd = strings.TrimSpace(req.Cwd)
+	if err := ValidateExecRequest(req); err != nil {
+		return nil, err
 	}
-	c.mu.Unlock()
 
-	if chars != "" {
-		c.mu.Lock()
-		if c.status != statusRunning {
-			c.mu.Unlock()
-			return nil, errors.New("shell session is not running")
+	if req.Mode == ModeBuffered {
+		return c.runBuffered(req)
+	}
+
+	proc, err := c.startManaged(req)
+	if err != nil {
+		return nil, err
+	}
+
+	resp, err := c.waitForSnapshot(proc, 0, processStartupWait, nil)
+	if err != nil {
+		return nil, err
+	}
+	resp.ProcessRef = proc.ref
+	c.releaseProcessIfDrained(proc, resp)
+	return resp, nil
+}
+
+func (c *ProcessController) ContinueProcess(req ContinueProcessRequest) (*Response, error) {
+	req.ProcessRef = strings.TrimSpace(req.ProcessRef)
+	req.Cursor = strings.TrimSpace(req.Cursor)
+	if err := ValidateContinueRequest(req); err != nil {
+		return nil, err
+	}
+
+	cursor, err := ParseCursor(req.Cursor)
+	if err != nil {
+		return nil, &Error{Code: CodeInvalidCursor, Message: err.Error(), HTTPStatus: 400}
+	}
+
+	proc, err := c.getProcess(req.ProcessRef)
+	if err != nil {
+		return nil, err
+	}
+
+	var accepted *int64
+	proc.mu.Lock()
+	if proc.inFlight {
+		proc.mu.Unlock()
+		return nil, &Error{Code: CodeProcessBusy, Message: "process is busy", HTTPStatus: 409}
+	}
+	if err := validateCursorLocked(proc, cursor); err != nil {
+		proc.mu.Unlock()
+		return nil, err
+	}
+	proc.inFlight = true
+	if req.StdinText != nil {
+		if req.InputSeq == nil || *req.InputSeq <= 0 {
+			proc.inFlight = false
+			proc.mu.Unlock()
+			return nil, &Error{Code: CodeInputSeqRequired, Message: "input_seq is required when stdin_text is provided", HTTPStatus: 400}
 		}
-		if _, err := io.WriteString(c.ptyFile, chars); err != nil {
-			c.mu.Unlock()
+		value := *req.InputSeq
+		accepted = &value
+		if _, exists := proc.acceptedInputSeqs[*req.InputSeq]; !exists {
+			if !proc.allowStdin || proc.stdin == nil || proc.stdinClosed {
+				proc.inFlight = false
+				proc.mu.Unlock()
+				return nil, &Error{Code: CodeStdinNotSupported, Message: "process does not accept stdin", HTTPStatus: 409}
+			}
+			if *req.StdinText != "" {
+				if _, err := io.WriteString(proc.stdin, *req.StdinText); err != nil {
+					proc.inFlight = false
+					proc.mu.Unlock()
+					return nil, err
+				}
+			}
+			proc.acceptedInputSeqs[*req.InputSeq] = struct{}{}
+		}
+	}
+	if req.CloseStdin {
+		if proc.mode == ModePTY {
+			proc.inFlight = false
+			proc.mu.Unlock()
+			return nil, &Error{Code: CodeCloseStdinUnsupported, Message: "close_stdin is not supported for mode: pty", HTTPStatus: 409}
+		}
+		if !proc.allowStdin || proc.stdin == nil {
+			proc.inFlight = false
+			proc.mu.Unlock()
+			return nil, &Error{Code: CodeStdinNotSupported, Message: "process does not accept stdin", HTTPStatus: 409}
+		}
+		if err := closeProcessStdinLocked(proc); err != nil {
+			proc.inFlight = false
+			proc.mu.Unlock()
 			return nil, err
 		}
-		c.mu.Unlock()
 	}
-	return c.waitForDelivery(normalizeYieldTimeMs(yieldTimeMs)), nil
+	proc.mu.Unlock()
+
+	resp, err := c.waitForSnapshot(proc, cursor, time.Duration(NormalizeWaitMs(req.WaitMs))*time.Millisecond, accepted)
+	proc.mu.Lock()
+	proc.inFlight = false
+	notifyLocked(proc)
+	proc.mu.Unlock()
+	c.releaseProcessIfDrained(proc, resp)
+
+	return resp, err
 }
 
-func (c *shellController) close() {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.closeLocked()
+func (c *ProcessController) TerminateProcess(req TerminateProcessRequest) (*Response, error) {
+	return c.stopProcess(req.ProcessRef, StatusTerminated)
 }
 
-func (c *shellController) ensureStarted(env map[string]string) error {
-	c.mu.Lock()
-	if c.status != statusClosed && c.cmd != nil && c.ptyFile != nil {
-		c.mu.Unlock()
-		return nil
-	}
+func (c *ProcessController) CancelProcess(req TerminateProcessRequest) (*Response, error) {
+	return c.stopProcess(req.ProcessRef, StatusCancelled)
+}
 
-	shellPath, args := resolveShell()
-	cmd := exec.Command(shellPath, args...)
-	cmd.Dir = c.workDir
-	shellEnv := buildLocalShellEnv(c.workDir)
-	if len(env) > 0 {
-		for k, v := range env {
-			shellEnv = setEnvVar(shellEnv, k, v)
-		}
-	}
-	cmd.Env = shellEnv
-
-	file, err := pty.Start(cmd)
+func (c *ProcessController) stopProcess(processRef string, status string) (*Response, error) {
+	processRef = strings.TrimSpace(processRef)
+	proc, err := c.getProcess(processRef)
 	if err != nil {
-		c.mu.Unlock()
-		return err
-	}
-	if _, err := term.MakeRaw(int(file.Fd())); err != nil {
-		_ = file.Close()
-		_ = cmd.Process.Kill()
-		_, _ = cmd.Process.Wait()
-		c.mu.Unlock()
-		return err
-	}
-
-	c.cmd = cmd
-	c.ptyFile = file
-	c.buf = c.buf[:0]
-	c.cursor = 0
-	c.endPos = 0
-	c.status = statusIdle
-	c.cwd = c.workDir
-	c.lastExit = nil
-	c.lastTO = false
-	c.current = nil
-	c.notify()
-	go c.readLoop(file)
-	c.mu.Unlock()
-
-	initCmd := "export PS1='' PROMPT_COMMAND=''" +
-		" BASH_SILENCE_DEPRECATION_WARNING=1" +
-		" TERM='xterm-256color'" +
-		" LANG='en_US.UTF-8'\nstty -echo\n"
-	_, err = c.runControlCommand(initCmd, c.workDir, defaultControlTimeout)
-	return err
-}
-
-func (c *shellController) runControlCommand(command, cwd string, timeoutMs int) (*shellResponse, error) {
-	if err := c.startCommand(command, cwd, timeoutMs, true); err != nil {
 		return nil, err
 	}
-	deadline := time.Now().Add(time.Duration(timeoutMs) * time.Millisecond)
+
+	proc.mu.Lock()
+	head := proc.output.HeadSeq()
+	if proc.status == StatusRunning {
+		killProcessLocked(proc, status)
+	}
+	proc.mu.Unlock()
+
+	resp, err := c.waitUntilStopped(proc, head)
+	c.releaseProcessIfDrained(proc, resp)
+	return resp, err
+}
+
+func (c *ProcessController) ResizeProcess(req ResizeProcessRequest) (*Response, error) {
+	req.ProcessRef = strings.TrimSpace(req.ProcessRef)
+	if err := ValidateResizeRequest(req); err != nil {
+		return nil, err
+	}
+
+	proc, err := c.getProcess(req.ProcessRef)
+	if err != nil {
+		return nil, err
+	}
+
+	proc.mu.Lock()
+	defer proc.mu.Unlock()
+	if proc.mode != ModePTY || proc.ptyFile == nil {
+		return nil, &Error{Code: CodeResizeNotSupported, Message: "process is not a PTY session", HTTPStatus: 409}
+	}
+	if proc.status != StatusRunning {
+		return nil, &Error{Code: CodeNotRunning, Message: "process is not running", HTTPStatus: 409}
+	}
+	if err := pty.Setsize(proc.ptyFile, &pty.Winsize{Rows: uint16(req.Rows), Cols: uint16(req.Cols)}); err != nil {
+		return nil, &Error{Code: CodeResizeNotSupported, Message: err.Error(), HTTPStatus: 409}
+	}
+	return &Response{Status: proc.status, ProcessRef: proc.ref}, nil
+}
+
+func (c *ProcessController) runBuffered(req ExecCommandRequest) (*Response, error) {
+	shellPath, shellArgs := resolveProcessShellCommand(req.Command)
+	cmd := exec.Command(shellPath, shellArgs...)
+	cmd.Dir = resolveProcessCwd(req.Cwd)
+	cmd.Env = buildProcessEnv(req.Env, false)
+	cmd.SysProcAttr = procSysProcAttr()
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	timeout := time.Duration(NormalizeTimeoutMs(ModeBuffered, req.TimeoutMs)) * time.Millisecond
+	if err := cmd.Start(); err != nil {
+		return nil, err
+	}
+	done := make(chan error, 1)
+	go func() {
+		done <- cmd.Wait()
+	}()
+
+	select {
+	case err := <-done:
+		exitCode := exitCodeFromError(err)
+		return &Response{
+			Status:     StatusExited,
+			Stdout:     stdout.String(),
+			Stderr:     stderr.String(),
+			ExitCode:   &exitCode,
+			Cursor:     CursorString(0),
+			NextCursor: CursorString(0),
+		}, nil
+	case <-time.After(timeout):
+		_ = terminateProcessTree(cmd, syscall.SIGTERM)
+		select {
+		case <-done:
+		case <-time.After(processKillGrace):
+			_ = terminateProcessTree(cmd, syscall.SIGKILL)
+			<-done
+		}
+		exitCode := 124
+		return &Response{
+			Status:     StatusTimedOut,
+			Stdout:     stdout.String(),
+			Stderr:     stderr.String(),
+			ExitCode:   &exitCode,
+			Cursor:     CursorString(0),
+			NextCursor: CursorString(0),
+		}, nil
+	}
+}
+
+func (c *ProcessController) startManaged(req ExecCommandRequest) (*managedProcess, error) {
+	ref, err := newProcessRef()
+	if err != nil {
+		return nil, err
+	}
+
+	shellPath, shellArgs := resolveProcessShellCommand(req.Command)
+	cmd := exec.Command(shellPath, shellArgs...)
+	cmd.Dir = resolveProcessCwd(req.Cwd)
+	cmd.Env = buildProcessEnv(req.Env, req.Mode == ModePTY)
+	cmd.SysProcAttr = procSysProcAttr()
+
+	proc := &managedProcess{
+		ref:               ref,
+		runID:             strings.TrimSpace(req.RunID),
+		mode:              req.Mode,
+		cmd:               cmd,
+		allowStdin:        req.Mode == ModeStdin || req.Mode == ModePTY,
+		status:            StatusRunning,
+		acceptedInputSeqs: map[int64]struct{}{},
+		output:            NewItemBuffer(processRingBytes),
+		updateCh:          make(chan struct{}),
+	}
+
+	switch req.Mode {
+	case ModePTY:
+		size := req.Size
+		if size == nil {
+			size = &Size{Rows: 24, Cols: 80}
+		}
+		file, err := pty.StartWithAttrs(cmd, &pty.Winsize{Rows: uint16(size.Rows), Cols: uint16(size.Cols)}, cmd.SysProcAttr)
+		if err != nil {
+			return nil, err
+		}
+		proc.stdin = file
+		proc.ptyFile = file
+		proc.readerWG.Add(1)
+		go c.readStream(proc, StreamPTY, file)
+	default:
+		stdout, err := cmd.StdoutPipe()
+		if err != nil {
+			return nil, err
+		}
+		stderr, err := cmd.StderrPipe()
+		if err != nil {
+			return nil, err
+		}
+		if proc.allowStdin {
+			stdin, err := cmd.StdinPipe()
+			if err != nil {
+				return nil, err
+			}
+			proc.stdin = stdin
+		}
+		if err := cmd.Start(); err != nil {
+			return nil, err
+		}
+		proc.readerWG.Add(2)
+		go c.readStream(proc, StreamStdout, stdout)
+		go c.readStream(proc, StreamStderr, stderr)
+	}
+
+	if req.Mode != ModePTY && cmd.Process == nil {
+		return nil, errors.New("process failed to start")
+	}
+
+	c.mu.Lock()
+	c.processes[proc.ref] = proc
+	c.mu.Unlock()
+	go c.waitForExit(proc, req.TimeoutMs)
+	return proc, nil
+}
+
+func (c *ProcessController) waitUntilStopped(proc *managedProcess, cursor uint64) (*Response, error) {
+	deadline := time.Now().Add(processKillGrace + processDrainGrace)
 	for {
-		c.mu.Lock()
-		resp := c.snapshotLocked()
-		if !resp.Running {
-			c.mu.Unlock()
+		proc.mu.Lock()
+		resp, err := snapshotLocked(proc, cursor)
+		ch := proc.updateCh
+		running := proc.status == StatusRunning
+		proc.mu.Unlock()
+		if err != nil {
+			return nil, err
+		}
+		if !running {
 			return resp, nil
 		}
-		ch := c.updateCh
-		c.mu.Unlock()
+		if time.Now().After(deadline) {
+			return resp, nil
+		}
+		select {
+		case <-ch:
+		case <-time.After(processPollTick):
+		}
+	}
+}
+
+func (c *ProcessController) waitForSnapshot(proc *managedProcess, cursor uint64, wait time.Duration, accepted *int64) (*Response, error) {
+	deadline := time.Now().Add(wait)
+	for {
+		proc.mu.Lock()
+		resp, err := snapshotLocked(proc, cursor)
+		ch := proc.updateCh
+		done := resp != nil && (len(resp.Items) > 0 || proc.status != StatusRunning || time.Now().After(deadline) || wait <= 0)
+		if resp != nil && accepted != nil {
+			value := *accepted
+			resp.AcceptedInputSeq = &value
+		}
+		proc.mu.Unlock()
+		if err != nil {
+			return nil, err
+		}
+		if done {
+			return resp, nil
+		}
 		remaining := time.Until(deadline)
 		if remaining <= 0 {
-			return nil, errors.New("control command timed out")
+			return resp, nil
 		}
 		select {
 		case <-ch:
-		case <-time.After(remaining):
+		case <-time.After(minDuration(processPollTick, remaining)):
 		}
 	}
 }
 
-func (c *shellController) startCommand(command, cwd string, timeoutMs int, suppress bool) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.status == statusClosed || c.cmd == nil || c.ptyFile == nil {
-		return errors.New("shell session not found")
-	}
-	if c.status == statusRunning {
-		return errors.New("shell session is busy")
-	}
+func (c *ProcessController) readStream(proc *managedProcess, stream string, reader io.ReadCloser) {
+	defer proc.readerWG.Done()
+	defer reader.Close()
 
-	token, err := newToken()
-	if err != nil {
-		return err
-	}
-
-	c.status = statusRunning
-	c.lastExit = nil
-	c.lastTO = false
-	// Reset pending buffer for new command
-	c.buf = c.buf[:0]
-	c.cursor = 0
-	c.endPos = 0
-
-	current := &pendingCommand{
-		token:       token,
-		beginMarker: "__ARK_BEGIN__" + token,
-		endPrefix:   "__ARK_END__" + token + "__RC=",
-		suppress:    suppress,
-	}
-	if timeoutMs > 0 {
-		current.timer = time.AfterFunc(time.Duration(timeoutMs)*time.Millisecond, func() {
-			c.handleTimeout(token)
-		})
-	}
-	c.current = current
-
-	wrapped := buildWrappedCommand(token, cwd, command)
-	if _, err := io.WriteString(c.ptyFile, wrapped); err != nil {
-		if current.timer != nil {
-			current.timer.Stop()
-		}
-		c.current = nil
-		c.status = statusIdle
-		return err
-	}
-	c.notify()
-	return nil
-}
-
-func (c *shellController) waitForDelivery(yieldTimeMs int) *shellResponse {
-	deadline := time.Now().Add(time.Duration(normalizeYieldTimeMs(yieldTimeMs)) * time.Millisecond)
-	c.mu.Lock()
-	resp := c.snapshotLocked()
-	ch := c.updateCh
-	shouldWait := resp.Running && resp.Output == ""
-	if !shouldWait {
-		c.advanceCursorLocked()
-		c.mu.Unlock()
-		return resp
-	}
-	c.mu.Unlock()
-
-	var lastOutputAt time.Time
-	var exitObservedAt time.Time
+	buf := make([]byte, 4096)
 	for {
-		waitFor := time.Until(deadline)
-		if !exitObservedAt.IsZero() {
-			graceUntil := exitObservedAt.Add(trailingGrace)
-			if !lastOutputAt.IsZero() && lastOutputAt.After(exitObservedAt) {
-				graceUntil = lastOutputAt.Add(trailingGrace)
-			}
-			remaining := time.Until(graceUntil)
-			if remaining <= 0 {
-				return c.finishDelivery()
-			}
-			if remaining < waitFor {
-				waitFor = remaining
-			}
-		} else if !lastOutputAt.IsZero() {
-			quietUntil := lastOutputAt.Add(quietWindow)
-			remaining := time.Until(quietUntil)
-			if remaining <= 0 {
-				return c.finishDelivery()
-			}
-			if remaining < waitFor {
-				waitFor = remaining
-			}
-		}
-		if waitFor <= 0 {
-			return c.finishDelivery()
-		}
-		select {
-		case <-ch:
-			now := time.Now()
-			c.mu.Lock()
-			resp = c.snapshotLocked()
-			if resp.Output != "" {
-				lastOutputAt = now
-			}
-			if !resp.Running || resp.Status == statusClosed {
-				exitObservedAt = now
-			}
-			ch = c.updateCh
-			c.mu.Unlock()
-		case <-time.After(waitFor):
-			return c.finishDelivery()
-		}
-	}
-}
-
-func (c *shellController) finishDelivery() *shellResponse {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	resp := c.snapshotLocked()
-	c.advanceCursorLocked()
-	return resp
-}
-
-func (c *shellController) snapshotLocked() *shellResponse {
-	output := ""
-	if int(c.cursor) < len(c.buf) {
-		end := len(c.buf)
-		if end-int(c.cursor) > readChunkSize {
-			end = int(c.cursor) + readChunkSize
-		}
-		output = string(c.buf[c.cursor:end])
-	}
-	return &shellResponse{
-		Status:   c.status,
-		Cwd:      c.cwd,
-		Output:   output,
-		Running:  c.status == statusRunning,
-		TimedOut: c.lastTO,
-		ExitCode: c.lastExit,
-	}
-}
-
-func (c *shellController) advanceCursorLocked() {
-	c.cursor = uint64(len(c.buf))
-}
-
-func (c *shellController) readLoop(file *os.File) {
-	readBuf := make([]byte, 4096)
-	for {
-		n, err := file.Read(readBuf)
+		n, err := reader.Read(buf)
 		if n > 0 {
-			c.mu.Lock()
-			if c.current != nil {
-				c.current.raw += string(readBuf[:n])
-				c.processCurrentLocked()
-			} else {
-				c.appendOutputLocked(string(readBuf[:n]), false)
-			}
-			c.notify()
-			c.mu.Unlock()
+			proc.mu.Lock()
+			proc.output.Append(stream, string(buf[:n]))
+			notifyLocked(proc)
+			proc.mu.Unlock()
 		}
 		if err != nil {
-			c.mu.Lock()
-			c.status = statusClosed
-			if c.current != nil && c.current.timer != nil {
-				c.current.timer.Stop()
-			}
-			c.current = nil
-			c.cmd = nil
-			c.ptyFile = nil
-			c.notify()
-			c.mu.Unlock()
 			return
 		}
 	}
 }
 
-func (c *shellController) processCurrentLocked() {
-	current := c.current
-	if current == nil {
-		return
-	}
-	raw := current.raw
-
-	if !current.startSeen {
-		idx := strings.Index(raw, current.beginMarker)
-		if idx == -1 {
-			keep := trailingMarkerPrefixLen(raw, current.beginMarker)
-			if keep == 0 {
-				current.raw = ""
+func (c *ProcessController) waitForExit(proc *managedProcess, timeoutMs int) {
+	var timer *time.Timer
+	if timeoutMs > 0 {
+		timer = time.AfterFunc(time.Duration(timeoutMs)*time.Millisecond, func() {
+			proc.mu.Lock()
+			defer proc.mu.Unlock()
+			if proc.status != StatusRunning {
 				return
 			}
-			current.raw = raw[len(raw)-keep:]
-			return
-		}
-		raw = raw[idx+len(current.beginMarker):]
-		if strings.HasPrefix(raw, "\r\n") {
-			raw = raw[2:]
-		} else if strings.HasPrefix(raw, "\n") {
-			raw = raw[1:]
-		}
-		current.startSeen = true
+			killProcessLocked(proc, StatusTimedOut)
+		})
 	}
 
-	idx := strings.Index(raw, current.endPrefix)
-	if idx == -1 {
-		keep := trailingMarkerPrefixLen(raw, current.endPrefix)
-		safeLen := len(raw) - keep
-		c.appendOutputLocked(raw[:safeLen], current.suppress)
-		current.raw = raw[safeLen:]
-		return
+	err := proc.cmd.Wait()
+	if timer != nil {
+		timer.Stop()
 	}
+	proc.readerWG.Wait()
+	time.Sleep(processDrainGrace)
 
-	c.appendOutputLocked(raw[:idx], current.suppress)
-	rest := raw[idx:]
-	lineEnd := strings.IndexByte(rest, '\n')
-	if lineEnd == -1 {
-		current.raw = rest
-		return
+	proc.mu.Lock()
+	defer proc.mu.Unlock()
+	exitCode := exitCodeFromError(err)
+	proc.exitCode = &exitCode
+	if proc.requestedStatus != "" {
+		proc.status = proc.requestedStatus
+	} else {
+		proc.status = StatusExited
 	}
-
-	line := strings.TrimRight(rest[:lineEnd], "\r")
-	c.finishCommandLocked(current, line)
-	trailing := rest[lineEnd+1:]
-	c.current = nil
-	if trailing != "" {
-		c.appendOutputLocked(trailing, false)
-	}
+	notifyLocked(proc)
+	c.scheduleProcessRelease(proc)
 }
 
-func (c *shellController) finishCommandLocked(current *pendingCommand, line string) {
-	if current.timer != nil {
-		current.timer.Stop()
-	}
-	if !strings.HasPrefix(line, current.endPrefix) {
-		c.status = statusIdle
+func (c *ProcessController) releaseProcessIfDrained(proc *managedProcess, resp *Response) {
+	if proc == nil || resp == nil {
 		return
 	}
-	rest := strings.TrimPrefix(line, current.endPrefix)
-	parts := strings.SplitN(rest, "__PWD=", 2)
-	rc, err := strconv.Atoi(parts[0])
-	if err != nil {
-		rc = 1
-	}
-	if len(parts) == 2 && strings.TrimSpace(parts[1]) != "" {
-		c.cwd = parts[1]
-	}
-	c.lastExit = &rc
-	c.lastTO = current.timedOut
-	c.status = statusIdle
-	current.raw = ""
-}
-
-func (c *shellController) appendOutputLocked(data string, suppress bool) {
-	if suppress || data == "" {
+	if resp.Status == StatusRunning || resp.HasMore {
 		return
 	}
-	// Enforce max buffer size
-	c.buf = append(c.buf, []byte(data)...)
-	if len(c.buf) > ringBufferSize {
-		trim := len(c.buf) - ringBufferSize
-		c.buf = append([]byte(nil), c.buf[trim:]...)
-		if c.cursor > uint64(trim) {
-			c.cursor -= uint64(trim)
-		} else {
-			c.cursor = 0
-		}
-	}
-}
-
-func (c *shellController) handleTimeout(token string) {
 	c.mu.Lock()
-	if c.current == nil || c.current.token != token || c.status != statusRunning {
-		c.mu.Unlock()
+	defer c.mu.Unlock()
+	if current, ok := c.processes[proc.ref]; ok && current == proc {
+		delete(c.processes, proc.ref)
+	}
+}
+
+func (c *ProcessController) scheduleProcessRelease(proc *managedProcess) {
+	if proc == nil || processTerminalRetention <= 0 {
 		return
 	}
-	c.current.timedOut = true
-	c.lastTO = true
-	if c.cmd != nil && c.cmd.Process != nil {
-		_ = c.cmd.Process.Signal(os.Interrupt)
-	}
-	c.notify()
-	c.mu.Unlock()
-
-	time.AfterFunc(timeoutKillDelay, func() {
+	time.AfterFunc(processTerminalRetention, func() {
 		c.mu.Lock()
 		defer c.mu.Unlock()
-		if c.current == nil || c.current.token != token || c.status != statusRunning {
-			return
-		}
-		if c.cmd != nil && c.cmd.Process != nil {
-			_ = c.cmd.Process.Kill()
+		if current, ok := c.processes[proc.ref]; ok && current == proc {
+			delete(c.processes, proc.ref)
 		}
 	})
 }
 
-func (c *shellController) closeLocked() {
-	if c.current != nil && c.current.timer != nil {
-		c.current.timer.Stop()
+func (c *ProcessController) getProcess(processRef string) (*managedProcess, error) {
+	ref := strings.TrimSpace(processRef)
+	if ref == "" {
+		return nil, &Error{Code: CodeProcessNotFound, Message: "process not found", HTTPStatus: 404}
 	}
-	if c.ptyFile != nil {
-		_ = c.ptyFile.Close()
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	proc, ok := c.processes[ref]
+	if !ok {
+		return nil, &Error{Code: CodeProcessNotFound, Message: "process not found", HTTPStatus: 404}
 	}
-	if c.cmd != nil && c.cmd.Process != nil {
-		_ = c.cmd.Process.Kill()
-		_, _ = c.cmd.Process.Wait()
-	}
-	c.cmd = nil
-	c.ptyFile = nil
-	c.current = nil
-	c.status = statusClosed
-	c.notify()
+	return proc, nil
 }
 
-func (c *shellController) notify() {
-	close(c.updateCh)
-	c.updateCh = make(chan struct{})
+func snapshotLocked(proc *managedProcess, cursor uint64) (*Response, error) {
+	if err := validateCursorLocked(proc, cursor); err != nil {
+		return nil, err
+	}
+	items, next, hasMore, truncated, ok := proc.output.ReadFrom(cursor, 0)
+	if !ok {
+		return nil, &Error{Code: CodeInvalidCursor, Message: "cursor is invalid", HTTPStatus: 400}
+	}
+	stdout, stderr := flattenItems(items)
+	resp := &Response{
+		Status:     proc.status,
+		ProcessRef: proc.ref,
+		Stdout:     stdout,
+		Stderr:     stderr,
+		Cursor:     CursorString(cursor),
+		NextCursor: CursorString(next),
+		Items:      items,
+		HasMore:    hasMore,
+		Truncated:  truncated,
+	}
+	if truncated {
+		resp.OutputRef = buildOutputRef(proc.ref, cursor, next)
+	}
+	if proc.exitCode != nil {
+		value := *proc.exitCode
+		resp.ExitCode = &value
+	}
+	return resp, nil
 }
 
-// --- helpers ---
+func validateCursorLocked(proc *managedProcess, cursor uint64) error {
+	if cursor < proc.output.HeadSeq() {
+		return &Error{Code: CodeCursorExpired, Message: "cursor has expired", HTTPStatus: 409}
+	}
+	if cursor > proc.output.NextSeq() {
+		return &Error{Code: CodeInvalidCursor, Message: "cursor is invalid", HTTPStatus: 400}
+	}
+	return nil
+}
 
-func resolveShell() (string, []string) {
-	candidates := []string{os.Getenv("SHELL"), "/bin/zsh", "/bin/bash", "/bin/sh"}
-	for _, shell := range candidates {
-		if shell == "" {
+func closeProcessStdinLocked(proc *managedProcess) error {
+	if proc.stdinClosed || proc.stdin == nil {
+		return nil
+	}
+	if err := proc.stdin.Close(); err != nil && !errors.Is(err, os.ErrClosed) {
+		return err
+	}
+	proc.stdinClosed = true
+	return nil
+}
+
+func killProcessLocked(proc *managedProcess, status string) {
+	if proc.cmd == nil || proc.cmd.Process == nil || proc.requestedStatus != "" {
+		return
+	}
+	proc.requestedStatus = status
+	_ = closeProcessStdinLocked(proc)
+	pid := proc.cmd.Process.Pid
+	_ = killProcessGroupSoft(pid)
+	time.AfterFunc(processKillGrace, func() {
+		_ = killProcessGroupHard(pid)
+	})
+}
+
+func notifyLocked(proc *managedProcess) {
+	close(proc.updateCh)
+	proc.updateCh = make(chan struct{})
+}
+
+func flattenItems(items []OutputItem) (string, string) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	for _, item := range items {
+		switch item.Stream {
+		case StreamStderr:
+			stderr.WriteString(item.Text)
+		default:
+			stdout.WriteString(item.Text)
+		}
+	}
+	return stdout.String(), stderr.String()
+}
+
+func buildOutputRef(processRef string, cursor uint64, next uint64) string {
+	ref := strings.TrimSpace(processRef)
+	if ref == "" {
+		ref = "buffered"
+	}
+	return fmt.Sprintf("process:%s:%d:%d", ref, cursor, next)
+}
+
+func resolveProcessShellCommand(command string) (string, []string) {
+	if _, err := os.Stat("/bin/bash"); err == nil {
+		return "/bin/bash", []string{"--noprofile", "--norc", "-lc", command}
+	}
+	return "/bin/sh", []string{"-lc", command}
+}
+
+func resolveProcessCwd(cwd string) string {
+	if strings.TrimSpace(cwd) != "" {
+		return strings.TrimSpace(cwd)
+	}
+	if wd, err := os.Getwd(); err == nil && strings.TrimSpace(wd) != "" {
+		return wd
+	}
+	return "."
+}
+
+func buildProcessEnv(extra map[string]*string, includeTerm bool) []string {
+	env := map[string]string{
+		"HOME":    processHomeDir(),
+		"PATH":    defaultProcessPath,
+		"LANG":    defaultProcessLang,
+		"TMPDIR":  processTempDir(),
+		"USER":    processUserName,
+		"LOGNAME": processUserName,
+	}
+	if includeTerm {
+		env["TERM"] = "xterm-256color"
+	}
+	for key, value := range extra {
+		key = strings.TrimSpace(key)
+		if key == "" || strings.ContainsRune(key, '=') {
 			continue
 		}
-		if _, err := os.Stat(shell); err != nil {
+		if value == nil {
+			delete(env, key)
 			continue
 		}
-		return shell, shellArgs(shell)
+		env[key] = *value
 	}
-	return "/bin/sh", []string{"-i"}
-}
-
-func shellArgs(path string) []string {
-	base := filepath.Base(path)
-	switch {
-	case strings.Contains(base, "zsh"):
-		return []string{"--no-rcs", "--no-globalrcs", "-i"}
-	case strings.Contains(base, "bash"):
-		return []string{"--noprofile", "--norc", "-i"}
-	default:
-		return []string{"-i"}
+	keys := make([]string, 0, len(env))
+	for key := range env {
+		keys = append(keys, key)
 	}
-}
-
-func setEnvVar(env []string, key, value string) []string {
-	prefix := key + "="
-	for i, entry := range env {
-		if strings.HasPrefix(entry, prefix) {
-			env[i] = prefix + value
-			return env
-		}
-	}
-	return append(env, prefix+value)
-}
-
-func buildLocalShellEnv(workDir string) []string {
-	env := os.Environ()
-	overrides := map[string]string{
-		"TERM": "xterm-256color",
-		"LANG": "en_US.UTF-8",
-		"HOME": os.Getenv("HOME"),
-	}
-	if workDir != "" {
-		overrides["PWD"] = workDir
-	}
-	result := make([]string, 0, len(env)+len(overrides))
-	seen := make(map[string]bool)
-	for _, entry := range env {
-		key := entry
-		if idx := strings.IndexByte(entry, '='); idx >= 0 {
-			key = entry[:idx]
-		}
-		if val, ok := overrides[key]; ok {
-			result = append(result, key+"="+val)
-			seen[key] = true
-		} else {
-			result = append(result, entry)
-		}
-	}
-	for key, val := range overrides {
-		if !seen[key] {
-			result = append(result, key+"="+val)
-		}
+	sort.Strings(keys)
+	result := make([]string, 0, len(keys))
+	for _, key := range keys {
+		result = append(result, key+"="+env[key])
 	}
 	return result
 }
 
-func buildWrappedCommand(token, cwd, command string) string {
-	encoded := base64.StdEncoding.EncodeToString([]byte(command))
-	var b strings.Builder
-	b.WriteString("ark_mark_a='__ARK'\n")
-	b.WriteString("printf '%s%s")
-	b.WriteString(token)
-	b.WriteString("\\n' \"$ark_mark_a\" '_BEGIN__'; ")
-	b.WriteString("ark_rc=0; ")
-	if strings.TrimSpace(cwd) != "" {
-		b.WriteString("cd -- ")
-		b.WriteString(shellQuote(cwd))
-		b.WriteString(" || ark_rc=$?; ")
+func processHomeDir() string {
+	if home, err := os.UserHomeDir(); err == nil && strings.TrimSpace(home) != "" {
+		return strings.TrimSpace(home)
 	}
-	b.WriteString("if [ \"$ark_rc\" -eq 0 ]; then ")
-	b.WriteString("ark_cmd_b64='")
-	b.WriteString(encoded)
-	b.WriteString("'; ")
-	b.WriteString("ark_cmd_file=$(mktemp); ")
-	// Sourced user script runs with stdin /dev/null so cat/read do not block on the PTY.
-	b.WriteString("if printf '%s' \"$ark_cmd_b64\" | base64 -d > \"$ark_cmd_file\"; then . \"$ark_cmd_file\" < /dev/null; ark_rc=$?; else ark_rc=1; fi; ")
-	b.WriteString("rm -f \"$ark_cmd_file\"; fi; ")
-	b.WriteString("printf '\\n%s%s")
-	b.WriteString(token)
-	b.WriteString("__RC=%s__PWD=%s\\n' \"$ark_mark_a\" '_END__' \"$ark_rc\" \"$PWD\"\n")
-	return b.String()
+	return defaultProcessHome
 }
 
-func shellQuote(value string) string {
-	return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'"
+func processTempDir() string {
+	if temp := strings.TrimSpace(os.TempDir()); temp != "" {
+		return temp
+	}
+	return defaultProcessTmp
 }
 
-func newToken() (string, error) {
+func (c *ProcessController) CleanupRun(runID string) {
+	runID = strings.TrimSpace(runID)
+	if runID == "" {
+		return
+	}
+	c.mu.Lock()
+	processes := make([]*managedProcess, 0, len(c.processes))
+	for _, proc := range c.processes {
+		if proc.runID == runID {
+			processes = append(processes, proc)
+		}
+	}
+	c.mu.Unlock()
+	for _, proc := range processes {
+		proc.mu.Lock()
+		if proc.status == StatusRunning {
+			killProcessLocked(proc, StatusCancelled)
+		}
+		proc.mu.Unlock()
+	}
+}
+
+func newProcessRef() (string, error) {
 	buf := make([]byte, 8)
 	if _, err := rand.Read(buf); err != nil {
 		return "", err
 	}
-	return hex.EncodeToString(buf), nil
+	return "proc_" + hex.EncodeToString(buf), nil
 }
 
-func trailingMarkerPrefixLen(text, marker string) int {
-	limit := len(text)
-	if len(marker) < limit {
-		limit = len(marker)
+func exitCodeFromError(err error) int {
+	if err == nil {
+		return 0
 	}
-	for size := limit; size > 0; size-- {
-		if strings.HasPrefix(marker, text[len(text)-size:]) {
-			return size
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) {
+		if status, ok := exitErr.Sys().(syscall.WaitStatus); ok {
+			return status.ExitStatus()
 		}
 	}
-	return 0
+	return 1
 }
 
-func normalizeTimeoutMs(v int) int {
-	if v <= 0 {
-		return defaultTimeoutMs
+func minDuration(left, right time.Duration) time.Duration {
+	if left < right {
+		return left
 	}
-	if v > maxTimeoutMs {
-		return maxTimeoutMs
-	}
-	return v
-}
-
-func normalizeYieldTimeMs(v int) int {
-	if v <= 0 {
-		return defaultYieldTimeMs
-	}
-	if v > maxYieldTimeMs {
-		return maxYieldTimeMs
-	}
-	return v
-}
-
-func init() {
-	_ = slog.Default() // ensure slog is available
+	return right
 }

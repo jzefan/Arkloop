@@ -14,16 +14,20 @@ import (
 
 // metadataFields are preserved verbatim during compression.
 var metadataFields = map[string]struct{}{
-	"error":       {},
-	"exit_code":   {},
-	"status":      {},
-	"running":     {},
-	"timed_out":   {},
-	"cwd":         {},
-	"session_id":  {},
-	"session_ref": {},
-	"duration_ms": {},
-	"share_scope": {},
+	"error":              {},
+	"exit_code":          {},
+	"status":             {},
+	"running":            {},
+	"timed_out":          {},
+	"cwd":                {},
+	"process_ref":        {},
+	"cursor":             {},
+	"next_cursor":        {},
+	"duration_ms":        {},
+	"accepted_input_seq": {},
+	"has_more":           {},
+	"truncated":          {},
+	"output_ref":         {},
 }
 
 var (
@@ -119,7 +123,44 @@ func compressMap(m map[string]any, limit int) map[string]any {
 		if _, keep := metadataFields[k]; keep {
 			continue
 		}
+		if k == "items" {
+			out[k] = compressOutputItems(v, limit/2)
+			continue
+		}
 		out[k] = compressValue(v, limit/2)
+	}
+	return out
+}
+
+func compressOutputItems(v any, budget int) any {
+	items, ok := v.([]any)
+	if !ok {
+		return compressValue(v, budget)
+	}
+	if budget <= 0 {
+		budget = 1024
+	}
+	perItem := budget / max(len(items), 1)
+	if perItem < 256 {
+		perItem = 256
+	}
+	out := make([]any, 0, len(items))
+	for _, raw := range items {
+		item, ok := raw.(map[string]any)
+		if !ok {
+			out = append(out, compressValue(raw, perItem))
+			continue
+		}
+		next := map[string]any{}
+		for _, key := range []string{"seq", "stream"} {
+			if value, exists := item[key]; exists {
+				next[key] = value
+			}
+		}
+		if text, ok := item["text"].(string); ok {
+			next["text"] = compressString(text, perItem)
+		}
+		out = append(out, next)
 	}
 	return out
 }

@@ -17,7 +17,7 @@ import (
 )
 
 // SandboxExecBackend performs file operations by executing shell commands
-// inside a sandbox session through the existing /v1/exec_command HTTP endpoint.
+// through the buffered process API inside the sandbox session.
 type SandboxExecBackend struct {
 	baseURL      string
 	authToken    string
@@ -28,21 +28,22 @@ type SandboxExecBackend struct {
 	client       *http.Client
 }
 
-type sandboxExecRequest struct {
+type sandboxProcessExecRequest struct {
 	SessionID    string `json:"session_id"`
 	AccountID    string `json:"account_id,omitempty"`
 	ProfileRef   string `json:"profile_ref,omitempty"`
 	WorkspaceRef string `json:"workspace_ref,omitempty"`
 	Command      string `json:"command"`
+	Mode         string `json:"mode,omitempty"`
+	Cwd          string `json:"cwd,omitempty"`
 	TimeoutMs    int    `json:"timeout_ms,omitempty"`
 	Tier         string `json:"tier,omitempty"`
 }
 
-type sandboxExecResponse struct {
-	Output   string `json:"output"`
-	Stdout   string `json:"stdout"`
+type sandboxProcessExecResponse struct {
 	Status   string `json:"status"`
-	Running  bool   `json:"running"`
+	Stdout   string `json:"stdout"`
+	Stderr   string `json:"stderr"`
 	ExitCode *int   `json:"exit_code,omitempty"`
 }
 
@@ -63,29 +64,41 @@ func (b *SandboxExecBackend) httpClient() *http.Client {
 	if b.client != nil {
 		return b.client
 	}
-	return &http.Client{Timeout: 2 * time.Minute}
+	return &http.Client{}
 }
 
-func (b *SandboxExecBackend) exec(ctx context.Context, command string, timeoutMs int) (string, int, error) {
+func (b *SandboxExecBackend) NormalizePath(path string) string {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return ""
+	}
+	return filepath.ToSlash(filepath.Clean(path))
+}
+
+func (b *SandboxExecBackend) exec(ctx context.Context, command string, timeoutMs int) (string, string, int, error) {
 	if timeoutMs == 0 {
 		timeoutMs = 30_000
 	}
-	payload, err := json.Marshal(sandboxExecRequest{
+	reqCtx, cancel := context.WithTimeout(ctx, time.Duration(timeoutMs+5000)*time.Millisecond)
+	defer cancel()
+
+	payload, err := json.Marshal(sandboxProcessExecRequest{
 		SessionID:    b.sessionID,
 		AccountID:    b.accountID,
 		ProfileRef:   b.profileRef,
 		WorkspaceRef: b.workspaceRef,
 		Command:      command,
+		Mode:         "buffered",
 		TimeoutMs:    timeoutMs,
 		Tier:         "lite",
 	})
 	if err != nil {
-		return "", -1, fmt.Errorf("marshal sandbox request: %w", err)
+		return "", "", -1, fmt.Errorf("marshal sandbox request: %w", err)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, b.baseURL+"/v1/exec_command", bytes.NewReader(payload))
+	req, err := http.NewRequestWithContext(reqCtx, http.MethodPost, b.baseURL+"/v1/process/exec", bytes.NewReader(payload))
 	if err != nil {
-		return "", -1, fmt.Errorf("build sandbox request: %w", err)
+		return "", "", -1, fmt.Errorf("build sandbox request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 	if b.authToken != "" {
@@ -97,37 +110,37 @@ func (b *SandboxExecBackend) exec(ctx context.Context, command string, timeoutMs
 
 	resp, err := b.httpClient().Do(req)
 	if err != nil {
-		return "", -1, fmt.Errorf("sandbox request failed: %w", err)
+		return "", "", -1, fmt.Errorf("sandbox request failed: %w", err)
 	}
 	defer resp.Body.Close()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return "", -1, fmt.Errorf("read sandbox response: %w", err)
+		return "", "", -1, fmt.Errorf("read sandbox response: %w", err)
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return "", -1, fmt.Errorf("sandbox returned %d: %s", resp.StatusCode, string(body))
+		return "", "", -1, fmt.Errorf("sandbox returned %d: %s", resp.StatusCode, string(body))
 	}
 
-	var result sandboxExecResponse
+	var result sandboxProcessExecResponse
 	if err := json.Unmarshal(body, &result); err != nil {
-		return "", -1, fmt.Errorf("decode sandbox response: %w", err)
+		return "", "", -1, fmt.Errorf("decode sandbox response: %w", err)
 	}
-	output := result.Output
-	if output == "" {
-		output = result.Stdout
+	stdout := stripANSI(result.Stdout)
+	stderr := stripANSI(result.Stderr)
+	if result.Status != "" && result.Status != "exited" {
+		return stdout, stderr, 0, fmt.Errorf("sandbox command ended with status %s", result.Status)
 	}
-	output = stripANSI(output)
 
 	exitCode := 0
 	if result.ExitCode != nil {
 		exitCode = *result.ExitCode
 	}
-	return output, exitCode, nil
+	return stdout, stderr, exitCode, nil
 }
 
 func (b *SandboxExecBackend) ReadFile(ctx context.Context, path string) ([]byte, error) {
-	output, _, err := b.exec(ctx, fmt.Sprintf("cat %s", shellQuote(path)), 30_000)
+	output, _, _, err := b.exec(ctx, fmt.Sprintf("cat %s", shellQuote(path)), 30_000)
 	if err != nil {
 		return nil, err
 	}
@@ -141,11 +154,14 @@ func (b *SandboxExecBackend) WriteFile(ctx context.Context, path string, data []
 	dir := filepath.Dir(path)
 	cmd := fmt.Sprintf("mkdir -p %s && printf '%%s' %s | base64 -d > %s",
 		shellQuote(dir), shellQuote(encoded), shellQuote(path))
-	_, exitCode, err := b.exec(ctx, cmd, 30_000)
+	_, stderr, exitCode, err := b.exec(ctx, cmd, 30_000)
 	if err != nil {
 		return err
 	}
 	if exitCode != 0 {
+		if strings.TrimSpace(stderr) != "" {
+			return fmt.Errorf("write command exited %d: %s", exitCode, strings.TrimSpace(stderr))
+		}
 		return fmt.Errorf("write command exited %d", exitCode)
 	}
 	return nil
@@ -154,7 +170,7 @@ func (b *SandboxExecBackend) WriteFile(ctx context.Context, path string, data []
 func (b *SandboxExecBackend) Stat(ctx context.Context, path string) (FileInfo, error) {
 	// GNU stat only; sandbox is always Linux.
 	// Use | as separator to handle multi-word %F values like "regular file", "symbolic link".
-	output, exitCode, err := b.exec(ctx,
+	output, stderr, exitCode, err := b.exec(ctx,
 		fmt.Sprintf("stat -c '%%s|%%F|%%Y' %s 2>/dev/null; echo $?", shellQuote(path)),
 		10_000)
 	if err != nil {
@@ -162,19 +178,31 @@ func (b *SandboxExecBackend) Stat(ctx context.Context, path string) (FileInfo, e
 	}
 	lines := strings.Split(strings.TrimSpace(output), "\n")
 	// last line is the exit code of stat
+	if len(lines) == 0 {
+		return FileInfo{}, fmt.Errorf("unexpected empty stat output")
+	}
 	statusLine := strings.TrimSpace(lines[len(lines)-1])
-	if exitCode != 0 || statusLine == "1" || len(lines) < 2 {
+	if statusLine == "1" {
 		return FileInfo{}, os.ErrNotExist
+	}
+	if exitCode != 0 {
+		if strings.TrimSpace(stderr) != "" {
+			return FileInfo{}, fmt.Errorf("stat command exited %d: %s", exitCode, strings.TrimSpace(stderr))
+		}
+		return FileInfo{}, fmt.Errorf("stat command exited %d", exitCode)
+	}
+	if len(lines) < 2 {
+		return FileInfo{}, fmt.Errorf("unexpected stat output: %q", output)
 	}
 	return parseStat(strings.TrimSpace(lines[0]))
 }
 
 func (b *SandboxExecBackend) Exec(ctx context.Context, command string) (string, string, int, error) {
-	output, exitCode, err := b.exec(ctx, command, 60_000)
+	stdout, stderr, exitCode, err := b.exec(ctx, command, 60_000)
 	if err != nil {
 		return "", "", -1, err
 	}
-	return output, "", exitCode, nil
+	return stdout, stderr, exitCode, nil
 }
 
 func parseStat(line string) (FileInfo, error) {
