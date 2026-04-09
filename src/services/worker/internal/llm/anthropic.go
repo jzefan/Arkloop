@@ -220,6 +220,9 @@ func (g *AnthropicGateway) Stream(ctx context.Context, request Request, yield fu
 			},
 		})
 	}
+	if RequestPayloadTooLarge(len(encoded)) {
+		return yield(PreflightOversizeFailure(llmCallID, len(encoded)))
+	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, g.transport.endpoint("/v1/messages"), bytes.NewReader(encoded))
 	if err != nil {
@@ -270,6 +273,9 @@ func (g *AnthropicGateway) Stream(ctx context.Context, request Request, yield fu
 			_ = yield(chunk)
 		}
 		message, details := anthropicErrorMessageAndDetails(body, status)
+		if status == http.StatusRequestEntityTooLarge {
+			details = OversizeFailureDetails(len(encoded), OversizePhaseProvider, details)
+		}
 		return yield(StreamRunFailed{
 			LlmCallID: llmCallID,
 			Error: GatewayError{

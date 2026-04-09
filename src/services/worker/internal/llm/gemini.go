@@ -148,6 +148,9 @@ func (g *GeminiGateway) Stream(ctx context.Context, request Request, yield func(
 			Message:    "Gemini request serialization failed",
 		}})
 	}
+	if RequestPayloadTooLarge(len(encoded)) {
+		return yield(PreflightOversizeFailure(llmCallID, len(encoded)))
+	}
 
 	resourcePath := geminiVersionedPath(g.transport.cfg.BaseURL, g.protocol.APIVersion, fmt.Sprintf("/models/%s:streamGenerateContent?alt=sse", request.Model))
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, g.transport.endpoint(resourcePath), bytes.NewReader(encoded))
@@ -187,6 +190,9 @@ func (g *GeminiGateway) Stream(ctx context.Context, request Request, yield func(
 			})
 		}
 		message, details := geminiErrorMessageAndDetails(body, status)
+		if status == http.StatusRequestEntityTooLarge {
+			details = OversizeFailureDetails(len(encoded), OversizePhaseProvider, details)
+		}
 		return yield(StreamRunFailed{LlmCallID: llmCallID, Error: GatewayError{
 			ErrorClass: errorClassFromStatus(status),
 			Message:    message,

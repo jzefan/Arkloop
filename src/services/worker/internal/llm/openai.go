@@ -46,6 +46,7 @@ const (
 // critical fields denied in advanced_json to prevent overriding core request structure
 var openAIAdvancedJSONDenylist = map[string]struct{}{
 	"model":          {},
+	"instructions":   {},
 	"messages":       {},
 	"input":          {},
 	"stream":         {},
@@ -212,6 +213,9 @@ func (g *OpenAIGateway) chatCompletions(ctx context.Context, request Request, yi
 		}
 		return yield(failed)
 	}
+	if RequestPayloadTooLarge(len(encoded)) {
+		return yield(PreflightOversizeFailure(llmCallID, len(encoded)))
+	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, g.transport.endpoint("/chat/completions"), bytes.NewReader(encoded))
 	if err != nil {
@@ -246,6 +250,9 @@ func (g *OpenAIGateway) chatCompletions(ctx context.Context, request Request, yi
 	if status < 200 || status >= 300 {
 		body, bodyTruncated, _ := readAllWithLimit(resp.Body, openAIMaxErrorBodyBytes)
 		message, details := openAIErrorMessageAndDetails(body, status, "OpenAI request failed")
+		if status == http.StatusRequestEntityTooLarge {
+			details = OversizeFailureDetails(len(encoded), OversizePhaseProvider, details)
+		}
 
 		errClass := errorClassFromStatus(status)
 		failed := StreamRunFailed{
@@ -322,7 +329,8 @@ func (e *openAIResponsesNotSupportedError) Error() string {
 func (g *OpenAIGateway) responses(ctx context.Context, request Request, yield func(StreamEvent) error, allowFallback bool) error {
 	llmCallID := uuid.NewString()
 
-	input, err := toOpenAIResponsesInput(request.Messages)
+	instructions, inputMessages := splitOpenAIResponsesInstructions(request.Messages)
+	input, err := toOpenAIResponsesInput(inputMessages)
 	if err != nil {
 		return yield(StreamRunFailed{
 			LlmCallID: llmCallID,
@@ -338,6 +346,9 @@ func (g *OpenAIGateway) responses(ctx context.Context, request Request, yield fu
 		"model":  request.Model,
 		"input":  input,
 		"stream": true,
+	}
+	if instructions != "" {
+		payload["instructions"] = instructions
 	}
 	if request.Temperature != nil {
 		payload["temperature"] = *request.Temperature
@@ -387,6 +398,9 @@ func (g *OpenAIGateway) responses(ctx context.Context, request Request, yield fu
 				Message:    "OpenAI request serialization failed",
 			},
 		})
+	}
+	if RequestPayloadTooLarge(len(encoded)) {
+		return yield(PreflightOversizeFailure(llmCallID, len(encoded)))
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, g.transport.endpoint("/responses"), bytes.NewReader(encoded))
@@ -439,6 +453,9 @@ func (g *OpenAIGateway) responses(ctx context.Context, request Request, yield fu
 
 		errClass := errorClassFromStatus(status)
 		message, details := openAIErrorMessageAndDetails(body, status, "OpenAI request failed")
+		if status == http.StatusRequestEntityTooLarge {
+			details = OversizeFailureDetails(len(encoded), OversizePhaseProvider, details)
+		}
 		return yield(StreamRunFailed{
 			LlmCallID: llmCallID,
 			Error: GatewayError{
@@ -1559,7 +1576,9 @@ func toOpenAIResponsesInput(messages []Message) ([]map[string]any, error) {
 				"call_id": toolCallID,
 				"output":  toolOutputTextFromEnvelope(parsed),
 			})
-			if imgBlocks := collectImageBlocks(message.Content); len(imgBlocks) > 0 {
+			if imgBlocks, err := toOpenAIResponsesImageBlocks(message.Content); err != nil {
+				return nil, err
+			} else if len(imgBlocks) > 0 {
 				items = append(items, map[string]any{
 					"type":    "message",
 					"role":    "user",
@@ -1580,6 +1599,22 @@ func toOpenAIResponsesInput(messages []Message) ([]map[string]any, error) {
 		})
 	}
 	return items, nil
+}
+
+func splitOpenAIResponsesInstructions(messages []Message) (string, []Message) {
+	instructions := make([]string, 0, 1)
+	filtered := make([]Message, 0, len(messages))
+	for _, message := range messages {
+		if strings.TrimSpace(message.Role) != "system" {
+			filtered = append(filtered, message)
+			continue
+		}
+		text := strings.TrimSpace(joinParts(message.Content))
+		if text != "" {
+			instructions = append(instructions, text)
+		}
+	}
+	return strings.Join(instructions, "\n\n"), filtered
 }
 
 func toOpenAIChatContentBlocks(parts []ContentPart) ([]map[string]any, bool, error) {
@@ -1605,6 +1640,9 @@ func toOpenAIChatContentBlocks(parts []ContentPart) ([]map[string]any, bool, err
 				return nil, false, err
 			}
 			hasStructured = true
+			if text := openAIImageAttachmentKeyText(part); text != "" {
+				blocks = append(blocks, map[string]any{"type": "text", "text": text})
+			}
 			blocks = append(blocks, map[string]any{
 				"type":      "image_url",
 				"image_url": map[string]any{"url": dataURL},
@@ -1704,6 +1742,9 @@ func toOpenAIResponsesContentBlocks(parts []ContentPart) ([]map[string]any, erro
 			if err != nil {
 				return nil, err
 			}
+			if text := openAIImageAttachmentKeyText(part); text != "" {
+				blocks = append(blocks, map[string]any{"type": "input_text", "text": text})
+			}
 			blocks = append(blocks, map[string]any{"type": "input_image", "image_url": dataURL})
 		}
 	}
@@ -1711,6 +1752,17 @@ func toOpenAIResponsesContentBlocks(parts []ContentPart) ([]map[string]any, erro
 		blocks = append(blocks, map[string]any{"type": "input_text", "text": ""})
 	}
 	return blocks, nil
+}
+
+func openAIImageAttachmentKeyText(part ContentPart) string {
+	if part.Attachment == nil {
+		return ""
+	}
+	key := strings.TrimSpace(part.Attachment.Key)
+	if key == "" {
+		return ""
+	}
+	return "[attachment_key:" + key + "]"
 }
 
 func collectImageBlocks(parts []ContentPart) []map[string]any {
@@ -1729,6 +1781,24 @@ func collectImageBlocks(parts []ContentPart) []map[string]any {
 		})
 	}
 	return blocks
+}
+
+func toOpenAIResponsesImageBlocks(parts []ContentPart) ([]map[string]any, error) {
+	blocks := make([]map[string]any, 0, len(parts))
+	for _, part := range parts {
+		if part.Kind() != "image" {
+			continue
+		}
+		dataURL, err := partDataURL(part)
+		if err != nil {
+			return nil, err
+		}
+		if text := openAIImageAttachmentKeyText(part); text != "" {
+			blocks = append(blocks, map[string]any{"type": "input_text", "text": text})
+		}
+		blocks = append(blocks, map[string]any{"type": "input_image", "image_url": dataURL})
+	}
+	return blocks, nil
 }
 
 func partDataURL(part ContentPart) (string, error) {
