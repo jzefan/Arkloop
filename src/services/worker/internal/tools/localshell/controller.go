@@ -252,7 +252,7 @@ func (c *ProcessController) runBuffered(req ExecCommandRequest) (*Response, erro
 	cmd := exec.Command(shellPath, shellArgs...)
 	cmd.Dir = resolveProcessCwd(req.Cwd)
 	cmd.Env = buildProcessEnv(req.Env, false)
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.SysProcAttr = procSysProcAttr()
 
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
@@ -309,7 +309,7 @@ func (c *ProcessController) startManaged(req ExecCommandRequest) (*managedProces
 	cmd := exec.Command(shellPath, shellArgs...)
 	cmd.Dir = resolveProcessCwd(req.Cwd)
 	cmd.Env = buildProcessEnv(req.Env, req.Mode == ModePTY)
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.SysProcAttr = procSysProcAttr()
 
 	proc := &managedProcess{
 		ref:               ref,
@@ -577,9 +577,9 @@ func killProcessLocked(proc *managedProcess, status string) {
 	proc.requestedStatus = status
 	_ = closeProcessStdinLocked(proc)
 	pid := proc.cmd.Process.Pid
-	_ = syscall.Kill(-pid, syscall.SIGTERM)
+	_ = killProcessGroupSoft(pid)
 	time.AfterFunc(processKillGrace, func() {
-		_ = syscall.Kill(-pid, syscall.SIGKILL)
+		_ = killProcessGroupHard(pid)
 	})
 }
 
@@ -704,13 +704,6 @@ func newProcessRef() (string, error) {
 		return "", err
 	}
 	return "proc_" + hex.EncodeToString(buf), nil
-}
-
-func terminateProcessTree(cmd *exec.Cmd, sig syscall.Signal) error {
-	if cmd == nil || cmd.Process == nil {
-		return errors.New("process is not running")
-	}
-	return syscall.Kill(-cmd.Process.Pid, sig)
 }
 
 func exitCodeFromError(err error) int {
