@@ -27,6 +27,10 @@ import {
   readMessageTerminalStatus,
   readMessageAssistantTurn,
   readMessageCodeExecutions,
+  readSelectedModelFromStorage,
+  readSelectedPersonaKeyFromStorage,
+  readThreadThinkingEnabled,
+  readThreadWorkFolder,
   writeMessageAssistantTurn,
   writeMessageTerminalStatus,
   writeMessageWidgets,
@@ -97,6 +101,10 @@ vi.mock('../storage', async () => {
     writeMessageThinking: vi.fn(),
     readMessageSearchSteps: vi.fn(() => null),
     writeMessageSearchSteps: vi.fn(),
+    readSelectedPersonaKeyFromStorage: vi.fn(() => 'default'),
+    readSelectedModelFromStorage: vi.fn(() => null),
+    readThreadWorkFolder: vi.fn(() => null),
+    readThreadThinkingEnabled: vi.fn(() => false),
     readMessageTerminalStatus: vi.fn(() => null),
     writeMessageTerminalStatus: vi.fn(),
     readMessageAssistantTurn: vi.fn(() => null),
@@ -478,6 +486,10 @@ describe('ChatPage loading state', () => {
   const mockedReadMessageTerminalStatus = vi.mocked(readMessageTerminalStatus)
   const mockedReadMessageAssistantTurn = vi.mocked(readMessageAssistantTurn)
   const mockedReadMessageCodeExecutions = vi.mocked(readMessageCodeExecutions)
+  const mockedReadSelectedPersonaKeyFromStorage = vi.mocked(readSelectedPersonaKeyFromStorage)
+  const mockedReadSelectedModelFromStorage = vi.mocked(readSelectedModelFromStorage)
+  const mockedReadThreadWorkFolder = vi.mocked(readThreadWorkFolder)
+  const mockedReadThreadThinkingEnabled = vi.mocked(readThreadThinkingEnabled)
   const mockedWriteMessageTerminalStatus = vi.mocked(writeMessageTerminalStatus)
   const mockedWriteMessageWidgets = vi.mocked(writeMessageWidgets)
   const mockedReadThreadRunHandoff = vi.mocked(readThreadRunHandoff)
@@ -493,6 +505,10 @@ describe('ChatPage loading state', () => {
     mockedReadMessageAssistantTurn.mockReturnValue(null)
     mockedReadMessageTerminalStatus.mockReturnValue(null)
     mockedReadMessageCodeExecutions.mockReturnValue(null)
+    mockedReadSelectedPersonaKeyFromStorage.mockReturnValue('default')
+    mockedReadSelectedModelFromStorage.mockReturnValue(null)
+    mockedReadThreadWorkFolder.mockReturnValue(null)
+    mockedReadThreadThinkingEnabled.mockReturnValue(false)
     mockedReadThreadRunHandoff.mockReturnValue(null)
     actEnvironment.IS_REACT_ACT_ENVIRONMENT = true
     HTMLElement.prototype.scrollIntoView = vi.fn()
@@ -1620,6 +1636,95 @@ describe('ChatPage loading state', () => {
     expect(container.textContent).toContain('Finding the right words')
     expect(mockedContinueThread).toHaveBeenCalledWith('token', 'thread-1', 'run-cancelled-output')
     expect(mockedRetryThread).not.toHaveBeenCalled()
+
+    act(() => {
+      root.unmount()
+    })
+    container.remove()
+    mathRandomSpy.mockRestore()
+  })
+
+  it('failed 重试应带上当前选择的 model', async () => {
+    const mathRandomSpy = vi.spyOn(Math, 'random').mockReturnValue(0)
+    mockedReadMessageTerminalStatus.mockReturnValue('failed')
+    mockedListMessages.mockResolvedValue([
+      {
+        id: 'msg-1',
+        role: 'user',
+        content: 'hello',
+        account_id: 'acc-1',
+        thread_id: 'thread-1',
+        created_by_user_id: 'user-1',
+        created_at: '2026-03-10T00:00:00Z',
+      },
+      {
+        id: 'msg-2',
+        role: 'assistant',
+        content: 'failed answer',
+        account_id: 'acc-1',
+        thread_id: 'thread-1',
+        created_by_user_id: 'user-1',
+        created_at: '2026-03-10T00:00:01Z',
+      },
+    ])
+    mockedReadSelectedPersonaKeyFromStorage.mockReturnValue('search')
+    mockedReadSelectedModelFromStorage.mockReturnValue('openai^gpt-5')
+    mockedReadThreadWorkFolder.mockReturnValue('/workspace/demo')
+    mockedReadThreadThinkingEnabled.mockReturnValue(true)
+
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const root = createRoot(container)
+    const outletContext = {
+      accessToken: 'token',
+      onLoggedOut: vi.fn(),
+      onRunStarted: vi.fn(),
+      onRunEnded: vi.fn(),
+      onThreadCreated: vi.fn(),
+      onThreadTitleUpdated: vi.fn(),
+      refreshCredits: vi.fn(),
+      onOpenNotifications: vi.fn(),
+      notificationVersion: 0,
+      creditsBalance: 0,
+      isPrivateMode: false,
+      onTogglePrivateMode: vi.fn(),
+      privateThreadIds: new Set<string>(),
+      onSetPendingIncognito: vi.fn(),
+      onRightPanelChange: vi.fn(),
+      threads: [],
+      onThreadDeleted: vi.fn(),
+    }
+
+    await act(async () => {
+      root.render(
+        <LocaleProvider>
+          <MemoryRouter initialEntries={['/t/thread-1']}>
+            <Routes>
+              <Route element={<OutletShell context={outletContext} />}>
+                <Route path="/t/:threadId" element={<ChatPage />} />
+              </Route>
+            </Routes>
+          </MemoryRouter>
+        </LocaleProvider>,
+      )
+    })
+    await act(async () => {
+      await flushMicrotasks()
+    })
+
+    const actionButton = container.querySelector('.failed-run-retry-button')
+    expect(actionButton?.textContent).toBe('重试')
+
+    await act(async () => {
+      actionButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      await flushMicrotasks()
+    })
+
+    expect(mockedRetryThread).toHaveBeenCalledWith(
+      'token',
+      'thread-1',
+      'openai^gpt-5',
+    )
 
     act(() => {
       root.unmount()
@@ -3087,7 +3192,7 @@ describe('ChatPage loading state', () => {
     container.remove()
   })
 
-  it('run.cancelled 的 handoff 会保留到下一次 run 真正启动前', async () => {
+  it('run.cancelled 的 handoff 会在下一次 run 创建后立即清掉', async () => {
     mockedListThreadRuns.mockResolvedValue([
       {
         run_id: 'run-cancel-next',
@@ -3210,7 +3315,7 @@ describe('ChatPage loading state', () => {
     })
 
     expect(mockedCreateMessage).toHaveBeenCalled()
-    expect(container.querySelector('[data-testid="current-run-handoff"]')).not.toBeNull()
+    expect(container.querySelector('[data-testid="current-run-handoff"]')).toBeNull()
 
     act(() => {
       root.unmount()
