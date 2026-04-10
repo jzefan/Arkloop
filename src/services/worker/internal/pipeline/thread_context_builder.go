@@ -188,7 +188,7 @@ func legacySnapshotAsReplacement(
 	} else if minStart == 0 {
 		if len(renderableMessages) > 0 && renderableMessages[0].ThreadSeq > 1 {
 			endThreadSeq = renderableMessages[0].ThreadSeq - 1
-		} else if upperBoundSeq != nil && *upperBoundSeq > 0 {
+		} else if len(renderableMessages) == 0 && upperBoundSeq != nil && *upperBoundSeq > 0 {
 			endThreadSeq = *upperBoundSeq
 		}
 	}
