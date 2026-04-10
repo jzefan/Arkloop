@@ -104,7 +104,7 @@ func NewChannelDeliveryMiddlewareWithOptions(pool *pgxpool.Pool, opts ChannelDel
 				tracker := NewTelegramProgressTracker(tgClient, preloaded.Token, ChannelDeliveryTarget{
 					ChannelType:  rc.ChannelContext.ChannelType,
 					Conversation: rc.ChannelContext.Conversation,
-				}, telegramReplyReference(rc))
+				}, telegramReplyReference(ctx, pool, rc))
 				rc.TelegramProgressTracker = tracker
 			}
 		}
@@ -295,7 +295,7 @@ func deliverTelegramChannelOutput(
 		return nil
 	}
 	sender := NewTelegramChannelSenderWithClient(client, channel.Token, resolveSegmentDelay())
-	replyTo := telegramReplyReference(rc)
+	replyTo := telegramReplyReference(ctx, pool, rc)
 	messageIDs, err := sender.SendText(ctx, ChannelDeliveryTarget{
 		ChannelType:  rc.ChannelContext.ChannelType,
 		Conversation: rc.ChannelContext.Conversation,
@@ -326,7 +326,7 @@ func deliverTelegramTerminalNotice(
 		return nil
 	}
 	sender := NewTelegramChannelSenderWithClient(client, channel.Token, resolveSegmentDelay())
-	replyTo := telegramReplyReference(rc)
+	replyTo := telegramReplyReference(ctx, pool, rc)
 	messageIDs, err := sender.SendText(ctx, ChannelDeliveryTarget{
 		ChannelType:  rc.ChannelContext.ChannelType,
 		Conversation: rc.ChannelContext.Conversation,
@@ -358,7 +358,7 @@ func deliverTelegramChannelOutputs(
 		return deliverTelegramChannelOutput(ctx, pool, deliveryRepo, ledgerRepo, rc, client, channel, output, threadMessageID)
 	}
 	sender := NewTelegramChannelSenderWithClient(client, channel.Token, resolveSegmentDelay())
-	replyTo := telegramReplyReference(rc)
+	replyTo := telegramReplyReference(ctx, pool, rc)
 	for i, item := range outputs {
 		trimmed := strings.TrimSpace(item)
 		if trimmed == "" {
@@ -663,7 +663,7 @@ func onebotReplyReference(rc *RunContext) *ChannelMessageRef {
 	return &ref
 }
 
-func telegramReplyReference(rc *RunContext) *ChannelMessageRef {
+func telegramReplyReference(ctx context.Context, pool *pgxpool.Pool, rc *RunContext) *ChannelMessageRef {
 	if rc == nil || rc.ChannelContext == nil {
 		return nil
 	}
@@ -676,6 +676,9 @@ func telegramReplyReference(rc *RunContext) *ChannelMessageRef {
 	if isPrivateChannelConversation(rc.ChannelContext.ConversationType) {
 		return nil
 	}
+	if telegramRunAlreadyDelivered(ctx, pool, rc.Run.ID) {
+		return nil
+	}
 	if rc.ChannelContext.TriggerMessage != nil && strings.TrimSpace(rc.ChannelContext.TriggerMessage.MessageID) != "" {
 		return rc.ChannelContext.TriggerMessage
 	}
@@ -684,6 +687,27 @@ func telegramReplyReference(rc *RunContext) *ChannelMessageRef {
 	}
 	ref := rc.ChannelContext.InboundMessage
 	return &ref
+}
+
+func telegramRunAlreadyDelivered(ctx context.Context, pool *pgxpool.Pool, runID uuid.UUID) bool {
+	if pool == nil || runID == uuid.Nil {
+		return false
+	}
+	var exists bool
+	err := pool.QueryRow(
+		ctx,
+		`SELECT EXISTS(
+			SELECT 1
+			  FROM channel_message_ledger
+			 WHERE run_id = $1
+			   AND direction = 'outbound'
+		)`,
+		runID,
+	).Scan(&exists)
+	if err != nil {
+		return false
+	}
+	return exists
 }
 
 func ShouldShowTelegramProgress(rc *RunContext) bool {
