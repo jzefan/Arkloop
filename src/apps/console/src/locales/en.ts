@@ -65,6 +65,7 @@ export const en: LocaleStrings = {
   password: 'Password',
   signIn: 'Sign in',
   requestFailed: 'Request failed',
+  sessionExpired: 'Session expired, please log in again',
   loginMode: 'Login',
   enterYourPasswordTitle: 'Enter your password',
   fieldIdentity: 'Username / Email',

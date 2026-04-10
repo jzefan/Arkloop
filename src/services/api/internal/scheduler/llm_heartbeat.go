@@ -184,7 +184,7 @@ func (s *LLMHeartbeat) fireOne(ctx context.Context, row data.ScheduledTriggerRow
 		return
 	}
 	if ctxData == nil {
-		_ = s.triggers.DeleteHeartbeat(ctx, s.pool, row.ChannelID, row.ChannelIdentityID)
+		_ = s.triggers.PostponeHeartbeat(ctx, s.pool, row.ID, 2*time.Minute)
 		return
 	}
 

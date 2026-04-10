@@ -1360,36 +1360,48 @@ func (c telegramConnector) resolveTelegramThreadID(
 	identity data.ChannelIdentity,
 	incoming telegramIncomingMessage,
 ) (uuid.UUID, error) {
+	threadRepoTx := c.threadRepo.WithTx(tx)
+
 	if incoming.IsPrivate() {
-		threadMap, err := c.channelDMThreadsRepo.WithTx(tx).GetByBinding(ctx, ch.ID, identity.ID, personaID)
+		dmRepo := c.channelDMThreadsRepo.WithTx(tx)
+		threadMap, err := dmRepo.GetByBinding(ctx, ch.ID, identity.ID, personaID)
 		if err != nil {
 			return uuid.Nil, err
 		}
 		if threadMap != nil {
-			return threadMap.ThreadID, nil
+			if existing, _ := threadRepoTx.GetByID(ctx, threadMap.ThreadID); existing != nil {
+				return threadMap.ThreadID, nil
+			}
+			slog.InfoContext(ctx, "tg_stale_dm_binding", "thread_id", threadMap.ThreadID, "channel_id", ch.ID)
+			_ = dmRepo.DeleteByBinding(ctx, ch.ID, identity.ID, personaID)
 		}
-		thread, err := c.threadRepo.WithTx(tx).Create(ctx, ch.AccountID, identity.UserID, projectID, nil, false)
+		thread, err := threadRepoTx.Create(ctx, ch.AccountID, identity.UserID, projectID, nil, false)
 		if err != nil {
 			return uuid.Nil, err
 		}
-		if _, err := c.channelDMThreadsRepo.WithTx(tx).Create(ctx, ch.ID, identity.ID, personaID, thread.ID); err != nil {
+		if _, err := dmRepo.Create(ctx, ch.ID, identity.ID, personaID, thread.ID); err != nil {
 			return uuid.Nil, err
 		}
 		return thread.ID, nil
 	}
 
-	threadMap, err := c.channelGroupThreadsRepo.WithTx(tx).GetByBinding(ctx, ch.ID, incoming.PlatformChatID, personaID)
+	groupRepo := c.channelGroupThreadsRepo.WithTx(tx)
+	threadMap, err := groupRepo.GetByBinding(ctx, ch.ID, incoming.PlatformChatID, personaID)
 	if err != nil {
 		return uuid.Nil, err
 	}
 	if threadMap != nil {
-		return threadMap.ThreadID, nil
+		if existing, _ := threadRepoTx.GetByID(ctx, threadMap.ThreadID); existing != nil {
+			return threadMap.ThreadID, nil
+		}
+		slog.InfoContext(ctx, "tg_stale_group_binding", "thread_id", threadMap.ThreadID, "channel_id", ch.ID)
+		_ = groupRepo.DeleteByBinding(ctx, ch.ID, incoming.PlatformChatID, personaID)
 	}
-	thread, err := c.threadRepo.WithTx(tx).Create(ctx, ch.AccountID, nil, projectID, nil, false)
+	thread, err := threadRepoTx.Create(ctx, ch.AccountID, nil, projectID, nil, false)
 	if err != nil {
 		return uuid.Nil, err
 	}
-	if _, err := c.channelGroupThreadsRepo.WithTx(tx).Create(ctx, ch.ID, incoming.PlatformChatID, personaID, thread.ID); err != nil {
+	if _, err := groupRepo.Create(ctx, ch.ID, incoming.PlatformChatID, personaID, thread.ID); err != nil {
 		return uuid.Nil, err
 	}
 	return thread.ID, nil

@@ -37,15 +37,16 @@ import { ModulesPage } from './pages/modules/ModulesPage'
 import { PromptInjectionPage } from './pages/prompt-injection/PromptInjectionPage'
 import { BootstrapPage } from './pages/BootstrapPage'
 
-import { OperationProvider, useOperations } from '@arkloop/shared'
+import { OperationProvider, useOperations, useToast } from '@arkloop/shared'
 import { OperationHistoryModal } from './components/OperationHistoryModal'
 import { bridgeClient } from './api/bridge'
+import { useLocale } from './contexts/LocaleContext'
 
 import {
   writeAccessTokenToStorage,
   clearAccessTokenFromStorage,
 } from './storage'
-import { setUnauthenticatedHandler, setAccessTokenHandler, restoreAccessSession, isApiError } from './api'
+import { setUnauthenticatedHandler, setAccessTokenHandler, setSessionExpiredHandler, restoreAccessSession, isApiError } from './api'
 import { setClientApp } from '@arkloop/shared/api'
 
 const sessionRestoreRetries = 12
@@ -69,6 +70,8 @@ function PlaceholderPage({ title }: { title: string }) {
 }
 
 function App() {
+  const { t } = useLocale()
+  const { addToast } = useToast()
   const [accessToken, setAccessToken] = useState<string | null>(null)
   const [authChecked, setAuthChecked] = useState(false)
 
@@ -101,6 +104,9 @@ function App() {
     setAccessTokenHandler((token: string) => {
       writeAccessTokenToStorage(token)
       setAccessToken(token)
+    })
+    setSessionExpiredHandler(() => {
+      addToast(t.sessionExpired, 'warn')
     })
 
     restoreAccessSession({

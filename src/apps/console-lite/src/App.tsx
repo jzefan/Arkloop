@@ -11,19 +11,22 @@ import { ModulesPage } from './pages/ModulesPage'
 import { SettingsPage } from './pages/SettingsPage'
 import { SecurityPage } from './pages/SecurityPage'
 import { BootstrapPage } from './pages/BootstrapPage'
-import { OperationProvider } from '@arkloop/shared'
+import { OperationProvider, useToast } from '@arkloop/shared'
 import { bridgeClient } from './api/bridge'
+import { useLocale } from './contexts/LocaleContext'
 import {
   writeAccessTokenToStorage,
   clearAccessTokenFromStorage,
 } from './storage'
-import { setUnauthenticatedHandler, setAccessTokenHandler, restoreAccessSession, isApiError } from './api'
+import { setUnauthenticatedHandler, setAccessTokenHandler, setSessionExpiredHandler, restoreAccessSession, isApiError } from './api'
 import { setClientApp } from '@arkloop/shared/api'
 
 const sessionRestoreRetries = 12
 const sessionRestoreDelayMs = 1000
 
 function App() {
+  const { t } = useLocale()
+  const { addToast } = useToast()
   const [accessToken, setAccessToken] = useState<string | null>(null)
   const [authChecked, setAuthChecked] = useState(false)
 
@@ -56,6 +59,9 @@ function App() {
     setAccessTokenHandler((token: string) => {
       writeAccessTokenToStorage(token)
       setAccessToken(token)
+    })
+    setSessionExpiredHandler(() => {
+      addToast(t.sessionExpired, 'warn')
     })
 
     restoreAccessSession({

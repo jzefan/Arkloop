@@ -456,6 +456,7 @@ export const en: LocaleStrings = {
   otpSendingCountdown: (s: number) => `Resend in ${s}s`,
   otpVerifyBtn: 'Verify',
   requestFailed: 'Request failed',
+  sessionExpired: 'Session expired, please log in again',
   saved: 'Saved',
   loading: 'Loading',
   accessDenied: 'Access denied',

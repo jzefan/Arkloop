@@ -2,6 +2,7 @@ package pipeline
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -11,6 +12,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"arkloop/services/shared/onebotclient"
 	"arkloop/services/shared/telegrambot"
 	"arkloop/services/worker/internal/data"
 
@@ -51,8 +53,9 @@ func NewChannelDeliveryMiddlewareWithOptions(pool *pgxpool.Pool, opts ChannelDel
 	return func(ctx context.Context, rc *RunContext, next RunHandler) error {
 		var preloaded *data.DeliveryChannelRecord
 		var ux TelegramChannelUX
+		var obUX OneBotChannelUX
 		channelType := normalizedChannelTypeFromContext(rc)
-		if pool != nil && rc != nil && rc.ChannelContext != nil && (channelType == "telegram" || channelType == "discord") {
+		if pool != nil && rc != nil && rc.ChannelContext != nil && (channelType == "telegram" || channelType == "discord" || channelType == "qq") {
 			ch, prefetchErr := repo.GetChannel(ctx, pool, rc.ChannelContext.ChannelID)
 			if prefetchErr != nil {
 				slog.WarnContext(ctx, "channel delivery prefetch failed", "run_id", rc.Run.ID, "err", prefetchErr.Error())
@@ -60,6 +63,9 @@ func NewChannelDeliveryMiddlewareWithOptions(pool *pgxpool.Pool, opts ChannelDel
 				preloaded = ch
 				if channelType == "telegram" {
 					ux = ParseTelegramChannelUX(ch.ConfigJSON)
+				}
+				if channelType == "qq" {
+					obUX = ParseOneBotChannelUX(ch.ConfigJSON)
 				}
 			}
 		}
@@ -103,6 +109,45 @@ func NewChannelDeliveryMiddlewareWithOptions(pool *pgxpool.Pool, opts ChannelDel
 			}
 		}
 
+		// QQ 渠道流式投递
+		if preloaded != nil && pool != nil && rc != nil && rc.ChannelContext != nil && channelType == "qq" {
+			obBaseURL := strings.TrimSpace(os.Getenv("ARKLOOP_ONEBOT_API_BASE_URL"))
+			if obBaseURL == "" {
+				obBaseURL = fmt.Sprintf("http://127.0.0.1:%d", resolveOneBotAPIPort(preloaded))
+			}
+			obToken := strings.TrimSpace(preloaded.Token)
+			obClient := onebotclient.NewClient(obBaseURL, obToken, nil)
+			obSender := NewOneBotChannelSender(obClient, resolveSegmentDelay())
+
+			metadata := map[string]any{}
+			if rc.ChannelContext.ConversationType == "group" {
+				metadata["message_type"] = "group"
+			}
+
+			streamFlush = func(ctx2 context.Context, text string) error {
+				if rc.HeartbeatRun && (rc.HeartbeatToolOutcome == nil || !rc.HeartbeatToolOutcome.Reply) {
+					return nil
+				}
+				ids, sendErr := obSender.SendText(ctx2, ChannelDeliveryTarget{
+					ChannelType:  rc.ChannelContext.ChannelType,
+					Conversation: rc.ChannelContext.Conversation,
+					Metadata:     metadata,
+				}, text)
+				if sendErr != nil {
+					return sendErr
+				}
+				if err := recordChannelDeliverySuccess(ctx2, pool, repo, ledgerRepo, rc, nil, ids); err != nil {
+					return err
+				}
+				if err := persistStreamChunkMessage(ctx2, pool, messagesRepo, rc, text); err != nil {
+					slog.WarnContext(ctx2, "persist stream chunk message failed", "run_id", rc.Run.ID, "err", err.Error())
+				}
+				streamMidCount++
+				return nil
+			}
+			rc.TelegramToolBoundaryFlush = streamFlush
+		}
+
 		var stopTyping context.CancelFunc
 		if preloaded != nil && ux.TypingIndicator && strings.TrimSpace(preloaded.Token) != "" && tgClient != nil && !IsHeartbeatRunContext(rc) {
 			stopTyping = StartTelegramTypingRefresh(ctx, tgClient, preloaded.Token, rc.ChannelContext.Conversation.Target)
@@ -123,7 +168,7 @@ func NewChannelDeliveryMiddlewareWithOptions(pool *pgxpool.Pool, opts ChannelDel
 			return err
 		}
 		channelType = normalizedChannelTypeFromContext(rc)
-		if pool == nil || (channelType != "telegram" && channelType != "discord") {
+		if pool == nil || (channelType != "telegram" && channelType != "discord" && channelType != "qq") {
 			return err
 		}
 		finalOutput := strings.TrimSpace(rc.FinalAssistantOutput)
@@ -187,6 +232,15 @@ func NewChannelDeliveryMiddlewareWithOptions(pool *pgxpool.Pool, opts ChannelDel
 				recordChannelDeliveryFailure(ctx, pool, rc.Run.ID, finalRecordErr)
 				slog.WarnContext(ctx, "discord channel delivery failed", "run_id", rc.Run.ID, "err", finalRecordErr.Error())
 				return err
+			}
+		case "qq":
+			if finalRecordErr := deliverOneBotChannelOutput(ctx, pool, repo, ledgerRepo, rc, channel, output); finalRecordErr != nil {
+				recordChannelDeliveryFailure(ctx, pool, rc.Run.ID, finalRecordErr)
+				slog.WarnContext(ctx, "qq channel delivery failed", "run_id", rc.Run.ID, "err", finalRecordErr.Error())
+				return err
+			}
+			if strings.TrimSpace(obUX.ReactionEmojiID) != "" {
+				MaybeOneBotInboundReaction(ctx, channel, rc, obUX.ReactionEmojiID)
 			}
 		}
 		return err
@@ -305,6 +359,48 @@ func deliverDiscordChannelOutput(
 	return nil
 }
 
+func deliverOneBotChannelOutput(
+	ctx context.Context,
+	pool *pgxpool.Pool,
+	deliveryRepo data.ChannelDeliveryRepository,
+	ledgerRepo data.ChannelMessageLedgerRepository,
+	rc *RunContext,
+	channel *data.DeliveryChannelRecord,
+	output string,
+) error {
+	if strings.TrimSpace(output) == "" {
+		return nil
+	}
+	obBaseURL := strings.TrimSpace(os.Getenv("ARKLOOP_ONEBOT_API_BASE_URL"))
+	if obBaseURL == "" {
+		obBaseURL = fmt.Sprintf("http://127.0.0.1:%d", resolveOneBotAPIPort(channel))
+	}
+	obToken := strings.TrimSpace(channel.Token)
+	client := onebotclient.NewClient(obBaseURL, obToken, nil)
+	sender := NewOneBotChannelSender(client, resolveSegmentDelay())
+
+	replyTo := onebotReplyReference(rc)
+	metadata := map[string]any{}
+	if rc.ChannelContext.ConversationType == "group" {
+		metadata["message_type"] = "group"
+	}
+
+	messageIDs, err := sender.SendText(ctx, ChannelDeliveryTarget{
+		ChannelType:  rc.ChannelContext.ChannelType,
+		Conversation: rc.ChannelContext.Conversation,
+		ReplyTo:      replyTo,
+		Metadata:     metadata,
+	}, output)
+	if err != nil {
+		return err
+	}
+	if err := recordChannelDeliverySuccess(ctx, pool, deliveryRepo, ledgerRepo, rc, replyTo, messageIDs); err != nil {
+		slog.WarnContext(ctx, "qq channel delivery record failed", "run_id", rc.Run.ID, "err", err.Error())
+		return err
+	}
+	return nil
+}
+
 func normalizedAssistantOutputs(outputs []string, fallback string) []string {
 	normalized := make([]string, 0, len(outputs))
 	for _, item := range outputs {
@@ -321,8 +417,42 @@ func normalizedAssistantOutputs(outputs []string, fallback string) []string {
 	return nil
 }
 
+// resolveOneBotAPIPort 从 channel 配置读取 OneBot HTTP 端口，默认 3000
+func resolveOneBotAPIPort(channel *data.DeliveryChannelRecord) int {
+	if channel == nil || len(channel.ConfigJSON) == 0 {
+		return 3000
+	}
+	var cfg struct {
+		OneBotPort int `json:"onebot_port"`
+	}
+	if json.Unmarshal(channel.ConfigJSON, &cfg) == nil && cfg.OneBotPort > 0 {
+		return cfg.OneBotPort
+	}
+	return 3000
+}
+
 func discordReplyReference(rc *RunContext) *ChannelMessageRef {
 	if rc == nil || rc.ChannelContext == nil {
+		return nil
+	}
+	if rc.ChannelContext.TriggerMessage != nil && strings.TrimSpace(rc.ChannelContext.TriggerMessage.MessageID) != "" {
+		return rc.ChannelContext.TriggerMessage
+	}
+	if strings.TrimSpace(rc.ChannelContext.InboundMessage.MessageID) == "" {
+		return nil
+	}
+	ref := rc.ChannelContext.InboundMessage
+	return &ref
+}
+
+func onebotReplyReference(rc *RunContext) *ChannelMessageRef {
+	if rc == nil || rc.ChannelContext == nil {
+		return nil
+	}
+	if rc.HeartbeatRun {
+		return nil
+	}
+	if isPrivateChannelConversation(rc.ChannelContext.ConversationType) {
 		return nil
 	}
 	if rc.ChannelContext.TriggerMessage != nil && strings.TrimSpace(rc.ChannelContext.TriggerMessage.MessageID) != "" {
@@ -416,6 +546,25 @@ func MaybeTelegramInboundReaction(ctx context.Context, client *telegrambot.Clien
 		Reaction:  []telegrambot.MessageReactionEmoji{{Type: "emoji", Emoji: strings.TrimSpace(emoji)}},
 	}); err != nil {
 		slog.WarnContext(ctx, "telegram inbound reaction failed", "run_id", rc.Run.ID, "err", err.Error())
+	}
+}
+
+// MaybeOneBotInboundReaction adds emoji reaction to the inbound QQ message (best effort).
+func MaybeOneBotInboundReaction(ctx context.Context, channel *data.DeliveryChannelRecord, rc *RunContext, emojiID string) {
+	if channel == nil || rc == nil || rc.ChannelContext == nil || strings.TrimSpace(emojiID) == "" {
+		return
+	}
+	midStr := strings.TrimSpace(rc.ChannelContext.InboundMessage.MessageID)
+	if midStr == "" {
+		return
+	}
+	obBaseURL := strings.TrimSpace(os.Getenv("ARKLOOP_ONEBOT_API_BASE_URL"))
+	if obBaseURL == "" {
+		obBaseURL = fmt.Sprintf("http://127.0.0.1:%d", resolveOneBotAPIPort(channel))
+	}
+	client := onebotclient.NewClient(obBaseURL, strings.TrimSpace(channel.Token), nil)
+	if err := client.SetMsgEmojiLike(ctx, midStr, strings.TrimSpace(emojiID)); err != nil {
+		slog.WarnContext(ctx, "qq inbound reaction failed", "run_id", rc.Run.ID, "err", err.Error())
 	}
 }
 

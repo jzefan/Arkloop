@@ -39,7 +39,9 @@ let refreshPromise: Promise<string> | null = null
 let refreshRequestPromise: Promise<LoginResponse> | null = null
 let unauthenticatedHandler: (() => void) | null = null
 let accessTokenHandler: ((token: string) => void) | null = null
+let sessionExpiredHandler: (() => void) | null = null
 let clientApp: string | null = null
+let loggedOut = false
 
 export type RestoreAccessSessionOptions = {
   signal?: AbortSignal
@@ -52,7 +54,14 @@ export function setUnauthenticatedHandler(fn: () => void): void {
 }
 
 export function setAccessTokenHandler(fn: (token: string) => void): void {
-  accessTokenHandler = fn
+  accessTokenHandler = (token: string) => {
+    loggedOut = false
+    fn(token)
+  }
+}
+
+export function setSessionExpiredHandler(fn: () => void): void {
+  sessionExpiredHandler = fn
 }
 
 export function setClientApp(app: string): void {
@@ -190,7 +199,8 @@ export async function restoreAccessSession(options: RestoreAccessSessionOptions 
   }
 }
 
-async function silentRefresh(): Promise<string> {
+export async function silentRefresh(): Promise<string> {
+  if (loggedOut) throw new ApiError({ status: 401, message: 'logged out' })
   if (refreshPromise) return refreshPromise
 
   refreshPromise = (async () => {
@@ -249,10 +259,12 @@ export async function apiFetch<T>(
       const newToken = await silentRefresh()
       return await apiFetch<T>(path, { ...init, accessToken: newToken, _isRetry: true })
     } catch (err) {
-      // 仅在认证失败时登出，网络错误不触发
       if (!(err instanceof TypeError)) {
+        loggedOut = true
+        sessionExpiredHandler?.()
         unauthenticatedHandler?.()
       }
+      throw err
     }
   }
 

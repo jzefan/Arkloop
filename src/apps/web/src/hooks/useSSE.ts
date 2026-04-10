@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { refreshAccessToken, writeAccessToken } from '@arkloop/shared'
+import { silentRefresh } from '@arkloop/shared'
 import { isLocalMode } from '@arkloop/shared/desktop'
 import { createSSEClient, type RunEvent, type SSEClient, type SSEClientState } from '../sse'
 import { clearLastSeqInStorage, readLastSeqFromStorage, writeLastSeqToStorage } from '../storage'
@@ -83,9 +83,7 @@ export function useSSE(options: UseSSEOptions): UseSSEResult {
 
   const handleTokenRefresh = useCallback(async (): Promise<string> => {
     if (isLocalMode()) return accessToken
-    const resp = await refreshAccessToken()
-    writeAccessToken(resp.access_token)
-    return resp.access_token
+    return await silentRefresh()
   }, [accessToken])
 
   const connect = useCallback(() => {

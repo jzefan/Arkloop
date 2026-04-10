@@ -74,6 +74,7 @@ export interface LocaleStrings {
   password: string
   signIn: string
   requestFailed: string
+  sessionExpired: string
   loginMode: string
   enterYourPasswordTitle: string
   fieldIdentity: string

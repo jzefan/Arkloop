@@ -28,6 +28,7 @@ var validChannelTypes = map[string]struct{}{
 	"telegram": {},
 	"discord":  {},
 	"feishu":   {},
+	"qq":       {},
 }
 
 type channelResponse struct {
@@ -265,7 +266,7 @@ func createChannel(
 	}
 
 	req.BotToken = strings.TrimSpace(req.BotToken)
-	if req.BotToken == "" {
+	if req.BotToken == "" && req.ChannelType != "qq" {
 		httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "bot_token must not be empty", traceID, nil)
 		return
 	}
@@ -324,6 +325,15 @@ func createChannel(
 		}
 		personaID = resolvedPersonaID
 	}
+	if req.ChannelType == "qq" && personaID != nil {
+		resolvedPersonaID, err := ensureProjectScopedChannelPersona(r.Context(), personasRepo, actor.AccountID, actor.UserID, personaID)
+		if err != nil {
+			slog.Error("createChannel.ensureProjectScopedPersona", "err", err)
+			httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
+			return
+		}
+		personaID = resolvedPersonaID
+	}
 
 	existing, err := channelsRepo.GetByAccountAndType(r.Context(), actor.AccountID, req.ChannelType)
 	if err != nil {
@@ -354,7 +364,7 @@ func createChannel(
 	defer tx.Rollback(r.Context()) //nolint:errcheck
 
 	var credentialsID *uuid.UUID
-	if secretsRepo != nil {
+	if secretsRepo != nil && req.BotToken != "" {
 		secret, err := secretsRepo.WithTx(tx).Create(r.Context(), actor.UserID, data.ChannelSecretName(channelID), req.BotToken)
 		if err != nil {
 			slog.Error("createChannel.secrets.Create", "err", err)
@@ -618,6 +628,17 @@ func updateChannel(
 		}
 	}
 	if ch.ChannelType == "discord" && desiredPersonaID != nil {
+		resolvedPersonaID, err := ensureProjectScopedChannelPersona(r.Context(), personasRepo, actor.AccountID, actor.UserID, desiredPersonaID)
+		if err != nil {
+			httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
+			return
+		}
+		if resolvedPersonaID != nil && *resolvedPersonaID != derefUUID(desiredPersonaID) {
+			desiredPersonaID = resolvedPersonaID
+			upd.PersonaID = &resolvedPersonaID
+		}
+	}
+	if ch.ChannelType == "qq" && desiredPersonaID != nil {
 		resolvedPersonaID, err := ensureProjectScopedChannelPersona(r.Context(), personasRepo, actor.AccountID, actor.UserID, desiredPersonaID)
 		if err != nil {
 			httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
