@@ -77,7 +77,12 @@ export function formFromInstall(install: MCPInstall): FormState {
 function parseJsonMap(raw: string, fieldKey: string): Record<string, string> {
   const trimmed = raw.trim()
   if (!trimmed) return {}
-  const parsed = JSON.parse(trimmed)
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(trimmed)
+  } catch {
+    throw new Error(fieldKey)
+  }
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error(fieldKey)
   const out: Record<string, string> = {}
   for (const [k, v] of Object.entries(parsed)) {
