@@ -16,13 +16,14 @@ import {
 } from '../api'
 import { useLocale } from '../contexts/LocaleContext'
 import { AutoResizeTextarea } from '@arkloop/shared'
+import { QQLoginFlow } from './QQLoginFlow'
 import { CopyIconButton } from './CopyIconButton'
 
 type Props = {
   accessToken: string
 }
 
-const CHANNEL_TYPES = ['telegram', 'discord', 'feishu'] as const
+const CHANNEL_TYPES = ['telegram', 'discord', 'feishu', 'qq'] as const
 type ChannelType = (typeof CHANNEL_TYPES)[number]
 
 function parseAllowedUserIds(input: string): string[] {
@@ -159,7 +160,7 @@ export function ChannelsSettingsContent({ accessToken }: Props) {
   }
 
   const channelLabel = (type: string) => {
-    const map: Record<string, string> = { telegram: ct.telegram, discord: ct.discord, feishu: ct.feishu }
+    const map: Record<string, string> = { telegram: ct.telegram, discord: ct.discord, feishu: ct.feishu, qq: 'QQ' }
     return map[type] || type
   }
 
@@ -212,6 +213,9 @@ export function ChannelsSettingsContent({ accessToken }: Props) {
 
           <div className="flex flex-col gap-1">
             <label className="text-xs font-medium text-[var(--c-text-secondary)]">{ct.botToken}</label>
+            {formType === 'qq' ? (
+              <p className="text-xs text-[var(--c-text-tertiary)]">QQ channel will be configured automatically after creation.</p>
+            ) : (
             <input
               type="password"
               value={formToken}
@@ -220,6 +224,7 @@ export function ChannelsSettingsContent({ accessToken }: Props) {
               className="h-9 rounded-lg bg-[var(--c-bg-input)] px-3 text-sm text-[var(--c-text-primary)] outline-none placeholder:text-[var(--c-text-muted)]"
               style={{ border: '0.5px solid var(--c-border-subtle)' }}
             />
+            )}
           </div>
 
           {formType === 'telegram' && (
@@ -258,7 +263,7 @@ export function ChannelsSettingsContent({ accessToken }: Props) {
           <div className="flex items-center gap-2 pt-1">
             <button
               onClick={handleCreate}
-              disabled={saving || !formToken.trim()}
+              disabled={saving || (formType !== 'qq' && !formToken.trim())}
               className="rounded-lg px-4 py-1.5 text-xs font-medium text-white transition-colors disabled:opacity-50"
               style={{ background: 'var(--c-accent, #3b82f6)' }}
             >
@@ -332,6 +337,10 @@ export function ChannelsSettingsContent({ accessToken }: Props) {
                   </button>
                 </div>
               </div>
+
+              {ch.channel_type === 'qq' && (
+                <QQLoginFlow accessToken={accessToken} channelId={ch.id} />
+              )}
 
               {ch.channel_type === 'telegram' && (
                 <div className="flex gap-2">

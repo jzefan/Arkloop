@@ -4,6 +4,7 @@ package app
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"os"
@@ -28,6 +29,7 @@ import (
 	"arkloop/services/worker/internal/toolprovider"
 	"arkloop/services/worker/internal/tools"
 	"arkloop/services/worker/internal/tools/builtin"
+	"arkloop/services/worker/internal/tools/builtin/channel_qq"
 	"arkloop/services/worker/internal/tools/builtin/channel_telegram"
 	"arkloop/services/worker/internal/tools/builtin/platform"
 	sandboxtool "arkloop/services/worker/internal/tools/builtin/sandbox"
@@ -58,6 +60,37 @@ func (l *pgTelegramChannelTokenLoader) BotToken(ctx context.Context, channelID u
 		return "", fmt.Errorf("telegram channel tools: channel not found")
 	}
 	return strings.TrimSpace(ch.Token), nil
+}
+
+type pgQQOneBotConfigLoader struct {
+	pool *pgxpool.Pool
+	repo data.ChannelDeliveryRepository
+}
+
+func (l *pgQQOneBotConfigLoader) OneBotConfig(ctx context.Context, channelID uuid.UUID) (string, string, error) {
+	if l.pool == nil {
+		return "", "", fmt.Errorf("qq channel tools: db unavailable")
+	}
+	ch, err := l.repo.GetChannel(ctx, l.pool, channelID)
+	if err != nil {
+		return "", "", err
+	}
+	if ch == nil {
+		return "", "", fmt.Errorf("qq channel tools: channel not found")
+	}
+	var cfg struct {
+		OneBotHTTPURL string `json:"onebot_http_url"`
+		OneBotToken   string `json:"onebot_token"`
+	}
+	if len(ch.ConfigJSON) > 0 {
+		_ = json.Unmarshal(ch.ConfigJSON, &cfg)
+	}
+	baseURL := strings.TrimSpace(cfg.OneBotHTTPURL)
+	token := strings.TrimSpace(cfg.OneBotToken)
+	if baseURL == "" {
+		return "", "", fmt.Errorf("qq channel tools: onebot_http_url not configured")
+	}
+	return baseURL, token, nil
 }
 
 const runtimeSnapshotTTL = 5 * time.Second
@@ -357,6 +390,11 @@ func ComposeNativeEngine(ctx context.Context, pool *pgxpool.Pool, directPool *pg
 		chTelegram = &pgTelegramChannelTokenLoader{pool: pool}
 	}
 
+	var chQQ channel_qq.OneBotConfigLoader
+	if pool != nil {
+		chQQ = &pgQQOneBotConfigLoader{pool: pool}
+	}
+
 	return runengine.NewEngineV1(runengine.EngineV1Deps{
 		Router:                       router,
 		DBPool:                       pool,
@@ -386,6 +424,7 @@ func ComposeNativeEngine(ctx context.Context, pool *pgxpool.Pool, directPool *pg
 		RolloutBlobStore:             rolloutStore,
 		PlatformToolExecutor:         platformExec,
 		ChannelTelegramLoader:        chTelegram,
+		ChannelQQLoader:              chQQ,
 		GroupSearchExecutor:          groupSearchExec,
 	})
 }

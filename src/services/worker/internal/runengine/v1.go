@@ -34,6 +34,7 @@ import (
 	"arkloop/services/worker/internal/subagentctl"
 	"arkloop/services/worker/internal/toolprovider"
 	"arkloop/services/worker/internal/tools"
+	"arkloop/services/worker/internal/tools/builtin/channel_qq"
 	"arkloop/services/worker/internal/tools/builtin/channel_telegram"
 	"arkloop/services/worker/internal/tools/builtin/sandbox"
 	conversationtool "arkloop/services/worker/internal/tools/conversation"
@@ -108,6 +109,9 @@ type EngineV1Deps struct {
 
 	// ChannelTelegramLoader: Telegram Channel 工具取 token；nil 时不注入 telegram_react/reply
 	ChannelTelegramLoader channel_telegram.TokenLoader
+
+	// ChannelQQLoader: QQ Channel 工具取 OneBot URL/token；nil 时不注入 qq_react/reply/send_file
+	ChannelQQLoader channel_qq.OneBotConfigLoader
 
 	// GroupSearchExecutor: 群聊搜索执行器；nil 时不注入 group_history_search
 	GroupSearchExecutor tools.Executor
@@ -566,6 +570,11 @@ func buildChannelLayer(deps EngineV1Deps, messagesRepo data.MessagesRepository, 
 			TokenLoader:        deps.ChannelTelegramLoader,
 			GroupSearchExec:    deps.GroupSearchExecutor,
 			GroupSearchLlmSpec: conversationtool.GroupSearchLlmSpec,
+		}),
+		pipeline.NewChannelQQToolsMiddleware(pipeline.ChannelQQToolsDeps{
+			ConfigLoader:    deps.ChannelQQLoader,
+			GroupSearchExec: deps.GroupSearchExecutor,
+			GroupSearchSpec:  conversationtool.GroupSearchLlmSpec,
 		}),
 	}
 }

@@ -65,6 +65,7 @@ export const zh: LocaleStrings = {
   password: '密码',
   signIn: '登录',
   requestFailed: '请求失败',
+  sessionExpired: '登录已过期，请重新登录',
   loginMode: '登录',
   enterYourPasswordTitle: '输入密码',
   fieldIdentity: '用户名 / 邮箱',

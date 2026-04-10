@@ -5,6 +5,8 @@ export {
   apiFetch,
   refreshAccessToken,
   restoreAccessSession,
+  silentRefresh,
   setUnauthenticatedHandler,
   setAccessTokenHandler,
+  setSessionExpiredHandler,
 } from '@arkloop/shared/api'

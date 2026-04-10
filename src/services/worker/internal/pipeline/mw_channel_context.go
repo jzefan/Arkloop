@@ -261,6 +261,7 @@ func NewChannelToolSurfaceFromContext(c *ChannelContext) *tools.ChannelToolSurfa
 		ChannelType:      c.ChannelType,
 		PlatformChatID:   strings.TrimSpace(c.Conversation.Target),
 		InboundMessageID: strings.TrimSpace(c.InboundMessage.MessageID),
+		ConversationType: strings.TrimSpace(c.ConversationType),
 	}
 	if c.Conversation.ThreadID != nil {
 		t := strings.TrimSpace(*c.Conversation.ThreadID)

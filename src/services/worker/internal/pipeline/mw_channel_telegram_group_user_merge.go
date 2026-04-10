@@ -22,7 +22,8 @@ func NewChannelTelegramGroupUserMergeMiddleware() RunMiddleware {
 		if rc == nil || rc.ChannelContext == nil {
 			return next(ctx, rc)
 		}
-		if strings.ToLower(strings.TrimSpace(rc.ChannelContext.ChannelType)) != "telegram" {
+		ct := strings.ToLower(strings.TrimSpace(rc.ChannelContext.ChannelType))
+		if ct != "telegram" && ct != "qq" {
 			return next(ctx, rc)
 		}
 		slog.DebugContext(ctx, "channel_group_user_merge", "msgs_before", len(rc.Messages), "ids_before", len(rc.ThreadMessageIDs))
@@ -301,7 +302,7 @@ func compactTelegramGroupEnvelopeBurst(tail []llm.Message) (string, []llm.Conten
 		if !ok {
 			return "", nil, false
 		}
-		if !strings.EqualFold(strings.TrimSpace(meta["channel"]), "telegram") {
+		if !isGroupMergeEligibleChannel(strings.TrimSpace(meta["channel"])) {
 			return "", nil, false
 		}
 		body = compactTelegramEnvelopeBody(meta, body)
@@ -332,7 +333,8 @@ func compactTelegramGroupEnvelopeBurst(tail []llm.Message) (string, []llm.Conten
 		bucket[ref] = struct{}{}
 	}
 
-	header := fmt.Sprintf("Telegram %s", conversationType)
+	channelLabel := strings.ToUpper(channel[:1]) + channel[1:]
+	header := fmt.Sprintf("%s %s", channelLabel, conversationType)
 	if conversationTitle != "" {
 		header += fmt.Sprintf(" %q", conversationTitle)
 	}
@@ -682,5 +684,15 @@ func compactTelegramBurstRange(start, end string) string {
 		return start
 	default:
 		return start + "-" + end
+	}
+}
+
+// isGroupMergeEligibleChannel 判断 envelope 中的 channel 值是否支持群消息合并。
+func isGroupMergeEligibleChannel(channel string) bool {
+	switch strings.ToLower(channel) {
+	case "telegram", "qq":
+		return true
+	default:
+		return false
 	}
 }
