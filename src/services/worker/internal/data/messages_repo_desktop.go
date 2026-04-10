@@ -186,7 +186,7 @@ func (MessagesRepository) ListByThread(
 			   AND (
 			     m.hidden = FALSE
 			     OR (
-			       m.metadata_json->>'intermediate' = 'true'
+			       json_extract(m.metadata_json, '$.intermediate') = 1
 			       AND EXISTS (
 			         SELECT 1
 			           FROM messages final
@@ -267,7 +267,7 @@ func (MessagesRepository) ListByThreadUpToID(
 			   AND (
 			     m.hidden = FALSE
 			     OR (
-			       m.metadata_json->>'intermediate' = 'true'
+			       json_extract(m.metadata_json, '$.intermediate') = 1
 			       AND EXISTS (
 			         SELECT 1
 			           FROM messages final
@@ -362,7 +362,7 @@ func (MessagesRepository) ListByIDs(
 		 WHERE m.account_id = $1
 		   AND m.thread_id = $2
 		   AND m.id = ANY($3)
-		   AND (m.hidden = FALSE OR m.metadata_json->>'intermediate' = 'true')
+		   AND (m.hidden = FALSE OR json_extract(m.metadata_json, '$.intermediate') = 1)
 		   AND m.deleted_at IS NULL
 		 ORDER BY m.thread_seq ASC`,
 		accountID,
@@ -418,7 +418,7 @@ func (MessagesRepository) ListRecentByThread(
 		 	  FROM messages
 		 	 WHERE account_id = $1
 		 	   AND thread_id = $2
-		 	   AND (hidden = FALSE OR metadata_json->>'intermediate' = 'true')
+		 	   AND (hidden = FALSE OR json_extract(metadata_json, '$.intermediate') = 1)
 		 	   AND deleted_at IS NULL
 		 	   AND COALESCE(compacted, 0) = 0
 		 	 ORDER BY thread_seq DESC
