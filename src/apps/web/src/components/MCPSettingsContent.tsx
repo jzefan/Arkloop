@@ -4,6 +4,7 @@ import {
   checkMCPInstall,
   createMCPInstall,
   deleteMCPInstall,
+  isApiError,
   listMCPInstalls,
   setWorkspaceMCPEnablement,
   updateMCPInstall,
@@ -219,7 +220,9 @@ export function MCPSettingsContent({ accessToken }: Props) {
       setEditing(null)
       await loadInstalls()
     } catch (err) {
-      if (err instanceof Error) {
+      if (isApiError(err)) {
+        setFormError(err.message || copy.toastSaveFailed)
+      } else if (err instanceof Error) {
         const map: Record<string, string> = {
           displayName: copy.errorName,
           url: copy.errorURL,
@@ -228,7 +231,8 @@ export function MCPSettingsContent({ accessToken }: Props) {
           envJson: copy.errorEnv,
           headersJson: copy.errorHeaders,
         }
-        setFormError(map[err.message] ?? copy.toastSaveFailed)
+        const message = map[err.message] ?? err.message
+        setFormError(message || copy.toastSaveFailed)
       } else {
         setFormError(copy.toastSaveFailed)
       }
