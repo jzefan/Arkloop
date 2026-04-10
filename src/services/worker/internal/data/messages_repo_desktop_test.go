@@ -220,6 +220,55 @@ func TestMessagesRepository_DesktopSortsMixedOldAndNewTimestampFormats(t *testin
 	}
 }
 
+func TestMessagesRepository_ListByThreadDesktopIncludesBooleanIntermediateHistory(t *testing.T) {
+	ctx := context.Background()
+	sqlitePool, err := sqliteadapter.AutoMigrate(ctx, filepath.Join(t.TempDir(), "intermediate-bool.db"))
+	if err != nil {
+		t.Fatalf("auto migrate sqlite: %v", err)
+	}
+	defer sqlitePool.Close()
+
+	pool := sqlitepgx.New(sqlitePool.Unwrap())
+	accountID := uuid.New()
+	projectID := uuid.New()
+	threadID := uuid.New()
+	runID := uuid.NewString()
+
+	seedDesktopAccount(t, pool, accountID)
+	seedDesktopProject(t, pool, accountID, projectID)
+	seedDesktopThread(t, pool, accountID, projectID, threadID)
+
+	if err := insertDesktopRepoMessage(ctx, pool, accountID, threadID, uuid.New(), 1, "user", "before", `{}`, false, ""); err != nil {
+		t.Fatalf("insert user: %v", err)
+	}
+	if err := insertDesktopRepoMessage(ctx, pool, accountID, threadID, uuid.New(), 2, "assistant", "", `{"run_id":"`+runID+`","intermediate":true}`, true, ""); err != nil {
+		t.Fatalf("insert assistant intermediate: %v", err)
+	}
+	if err := insertDesktopRepoMessage(ctx, pool, accountID, threadID, uuid.New(), 3, "tool", `{"tool_call_id":"call_1","tool_name":"exec_command","result":{"ok":true}}`, `{"run_id":"`+runID+`","intermediate":true,"tool_call_id":"call_1"}`, true, ""); err != nil {
+		t.Fatalf("insert tool intermediate: %v", err)
+	}
+	if err := insertDesktopRepoMessage(ctx, pool, accountID, threadID, uuid.New(), 4, "assistant", "after", `{"run_id":"`+runID+`"}`, false, ""); err != nil {
+		t.Fatalf("insert final assistant: %v", err)
+	}
+
+	tx, err := pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		t.Fatalf("begin read: %v", err)
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck
+
+	msgs, err := (MessagesRepository{}).ListByThread(ctx, tx, accountID, threadID, 50)
+	if err != nil {
+		t.Fatalf("list by thread: %v", err)
+	}
+	if len(msgs) != 4 {
+		t.Fatalf("expected visible history plus boolean intermediate pair, got %#v", msgs)
+	}
+	if msgs[1].Role != "assistant" || msgs[2].Role != "tool" || msgs[3].Role != "assistant" {
+		t.Fatalf("unexpected message order: %#v", msgs)
+	}
+}
+
 func TestMessagesRepository_ListByThreadDesktopSkipsRolledBackIntermediateHistory(t *testing.T) {
 	ctx := context.Background()
 	sqlitePool, err := sqliteadapter.AutoMigrate(ctx, filepath.Join(t.TempDir(), "rolled-back.db"))
