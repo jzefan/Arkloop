@@ -759,7 +759,11 @@ function desktopOsUsername(): string {
   }
 }
 
-type BridgeModuleRow = { id: string; status: string }
+export type BridgeModuleRow = {
+  id: string
+  status: string
+  version?: string
+}
 
 async function waitForBridgeReady(): Promise<boolean> {
   const base = bridgeBaseUrl
@@ -923,7 +927,7 @@ export async function waitForBridgeOperation(
   })
 }
 
-async function bridgeListModules(): Promise<BridgeModuleRow[] | null> {
+export async function bridgeListModules(): Promise<BridgeModuleRow[] | null> {
   return await bridgeGetJson<BridgeModuleRow[]>('/v1/modules')
 }
 

@@ -135,7 +135,7 @@ func (h *Handler) listModules(w http.ResponseWriter, r *http.Request) {
 		} else {
 			status = h.moduleStatus(r.Context(), &defs[i])
 		}
-		infos = append(infos, defs[i].ToModuleInfo(status))
+		infos = append(infos, h.moduleInfo(r.Context(), &defs[i], status))
 	}
 
 	writeJSON(w, http.StatusOK, infos)
@@ -150,7 +150,55 @@ func (h *Handler) getModule(w http.ResponseWriter, r *http.Request) {
 	}
 
 	status := h.moduleStatus(r.Context(), def)
-	writeJSON(w, http.StatusOK, def.ToModuleInfo(status))
+	writeJSON(w, http.StatusOK, h.moduleInfo(r.Context(), def, status))
+}
+
+func (h *Handler) moduleInfo(ctx context.Context, def *module.ModuleDefinition, status module.ModuleStatus) module.ModuleInfo {
+	info := def.ToModuleInfo(status)
+	if status == module.StatusNotInstalled || status == module.StatusError || def.ID != "openviking" {
+		return info
+	}
+
+	version := h.moduleVersion(ctx, def)
+	if version != "" {
+		info.Version = version
+	}
+	return info
+}
+
+func (h *Handler) moduleVersion(ctx context.Context, def *module.ModuleDefinition) string {
+	if def.ComposeService == "" {
+		return ""
+	}
+
+	queryCtx, cancel := context.WithTimeout(ctx, dockerQueryTimeout)
+	defer cancel()
+
+	image, err := h.compose.ContainerImage(queryCtx, def.ComposeService, def.ComposeProfile)
+	if err != nil {
+		h.appLogger.Error("container image query failed", map[string]any{
+			"module": def.ID,
+			"error":  err.Error(),
+		})
+		return ""
+	}
+	return imageRefVersion(image)
+}
+
+func imageRefVersion(ref string) string {
+	trimmed := strings.TrimSpace(ref)
+	if trimmed == "" {
+		return ""
+	}
+	if digestSep := strings.Index(trimmed, "@"); digestSep >= 0 {
+		trimmed = trimmed[:digestSep]
+	}
+	slash := strings.LastIndex(trimmed, "/")
+	colon := strings.LastIndex(trimmed, ":")
+	if colon <= slash {
+		return ""
+	}
+	return strings.TrimPrefix(trimmed[colon+1:], "v")
 }
 
 // moduleStatus queries Docker for the live status of a module's compose service.

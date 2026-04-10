@@ -170,4 +170,95 @@ describe('UpdateSettingsContent', () => {
 
     expect(container.textContent).not.toContain('failed to fetch release info: 404')
   })
+
+  it('下载失败时显示原始报错', async () => {
+    downloadAppUpdate.mockRejectedValueOnce(new Error('ZIP file not provided'))
+    const { UpdateSettingsContent, LocaleProvider } = await loadSubject()
+
+    await act(async () => {
+      root!.render(
+        <LocaleProvider>
+          <UpdateSettingsContent />
+        </LocaleProvider>,
+      )
+    })
+    await flushEffects()
+
+    const downloadButton = Array.from(container.querySelectorAll('button')).find((button) => button.textContent?.trim() === '下载')
+    expect(downloadButton).toBeTruthy()
+
+    await act(async () => {
+      downloadButton!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+    await flushEffects()
+
+    expect(container.textContent).toContain('ZIP file not provided')
+  })
+
+  it('检查更新失败时显示原始报错', async () => {
+    checkAppUpdater.mockRejectedValueOnce(new Error('ZIP file not provided'))
+    const { UpdateSettingsContent, LocaleProvider } = await loadSubject()
+
+    await act(async () => {
+      root!.render(
+        <LocaleProvider>
+          <UpdateSettingsContent />
+        </LocaleProvider>,
+      )
+    })
+    await flushEffects()
+
+    expect(container.textContent).toContain('ZIP file not provided')
+  })
+
+  it('组件更新失败时保留原始报错', async () => {
+    checkUpdater.mockResolvedValue({
+      openviking: { current: '0.3.2', latest: '0.3.3', available: true },
+      sandbox: {
+        kernel: { current: '1.0.0', latest: '1.0.0', available: false },
+        rootfs: { current: '1.0.0', latest: '1.0.0', available: false },
+      },
+      bins: {
+        rtk: { current: '1.0.0', latest: '1.0.0', available: false },
+        opencli: { current: '1.0.0', latest: '1.0.0', available: false },
+      },
+    })
+    applyUpdate.mockRejectedValueOnce(new Error('module apply failed'))
+    const { UpdateSettingsContent, LocaleProvider } = await loadSubject()
+
+    await act(async () => {
+      root!.render(
+        <LocaleProvider>
+          <UpdateSettingsContent />
+        </LocaleProvider>,
+      )
+    })
+    await flushEffects()
+
+    const applyButton = Array.from(container.querySelectorAll('button')).find((button) => button.textContent?.trim() === '更新到最新')
+    expect(applyButton).toBeTruthy()
+
+    await act(async () => {
+      applyButton!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+    await flushEffects()
+
+    expect(container.textContent).toContain('module apply failed')
+  })
+
+  it('没有组件更新数据时不显示占位横杠', async () => {
+    checkUpdater.mockResolvedValueOnce(null)
+    const { UpdateSettingsContent, LocaleProvider } = await loadSubject()
+
+    await act(async () => {
+      root!.render(
+        <LocaleProvider>
+          <UpdateSettingsContent />
+        </LocaleProvider>,
+      )
+    })
+    await flushEffects()
+
+    expect(container.textContent).not.toContain('—')
+  })
 })

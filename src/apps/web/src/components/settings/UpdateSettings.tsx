@@ -1,10 +1,10 @@
 import { useState, useEffect, useCallback } from 'react'
 import { RefreshCw } from 'lucide-react'
+import { Button } from '@arkloop/shared'
 import { SpinnerIcon } from '@arkloop/shared/components/auth-ui'
 import { useLocale } from '../../contexts/LocaleContext'
 import { getDesktopApi, type UpdaterComponent, type AppUpdaterState } from '@arkloop/shared/desktop'
 import { SettingsSectionHeader } from './_SettingsSectionHeader'
-import { primaryButtonXsCls, secondaryButtonBorderStyle, secondaryButtonSmCls } from '../buttonStyles'
 
 type ComponentStatus = {
   current: string | null
@@ -56,6 +56,11 @@ function isSilentUpdateError(message: string | null): boolean {
     || normalized.includes('no release published')
 }
 
+function getVisibleErrorMessage(error: unknown): string | null {
+  const message = error instanceof Error ? error.message : String(error)
+  return isSilentUpdateError(message) ? null : message
+}
+
 export function UpdateSettingsContent() {
   const { t } = useLocale()
 
@@ -72,22 +77,32 @@ export function UpdateSettingsContent() {
     if (!updaterApi && !appUpdaterApi) return
     setChecking(true)
     setCheckError(null)
-    try {
-      const tasks: Promise<unknown>[] = []
-      if (updaterApi) {
-        tasks.push(updaterApi.check().then((status) => {
+    let visibleError: string | null = null
+    const tasks: Promise<void>[] = []
+
+    if (updaterApi) {
+      tasks.push(
+        updaterApi.check().then((status) => {
           setUpdateStatus(status)
-        }))
-      }
-      if (appUpdaterApi) {
-        tasks.push(appUpdaterApi.check().then((state) => {
+        }).catch((error) => {
+          visibleError ??= getVisibleErrorMessage(error)
+        }),
+      )
+    }
+
+    if (appUpdaterApi) {
+      tasks.push(
+        appUpdaterApi.check().then((state) => {
           setAppUpdateState(state)
-        }))
-      }
+        }).catch((error) => {
+          visibleError ??= getVisibleErrorMessage(error)
+        }),
+      )
+    }
+
+    try {
       await Promise.all(tasks)
-    } catch (e) {
-      const message = e instanceof Error ? e.message : String(e)
-      setCheckError(isSilentUpdateError(message) ? null : message)
+      setCheckError(visibleError)
     } finally {
       setChecking(false)
     }
@@ -136,8 +151,10 @@ export function UpdateSettingsContent() {
       }))
     })
 
+    let succeeded = false
     try {
       await api.apply({ component })
+      succeeded = true
     } catch (e) {
       setUpdatingMap((prev) => ({
         ...prev,
@@ -147,11 +164,13 @@ export function UpdateSettingsContent() {
       unsub()
       // 更新完成后刷新状态
       await checkUpdates()
-      setUpdatingMap((prev) => {
-        const next = { ...prev }
-        delete next[component]
-        return next
-      })
+      if (succeeded) {
+        setUpdatingMap((prev) => {
+          const next = { ...prev }
+          delete next[component]
+          return next
+        })
+      }
     }
   }, [checkUpdates])
 
@@ -163,8 +182,7 @@ export function UpdateSettingsContent() {
       const state = await api.download()
       setAppUpdateState(state)
     } catch (e) {
-      const message = e instanceof Error ? e.message : String(e)
-      setCheckError(isSilentUpdateError(message) ? null : message)
+      setCheckError(getVisibleErrorMessage(e))
     }
   }, [])
 
@@ -175,8 +193,7 @@ export function UpdateSettingsContent() {
       setCheckError(null)
       await api.install()
     } catch (e) {
-      const message = e instanceof Error ? e.message : String(e)
-      setCheckError(isSilentUpdateError(message) ? null : message)
+      setCheckError(getVisibleErrorMessage(e))
     }
   }, [])
 
@@ -219,15 +236,16 @@ export function UpdateSettingsContent() {
     <div className="flex flex-col gap-6">
       <div className="flex items-center justify-between">
         <SettingsSectionHeader title={t.nav.updates} />
-        <button
+        <Button
           onClick={checkUpdates}
           disabled={checking || isAppUpdaterBusy(appUpdateState)}
-          className={secondaryButtonSmCls}
-          style={secondaryButtonBorderStyle}
+          variant="outline"
+          size="sm"
+          loading={checking}
         >
-          {checking ? <SpinnerIcon /> : <RefreshCw size={14} />}
+          {!checking && <RefreshCw size={14} />}
           <span>{t.desktopSettings.checkForUpdates}</span>
-        </button>
+        </Button>
       </div>
 
       {checkError && (
@@ -239,12 +257,12 @@ export function UpdateSettingsContent() {
         style={{ border: '1px solid var(--c-border-subtle)' }}
       >
         <SettingsSectionHeader title={t.desktopSettings.appUpdateTitle} />
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-3">
           <span className="w-32 shrink-0 text-sm font-medium text-[var(--c-text-heading)]">
             {t.desktopSettings.appUpdateVersion}
           </span>
-          <div className="flex flex-1 items-center gap-2 text-sm text-[var(--c-text-secondary)]">
-            <span>{appUpdateState?.currentVersion ?? '-'}</span>
+          <div className="flex min-w-[12rem] flex-1 items-center gap-2 text-sm text-[var(--c-text-secondary)]">
+            {appUpdateState?.currentVersion && <span>{appUpdateState.currentVersion}</span>}
             {appUpdateState?.latestVersion && appUpdateState.latestVersion !== appUpdateState.currentVersion && (
               <>
                 <span style={{ color: 'var(--c-text-muted)' }}>→</span>
@@ -259,6 +277,14 @@ export function UpdateSettingsContent() {
                 </span>
               </>
             )}
+            {appStateText && !appBusy && (
+              <span
+                className="text-sm"
+                style={{ color: appUpdateState?.phase === 'error' ? 'var(--c-status-error)' : 'var(--c-text-secondary)' }}
+              >
+                {appStateText}
+              </span>
+            )}
           </div>
           <div className="flex items-center gap-2">
             {appBusy ? (
@@ -267,32 +293,22 @@ export function UpdateSettingsContent() {
                 <span>{appStateText}</span>
               </div>
             ) : appUpdateState?.phase === 'available' ? (
-              <button
+              <Button
                 onClick={handleDownloadApp}
-                className={primaryButtonXsCls}
-                style={{
-                  background: 'var(--c-accent)',
-                  color: 'var(--c-accent-fg)',
-                }}
+                variant="primary"
+                size="sm"
               >
                 {t.desktopSettings.appUpdateDownload}
-              </button>
+              </Button>
             ) : appUpdateState?.phase === 'downloaded' ? (
-              <button
+              <Button
                 onClick={handleInstallApp}
-                className={primaryButtonXsCls}
-                style={{
-                  background: 'var(--c-accent)',
-                  color: 'var(--c-accent-fg)',
-                }}
+                variant="primary"
+                size="sm"
               >
                 {t.desktopSettings.appUpdateInstall}
-              </button>
-            ) : (
-              <span className="text-sm" style={{ color: appUpdateState?.phase === 'error' ? 'var(--c-status-error)' : 'var(--c-text-secondary)' }}>
-                {appStateText ?? '—'}
-              </span>
-            )}
+              </Button>
+            ) : null}
           </div>
         </div>
       </div>
@@ -321,7 +337,7 @@ export function UpdateSettingsContent() {
                 </span>
 
                 <div className="flex flex-1 items-center gap-2 text-sm text-[var(--c-text-secondary)]">
-                  <span>{row.status.current ?? '-'}</span>
+                  {row.status.current && <span>{row.status.current}</span>}
                   {row.status.available && row.status.latest && (
                     <>
                       <span style={{ color: 'var(--c-text-muted)' }}>→</span>
@@ -353,21 +369,14 @@ export function UpdateSettingsContent() {
                       )}
                     </div>
                   ) : row.status.available ? (
-                    <button
+                    <Button
                       onClick={() => handleApply(row.key)}
-                      className={primaryButtonXsCls}
-                      style={{
-                        background: 'var(--c-accent)',
-                        color: 'var(--c-accent-fg)',
-                      }}
+                      variant="primary"
+                      size="sm"
                     >
                       {t.skills.update}
-                    </button>
-                  ) : (
-                    <span className="text-xs" style={{ color: 'var(--c-text-muted)' }}>
-                      {/* 已是最新，不显示文字 */}
-                    </span>
-                  )}
+                    </Button>
+                  ) : null}
                 </div>
               </div>
             )
@@ -375,9 +384,6 @@ export function UpdateSettingsContent() {
         </div>
       )}
 
-      {!updateStatus && !checking && !checkError && (
-        <p className="text-sm" style={{ color: 'var(--c-text-muted)' }}>—</p>
-      )}
     </div>
   )
 }

@@ -44,6 +44,7 @@ mac:
   artifactName: "${productName}-mac-${arch}.${ext}"
   target:
     - dmg
+    - zip
   icon: resources/icon.icns
   notarize: true
   entitlements: build/entitlements.mac.plist

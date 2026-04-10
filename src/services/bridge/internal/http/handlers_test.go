@@ -172,3 +172,23 @@ func TestPerformActionUnknownModule(t *testing.T) {
 		t.Fatalf("status = %d, want %d", rec.Code, http.StatusNotFound)
 	}
 }
+
+func TestImageRefVersion(t *testing.T) {
+	tests := []struct {
+		name string
+		ref  string
+		want string
+	}{
+		{name: "tagged image", ref: "ghcr.io/volcengine/openviking:v0.3.3", want: "0.3.3"},
+		{name: "digest image", ref: "ghcr.io/volcengine/openviking:v0.3.3@sha256:deadbeef", want: "0.3.3"},
+		{name: "untagged image", ref: "ghcr.io/volcengine/openviking", want: ""},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := imageRefVersion(tc.ref); got != tc.want {
+				t.Fatalf("imageRefVersion(%q) = %q, want %q", tc.ref, got, tc.want)
+			}
+		})
+	}
+}

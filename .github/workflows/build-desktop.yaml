@@ -250,7 +250,6 @@ jobs:
         with:
           pattern: desktop-installer-*
           path: release-assets/installers/
-          merge-multiple: true
 
       - name: List release assets
         run: find release-assets -type f | sort
@@ -260,14 +259,180 @@ jobs:
           mkdir -p release-files
           find release-assets/installers -type f \( \
             -name '*.dmg' -o \
+            -name '*.zip' -o \
             -name '*.AppImage' -o \
             -name '*.deb' -o \
             -name '*.exe' -o \
             -name '*.blockmap' -o \
             -name 'latest*.yml' \
           \) -exec cp {} release-files/ \;
+          rm -f release-files/latest-mac.yml
+          python3 - <<'PY'
+          from pathlib import Path
+
+          installers_root = Path('release-assets/installers')
+          release_dir = Path('release-files')
+          latest_mac_sources = sorted(installers_root.glob('**/latest-mac.yml'))
+          if not latest_mac_sources:
+              raise SystemExit('missing latest-mac.yml in installer artifacts')
+
+          def parse_scalar(value: str) -> str:
+              value = value.split(' #', 1)[0].strip()
+              if len(value) >= 2 and value[0] == value[-1] and value[0] in {'"', "'"}:
+                  return value[1:-1]
+              return value
+
+          merged_files = []
+          release_date = ''
+          version = ''
+          for latest_mac in latest_mac_sources:
+              text = latest_mac.read_text()
+              lines = text.splitlines()
+              in_files = False
+              current_item = None
+              current_indent = None
+              for raw_line in lines:
+                  stripped = raw_line.strip()
+                  if not stripped:
+                      continue
+                  if stripped == 'files:':
+                      in_files = True
+                      continue
+                  if not in_files:
+                      if stripped.startswith('version:') and not version:
+                          version = parse_scalar(stripped.split(':', 1)[1])
+                      elif stripped.startswith('releaseDate:') and not release_date:
+                          release_date = parse_scalar(stripped.split(':', 1)[1])
+                      continue
+                  indent = len(raw_line) - len(raw_line.lstrip(' '))
+                  if stripped.startswith('- '):
+                      if current_item:
+                          merged_files.append(current_item)
+                      current_item = {}
+                      current_indent = indent
+                      body = stripped[2:].strip()
+                      if body.startswith('url:'):
+                          current_item['url'] = parse_scalar(body.split(':', 1)[1])
+                      continue
+                  if current_item is None or current_indent is None:
+                      continue
+                  if indent <= current_indent:
+                      merged_files.append(current_item)
+                      current_item = None
+                      current_indent = None
+                      continue
+                  if ':' not in stripped:
+                      continue
+                  key, value = stripped.split(':', 1)
+                  current_item[key.strip()] = parse_scalar(value)
+              if current_item:
+                  merged_files.append(current_item)
+
+          deduped = []
+          seen_urls = set()
+          for item in merged_files:
+              url = item.get('url', '')
+              if not url or url in seen_urls:
+                  continue
+              seen_urls.add(url)
+              deduped.append(item)
+
+          if not deduped:
+              raise SystemExit('no files found while merging latest-mac.yml assets')
+
+          zip_entry = next((item for item in deduped if str(item.get('url', '')).endswith('.zip')), None)
+          if zip_entry is None:
+              raise SystemExit('merged latest-mac.yml must include a zip file')
+
+          if not any(str(item.get('url', '')).endswith('arm64.zip') for item in deduped):
+              raise SystemExit('merged latest-mac.yml must include arm64 zip')
+          if not any(str(item.get('url', '')).endswith('x64.zip') for item in deduped):
+              raise SystemExit('merged latest-mac.yml must include x64 zip')
+
+          out = [f'version: {version}'] if version else []
+          out.append('files:')
+          for item in deduped:
+              out.append(f"  - url: {item['url']}")
+              if 'sha512' in item:
+                  out.append(f"    sha512: {item['sha512']}")
+              if 'size' in item:
+                  out.append(f"    size: {item['size']}")
+          out.append(f"path: {zip_entry['url']}")
+          if 'sha512' in zip_entry:
+              out.append(f"sha512: {zip_entry['sha512']}")
+          if release_date:
+              out.append(f"releaseDate: '{release_date}'")
+
+          (release_dir / 'latest-mac.yml').write_text('\n'.join(out) + '\n')
+          PY
           echo "--- Release files ---"
           ls -lh release-files/
+
+      - name: Validate release files
+        run: |
+          python3 - <<'PY'
+          import re
+          from pathlib import Path
+
+          release_dir = Path('release-files')
+          mac_zip_files = sorted(path.name for path in release_dir.glob('*mac*.zip'))
+          if not mac_zip_files:
+              raise SystemExit('missing mac zip in release-files')
+
+          latest_mac = release_dir / 'latest-mac.yml'
+          if not latest_mac.exists():
+              raise SystemExit('missing latest-mac.yml in release-files')
+          if not (release_dir / 'latest.yml').exists():
+              raise SystemExit('missing latest.yml in release-files')
+
+          text = latest_mac.read_text()
+
+          def parse_scalar(value: str) -> str:
+              value = value.split(' #', 1)[0].strip()
+              if len(value) >= 2 and value[0] == value[-1] and value[0] in {'"', "'"}:
+                  return value[1:-1]
+              return value
+
+          path_match = re.search(r'(?m)^path:\s*(.+?)\s*$', text)
+          yml_path = parse_scalar(path_match.group(1)) if path_match else ''
+
+          first_file_url = ''
+          lines = text.splitlines()
+          for index, raw_line in enumerate(lines):
+              stripped = raw_line.strip()
+              if stripped != 'files:':
+                  continue
+              files_indent = len(raw_line) - len(raw_line.lstrip(' '))
+              current_item_indent = None
+              for nested_line in lines[index + 1:]:
+                  nested_stripped = nested_line.strip()
+                  if not nested_stripped or nested_stripped.startswith('#'):
+                      continue
+                  nested_indent = len(nested_line) - len(nested_line.lstrip(' '))
+                  if nested_indent <= files_indent and not nested_stripped.startswith('-'):
+                      break
+                  if nested_stripped.startswith('- '):
+                      current_item_indent = nested_indent
+                      item_body = nested_stripped[2:].strip()
+                      if item_body.startswith('url:'):
+                          first_file_url = parse_scalar(item_body[4:])
+                          break
+                      continue
+                  if current_item_indent is not None and nested_indent > current_item_indent and nested_stripped.startswith('url:'):
+                      first_file_url = parse_scalar(nested_stripped[4:])
+                      break
+              break
+
+          if not (yml_path.endswith('.zip') or first_file_url.endswith('.zip')):
+              raise SystemExit(
+                  f'latest-mac.yml must point to a .zip file, got path={yml_path or "<missing>"} '
+                  f'files[0].url={first_file_url or "<missing>"}'
+              )
+          if 'Arkloop-mac-arm64.zip' not in text:
+              raise SystemExit('latest-mac.yml missing arm64 zip entry')
+          if 'Arkloop-mac-x64.zip' not in text:
+              raise SystemExit('latest-mac.yml missing x64 zip entry')
+          PY
 
       - name: Write release notes
         run: |
