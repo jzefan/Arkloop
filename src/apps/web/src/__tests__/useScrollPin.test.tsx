@@ -722,6 +722,160 @@ describe('useScrollPin', () => {
     })
   })
 
+  it('底部跟随时，轻微向上滚动也应立刻退出自动跟随', async () => {
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const root = createRoot(container)
+    let api: ScrollPinResult | null = null
+    const metrics = {
+      clientHeight: 400,
+      scrollHeight: 1400,
+      turnHeight: 980,
+      turnOffset: 600,
+      bottomOffset: 1400,
+    }
+
+    await act(async () => {
+      root.render(
+        <ScrollPinHarness
+          metrics={metrics}
+          messages={[{ id: 'user-1' }, { id: 'assistant-live' }]}
+          liveRunUiVisible
+          onReady={(value) => { api = value }}
+        />,
+      )
+      await flushAnimationFrames(2)
+    })
+
+    const readyApi = requireApi(api)
+    const scrollContainer = requireContainer(readyApi)
+
+    act(() => {
+      readyApi.scrollToBottom()
+    })
+    await act(async () => {
+      await flushAnimationFrames(2)
+    })
+
+    expect(scrollContainer.scrollTop).toBe(1000)
+    expect(readyApi.isAtBottomRef.current).toBe(true)
+
+    act(() => {
+      scrollContainer.scrollTop = 968
+      readyApi.handleScrollContainerScroll()
+    })
+
+    expect(readyApi.isAtBottomRef.current).toBe(false)
+
+    await act(async () => {
+      metrics.scrollHeight = 1560
+      metrics.turnHeight = 1140
+      metrics.bottomOffset = 1560
+      root.render(
+        <ScrollPinHarness
+          metrics={metrics}
+          messages={[{ id: 'user-1' }, { id: 'assistant-live' }, { id: 'assistant-live-2' }]}
+          liveRunUiVisible
+          onReady={(value) => { api = value }}
+        />,
+      )
+      await flushAnimationFrames(2)
+    })
+
+    expect(scrollContainer.scrollTop).toBe(968)
+    expect(readyApi.isAtBottomRef.current).toBe(false)
+
+    act(() => {
+      root.unmount()
+    })
+  })
+
+  it('发送后顶部锚定下，流结束后补上操作区也不应把视角带到底部', async () => {
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const root = createRoot(container)
+    let api: ScrollPinResult | null = null
+    const metrics = {
+      clientHeight: 400,
+      scrollHeight: 1400,
+      turnHeight: 120,
+      turnOffset: 600,
+      bottomOffset: 1400,
+    }
+
+    await act(async () => {
+      root.render(
+        <ScrollPinHarness
+          metrics={metrics}
+          messages={[{ id: 'user-1' }]}
+          onReady={(value) => { api = value }}
+        />,
+      )
+    })
+
+    const readyApi = requireApi(api)
+    const scrollContainer = requireContainer(readyApi)
+
+    act(() => {
+      readyApi.activateAnchor()
+    })
+    await act(async () => {
+      await flushAnimationFrames(3)
+    })
+
+    expect(scrollContainer.scrollTop).toBe(552)
+
+    await act(async () => {
+      metrics.scrollHeight = 1900
+      metrics.turnHeight = 860
+      metrics.bottomOffset = 1900
+      root.render(
+        <ScrollPinHarness
+          metrics={metrics}
+          messages={[{ id: 'user-1' }, { id: 'assistant-live' }]}
+          liveRunUiVisible
+          onReady={(value) => { api = value }}
+        />,
+      )
+      await flushAnimationFrames(1)
+    })
+
+    await act(async () => {
+      triggerResize(requireLastTurn(requireApi(api)))
+      triggerResize(requireContentRoot(requireApi(api)))
+      await flushAnimationFrames(2)
+    })
+
+    expect(scrollContainer.scrollTop).toBe(552)
+
+    await act(async () => {
+      metrics.scrollHeight = 1988
+      metrics.turnHeight = 948
+      metrics.bottomOffset = 1988
+      root.render(
+        <ScrollPinHarness
+          metrics={metrics}
+          messages={[{ id: 'user-1' }, { id: 'assistant-completed' }]}
+          onReady={(value) => { api = value }}
+        />,
+      )
+      await flushAnimationFrames(1)
+    })
+
+    await act(async () => {
+      triggerResize(requireLastTurn(requireApi(api)))
+      triggerResize(requireContentRoot(requireApi(api)))
+      await flushAnimationFrames(2)
+    })
+
+    expect(scrollContainer.scrollTop).toBe(552)
+    expect(requireLastUserPrompt(requireApi(api)).getBoundingClientRect().top).toBe(48)
+
+    act(() => {
+      root.unmount()
+    })
+  })
+
   it('在最后一段内部阅读时，上方收起不应改变当前阅读位置', async () => {
     const container = document.createElement('div')
     document.body.appendChild(container)
