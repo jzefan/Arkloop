@@ -4,6 +4,7 @@ import * as http from 'http'
 import * as os from 'os'
 import * as path from 'path'
 import { execFileSync } from 'child_process'
+import { loadVersionsFile, saveVersionsFile, type VersionsState } from './config'
 
 export type ComponentStatus = {
   current: string | null
@@ -93,19 +94,10 @@ function parseDesktopManifest(raw: unknown): DesktopManifest {
   }
 }
 
-type LocalVersions = {
-  openviking?: { version: string; updated_at: string }
-  opencli?: { version: string; updated_at: string }
-  rtk?: { version: string; updated_at: string }
-  sandbox?: {
-    kernel?: { version: string; updated_at: string }
-    rootfs?: { version: string; updated_at: string }
-  }
-}
+type LocalVersions = VersionsState
 
-const GITHUB_REPO = 'qqqqqf/Arkloop'
+const GITHUB_REPO = 'qqqqqf-q/Arkloop'
 const GITHUB_API_LATEST_RELEASE = `https://api.github.com/repos/${GITHUB_REPO}/releases/latest`
-const VERSIONS_FILE = path.join(os.homedir(), '.arkloop', 'versions.json')
 const VM_DIR = path.join(os.homedir(), '.arkloop', 'vm')
 const OPENCLI_VERSION_FILE_LEGACY = path.join(os.homedir(), '.arkloop', 'bin', 'opencli.version.json')
 
@@ -122,18 +114,11 @@ function isReleaseMissingStatus(statusCode: number | undefined): boolean {
 }
 
 export function loadLocalVersions(): LocalVersions {
-  try {
-    const raw = fs.readFileSync(VERSIONS_FILE, 'utf-8')
-    return JSON.parse(raw) as LocalVersions
-  } catch (err) {
-    if (err instanceof Error && (err as NodeJS.ErrnoException).code === 'ENOENT') return {}
-    throw err
-  }
+  return loadVersionsFile()
 }
 
 export function saveLocalVersions(v: LocalVersions): void {
-  fs.mkdirSync(path.dirname(VERSIONS_FILE), { recursive: true })
-  fs.writeFileSync(VERSIONS_FILE, JSON.stringify(v, null, 2), 'utf-8')
+  saveVersionsFile(v)
 }
 
 function httpsGet(url: string, maxRedirects = 5): Promise<http.IncomingMessage> {
@@ -197,6 +182,115 @@ function resolveLocalOpenCLIVersion(local: LocalVersions): string | null {
   } catch {
     return null
   }
+}
+
+function extractVersionToken(text: string): string | null {
+  const match = text.match(/\b(?:v)?(\d+(?:\.\d+)+(?:[-+._A-Za-z0-9]*)?)\b/)
+  return match?.[1] ?? null
+}
+
+function hasComponentVersionShape(value: string | undefined): boolean {
+  if (!value) return false
+  return extractVersionToken(value) === value || extractVersionToken(value) === value.replace(/^v/, '')
+}
+
+function readCommandVersion(binaryPath: string, args: string[]): string | null {
+  if (!fs.existsSync(binaryPath)) return null
+  try {
+    const output = execFileSync(binaryPath, args, {
+      encoding: 'utf-8',
+      timeout: 15_000,
+    }).trim()
+    return output ? extractVersionToken(output) : null
+  } catch {
+    return null
+  }
+}
+
+function readSidecarVersion(): { version: string; updated_at: string } | null {
+  const filePath = path.join(os.homedir(), '.arkloop', 'bin', 'sidecar.version.json')
+  try {
+    const raw = fs.readFileSync(filePath, 'utf-8')
+    const parsed = JSON.parse(raw) as { version?: string; downloadedAt?: string }
+    if (typeof parsed.version !== 'string' || !parsed.version.trim()) return null
+    return {
+      version: parsed.version.trim(),
+      updated_at: parsed.downloadedAt ?? new Date().toISOString(),
+    }
+  } catch {
+    return null
+  }
+}
+
+function readOpenCLIVersion(): { version: string; updated_at: string } | null {
+  const binaryPath = path.join(os.homedir(), '.arkloop', 'bin', process.platform === 'win32' ? 'autocli.exe' : 'autocli')
+  const detectedVersion = readCommandVersion(binaryPath, ['--version'])
+  if (detectedVersion) {
+    const updatedAt = fs.existsSync(binaryPath)
+      ? fs.statSync(binaryPath).mtime.toISOString()
+      : new Date().toISOString()
+    return { version: detectedVersion, updated_at: updatedAt }
+  }
+  try {
+    const raw = fs.readFileSync(OPENCLI_VERSION_FILE_LEGACY, 'utf-8')
+    const parsed = JSON.parse(raw) as { version?: string; downloadedAt?: string }
+    if (typeof parsed.version !== 'string' || !parsed.version.trim()) return null
+    return {
+      version: parsed.version.trim(),
+      updated_at: parsed.downloadedAt ?? new Date().toISOString(),
+    }
+  } catch {
+    return null
+  }
+}
+
+function readRTKVersion(): { version: string; updated_at: string } | null {
+  const binaryPath = path.join(os.homedir(), '.arkloop', 'bin', rtkBinaryName())
+  const detectedVersion = readCommandVersion(binaryPath, ['--version'])
+  if (!detectedVersion) return null
+  return {
+    version: detectedVersion,
+    updated_at: fs.statSync(binaryPath).mtime.toISOString(),
+  }
+}
+
+export async function syncLocalVersions(includeBridge = false): Promise<LocalVersions> {
+  const next = { ...loadLocalVersions() }
+
+  const sidecar = readSidecarVersion()
+  if (sidecar) next.sidecar = sidecar
+
+  const opencli = readOpenCLIVersion()
+  if (opencli) next.opencli = opencli
+
+  const rtk = readRTKVersion()
+  if (rtk) next.rtk = rtk
+
+  if (next.sandbox) {
+    const cleanedSandbox = { ...next.sandbox }
+    if (cleanedSandbox.kernel && !hasComponentVersionShape(cleanedSandbox.kernel.version)) {
+      delete cleanedSandbox.kernel
+    }
+    if (cleanedSandbox.rootfs && !hasComponentVersionShape(cleanedSandbox.rootfs.version)) {
+      delete cleanedSandbox.rootfs
+    }
+    next.sandbox = (cleanedSandbox.kernel || cleanedSandbox.rootfs) ? cleanedSandbox : undefined
+  }
+
+  if (includeBridge) {
+    const { bridgeListModules } = await import('./sidecar')
+    const modules = await bridgeListModules()
+    const openviking = modules?.find((module) => module.id === 'openviking')
+    if (openviking?.version) {
+      next.openviking = {
+        version: openviking.version,
+        updated_at: new Date().toISOString(),
+      }
+    }
+  }
+
+  saveLocalVersions(next)
+  return next
 }
 
 export async function checkForUpdates(): Promise<UpdateStatus> {

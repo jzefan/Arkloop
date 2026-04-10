@@ -22,6 +22,7 @@ import { registerIpcHandlers } from './ipc'
 import { initVersionsFile } from './config'
 import { setupAppUpdater } from './app-updater'
 import { setupMainProcessLogging, getDesktopLogDir } from './logging'
+import { syncLocalVersions } from './updater'
 import type { AppConfig, ApplyConfigUpdateOptions } from './types'
 
 app.setName('Arkloop')
@@ -175,6 +176,7 @@ async function ensureLocalSidecar(config: AppConfig): Promise<AppConfig> {
   void ensureOpenCLI()
 
   const runtime = await startSidecar(config.local.port, config.local.portMode)
+  await syncLocalVersions(true)
   const next = mergeConfigWithRuntime(config, runtime)
   syncActiveSidecarPort(next, runtime)
   if (next.local.port !== config.local.port || next.local.portMode !== config.local.portMode) {
@@ -379,6 +381,7 @@ app.whenReady().then(async () => {
   }
   ensureDockPresence()
   initVersionsFile()
+  await syncLocalVersions()
   applyAppIcon()
 
   setStatusListener((status) => {

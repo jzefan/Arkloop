@@ -139,6 +139,43 @@ func (c *Compose) ContainerStatuses(ctx context.Context, serviceNames []string, 
 	return statuses, nil
 }
 
+// ContainerImage returns the configured image reference of a compose service's
+// current container, if one exists.
+func (c *Compose) ContainerImage(ctx context.Context, serviceName string, profile string) (string, error) {
+	if err := c.validateProjectDir(); err != nil {
+		return "", err
+	}
+
+	args := c.baseArgs()
+	if profile != "" {
+		args = append(args, "--profile", profile)
+	}
+	args = append(args, "ps", "--all", "--format", "json", serviceName)
+
+	cmd := exec.CommandContext(ctx, "docker", args...)
+	cmd.Dir = c.projectDir
+
+	out, err := cmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("docker compose ps %s: %w", serviceName, err)
+	}
+
+	entries := parsePSEntries(out)
+	if len(entries) == 0 || strings.TrimSpace(entries[0].Name) == "" {
+		return "", nil
+	}
+
+	inspectCmd := exec.CommandContext(ctx, "docker", "inspect", "--format", "{{.Config.Image}}", entries[0].Name)
+	inspectCmd.Dir = c.projectDir
+
+	imageOut, err := inspectCmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("docker inspect %s: %w", entries[0].Name, err)
+	}
+
+	return strings.TrimSpace(string(imageOut)), nil
+}
+
 // Install pulls/builds and starts a service. If profile is non-empty it is
 // passed as --profile to docker compose.
 func (c *Compose) Install(ctx context.Context, serviceName string, profile string) (*Operation, error) {

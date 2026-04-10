@@ -59,6 +59,9 @@ const DESKTOP_EXPORT_BUNDLE_FILE_SET = new Set([
   'themes.json',
 ])
 
+const DESKTOP_GITHUB_REPO = 'qqqqqf-q/Arkloop'
+const DESKTOP_GITHUB_URL = `https://github.com/${DESKTOP_GITHUB_REPO}`
+
 type DesktopBundleFile = 'config.json' | 'data.sqlite' | 'themes.json'
 
 type DesktopBundleManifest = {
@@ -735,38 +738,33 @@ function desktopStoragePath(): string {
 function getDesktopIconDataUrl(): string | null {
   const fs = require('fs') as typeof import('fs')
   const { app } = require('electron') as typeof import('electron')
+  const { pathToFileURL } = require('node:url') as typeof import('node:url')
   const candidates = app.isPackaged
     ? (
       process.platform === 'darwin'
         ? [
-            path.join(process.resourcesPath, 'icon.icns'),
             path.join(process.resourcesPath, 'app.asar', 'resources', 'icon.png'),
+            path.join(process.resourcesPath, 'icon.png'),
           ]
         : process.platform === 'win32'
           ? [
+              path.join(process.resourcesPath, 'app.asar', 'resources', 'icon.png'),
+              path.join(process.resourcesPath, 'icon.png'),
               path.join(process.resourcesPath, 'icon.ico'),
               path.join(process.resourcesPath, 'app.asar', 'resources', 'icon.ico'),
             ]
           : [
-              path.join(process.resourcesPath, 'icon.png'),
               path.join(process.resourcesPath, 'app.asar', 'resources', 'icon.png'),
+              path.join(process.resourcesPath, 'icon.png'),
             ]
     )
     : [
         path.join(__dirname, '..', '..', 'resources', 'icon.png'),
-        path.join(__dirname, '..', '..', 'resources', 'icon.icns'),
       ]
 
   for (const candidate of candidates) {
     if (!fs.existsSync(candidate)) continue
-    const ext = path.extname(candidate).slice(1).toLowerCase()
-    const mimeType = ext === 'icns'
-      ? 'image/icns'
-      : ext === 'ico'
-        ? 'image/x-icon'
-        : 'image/png'
-    const raw = fs.readFileSync(candidate)
-    return `data:${mimeType};base64,${raw.toString('base64')}`
+    return pathToFileURL(candidate).toString()
   }
   return null
 }
@@ -813,7 +811,7 @@ async function buildAdvancedOverview(): Promise<{
   return {
     appName: 'Arkloop',
     appVersion: versionDisplay,
-    githubUrl: 'https://github.com/qqqqqf/Arkloop',
+    githubUrl: DESKTOP_GITHUB_URL,
     telegramUrl: null,
     iconDataUrl: getDesktopIconDataUrl(),
     configPath: getConfigPath(),
@@ -821,8 +819,8 @@ async function buildAdvancedOverview(): Promise<{
     logsDir: getDesktopLogDir(),
     sqlitePath: desktopSQLitePath(),
     links: [
-      { label: 'GitHub', url: 'https://github.com/qqqqqf/Arkloop' },
-      { label: 'Releases', url: 'https://github.com/qqqqqf/Arkloop/releases' },
+      { label: 'GitHub', url: DESKTOP_GITHUB_URL },
+      { label: 'Releases', url: `${DESKTOP_GITHUB_URL}/releases` },
       { label: 'Follow on X', url: 'https://x.com/intent/follow?screen_name=qqqqqf_' },
     ],
     status: [

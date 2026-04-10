@@ -21,6 +21,20 @@ import type {
 
 const CONFIG_DIR = path.join(os.homedir(), '.arkloop')
 const CONFIG_PATH = path.join(CONFIG_DIR, 'config.json')
+const VERSIONS_FILE = path.join(CONFIG_DIR, 'versions.json')
+const LEGACY_SIDECAR_VERSION_FILE = path.join(CONFIG_DIR, 'bin', 'sidecar.version.json')
+const LEGACY_OPENCLI_VERSION_FILE = path.join(CONFIG_DIR, 'bin', 'opencli.version.json')
+
+export type VersionsState = {
+  sidecar?: { version: string; updated_at: string }
+  openviking?: { version: string; updated_at: string }
+  opencli?: { version: string; updated_at: string }
+  rtk?: { version: string; updated_at: string }
+  sandbox?: {
+    kernel?: { version: string; updated_at: string }
+    rootfs?: { version: string; updated_at: string }
+  }
+}
 
 function normalizeConnectionMode(mode: unknown): ConnectionMode {
   return mode === 'saas' || mode === 'self-hosted' || mode === 'local'
@@ -212,33 +226,60 @@ export function getConfigPath(): string {
   return CONFIG_PATH
 }
 
-const VERSIONS_FILE = path.join(CONFIG_DIR, 'versions.json')
-const LEGACY_SIDECAR_VERSION_FILE = path.join(CONFIG_DIR, 'bin', 'sidecar.version.json')
+type LegacyVersionState = {
+  version?: string
+  downloadedAt?: string
+}
+
+function readLegacyVersionState(filePath: string): { version: string; updated_at: string } | null {
+  try {
+    const raw = fs.readFileSync(filePath, 'utf-8')
+    const parsed = JSON.parse(raw) as LegacyVersionState
+    if (typeof parsed.version !== 'string' || !parsed.version.trim()) return null
+    return {
+      version: parsed.version.trim(),
+      updated_at: parsed.downloadedAt ?? new Date().toISOString(),
+    }
+  } catch {
+    return null
+  }
+}
+
+export function loadVersionsFile(): VersionsState {
+  try {
+    const raw = fs.readFileSync(VERSIONS_FILE, 'utf-8')
+    return JSON.parse(raw) as VersionsState
+  } catch {
+    return {}
+  }
+}
+
+export function saveVersionsFile(versions: VersionsState): void {
+  fs.mkdirSync(CONFIG_DIR, { recursive: true })
+  fs.writeFileSync(VERSIONS_FILE, JSON.stringify(versions, null, 2), 'utf-8')
+}
 
 export function initVersionsFile(): void {
-  if (fs.existsSync(VERSIONS_FILE)) return
+  const next = loadVersionsFile()
+  let changed = false
 
-  let sidecarVersion: string | undefined
-  let downloadedAt: string | undefined
-  try {
-    const raw = fs.readFileSync(LEGACY_SIDECAR_VERSION_FILE, 'utf-8')
-    const legacy = JSON.parse(raw) as { version?: string; downloadedAt?: string }
-    sidecarVersion = legacy.version
-    downloadedAt = legacy.downloadedAt
-  } catch {
-    // 无旧文件，跳过迁移
+  if (!next.sidecar) {
+    const sidecarVersion = readLegacyVersionState(LEGACY_SIDECAR_VERSION_FILE)
+    if (sidecarVersion) {
+      next.sidecar = sidecarVersion
+      changed = true
+    }
   }
 
-  if (!sidecarVersion) return
+  if (!next.opencli) {
+    const opencliVersion = readLegacyVersionState(LEGACY_OPENCLI_VERSION_FILE)
+    if (opencliVersion) {
+      next.opencli = opencliVersion
+      changed = true
+    }
+  }
 
-  fs.mkdirSync(CONFIG_DIR, { recursive: true })
-  fs.writeFileSync(
-    VERSIONS_FILE,
-    JSON.stringify(
-      { sidecar: { version: sidecarVersion, updated_at: downloadedAt ?? new Date().toISOString() } },
-      null,
-      2,
-    ),
-    'utf-8',
-  )
+  if (changed) {
+    saveVersionsFile(next)
+  }
 }

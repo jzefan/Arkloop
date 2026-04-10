@@ -22,7 +22,7 @@ import {
   type LucideIcon,
 } from 'lucide-react'
 import { getDesktopApi } from '@arkloop/shared/desktop'
-import { Modal, PillToggle, TabBar, formatDateTime, useTimeZone, useToast } from '@arkloop/shared'
+import { Button, Modal, PillToggle, TabBar, formatDateTime, useTimeZone, useToast } from '@arkloop/shared'
 import type {
   DesktopAdvancedOverview,
   DesktopExportSection,
@@ -45,7 +45,6 @@ import { SettingsSelect } from './_SettingsSelect'
 import { ConnectionSettings } from './ConnectionSettings'
 import { ModulesSettings } from './ModulesSettings'
 import { UpdateSettingsContent } from './UpdateSettings'
-import { secondaryButtonBorderStyle, secondaryButtonSmCls } from '../buttonStyles'
 
 type AdvancedKey = 'about' | 'network' | 'usage' | 'modules' | 'data' | 'logs'
 
@@ -221,7 +220,7 @@ function AboutPane({
       <SettingsSectionHeader title={ds.about} description={ds.aboutDesc} />
 
       <SettingsSection>
-        <div className="flex flex-wrap items-center gap-4">
+        <div className="flex flex-wrap items-start gap-4">
           <div
             className="flex h-14 w-14 items-center justify-center overflow-hidden rounded-2xl bg-[var(--c-bg-deep)]"
             style={{ border: '0.5px solid var(--c-border-subtle)' }}
@@ -232,22 +231,22 @@ function AboutPane({
               <HardDrive size={22} className="text-[var(--c-text-muted)]" />
             )}
           </div>
-          <div className="min-w-0 flex-1">
+          <div className="min-w-[12rem] flex-1">
             <div className="text-lg font-semibold text-[var(--c-text-heading)]">{overview.appName}</div>
             <div className="mt-0.5 text-sm text-[var(--c-text-secondary)]">{overview.appVersion}</div>
           </div>
-          <div className="flex flex-wrap gap-2">
+          <div className="flex basis-full flex-wrap gap-2 xl:ml-auto xl:basis-auto xl:justify-end">
             {overview.links.map((link) => (
-              <button
+              <Button
                 key={link.url}
-                type="button"
                 onClick={() => openExternal(link.url)}
-                className={secondaryButtonSmCls}
-                style={secondaryButtonBorderStyle}
+                variant="outline"
+                size="sm"
+                className="shrink-0"
               >
                 {link.label === 'GitHub' ? <Github size={14} /> : <ExternalLink size={14} />}
                 <span>{link.label}</span>
-              </button>
+              </Button>
             ))}
           </div>
         </div>
