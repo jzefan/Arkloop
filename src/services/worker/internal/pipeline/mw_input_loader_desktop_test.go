@@ -113,6 +113,7 @@ func TestLoadRunInputsDesktopResolvesChannelHistoryUpperBoundFromLedger(t *testi
 	runID := uuid.New()
 	channelID := uuid.New()
 	identityID := uuid.New()
+	hiddenID := uuid.New()
 	msg1ID := uuid.New()
 	msg2ID := uuid.New()
 	msg3ID := uuid.New()
@@ -146,13 +147,19 @@ func TestLoadRunInputsDesktopResolvesChannelHistoryUpperBoundFromLedger(t *testi
 	if _, err := db.Exec(ctx, `INSERT INTO run_events (run_id, seq, type, data_json) VALUES ($1, 1, 'run.started', $2::jsonb)`, runID, runStarted); err != nil {
 		t.Fatalf("insert run started: %v", err)
 	}
-	if err := insertDesktopThreadMessage(ctx, db, accountID, threadID, msg1ID, 1, "user", "one", "2026-04-09 05:18:30.100000000 +0000"); err != nil {
+	if err := insertDesktopThreadMessage(ctx, db, accountID, threadID, hiddenID, 1, "assistant", "hidden", "2026-04-09 05:18:28.100000000 +0000"); err != nil {
+		t.Fatalf("insert hidden message: %v", err)
+	}
+	if _, err := db.Exec(ctx, `UPDATE messages SET hidden = TRUE, compacted = 1 WHERE id = $1`, hiddenID); err != nil {
+		t.Fatalf("mark hidden message compacted: %v", err)
+	}
+	if err := insertDesktopThreadMessage(ctx, db, accountID, threadID, msg1ID, 2, "user", "one", "2026-04-09 05:18:30.100000000 +0000"); err != nil {
 		t.Fatalf("insert message one: %v", err)
 	}
-	if err := insertDesktopThreadMessage(ctx, db, accountID, threadID, msg2ID, 2, "user", "two", "2026-04-09 05:18:31.100000000 +0000"); err != nil {
+	if err := insertDesktopThreadMessage(ctx, db, accountID, threadID, msg2ID, 3, "user", "two", "2026-04-09 05:18:31.100000000 +0000"); err != nil {
 		t.Fatalf("insert message two: %v", err)
 	}
-	if err := insertDesktopThreadMessage(ctx, db, accountID, threadID, msg3ID, 3, "assistant", "future assistant", "2026-04-09 05:18:29.100000000 +0000"); err != nil {
+	if err := insertDesktopThreadMessage(ctx, db, accountID, threadID, msg3ID, 4, "assistant", "future assistant", "2026-04-09 05:18:29.100000000 +0000"); err != nil {
 		t.Fatalf("insert future assistant: %v", err)
 	}
 	if _, err := db.Exec(ctx, `INSERT INTO channel_message_ledger (channel_id, channel_type, direction, thread_id, platform_conversation_id, platform_message_id, sender_channel_identity_id, message_id, metadata_json, created_at) VALUES ($1, 'telegram', 'inbound', $2, 'chat-1', 'm-2', $3, $4, '{}', $5)`, channelID, threadID, identityID, msg2ID, "2026-04-09 05:18:31.200000000 +0000"); err != nil {
@@ -204,6 +211,7 @@ func TestLoadRunInputsDesktopSkipsSnapshotWhenChannelUpperBoundMissing(t *testin
 	runID := uuid.New()
 	channelID := uuid.New()
 	identityID := uuid.New()
+	hiddenID := uuid.New()
 	msg1ID := uuid.New()
 	msg2ID := uuid.New()
 	msg3ID := uuid.New()
@@ -237,13 +245,19 @@ func TestLoadRunInputsDesktopSkipsSnapshotWhenChannelUpperBoundMissing(t *testin
 	if _, err := db.Exec(ctx, `INSERT INTO run_events (run_id, seq, type, data_json) VALUES ($1, 1, 'run.started', $2::jsonb)`, runID, runStarted); err != nil {
 		t.Fatalf("insert run started: %v", err)
 	}
-	if err := insertDesktopThreadMessage(ctx, db, accountID, threadID, msg1ID, 1, "user", "one", "2026-04-09 05:18:30.100000000 +0000"); err != nil {
+	if err := insertDesktopThreadMessage(ctx, db, accountID, threadID, hiddenID, 1, "assistant", "hidden", "2026-04-09 05:18:28.100000000 +0000"); err != nil {
+		t.Fatalf("insert hidden message: %v", err)
+	}
+	if _, err := db.Exec(ctx, `UPDATE messages SET hidden = TRUE, compacted = 1 WHERE id = $1`, hiddenID); err != nil {
+		t.Fatalf("mark hidden message compacted: %v", err)
+	}
+	if err := insertDesktopThreadMessage(ctx, db, accountID, threadID, msg1ID, 2, "user", "one", "2026-04-09 05:18:30.100000000 +0000"); err != nil {
 		t.Fatalf("insert message one: %v", err)
 	}
-	if err := insertDesktopThreadMessage(ctx, db, accountID, threadID, msg2ID, 2, "user", "two", "2026-04-09 05:18:31.100000000 +0000"); err != nil {
+	if err := insertDesktopThreadMessage(ctx, db, accountID, threadID, msg2ID, 3, "user", "two", "2026-04-09 05:18:31.100000000 +0000"); err != nil {
 		t.Fatalf("insert message two: %v", err)
 	}
-	if err := insertDesktopThreadMessage(ctx, db, accountID, threadID, msg3ID, 3, "assistant", "future assistant", "2026-04-09 05:18:29.100000000 +0000"); err != nil {
+	if err := insertDesktopThreadMessage(ctx, db, accountID, threadID, msg3ID, 4, "assistant", "future assistant", "2026-04-09 05:18:29.100000000 +0000"); err != nil {
 		t.Fatalf("insert future assistant: %v", err)
 	}
 	if _, err := db.Exec(ctx, `INSERT INTO thread_compaction_snapshots (account_id, thread_id, summary_text, metadata_json, is_active) VALUES ($1, $2, 'future summary', '{}', 1)`, accountID, threadID); err != nil {
