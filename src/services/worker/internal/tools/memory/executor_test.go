@@ -11,6 +11,7 @@ import (
 
 	"arkloop/services/worker/internal/events"
 	workermemory "arkloop/services/worker/internal/memory"
+	"arkloop/services/worker/internal/memory/nowledge"
 	"arkloop/services/worker/internal/tools"
 
 	"github.com/google/uuid"
@@ -37,6 +38,11 @@ type mockProvider struct {
 	deleteCalled   bool
 	lastWriteEntry workermemory.MemoryEntry
 	lastDeleteURI  string
+}
+
+type richMockProvider struct {
+	mockProvider
+	richResults []nowledge.SearchResult
 }
 
 type desktopMockProvider struct {
@@ -110,6 +116,10 @@ func (m *mockProvider) Find(_ context.Context, _ workermemory.MemoryIdentity, _ 
 func (m *mockProvider) Content(_ context.Context, _ workermemory.MemoryIdentity, _ string, _ workermemory.MemoryLayer) (string, error) {
 	m.contentCalled = true
 	return m.contentText, m.contentErr
+}
+
+func (m *richMockProvider) SearchRich(_ context.Context, _ workermemory.MemoryIdentity, _ string, _ int) ([]nowledge.SearchResult, error) {
+	return m.richResults, m.findErr
 }
 
 func (m *mockProvider) AppendSessionMessages(_ context.Context, _ workermemory.MemoryIdentity, _ string, _ []workermemory.MemoryMessage) error {
@@ -251,6 +261,56 @@ func TestMemoryExecutor_Search_LimitParsing(t *testing.T) {
 	result = ex.Execute(context.Background(), "memory_search", map[string]any{"query": "q", "limit": json.Number("7")}, newUserExecCtx(), "")
 	if result.Error != nil {
 		t.Fatalf("json.Number limit failed: %v", result.Error.Message)
+	}
+}
+
+func TestMemoryExecutor_Search_EnrichesNowledgeResults(t *testing.T) {
+	mp := &richMockProvider{
+		richResults: []nowledge.SearchResult{
+			{
+				ID:              "mem-1",
+				Title:           "Deploy decision",
+				Content:         "Use SeaweedFS",
+				RelevanceReason: "keyword + bm25",
+				Importance:      0.8,
+				Labels:          []string{"decision"},
+				SourceThreadID:  "thread-1",
+				RelatedThreads: []nowledge.ThreadSearchResult{
+					{ThreadID: "thread-1", Title: "Deploy chat", Source: "arkloop", MessageCount: 3, Score: 0.7, Snippets: []string{"Use SeaweedFS"}},
+				},
+			},
+		},
+	}
+	ex := NewToolExecutor(mp, nil, nil)
+	result := ex.Execute(context.Background(), "memory_search", map[string]any{"query": "deploy"}, newUserExecCtx(), "")
+	if result.Error != nil {
+		t.Fatalf("unexpected error: %v", result.Error.Message)
+	}
+	hits, _ := result.ResultJSON["hits"].([]map[string]any)
+	if len(hits) == 0 {
+		raw, _ := json.Marshal(result.ResultJSON["hits"])
+		var arr []map[string]any
+		_ = json.Unmarshal(raw, &arr)
+		hits = arr
+	}
+	if len(hits) != 1 {
+		t.Fatalf("unexpected hits: %#v", result.ResultJSON)
+	}
+	if hits[0]["source_thread_id"] != "thread-1" {
+		t.Fatalf("missing source_thread_id: %#v", hits[0])
+	}
+	if hits[0]["matched_via"] != "keyword + bm25" {
+		t.Fatalf("missing matched_via: %#v", hits[0])
+	}
+	related, ok := hits[0]["related_threads"].([]map[string]any)
+	if !ok || len(related) != 1 {
+		raw, _ := json.Marshal(hits[0]["related_threads"])
+		var arr []map[string]any
+		_ = json.Unmarshal(raw, &arr)
+		related = arr
+	}
+	if len(related) != 1 || related[0]["thread_id"] != "thread-1" {
+		t.Fatalf("unexpected related threads: %#v", hits[0]["related_threads"])
 	}
 }
 

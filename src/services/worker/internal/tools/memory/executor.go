@@ -14,6 +14,7 @@ import (
 	datarepo "arkloop/services/worker/internal/data"
 	"arkloop/services/worker/internal/events"
 	"arkloop/services/worker/internal/memory"
+	"arkloop/services/worker/internal/memory/nowledge"
 	"arkloop/services/worker/internal/pipeline"
 	"arkloop/services/worker/internal/tools"
 
@@ -33,6 +34,10 @@ const (
 type snapshotAppender interface {
 	AppendMemoryLine(ctx context.Context, pool *pgxpool.Pool, accountID, userID uuid.UUID, agentID, line string) error
 	Invalidate(ctx context.Context, pool *pgxpool.Pool, accountID, userID uuid.UUID, agentID string) error
+}
+
+type richSearchProvider interface {
+	SearchRich(ctx context.Context, ident memory.MemoryIdentity, query string, limit int) ([]nowledge.SearchResult, error)
 }
 
 // ToolExecutor 实现 tools.Executor，将 memory_search/read/write/forget 分发到 MemoryProvider。
@@ -204,11 +209,69 @@ func (e *ToolExecutor) search(ctx context.Context, args map[string]any, ident me
 
 	limit := parseLimit(args, defaultSearchLimit)
 
-	hits, err := e.provider.Find(ctx, ident, memory.SelfURI(ident.UserID.String()), query, limit)
+	results, err := e.searchResults(ctx, ident, query, limit)
 	if err != nil {
 		return providerError("search", err, started)
 	}
 
+	return tools.ExecutionResult{
+		ResultJSON: map[string]any{"hits": results},
+		DurationMs: durationMs(started),
+	}
+}
+
+func (e *ToolExecutor) searchResults(ctx context.Context, ident memory.MemoryIdentity, query string, limit int) ([]map[string]any, error) {
+	if provider, ok := e.provider.(richSearchProvider); ok {
+		results, err := provider.SearchRich(ctx, ident, query, limit)
+		if err != nil {
+			return nil, err
+		}
+		hits := make([]map[string]any, 0, len(results))
+		for _, item := range results {
+			abstract := strings.TrimSpace(item.Title)
+			if abstract == "" {
+				abstract = strings.TrimSpace(item.Content)
+			}
+			hit := map[string]any{
+				"uri":      "nowledge://memory/" + item.ID,
+				"abstract": abstract,
+			}
+			if strings.TrimSpace(item.RelevanceReason) != "" {
+				hit["matched_via"] = strings.TrimSpace(item.RelevanceReason)
+			}
+			if strings.TrimSpace(item.SourceThreadID) != "" {
+				hit["source_thread_id"] = strings.TrimSpace(item.SourceThreadID)
+			}
+			if item.Importance != 0 {
+				hit["importance"] = item.Importance
+			}
+			if len(item.Labels) > 0 {
+				hit["labels"] = append([]string(nil), item.Labels...)
+			}
+			if len(item.RelatedThreads) > 0 {
+				related := make([]map[string]any, 0, len(item.RelatedThreads))
+				for _, thread := range item.RelatedThreads {
+					related = append(related, map[string]any{
+						"thread_id":       thread.ThreadID,
+						"title":           thread.Title,
+						"source":          thread.Source,
+						"message_count":   thread.MessageCount,
+						"score":           thread.Score,
+						"matched_snippet": thread.MatchedSnippet,
+						"snippets":        append([]string(nil), thread.Snippets...),
+					})
+				}
+				hit["related_threads"] = related
+			}
+			hits = append(hits, hit)
+		}
+		return hits, nil
+	}
+
+	hits, err := e.provider.Find(ctx, ident, memory.SelfURI(ident.UserID.String()), query, limit)
+	if err != nil {
+		return nil, err
+	}
 	results := make([]map[string]any, 0, len(hits))
 	for _, h := range hits {
 		results = append(results, map[string]any{
@@ -216,11 +279,7 @@ func (e *ToolExecutor) search(ctx context.Context, args map[string]any, ident me
 			"abstract": h.Abstract,
 		})
 	}
-
-	return tools.ExecutionResult{
-		ResultJSON: map[string]any{"hits": results},
-		DurationMs: durationMs(started),
-	}
+	return results, nil
 }
 
 func (e *ToolExecutor) read(ctx context.Context, args map[string]any, ident memory.MemoryIdentity, started time.Time) tools.ExecutionResult {

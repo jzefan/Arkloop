@@ -25,27 +25,48 @@ func testIdent() memory.MemoryIdentity {
 func TestClientSearchRich(t *testing.T) {
 	t.Setenv(sharedoutbound.AllowLoopbackHTTPEnv, "true")
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/memories/search" {
+		switch r.URL.Path {
+		case "/memories/search":
+			if got := r.URL.Query().Get("query"); got != "deploy notes" {
+				t.Fatalf("unexpected query: %q", got)
+			}
+			if r.Header.Get("Authorization") != "Bearer test-key" {
+				t.Fatalf("missing auth header")
+			}
+			if got := r.Header.Get("X-Arkloop-App"); got != "arkloop" {
+				t.Fatalf("missing app header: %q", got)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"memories": []map[string]any{
+					{
+						"id":               "mem-1",
+						"title":            "Deploy decision",
+						"content":          "Use blue/green",
+						"score":            0.82,
+						"labels":           []string{"decisions"},
+						"relevance_reason": "keyword",
+						"metadata": map[string]any{
+							"source_thread_id": "thread-9",
+						},
+					},
+				},
+			})
+		case "/threads/search":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"threads": []map[string]any{
+					{
+						"thread_id":     "thread-9",
+						"title":         "Deploy chat",
+						"source":        "arkloop",
+						"message_count": 3,
+						"score":         0.7,
+						"snippets":      []string{"Use blue/green"},
+					},
+				},
+			})
+		default:
 			t.Fatalf("unexpected path: %s", r.URL.Path)
 		}
-		if got := r.URL.Query().Get("query"); got != "deploy notes" {
-			t.Fatalf("unexpected query: %q", got)
-		}
-		if r.Header.Get("Authorization") != "Bearer test-key" {
-			t.Fatalf("missing auth header")
-		}
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"memories": []map[string]any{
-				{
-					"id":               "mem-1",
-					"title":            "Deploy decision",
-					"content":          "Use blue/green",
-					"score":            0.82,
-					"labels":           []string{"decisions"},
-					"relevance_reason": "keyword",
-				},
-			},
-		})
 	}))
 	defer srv.Close()
 
@@ -59,6 +80,12 @@ func TestClientSearchRich(t *testing.T) {
 	}
 	if results[0].ID != "mem-1" || results[0].Title != "Deploy decision" {
 		t.Fatalf("unexpected result: %#v", results[0])
+	}
+	if results[0].SourceThreadID != "thread-9" {
+		t.Fatalf("unexpected source thread id: %#v", results[0])
+	}
+	if len(results[0].RelatedThreads) != 1 || results[0].RelatedThreads[0].ThreadID != "thread-9" {
+		t.Fatalf("unexpected related threads: %#v", results[0].RelatedThreads)
 	}
 }
 
@@ -202,9 +229,13 @@ func TestClientReadWorkingMemory(t *testing.T) {
 
 func TestClientThreadEndpoints(t *testing.T) {
 	t.Setenv(sharedoutbound.AllowLoopbackHTTPEnv, "true")
+	var createBody map[string]any
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodPost && r.URL.Path == "/threads":
+			if err := json.NewDecoder(r.Body).Decode(&createBody); err != nil {
+				t.Fatalf("decode create body: %v", err)
+			}
 			_ = json.NewEncoder(w).Encode(map[string]any{"id": "thread-created"})
 		case r.Method == http.MethodPost && r.URL.Path == "/threads/thread-created/append":
 			_ = json.NewEncoder(w).Encode(map[string]any{"messages_added": 2})
@@ -233,9 +264,12 @@ func TestClientThreadEndpoints(t *testing.T) {
 	defer srv.Close()
 
 	c := NewClient(Config{BaseURL: srv.URL})
-	threadID, err := c.CreateThread(context.Background(), testIdent(), "ark-thread", "Deploy chat", []ThreadMessage{{Role: "user", Content: "Deploy it"}})
+	threadID, err := c.CreateThread(context.Background(), testIdent(), "ark-thread", "Deploy chat", "arkloop", []ThreadMessage{{Role: "user", Content: "Deploy it"}})
 	if err != nil || threadID != "thread-created" {
 		t.Fatalf("CreateThread failed: %v %q", err, threadID)
+	}
+	if got := createBody["source"]; got != "arkloop" {
+		t.Fatalf("unexpected source: %#v", got)
 	}
 	appended, err := c.AppendThread(context.Background(), testIdent(), threadID, []ThreadMessage{{Role: "assistant", Content: "Done"}}, "idem-1")
 	if err != nil || appended != 2 {
@@ -254,6 +288,45 @@ func TestClientThreadEndpoints(t *testing.T) {
 	}
 	if got := len(fetched["messages"].([]map[string]any)); got != 1 {
 		t.Fatalf("unexpected fetched thread: %#v", fetched)
+	}
+}
+
+func TestBuildThreadMessageMetadata(t *testing.T) {
+	metadata := BuildThreadMessageMetadata("arkloop", "session-1", "run-1", "thread-1", "user", "hello world", 0, "trace-1")
+	if metadata["source"] != "arkloop" {
+		t.Fatalf("unexpected source: %#v", metadata["source"])
+	}
+	if metadata["session_key"] != "session-1" {
+		t.Fatalf("unexpected session key: %#v", metadata["session_key"])
+	}
+	if metadata["session_id"] != "run-1" {
+		t.Fatalf("unexpected session id: %#v", metadata["session_id"])
+	}
+	if metadata["trace_id"] != "trace-1" {
+		t.Fatalf("unexpected trace id: %#v", metadata["trace_id"])
+	}
+	if got, _ := metadata["external_id"].(string); !strings.HasPrefix(got, "arkloop_") || got == "" {
+		t.Fatalf("unexpected external id: %#v", metadata["external_id"])
+	}
+}
+
+func TestThreadMessageJSONUsesLowercaseKeys(t *testing.T) {
+	payload, err := json.Marshal(ThreadMessage{
+		Role:    "user",
+		Content: "hello",
+		Metadata: map[string]any{
+			"source": "arkloop",
+		},
+	})
+	if err != nil {
+		t.Fatalf("marshal thread message: %v", err)
+	}
+	text := string(payload)
+	if !strings.Contains(text, `"role":"user"`) || !strings.Contains(text, `"content":"hello"`) {
+		t.Fatalf("unexpected payload: %s", text)
+	}
+	if strings.Contains(text, `"Role"`) || strings.Contains(text, `"Content"`) {
+		t.Fatalf("expected lowercase keys, got: %s", text)
 	}
 }
 

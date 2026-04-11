@@ -138,3 +138,35 @@ func TestNowledgeDistillObserverRunsWhenEnabled(t *testing.T) {
 		t.Fatalf("expected nowledge distill flow to run, triage=%v distill=%v", triageCalled, distillCalled)
 	}
 }
+
+func TestBuildNowledgeThreadPayloadCarriesOpenClawStyleMetadata(t *testing.T) {
+	delta := ThreadDelta{
+		RunID:           uuid.MustParse("11111111-1111-1111-1111-111111111111"),
+		ThreadID:        uuid.MustParse("22222222-2222-2222-2222-222222222222"),
+		TraceID:         "trace-1",
+		Messages:        []ThreadDeltaMessage{{Role: "user", Content: "第一句"}, {Role: "assistant", Content: "第二句"}},
+		AssistantOutput: "最终回复",
+	}
+
+	payload := buildNowledgeThreadPayload(delta)
+	if len(payload) != 3 {
+		t.Fatalf("unexpected payload length: %d", len(payload))
+	}
+	for index, message := range payload {
+		if message.Metadata["source"] != nowledgeThreadSource {
+			t.Fatalf("unexpected source at %d: %#v", index, message.Metadata)
+		}
+		if message.Metadata["session_key"] != delta.ThreadID.String() {
+			t.Fatalf("unexpected session_key at %d: %#v", index, message.Metadata)
+		}
+		if message.Metadata["session_id"] != delta.RunID.String() {
+			t.Fatalf("unexpected session_id at %d: %#v", index, message.Metadata)
+		}
+		if message.Metadata["trace_id"] != delta.TraceID {
+			t.Fatalf("unexpected trace_id at %d: %#v", index, message.Metadata)
+		}
+		if externalID, _ := message.Metadata["external_id"].(string); externalID == "" {
+			t.Fatalf("missing external_id at %d: %#v", index, message.Metadata)
+		}
+	}
+}

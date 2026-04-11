@@ -924,6 +924,7 @@ func (h *handler) setNowledgeHeaders(req *nethttp.Request, agentID, apiKey strin
 	req.Header.Set("X-Arkloop-Account", auth.DesktopAccountID.String())
 	req.Header.Set("X-Arkloop-User", auth.DesktopUserID.String())
 	req.Header.Set("X-Arkloop-Agent", strings.TrimSpace(agentID))
+	req.Header.Set("X-Arkloop-App", "arkloop")
 }
 
 func nowledgeMemoryIDFromURI(uri string) (string, error) {
