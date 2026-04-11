@@ -596,7 +596,6 @@ export const zh: LocaleStrings = {
     qqScanNewAccount: '扫码登录新账号',
     qqAllowedUsers: '允许的 QQ 用户',
     qqAllowedUsersPlaceholder: 'QQ 号；逗号或换行；留空不限制',
-    qqAllowAllUsers: '允许所有用户',
     qqAllowedGroups: '允许的 QQ 群',
     qqAllowedGroupsPlaceholder: 'QQ 群号；逗号或换行；留空不限制',
     qqAutoLogin: '自动重新登录',
