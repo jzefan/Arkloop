@@ -29,6 +29,8 @@ func TestProviderMapsNowledgeMemoryOperations(t *testing.T) {
 					"relevance_reason": "topic match",
 				}},
 			})
+		case r.Method == http.MethodGet && r.URL.Path == "/threads/search":
+			_ = json.NewEncoder(w).Encode(map[string]any{"threads": []map[string]any{}})
 		case r.Method == http.MethodGet && r.URL.Path == "/memories/mem-1":
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"id":      "mem-1",

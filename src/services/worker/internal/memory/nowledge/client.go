@@ -3,11 +3,14 @@ package nowledge
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -35,6 +38,7 @@ type SearchResult struct {
 	RelevanceReason string
 	Labels          []string
 	SourceThreadID  string
+	RelatedThreads  []ThreadSearchResult
 }
 
 type ListedMemory struct {
@@ -50,10 +54,10 @@ type ListedMemory struct {
 }
 
 type ThreadMessage struct {
-	Role      string
-	Content   string
-	Timestamp string
-	Metadata  map[string]any
+	Role      string         `json:"role"`
+	Content   string         `json:"content"`
+	Timestamp string         `json:"timestamp,omitempty"`
+	Metadata  map[string]any `json:"metadata,omitempty"`
 }
 
 type ThreadSearchResult struct {
@@ -84,7 +88,7 @@ type DistillResult struct {
 }
 
 type ThreadAppender interface {
-	CreateThread(ctx context.Context, ident memory.MemoryIdentity, threadID, title string, messages []ThreadMessage) (string, error)
+	CreateThread(ctx context.Context, ident memory.MemoryIdentity, threadID, title, source string, messages []ThreadMessage) (string, error)
 	AppendThread(ctx context.Context, ident memory.MemoryIdentity, threadID string, messages []ThreadMessage, idempotencyKey string) (int, error)
 }
 
@@ -340,6 +344,10 @@ func (c *Client) SearchRich(ctx context.Context, ident memory.MemoryIdentity, qu
 	if err := c.doJSON(ctx, ident, http.MethodGet, "/memories/search?"+values.Encode(), nil, &response); err != nil {
 		return nil, err
 	}
+	threadResults, err := c.searchThreadsResult(ctx, ident, query, min(limit, 3), "")
+	if err != nil {
+		threadResults = nil
+	}
 	results := make([]SearchResult, 0, len(response.Memories))
 	for _, item := range response.Memories {
 		sourceThreadID := item.Metadata.SourceThreadID
@@ -373,15 +381,16 @@ func (c *Client) SearchRich(ctx context.Context, ident memory.MemoryIdentity, qu
 			RelevanceReason: firstNonEmpty(item.RelevanceReason, item.Metadata.RelevanceReason),
 			Labels:          labels,
 			SourceThreadID:  sourceThreadID,
+			RelatedThreads:  append([]ThreadSearchResult(nil), threadResults...),
 		})
 	}
 	return results, nil
 }
 
-func (c *Client) CreateThread(ctx context.Context, ident memory.MemoryIdentity, threadID, title string, messages []ThreadMessage) (string, error) {
+func (c *Client) CreateThread(ctx context.Context, ident memory.MemoryIdentity, threadID, title, source string, messages []ThreadMessage) (string, error) {
 	body := map[string]any{
 		"title":    strings.TrimSpace(title),
-		"source":   defaultSource,
+		"source":   firstNonEmpty(strings.TrimSpace(source), defaultSource),
 		"messages": messages,
 	}
 	if strings.TrimSpace(threadID) != "" {
@@ -418,7 +427,7 @@ func (c *Client) AppendThread(ctx context.Context, ident memory.MemoryIdentity, 
 }
 
 func (c *Client) SearchThreads(ctx context.Context, ident memory.MemoryIdentity, query string, limit int) (map[string]any, error) {
-	results, err := c.searchThreadsResult(ctx, ident, query, limit)
+	results, err := c.searchThreadsResult(ctx, ident, query, limit, "")
 	if err != nil {
 		return nil, err
 	}
@@ -437,7 +446,7 @@ func (c *Client) SearchThreads(ctx context.Context, ident memory.MemoryIdentity,
 	return map[string]any{"threads": threads, "total_found": len(threads)}, nil
 }
 
-func (c *Client) searchThreadsResult(ctx context.Context, ident memory.MemoryIdentity, query string, limit int) ([]ThreadSearchResult, error) {
+func (c *Client) searchThreadsResult(ctx context.Context, ident memory.MemoryIdentity, query string, limit int, source string) ([]ThreadSearchResult, error) {
 	if strings.TrimSpace(query) == "" {
 		return nil, nil
 	}
@@ -448,6 +457,9 @@ func (c *Client) searchThreadsResult(ctx context.Context, ident memory.MemoryIde
 	values.Set("query", strings.TrimSpace(query))
 	values.Set("mode", "full")
 	values.Set("limit", fmt.Sprintf("%d", limit))
+	if strings.TrimSpace(source) != "" {
+		values.Set("source", strings.TrimSpace(source))
+	}
 	var response struct {
 		Threads []struct {
 			ID           string   `json:"id"`
@@ -632,9 +644,46 @@ func (c *Client) setHeaders(req *http.Request, ident memory.MemoryIdentity) {
 	req.Header.Set("X-Arkloop-Account", ident.AccountID.String())
 	req.Header.Set("X-Arkloop-User", ident.UserID.String())
 	req.Header.Set("X-Arkloop-Agent", sanitizeAgentID(ident.AgentID))
+	req.Header.Set("X-Arkloop-App", defaultSource)
 	if strings.TrimSpace(ident.ExternalUserID) != "" {
 		req.Header.Set("X-Arkloop-External-User", strings.TrimSpace(ident.ExternalUserID))
 	}
+}
+
+func BuildThreadMessageMetadata(source, sessionKey, sessionID, threadID, role, content string, index int, traceID string) map[string]any {
+	externalID := buildExternalID(threadID, sessionKey, role, content, index)
+	metadata := map[string]any{
+		"external_id": externalID,
+		"source":      firstNonEmpty(strings.TrimSpace(source), defaultSource),
+	}
+	if strings.TrimSpace(sessionKey) != "" {
+		metadata["session_key"] = strings.TrimSpace(sessionKey)
+	}
+	if strings.TrimSpace(sessionID) != "" {
+		metadata["session_id"] = strings.TrimSpace(sessionID)
+	}
+	if strings.TrimSpace(traceID) != "" {
+		metadata["trace_id"] = strings.TrimSpace(traceID)
+	}
+	return metadata
+}
+
+func buildExternalID(threadID, sessionKey, role, content string, index int) string {
+	sum := sha256.Sum256([]byte(strings.Join([]string{
+		strings.TrimSpace(threadID),
+		strings.TrimSpace(sessionKey),
+		strings.TrimSpace(role),
+		strconv.Itoa(index),
+		strings.TrimSpace(content),
+	}, "|")))
+	return "arkloop_" + hex.EncodeToString(sum[:12])
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }
 
 func parseMemoryURI(uri string) (string, error) {

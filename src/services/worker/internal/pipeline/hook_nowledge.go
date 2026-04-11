@@ -2,6 +2,8 @@ package pipeline
 
 import (
 	"context"
+	"crypto/sha1"
+	"encoding/hex"
 	"fmt"
 	"strings"
 
@@ -14,6 +16,7 @@ import (
 )
 
 const nowledgeProviderName = "nowledge"
+const nowledgeThreadSource = "arkloop"
 
 type externalThreadLinkStore interface {
 	Get(ctx context.Context, accountID, threadID uuid.UUID, provider string) (string, bool, error)
@@ -159,7 +162,7 @@ func (p *NowledgeThreadPersistenceProvider) PersistThread(ctx context.Context, r
 		return result
 	}
 	if !found {
-		externalThreadID, err = p.provider.CreateThread(ctx, ident, delta.ThreadID.String(), "Arkloop "+delta.ThreadID.String(), payload)
+		externalThreadID, err = p.provider.CreateThread(ctx, ident, delta.ThreadID.String(), buildNowledgeThreadTitle(delta), nowledgeThreadSource, payload)
 		if err != nil {
 			result.Err = err
 			return result
@@ -177,7 +180,7 @@ func (p *NowledgeThreadPersistenceProvider) PersistThread(ctx context.Context, r
 		result.Committed = true
 		return result
 	}
-	added, err := p.provider.AppendThread(ctx, ident, externalThreadID, payload, delta.TraceID)
+	added, err := p.provider.AppendThread(ctx, ident, externalThreadID, payload, buildNowledgeAppendIdempotencyKey(delta, payload))
 	if err != nil {
 		result.Err = err
 		return result
@@ -235,7 +238,7 @@ func (o *NowledgeDistillObserver) AfterThreadPersist(ctx context.Context, rc *Ru
 	if err != nil || !triage.ShouldDistill {
 		return nil, err
 	}
-	_, err = o.provider.DistillThread(ctx, ident, threadID, "Arkloop "+delta.ThreadID.String(), conversation)
+	_, err = o.provider.DistillThread(ctx, ident, threadID, buildNowledgeThreadTitle(delta), conversation)
 	return nil, err
 }
 
@@ -301,31 +304,61 @@ func compactInline(text string, maxRunes int) string {
 
 func buildNowledgeThreadPayload(delta ThreadDelta) []nowledge.ThreadMessage {
 	out := make([]nowledge.ThreadMessage, 0, len(delta.Messages)+1)
+	sessionKey := delta.ThreadID.String()
+	sessionID := delta.RunID.String()
+	source := nowledgeThreadSource
 	for _, message := range delta.Messages {
 		content := strings.TrimSpace(message.Content)
 		if content == "" {
 			continue
 		}
+		index := len(out)
 		out = append(out, nowledge.ThreadMessage{
-			Role:    message.Role,
-			Content: content,
-			Metadata: map[string]any{
-				"source":   "arkloop",
-				"trace_id": delta.TraceID,
-			},
+			Role:     message.Role,
+			Content:  content,
+			Metadata: nowledge.BuildThreadMessageMetadata(source, sessionKey, sessionID, delta.ThreadID.String(), message.Role, content, index, delta.TraceID),
 		})
 	}
 	if strings.TrimSpace(delta.AssistantOutput) != "" {
+		index := len(out)
 		out = append(out, nowledge.ThreadMessage{
-			Role:    "assistant",
-			Content: strings.TrimSpace(delta.AssistantOutput),
-			Metadata: map[string]any{
-				"source":   "arkloop",
-				"trace_id": delta.TraceID,
-			},
+			Role:     "assistant",
+			Content:  strings.TrimSpace(delta.AssistantOutput),
+			Metadata: nowledge.BuildThreadMessageMetadata(source, sessionKey, sessionID, delta.ThreadID.String(), "assistant", strings.TrimSpace(delta.AssistantOutput), index, delta.TraceID),
 		})
 	}
 	return out
+}
+
+func buildNowledgeThreadTitle(delta ThreadDelta) string {
+	for _, message := range delta.Messages {
+		if strings.TrimSpace(message.Content) == "" || message.Role != "user" {
+			continue
+		}
+		return compactInline(message.Content, 80)
+	}
+	if strings.TrimSpace(delta.AssistantOutput) != "" {
+		return compactInline(delta.AssistantOutput, 80)
+	}
+	return "Arkloop " + delta.ThreadID.String()
+}
+
+func buildNowledgeAppendIdempotencyKey(delta ThreadDelta, messages []nowledge.ThreadMessage) string {
+	externalIDs := make([]string, 0, len(messages))
+	for _, message := range messages {
+		if message.Metadata == nil {
+			continue
+		}
+		if externalID, ok := message.Metadata["external_id"].(string); ok && strings.TrimSpace(externalID) != "" {
+			externalIDs = append(externalIDs, strings.TrimSpace(externalID))
+		}
+	}
+	sum := sha1.Sum([]byte(strings.Join([]string{
+		delta.ThreadID.String(),
+		delta.RunID.String(),
+		strings.Join(externalIDs, "|"),
+	}, "::")))
+	return "ark-batch:" + hex.EncodeToString(sum[:])
 }
 
 func buildNowledgeConversation(delta ThreadDelta) string {
