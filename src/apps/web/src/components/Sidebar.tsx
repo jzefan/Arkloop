@@ -111,8 +111,8 @@ const SidebarThreadList = memo(function SidebarThreadList({
                 setEditingThreadId(null)
               }
             }}
-            className="min-w-0 flex-1 bg-transparent px-2 py-[7px] text-[13px] font-[350] text-[var(--c-text-primary)] outline-none"
-            style={{ border: 'none' }}
+            className="min-w-0 flex-1 bg-transparent px-2 py-[7px] text-[13px] text-[var(--c-text-primary)] outline-none"
+            style={{ border: 'none', fontWeight: 'var(--c-sidebar-thread-weight)' }}
             maxLength={200}
           />
         ) : (
@@ -122,11 +122,12 @@ const SidebarThreadList = memo(function SidebarThreadList({
               navigate(`/t/${thread.id}`)
             }}
             className={[
-              'flex min-w-0 flex-1 items-center gap-2 px-2 py-[7px] text-left text-[14px] font-[325] group-hover:text-[var(--c-text-primary)]',
+              'flex min-w-0 flex-1 items-center gap-2 px-2 py-[7px] text-left text-[14px] group-hover:text-[var(--c-text-primary)]',
               thread.id === activeThreadId
                 ? 'text-[var(--c-text-primary)]'
                 : 'text-[var(--c-text-secondary)]',
             ].join(' ')}
+            style={{ fontWeight: 'var(--c-sidebar-thread-weight)' }}
           >
             {starredSet.has(thread.id) && (
               <Star size={11} className="shrink-0 fill-[var(--c-text-muted)] text-[var(--c-text-muted)] opacity-70" />
@@ -660,7 +661,8 @@ export function Sidebar({
       <nav className="flex flex-col gap-px px-2 pt-1">
         <button
           onClick={onNewThread}
-          className="group flex h-9 items-center gap-2.5 overflow-hidden whitespace-nowrap rounded-lg px-2 text-[15px] font-[300] text-[var(--c-text-secondary)] transition-[background-color,color] duration-[60ms] hover:bg-[var(--c-bg-deep)] hover:text-[var(--c-text-primary)]"
+          className="group flex h-9 items-center gap-2.5 overflow-hidden whitespace-nowrap rounded-lg px-2 text-[15px] text-[var(--c-text-secondary)] transition-[background-color,color] duration-[60ms] hover:bg-[var(--c-bg-deep)] hover:text-[var(--c-text-primary)]"
+          style={{ fontWeight: 'var(--c-sidebar-nav-weight)' }}
         >
           <SquarePen size={16} className="shrink-0 transition-transform duration-100 group-hover:scale-[1.05]" />
           <span style={{ overflow: 'hidden', maxWidth: collapsed ? 0 : '200px', opacity: collapsed ? 0 : 1, transition: 'max-width 280ms cubic-bezier(0.16,1,0.3,1), opacity 150ms ease', whiteSpace: 'nowrap' }}>{isWorkMode ? t.newTask : t.newChat}</span>
@@ -691,7 +693,8 @@ export function Sidebar({
           onPointerLeave={() => {
             searchPointerTraceRef.current = null
           }}
-          className="group flex h-9 items-center gap-2.5 overflow-hidden whitespace-nowrap rounded-lg px-2 text-[15px] font-[300] text-[var(--c-text-secondary)] transition-[background-color,color] duration-[60ms] hover:bg-[var(--c-bg-deep)] hover:text-[var(--c-text-primary)]"
+          className="group flex h-9 items-center gap-2.5 overflow-hidden whitespace-nowrap rounded-lg px-2 text-[15px] text-[var(--c-text-secondary)] transition-[background-color,color] duration-[60ms] hover:bg-[var(--c-bg-deep)] hover:text-[var(--c-text-primary)]"
+          style={{ fontWeight: 'var(--c-sidebar-nav-weight)' }}
         >
           <Search size={16} className="shrink-0 transition-transform duration-100 group-hover:scale-[1.05]" />
           <span style={{ overflow: 'hidden', maxWidth: collapsed ? 0 : '200px', opacity: collapsed ? 0 : 1, transition: 'max-width 280ms cubic-bezier(0.16,1,0.3,1), opacity 150ms ease', whiteSpace: 'nowrap' }}>{isWorkMode ? t.searchTasks : t.searchChats}</span>
@@ -708,7 +711,10 @@ export function Sidebar({
         style={{ transition: 'opacity 150ms ease' }}
       >
           <div className="mb-[12px] mt-1 flex shrink-0 items-center gap-2 px-2">
-            <h3 className="text-[11px] font-[350] tracking-[0.3px] text-[var(--c-text-tertiary)]">
+            <h3
+              className="text-[11px] tracking-[0.3px] text-[var(--c-text-tertiary)]"
+              style={{ fontWeight: 'var(--c-sidebar-section-weight)' }}
+            >
               {t.recents}
             </h3>
           </div>
