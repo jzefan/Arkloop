@@ -32,22 +32,34 @@ func (f *SubAgentRunFactory) CreateSpawnRun(
 	snapshot ContextSnapshot,
 	forcedRunID *uuid.UUID,
 ) (data.SubAgentRecord, uuid.UUID, error) {
-	lineage, err := (data.RunsRepository{}).GetLineage(ctx, tx, parentRun.ID)
+	parentSubAgent, err := (data.SubAgentRepository{}).GetByCurrentRunID(ctx, tx, parentRun.ID)
+	if err != nil {
+		return data.SubAgentRecord{}, uuid.Nil, err
+	}
+	ownerThreadID := parentRun.ThreadID
+	var parentSubAgentID *uuid.UUID
+	depth := 1
+	if parentSubAgent != nil {
+		ownerThreadID = parentRun.ThreadID
+		parentSubAgentID = &parentSubAgent.ID
+		depth = parentSubAgent.Depth + 1
+	}
+	childThreadID, err := f.createChildThread(ctx, tx, parentRun)
 	if err != nil {
 		return data.SubAgentRecord{}, uuid.Nil, err
 	}
 	createdSubAgent, err := (data.SubAgentRepository{}).Create(ctx, tx, data.SubAgentCreateParams{
-		AccountID:      parentRun.AccountID,
-		ParentRunID:    parentRun.ID,
-		ParentThreadID: parentRun.ThreadID,
-		RootRunID:      lineage.RootRunID,
-		RootThreadID:   lineage.RootThreadID,
-		Depth:          lineage.Depth + 1,
-		Role:           cloneStringPtr(spawnReq.Role),
-		PersonaID:      stringPtr(spawnReq.PersonaID),
-		Nickname:       cloneStringPtr(spawnReq.Nickname),
-		SourceType:     spawnReq.SourceType,
-		ContextMode:    spawnReq.ContextMode,
+		AccountID:        parentRun.AccountID,
+		OwnerThreadID:    ownerThreadID,
+		AgentThreadID:    childThreadID,
+		OriginRunID:      parentRun.ID,
+		ParentSubAgentID: parentSubAgentID,
+		Depth:            depth,
+		Role:             cloneStringPtr(spawnReq.Role),
+		PersonaID:        stringPtr(spawnReq.PersonaID),
+		Nickname:         cloneStringPtr(spawnReq.Nickname),
+		SourceType:       spawnReq.SourceType,
+		ContextMode:      spawnReq.ContextMode,
 	})
 	if err != nil {
 		return data.SubAgentRecord{}, uuid.Nil, fmt.Errorf("create sub_agent: %w", err)
@@ -56,17 +68,14 @@ func (f *SubAgentRunFactory) CreateSpawnRun(
 		return data.SubAgentRecord{}, uuid.Nil, fmt.Errorf("save context snapshot: %w", err)
 	}
 	if _, err := (data.SubAgentEventAppender{}).Append(ctx, tx, createdSubAgent.ID, nil, data.SubAgentEventTypeSpawnRequested, map[string]any{
-		"persona_id":       spawnReq.PersonaID,
-		"context_mode":     createdSubAgent.ContextMode,
-		"source_type":      spawnReq.SourceType,
-		"parent_run_id":    parentRun.ID.String(),
-		"parent_thread_id": parentRun.ThreadID.String(),
+		"persona_id":      spawnReq.PersonaID,
+		"context_mode":    createdSubAgent.ContextMode,
+		"source_type":     spawnReq.SourceType,
+		"origin_run_id":   parentRun.ID.String(),
+		"owner_thread_id": ownerThreadID.String(),
+		"agent_thread_id": childThreadID.String(),
 	}, nil); err != nil {
 		return data.SubAgentRecord{}, uuid.Nil, fmt.Errorf("append spawn_requested: %w", err)
-	}
-	childThreadID, err := f.createChildThread(ctx, tx, parentRun)
-	if err != nil {
-		return data.SubAgentRecord{}, uuid.Nil, err
 	}
 	if err := f.copySnapshotMessages(ctx, tx, parentRun.AccountID, childThreadID, snapshot.Messages); err != nil {
 		return data.SubAgentRecord{}, uuid.Nil, err
@@ -94,12 +103,12 @@ func (f *SubAgentRunFactory) CreateRunForExistingSubAgent(
 	errorClass *string,
 	reconstructedMessages []ContextSnapshotMessage,
 ) (uuid.UUID, error) {
-	ownerRun, err := (data.RunsRepository{}).GetRun(ctx, tx, subAgent.ParentRunID)
+	ownerRun, err := (data.RunsRepository{}).GetRun(ctx, tx, subAgent.OriginRunID)
 	if err != nil {
 		return uuid.Nil, err
 	}
 	if ownerRun == nil {
-		return uuid.Nil, fmt.Errorf("parent run not found: %s", subAgent.ParentRunID)
+		return uuid.Nil, fmt.Errorf("origin run not found: %s", subAgent.OriginRunID)
 	}
 	snapshot, err := f.snapshotStorage.LoadBySubAgent(ctx, tx, subAgent.ID)
 	if err != nil {
@@ -108,9 +117,10 @@ func (f *SubAgentRunFactory) CreateRunForExistingSubAgent(
 	if snapshot == nil {
 		return uuid.Nil, fmt.Errorf("context snapshot not found for sub_agent: %s", subAgent.ID)
 	}
-	threadID, runID, err := resolveSubAgentThread(ctx, tx, subAgent)
-	if err != nil {
-		return uuid.Nil, err
+	threadID := subAgent.AgentThreadID
+	runID := uuid.Nil
+	if subAgent.CurrentRunID != nil {
+		runID = *subAgent.CurrentRunID
 	}
 	payload := cloneMap(primaryPayload)
 	payload["thread_id"] = threadID.String()
@@ -158,17 +168,14 @@ func (f *SubAgentRunFactory) CreateRunFromPendingInputs(ctx context.Context, tx 
 		ids = append(ids, item.ID)
 	}
 	combined := strings.Join(parts, "\n\n")
-	ownerRun, err := (data.RunsRepository{}).GetRun(ctx, tx, subAgent.ParentRunID)
+	ownerRun, err := (data.RunsRepository{}).GetRun(ctx, tx, subAgent.OriginRunID)
 	if err != nil {
 		return nil, err
 	}
 	if ownerRun == nil {
-		return nil, fmt.Errorf("parent run not found: %s", subAgent.ParentRunID)
+		return nil, fmt.Errorf("origin run not found: %s", subAgent.OriginRunID)
 	}
-	threadID, _, err := resolveSubAgentThread(ctx, tx, subAgent)
-	if err != nil {
-		return nil, err
-	}
+	threadID := subAgent.AgentThreadID
 	messageID, err := insertUserMessage(ctx, tx, subAgent.AccountID, threadID, combined)
 	if err != nil {
 		return nil, fmt.Errorf("insert pending input message: %w", err)

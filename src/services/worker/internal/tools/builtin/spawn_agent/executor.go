@@ -648,11 +648,9 @@ func parseOptionalBool(raw any, field string) (*bool, error) {
 
 func snapshotJSON(snapshot subagentctl.StatusSnapshot) map[string]any {
 	result := map[string]any{
-		"sub_agent_id":  snapshot.SubAgentID.String(),
-		"parent_run_id": snapshot.ParentRunID.String(),
-		"root_run_id":   snapshot.RootRunID.String(),
-		"depth":         snapshot.Depth,
-		"status":        snapshot.Status,
+		"sub_agent_id": snapshot.SubAgentID.String(),
+		"depth":        snapshot.Depth,
+		"status":       snapshot.Status,
 	}
 	if snapshot.PersonaID != nil {
 		result["persona_id"] = *snapshot.PersonaID

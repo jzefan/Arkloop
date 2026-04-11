@@ -847,8 +847,6 @@ func ensureLuaTableKeys(tbl *lua.LTable, field string, allowed map[string]struct
 func statusSnapshotToLuaTable(L *lua.LState, snapshot subagentctl.StatusSnapshot) *lua.LTable {
 	tbl := L.NewTable()
 	tbl.RawSetString("id", lua.LString(snapshot.SubAgentID.String()))
-	tbl.RawSetString("parent_run_id", lua.LString(snapshot.ParentRunID.String()))
-	tbl.RawSetString("root_run_id", lua.LString(snapshot.RootRunID.String()))
 	tbl.RawSetString("depth", lua.LNumber(snapshot.Depth))
 	setLuaStringField(tbl, "status", snapshot.Status)
 	setLuaOptionalStringField(tbl, "role", snapshot.Role)

@@ -36,15 +36,14 @@ func TestSubAgentRepository_CreateAndTransitions(t *testing.T) {
 
 	repo := SubAgentRepository{}
 	record, err := repo.Create(context.Background(), tx, SubAgentCreateParams{
-		AccountID:      accountID,
-		ParentRunID:    parentRunID,
-		ParentThreadID: parentThreadID,
-		RootRunID:      parentRunID,
-		RootThreadID:   parentThreadID,
-		Depth:          1,
-		PersonaID:      ptr("researcher@1"),
-		SourceType:     SubAgentSourceTypeThreadSpawn,
-		ContextMode:    SubAgentContextModeIsolated,
+		AccountID:     accountID,
+		OwnerThreadID: parentThreadID,
+		AgentThreadID: childThreadID,
+		OriginRunID:   parentRunID,
+		Depth:         1,
+		PersonaID:     ptr("researcher@1"),
+		SourceType:    SubAgentSourceTypeThreadSpawn,
+		ContextMode:   SubAgentContextModeIsolated,
 	})
 	if err != nil {
 		t.Fatalf("create sub_agent: %v", err)
@@ -114,14 +113,13 @@ func TestSubAgentRepository_RejectsIllegalTransitions(t *testing.T) {
 
 	repo := SubAgentRepository{}
 	record, err := repo.Create(context.Background(), tx, SubAgentCreateParams{
-		AccountID:      accountID,
-		ParentRunID:    runID,
-		ParentThreadID: threadID,
-		RootRunID:      runID,
-		RootThreadID:   threadID,
-		Depth:          1,
-		SourceType:     SubAgentSourceTypeThreadSpawn,
-		ContextMode:    SubAgentContextModeIsolated,
+		AccountID:     accountID,
+		OwnerThreadID: threadID,
+		AgentThreadID: threadID,
+		OriginRunID:   runID,
+		Depth:         1,
+		SourceType:    SubAgentSourceTypeThreadSpawn,
+		ContextMode:   SubAgentContextModeIsolated,
 	})
 	if err != nil {
 		t.Fatalf("create sub_agent: %v", err)

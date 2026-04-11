@@ -83,8 +83,8 @@ type WaitRequest struct {
 }
 
 type ResumeRequest struct {
-	SubAgentID    uuid.UUID
-	RolloutStore  objectstore.BlobStore // 可选，为 nil 时走原有 snapshot 逻辑
+	SubAgentID   uuid.UUID
+	RolloutStore objectstore.BlobStore // 可选，为 nil 时走原有 snapshot 逻辑
 }
 
 type CloseRequest struct {
@@ -98,8 +98,6 @@ type InterruptRequest struct {
 
 type StatusSnapshot struct {
 	SubAgentID         uuid.UUID  `json:"sub_agent_id"`
-	ParentRunID        uuid.UUID  `json:"parent_run_id"`
-	RootRunID          uuid.UUID  `json:"root_run_id"`
 	Depth              int        `json:"depth"`
 	Status             string     `json:"status"`
 	Role               *string    `json:"role,omitempty"`

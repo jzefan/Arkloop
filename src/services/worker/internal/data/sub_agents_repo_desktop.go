@@ -41,10 +41,10 @@ const (
 type SubAgentRecord struct {
 	ID                 uuid.UUID
 	AccountID          uuid.UUID
-	ParentRunID        uuid.UUID
-	ParentThreadID     uuid.UUID
-	RootRunID          uuid.UUID
-	RootThreadID       uuid.UUID
+	OwnerThreadID      uuid.UUID
+	AgentThreadID      uuid.UUID
+	OriginRunID        uuid.UUID
+	ParentSubAgentID   *uuid.UUID
 	Depth              int
 	Role               *string
 	PersonaID          *string
@@ -63,18 +63,18 @@ type SubAgentRecord struct {
 }
 
 type SubAgentCreateParams struct {
-	ID             uuid.UUID
-	AccountID      uuid.UUID
-	ParentRunID    uuid.UUID
-	ParentThreadID uuid.UUID
-	RootRunID      uuid.UUID
-	RootThreadID   uuid.UUID
-	Depth          int
-	Role           *string
-	PersonaID      *string
-	Nickname       *string
-	SourceType     string
-	ContextMode    string
+	ID               uuid.UUID
+	AccountID        uuid.UUID
+	OwnerThreadID    uuid.UUID
+	AgentThreadID    uuid.UUID
+	OriginRunID      uuid.UUID
+	ParentSubAgentID *uuid.UUID
+	Depth            int
+	Role             *string
+	PersonaID        *string
+	Nickname         *string
+	SourceType       string
+	ContextMode      string
 }
 
 type SubAgentRepository struct{}
@@ -89,17 +89,14 @@ func (SubAgentRepository) Create(ctx context.Context, tx pgx.Tx, params SubAgent
 	if params.AccountID == uuid.Nil {
 		return SubAgentRecord{}, fmt.Errorf("account_id must not be empty")
 	}
-	if params.ParentRunID == uuid.Nil {
-		return SubAgentRecord{}, fmt.Errorf("parent_run_id must not be empty")
+	if params.OwnerThreadID == uuid.Nil {
+		return SubAgentRecord{}, fmt.Errorf("owner_thread_id must not be empty")
 	}
-	if params.ParentThreadID == uuid.Nil {
-		return SubAgentRecord{}, fmt.Errorf("parent_thread_id must not be empty")
+	if params.AgentThreadID == uuid.Nil {
+		return SubAgentRecord{}, fmt.Errorf("agent_thread_id must not be empty")
 	}
-	if params.RootRunID == uuid.Nil {
-		return SubAgentRecord{}, fmt.Errorf("root_run_id must not be empty")
-	}
-	if params.RootThreadID == uuid.Nil {
-		return SubAgentRecord{}, fmt.Errorf("root_thread_id must not be empty")
+	if params.OriginRunID == uuid.Nil {
+		return SubAgentRecord{}, fmt.Errorf("origin_run_id must not be empty")
 	}
 	if params.Depth < 0 {
 		return SubAgentRecord{}, fmt.Errorf("depth must not be negative")
@@ -114,22 +111,22 @@ func (SubAgentRepository) Create(ctx context.Context, tx pgx.Tx, params SubAgent
 	return scanSubAgent(tx.QueryRow(
 		ctx,
 		`INSERT INTO sub_agents (
-			id, account_id, parent_run_id, parent_thread_id, root_run_id, root_thread_id,
+			id, account_id, owner_thread_id, agent_thread_id, origin_run_id, parent_sub_agent_id,
 			depth, role, persona_id, nickname, source_type, context_mode, status
 		 ) VALUES (
 			$1, $2, $3, $4, $5, $6,
 			$7, $8, $9, $10, $11, $12, $13
 		 )
-		 RETURNING id, account_id, parent_run_id, parent_thread_id, root_run_id, root_thread_id,
+		 RETURNING id, account_id, owner_thread_id, agent_thread_id, origin_run_id, parent_sub_agent_id,
 		           depth, role, persona_id, nickname, source_type, context_mode, status,
 		           current_run_id, last_completed_run_id, last_output_ref, last_error,
 		           created_at, started_at, completed_at, closed_at`,
 		params.ID,
 		params.AccountID,
-		params.ParentRunID,
-		params.ParentThreadID,
-		params.RootRunID,
-		params.RootThreadID,
+		params.OwnerThreadID,
+		params.AgentThreadID,
+		params.OriginRunID,
+		params.ParentSubAgentID,
 		params.Depth,
 		normalizeSubAgentOptionalString(params.Role),
 		normalizeSubAgentOptionalString(params.PersonaID),
@@ -160,14 +157,14 @@ func (SubAgentRepository) GetByCurrentRunID(ctx context.Context, tx pgx.Tx, runI
 	return scanSubAgentNullable(tx.QueryRow(ctx, subAgentSelectBy+` WHERE current_run_id = $1 LIMIT 1`, runID))
 }
 
-func (SubAgentRepository) ListByParentRun(ctx context.Context, db QueryDB, parentRunID uuid.UUID) ([]SubAgentRecord, error) {
+func (SubAgentRepository) ListByOwnerThread(ctx context.Context, db QueryDB, ownerThreadID uuid.UUID) ([]SubAgentRecord, error) {
 	if db == nil {
 		return nil, fmt.Errorf("pool must not be nil")
 	}
-	if parentRunID == uuid.Nil {
-		return nil, fmt.Errorf("parent_run_id must not be empty")
+	if ownerThreadID == uuid.Nil {
+		return nil, fmt.Errorf("owner_thread_id must not be empty")
 	}
-	rows, err := db.Query(ctx, subAgentSelectBy+` WHERE parent_run_id = $1 ORDER BY created_at ASC, id ASC`, parentRunID)
+	rows, err := db.Query(ctx, subAgentSelectBy+` WHERE owner_thread_id = $1 ORDER BY created_at ASC, id ASC`, ownerThreadID)
 	if err != nil {
 		return nil, err
 	}
@@ -378,19 +375,19 @@ func (repo SubAgentRepository) SetLastOutputRefByLastCompletedRunID(ctx context.
 	return err
 }
 
-func (SubAgentRepository) CountActiveByRootRun(ctx context.Context, tx pgx.Tx, rootRunID uuid.UUID) (int, error) {
+func (SubAgentRepository) CountActiveByOwnerThread(ctx context.Context, tx pgx.Tx, ownerThreadID uuid.UUID) (int, error) {
 	if tx == nil {
 		return 0, fmt.Errorf("tx must not be nil")
 	}
-	if rootRunID == uuid.Nil {
-		return 0, fmt.Errorf("root_run_id must not be empty")
+	if ownerThreadID == uuid.Nil {
+		return 0, fmt.Errorf("owner_thread_id must not be empty")
 	}
 	var count int
 	err := tx.QueryRow(ctx,
 		`SELECT COUNT(*) FROM sub_agents
-		 WHERE root_run_id = $1
+		 WHERE owner_thread_id = $1
 		   AND status IN ($2, $3, $4)`,
-		rootRunID,
+		ownerThreadID,
 		SubAgentStatusCreated,
 		SubAgentStatusQueued,
 		SubAgentStatusRunning,
@@ -398,19 +395,19 @@ func (SubAgentRepository) CountActiveByRootRun(ctx context.Context, tx pgx.Tx, r
 	return count, err
 }
 
-func (SubAgentRepository) CountActiveByParentRun(ctx context.Context, tx pgx.Tx, parentRunID uuid.UUID) (int, error) {
+func (SubAgentRepository) CountActiveByOwnerThreadForParent(ctx context.Context, tx pgx.Tx, ownerThreadID uuid.UUID) (int, error) {
 	if tx == nil {
 		return 0, fmt.Errorf("tx must not be nil")
 	}
-	if parentRunID == uuid.Nil {
-		return 0, fmt.Errorf("parent_run_id must not be empty")
+	if ownerThreadID == uuid.Nil {
+		return 0, fmt.Errorf("owner_thread_id must not be empty")
 	}
 	var count int
 	err := tx.QueryRow(ctx,
 		`SELECT COUNT(*) FROM sub_agents
-		 WHERE parent_run_id = $1
+		 WHERE owner_thread_id = $1
 		   AND status IN ($2, $3, $4)`,
-		parentRunID,
+		ownerThreadID,
 		SubAgentStatusCreated,
 		SubAgentStatusQueued,
 		SubAgentStatusRunning,
@@ -418,18 +415,18 @@ func (SubAgentRepository) CountActiveByParentRun(ctx context.Context, tx pgx.Tx,
 	return count, err
 }
 
-func (SubAgentRepository) CountByRootRun(ctx context.Context, tx pgx.Tx, rootRunID uuid.UUID) (int, error) {
+func (SubAgentRepository) CountByOwnerThread(ctx context.Context, tx pgx.Tx, ownerThreadID uuid.UUID) (int, error) {
 	if tx == nil {
 		return 0, fmt.Errorf("tx must not be nil")
 	}
-	if rootRunID == uuid.Nil {
-		return 0, fmt.Errorf("root_run_id must not be empty")
+	if ownerThreadID == uuid.Nil {
+		return 0, fmt.Errorf("owner_thread_id must not be empty")
 	}
 	var count int
 	err := tx.QueryRow(ctx,
 		`SELECT COUNT(*) FROM sub_agents
-		 WHERE root_run_id = $1`,
-		rootRunID,
+		 WHERE owner_thread_id = $1`,
+		ownerThreadID,
 	).Scan(&count)
 	return count, err
 }
@@ -442,7 +439,7 @@ func (repo SubAgentRepository) getForUpdateByCurrentRunID(ctx context.Context, t
 	return scanSubAgentNullable(tx.QueryRow(ctx, subAgentSelectBy+` WHERE current_run_id = $1 FOR UPDATE`, runID))
 }
 
-const subAgentSelectBy = `SELECT id, account_id, parent_run_id, parent_thread_id, root_run_id, root_thread_id,
+const subAgentSelectBy = `SELECT id, account_id, owner_thread_id, agent_thread_id, origin_run_id, parent_sub_agent_id,
 	       depth, role, persona_id, nickname, source_type, context_mode, status,
 	       current_run_id, last_completed_run_id, last_output_ref, last_error,
 	       created_at, started_at, completed_at, closed_at
@@ -453,10 +450,10 @@ func scanSubAgent(row pgx.Row) (SubAgentRecord, error) {
 	err := row.Scan(
 		&record.ID,
 		&record.AccountID,
-		&record.ParentRunID,
-		&record.ParentThreadID,
-		&record.RootRunID,
-		&record.RootThreadID,
+		&record.OwnerThreadID,
+		&record.AgentThreadID,
+		&record.OriginRunID,
+		&record.ParentSubAgentID,
 		&record.Depth,
 		&record.Role,
 		&record.PersonaID,
@@ -492,10 +489,10 @@ func scanSubAgentFromRows(rows pgx.Rows) (SubAgentRecord, error) {
 	err := rows.Scan(
 		&record.ID,
 		&record.AccountID,
-		&record.ParentRunID,
-		&record.ParentThreadID,
-		&record.RootRunID,
-		&record.RootThreadID,
+		&record.OwnerThreadID,
+		&record.AgentThreadID,
+		&record.OriginRunID,
+		&record.ParentSubAgentID,
 		&record.Depth,
 		&record.Role,
 		&record.PersonaID,

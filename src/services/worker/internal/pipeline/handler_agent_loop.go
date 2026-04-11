@@ -13,6 +13,7 @@ import (
 	"arkloop/services/shared/creditpolicy"
 	sharedent "arkloop/services/shared/entitlement"
 	"arkloop/services/shared/eventbus"
+	"arkloop/services/shared/runkind"
 	"arkloop/services/worker/internal/data"
 	"arkloop/services/worker/internal/events"
 	"arkloop/services/worker/internal/llm"
@@ -88,6 +89,9 @@ func NewAgentLoopHandler(
 			rc.ReleaseSlot,
 			rc.TelegramToolBoundaryFlush,
 			rc.TelegramProgressTracker,
+			stringValue(rc.InputJSON["run_kind"]),
+			parseOptionalUUID(stringValue(rc.InputJSON["callback_id"])),
+			pendingSubAgentCallbackIDs(rc.PendingSubAgentCallbacks),
 			IsHeartbeatRunContext(rc),
 		)
 		defer writer.Close(ctx)
@@ -102,6 +106,20 @@ func NewAgentLoopHandler(
 				slog.Warn("acp cleanup failed", "run_id", rc.Run.ID.String(), "error", err.Error())
 			}
 		}()
+		if isStaleSubAgentCallbackRun(rc.InputJSON) {
+			completed := rc.Emitter.Emit("run.completed", map[string]any{}, nil, nil)
+			if err := writer.Append(ctx, runsRepo, eventsRepo, rc.Run.ID, completed); err != nil {
+				if errors.Is(err, errStopProcessing) {
+					return nil
+				}
+				return err
+			}
+			flushErr := writer.Flush(ctx)
+			if flushErr == nil {
+				rc.ThreadPersistReady = true
+			}
+			return flushErr
+		}
 
 		routeData := selected.ToRunEventDataJSON()
 		if rc.AgentConfig != nil && rc.AgentConfig.Model != nil && strings.TrimSpace(*rc.AgentConfig.Model) != "" {
@@ -256,11 +274,15 @@ type eventWriter struct {
 	telegramProgressTracker   *TelegramProgressTracker
 	pendingReplyOverride      string
 	heartbeatRun              bool
+	runKind                   string
+	callbackID                *uuid.UUID
+	pendingCallbackIDs        []uuid.UUID
 
 	// 子 Run 完成通知：commit 时将终态状态发布到 run.child.{runID}.done
-	terminalRunStatus    string
-	terminalMessage      string
-	pendingEnqueueRunIDs []uuid.UUID
+	terminalRunStatus      string
+	terminalMessage        string
+	pendingEnqueueRunIDs   []uuid.UUID
+	pendingCallbackWakeups []data.ThreadSubAgentCallbackRecord
 
 	pendingToolCalls     []llm.ToolCall
 	pendingToolResults   []intermediateMessage
@@ -302,6 +324,9 @@ func newEventWriter(
 	releaseSlot func(),
 	telegramToolBoundaryFlush func(context.Context, string) error,
 	telegramProgressTracker *TelegramProgressTracker,
+	runKind string,
+	callbackID *uuid.UUID,
+	pendingCallbackIDs []uuid.UUID,
 	heartbeatRun bool,
 ) *eventWriter {
 	if creditsPerUSD <= 0 {
@@ -333,8 +358,49 @@ func newEventWriter(
 		releaseSlot:               releaseSlot,
 		telegramToolBoundaryFlush: telegramToolBoundaryFlush,
 		telegramProgressTracker:   telegramProgressTracker,
+		runKind:                   strings.TrimSpace(runKind),
+		callbackID:                callbackID,
+		pendingCallbackIDs:        append([]uuid.UUID(nil), pendingCallbackIDs...),
 		heartbeatRun:              heartbeatRun,
 	}
+}
+
+func pendingSubAgentCallbackIDs(callbacks []data.ThreadSubAgentCallbackRecord) []uuid.UUID {
+	if len(callbacks) == 0 {
+		return nil
+	}
+	ids := make([]uuid.UUID, 0, len(callbacks))
+	for _, callback := range callbacks {
+		if callback.ID == uuid.Nil {
+			continue
+		}
+		ids = append(ids, callback.ID)
+	}
+	return ids
+}
+
+func (w *eventWriter) callbackIDsToConsume() []uuid.UUID {
+	seen := make(map[uuid.UUID]struct{}, len(w.pendingCallbackIDs))
+	out := make([]uuid.UUID, 0, len(w.pendingCallbackIDs))
+	for _, callbackID := range w.pendingCallbackIDs {
+		if callbackID == uuid.Nil {
+			continue
+		}
+		if _, exists := seen[callbackID]; exists {
+			continue
+		}
+		seen[callbackID] = struct{}{}
+		out = append(out, callbackID)
+	}
+	return out
+}
+
+func isStaleSubAgentCallbackRun(inputJSON map[string]any) bool {
+	if !strings.EqualFold(stringValue(inputJSON["run_kind"]), runkind.SubagentCallback) {
+		return false
+	}
+	value, ok := inputJSON[staleSubAgentCallbackRunKey].(bool)
+	return ok && value
 }
 
 func (w *eventWriter) telegramStreamRemainder() string {
@@ -465,12 +531,15 @@ func (w *eventWriter) Append(
 			return err
 		}
 		if w.projector != nil {
-			nextRunID, err := w.projector.ProjectRunTerminal(ctx, w.tx, w.run, data.SubAgentStatusCancelled, map[string]any{"run_id": runID.String()}, nil)
+			projection, err := w.projector.ProjectRunTerminal(ctx, w.tx, w.run, data.SubAgentStatusCancelled, map[string]any{"run_id": runID.String()}, nil)
 			if err != nil {
 				return err
 			}
-			if nextRunID != nil {
-				w.pendingEnqueueRunIDs = append(w.pendingEnqueueRunIDs, *nextRunID)
+			if projection.NextRunID != nil {
+				w.pendingEnqueueRunIDs = append(w.pendingEnqueueRunIDs, *projection.NextRunID)
+			}
+			if projection.Callback != nil {
+				w.pendingCallbackWakeups = append(w.pendingCallbackWakeups, *projection.Callback)
 			}
 		}
 		// 如果配置了平台成本费率，覆盖 LLM 返回的原始 cost
@@ -608,12 +677,22 @@ func (w *eventWriter) Append(
 			return err
 		}
 		if w.projector != nil {
-			nextRunID, err := w.projector.ProjectRunTerminal(ctx, w.tx, w.run, status, ev.DataJSON, ev.ErrorClass)
+			projection, err := w.projector.ProjectRunTerminal(ctx, w.tx, w.run, status, ev.DataJSON, ev.ErrorClass)
 			if err != nil {
 				return err
 			}
-			if nextRunID != nil {
-				w.pendingEnqueueRunIDs = append(w.pendingEnqueueRunIDs, *nextRunID)
+			if projection.NextRunID != nil {
+				w.pendingEnqueueRunIDs = append(w.pendingEnqueueRunIDs, *projection.NextRunID)
+			}
+			if projection.Callback != nil {
+				w.pendingCallbackWakeups = append(w.pendingCallbackWakeups, *projection.Callback)
+			}
+		}
+		if status == "completed" {
+			for _, callbackID := range w.callbackIDsToConsume() {
+				if err := (data.ThreadSubAgentCallbacksRepository{}).MarkConsumed(ctx, w.tx, callbackID, runID); err != nil {
+					return err
+				}
 			}
 		}
 		if err := w.usageRepo.Insert(ctx, w.tx, w.run.AccountID, runID, w.model,
@@ -702,6 +781,27 @@ func (w *eventWriter) commit(ctx context.Context) error {
 			}
 		}
 		w.pendingEnqueueRunIDs = nil
+		for _, callback := range w.pendingCallbackWakeups {
+			if w.projector == nil {
+				continue
+			}
+			if err := w.projector.EnqueueCallbackRunIfIdle(ctx, callback, w.traceID); err != nil {
+				slog.Error("enqueue_subagent_callback_run_failed",
+					"callback_id", callback.ID.String(),
+					"thread_id", callback.ThreadID.String(),
+					"error", err.Error(),
+				)
+			}
+		}
+		w.pendingCallbackWakeups = nil
+		if w.projector != nil {
+			if err := w.projector.EnqueueOldestPendingCallbackIfIdle(ctx, w.run.ThreadID, w.traceID); err != nil {
+				slog.Error("enqueue_pending_subagent_callback_run_failed",
+					"thread_id", w.run.ThreadID.String(),
+					"error", err.Error(),
+				)
+			}
+		}
 		if w.runLimiterRDB != nil && w.terminalRunStatus != "" {
 			// 通知可能正在等待的父 Run（无父 Run 时此 publish 为空操作）
 			output := ""
@@ -721,6 +821,18 @@ func (w *eventWriter) commit(ctx context.Context) error {
 	}
 
 	return nil
+}
+
+func parseOptionalUUID(raw string) *uuid.UUID {
+	cleaned := strings.TrimSpace(raw)
+	if cleaned == "" {
+		return nil
+	}
+	parsed, err := uuid.Parse(cleaned)
+	if err != nil {
+		return nil
+	}
+	return &parsed
 }
 
 func (w *eventWriter) Completed() bool {

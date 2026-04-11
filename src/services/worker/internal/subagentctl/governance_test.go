@@ -14,13 +14,13 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-func seedSubAgent(t *testing.T, pool *pgxpool.Pool, accountID, parentRunID, parentThreadID, rootRunID, rootThreadID uuid.UUID, depth int, status string) uuid.UUID {
+func seedSubAgent(t *testing.T, pool *pgxpool.Pool, accountID, ownerThreadID, agentThreadID, originRunID uuid.UUID, depth int, status string) uuid.UUID {
 	t.Helper()
 	id := uuid.New()
 	_, err := pool.Exec(context.Background(),
-		`INSERT INTO sub_agents (id, account_id, parent_run_id, parent_thread_id, root_run_id, root_thread_id, depth, source_type, context_mode, status)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
-		id, accountID, parentRunID, parentThreadID, rootRunID, rootThreadID, depth,
+		`INSERT INTO sub_agents (id, account_id, owner_thread_id, agent_thread_id, origin_run_id, depth, source_type, context_mode, status)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+		id, accountID, ownerThreadID, agentThreadID, originRunID, depth,
 		"thread_spawn", "isolated", status,
 	)
 	if err != nil {
@@ -60,11 +60,10 @@ func setupGovernanceTest(t *testing.T, dbName string) (*pgxpool.Pool, uuid.UUID,
 }
 
 func TestSpawnGovernorDepthLimit(t *testing.T) {
-	pool, _, _, runID := setupGovernanceTest(t, "arkloop_gov_depth")
+	pool, _, _, _ := setupGovernanceTest(t, "arkloop_gov_depth")
 
 	governor := NewSpawnGovernor(SubAgentLimits{MaxDepth: 2}, BackpressureConfig{})
-	parentRun := data.Run{ID: runID}
-	rootRunID := runID
+	ownerThreadID := uuid.New()
 
 	tx, err := pool.Begin(context.Background())
 	if err != nil {
@@ -72,11 +71,11 @@ func TestSpawnGovernorDepthLimit(t *testing.T) {
 	}
 	defer tx.Rollback(context.Background())
 
-	if err := governor.ValidateSpawn(context.Background(), tx, parentRun, rootRunID, 2); err != nil {
+	if err := governor.ValidateSpawn(context.Background(), tx, ownerThreadID, 2); err != nil {
 		t.Fatalf("depth=2 should pass: %v", err)
 	}
 
-	err = governor.ValidateSpawn(context.Background(), tx, parentRun, rootRunID, 3)
+	err = governor.ValidateSpawn(context.Background(), tx, ownerThreadID, 3)
 	if err == nil {
 		t.Fatal("depth=3 should fail")
 	}
@@ -85,14 +84,13 @@ func TestSpawnGovernorDepthLimit(t *testing.T) {
 	}
 }
 
-func TestSpawnGovernorActivePerRootRunLimit(t *testing.T) {
+func TestSpawnGovernorActivePerThreadLimit(t *testing.T) {
 	pool, accountID, threadID, runID := setupGovernanceTest(t, "arkloop_gov_active_root")
 
-	seedSubAgent(t, pool, accountID, runID, threadID, runID, threadID, 1, data.SubAgentStatusRunning)
-	seedSubAgent(t, pool, accountID, runID, threadID, runID, threadID, 1, data.SubAgentStatusQueued)
+	seedSubAgent(t, pool, accountID, threadID, threadID, runID, 1, data.SubAgentStatusRunning)
+	seedSubAgent(t, pool, accountID, threadID, threadID, runID, 1, data.SubAgentStatusQueued)
 
-	governor := NewSpawnGovernor(SubAgentLimits{MaxActivePerRootRun: 2}, BackpressureConfig{})
-	parentRun := data.Run{ID: runID, AccountID: accountID}
+	governor := NewSpawnGovernor(SubAgentLimits{MaxActivePerThread: 2}, BackpressureConfig{})
 
 	tx, err := pool.Begin(context.Background())
 	if err != nil {
@@ -100,7 +98,7 @@ func TestSpawnGovernorActivePerRootRunLimit(t *testing.T) {
 	}
 	defer tx.Rollback(context.Background())
 
-	err = governor.ValidateSpawn(context.Background(), tx, parentRun, runID, 1)
+	err = governor.ValidateSpawn(context.Background(), tx, threadID, 1)
 	if err == nil {
 		t.Fatal("should reject when active count reaches limit")
 	}
@@ -112,10 +110,9 @@ func TestSpawnGovernorActivePerRootRunLimit(t *testing.T) {
 func TestSpawnGovernorParallelChildrenLimit(t *testing.T) {
 	pool, accountID, threadID, runID := setupGovernanceTest(t, "arkloop_gov_parallel")
 
-	seedSubAgent(t, pool, accountID, runID, threadID, runID, threadID, 1, data.SubAgentStatusRunning)
+	seedSubAgent(t, pool, accountID, threadID, threadID, runID, 1, data.SubAgentStatusRunning)
 
-	governor := NewSpawnGovernor(SubAgentLimits{MaxParallelChildren: 1}, BackpressureConfig{})
-	parentRun := data.Run{ID: runID, AccountID: accountID}
+	governor := NewSpawnGovernor(SubAgentLimits{MaxParallelChildrenPerThread: 1}, BackpressureConfig{})
 
 	tx, err := pool.Begin(context.Background())
 	if err != nil {
@@ -123,7 +120,7 @@ func TestSpawnGovernorParallelChildrenLimit(t *testing.T) {
 	}
 	defer tx.Rollback(context.Background())
 
-	err = governor.ValidateSpawn(context.Background(), tx, parentRun, runID, 1)
+	err = governor.ValidateSpawn(context.Background(), tx, threadID, 1)
 	if err == nil {
 		t.Fatal("should reject when parallel children reaches limit")
 	}
@@ -132,15 +129,14 @@ func TestSpawnGovernorParallelChildrenLimit(t *testing.T) {
 	}
 }
 
-func TestSpawnGovernorDescendantsPerRootRunLimit(t *testing.T) {
+func TestSpawnGovernorDescendantsPerThreadLimit(t *testing.T) {
 	pool, accountID, threadID, runID := setupGovernanceTest(t, "arkloop_gov_descendants")
 
-	seedSubAgent(t, pool, accountID, runID, threadID, runID, threadID, 1, data.SubAgentStatusCompleted)
-	seedSubAgent(t, pool, accountID, runID, threadID, runID, threadID, 1, data.SubAgentStatusFailed)
-	seedSubAgent(t, pool, accountID, runID, threadID, runID, threadID, 1, data.SubAgentStatusRunning)
+	seedSubAgent(t, pool, accountID, threadID, threadID, runID, 1, data.SubAgentStatusCompleted)
+	seedSubAgent(t, pool, accountID, threadID, threadID, runID, 1, data.SubAgentStatusFailed)
+	seedSubAgent(t, pool, accountID, threadID, threadID, runID, 1, data.SubAgentStatusRunning)
 
-	governor := NewSpawnGovernor(SubAgentLimits{MaxDescendantsPerRootRun: 3}, BackpressureConfig{})
-	parentRun := data.Run{ID: runID, AccountID: accountID}
+	governor := NewSpawnGovernor(SubAgentLimits{MaxDescendantsPerThread: 3}, BackpressureConfig{})
 
 	tx, err := pool.Begin(context.Background())
 	if err != nil {
@@ -148,7 +144,7 @@ func TestSpawnGovernorDescendantsPerRootRunLimit(t *testing.T) {
 	}
 	defer tx.Rollback(context.Background())
 
-	err = governor.ValidateSpawn(context.Background(), tx, parentRun, runID, 1)
+	err = governor.ValidateSpawn(context.Background(), tx, threadID, 1)
 	if err == nil {
 		t.Fatal("should reject when descendant count reaches limit")
 	}
@@ -160,11 +156,11 @@ func TestSpawnGovernorDescendantsPerRootRunLimit(t *testing.T) {
 func TestSpawnGovernorPendingInputLimit(t *testing.T) {
 	pool, accountID, threadID, runID := setupGovernanceTest(t, "arkloop_gov_pending")
 
-	subAgentID := seedSubAgent(t, pool, accountID, runID, threadID, runID, threadID, 1, data.SubAgentStatusRunning)
+	subAgentID := seedSubAgent(t, pool, accountID, threadID, threadID, runID, 1, data.SubAgentStatusRunning)
 	seedPendingInput(t, pool, subAgentID, "input-1")
 	seedPendingInput(t, pool, subAgentID, "input-2")
 
-	governor := NewSpawnGovernor(SubAgentLimits{MaxPendingPerRootRun: 2}, BackpressureConfig{})
+	governor := NewSpawnGovernor(SubAgentLimits{MaxPendingPerThread: 2}, BackpressureConfig{})
 
 	tx, err := pool.Begin(context.Background())
 	if err != nil {
@@ -172,7 +168,7 @@ func TestSpawnGovernorPendingInputLimit(t *testing.T) {
 	}
 	defer tx.Rollback(context.Background())
 
-	err = governor.ValidatePendingInput(context.Background(), tx, runID)
+	err = governor.ValidatePendingInput(context.Background(), tx, threadID)
 	if err == nil {
 		t.Fatal("should reject when pending count reaches limit")
 	}
@@ -185,12 +181,11 @@ func TestSpawnGovernorZeroLimitMeansUnlimited(t *testing.T) {
 	pool, accountID, threadID, runID := setupGovernanceTest(t, "arkloop_gov_unlimited")
 
 	for i := 0; i < 10; i++ {
-		subAgentID := seedSubAgent(t, pool, accountID, runID, threadID, runID, threadID, 1, data.SubAgentStatusRunning)
+		subAgentID := seedSubAgent(t, pool, accountID, threadID, threadID, runID, 1, data.SubAgentStatusRunning)
 		seedPendingInput(t, pool, subAgentID, "queued-input")
 	}
 
 	governor := NewSpawnGovernor(SubAgentLimits{}, BackpressureConfig{})
-	parentRun := data.Run{ID: runID, AccountID: accountID}
 
 	tx, err := pool.Begin(context.Background())
 	if err != nil {
@@ -198,10 +193,10 @@ func TestSpawnGovernorZeroLimitMeansUnlimited(t *testing.T) {
 	}
 	defer tx.Rollback(context.Background())
 
-	if err := governor.ValidateSpawn(context.Background(), tx, parentRun, runID, 100); err != nil {
+	if err := governor.ValidateSpawn(context.Background(), tx, threadID, 100); err != nil {
 		t.Fatalf("zero limits should allow anything: %v", err)
 	}
-	if err := governor.ValidatePendingInput(context.Background(), tx, runID); err != nil {
+	if err := governor.ValidatePendingInput(context.Background(), tx, threadID); err != nil {
 		t.Fatalf("zero pending limit should allow anything: %v", err)
 	}
 }
@@ -222,7 +217,7 @@ func TestServiceSpawnRejectsOnParallelChildrenLimit(t *testing.T) {
 	seedThreadAndRun(t, pool, accountID, threadID, &projectID, &userID, runID)
 
 	parentRun := data.Run{ID: runID, AccountID: accountID, ThreadID: threadID, ProjectID: &projectID, CreatedByUserID: &userID}
-	service := NewService(pool, nil, &stubJobQueue{}, parentRun, "trace-gov", SubAgentLimits{MaxParallelChildren: 1}, BackpressureConfig{}, nil)
+	service := NewService(pool, nil, &stubJobQueue{}, parentRun, "trace-gov", SubAgentLimits{MaxParallelChildrenPerThread: 1}, BackpressureConfig{}, nil)
 
 	_, err = service.Spawn(context.Background(), isolatedSpawnRequest("first child"))
 	if err != nil {
@@ -241,8 +236,8 @@ func TestServiceSpawnRejectsOnParallelChildrenLimit(t *testing.T) {
 func TestBackpressureEvaluateBelowThreshold(t *testing.T) {
 	pool, accountID, threadID, runID := setupGovernanceTest(t, "arkloop_bp_below")
 
-	seedSubAgent(t, pool, accountID, runID, threadID, runID, threadID, 1, data.SubAgentStatusRunning)
-	seedSubAgent(t, pool, accountID, runID, threadID, runID, threadID, 1, data.SubAgentStatusQueued)
+	seedSubAgent(t, pool, accountID, threadID, threadID, runID, 1, data.SubAgentStatusRunning)
+	seedSubAgent(t, pool, accountID, threadID, threadID, runID, 1, data.SubAgentStatusQueued)
 
 	governor := NewSpawnGovernor(SubAgentLimits{}, BackpressureConfig{
 		Enabled:        true,
@@ -256,7 +251,7 @@ func TestBackpressureEvaluateBelowThreshold(t *testing.T) {
 	}
 	defer tx.Rollback(context.Background())
 
-	result, err := governor.EvaluateBackpressure(context.Background(), tx, runID)
+	result, err := governor.EvaluateBackpressure(context.Background(), tx, threadID)
 	if err != nil {
 		t.Fatalf("evaluate backpressure: %v", err)
 	}
@@ -269,7 +264,7 @@ func TestBackpressureEvaluateAboveThreshold(t *testing.T) {
 	pool, accountID, threadID, runID := setupGovernanceTest(t, "arkloop_bp_above")
 
 	for i := 0; i < 5; i++ {
-		seedSubAgent(t, pool, accountID, runID, threadID, runID, threadID, 1, data.SubAgentStatusRunning)
+		seedSubAgent(t, pool, accountID, threadID, threadID, runID, 1, data.SubAgentStatusRunning)
 	}
 
 	governor := NewSpawnGovernor(SubAgentLimits{}, BackpressureConfig{
@@ -284,7 +279,7 @@ func TestBackpressureEvaluateAboveThreshold(t *testing.T) {
 	}
 	defer tx.Rollback(context.Background())
 
-	result, err := governor.EvaluateBackpressure(context.Background(), tx, runID)
+	result, err := governor.EvaluateBackpressure(context.Background(), tx, threadID)
 	if err != nil {
 		t.Fatalf("evaluate backpressure: %v", err)
 	}
@@ -299,8 +294,8 @@ func TestBackpressureEvaluateAboveThreshold(t *testing.T) {
 func TestBackpressureSpawnRejectStrategy(t *testing.T) {
 	pool, accountID, threadID, runID := setupGovernanceTest(t, "arkloop_bp_reject")
 
-	seedSubAgent(t, pool, accountID, runID, threadID, runID, threadID, 1, data.SubAgentStatusRunning)
-	seedSubAgent(t, pool, accountID, runID, threadID, runID, threadID, 1, data.SubAgentStatusRunning)
+	seedSubAgent(t, pool, accountID, threadID, threadID, runID, 1, data.SubAgentStatusRunning)
+	seedSubAgent(t, pool, accountID, threadID, threadID, runID, 1, data.SubAgentStatusRunning)
 
 	governor := NewSpawnGovernor(SubAgentLimits{}, BackpressureConfig{
 		Enabled:        true,
@@ -314,7 +309,7 @@ func TestBackpressureSpawnRejectStrategy(t *testing.T) {
 	}
 	defer tx.Rollback(context.Background())
 
-	err = governor.ValidateBackpressureForSpawn(context.Background(), tx, runID)
+	err = governor.ValidateBackpressureForSpawn(context.Background(), tx, threadID)
 	if err == nil {
 		t.Fatal("reject strategy should reject spawn under backpressure")
 	}
@@ -326,8 +321,8 @@ func TestBackpressureSpawnRejectStrategy(t *testing.T) {
 func TestBackpressureSpawnSerialStrategy(t *testing.T) {
 	pool, accountID, threadID, runID := setupGovernanceTest(t, "arkloop_bp_serial")
 
-	seedSubAgent(t, pool, accountID, runID, threadID, runID, threadID, 1, data.SubAgentStatusRunning)
-	seedSubAgent(t, pool, accountID, runID, threadID, runID, threadID, 1, data.SubAgentStatusRunning)
+	seedSubAgent(t, pool, accountID, threadID, threadID, runID, 1, data.SubAgentStatusRunning)
+	seedSubAgent(t, pool, accountID, threadID, threadID, runID, 1, data.SubAgentStatusRunning)
 
 	governor := NewSpawnGovernor(SubAgentLimits{}, BackpressureConfig{
 		Enabled:        true,
@@ -341,7 +336,7 @@ func TestBackpressureSpawnSerialStrategy(t *testing.T) {
 	}
 	defer tx.Rollback(context.Background())
 
-	if err := governor.ValidateBackpressureForSpawn(context.Background(), tx, runID); err != nil {
+	if err := governor.ValidateBackpressureForSpawn(context.Background(), tx, threadID); err != nil {
 		t.Fatalf("serial strategy should allow spawn: %v", err)
 	}
 }
@@ -349,8 +344,8 @@ func TestBackpressureSpawnSerialStrategy(t *testing.T) {
 func TestBackpressureSpawnPauseStrategy(t *testing.T) {
 	pool, accountID, threadID, runID := setupGovernanceTest(t, "arkloop_bp_pause")
 
-	seedSubAgent(t, pool, accountID, runID, threadID, runID, threadID, 1, data.SubAgentStatusRunning)
-	seedSubAgent(t, pool, accountID, runID, threadID, runID, threadID, 1, data.SubAgentStatusRunning)
+	seedSubAgent(t, pool, accountID, threadID, threadID, runID, 1, data.SubAgentStatusRunning)
+	seedSubAgent(t, pool, accountID, threadID, threadID, runID, 1, data.SubAgentStatusRunning)
 
 	governor := NewSpawnGovernor(SubAgentLimits{}, BackpressureConfig{
 		Enabled:        true,
@@ -364,7 +359,7 @@ func TestBackpressureSpawnPauseStrategy(t *testing.T) {
 	}
 	defer tx.Rollback(context.Background())
 
-	if err := governor.ValidateBackpressureForSpawn(context.Background(), tx, runID); err != nil {
+	if err := governor.ValidateBackpressureForSpawn(context.Background(), tx, threadID); err != nil {
 		t.Fatalf("pause strategy should allow spawn: %v", err)
 	}
 }
@@ -372,8 +367,8 @@ func TestBackpressureSpawnPauseStrategy(t *testing.T) {
 func TestBackpressureSendInputRejectsNonInterrupt(t *testing.T) {
 	pool, accountID, threadID, runID := setupGovernanceTest(t, "arkloop_bp_input_reject")
 
-	seedSubAgent(t, pool, accountID, runID, threadID, runID, threadID, 1, data.SubAgentStatusRunning)
-	seedSubAgent(t, pool, accountID, runID, threadID, runID, threadID, 1, data.SubAgentStatusRunning)
+	seedSubAgent(t, pool, accountID, threadID, threadID, runID, 1, data.SubAgentStatusRunning)
+	seedSubAgent(t, pool, accountID, threadID, threadID, runID, 1, data.SubAgentStatusRunning)
 
 	governor := NewSpawnGovernor(SubAgentLimits{}, BackpressureConfig{
 		Enabled:        true,
@@ -387,7 +382,7 @@ func TestBackpressureSendInputRejectsNonInterrupt(t *testing.T) {
 	}
 	defer tx.Rollback(context.Background())
 
-	err = governor.ValidateBackpressureForSendInput(context.Background(), tx, runID, false)
+	err = governor.ValidateBackpressureForSendInput(context.Background(), tx, threadID, false)
 	if err == nil {
 		t.Fatal("non-interrupt send_input should be rejected under backpressure")
 	}
@@ -396,8 +391,8 @@ func TestBackpressureSendInputRejectsNonInterrupt(t *testing.T) {
 func TestBackpressureSendInputAllowsInterrupt(t *testing.T) {
 	pool, accountID, threadID, runID := setupGovernanceTest(t, "arkloop_bp_input_interrupt")
 
-	seedSubAgent(t, pool, accountID, runID, threadID, runID, threadID, 1, data.SubAgentStatusRunning)
-	seedSubAgent(t, pool, accountID, runID, threadID, runID, threadID, 1, data.SubAgentStatusRunning)
+	seedSubAgent(t, pool, accountID, threadID, threadID, runID, 1, data.SubAgentStatusRunning)
+	seedSubAgent(t, pool, accountID, threadID, threadID, runID, 1, data.SubAgentStatusRunning)
 
 	governor := NewSpawnGovernor(SubAgentLimits{}, BackpressureConfig{
 		Enabled:        true,
@@ -411,7 +406,7 @@ func TestBackpressureSendInputAllowsInterrupt(t *testing.T) {
 	}
 	defer tx.Rollback(context.Background())
 
-	if err := governor.ValidateBackpressureForSendInput(context.Background(), tx, runID, true); err != nil {
+	if err := governor.ValidateBackpressureForSendInput(context.Background(), tx, threadID, true); err != nil {
 		t.Fatalf("interrupt should be allowed under backpressure: %v", err)
 	}
 }
@@ -419,8 +414,8 @@ func TestBackpressureSendInputAllowsInterrupt(t *testing.T) {
 func TestBackpressureResumeRejected(t *testing.T) {
 	pool, accountID, threadID, runID := setupGovernanceTest(t, "arkloop_bp_resume")
 
-	seedSubAgent(t, pool, accountID, runID, threadID, runID, threadID, 1, data.SubAgentStatusRunning)
-	seedSubAgent(t, pool, accountID, runID, threadID, runID, threadID, 1, data.SubAgentStatusRunning)
+	seedSubAgent(t, pool, accountID, threadID, threadID, runID, 1, data.SubAgentStatusRunning)
+	seedSubAgent(t, pool, accountID, threadID, threadID, runID, 1, data.SubAgentStatusRunning)
 
 	governor := NewSpawnGovernor(SubAgentLimits{}, BackpressureConfig{
 		Enabled:        true,
@@ -434,7 +429,7 @@ func TestBackpressureResumeRejected(t *testing.T) {
 	}
 	defer tx.Rollback(context.Background())
 
-	err = governor.ValidateBackpressureForResume(context.Background(), tx, runID)
+	err = governor.ValidateBackpressureForResume(context.Background(), tx, threadID)
 	if err == nil {
 		t.Fatal("resume should be rejected under backpressure")
 	}
@@ -446,8 +441,8 @@ func TestBackpressureResumeRejected(t *testing.T) {
 func TestBackpressureDisabled(t *testing.T) {
 	pool, accountID, threadID, runID := setupGovernanceTest(t, "arkloop_bp_disabled")
 
-	seedSubAgent(t, pool, accountID, runID, threadID, runID, threadID, 1, data.SubAgentStatusRunning)
-	seedSubAgent(t, pool, accountID, runID, threadID, runID, threadID, 1, data.SubAgentStatusRunning)
+	seedSubAgent(t, pool, accountID, threadID, threadID, runID, 1, data.SubAgentStatusRunning)
+	seedSubAgent(t, pool, accountID, threadID, threadID, runID, 1, data.SubAgentStatusRunning)
 
 	governor := NewSpawnGovernor(SubAgentLimits{}, BackpressureConfig{
 		Enabled:        false,
@@ -461,17 +456,17 @@ func TestBackpressureDisabled(t *testing.T) {
 	}
 	defer tx.Rollback(context.Background())
 
-	result, err := governor.EvaluateBackpressure(context.Background(), tx, runID)
+	result, err := governor.EvaluateBackpressure(context.Background(), tx, threadID)
 	if err != nil {
 		t.Fatalf("evaluate: %v", err)
 	}
 	if result.Level != BackpressureNone {
 		t.Fatalf("disabled backpressure should return None, got %d", result.Level)
 	}
-	if err := governor.ValidateBackpressureForSpawn(context.Background(), tx, runID); err != nil {
+	if err := governor.ValidateBackpressureForSpawn(context.Background(), tx, threadID); err != nil {
 		t.Fatalf("disabled backpressure should allow spawn: %v", err)
 	}
-	if err := governor.ValidateBackpressureForResume(context.Background(), tx, runID); err != nil {
+	if err := governor.ValidateBackpressureForResume(context.Background(), tx, threadID); err != nil {
 		t.Fatalf("disabled backpressure should allow resume: %v", err)
 	}
 }
@@ -479,7 +474,7 @@ func TestBackpressureDisabled(t *testing.T) {
 func TestBackpressureZeroThreshold(t *testing.T) {
 	pool, accountID, threadID, runID := setupGovernanceTest(t, "arkloop_bp_zero")
 
-	seedSubAgent(t, pool, accountID, runID, threadID, runID, threadID, 1, data.SubAgentStatusRunning)
+	seedSubAgent(t, pool, accountID, threadID, threadID, runID, 1, data.SubAgentStatusRunning)
 
 	governor := NewSpawnGovernor(SubAgentLimits{}, BackpressureConfig{
 		Enabled:        true,
@@ -493,7 +488,7 @@ func TestBackpressureZeroThreshold(t *testing.T) {
 	}
 	defer tx.Rollback(context.Background())
 
-	result, err := governor.EvaluateBackpressure(context.Background(), tx, runID)
+	result, err := governor.EvaluateBackpressure(context.Background(), tx, threadID)
 	if err != nil {
 		t.Fatalf("evaluate: %v", err)
 	}

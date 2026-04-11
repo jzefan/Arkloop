@@ -48,15 +48,14 @@ func TestDesktopSubAgentRepository_CreateAndEvents(t *testing.T) {
 
 	subAgentsRepo := SubAgentRepository{}
 	record, err := subAgentsRepo.Create(ctx, tx, SubAgentCreateParams{
-		AccountID:      accountID,
-		ParentRunID:    parentRunID,
-		ParentThreadID: parentThreadID,
-		RootRunID:      parentRunID,
-		RootThreadID:   parentThreadID,
-		Depth:          1,
-		PersonaID:      ptr("normal"),
-		SourceType:     SubAgentSourceTypeThreadSpawn,
-		ContextMode:    SubAgentContextModeIsolated,
+		AccountID:     accountID,
+		OwnerThreadID: parentThreadID,
+		AgentThreadID: childThreadID,
+		OriginRunID:   parentRunID,
+		Depth:         1,
+		PersonaID:     ptr("normal"),
+		SourceType:    SubAgentSourceTypeThreadSpawn,
+		ContextMode:   SubAgentContextModeIsolated,
 	})
 	if err != nil {
 		t.Fatalf("create sub_agent: %v", err)

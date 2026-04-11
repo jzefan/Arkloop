@@ -126,6 +126,9 @@ func NewPersonaResolutionMiddleware(
 		)
 
 		rc.SystemPrompt = profile.SystemPrompt
+		if len(rc.PendingSubAgentCallbacks) > 0 {
+			rc.SystemPrompt = appendSystemPromptBlock(rc.SystemPrompt, buildPendingSubAgentCallbacksBlock(rc.PendingSubAgentCallbacks))
+		}
 		rc.ReasoningIterations = profile.ReasoningIterations
 		rc.ToolContinuationBudget = profile.ToolContinuationBudget
 		rc.MaxOutputTokens = profile.MaxOutputTokens
