@@ -30,6 +30,7 @@ setupMainProcessLogging()
 
 let mainWindow: BrowserWindow | null = null
 let activeSidecarPort: number | null = null
+const hasSingleInstanceLock = app.requestSingleInstanceLock()
 
 const REACT_DEVTOOLS_EXTENSION_ID = 'fmkadmapgofadopljbjfkapdkoienihi'
 
@@ -113,6 +114,17 @@ async function installReactDevTools(): Promise<void> {
 
 function getWindow(): BrowserWindow | null {
   return mainWindow
+}
+
+function showMainWindow(): void {
+  ensureDockPresence()
+  const win = mainWindow
+  if (!win) return
+  if (win.isMinimized()) {
+    win.restore()
+  }
+  win.show()
+  win.focus()
 }
 
 function mergeConfigWithRuntime(config: AppConfig, runtime: SidecarRuntime): AppConfig {
@@ -369,107 +381,111 @@ function loadContent(win: BrowserWindow): void {
 let isQuitting = false
 let shutdownInProgress = false
 
-app.whenReady().then(async () => {
-  console.info('[desktop] app ready', {
-    logDir: getDesktopLogDir(),
-    packaged: app.isPackaged,
-    version: app.getVersion(),
-  })
-  await installReactDevTools()
-  if (process.platform === 'win32') {
-    Menu.setApplicationMenu(null)
-  }
-  ensureDockPresence()
-  initVersionsFile()
-  await syncLocalVersions()
-  applyAppIcon()
-
-  setStatusListener((status) => {
-    mainWindow?.webContents.send('arkloop:sidecar:status-changed', status)
-  })
-  setRuntimeListener((runtime) => {
-    handleRuntimeUpdate(runtime)
-  })
-  setBridgeUrlListener((bridgeBaseUrl) => {
-    syncBridgeBaseUrlToRenderer(bridgeBaseUrl)
+if (!hasSingleInstanceLock) {
+  app.quit()
+} else {
+  app.on('second-instance', () => {
+    showMainWindow()
   })
 
-  registerIpcHandlers(getWindow, {
-    applyConfigUpdate,
-    restartLocalSidecar,
-    getSidecarRuntime: async () => getSidecarRuntime(),
-  })
-
-  const config = loadConfig()
-  if (config.mode === 'local') {
-    try {
-      await ensureLocalSidecar(config)
-    } catch (error) {
-      console.error('[desktop] failed to start local sidecar:', error)
-      syncRuntimeToRenderer(getSidecarRuntime())
+  app.whenReady().then(async () => {
+    console.info('[desktop] app ready', {
+      logDir: getDesktopLogDir(),
+      packaged: app.isPackaged,
+      version: app.getVersion(),
+    })
+    await installReactDevTools()
+    if (process.platform === 'win32') {
+      Menu.setApplicationMenu(null)
     }
-  } else {
-    activeSidecarPort = null
-  }
+    ensureDockPresence()
+    initVersionsFile()
+    await syncLocalVersions()
+    applyAppIcon()
 
-  mainWindow = createWindow()
+    setStatusListener((status) => {
+      mainWindow?.webContents.send('arkloop:sidecar:status-changed', status)
+    })
+    setRuntimeListener((runtime) => {
+      handleRuntimeUpdate(runtime)
+    })
+    setBridgeUrlListener((bridgeBaseUrl) => {
+      syncBridgeBaseUrlToRenderer(bridgeBaseUrl)
+    })
 
-  // ensureLocalSidecar 在窗口创建之前完成，当时 sync*ToRenderer 因 mainWindow 为 null 丢弃。
-  // 渲染层 preload 里 sidecarRuntimeSnapshot 仍为初始值，getApiBaseUrl 可能与真实端口/bridge 不一致，
-  // 导致 /v1/me 等请求挂起或失败且界面长期 Loading。dom-ready / did-finish-load 后补发一次。
-  const pushEmbeddedStateToRendererOnce = (() => {
-    let sent = false
-    return (): void => {
-      if (sent) return
-      const win = mainWindow
-      if (!win || win.isDestroyed()) return
-      sent = true
-      syncRuntimeToRenderer(getSidecarRuntime())
-      syncConfigToRenderer(loadConfig())
-      syncBridgeBaseUrlToRenderer(getBridgeBaseUrl())
-    }
-  })()
-  mainWindow.webContents.once('dom-ready', pushEmbeddedStateToRendererOnce)
-  mainWindow.webContents.once('did-finish-load', pushEmbeddedStateToRendererOnce)
+    registerIpcHandlers(getWindow, {
+      applyConfigUpdate,
+      restartLocalSidecar,
+      getSidecarRuntime: async () => getSidecarRuntime(),
+    })
 
-  loadContent(mainWindow)
-
-  createTray(getWindow)
-  registerGlobalShortcut(getWindow)
-  setupAppUpdater(getWindow)
-})
-
-app.on('window-all-closed', () => {
-  // macOS: 保持运行直到用户显式退出
-  if (process.platform !== 'darwin') {
-    app.quit()
-  }
-})
-
-app.on('activate', () => {
-  ensureDockPresence()
-  if (mainWindow) {
-    mainWindow.show()
-    mainWindow.focus()
-  }
-})
-
-app.on('before-quit', (e) => {
-  if (shutdownInProgress) return
-  e.preventDefault()
-  shutdownInProgress = true
-  isQuitting = true
-  void (async () => {
-    destroyTray()
-    try {
-      const cfg = loadConfig()
-      if (cfg.mode === 'local') {
-        await stopBridgeOpenvikingIfNeeded(cfg.memory)
+    const config = loadConfig()
+    if (config.mode === 'local') {
+      try {
+        await ensureLocalSidecar(config)
+      } catch (error) {
+        console.error('[desktop] failed to start local sidecar:', error)
+        syncRuntimeToRenderer(getSidecarRuntime())
       }
-      await stopSidecar()
-    } catch (err) {
-      console.error('[desktop] shutdown error:', err)
+    } else {
+      activeSidecarPort = null
     }
-    app.quit()
-  })()
-})
+
+    mainWindow = createWindow()
+
+    // ensureLocalSidecar 在窗口创建之前完成，当时 sync*ToRenderer 因 mainWindow 为 null 丢弃。
+    // 渲染层 preload 里 sidecarRuntimeSnapshot 仍为初始值，getApiBaseUrl 可能与真实端口/bridge 不一致，
+    // 导致 /v1/me 等请求挂起或失败且界面长期 Loading。dom-ready / did-finish-load 后补发一次。
+    const pushEmbeddedStateToRendererOnce = (() => {
+      let sent = false
+      return (): void => {
+        if (sent) return
+        const win = mainWindow
+        if (!win || win.isDestroyed()) return
+        sent = true
+        syncRuntimeToRenderer(getSidecarRuntime())
+        syncConfigToRenderer(loadConfig())
+        syncBridgeBaseUrlToRenderer(getBridgeBaseUrl())
+      }
+    })()
+    mainWindow.webContents.once('dom-ready', pushEmbeddedStateToRendererOnce)
+    mainWindow.webContents.once('did-finish-load', pushEmbeddedStateToRendererOnce)
+
+    loadContent(mainWindow)
+
+    createTray(getWindow)
+    registerGlobalShortcut(getWindow)
+    setupAppUpdater(getWindow)
+  })
+
+  app.on('window-all-closed', () => {
+    // macOS: 保持运行直到用户显式退出
+    if (process.platform !== 'darwin') {
+      app.quit()
+    }
+  })
+
+  app.on('activate', () => {
+    showMainWindow()
+  })
+
+  app.on('before-quit', (e) => {
+    if (shutdownInProgress) return
+    e.preventDefault()
+    shutdownInProgress = true
+    isQuitting = true
+    void (async () => {
+      destroyTray()
+      try {
+        const cfg = loadConfig()
+        if (cfg.mode === 'local') {
+          await stopBridgeOpenvikingIfNeeded(cfg.memory)
+        }
+        await stopSidecar()
+      } catch (err) {
+        console.error('[desktop] shutdown error:', err)
+      }
+      app.quit()
+    })()
+  })
+}

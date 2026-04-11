@@ -56,13 +56,19 @@ const MAX_RESTARTS = 3
 const MAX_AUTO_PORT_RETRIES = 6
 const AUTO_PORT_SCAN_WINDOW = 20
 const DEFAULT_BRIDGE_PORT = 19003
+const ARKLOOP_HOME = path.join(os.homedir(), '.arkloop')
 const SIDECAR_DIR = path.join(os.homedir(), '.arkloop', 'bin')
 const VERSION_FILE = path.join(os.homedir(), '.arkloop', 'bin', 'sidecar.version.json')
+const PACKAGED_PROJECT_DIR = path.join(ARKLOOP_HOME, 'project')
+const PACKAGED_PROJECT_STATE_FILE = path.join(PACKAGED_PROJECT_DIR, '.bundle-state.json')
+const PACKAGED_PROJECT_PRESERVED_FILES = new Set([
+  path.join('config', 'openviking', 'ov.conf'),
+])
 const DEFAULT_GITHUB_REPO = 'qqqqqf-q/Arkloop'
 const DEFAULT_DOWNLOAD_BASE = `https://github.com/${DEFAULT_GITHUB_REPO}/releases/download`
 const GITHUB_API_LATEST_RELEASE = `https://api.github.com/repos/${DEFAULT_GITHUB_REPO}/releases/latest`
 const desktopAccessToken = `arkloop-desktop-${randomBytes(24).toString('hex')}`
-const DESKTOP_TOKEN_FILE = path.join(os.homedir(), '.arkloop', 'desktop.token')
+const DESKTOP_TOKEN_FILE = path.join(ARKLOOP_HOME, 'desktop.token')
 
 let proc: ChildProcess | null = null
 let restartCount = 0
@@ -466,7 +472,58 @@ function resolveBinaryPath(): string {
 function resolveBundledProjectDir(): string | null {
   if (!app.isPackaged) return null
   const candidate = path.join(process.resourcesPath, 'arkloop-project')
-  return fs.existsSync(path.join(candidate, 'compose.yaml')) ? candidate : null
+  if (!fs.existsSync(path.join(candidate, 'compose.yaml'))) return null
+  return ensureWritableBundledProjectDir(candidate)
+}
+
+type PackagedProjectState = {
+  version?: string
+}
+
+function readPackagedProjectState(): PackagedProjectState | null {
+  try {
+    return JSON.parse(fs.readFileSync(PACKAGED_PROJECT_STATE_FILE, 'utf-8')) as PackagedProjectState
+  } catch {
+    return null
+  }
+}
+
+function syncPackagedProjectTree(sourceDir: string, destDir: string, relDir = ''): void {
+  fs.mkdirSync(destDir, { recursive: true })
+  const entries = fs.readdirSync(sourceDir, { withFileTypes: true })
+  for (const entry of entries) {
+    const relPath = relDir ? path.join(relDir, entry.name) : entry.name
+    const sourcePath = path.join(sourceDir, entry.name)
+    const destPath = path.join(destDir, entry.name)
+
+    if (entry.isDirectory()) {
+      syncPackagedProjectTree(sourcePath, destPath, relPath)
+      continue
+    }
+
+    if (PACKAGED_PROJECT_PRESERVED_FILES.has(relPath) && fs.existsSync(destPath)) {
+      continue
+    }
+
+    fs.mkdirSync(path.dirname(destPath), { recursive: true })
+    fs.copyFileSync(sourcePath, destPath)
+  }
+}
+
+function ensureWritableBundledProjectDir(sourceDir: string): string {
+  const currentVersion = app.getVersion()
+  const currentState = readPackagedProjectState()
+  if (currentState?.version === currentVersion && isBridgeProjectDir(PACKAGED_PROJECT_DIR)) {
+    return PACKAGED_PROJECT_DIR
+  }
+
+  syncPackagedProjectTree(sourceDir, PACKAGED_PROJECT_DIR)
+  fs.writeFileSync(
+    PACKAGED_PROJECT_STATE_FILE,
+    JSON.stringify({ version: currentVersion, syncedAt: new Date().toISOString() }),
+    'utf-8',
+  )
+  return PACKAGED_PROJECT_DIR
 }
 
 function readEnvVar(name: string): string | null {
