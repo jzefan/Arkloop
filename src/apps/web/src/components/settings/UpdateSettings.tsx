@@ -71,6 +71,20 @@ export function UpdateSettingsContent() {
   // 每个组件独立的更新状态
   const [updatingMap, setUpdatingMap] = useState<Partial<Record<UpdaterComponent, UpdatingState>>>({})
 
+  useEffect(() => {
+    const updaterApi = getUpdaterApi()
+    if (!updaterApi) return
+    let active = true
+    void updaterApi.getCached()
+      .then((status) => {
+        if (active) setUpdateStatus(status)
+      })
+      .catch(() => {})
+    return () => {
+      active = false
+    }
+  }, [])
+
   const checkUpdates = useCallback(async () => {
     const updaterApi = getUpdaterApi()
     const appUpdaterApi = getAppUpdaterApi()
@@ -109,10 +123,6 @@ export function UpdateSettingsContent() {
   }, [])
 
   useEffect(() => {
-    checkUpdates()
-  }, [checkUpdates])
-
-  useEffect(() => {
     const api = getAppUpdaterApi()
     if (!api) return
 
@@ -130,6 +140,10 @@ export function UpdateSettingsContent() {
       unsub()
     }
   }, [])
+
+  useEffect(() => {
+    void checkUpdates()
+  }, [checkUpdates])
 
   const handleApply = useCallback(async (component: UpdaterComponent) => {
     const api = getUpdaterApi()

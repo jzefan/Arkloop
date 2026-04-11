@@ -8,6 +8,7 @@ const actEnvironment = globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONM
 const originalActEnvironment = actEnvironment.IS_REACT_ACT_ENVIRONMENT
 
 const checkUpdater = vi.fn()
+const getCachedUpdater = vi.fn()
 const applyUpdate = vi.fn()
 const onUpdaterProgress = vi.fn(() => () => {})
 const getAppUpdaterState = vi.fn()
@@ -39,6 +40,7 @@ async function loadSubject() {
       ...actual,
       getDesktopApi: () => ({
         updater: {
+          getCached: getCachedUpdater,
           check: checkUpdater,
           apply: applyUpdate,
           onProgress: onUpdaterProgress,
@@ -66,6 +68,7 @@ beforeEach(() => {
   root = createRoot(container)
 
   checkUpdater.mockReset()
+  getCachedUpdater.mockReset()
   applyUpdate.mockReset()
   onUpdaterProgress.mockReset()
   getAppUpdaterState.mockReset()
@@ -76,11 +79,26 @@ beforeEach(() => {
 
   onUpdaterProgress.mockReturnValue(() => {})
   onAppUpdaterState.mockReturnValue(() => {})
+  getCachedUpdater.mockResolvedValue({
+    openviking: { current: '1.0.0', latest: '1.0.0', available: false },
+    sandbox: {
+      kernel: { current: '1.0.0', latest: '1.0.0', available: false },
+      rootfs: { current: '1.0.0', latest: '1.0.0', available: false },
+    },
+    bins: {
+      rtk: { current: '1.0.0', latest: '1.0.0', available: false },
+      opencli: { current: '1.0.0', latest: '1.0.0', available: false },
+    },
+  })
   checkUpdater.mockResolvedValue({
     openviking: { current: '1.0.0', latest: '1.0.0', available: false },
     sandbox: {
       kernel: { current: '1.0.0', latest: '1.0.0', available: false },
       rootfs: { current: '1.0.0', latest: '1.0.0', available: false },
+    },
+    bins: {
+      rtk: { current: '1.0.0', latest: '1.0.0', available: false },
+      opencli: { current: '1.0.0', latest: '1.0.0', available: false },
     },
   })
   getAppUpdaterState.mockResolvedValue({

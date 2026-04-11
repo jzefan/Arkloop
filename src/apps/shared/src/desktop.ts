@@ -150,6 +150,7 @@ export type ArkloopDesktopApi = {
     listLogs: (input?: DesktopLogQuery) => Promise<{ entries: DesktopLogEntry[] }>
   }
   updater?: {
+    getCached: () => Promise<UpdaterStatus>
     check: () => Promise<UpdaterStatus>
     apply: (opts: { component: UpdaterComponent }) => Promise<{ ok: boolean }>
     onProgress: (callback: (data: { phase: string; percent: number; bytesDownloaded: number; bytesTotal: number; error?: string; component: UpdaterComponent }) => void) => () => void
