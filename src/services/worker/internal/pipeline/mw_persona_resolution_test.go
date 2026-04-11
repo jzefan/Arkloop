@@ -3,12 +3,15 @@ package pipeline_test
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 
 	"arkloop/services/worker/internal/data"
 	"arkloop/services/worker/internal/personas"
 	"arkloop/services/worker/internal/pipeline"
 	"arkloop/services/worker/internal/tools"
+
+	"github.com/google/uuid"
 )
 
 func TestPersonaResolutionPreferredCredentialSet(t *testing.T) {
@@ -156,6 +159,57 @@ func TestPersonaResolutionLoadsModelReasoningAndPromptCache(t *testing.T) {
 	}
 	if gotSystemPrompt != "persona soul\n\nsystem prompt" {
 		t.Fatalf("unexpected system prompt: %q", gotSystemPrompt)
+	}
+}
+
+func TestPersonaResolutionAppendsPendingSubAgentCallbacksBlock(t *testing.T) {
+	reg := buildPersonaRegistry(t, personas.Definition{
+		ID:             "test-persona",
+		Version:        "1",
+		Title:          "Test Persona",
+		SoulMD:         "persona soul",
+		PromptMD:       "system prompt",
+		ExecutorType:   "agent.simple",
+		ExecutorConfig: map[string]any{},
+	})
+	mw := pipeline.NewPersonaResolutionMiddleware(
+		func() *personas.Registry { return reg },
+		nil, data.RunsRepository{}, data.RunEventsRepository{}, nil,
+	)
+
+	rc := &pipeline.RunContext{
+		InputJSON: map[string]any{"persona_id": "test-persona"},
+		PendingSubAgentCallbacks: []data.ThreadSubAgentCallbackRecord{
+			{
+				ID:         uuid.New(),
+				SubAgentID: uuid.New(),
+				Status:     data.SubAgentStatusCompleted,
+				PayloadJSON: map[string]any{
+					"message": "phase one done",
+				},
+			},
+		},
+	}
+
+	var gotSystemPrompt string
+	h := pipeline.Build([]pipeline.RunMiddleware{mw}, func(_ context.Context, rc *pipeline.RunContext) error {
+		gotSystemPrompt = rc.SystemPrompt
+		return nil
+	})
+	if err := h(context.Background(), rc); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if gotSystemPrompt == "persona soul\n\nsystem prompt" {
+		t.Fatalf("expected pending callback block in system prompt, got %q", gotSystemPrompt)
+	}
+	if want := "<pending_subagent_callbacks>"; !strings.Contains(gotSystemPrompt, want) {
+		t.Fatalf("expected %q in system prompt, got %q", want, gotSystemPrompt)
+	}
+	if want := `"status":"completed"`; !strings.Contains(gotSystemPrompt, want) {
+		t.Fatalf("expected %q in system prompt, got %q", want, gotSystemPrompt)
+	}
+	if want := `"message":"phase one done"`; !strings.Contains(gotSystemPrompt, want) {
+		t.Fatalf("expected callback payload in system prompt, got %q", gotSystemPrompt)
 	}
 }
 

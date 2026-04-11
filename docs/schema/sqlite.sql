@@ -1156,6 +1156,19 @@ CREATE TABLE user_notebook_snapshots (
     PRIMARY KEY (account_id, user_id, agent_id)
 );
 
+CREATE TABLE external_thread_links (
+    account_id TEXT NOT NULL,
+    thread_id TEXT NOT NULL REFERENCES threads(id) ON DELETE CASCADE,
+    provider TEXT NOT NULL,
+    external_thread_id TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (account_id, thread_id, provider)
+);
+
+CREATE INDEX idx_external_thread_links_provider_external
+    ON external_thread_links (provider, external_thread_id);
+
 CREATE TABLE users (
     id                TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(4))) || '-' || lower(hex(randomblob(2))) || '-4' || substr(lower(hex(randomblob(2))),2) || '-' || substr('89ab',abs(random()) % 4 + 1, 1) || substr(lower(hex(randomblob(2))),2) || '-' || lower(hex(randomblob(6)))),
     username          TEXT NOT NULL,

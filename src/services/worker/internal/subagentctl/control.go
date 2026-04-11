@@ -117,15 +117,17 @@ func (s *Service) spawn(ctx context.Context, req SpawnRequest, forcedRunID *uuid
 		return StatusSnapshot{}, err
 	}
 	defer tx.Rollback(ctx)
-
-	lineage, err := (data.RunsRepository{}).GetLineage(ctx, tx, s.parentRun.ID)
-	if err != nil {
-		return StatusSnapshot{}, fmt.Errorf("get lineage for governance: %w", err)
+	ownerThreadID := s.parentRun.ThreadID
+	depth := 1
+	if parentSubAgent, err := (data.SubAgentRepository{}).GetByCurrentRunID(ctx, tx, s.parentRun.ID); err != nil {
+		return StatusSnapshot{}, fmt.Errorf("get parent sub-agent for governance: %w", err)
+	} else if parentSubAgent != nil {
+		depth = parentSubAgent.Depth + 1
 	}
-	if err := s.governor.ValidateSpawn(ctx, tx, s.parentRun, lineage.RootRunID, lineage.Depth+1); err != nil {
+	if err := s.governor.ValidateSpawn(ctx, tx, ownerThreadID, depth); err != nil {
 		return StatusSnapshot{}, err
 	}
-	if err := s.governor.ValidateBackpressureForSpawn(ctx, tx, lineage.RootRunID); err != nil {
+	if err := s.governor.ValidateBackpressureForSpawn(ctx, tx, ownerThreadID); err != nil {
 		return StatusSnapshot{}, err
 	}
 
@@ -144,7 +146,7 @@ func (s *Service) spawn(ctx context.Context, req SpawnRequest, forcedRunID *uuid
 	// 背压 pause 策略下延迟入队
 	var availableAt *time.Time
 	if bpTx, bpErr := s.pool.BeginTx(ctx, pgx.TxOptions{AccessMode: pgx.ReadOnly}); bpErr == nil {
-		bp, _ := s.governor.EvaluateBackpressure(ctx, bpTx, lineage.RootRunID)
+		bp, _ := s.governor.EvaluateBackpressure(ctx, bpTx, ownerThreadID)
 		_ = bpTx.Rollback(ctx)
 		if bp.Level == BackpressureCritical && bp.Strategy == BackpressureStrategyPause {
 			t := time.Now().Add(5 * time.Second)
@@ -167,9 +169,6 @@ func (s *Service) spawn(ctx context.Context, req SpawnRequest, forcedRunID *uuid
 		s.recorders.Store(record.ID, recorder)
 	}
 
-	if s.rdb != nil {
-		go s.startCompletionWatcher(record.ID, childRunID, record.ParentThreadID, s.parentRun.AccountID, record.Nickname)
-	}
 	return s.GetStatus(ctx, record.ID)
 }
 
@@ -195,14 +194,14 @@ func (s *Service) SendInput(ctx context.Context, req SendInputRequest) (StatusSn
 	if err != nil {
 		return StatusSnapshot{}, err
 	}
-	if err := s.governor.ValidateBackpressureForSendInput(ctx, tx, record.RootRunID, req.Interrupt); err != nil {
+	if err := s.governor.ValidateBackpressureForSendInput(ctx, tx, record.OwnerThreadID, req.Interrupt); err != nil {
 		return StatusSnapshot{}, err
 	}
 
 	var childRunID *uuid.UUID
 	switch plan.Mode {
 	case childRunPlanModeQueue:
-		if err := s.governor.ValidatePendingInput(ctx, tx, record.RootRunID); err != nil {
+		if err := s.governor.ValidatePendingInput(ctx, tx, record.OwnerThreadID); err != nil {
 			return StatusSnapshot{}, err
 		}
 		queuedInput, err := (data.SubAgentPendingInputsRepository{}).Enqueue(ctx, tx, record.ID, plan.Input, plan.Priority)
@@ -455,7 +454,7 @@ func (s *Service) Resume(ctx context.Context, req ResumeRequest) (StatusSnapshot
 	if err != nil {
 		return StatusSnapshot{}, err
 	}
-	if err := s.governor.ValidateBackpressureForResume(ctx, tx, record.RootRunID); err != nil {
+	if err := s.governor.ValidateBackpressureForResume(ctx, tx, record.OwnerThreadID); err != nil {
 		return StatusSnapshot{}, err
 	}
 
@@ -583,7 +582,7 @@ func (s *Service) GetStatus(ctx context.Context, subAgentID uuid.UUID) (StatusSn
 	if err != nil {
 		return StatusSnapshot{}, err
 	}
-	bp, _ := s.governor.EvaluateBackpressure(ctx, tx, record.RootRunID)
+	bp, _ := s.governor.EvaluateBackpressure(ctx, tx, record.OwnerThreadID)
 	if bp.Level == BackpressureCritical {
 		snapshot.Degraded = true
 	}
@@ -591,7 +590,7 @@ func (s *Service) GetStatus(ctx context.Context, subAgentID uuid.UUID) (StatusSn
 }
 
 func (s *Service) ListChildren(ctx context.Context) ([]StatusSnapshot, error) {
-	records, err := (data.SubAgentRepository{}).ListByParentRun(ctx, s.pool, s.parentRun.ID)
+	records, err := (data.SubAgentRepository{}).ListByOwnerThread(ctx, s.pool, s.parentRun.ThreadID)
 	if err != nil {
 		return nil, err
 	}
@@ -636,7 +635,7 @@ func (s *Service) mustLoadOwnedSubAgent(ctx context.Context, tx pgx.Tx, subAgent
 	if record == nil {
 		return nil, fmt.Errorf("sub_agent not found: %s", subAgentID)
 	}
-	if record.AccountID != s.parentRun.AccountID || record.ParentRunID != s.parentRun.ID {
+	if record.AccountID != s.parentRun.AccountID || record.OwnerThreadID != s.parentRun.ThreadID {
 		return nil, fmt.Errorf("sub_agent not owned by current run: %s", subAgentID)
 	}
 	return record, nil
@@ -656,69 +655,6 @@ func (s *Service) appendLifecycleEvent(ctx context.Context, subAgentID uuid.UUID
 		return err
 	}
 	return tx.Commit(ctx)
-}
-
-// startCompletionWatcher 订阅子代理 run 的 Redis done 事件，收到后向父线程注入系统消息。
-// 不阻塞调用方，不影响子代理生命周期。
-func (s *Service) startCompletionWatcher(subAgentID, childRunID, parentThreadID, accountID uuid.UUID, nickname *string) {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
-	defer cancel()
-
-	ch := fmt.Sprintf("run.child.%s.done", childRunID.String())
-	sub := s.rdb.Subscribe(ctx, ch)
-	defer sub.Close()
-
-	// Subscribe 后立即重检，防止 done 消息在 Subscribe 前已发布导致永久等待。
-	snap, err := s.GetStatus(ctx, subAgentID)
-	if err == nil && waitResolved(snap.Status) {
-		s.injectCompletionMessage(ctx, subAgentID, parentThreadID, accountID, nickname, snap.Status)
-		return
-	}
-
-	msgCh := sub.Channel()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case msg, ok := <-msgCh:
-			if !ok {
-				return
-			}
-			// msg.Payload 格式: "completed\n<output>" 或 "failed\n<error>"
-			payload := msg.Payload
-			status := "unknown"
-			if i := strings.IndexByte(payload, '\n'); i >= 0 {
-				status = strings.TrimSpace(payload[:i])
-			}
-			s.injectCompletionMessage(ctx, subAgentID, parentThreadID, accountID, nickname, status)
-			return
-		}
-	}
-}
-
-func (s *Service) injectCompletionMessage(ctx context.Context, subAgentID, parentThreadID, accountID uuid.UUID, nickname *string, status string) {
-	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
-	if err != nil {
-		slog.Warn("completion_watcher: begin tx failed", "err", err, "sub_agent_id", subAgentID)
-		return
-	}
-	defer tx.Rollback(ctx)
-
-	nick := ""
-	if nickname != nil {
-		nick = *nickname
-	}
-	content := fmt.Sprintf("Sub-agent %s (%s) completed with status: %s", nick, subAgentID.String(), status)
-	_, err = data.MessagesRepository{}.InsertThreadMessage(ctx, tx, accountID, parentThreadID, "system", content, nil, nil)
-	if err != nil {
-		slog.Warn("completion_watcher: inject message failed", "err", err, "sub_agent_id", subAgentID)
-		return
-	}
-	if err := tx.Commit(ctx); err != nil {
-		slog.Warn("completion_watcher: commit failed", "err", err, "sub_agent_id", subAgentID)
-		return
-	}
-	slog.Info("completion_watcher: injected notification", "sub_agent_id", subAgentID, "status", status)
 }
 
 func waitResolved(status string) bool {

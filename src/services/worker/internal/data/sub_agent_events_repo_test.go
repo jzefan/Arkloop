@@ -31,14 +31,13 @@ func TestSubAgentEventsRepository_AppendAndList(t *testing.T) {
 
 	repo := SubAgentRepository{}
 	record, err := repo.Create(context.Background(), tx, SubAgentCreateParams{
-		AccountID:      accountID,
-		ParentRunID:    runID,
-		ParentThreadID: threadID,
-		RootRunID:      runID,
-		RootThreadID:   threadID,
-		Depth:          1,
-		SourceType:     SubAgentSourceTypeThreadSpawn,
-		ContextMode:    SubAgentContextModeIsolated,
+		AccountID:     accountID,
+		OwnerThreadID: threadID,
+		AgentThreadID: threadID,
+		OriginRunID:   runID,
+		Depth:         1,
+		SourceType:    SubAgentSourceTypeThreadSpawn,
+		ContextMode:   SubAgentContextModeIsolated,
 	})
 	if err != nil {
 		t.Fatalf("create sub_agent: %v", err)

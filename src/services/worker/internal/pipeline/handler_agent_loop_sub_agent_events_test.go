@@ -8,10 +8,13 @@ import (
 	"time"
 
 	creditpolicy "arkloop/services/shared/creditpolicy"
+	"arkloop/services/shared/runkind"
 	"arkloop/services/worker/internal/data"
 	"arkloop/services/worker/internal/events"
 	"arkloop/services/worker/internal/queue"
+	"arkloop/services/worker/internal/routing"
 	"arkloop/services/worker/internal/testutil"
+	"arkloop/services/worker/internal/tools"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -33,6 +36,23 @@ func (s *stubJobQueue) Ack(context.Context, queue.JobLease) error            { r
 func (s *stubJobQueue) Nack(context.Context, queue.JobLease, *int) error     { return nil }
 func (s *stubJobQueue) QueueDepth(context.Context, []string) (int, error)    { return 0, nil }
 
+type captureExecutor struct {
+	called bool
+}
+
+func (e *captureExecutor) Execute(ctx context.Context, rc *RunContext, emitter events.Emitter, yield func(events.RunEvent) error) error {
+	e.called = true
+	return yield(emitter.Emit("run.completed", map[string]any{}, nil, nil))
+}
+
+type staticExecutorBuilder struct {
+	executor AgentExecutor
+}
+
+func (b staticExecutorBuilder) Build(string, map[string]any) (AgentExecutor, error) {
+	return b.executor, nil
+}
+
 func TestEventWriterAppend_AppendsSubAgentCompletedEvent(t *testing.T) {
 	db := testutil.SetupPostgresDatabase(t, "arkloop_sub_agent_completed_event")
 	pool, err := pgxpool.New(context.Background(), db.DSN)
@@ -50,7 +70,7 @@ func TestEventWriterAppend_AppendsSubAgentCompletedEvent(t *testing.T) {
 	seedPipelineRun(t, pool, accountID, threadID, runID, nil)
 	seedPipelineSubAgent(t, pool, subAgentID, accountID, threadID, runID)
 
-	writer := newEventWriter(pool, data.Run{ID: runID, AccountID: accountID, ThreadID: threadID}, "trace-1", nil, nil, nil, "", "", data.UsageRecordsRepository{}, data.CreditsRepository{}, 1000, 1, nil, nil, nil, nil, creditpolicy.DefaultPolicy, nil, nil, nil, false)
+	writer := newEventWriter(pool, data.Run{ID: runID, AccountID: accountID, ThreadID: threadID}, "trace-1", nil, nil, nil, "", "", data.UsageRecordsRepository{}, data.CreditsRepository{}, 1000, 1, nil, nil, nil, nil, creditpolicy.DefaultPolicy, nil, nil, nil, "", nil, nil, false)
 	ev := events.NewEmitter("trace-1").Emit("run.completed", map[string]any{}, nil, nil)
 	if err := writer.Append(context.Background(), data.RunsRepository{}, data.RunEventsRepository{}, runID, ev); err != nil {
 		t.Fatalf("append terminal event: %v", err)
@@ -96,7 +116,7 @@ func TestEventWriterAppend_AppendsSubAgentCancelledEventOnCancelRequest(t *testi
 		t.Fatalf("commit cancel_requested: %v", err)
 	}
 
-	writer := newEventWriter(pool, data.Run{ID: runID, AccountID: accountID, ThreadID: threadID}, "trace-2", nil, nil, nil, "", "", data.UsageRecordsRepository{}, data.CreditsRepository{}, 1000, 1, nil, nil, nil, nil, creditpolicy.DefaultPolicy, nil, nil, nil, false)
+	writer := newEventWriter(pool, data.Run{ID: runID, AccountID: accountID, ThreadID: threadID}, "trace-2", nil, nil, nil, "", "", data.UsageRecordsRepository{}, data.CreditsRepository{}, 1000, 1, nil, nil, nil, nil, creditpolicy.DefaultPolicy, nil, nil, nil, "", nil, nil, false)
 	ev := events.NewEmitter("trace-2").Emit("message.delta", map[string]any{"content_delta": "ignored"}, nil, nil)
 	if err := writer.Append(context.Background(), data.RunsRepository{}, data.RunEventsRepository{}, runID, ev); err != nil {
 		t.Fatalf("append after cancel request: %v", err)
@@ -132,10 +152,10 @@ func TestEventWriterAppend_AutoQueuesNextRunFromPendingInputs(t *testing.T) {
 	seedPipelineRun(t, pool, accountID, childThreadID, childRunID, &parentRunID)
 	_, err = pool.Exec(context.Background(), `
 		INSERT INTO sub_agents (
-			id, account_id, parent_run_id, parent_thread_id, root_run_id, root_thread_id,
+			id, account_id, owner_thread_id, agent_thread_id, origin_run_id,
 			depth, source_type, context_mode, status, current_run_id
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-	`, subAgentID, accountID, parentRunID, parentThreadID, parentRunID, parentThreadID, 1, data.SubAgentSourceTypeThreadSpawn, data.SubAgentContextModeIsolated, data.SubAgentStatusRunning, childRunID)
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+	`, subAgentID, accountID, parentThreadID, childThreadID, parentRunID, 1, data.SubAgentSourceTypeThreadSpawn, data.SubAgentContextModeIsolated, data.SubAgentStatusRunning, childRunID)
 	if err != nil {
 		t.Fatalf("insert sub_agent: %v", err)
 	}
@@ -145,7 +165,7 @@ func TestEventWriterAppend_AutoQueuesNextRunFromPendingInputs(t *testing.T) {
 	}
 
 	jobQueue := &stubJobQueue{}
-	writer := newEventWriter(pool, data.Run{ID: childRunID, AccountID: accountID, ThreadID: childThreadID, ParentRunID: &parentRunID}, "trace-3", nil, nil, jobQueue, "", "", data.UsageRecordsRepository{}, data.CreditsRepository{}, 1000, 1, nil, nil, nil, nil, creditpolicy.DefaultPolicy, nil, nil, nil, false)
+	writer := newEventWriter(pool, data.Run{ID: childRunID, AccountID: accountID, ThreadID: childThreadID, ParentRunID: &parentRunID}, "trace-3", nil, nil, jobQueue, "", "", data.UsageRecordsRepository{}, data.CreditsRepository{}, 1000, 1, nil, nil, nil, nil, creditpolicy.DefaultPolicy, nil, nil, nil, "", nil, nil, false)
 	ev := events.NewEmitter("trace-3").Emit("run.completed", map[string]any{}, nil, nil)
 	if err := writer.Append(context.Background(), data.RunsRepository{}, data.RunEventsRepository{}, childRunID, ev); err != nil {
 		t.Fatalf("append terminal event: %v", err)
@@ -157,7 +177,7 @@ func TestEventWriterAppend_AutoQueuesNextRunFromPendingInputs(t *testing.T) {
 		t.Fatalf("expected 1 auto-enqueued run, got %d", len(jobQueue.enqueuedRunIDs))
 	}
 
-	agent, err := (data.SubAgentRepository{}).ListByParentRun(context.Background(), pool, parentRunID)
+	agent, err := (data.SubAgentRepository{}).ListByOwnerThread(context.Background(), pool, parentThreadID)
 	if err != nil {
 		t.Fatalf("list sub_agents: %v", err)
 	}
@@ -197,7 +217,7 @@ func TestEventWriterAppend_TouchesRunActivityOnNonTerminalCommit(t *testing.T) {
 		t.Fatalf("set old activity: %v", err)
 	}
 
-	writer := newEventWriter(pool, data.Run{ID: runID, AccountID: accountID, ThreadID: threadID}, "trace-activity", nil, nil, nil, "", "", data.UsageRecordsRepository{}, data.CreditsRepository{}, 1000, 1, nil, nil, nil, nil, creditpolicy.DefaultPolicy, nil, nil, nil, false)
+	writer := newEventWriter(pool, data.Run{ID: runID, AccountID: accountID, ThreadID: threadID}, "trace-activity", nil, nil, nil, "", "", data.UsageRecordsRepository{}, data.CreditsRepository{}, 1000, 1, nil, nil, nil, nil, creditpolicy.DefaultPolicy, nil, nil, nil, "", nil, nil, false)
 	ev := events.NewEmitter("trace-activity").Emit("llm.turn.completed", map[string]any{
 		"usage": map[string]any{
 			"input_tokens":  3,
@@ -233,6 +253,237 @@ func TestEventWriterAppend_TouchesRunActivityOnNonTerminalCommit(t *testing.T) {
 	}
 }
 
+func TestEventWriterAppend_ConsumesPendingCallbacksOnCompletedRun(t *testing.T) {
+	db := testutil.SetupPostgresDatabase(t, "arkloop_subagent_pending_callback_consume")
+	pool, err := pgxpool.New(context.Background(), db.DSN)
+	if err != nil {
+		t.Fatalf("pgxpool.New: %v", err)
+	}
+	t.Cleanup(pool.Close)
+
+	accountID := uuid.New()
+	projectID := uuid.New()
+	threadID := uuid.New()
+	runID := uuid.New()
+	callbackID := uuid.New()
+	subAgentID := uuid.New()
+	sourceRunID := uuid.New()
+	seedPipelineThread(t, pool, accountID, threadID, projectID)
+	seedPipelineRun(t, pool, accountID, threadID, runID, nil)
+	if _, err := pool.Exec(context.Background(), `
+		INSERT INTO thread_subagent_callbacks (
+			id, account_id, thread_id, sub_agent_id, source_run_id, status, payload_json
+		) VALUES ($1, $2, $3, $4, $5, $6, '{"status":"completed"}'::jsonb)
+	`, callbackID, accountID, threadID, subAgentID, sourceRunID, data.SubAgentStatusCompleted); err != nil {
+		t.Fatalf("insert callback: %v", err)
+	}
+
+	writer := newEventWriter(pool, data.Run{ID: runID, AccountID: accountID, ThreadID: threadID}, "trace-consume", nil, nil, nil, "", "", data.UsageRecordsRepository{}, data.CreditsRepository{}, 1000, 1, nil, nil, nil, nil, creditpolicy.DefaultPolicy, nil, nil, nil, "", nil, []uuid.UUID{callbackID}, false)
+	ev := events.NewEmitter("trace-consume").Emit("run.completed", map[string]any{}, nil, nil)
+	if err := writer.Append(context.Background(), data.RunsRepository{}, data.RunEventsRepository{}, runID, ev); err != nil {
+		t.Fatalf("append terminal event: %v", err)
+	}
+	if err := writer.Flush(context.Background()); err != nil {
+		t.Fatalf("flush writer: %v", err)
+	}
+
+	var consumedByRunID *uuid.UUID
+	if err := pool.QueryRow(context.Background(),
+		`SELECT consumed_by_run_id
+		   FROM thread_subagent_callbacks
+		  WHERE id = $1`,
+		callbackID,
+	).Scan(&consumedByRunID); err != nil {
+		t.Fatalf("load callback consumption: %v", err)
+	}
+	if consumedByRunID == nil || *consumedByRunID != runID {
+		t.Fatalf("unexpected consumed_by_run_id: %#v", consumedByRunID)
+	}
+}
+
+func TestEventWriterAppend_KeepsPendingCallbacksOnFailedRun(t *testing.T) {
+	db := testutil.SetupPostgresDatabase(t, "arkloop_subagent_pending_callback_retry")
+	pool, err := pgxpool.New(context.Background(), db.DSN)
+	if err != nil {
+		t.Fatalf("pgxpool.New: %v", err)
+	}
+	t.Cleanup(pool.Close)
+
+	accountID := uuid.New()
+	projectID := uuid.New()
+	threadID := uuid.New()
+	runID := uuid.New()
+	callbackID := uuid.New()
+	subAgentID := uuid.New()
+	sourceRunID := uuid.New()
+	seedPipelineThread(t, pool, accountID, threadID, projectID)
+	seedPipelineRun(t, pool, accountID, threadID, runID, nil)
+	if _, err := pool.Exec(context.Background(), `
+		INSERT INTO thread_subagent_callbacks (
+			id, account_id, thread_id, sub_agent_id, source_run_id, status, payload_json
+		) VALUES ($1, $2, $3, $4, $5, $6, '{"status":"completed"}'::jsonb)
+	`, callbackID, accountID, threadID, subAgentID, sourceRunID, data.SubAgentStatusCompleted); err != nil {
+		t.Fatalf("insert callback: %v", err)
+	}
+
+	writer := newEventWriter(pool, data.Run{ID: runID, AccountID: accountID, ThreadID: threadID}, "trace-failed", nil, nil, nil, "", "", data.UsageRecordsRepository{}, data.CreditsRepository{}, 1000, 1, nil, nil, nil, nil, creditpolicy.DefaultPolicy, nil, nil, nil, "", nil, []uuid.UUID{callbackID}, false)
+	ev := events.NewEmitter("trace-failed").Emit("run.failed", map[string]any{"message": "boom"}, nil, nil)
+	if err := writer.Append(context.Background(), data.RunsRepository{}, data.RunEventsRepository{}, runID, ev); err != nil {
+		t.Fatalf("append terminal event: %v", err)
+	}
+	if err := writer.Flush(context.Background()); err != nil {
+		t.Fatalf("flush writer: %v", err)
+	}
+
+	var consumedByRunID *uuid.UUID
+	if err := pool.QueryRow(context.Background(),
+		`SELECT consumed_by_run_id
+		   FROM thread_subagent_callbacks
+		  WHERE id = $1`,
+		callbackID,
+	).Scan(&consumedByRunID); err != nil {
+		t.Fatalf("load callback consumption: %v", err)
+	}
+	if consumedByRunID != nil {
+		t.Fatalf("expected callback to stay pending, got consumed_by_run_id=%s", consumedByRunID.String())
+	}
+}
+
+func TestSubAgentCallbackMiddlewareFiltersToCurrentCallback(t *testing.T) {
+	db := testutil.SetupPostgresDatabase(t, "arkloop_subagent_callback_filter_current")
+	pool, err := pgxpool.New(context.Background(), db.DSN)
+	if err != nil {
+		t.Fatalf("pgxpool.New: %v", err)
+	}
+	t.Cleanup(pool.Close)
+
+	accountID := uuid.New()
+	projectID := uuid.New()
+	threadID := uuid.New()
+	runID := uuid.New()
+	callbackAID := uuid.New()
+	callbackBID := uuid.New()
+	seedPipelineThread(t, pool, accountID, threadID, projectID)
+	seedPipelineRun(t, pool, accountID, threadID, runID, nil)
+	if _, err := pool.Exec(context.Background(), `
+		INSERT INTO thread_subagent_callbacks (
+			id, account_id, thread_id, sub_agent_id, source_run_id, status, payload_json
+		) VALUES
+			($1, $2, $3, $4, $5, $6, '{"message":"first"}'::jsonb),
+			($7, $2, $3, $8, $5, $6, '{"message":"second"}'::jsonb)
+	`, callbackAID, accountID, threadID, uuid.New(), runID, data.SubAgentStatusCompleted, callbackBID, uuid.New()); err != nil {
+		t.Fatalf("insert callbacks: %v", err)
+	}
+
+	rc := &RunContext{
+		Run:       data.Run{ID: runID, AccountID: accountID, ThreadID: threadID},
+		Pool:      pool,
+		InputJSON: map[string]any{"run_kind": runkind.SubagentCallback, "callback_id": callbackBID.String()},
+	}
+	handler := Build([]RunMiddleware{NewSubAgentCallbackMiddleware()}, func(_ context.Context, rc *RunContext) error {
+		if len(rc.PendingSubAgentCallbacks) != 1 || rc.PendingSubAgentCallbacks[0].ID != callbackBID {
+			t.Fatalf("unexpected visible callbacks: %#v", rc.PendingSubAgentCallbacks)
+		}
+		if rc.InputJSON[staleSubAgentCallbackRunKey] != nil {
+			t.Fatalf("unexpected stale flag: %#v", rc.InputJSON[staleSubAgentCallbackRunKey])
+		}
+		return nil
+	})
+	if err := handler(context.Background(), rc); err != nil {
+		t.Fatalf("run middleware: %v", err)
+	}
+}
+
+func TestAgentLoopHandlerShortCircuitsStaleCallbackRun(t *testing.T) {
+	db := testutil.SetupPostgresDatabase(t, "arkloop_stale_callback_run_short_circuit")
+	pool, err := pgxpool.New(context.Background(), db.DSN)
+	if err != nil {
+		t.Fatalf("pgxpool.New: %v", err)
+	}
+	t.Cleanup(pool.Close)
+
+	accountID := uuid.New()
+	projectID := uuid.New()
+	threadID := uuid.New()
+	runID := uuid.New()
+	callbackID := uuid.New()
+	seedPipelineThread(t, pool, accountID, threadID, projectID)
+	seedPipelineRun(t, pool, accountID, threadID, runID, nil)
+
+	executor := &captureExecutor{}
+	handler := NewAgentLoopHandler(data.RunsRepository{}, data.RunEventsRepository{}, data.MessagesRepository{}, nil, &stubJobQueue{}, data.UsageRecordsRepository{}, data.CreditsRepository{}, nil)
+	rc := &RunContext{
+		Run:       data.Run{ID: runID, AccountID: accountID, ThreadID: threadID},
+		Pool:      pool,
+		InputJSON: map[string]any{"run_kind": runkind.SubagentCallback, "callback_id": callbackID.String(), staleSubAgentCallbackRunKey: true},
+		SelectedRoute: &routing.SelectedProviderRoute{
+			Route: routing.ProviderRouteRule{ID: "route-main", Model: "gpt-test", Multiplier: 1},
+		},
+		Emitter:         events.NewEmitter("trace-stale"),
+		ToolExecutors:   map[string]tools.Executor{},
+		CreditPerUSD:    1000,
+		ExecutorBuilder: staticExecutorBuilder{executor: executor},
+	}
+
+	if err := handler(context.Background(), rc); err != nil {
+		t.Fatalf("run handler: %v", err)
+	}
+	if executor.called {
+		t.Fatal("expected stale callback run to skip executor")
+	}
+	var status string
+	if err := pool.QueryRow(context.Background(), `SELECT status FROM runs WHERE id = $1`, runID).Scan(&status); err != nil {
+		t.Fatalf("query run status: %v", err)
+	}
+	if status != "completed" {
+		t.Fatalf("unexpected run status: %s", status)
+	}
+}
+
+func TestEventWriterFlushRewakesPendingCallbackAfterCallbackRunCompletes(t *testing.T) {
+	db := testutil.SetupPostgresDatabase(t, "arkloop_callback_run_rewake_pending")
+	pool, err := pgxpool.New(context.Background(), db.DSN)
+	if err != nil {
+		t.Fatalf("pgxpool.New: %v", err)
+	}
+	t.Cleanup(pool.Close)
+
+	accountID := uuid.New()
+	projectID := uuid.New()
+	threadID := uuid.New()
+	runID := uuid.New()
+	callbackID := uuid.New()
+	seedPipelineThread(t, pool, accountID, threadID, projectID)
+	seedPipelineRun(t, pool, accountID, threadID, runID, nil)
+	if _, err := pool.Exec(context.Background(),
+		`INSERT INTO run_events (run_id, seq, type, data_json)
+		 VALUES ($1, 1, 'run.started', '{"persona_id":"callback-persona@1"}'::jsonb)`,
+		runID,
+	); err != nil {
+		t.Fatalf("insert callback run.started: %v", err)
+	}
+	if _, err := pool.Exec(context.Background(), `
+		INSERT INTO thread_subagent_callbacks (
+			id, account_id, thread_id, sub_agent_id, source_run_id, status, payload_json
+		) VALUES ($1, $2, $3, $4, $5, $6, '{"message":"late callback"}'::jsonb)
+	`, callbackID, accountID, threadID, uuid.New(), uuid.New(), data.SubAgentStatusCompleted); err != nil {
+		t.Fatalf("insert pending callback: %v", err)
+	}
+
+	jobQueue := &stubJobQueue{}
+	writer := newEventWriter(pool, data.Run{ID: runID, AccountID: accountID, ThreadID: threadID}, "trace-rewake", nil, nil, jobQueue, "", "", data.UsageRecordsRepository{}, data.CreditsRepository{}, 1000, 1, nil, nil, nil, nil, creditpolicy.DefaultPolicy, nil, nil, nil, runkind.SubagentCallback, uuidPtr(callbackID), nil, false)
+	ev := events.NewEmitter("trace-rewake").Emit("run.completed", map[string]any{}, nil, nil)
+	if err := writer.Append(context.Background(), data.RunsRepository{}, data.RunEventsRepository{}, runID, ev); err != nil {
+		t.Fatalf("append completed: %v", err)
+	}
+	if err := writer.Flush(context.Background()); err != nil {
+		t.Fatalf("flush writer: %v", err)
+	}
+	if len(jobQueue.enqueuedRunIDs) != 1 {
+		t.Fatalf("expected one rewoken callback run, got %d", len(jobQueue.enqueuedRunIDs))
+	}
+}
+
 func seedPipelineThread(t *testing.T, pool *pgxpool.Pool, accountID, threadID, projectID uuid.UUID) {
 	t.Helper()
 	_, err := pool.Exec(context.Background(), `INSERT INTO threads (id, account_id, project_id) VALUES ($1, $2, $3)`, threadID, accountID, projectID)
@@ -253,13 +504,13 @@ func seedPipelineSubAgent(t *testing.T, pool *pgxpool.Pool, subAgentID, accountI
 	t.Helper()
 	_, err := pool.Exec(context.Background(), `
 		INSERT INTO sub_agents (
-			id, account_id, parent_run_id, parent_thread_id, root_run_id, root_thread_id,
+			id, account_id, owner_thread_id, agent_thread_id, origin_run_id,
 			depth, source_type, context_mode, status, current_run_id
 		) VALUES (
-			$1, $2, $3, $4, $5, $6,
-			$7, $8, $9, $10, $11
+			$1, $2, $3, $4, $5,
+			$6, $7, $8, $9, $10
 		)
-	`, subAgentID, accountID, runID, threadID, runID, threadID, 1, data.SubAgentSourceTypeThreadSpawn, data.SubAgentContextModeIsolated, data.SubAgentStatusRunning, runID)
+	`, subAgentID, accountID, threadID, threadID, runID, 1, data.SubAgentSourceTypeThreadSpawn, data.SubAgentContextModeIsolated, data.SubAgentStatusRunning, runID)
 	if err != nil {
 		t.Fatalf("insert sub_agent: %v", err)
 	}

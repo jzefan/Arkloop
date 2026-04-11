@@ -3704,6 +3704,21 @@ CREATE INDEX idx_notebook_entries_scope
     ON notebook_entries (account_id, user_id, agent_id, scope);
 
 
+-- === 00161_external_thread_links.sql ===
+CREATE TABLE external_thread_links (
+    account_id UUID NOT NULL,
+    thread_id UUID NOT NULL REFERENCES threads(id) ON DELETE CASCADE,
+    provider TEXT NOT NULL,
+    external_thread_id TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (account_id, thread_id, provider)
+);
+
+CREATE INDEX idx_external_thread_links_provider_external
+    ON external_thread_links (provider, external_thread_id);
+
+
 -- === 00150_channel_message_ledger_message_id.sql ===
 ALTER TABLE channel_message_ledger ADD COLUMN message_id UUID REFERENCES messages(id) ON DELETE SET NULL;
 
@@ -3715,4 +3730,3 @@ UPDATE threads SET mode = 'work' WHERE mode = 'claw';
 ALTER TABLE threads DROP CONSTRAINT chk_threads_mode;
 ALTER TABLE threads ADD CONSTRAINT chk_threads_mode CHECK (mode IN ('chat', 'work'));
 UPDATE feature_flags SET key = 'work_enabled', description = 'enable work mode' WHERE key = 'claw_enabled';
-

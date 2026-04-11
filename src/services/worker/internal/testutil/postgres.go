@@ -292,11 +292,11 @@ func initRunsSchema(t *testing.T, dsn string) error {
 		)`,
 		`CREATE TABLE sub_agents (
 			id                    UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
-			account_id                UUID        NOT NULL,
-			parent_run_id         UUID        NOT NULL,
-			parent_thread_id      UUID        NOT NULL,
-			root_run_id           UUID        NOT NULL,
-			root_thread_id        UUID        NOT NULL,
+			account_id            UUID        NOT NULL,
+			owner_thread_id       UUID        NOT NULL,
+			agent_thread_id       UUID        NOT NULL,
+			origin_run_id         UUID        NOT NULL,
+			parent_sub_agent_id   UUID        NULL,
 			depth                 INTEGER     NOT NULL,
 			role                  TEXT        NULL,
 			persona_id            TEXT        NULL,
@@ -314,8 +314,8 @@ func initRunsSchema(t *testing.T, dsn string) error {
 			closed_at             TIMESTAMPTZ NULL
 		)`,
 		`CREATE INDEX idx_sub_agents_account_id ON sub_agents (account_id)`,
-		`CREATE INDEX idx_sub_agents_parent_run_id ON sub_agents (parent_run_id)`,
-		`CREATE INDEX idx_sub_agents_root_run_id ON sub_agents (root_run_id)`,
+		`CREATE INDEX idx_sub_agents_owner_thread_id ON sub_agents (owner_thread_id)`,
+		`CREATE INDEX idx_sub_agents_parent_sub_agent_id ON sub_agents (parent_sub_agent_id)`,
 		`CREATE INDEX idx_sub_agents_current_run_id ON sub_agents (current_run_id)`,
 		`CREATE INDEX idx_sub_agents_status ON sub_agents (status)`,
 		`CREATE TABLE sub_agent_events (
@@ -349,6 +349,19 @@ func initRunsSchema(t *testing.T, dsn string) error {
 			updated_at    TIMESTAMPTZ NOT NULL DEFAULT now()
 		)`,
 		`CREATE INDEX idx_sub_agent_context_snapshots_updated_at ON sub_agent_context_snapshots (updated_at)`,
+		`CREATE TABLE thread_subagent_callbacks (
+			id                  UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+			account_id          UUID        NOT NULL,
+			thread_id           UUID        NOT NULL,
+			sub_agent_id        UUID        NOT NULL REFERENCES sub_agents(id) ON DELETE CASCADE,
+			source_run_id       UUID        NOT NULL,
+			status              TEXT        NOT NULL,
+			payload_json        JSONB       NOT NULL DEFAULT '{}'::jsonb,
+			created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
+			consumed_at         TIMESTAMPTZ NULL,
+			consumed_by_run_id  UUID        NULL
+		)`,
+		`CREATE INDEX idx_thread_subagent_callbacks_thread_pending ON thread_subagent_callbacks (thread_id, created_at)`,
 		`CREATE TABLE thread_compaction_snapshots (
 			id                     UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
 			account_id             UUID        NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,

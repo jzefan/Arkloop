@@ -1540,14 +1540,13 @@ func TestDesktopEventWriterCommitsNonStreamingEventsBeforeToolExecution(t *testi
 	defer tx.Rollback(ctx) //nolint:errcheck
 
 	if _, err := (data.SubAgentRepository{}).Create(ctx, tx, data.SubAgentCreateParams{
-		AccountID:      accountID,
-		ParentRunID:    runID,
-		ParentThreadID: threadID,
-		RootRunID:      runID,
-		RootThreadID:   threadID,
-		Depth:          1,
-		SourceType:     data.SubAgentSourceTypeThreadSpawn,
-		ContextMode:    data.SubAgentContextModeIsolated,
+		AccountID:     accountID,
+		OwnerThreadID: threadID,
+		AgentThreadID: threadID,
+		OriginRunID:   runID,
+		Depth:         1,
+		SourceType:    data.SubAgentSourceTypeThreadSpawn,
+		ContextMode:   data.SubAgentContextModeIsolated,
 	}); err != nil {
 		t.Fatalf("create sub_agent after non-streaming commit: %v", err)
 	}
@@ -2297,9 +2296,9 @@ func TestDesktopSubAgentContextRestoresRoutingFromSnapshotFallback(t *testing.T)
 		},
 		{
 			sql: `INSERT INTO sub_agents
-				(id, account_id, parent_run_id, parent_thread_id, root_run_id, root_thread_id, depth, source_type, context_mode, status, current_run_id)
-				VALUES ($1, $2, $3, $4, $3, $4, 1, $5, $6, $7, $8)`,
-			args: []any{subAgentID, accountID, parentRunID, parentThreadID, data.SubAgentSourceTypeThreadSpawn, data.SubAgentContextModeIsolated, data.SubAgentStatusQueued, childRunID},
+				(id, account_id, owner_thread_id, agent_thread_id, origin_run_id, depth, source_type, context_mode, status, current_run_id)
+				VALUES ($1, $2, $3, $4, $5, 1, $6, $7, $8, $9)`,
+			args: []any{subAgentID, accountID, parentThreadID, childThreadID, parentRunID, data.SubAgentSourceTypeThreadSpawn, data.SubAgentContextModeIsolated, data.SubAgentStatusQueued, childRunID},
 		},
 	} {
 		if _, err := db.Exec(ctx, stmt.sql, stmt.args...); err != nil {
