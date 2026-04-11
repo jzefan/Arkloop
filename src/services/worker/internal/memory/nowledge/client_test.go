@@ -140,6 +140,30 @@ func TestClientMemoryDetailIncludesSourceThreadID(t *testing.T) {
 	}
 }
 
+func TestClientMemorySnippetSlicesLines(t *testing.T) {
+	t.Setenv(sharedoutbound.AllowLoopbackHTTPEnv, "true")
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/memories/mem-9" {
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"id":      "mem-9",
+			"title":   "Preference",
+			"content": "line1\nline2\nline3\nline4",
+		})
+	}))
+	defer srv.Close()
+
+	c := NewClient(Config{BaseURL: srv.URL})
+	snippet, err := c.MemorySnippet(context.Background(), testIdent(), "nowledge://memory/mem-9", 2, 2)
+	if err != nil {
+		t.Fatalf("MemorySnippet failed: %v", err)
+	}
+	if snippet.Text != "line2\nline3" || snippet.StartLine != 2 || snippet.EndLine != 3 || snippet.TotalLines != 4 {
+		t.Fatalf("unexpected snippet: %#v", snippet)
+	}
+}
+
 func TestClientListMemories(t *testing.T) {
 	t.Setenv(sharedoutbound.AllowLoopbackHTTPEnv, "true")
 	var sawAuth bool
@@ -254,6 +278,69 @@ func TestClientReadWorkingMemory(t *testing.T) {
 	}
 }
 
+func TestClientUpdateWorkingMemory(t *testing.T) {
+	t.Setenv(sharedoutbound.AllowLoopbackHTTPEnv, "true")
+	var got map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPut || r.URL.Path != "/agent/working-memory" {
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
+			t.Fatalf("decode body: %v", err)
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer srv.Close()
+
+	c := NewClient(Config{BaseURL: srv.URL})
+	wm, err := c.UpdateWorkingMemory(context.Background(), testIdent(), "## Focus\nShip nowledge")
+	if err != nil {
+		t.Fatalf("UpdateWorkingMemory failed: %v", err)
+	}
+	if got["content"] != "## Focus\nShip nowledge" {
+		t.Fatalf("unexpected payload: %#v", got)
+	}
+	if !wm.Available || wm.Content != "## Focus\nShip nowledge" {
+		t.Fatalf("unexpected result: %#v", wm)
+	}
+}
+
+func TestClientPatchWorkingMemoryAppend(t *testing.T) {
+	t.Setenv(sharedoutbound.AllowLoopbackHTTPEnv, "true")
+	var updated map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/agent/working-memory":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"exists":  true,
+				"content": "## Focus\n\nShip nowledge\n\n## Notes\n\nBefore",
+			})
+		case r.Method == http.MethodPut && r.URL.Path == "/agent/working-memory":
+			if err := json.NewDecoder(r.Body).Decode(&updated); err != nil {
+				t.Fatalf("decode body: %v", err)
+			}
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer srv.Close()
+
+	appendText := "After"
+	c := NewClient(Config{BaseURL: srv.URL})
+	wm, err := c.PatchWorkingMemory(context.Background(), testIdent(), "## Notes", WorkingMemoryPatch{Append: &appendText})
+	if err != nil {
+		t.Fatalf("PatchWorkingMemory failed: %v", err)
+	}
+	want := "## Focus\n\nShip nowledge\n\n## Notes\n\nBefore\nAfter"
+	if updated["content"] != want {
+		t.Fatalf("unexpected updated payload: %#v", updated)
+	}
+	if wm.Content != want {
+		t.Fatalf("unexpected wm: %#v", wm)
+	}
+}
+
 func TestClientThreadEndpoints(t *testing.T) {
 	t.Setenv(sharedoutbound.AllowLoopbackHTTPEnv, "true")
 	var createBody map[string]any
@@ -318,6 +405,36 @@ func TestClientThreadEndpoints(t *testing.T) {
 	}
 }
 
+func TestClientSearchThreadsFullIncludesSourceFilter(t *testing.T) {
+	t.Setenv(sharedoutbound.AllowLoopbackHTTPEnv, "true")
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/threads/search" {
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+		if got := r.URL.Query().Get("source"); got != "arkloop" {
+			t.Fatalf("unexpected source filter: %q", got)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"threads": []map[string]any{{
+				"thread_id": "thread-created",
+				"title":     "Deploy chat",
+				"source":    "arkloop",
+			}},
+			"total_found": 1,
+		})
+	}))
+	defer srv.Close()
+
+	c := NewClient(Config{BaseURL: srv.URL})
+	data, err := c.SearchThreadsFull(context.Background(), testIdent(), "deploy", 5, "arkloop")
+	if err != nil {
+		t.Fatalf("SearchThreadsFull failed: %v", err)
+	}
+	if data["total_found"] != 1 {
+		t.Fatalf("unexpected payload: %#v", data)
+	}
+}
+
 func TestBuildThreadMessageMetadata(t *testing.T) {
 	metadata := BuildThreadMessageMetadata("arkloop", "session-1", "run-1", "thread-1", "user", "hello world", 0, "trace-1")
 	if metadata["source"] != "arkloop" {
@@ -334,6 +451,45 @@ func TestBuildThreadMessageMetadata(t *testing.T) {
 	}
 	if got, _ := metadata["external_id"].(string); !strings.HasPrefix(got, "arkloop_") || got == "" {
 		t.Fatalf("unexpected external id: %#v", metadata["external_id"])
+	}
+}
+
+func TestClientStatusReadsHealthEndpoint(t *testing.T) {
+	t.Setenv(sharedoutbound.AllowLoopbackHTTPEnv, "true")
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/health":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"version":            "0.4.1",
+				"database_connected": true,
+			})
+		case r.Method == http.MethodGet && r.URL.Path == "/agent/working-memory":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"exists":  true,
+				"content": "## Focus\n\nShip nowledge",
+			})
+		default:
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer srv.Close()
+
+	c := NewClient(Config{BaseURL: srv.URL})
+	status, err := c.Status(context.Background(), testIdent())
+	if err != nil {
+		t.Fatalf("Status failed: %v", err)
+	}
+	if !status.Healthy || status.Version != "0.4.1" {
+		t.Fatalf("unexpected status: %#v", status)
+	}
+	if status.DatabaseConnected == nil || !*status.DatabaseConnected {
+		t.Fatalf("unexpected database flag: %#v", status)
+	}
+	if status.Mode != "remote" || status.BaseURL != srv.URL {
+		t.Fatalf("unexpected mode/base url: %#v", status)
+	}
+	if status.WorkingMemoryAvailable == nil || !*status.WorkingMemoryAvailable {
+		t.Fatalf("unexpected working memory flag: %#v", status)
 	}
 }
 

@@ -29,8 +29,12 @@ type mockProvider struct {
 	contentErr  error
 	detail      nowledge.MemoryDetail
 	detailErr   error
+	snippet     nowledge.MemorySnippet
+	snippetErr  error
 	wm          nowledge.WorkingMemory
 	wmErr       error
+	status      nowledge.Status
+	statusErr   error
 	connections []nowledge.GraphConnection
 	connErr     error
 	timeline    []nowledge.TimelineEvent
@@ -130,8 +134,37 @@ func (m *mockProvider) MemoryDetail(_ context.Context, _ workermemory.MemoryIden
 	return m.detail, m.detailErr
 }
 
+func (m *mockProvider) MemorySnippet(_ context.Context, _ workermemory.MemoryIdentity, _ string, _ int, _ int) (nowledge.MemorySnippet, error) {
+	return m.snippet, m.snippetErr
+}
+
 func (m *mockProvider) ReadWorkingMemory(_ context.Context, _ workermemory.MemoryIdentity) (nowledge.WorkingMemory, error) {
 	return m.wm, m.wmErr
+}
+
+func (m *mockProvider) PatchWorkingMemory(_ context.Context, _ workermemory.MemoryIdentity, _ string, patch nowledge.WorkingMemoryPatch) (nowledge.WorkingMemory, error) {
+	if m.wmErr != nil {
+		return nowledge.WorkingMemory{}, m.wmErr
+	}
+	updated := m.wm
+	if patch.Content != nil {
+		updated.Content = *patch.Content
+	}
+	if patch.Append != nil {
+		switch {
+		case strings.TrimSpace(updated.Content) == "":
+			updated.Content = *patch.Append
+		case strings.TrimSpace(*patch.Append) != "":
+			updated.Content = updated.Content + "\n" + *patch.Append
+		}
+	}
+	updated.Available = strings.TrimSpace(updated.Content) != ""
+	m.wm = updated
+	return updated, nil
+}
+
+func (m *mockProvider) Status(_ context.Context, _ workermemory.MemoryIdentity) (nowledge.Status, error) {
+	return m.status, m.statusErr
 }
 
 func (m *mockProvider) Connections(_ context.Context, _ workermemory.MemoryIdentity, _ string, _ int, _ int) ([]nowledge.GraphConnection, error) {
@@ -144,6 +177,27 @@ func (m *mockProvider) Timeline(_ context.Context, _ workermemory.MemoryIdentity
 
 func (m *richMockProvider) SearchRich(_ context.Context, _ workermemory.MemoryIdentity, _ string, _ int) ([]nowledge.SearchResult, error) {
 	return m.richResults, m.findErr
+}
+
+func (m *richMockProvider) SearchThreads(_ context.Context, _ workermemory.MemoryIdentity, _ string, _ int) (map[string]any, error) {
+	return map[string]any{"threads": []map[string]any{}, "total_found": 0}, nil
+}
+
+func (m *richMockProvider) SearchThreadsFull(_ context.Context, _ workermemory.MemoryIdentity, _ string, _ int, source string) (map[string]any, error) {
+	if strings.TrimSpace(source) == "" {
+		return map[string]any{"threads": []map[string]any{}, "total_found": 0}, nil
+	}
+	return map[string]any{
+		"threads": []map[string]any{{
+			"thread_id": "thread-1",
+			"source":    source,
+		}},
+		"total_found": 1,
+	}, nil
+}
+
+func (m *richMockProvider) FetchThread(_ context.Context, _ workermemory.MemoryIdentity, _ string, _ int, _ int) (map[string]any, error) {
+	return map[string]any{"messages": []map[string]any{}}, nil
 }
 
 func (m *mockProvider) AppendSessionMessages(_ context.Context, _ workermemory.MemoryIdentity, _ string, _ []workermemory.MemoryMessage) error {
@@ -221,6 +275,8 @@ func newUserExecCtx() tools.ExecutionContext {
 	uid := uuid.New()
 	return newExecCtx(&uid)
 }
+
+func boolPtr(v bool) *bool { return &v }
 
 // --- search ---
 
@@ -406,6 +462,33 @@ func TestMemoryExecutor_Read_NowledgeDetailIncludesProvenance(t *testing.T) {
 	}
 }
 
+func TestMemoryExecutor_Read_NowledgeSnippetRange(t *testing.T) {
+	mp := &mockProvider{
+		snippet: nowledge.MemorySnippet{
+			MemoryDetail: nowledge.MemoryDetail{Title: "Decision", SourceThreadID: "thread-1"},
+			Text:         "line2\nline3",
+			StartLine:    2,
+			EndLine:      3,
+			TotalLines:   4,
+		},
+	}
+	ex := NewToolExecutor(mp, nil, nil)
+	result := ex.Execute(context.Background(), "memory_read", map[string]any{
+		"uri":   "nowledge://memory/mem-1",
+		"from":  float64(2),
+		"lines": float64(2),
+	}, newUserExecCtx(), "")
+	if result.Error != nil {
+		t.Fatalf("unexpected error: %v", result.Error.Message)
+	}
+	if result.ResultJSON["content"] != "line2\nline3" || result.ResultJSON["start_line"] != 2 || result.ResultJSON["end_line"] != 3 {
+		t.Fatalf("unexpected snippet result: %#v", result.ResultJSON)
+	}
+	if result.ResultJSON["source_thread_id"] != "thread-1" {
+		t.Fatalf("unexpected provenance: %#v", result.ResultJSON)
+	}
+}
+
 func TestMemoryExecutor_Read_NowledgeOverviewKeepsDepthContract(t *testing.T) {
 	mp := &mockProvider{detail: nowledge.MemoryDetail{
 		Title:   "Decision",
@@ -425,6 +508,55 @@ func TestMemoryExecutor_Read_NowledgeOverviewKeepsDepthContract(t *testing.T) {
 	}
 	if strings.Contains(content, "do not integrate MinIO in this phase") {
 		t.Fatalf("overview should not return full content: %#v", result.ResultJSON)
+	}
+}
+
+func TestMemoryExecutor_Context_ReadWorkingMemory(t *testing.T) {
+	mp := &mockProvider{wm: nowledge.WorkingMemory{Content: "## Focus\n\nShip nowledge", Available: true}}
+	ex := NewToolExecutor(mp, nil, nil)
+	result := ex.Execute(context.Background(), "memory_context", map[string]any{}, newUserExecCtx(), "")
+	if result.Error != nil {
+		t.Fatalf("unexpected error: %v", result.Error.Message)
+	}
+	if result.ResultJSON["source"] != "working_memory" || result.ResultJSON["available"] != true {
+		t.Fatalf("unexpected context payload: %#v", result.ResultJSON)
+	}
+}
+
+func TestMemoryExecutor_Context_PatchAppend(t *testing.T) {
+	mp := &mockProvider{wm: nowledge.WorkingMemory{Content: "## Notes\n\nBefore", Available: true}}
+	ex := NewToolExecutor(mp, nil, nil)
+	result := ex.Execute(context.Background(), "memory_context", map[string]any{
+		"patch_section": "## Notes",
+		"patch_append":  "After",
+	}, newUserExecCtx(), "")
+	if result.Error != nil {
+		t.Fatalf("unexpected error: %v", result.Error.Message)
+	}
+	if result.ResultJSON["action"] != "append" {
+		t.Fatalf("unexpected action: %#v", result.ResultJSON)
+	}
+	if !strings.Contains(result.ResultJSON["content"].(string), "After") {
+		t.Fatalf("unexpected content: %#v", result.ResultJSON)
+	}
+}
+
+func TestMemoryExecutor_Status(t *testing.T) {
+	mp := &mockProvider{status: nowledge.Status{
+		Mode:                   "local",
+		BaseURL:                "http://127.0.0.1:14242",
+		APIKeyConfigured:       false,
+		Healthy:                true,
+		Version:                "0.4.1",
+		WorkingMemoryAvailable: boolPtr(true),
+	}}
+	ex := NewToolExecutor(mp, nil, nil)
+	result := ex.Execute(context.Background(), "memory_status", map[string]any{}, newUserExecCtx(), "")
+	if result.Error != nil {
+		t.Fatalf("unexpected error: %v", result.Error.Message)
+	}
+	if result.ResultJSON["provider"] != "nowledge" || result.ResultJSON["healthy"] != true {
+		t.Fatalf("unexpected status: %#v", result.ResultJSON)
 	}
 }
 
@@ -497,6 +629,21 @@ func TestMemoryExecutor_Timeline(t *testing.T) {
 	}
 	if len(days) != 2 || days[0]["date"] != "2026-04-12" || days[1]["date"] != "2026-04-11" {
 		t.Fatalf("unexpected grouped days: %#v", result.ResultJSON)
+	}
+}
+
+func TestMemoryExecutor_ThreadSearchWithSourceFilter(t *testing.T) {
+	mp := &richMockProvider{}
+	ex := NewToolExecutor(mp, nil, nil)
+	result := ex.Execute(context.Background(), "memory_thread_search", map[string]any{
+		"query":  "deploy",
+		"source": "arkloop",
+	}, newUserExecCtx(), "")
+	if result.Error != nil {
+		t.Fatalf("unexpected error: %v", result.Error.Message)
+	}
+	if result.ResultJSON["total_found"] != 1 {
+		t.Fatalf("unexpected result: %#v", result.ResultJSON)
 	}
 }
 
