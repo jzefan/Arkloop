@@ -40,6 +40,9 @@ button:not(:disabled) {
   --c-fw-500: 500;
   --c-fw-600: 600;
   --c-fw-700: 700;
+  --c-sidebar-nav-weight: var(--c-fw-300);
+  --c-sidebar-thread-weight: var(--c-fw-325);
+  --c-sidebar-section-weight: var(--c-fw-350);
   --font-weight-light: var(--c-fw-300);
   --font-weight-normal: var(--c-fw-400);
   --font-weight-medium: var(--c-fw-500);
@@ -172,6 +175,9 @@ button:not(:disabled) {
   --c-fw-500: 440;
   --c-fw-600: 540;
   --c-fw-700: 640;
+  --c-sidebar-nav-weight: var(--c-fw-350);
+  --c-sidebar-thread-weight: var(--c-fw-350);
+  --c-sidebar-section-weight: var(--c-fw-375);
 }
 
 @media (prefers-color-scheme: light) {
