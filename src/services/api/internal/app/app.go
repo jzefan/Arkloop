@@ -214,18 +214,19 @@ func (a *Application) Run(ctx context.Context) error {
 	}
 
 	var (
-		userRepo         *data.UserRepository
-		credentialRepo   *data.UserCredentialRepository
-		membershipRepo   *data.AccountMembershipRepository
-		accountRepo      *data.AccountRepository
-		threadRepo       *data.ThreadRepository
-		threadStarRepo   *data.ThreadStarRepository
-		threadShareRepo  *data.ThreadShareRepository
-		threadReportRepo *data.ThreadReportRepository
-		messageRepo      *data.MessageRepository
-		runEventRepo     *data.RunEventRepository
-		shellSessionRepo *data.ShellSessionRepository
-		auditRepo        *data.AuditLogRepository
+		userRepo              *data.UserRepository
+		credentialRepo        *data.UserCredentialRepository
+		membershipRepo        *data.AccountMembershipRepository
+		accountRepo           *data.AccountRepository
+		threadRepo            *data.ThreadRepository
+		threadStarRepo        *data.ThreadStarRepository
+		threadShareRepo       *data.ThreadShareRepository
+		threadReportRepo      *data.ThreadReportRepository
+		messageRepo           *data.MessageRepository
+		runEventRepo          *data.RunEventRepository
+		runPipelineEventsRepo *data.RunPipelineEventsRepository
+		shellSessionRepo      *data.ShellSessionRepository
+		auditRepo             *data.AuditLogRepository
 
 		secretsRepo                  *data.SecretsRepository
 		llmCredRepo                  *data.LlmCredentialsRepository
@@ -334,6 +335,7 @@ func (a *Application) Run(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
+		runPipelineEventsRepo = data.NewRunPipelineEventsRepository(pool)
 		shellSessionRepo, err = data.NewShellSessionRepository(pool)
 		if err != nil {
 			return err
@@ -778,6 +780,7 @@ func (a *Application) Run(ctx context.Context) error {
 			ThreadReportRepo:             threadReportRepo,
 			MessageRepo:                  messageRepo,
 			RunEventRepo:                 runEventRepo,
+			RunPipelineEventsRepo:        runPipelineEventsRepo,
 			ShellSessionRepo:             shellSessionRepo,
 			AuditWriter:                  auditWriter,
 			LlmCredentialsRepo:           llmCredRepo,

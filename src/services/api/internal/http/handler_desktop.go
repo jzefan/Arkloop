@@ -102,6 +102,7 @@ type HandlerConfig struct {
 	ThreadReportRepo      *data.ThreadReportRepository
 	MessageRepo           *data.MessageRepository
 	RunEventRepo          *data.RunEventRepository
+	RunPipelineEventsRepo *data.RunPipelineEventsRepository
 	ShellSessionRepo      *data.ShellSessionRepository
 	AuditWriter           *audit.Writer
 
@@ -380,6 +381,7 @@ func NewHandler(cfg HandlerConfig) nethttp.Handler {
 		AccountMembershipRepo: cfg.AccountMembershipRepo,
 		UsersRepo:             cfg.UsersRepo,
 		RunEventRepo:          cfg.RunEventRepo,
+		RunPipelineEventsRepo: cfg.RunPipelineEventsRepo,
 		UsageRepo:             cfg.UsageRepo,
 		AccountRepo:           cfg.AccountRepo,
 		APIKeysRepo:           cfg.APIKeysRepo,

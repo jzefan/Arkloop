@@ -4,6 +4,7 @@ import (
 	httpkit "arkloop/services/api/internal/http/httpkit"
 	"context"
 	"encoding/json"
+	"fmt"
 	"sort"
 	"strings"
 	"time"
@@ -95,10 +96,21 @@ type adminRunDetailResponse struct {
 	TotalAggregate    *adminRunUsageAggregate   `json:"total_aggregate,omitempty"`
 }
 
+type adminPipelineEventResponse struct {
+	EventID    string         `json:"event_id"`
+	RunID      string         `json:"run_id"`
+	Seq        int            `json:"seq"`
+	Ts         string         `json:"ts"`
+	Type       string         `json:"type"`
+	Data       map[string]any `json:"data"`
+	Middleware string         `json:"middleware,omitempty"`
+}
+
 func adminRunsEntry(
 	authService *auth.Service,
 	membershipRepo *data.AccountMembershipRepository,
 	runRepo *data.RunEventRepository,
+	pipelineRepo *data.RunPipelineEventsRepository,
 	usersRepo *data.UserRepository,
 	apiKeysRepo *data.APIKeysRepository,
 	messagesRepo *data.MessageRepository,
@@ -133,7 +145,8 @@ func adminRunsEntry(
 			return
 		}
 
-		runID, err := uuid.Parse(tail)
+		parts := strings.Split(tail, "/")
+		runID, err := uuid.Parse(parts[0])
 		if err != nil {
 			httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "invalid run_id", traceID, nil)
 			return
@@ -141,6 +154,49 @@ func adminRunsEntry(
 
 		if r.Method != nethttp.MethodGet {
 			httpkit.WriteMethodNotAllowed(w, r)
+			return
+		}
+
+		if len(parts) == 2 {
+			if parts[1] != "pipeline-events" {
+				httpkit.WriteNotFound(w, r)
+				return
+			}
+			if pipelineRepo == nil {
+				httpkit.WriteError(w, nethttp.StatusServiceUnavailable, "database.not_configured", "database not configured", traceID, nil)
+				return
+			}
+			run, err := runRepo.GetRun(r.Context(), runID)
+			if err != nil {
+				httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
+				return
+			}
+			if run == nil {
+				httpkit.WriteError(w, nethttp.StatusNotFound, "runs.not_found", "run not found", traceID, nil)
+				return
+			}
+			items, err := pipelineRepo.ListByRunID(r.Context(), runID, 2000)
+			if err != nil {
+				httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
+				return
+			}
+			resp := make([]adminPipelineEventResponse, 0, len(items))
+			for _, item := range items {
+				resp = append(resp, adminPipelineEventResponse{
+					EventID:    fmt.Sprintf("pipeline-%d", item.ID),
+					RunID:      item.RunID.String(),
+					Seq:        item.Seq,
+					Ts:         item.CreatedAt.UTC().Format(time.RFC3339Nano),
+					Type:       item.EventName,
+					Data:       item.FieldsJSON,
+					Middleware: item.Middleware,
+				})
+			}
+			httpkit.WriteJSON(w, traceID, nethttp.StatusOK, resp)
+			return
+		}
+		if len(parts) > 2 {
+			httpkit.WriteNotFound(w, r)
 			return
 		}
 

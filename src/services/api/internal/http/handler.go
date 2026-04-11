@@ -4,8 +4,8 @@ package http
 
 import (
 	"context"
-	nethttp "net/http"
 	"log/slog"
+	nethttp "net/http"
 	"os"
 	"time"
 
@@ -71,6 +71,7 @@ type HandlerConfig struct {
 	ThreadReportRepo      *data.ThreadReportRepository
 	MessageRepo           *data.MessageRepository
 	RunEventRepo          *data.RunEventRepository
+	RunPipelineEventsRepo *data.RunPipelineEventsRepository
 	ShellSessionRepo      *data.ShellSessionRepository
 	AuditWriter           *audit.Writer
 
@@ -328,43 +329,43 @@ func NewHandler(cfg HandlerConfig) nethttp.Handler {
 	})
 
 	accountapi.RegisterRoutes(mux, accountapi.Deps{
-		AuthService:             cfg.AuthService,
-		AccountMembershipRepo:   cfg.AccountMembershipRepo,
-		ThreadRepo:              cfg.ThreadRepo,
-		TeamRepo:                cfg.TeamRepo,
-		ProjectRepo:             cfg.ProjectRepo,
-		APIKeysRepo:             cfg.APIKeysRepo,
-		AuditWriter:             cfg.AuditWriter,
-		EntitlementService:      cfg.EntitlementService,
-		Pool:                    cfg.Pool,
-		AccountRepo:             cfg.AccountRepo,
-		AccountService:          cfg.AccountService,
-		WebhookRepo:             cfg.WebhookRepo,
-		SecretsRepo:             cfg.SecretsRepo,
-		LlmCredentialsRepo:      cfg.LlmCredentialsRepo,
-		LlmRoutesRepo:           cfg.LlmRoutesRepo,
-		ChannelsRepo:            cfg.ChannelsRepo,
-		ChannelIdentitiesRepo:   cfg.ChannelIdentitiesRepo,
+		AuthService:              cfg.AuthService,
+		AccountMembershipRepo:    cfg.AccountMembershipRepo,
+		ThreadRepo:               cfg.ThreadRepo,
+		TeamRepo:                 cfg.TeamRepo,
+		ProjectRepo:              cfg.ProjectRepo,
+		APIKeysRepo:              cfg.APIKeysRepo,
+		AuditWriter:              cfg.AuditWriter,
+		EntitlementService:       cfg.EntitlementService,
+		Pool:                     cfg.Pool,
+		AccountRepo:              cfg.AccountRepo,
+		AccountService:           cfg.AccountService,
+		WebhookRepo:              cfg.WebhookRepo,
+		SecretsRepo:              cfg.SecretsRepo,
+		LlmCredentialsRepo:       cfg.LlmCredentialsRepo,
+		LlmRoutesRepo:            cfg.LlmRoutesRepo,
+		ChannelsRepo:             cfg.ChannelsRepo,
+		ChannelIdentitiesRepo:    cfg.ChannelIdentitiesRepo,
 		ChannelIdentityLinksRepo: cfg.ChannelIdentityLinksRepo,
-		ChannelBindCodesRepo:    cfg.ChannelBindCodesRepo,
-		ChannelDMThreadsRepo:    cfg.ChannelDMThreadsRepo,
-		ChannelGroupThreadsRepo: cfg.ChannelGroupThreadsRepo,
-		ChannelReceiptsRepo:     cfg.ChannelReceiptsRepo,
-		UsersRepo:               cfg.UsersRepo,
-		MessageRepo:             cfg.MessageRepo,
-		JobRepo:                 cfg.JobRepo,
-		CreditsRepo:             cfg.CreditsRepo,
-		PersonasRepo:            cfg.PersonasRepo,
-		TelegramBotClient:       telegramClient,
-		DiscordBotClient:        discordClient,
-		TelegramMode:            "webhook",
-		AppBaseURL:              cfg.AppBaseURL,
-		EnvironmentStore:        cfg.EnvironmentStore,
-		RunEventRepo:            cfg.RunEventRepo,
-		GatewayRedisClient:      gatewayRedis,
-		EntitlementsRepo:        cfg.EntitlementsRepo,
-		ConfigResolver:          resolver,
-		MessageAttachmentStore:  cfg.MessageAttachmentStore,
+		ChannelBindCodesRepo:     cfg.ChannelBindCodesRepo,
+		ChannelDMThreadsRepo:     cfg.ChannelDMThreadsRepo,
+		ChannelGroupThreadsRepo:  cfg.ChannelGroupThreadsRepo,
+		ChannelReceiptsRepo:      cfg.ChannelReceiptsRepo,
+		UsersRepo:                cfg.UsersRepo,
+		MessageRepo:              cfg.MessageRepo,
+		JobRepo:                  cfg.JobRepo,
+		CreditsRepo:              cfg.CreditsRepo,
+		PersonasRepo:             cfg.PersonasRepo,
+		TelegramBotClient:        telegramClient,
+		DiscordBotClient:         discordClient,
+		TelegramMode:             "webhook",
+		AppBaseURL:               cfg.AppBaseURL,
+		EnvironmentStore:         cfg.EnvironmentStore,
+		RunEventRepo:             cfg.RunEventRepo,
+		GatewayRedisClient:       gatewayRedis,
+		EntitlementsRepo:         cfg.EntitlementsRepo,
+		ConfigResolver:           resolver,
+		MessageAttachmentStore:   cfg.MessageAttachmentStore,
 	})
 
 	platformapi.RegisterRoutes(mux, platformapi.Deps{
@@ -389,6 +390,7 @@ func NewHandler(cfg HandlerConfig) nethttp.Handler {
 		AccountMembershipRepo: cfg.AccountMembershipRepo,
 		UsersRepo:             cfg.UsersRepo,
 		RunEventRepo:          cfg.RunEventRepo,
+		RunPipelineEventsRepo: cfg.RunPipelineEventsRepo,
 		UsageRepo:             cfg.UsageRepo,
 		AccountRepo:           cfg.AccountRepo,
 		APIKeysRepo:           cfg.APIKeysRepo,

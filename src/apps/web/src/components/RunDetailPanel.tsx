@@ -5,8 +5,8 @@ import { useLocation } from 'react-router-dom'
 import { TurnView, buildRequestThreadTurns, buildTurns, jsonStringifyForDebugDisplay, pickLogicalToolName } from '@arkloop/shared'
 import type { LlmTurn, RequestThreadTurn, RunEventRaw } from '@arkloop/shared'
 import { formatDateTime } from '@arkloop/shared'
-import type { RunDetail, RunEvent } from '../api'
-import { getRunDetail, listRunEvents } from '../api'
+import type { RunDetail, RunEvent, RunPipelineEvent } from '../api'
+import { getRunDetail, listRunEvents, listRunPipelineEvents } from '../api'
 import { useLocale } from '../contexts/LocaleContext'
 
 type Props = {
@@ -43,21 +43,67 @@ function formatTime(value: string | undefined): string {
   return formatDateTime(value, { includeSeconds: true, includeMilliseconds: true, includeZone: false })
 }
 
-function formatEventJSON(event: RunEvent): string {
-  const toolName = pickLogicalToolName(event.data, event.tool_name)
+type DebugEvent = {
+  id: string
+  seqLabel: string
+  ts: string
+  type: string
+  payload: unknown
+  source: 'run' | 'pipeline'
+  toolName?: string
+  errorClass?: string
+  middleware?: string
+  sortKey: number
+  sortSeq: number
+}
+
+function formatDebugEventJSON(event: DebugEvent): string {
   return jsonStringifyForDebugDisplay(
     {
-      event_id: event.event_id,
-      run_id: event.run_id,
-      seq: event.seq,
+      source: event.source,
+      seq: event.seqLabel,
       ts: event.ts,
       type: event.type,
-      tool_name: toolName || event.tool_name,
-      error_class: event.error_class,
-      data: event.data,
+      tool_name: event.toolName,
+      error_class: event.errorClass,
+      middleware: event.middleware,
+      data: event.payload,
     },
     2,
   )
+}
+
+function toDebugEvent(event: RunEvent): DebugEvent {
+  return {
+    id: event.event_id,
+    seqLabel: `#${event.seq}`,
+    ts: event.ts,
+    type: event.type,
+    payload: event.data,
+    source: 'run',
+    toolName: displayToolName(event) || event.tool_name,
+    errorClass: event.error_class,
+    sortKey: Date.parse(event.ts) || 0,
+    sortSeq: event.seq,
+  }
+}
+
+function toPipelineDebugEvent(event: RunPipelineEvent): DebugEvent {
+  return {
+    id: event.event_id,
+    seqLabel: `P#${event.seq}`,
+    ts: event.ts,
+    type: event.type,
+    payload: event.data,
+    source: 'pipeline',
+    middleware: event.middleware,
+    sortKey: Date.parse(event.ts) || 0,
+    sortSeq: event.seq,
+  }
+}
+
+function shouldHideDebugEvent(event: DebugEvent): boolean {
+  return event.type === 'llm.response.chunk'
 }
 
 function displayToolName(event: RunEvent): string {
@@ -115,6 +161,7 @@ export function RunDetailPanel({ runId, accessToken, onClose }: Props) {
   const [activeTab, setActiveTab] = useState<TabKey>('thread')
   const [detail, setDetail] = useState<RunDetail | null>(null)
   const [events, setEvents] = useState<RunEvent[] | null>(null)
+  const [pipelineEvents, setPipelineEvents] = useState<RunPipelineEvent[] | null>(null)
   const [loading, setLoading] = useState(false)
   const [loadError, setLoadError] = useState(false)
   const mountedRef = useRef(false)
@@ -144,19 +191,26 @@ export function RunDetailPanel({ runId, accessToken, onClose }: Props) {
     setLoading(true)
     setDetail(null)
     setEvents(null)
+    setPipelineEvents(null)
     setLoadError(false)
 
-    const [detailResult, eventsResult] = await Promise.allSettled([
+    const [detailResult, eventsResult, pipelineEventsResult] = await Promise.allSettled([
       getRunDetail(accessToken, runId),
       listRunEvents(accessToken, runId, { follow: false }),
+      listRunPipelineEvents(accessToken, runId),
     ])
 
     if (!mountedRef.current || requestIdRef.current !== runId) return
 
     if (detailResult.status === 'fulfilled') setDetail(detailResult.value)
     if (eventsResult.status === 'fulfilled') setEvents(eventsResult.value)
+    if (pipelineEventsResult.status === 'fulfilled') setPipelineEvents(pipelineEventsResult.value)
 
-    if (detailResult.status === 'rejected' && eventsResult.status === 'rejected') {
+    if (
+      detailResult.status === 'rejected' &&
+      eventsResult.status === 'rejected' &&
+      pipelineEventsResult.status === 'rejected'
+    ) {
       setLoadError(true)
     }
 
@@ -184,6 +238,19 @@ export function RunDetailPanel({ runId, accessToken, onClose }: Props) {
   const executionTurns = useMemo(() => {
     return turns
   }, [turns])
+  const debugEvents = useMemo(() => {
+    const merged = [
+      ...((events ?? []).map(toDebugEvent)),
+      ...((pipelineEvents ?? []).map(toPipelineDebugEvent)),
+    ]
+      .filter((event) => !shouldHideDebugEvent(event))
+      .sort((left, right) => {
+        if (left.sortKey !== right.sortKey) return left.sortKey - right.sortKey
+        if (left.sortSeq !== right.sortSeq) return left.sortSeq - right.sortSeq
+        return left.id.localeCompare(right.id)
+      })
+    return merged
+  }, [events, pipelineEvents])
   const executionLabel = locale.startsWith('zh') ? '本轮执行' : 'Execution'
   const threadLabel = locale.startsWith('zh') ? '对话线程' : 'Thread'
 
@@ -232,9 +299,9 @@ export function RunDetailPanel({ runId, accessToken, onClose }: Props) {
               ].join(' ')}
             >
               {tab.label}
-              {tab.key === 'events' && events != null && (
+              {tab.key === 'events' && (events != null || pipelineEvents != null) && (
                 <span className="ml-1.5 rounded bg-[var(--c-bg-sub)] px-1 py-0.5 text-[10px] text-[var(--c-text-muted)]">
-                  {events.length}
+                  {debugEvents.length}
                 </span>
               )}
               {tab.key === 'thread' && requestThreadTurns.length > 0 && (
@@ -357,38 +424,46 @@ export function RunDetailPanel({ runId, accessToken, onClose }: Props) {
               <div className="rounded-lg border border-[var(--c-border)] bg-[var(--c-bg-deep)] p-3 text-xs text-[var(--c-text-muted)]">
                 Loading…
               </div>
-            ) : !events || events.length === 0 ? (
+            ) : debugEvents.length === 0 ? (
               <div className="rounded-lg border border-[var(--c-border)] bg-[var(--c-bg-deep)] p-3 text-xs text-[var(--c-text-muted)]">
                 {ds.runDetailNoEvents}
               </div>
             ) : (
               <>
                 <p className="mb-2 text-[11px] text-[var(--c-text-muted)]">
-                  Events are listed in sequence. Timestamps are when events were stored.
+                  Events include run events and pipeline hook trace. `llm.response.chunk` is hidden by default.
                 </p>
                 <div className="space-y-1.5">
-                  {events.map((event) => (
+                  {debugEvents.map((event) => (
                     <details
-                      key={event.event_id}
+                      key={event.id}
                       className="rounded-lg border border-[var(--c-border)] bg-[var(--c-bg-deep)]"
                     >
                       <summary className="cursor-pointer list-none px-3 py-2">
                         <div className="flex flex-wrap items-center gap-2 text-xs">
                           <span className="rounded bg-[var(--c-bg-sub)] px-1.5 py-0.5 font-mono text-[10px] text-[var(--c-text-muted)]">
-                            #{event.seq}
+                            {event.seqLabel}
                           </span>
                           <span className="font-mono text-[var(--c-text-secondary)]">{event.type}</span>
-                          {displayToolName(event) && (
+                          {event.source === 'pipeline' && event.middleware && (
                             <span className="rounded bg-[var(--c-bg-sub)] px-1.5 py-0.5 text-[10px] text-[var(--c-text-muted)]">
-                              {displayToolName(event)}
+                              {event.middleware}
                             </span>
                           )}
-                          {event.error_class && (
+                          {event.toolName && (
+                            <span className="rounded bg-[var(--c-bg-sub)] px-1.5 py-0.5 text-[10px] text-[var(--c-text-muted)]">
+                              {event.toolName}
+                            </span>
+                          )}
+                          <span className="rounded bg-[var(--c-bg-sub)] px-1.5 py-0.5 text-[10px] text-[var(--c-text-muted)]">
+                            {event.source}
+                          </span>
+                          {event.errorClass && (
                             <span
                               className="rounded px-1.5 py-0.5 text-[10px]"
                               style={{ background: 'var(--c-status-danger-bg)', color: 'var(--c-status-danger-text)' }}
                             >
-                              {event.error_class}
+                              {event.errorClass}
                             </span>
                           )}
                           <span className="ml-auto text-[10px] tabular-nums text-[var(--c-text-muted)]">
@@ -398,7 +473,7 @@ export function RunDetailPanel({ runId, accessToken, onClose }: Props) {
                       </summary>
                       <div className="border-t border-[var(--c-border)] px-3 py-2">
                         <pre className="overflow-x-auto whitespace-pre-wrap break-words rounded bg-[var(--c-bg-deep2)] p-2 font-mono text-[11px] text-[var(--c-text-secondary)]">
-                          {formatEventJSON(event)}
+                          {formatDebugEventJSON(event)}
                         </pre>
                       </div>
                     </details>

@@ -937,6 +937,25 @@ export async function listRunEvents(
   return runEvents.sort((left, right) => left.seq - right.seq)
 }
 
+export type RunPipelineEvent = {
+  event_id: string
+  run_id: string
+  seq: number
+  ts: string
+  type: string
+  data: Record<string, unknown>
+  middleware?: string
+}
+
+export async function listRunPipelineEvents(
+  accessToken: string,
+  runId: string,
+): Promise<RunPipelineEvent[]> {
+  return await apiFetch<RunPipelineEvent[]>(`/v1/admin/runs/${runId}/pipeline-events`, {
+    accessToken,
+  })
+}
+
 export type CancelRunResponse = {
   ok: boolean
 }
