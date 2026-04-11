@@ -560,6 +560,29 @@ func TestMaybeInlineCompactMessages_SingleOversizedTextAtom(t *testing.T) {
 	}
 }
 
+func TestRunContextCompactLLM_PromotionUsesTargetChunksNotPreviousReplacements(t *testing.T) {
+	gateway := &stubCompactGateway{summary: "promoted compact"}
+	msgs := buildPromotionCompactMessages("summary one", "summary two", "summary three")
+
+	out, err := runContextCompactLLM(context.Background(), gateway, "stub", msgs, nil, "")
+	if err != nil {
+		t.Fatalf("runContextCompactLLM: %v", err)
+	}
+	if out != "promoted compact" {
+		t.Fatalf("unexpected compact output: %q", out)
+	}
+	body := messageText(gateway.lastReq.Messages[1])
+	if !strings.Contains(body, "<target-chunks>") {
+		t.Fatalf("expected target chunks in request, got %q", body)
+	}
+	if strings.Contains(body, "<previous-replacements>") {
+		t.Fatalf("promotion input should not be treated as previous replacements: %q", body)
+	}
+	if !strings.Contains(body, "summary one") || !strings.Contains(body, "summary two") || !strings.Contains(body, "summary three") {
+		t.Fatalf("expected promotion summaries inside target chunks, got %q", body)
+	}
+}
+
 func TestBuildCanonicalCompactChunks_ToolEpisodePreservesSkeleton(t *testing.T) {
 	enc, err := tiktoken.GetEncoding(tiktoken.MODEL_O200K_BASE)
 	if err != nil {

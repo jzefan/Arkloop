@@ -643,6 +643,9 @@ func maybePromoteLeadingReplacementTriple(
 	if tx == nil || accountID == uuid.Nil || threadID == uuid.Nil {
 		return false, nil
 	}
+	if gateway == nil || strings.TrimSpace(model) == "" {
+		return false, nil
+	}
 	items, err := replacementsRepo.ListActiveByThreadUpToContextSeq(ctx, tx, accountID, threadID, nil)
 	if err != nil {
 		return false, err
@@ -669,15 +672,13 @@ func maybePromoteLeadingReplacementTriple(
 			strings.TrimSpace(b.SummaryText),
 			strings.TrimSpace(c.SummaryText),
 		}, "\n\n"))
-		if gateway != nil && strings.TrimSpace(model) != "" {
-			prefix := []llm.Message{
-				makeCompactSnapshotMessage(strings.TrimSpace(a.SummaryText)),
-				makeCompactSnapshotMessage(strings.TrimSpace(b.SummaryText)),
-				makeCompactSnapshotMessage(strings.TrimSpace(c.SummaryText)),
-			}
-			if generated, genErr := runContextCompactLLM(ctx, gateway, model, prefix, enc, ""); genErr == nil && strings.TrimSpace(generated) != "" {
-				promotionSummary = strings.TrimSpace(generated)
-			}
+		prefix := buildPromotionCompactMessages(
+			strings.TrimSpace(a.SummaryText),
+			strings.TrimSpace(b.SummaryText),
+			strings.TrimSpace(c.SummaryText),
+		)
+		if generated, genErr := runContextCompactLLM(ctx, gateway, model, prefix, enc, ""); genErr == nil && strings.TrimSpace(generated) != "" {
+			promotionSummary = strings.TrimSpace(generated)
 		}
 		if promotionSummary == "" {
 			continue
@@ -707,6 +708,21 @@ func maybePromoteLeadingReplacementTriple(
 		return true, nil
 	}
 	return false, nil
+}
+
+func buildPromotionCompactMessages(summaries ...string) []llm.Message {
+	msgs := make([]llm.Message, 0, len(summaries))
+	for _, summary := range summaries {
+		summary = strings.TrimSpace(summary)
+		if summary == "" {
+			continue
+		}
+		msgs = append(msgs, llm.Message{
+			Role:    "user",
+			Content: []llm.TextPart{{Text: summary}},
+		})
+	}
+	return msgs
 }
 
 func selectPromotionReplacements(items []data.ThreadContextReplacementRecord) []data.ThreadContextReplacementRecord {
