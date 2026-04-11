@@ -251,7 +251,7 @@ func ResolveBuiltin(input ResolveInput) BuiltinAvailability {
 		}
 	}
 	if memoryProvider == "nowledge" && memoryBaseURL != "" {
-		for _, name := range []string{"memory_search", "memory_read", "memory_write", "memory_forget", "memory_thread_search", "memory_thread_fetch", "memory_connections", "memory_timeline"} {
+		for _, name := range []string{"memory_search", "memory_read", "memory_write", "memory_forget", "memory_thread_search", "memory_thread_fetch", "memory_connections", "memory_timeline", "memory_context", "memory_status"} {
 			available[name] = struct{}{}
 		}
 	} else if memoryBaseURL != "" {
@@ -314,7 +314,7 @@ func resolveMemoryFromConfig(ctx context.Context, resolver sharedconfig.Resolver
 	}
 	switch availability.MemoryProvider {
 	case "nowledge":
-		availability.toolNames = appendToolNames(availability.toolNames, "memory_search", "memory_read", "memory_write", "memory_forget", "memory_thread_search", "memory_thread_fetch", "memory_connections", "memory_timeline")
+		availability.toolNames = appendToolNames(availability.toolNames, "memory_search", "memory_read", "memory_write", "memory_forget", "memory_thread_search", "memory_thread_fetch", "memory_connections", "memory_timeline", "memory_context", "memory_status")
 	default:
 		availability.toolNames = appendToolNames(availability.toolNames, "memory_search", "memory_read", "memory_write", "memory_edit", "memory_forget")
 	}

@@ -51,6 +51,24 @@ type detailedReadProvider interface {
 	ReadWorkingMemory(ctx context.Context, ident memory.MemoryIdentity) (nowledge.WorkingMemory, error)
 }
 
+type snippetReadProvider interface {
+	MemorySnippet(ctx context.Context, ident memory.MemoryIdentity, uri string, fromLine, lineCount int) (nowledge.MemorySnippet, error)
+	ReadWorkingMemory(ctx context.Context, ident memory.MemoryIdentity) (nowledge.WorkingMemory, error)
+}
+
+type workingMemoryContextProvider interface {
+	ReadWorkingMemory(ctx context.Context, ident memory.MemoryIdentity) (nowledge.WorkingMemory, error)
+	PatchWorkingMemory(ctx context.Context, ident memory.MemoryIdentity, heading string, patch nowledge.WorkingMemoryPatch) (nowledge.WorkingMemory, error)
+}
+
+type statusProvider interface {
+	Status(ctx context.Context, ident memory.MemoryIdentity) (nowledge.Status, error)
+}
+
+type threadSearchFilterProvider interface {
+	SearchThreadsFull(ctx context.Context, ident memory.MemoryIdentity, query string, limit int, source string) (map[string]any, error)
+}
+
 // ToolExecutor 实现 tools.Executor，将 memory_search/read/write/forget 分发到 MemoryProvider。
 type ToolExecutor struct {
 	provider  memory.MemoryProvider
@@ -108,6 +126,10 @@ func (e *ToolExecutor) Execute(
 		return e.connections(ctx, args, ident, started)
 	case "memory_timeline":
 		return e.timeline(ctx, args, ident, started)
+	case "memory_context":
+		return e.context(ctx, args, ident, started)
+	case "memory_status":
+		return e.status(ctx, ident, started)
 	case "memory_read":
 		return e.read(ctx, args, ident, started)
 	case "memory_write":
@@ -306,6 +328,15 @@ func (e *ToolExecutor) read(ctx context.Context, args map[string]any, ident memo
 	if value, ok := args["depth"].(string); ok && strings.EqualFold(strings.TrimSpace(value), "full") {
 		depth = "full"
 	}
+	fromLine := 0
+	if raw, ok := args["from"].(float64); ok && raw >= 1 {
+		fromLine = int(raw)
+	}
+	lineCount := 0
+	if raw, ok := args["lines"].(float64); ok && raw >= 1 {
+		lineCount = int(raw)
+	}
+	wantsSnippet := fromLine > 0 || lineCount > 0
 	if provider, ok := e.provider.(detailedReadProvider); ok {
 		normalizedURI := strings.TrimSpace(uri)
 		lowerURI := strings.ToLower(normalizedURI)
@@ -314,15 +345,46 @@ func (e *ToolExecutor) read(ctx context.Context, args map[string]any, ident memo
 			if err != nil {
 				return providerError("read", err, started)
 			}
+			result := map[string]any{
+				"content": summarizeMemoryRead("", wm.Content, depth),
+				"source":  "working_memory",
+			}
+			if wantsSnippet {
+				content, startLine, endLine, totalLines := sliceReadLines(wm.Content, fromLine, lineCount)
+				result["content"] = content
+				result["start_line"] = startLine
+				result["end_line"] = endLine
+				result["total_lines"] = totalLines
+			}
 			return tools.ExecutionResult{
-				ResultJSON: map[string]any{
-					"content": summarizeMemoryRead("", wm.Content, depth),
-					"source":  "working_memory",
-				},
+				ResultJSON: result,
 				DurationMs: durationMs(started),
 			}
 		}
 		if strings.HasPrefix(normalizedURI, "nowledge://memory/") {
+			if wantsSnippet {
+				snippetProvider, ok := e.provider.(snippetReadProvider)
+				if !ok {
+					return stateError("memory line slicing is not available in this runtime", started)
+				}
+				snippet, err := snippetProvider.MemorySnippet(ctx, ident, normalizedURI, fromLine, lineCount)
+				if err != nil {
+					return providerError("read", err, started)
+				}
+				result := map[string]any{
+					"content":     strings.TrimSpace(snippet.Text),
+					"start_line":  snippet.StartLine,
+					"end_line":    snippet.EndLine,
+					"total_lines": snippet.TotalLines,
+				}
+				if strings.TrimSpace(snippet.Title) != "" {
+					result["title"] = strings.TrimSpace(snippet.Title)
+				}
+				if strings.TrimSpace(snippet.SourceThreadID) != "" {
+					result["source_thread_id"] = strings.TrimSpace(snippet.SourceThreadID)
+				}
+				return tools.ExecutionResult{ResultJSON: result, DurationMs: durationMs(started)}
+			}
 			detail, err := provider.MemoryDetail(ctx, ident, normalizedURI)
 			if err != nil {
 				return providerError("read", err, started)
@@ -333,6 +395,9 @@ func (e *ToolExecutor) read(ctx context.Context, args map[string]any, ident memo
 			}
 			return tools.ExecutionResult{ResultJSON: result, DurationMs: durationMs(started)}
 		}
+	}
+	if wantsSnippet {
+		return stateError("memory line slicing is not available in this runtime", started)
 	}
 
 	layer := memory.MemoryLayerOverview
@@ -490,6 +555,101 @@ func (e *ToolExecutor) timeline(ctx context.Context, args map[string]any, ident 
 	}
 }
 
+func (e *ToolExecutor) context(ctx context.Context, args map[string]any, ident memory.MemoryIdentity, started time.Time) tools.ExecutionResult {
+	provider, ok := e.provider.(workingMemoryContextProvider)
+	if !ok {
+		return stateError("working memory context is not available in this runtime", started)
+	}
+	patchSection, _ := args["patch_section"].(string)
+	patchSection = strings.TrimSpace(patchSection)
+	patchContent, hasPatchContent := args["patch_content"]
+	patchAppend, hasPatchAppend := args["patch_append"]
+	if patchSection == "" {
+		if hasPatchContent || hasPatchAppend {
+			return argError("patch_section is required when patch_content or patch_append is provided", started)
+		}
+		wm, err := provider.ReadWorkingMemory(ctx, ident)
+		if err != nil {
+			return providerError("context", err, started)
+		}
+		return tools.ExecutionResult{
+			ResultJSON: map[string]any{
+				"content":   wm.Content,
+				"available": wm.Available,
+				"source":    "working_memory",
+			},
+			DurationMs: durationMs(started),
+		}
+	}
+	if !hasPatchContent && !hasPatchAppend {
+		return argError("patch_section requires patch_content or patch_append", started)
+	}
+	patch := nowledge.WorkingMemoryPatch{}
+	action := "replace"
+	if hasPatchContent {
+		value, ok := patchContent.(string)
+		if !ok {
+			return argError("patch_content must be a string", started)
+		}
+		patch.Content = &value
+	}
+	if hasPatchAppend {
+		value, ok := patchAppend.(string)
+		if !ok {
+			return argError("patch_append must be a string", started)
+		}
+		patch.Append = &value
+		action = "append"
+	}
+	wm, err := provider.PatchWorkingMemory(ctx, ident, patchSection, patch)
+	if err != nil {
+		return providerError("context", err, started)
+	}
+	return tools.ExecutionResult{
+		ResultJSON: map[string]any{
+			"status":          "ok",
+			"action":          action,
+			"patched_section": patchSection,
+			"content":         wm.Content,
+			"available":       wm.Available,
+			"source":          "working_memory",
+		},
+		DurationMs: durationMs(started),
+	}
+}
+
+func (e *ToolExecutor) status(ctx context.Context, ident memory.MemoryIdentity, started time.Time) tools.ExecutionResult {
+	provider, ok := e.provider.(statusProvider)
+	if !ok {
+		return stateError("memory status is not available in this runtime", started)
+	}
+	status, err := provider.Status(ctx, ident)
+	if err != nil {
+		return providerError("status", err, started)
+	}
+	result := map[string]any{
+		"provider":           "nowledge",
+		"mode":               status.Mode,
+		"base_url":           status.BaseURL,
+		"api_key_configured": status.APIKeyConfigured,
+		"healthy":            status.Healthy,
+		"version":            status.Version,
+	}
+	if status.DatabaseConnected != nil {
+		result["database_connected"] = *status.DatabaseConnected
+	}
+	if status.WorkingMemoryAvailable != nil {
+		result["working_memory_available"] = *status.WorkingMemoryAvailable
+	}
+	if strings.TrimSpace(status.Error) != "" {
+		result["error"] = strings.TrimSpace(status.Error)
+	}
+	return tools.ExecutionResult{
+		ResultJSON: result,
+		DurationMs: durationMs(started),
+	}
+}
+
 func summarizeMemoryRead(title, content, depth string) string {
 	title = strings.TrimSpace(title)
 	content = strings.TrimSpace(content)
@@ -531,6 +691,39 @@ func firstReadValue(values ...string) string {
 	return ""
 }
 
+func sliceReadLines(text string, fromLine, lineCount int) (string, int, int, int) {
+	allLines := strings.Split(strings.ReplaceAll(text, "\r\n", "\n"), "\n")
+	start := fromLine
+	if start <= 0 {
+		start = 1
+	}
+	total := len(allLines)
+	if total == 1 && allLines[0] == "" {
+		total = 0
+	}
+	if total == 0 {
+		return "", start, start, 0
+	}
+	maxLines := lineCount
+	if maxLines <= 0 {
+		maxLines = total
+	}
+	startIdx := start - 1
+	if startIdx >= total {
+		return "", start, start, total
+	}
+	endIdx := startIdx + maxLines
+	if endIdx > total {
+		endIdx = total
+	}
+	selected := allLines[startIdx:endIdx]
+	endLine := start + len(selected) - 1
+	if len(selected) == 0 {
+		endLine = start
+	}
+	return strings.Join(selected, "\n"), start, endLine, total
+}
+
 func (e *ToolExecutor) threadSearch(ctx context.Context, args map[string]any, ident memory.MemoryIdentity, started time.Time) tools.ExecutionResult {
 	provider, ok := e.provider.(memory.MemoryThreadProvider)
 	if !ok {
@@ -540,8 +733,21 @@ func (e *ToolExecutor) threadSearch(ctx context.Context, args map[string]any, id
 	if !ok || strings.TrimSpace(query) == "" {
 		return argError("query must be a non-empty string", started)
 	}
+	source, _ := args["source"].(string)
 	limit := parseLimit(args, defaultSearchLimit)
-	data, err := provider.SearchThreads(ctx, ident, strings.TrimSpace(query), limit)
+	var (
+		data map[string]any
+		err  error
+	)
+	if strings.TrimSpace(source) != "" {
+		filteredProvider, ok := e.provider.(threadSearchFilterProvider)
+		if !ok {
+			return stateError("thread source filtering is not available in this runtime", started)
+		}
+		data, err = filteredProvider.SearchThreadsFull(ctx, ident, strings.TrimSpace(query), limit, strings.TrimSpace(source))
+	} else {
+		data, err = provider.SearchThreads(ctx, ident, strings.TrimSpace(query), limit)
+	}
 	if err != nil {
 		return providerError("thread_search", err, started)
 	}

@@ -398,7 +398,7 @@ func ComposeDesktopEngine(ctx context.Context, db data.DesktopDB, bus eventbus.E
 	if useOV && memProvider != nil {
 		if _, ok := memProvider.(*nowledge.Provider); ok {
 			mergedRT = mergedRT.WithMergedBuiltinToolNames(
-				"memory_search", "memory_read", "memory_write", "memory_forget", "memory_thread_search", "memory_thread_fetch",
+				"memory_search", "memory_read", "memory_write", "memory_forget", "memory_thread_search", "memory_thread_fetch", "memory_connections", "memory_timeline", "memory_context", "memory_status",
 			)
 		} else {
 			mergedRT = mergedRT.WithMergedBuiltinToolNames(

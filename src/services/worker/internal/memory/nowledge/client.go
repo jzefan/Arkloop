@@ -29,11 +29,35 @@ type WorkingMemory struct {
 	Available bool
 }
 
+type WorkingMemoryPatch struct {
+	Content *string
+	Append  *string
+}
+
+type Status struct {
+	Mode                   string
+	BaseURL                string
+	APIKeyConfigured       bool
+	Healthy                bool
+	Version                string
+	DatabaseConnected      *bool
+	WorkingMemoryAvailable *bool
+	Error                  string
+}
+
 type MemoryDetail struct {
 	ID             string
 	Title          string
 	Content        string
 	SourceThreadID string
+}
+
+type MemorySnippet struct {
+	MemoryDetail
+	Text       string
+	StartLine  int
+	EndLine    int
+	TotalLines int
 }
 
 type SearchResult struct {
@@ -228,6 +252,21 @@ func (c *Client) MemoryDetail(ctx context.Context, ident memory.MemoryIdentity, 
 	}, nil
 }
 
+func (c *Client) MemorySnippet(ctx context.Context, ident memory.MemoryIdentity, uri string, fromLine, lineCount int) (MemorySnippet, error) {
+	detail, err := c.MemoryDetail(ctx, ident, uri)
+	if err != nil {
+		return MemorySnippet{}, err
+	}
+	text, startLine, endLine, totalLines := sliceLines(detail.Content, fromLine, lineCount)
+	return MemorySnippet{
+		MemoryDetail: detail,
+		Text:         text,
+		StartLine:    startLine,
+		EndLine:      endLine,
+		TotalLines:   totalLines,
+	}, nil
+}
+
 func (c *Client) ListDir(context.Context, memory.MemoryIdentity, string) ([]string, error) {
 	return nil, nil
 }
@@ -364,6 +403,40 @@ func (c *Client) ReadWorkingMemory(ctx context.Context, ident memory.MemoryIdent
 	}, nil
 }
 
+func (c *Client) UpdateWorkingMemory(ctx context.Context, ident memory.MemoryIdentity, content string) (WorkingMemory, error) {
+	body := map[string]any{"content": strings.TrimSpace(content)}
+	if err := c.doJSON(ctx, ident, http.MethodPut, "/agent/working-memory", body, nil); err != nil {
+		return WorkingMemory{}, err
+	}
+	updated := strings.TrimSpace(content)
+	return WorkingMemory{
+		Content:   updated,
+		Available: updated != "",
+	}, nil
+}
+
+func (c *Client) PatchWorkingMemory(ctx context.Context, ident memory.MemoryIdentity, heading string, patch WorkingMemoryPatch) (WorkingMemory, error) {
+	normalizedHeading := strings.TrimSpace(heading)
+	if normalizedHeading == "" {
+		return WorkingMemory{}, fmt.Errorf("nowledge working memory patch: heading is empty")
+	}
+	if patch.Content == nil && patch.Append == nil {
+		return WorkingMemory{}, fmt.Errorf("nowledge working memory patch: content and append are both nil")
+	}
+	current, err := c.ReadWorkingMemory(ctx, ident)
+	if err != nil {
+		return WorkingMemory{}, err
+	}
+	if !current.Available || strings.TrimSpace(current.Content) == "" {
+		return WorkingMemory{}, fmt.Errorf("nowledge working memory patch: working memory not available")
+	}
+	updated, ok := patchWorkingMemorySection(current.Content, normalizedHeading, patch)
+	if !ok {
+		return WorkingMemory{}, fmt.Errorf("nowledge working memory patch: section not found: %s", normalizedHeading)
+	}
+	return c.UpdateWorkingMemory(ctx, ident, updated)
+}
+
 func (c *Client) SearchRich(ctx context.Context, ident memory.MemoryIdentity, query string, limit int) ([]SearchResult, error) {
 	if strings.TrimSpace(query) == "" {
 		return nil, nil
@@ -474,6 +547,18 @@ func (c *Client) SearchThreads(ctx context.Context, ident memory.MemoryIdentity,
 	if err != nil {
 		return nil, err
 	}
+	return threadSearchPayload(results), nil
+}
+
+func (c *Client) SearchThreadsFull(ctx context.Context, ident memory.MemoryIdentity, query string, limit int, source string) (map[string]any, error) {
+	results, err := c.searchThreadsResult(ctx, ident, query, limit, source)
+	if err != nil {
+		return nil, err
+	}
+	return threadSearchPayload(results), nil
+}
+
+func threadSearchPayload(results []ThreadSearchResult) map[string]any {
 	threads := make([]map[string]any, 0, len(results))
 	for _, item := range results {
 		threads = append(threads, map[string]any{
@@ -486,7 +571,7 @@ func (c *Client) SearchThreads(ctx context.Context, ident memory.MemoryIdentity,
 			"snippets":        item.Snippets,
 		})
 	}
-	return map[string]any{"threads": threads, "total_found": len(threads)}, nil
+	return map[string]any{"threads": threads, "total_found": len(threads)}
 }
 
 func (c *Client) searchThreadsResult(ctx context.Context, ident memory.MemoryIdentity, query string, limit int, source string) ([]ThreadSearchResult, error) {
@@ -789,6 +874,31 @@ func (c *Client) DistillThread(ctx context.Context, ident memory.MemoryIdentity,
 	return DistillResult{MemoriesCreated: count}, nil
 }
 
+func (c *Client) Status(ctx context.Context, ident memory.MemoryIdentity) (Status, error) {
+	status := Status{
+		Mode:             nowledgeMode(c.baseURL),
+		BaseURL:          strings.TrimSpace(c.baseURL),
+		APIKeyConfigured: strings.TrimSpace(c.apiKey) != "",
+	}
+	var response struct {
+		Version           string `json:"version"`
+		DatabaseConnected *bool  `json:"database_connected"`
+	}
+	if err := c.doJSON(ctx, ident, http.MethodGet, "/health", nil, &response); err != nil {
+		status.Error = err.Error()
+		return status, nil
+	}
+	wm, err := c.ReadWorkingMemory(ctx, ident)
+	if err == nil {
+		available := wm.Available
+		status.WorkingMemoryAvailable = &available
+	}
+	status.Healthy = true
+	status.Version = strings.TrimSpace(response.Version)
+	status.DatabaseConnected = response.DatabaseConnected
+	return status, nil
+}
+
 func (c *Client) doJSON(ctx context.Context, ident memory.MemoryIdentity, method, path string, body any, out any) error {
 	var requestBody io.Reader
 	if body != nil {
@@ -1047,4 +1157,98 @@ func compactContent(text string, maxRunes int) string {
 		return text
 	}
 	return string(runes[:maxRunes]) + "..."
+}
+
+func nowledgeMode(baseURL string) string {
+	trimmed := strings.TrimSpace(baseURL)
+	switch trimmed {
+	case "", "http://127.0.0.1:14242", "http://localhost:14242":
+		return "local"
+	default:
+		return "remote"
+	}
+}
+
+func sliceLines(text string, fromLine, lineCount int) (string, int, int, int) {
+	allLines := strings.Split(strings.ReplaceAll(text, "\r\n", "\n"), "\n")
+	start := fromLine
+	if start <= 0 {
+		start = 1
+	}
+	total := len(allLines)
+	if total == 1 && allLines[0] == "" {
+		total = 0
+	}
+	if total == 0 {
+		return "", start, start, 0
+	}
+	maxLines := lineCount
+	if maxLines <= 0 {
+		maxLines = total
+	}
+	startIdx := start - 1
+	if startIdx >= total {
+		return "", start, start, total
+	}
+	endIdx := startIdx + maxLines
+	if endIdx > total {
+		endIdx = total
+	}
+	selected := allLines[startIdx:endIdx]
+	endLine := start + len(selected) - 1
+	if len(selected) == 0 {
+		endLine = start
+	}
+	return strings.Join(selected, "\n"), start, endLine, total
+}
+
+func patchWorkingMemorySection(currentContent, heading string, patch WorkingMemoryPatch) (string, bool) {
+	normalizedHeading := strings.ToLower(strings.TrimSpace(heading))
+	lines := strings.Split(strings.ReplaceAll(currentContent, "\r\n", "\n"), "\n")
+	startIdx := -1
+	endIdx := len(lines)
+	for index, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if !strings.HasPrefix(trimmed, "##") {
+			continue
+		}
+		if startIdx == -1 && strings.Contains(strings.ToLower(trimmed), normalizedHeading) {
+			startIdx = index
+			continue
+		}
+		if startIdx != -1 {
+			endIdx = index
+			break
+		}
+	}
+	if startIdx == -1 {
+		return "", false
+	}
+	bodyStart := startIdx + 1
+	for bodyStart < endIdx && strings.TrimSpace(lines[bodyStart]) == "" {
+		bodyStart++
+	}
+	existingBody := strings.TrimSpace(strings.Join(lines[bodyStart:endIdx], "\n"))
+	updatedBody := existingBody
+	if patch.Content != nil {
+		updatedBody = strings.TrimSpace(*patch.Content)
+	}
+	if patch.Append != nil {
+		appendText := strings.TrimSpace(*patch.Append)
+		switch {
+		case updatedBody == "":
+			updatedBody = appendText
+		case appendText != "":
+			updatedBody = updatedBody + "\n" + appendText
+		}
+	}
+	replacement := []string{lines[startIdx]}
+	if strings.TrimSpace(updatedBody) != "" {
+		replacement = append(replacement, "")
+		replacement = append(replacement, strings.Split(updatedBody, "\n")...)
+	}
+	updatedLines := append([]string{}, lines[:startIdx]...)
+	updatedLines = append(updatedLines, replacement...)
+	updatedLines = append(updatedLines, lines[endIdx:]...)
+	return strings.Join(updatedLines, "\n"), true
 }

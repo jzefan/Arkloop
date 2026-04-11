@@ -276,6 +276,7 @@ var registry = []ToolMeta{
 		Label:     "Memory thread search",
 		ShortDesc: "search historical conversation threads",
 		LLMDescription: "search historical conversation threads when you need prior discussion context that was preserved as thread history. " +
+			"For Nowledge, you can optionally pass source to restrict results to one client such as arkloop. " +
 			"Use this to find relevant past conversations by keyword before fetching the full thread. " +
 			"Results identify candidate thread_id values for memory_thread_fetch.",
 	},
@@ -307,12 +308,30 @@ var registry = []ToolMeta{
 			"Results are grouped activity records with event labels, dates, and related memory ids for follow-up.",
 	},
 	{
+		Name:      "memory_context",
+		Group:     GroupMemory,
+		Label:     "Working Memory",
+		ShortDesc: "read or patch today's Working Memory",
+		LLMDescription: "read or patch today's Working Memory in Nowledge. " +
+			"Call with no parameters to read today's briefing. " +
+			"Use patch_section plus patch_content to replace one markdown section, or patch_section plus patch_append to append text to one section without overwriting the rest.",
+	},
+	{
+		Name:      "memory_status",
+		Group:     GroupMemory,
+		Label:     "Memory status",
+		ShortDesc: "check memory backend status",
+		LLMDescription: "check the active memory backend status for debugging. " +
+			"For Nowledge, returns backend health, version, base_url, api_key_configured, and Working Memory availability so you can verify the integration is actually working.",
+	},
+	{
 		Name:      "memory_read",
 		Group:     GroupMemory,
 		Label:     "Memory read",
 		ShortDesc: "read the full content of a memory entry by URI",
 		LLMDescription: "read the full content of an auto-organized memory entry by URI copied from a memory_search hit or from memory_write. " +
 			"For Nowledge, MEMORY.md is a valid alias for Working Memory. Results may include source_thread_id when the memory was distilled from a conversation. " +
+			"For Nowledge, optional from and lines let you read an exact snippet range instead of the whole entry. " +
 			"These URIs belong to semantic memory recall, not Notebook. Never guess uri from category/key alone.",
 	},
 	{

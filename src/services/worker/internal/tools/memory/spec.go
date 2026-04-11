@@ -46,8 +46,9 @@ var ThreadSearchLlmSpec = llm.ToolSpec{
 	JSONSchema: map[string]any{
 		"type": "object",
 		"properties": map[string]any{
-			"query": map[string]any{"type": "string"},
-			"limit": map[string]any{"type": "integer", "minimum": 1, "maximum": 20},
+			"query":  map[string]any{"type": "string"},
+			"limit":  map[string]any{"type": "integer", "minimum": 1, "maximum": 20},
+			"source": map[string]any{"type": "string"},
 		},
 		"required":             []string{"query"},
 		"additionalProperties": false,
@@ -125,6 +126,46 @@ var TimelineLlmSpec = llm.ToolSpec{
 	},
 }
 
+var ContextAgentSpec = tools.AgentToolSpec{
+	Name:        "memory_context",
+	Version:     "1",
+	Description: "read or patch today's Working Memory",
+	RiskLevel:   tools.RiskLevelLow,
+	SideEffects: true,
+}
+
+var ContextLlmSpec = llm.ToolSpec{
+	Name:        "memory_context",
+	Description: stringPtr(sharedtoolmeta.Must("memory_context").LLMDescription),
+	JSONSchema: map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"patch_section": map[string]any{"type": "string"},
+			"patch_content": map[string]any{"type": "string"},
+			"patch_append":  map[string]any{"type": "string"},
+		},
+		"additionalProperties": false,
+	},
+}
+
+var StatusAgentSpec = tools.AgentToolSpec{
+	Name:        "memory_status",
+	Version:     "1",
+	Description: "check memory backend status",
+	RiskLevel:   tools.RiskLevelLow,
+	SideEffects: false,
+}
+
+var StatusLlmSpec = llm.ToolSpec{
+	Name:        "memory_status",
+	Description: stringPtr(sharedtoolmeta.Must("memory_status").LLMDescription),
+	JSONSchema: map[string]any{
+		"type":                 "object",
+		"properties":           map[string]any{},
+		"additionalProperties": false,
+	},
+}
+
 // --- memory_read ---
 
 var ReadAgentSpec = tools.AgentToolSpec{
@@ -143,6 +184,8 @@ var ReadLlmSpec = llm.ToolSpec{
 		"properties": map[string]any{
 			"uri":   map[string]any{"type": "string"},
 			"depth": map[string]any{"type": "string", "enum": []string{"overview", "full"}},
+			"from":  map[string]any{"type": "integer", "minimum": 1},
+			"lines": map[string]any{"type": "integer", "minimum": 1, "maximum": 500},
 		},
 		"required":             []string{"uri"},
 		"additionalProperties": false,
@@ -348,6 +391,8 @@ func MemoryAgentSpecs() []tools.AgentToolSpec {
 		ThreadFetchAgentSpec,
 		ConnectionsAgentSpec,
 		TimelineAgentSpec,
+		ContextAgentSpec,
+		StatusAgentSpec,
 		ReadAgentSpec,
 		WriteAgentSpec,
 		EditAgentSpec,
@@ -376,6 +421,8 @@ func MemoryLlmSpecs() []llm.ToolSpec {
 		ThreadFetchLlmSpec,
 		ConnectionsLlmSpec,
 		TimelineLlmSpec,
+		ContextLlmSpec,
+		StatusLlmSpec,
 		ReadLlmSpec,
 		WriteLlmSpec,
 		EditLlmSpec,
