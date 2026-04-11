@@ -602,7 +602,6 @@ export const en: LocaleStrings = {
     qqScanNewAccount: 'Scan to login new account',
     qqAllowedUsers: 'Allowed QQ users',
     qqAllowedUsersPlaceholder: 'QQ numbers; commas or newlines; leave empty for no restriction',
-    qqAllowAllUsers: 'Allow all users',
     qqAllowedGroups: 'Allowed QQ groups',
     qqAllowedGroupsPlaceholder: 'QQ group numbers; commas or newlines; leave empty for no restriction',
     qqAutoLogin: 'Auto re-login',

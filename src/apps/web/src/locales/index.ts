@@ -628,7 +628,6 @@ export interface LocaleStrings {
     qqScanNewAccount: string
     qqAllowedUsers: string
     qqAllowedUsersPlaceholder: string
-    qqAllowAllUsers: string
     qqAllowedGroups: string
     qqAllowedGroupsPlaceholder: string
     qqAutoLogin: string

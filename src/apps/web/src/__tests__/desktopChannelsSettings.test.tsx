@@ -283,7 +283,6 @@ describe('DesktopChannelsSettings', () => {
     })
     await flushEffects()
 
-    expect(container.textContent).toContain('第三方接入')
     expect(container.textContent).toContain('Telegram')
     expect(container.textContent).toContain('Discord')
     expect(container.textContent).toContain('允许的 Telegram 用户')

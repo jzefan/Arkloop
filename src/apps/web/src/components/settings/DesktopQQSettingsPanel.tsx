@@ -19,6 +19,7 @@ import { PillToggle } from '@arkloop/shared'
 import {
   BindingsCard,
   buildModelOptions,
+  inputCls,
   ListField,
   mergeListValues,
   ModelDropdown,
@@ -27,6 +28,7 @@ import {
   sameItems,
   SaveActions,
   StatusBadge,
+  TokenField,
 } from './DesktopChannelSettingsShared'
 import { QQLoginFlow } from '../QQLoginFlow'
 
@@ -56,7 +58,6 @@ export function DesktopQQSettingsPanel({
   const [personaID, setPersonaID] = useState(resolvePersonaID(personas, channel?.persona_id))
   const [allowedUserIDs, setAllowedUserIDs] = useState(readStringArrayConfig(channel, 'allowed_user_ids'))
   const [allowedUserInput, setAllowedUserInput] = useState('')
-  const [allowAllUsers, setAllowAllUsers] = useState((channel?.config_json?.allow_all_users as boolean | undefined) ?? false)
   const [allowedGroupIDs, setAllowedGroupIDs] = useState(readStringArrayConfig(channel, 'allowed_group_ids'))
   const [allowedGroupInput, setAllowedGroupInput] = useState('')
   const [defaultModel, setDefaultModel] = useState((channel?.config_json?.default_model as string | undefined) ?? '')
@@ -85,7 +86,6 @@ export function DesktopQQSettingsPanel({
     setPersonaID(resolvePersonaID(personas, channel?.persona_id))
     setAllowedUserIDs(readStringArrayConfig(channel, 'allowed_user_ids'))
     setAllowedUserInput('')
-    setAllowAllUsers((channel?.config_json?.allow_all_users as boolean | undefined) ?? false)
     setAllowedGroupIDs(readStringArrayConfig(channel, 'allowed_group_ids'))
     setAllowedGroupInput('')
     setDefaultModel((channel?.config_json?.default_model as string | undefined) ?? '')
@@ -124,7 +124,6 @@ export function DesktopQQSettingsPanel({
     [personas, channel?.persona_id],
   )
   const persistedDefaultModel = (channel?.config_json?.default_model as string | undefined) ?? ''
-  const persistedAllowAllUsers = (channel?.config_json?.allow_all_users as boolean | undefined) ?? false
   const persistedOnebotWSUrl = (channel?.config_json?.onebot_ws_url as string | undefined) ?? ''
   const persistedOnebotHTTPUrl = (channel?.config_json?.onebot_http_url as string | undefined) ?? ''
   const persistedOnebotToken = (channel?.config_json?.onebot_token as string | undefined) ?? ''
@@ -134,7 +133,6 @@ export function DesktopQQSettingsPanel({
     if (effectivePersonaID !== personaID) return true
     if (!sameItems(persistedAllowedUserIDs, effectiveAllowedUserIDs)) return true
     if (!sameItems(persistedAllowedGroupIDs, effectiveAllowedGroupIDs)) return true
-    if (allowAllUsers !== persistedAllowAllUsers) return true
     if (defaultModel !== persistedDefaultModel) return true
     if (onebotWSUrl !== persistedOnebotWSUrl) return true
     if (onebotHTTPUrl !== persistedOnebotHTTPUrl) return true
@@ -152,8 +150,6 @@ export function DesktopQQSettingsPanel({
     persistedAllowedUserIDs,
     persistedAllowedGroupIDs,
     persistedDefaultModel,
-    allowAllUsers,
-    persistedAllowAllUsers,
     onebotWSUrl,
     onebotHTTPUrl,
     onebotToken,
@@ -205,7 +201,6 @@ export function DesktopQQSettingsPanel({
         ...base,
         allowed_user_ids: nextAllowedUserIDs,
         allowed_group_ids: nextAllowedGroupIDs,
-        allow_all_users: allowAllUsers,
       }
       if (defaultModel.trim()) configJSON.default_model = defaultModel.trim()
       else delete configJSON.default_model
@@ -422,7 +417,7 @@ export function DesktopQQSettingsPanel({
             </div>
             <div className="grid gap-3">
               <div>
-                <label className="mb-1 block text-xs font-medium text-[var(--c-text-secondary)]">
+                <label className="mb-1.5 block text-xs font-medium text-[var(--c-text-secondary)]">
                   {ct.qqOneBotWSUrl}
                 </label>
                 <input
@@ -431,11 +426,11 @@ export function DesktopQQSettingsPanel({
                   onChange={(e) => { setOnebotWSUrl(e.target.value); setSaved(false) }}
                   placeholder={ct.qqOneBotWSUrlPlaceholder}
                   disabled={saving}
-                  className="w-full rounded-lg border-0 bg-[var(--c-bg-input)] px-3 py-2 text-sm text-[var(--c-text-primary)] outline-none placeholder:text-[var(--c-text-muted)] focus:ring-1 focus:ring-[var(--c-border-mid)]"
+                  className={inputCls}
                 />
               </div>
               <div>
-                <label className="mb-1 block text-xs font-medium text-[var(--c-text-secondary)]">
+                <label className="mb-1.5 block text-xs font-medium text-[var(--c-text-secondary)]">
                   {ct.qqOneBotHTTPUrl}
                 </label>
                 <input
@@ -444,22 +439,15 @@ export function DesktopQQSettingsPanel({
                   onChange={(e) => { setOnebotHTTPUrl(e.target.value); setSaved(false) }}
                   placeholder={ct.qqOneBotHTTPUrlPlaceholder}
                   disabled={saving}
-                  className="w-full rounded-lg border-0 bg-[var(--c-bg-input)] px-3 py-2 text-sm text-[var(--c-text-primary)] outline-none placeholder:text-[var(--c-text-muted)] focus:ring-1 focus:ring-[var(--c-border-mid)]"
+                  className={inputCls}
                 />
               </div>
-              <div>
-                <label className="mb-1 block text-xs font-medium text-[var(--c-text-secondary)]">
-                  {ct.qqOneBotToken}
-                </label>
-                <input
-                  type="password"
-                  value={onebotToken}
-                  onChange={(e) => { setOnebotToken(e.target.value); setSaved(false) }}
-                  placeholder={ct.qqOneBotTokenPlaceholder}
-                  disabled={saving}
-                  className="w-full rounded-lg border-0 bg-[var(--c-bg-input)] px-3 py-2 text-sm text-[var(--c-text-primary)] outline-none placeholder:text-[var(--c-text-muted)] focus:ring-1 focus:ring-[var(--c-border-mid)]"
-                />
-              </div>
+              <TokenField
+                label={ct.qqOneBotToken}
+                value={onebotToken}
+                placeholder={ct.qqOneBotTokenPlaceholder}
+                onChange={(v) => { setOnebotToken(v); setSaved(false) }}
+              />
             </div>
           </div>
 
@@ -474,35 +462,21 @@ export function DesktopQQSettingsPanel({
                   <div className="text-sm font-medium text-[var(--c-text-heading)]">{ct.accessControl}</div>
                 </div>
 
-                <div className="mb-4 flex items-center gap-3">
-                  <label className="flex items-center gap-2 text-xs font-medium text-[var(--c-text-secondary)]">
-                    <input
-                      type="checkbox"
-                      checked={allowAllUsers}
-                      onChange={(e) => { setAllowAllUsers(e.target.checked); setSaved(false) }}
-                      className="rounded"
-                    />
-                    {ct.qqAllowAllUsers}
-                  </label>
+                <div className="mb-4">
+                  <ListField
+                    label={ct.qqAllowedUsers}
+                    values={allowedUserIDs}
+                    inputValue={allowedUserInput}
+                    placeholder={ct.qqAllowedUsersPlaceholder}
+                    addLabel={t.skills.add}
+                    onInputChange={setAllowedUserInput}
+                    onAdd={handleAddAllowedUsers}
+                    onRemove={(value) => {
+                      setAllowedUserIDs((current) => current.filter((item) => item !== value))
+                      setSaved(false)
+                    }}
+                  />
                 </div>
-
-                {!allowAllUsers && (
-                  <div className="mb-4">
-                    <ListField
-                      label={ct.qqAllowedUsers}
-                      values={allowedUserIDs}
-                      inputValue={allowedUserInput}
-                      placeholder={ct.qqAllowedUsersPlaceholder}
-                      addLabel={t.skills.add}
-                      onInputChange={setAllowedUserInput}
-                      onAdd={handleAddAllowedUsers}
-                      onRemove={(value) => {
-                        setAllowedUserIDs((current) => current.filter((item) => item !== value))
-                        setSaved(false)
-                      }}
-                    />
-                  </div>
-                )}
 
                 <ListField
                   label={ct.qqAllowedGroups}
