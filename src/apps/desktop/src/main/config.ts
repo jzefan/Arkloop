@@ -30,6 +30,14 @@ export type VersionsState = {
   openviking?: { version: string; updated_at: string }
   opencli?: { version: string; updated_at: string }
   rtk?: { version: string; updated_at: string }
+  update_check?: {
+    checked_at: string
+    openviking?: string | null
+    sandbox_kernel?: string | null
+    sandbox_rootfs?: string | null
+    rtk?: string | null
+    opencli?: string | null
+  }
   sandbox?: {
     kernel?: { version: string; updated_at: string }
     rootfs?: { version: string; updated_at: string }

@@ -57,6 +57,13 @@ type UsageState = {
   byModel: MeModelUsageItem[]
 }
 
+const EMPTY_USAGE_STATE: UsageState = {
+  summary: null,
+  daily: [],
+  hourly: [],
+  byModel: [],
+}
+
 const DESKTOP_EXPORT_SECTIONS: DesktopExportSection[] = [
   'settings',
   'providers',
@@ -195,25 +202,27 @@ function AboutPane({
 }) {
   const { t } = useLocale()
   const ds = t.desktopSettings
+  const api = getDesktopApi()
   const [devMode, setDevMode] = useState(() => readDeveloperMode())
+  const [fallbackVersion, setFallbackVersion] = useState('')
 
-  if (loading) {
-    return (
-      <div className="flex min-h-[220px] items-center justify-center">
-        <Loader2 size={18} className="animate-spin text-[var(--c-text-muted)]" />
-      </div>
-    )
-  }
+  useEffect(() => {
+    if (overview?.appVersion || !api?.app) return
+    let active = true
+    void api.app.getVersion()
+      .then((version) => {
+        if (active) setFallbackVersion(version)
+      })
+      .catch(() => {})
+    return () => {
+      active = false
+    }
+  }, [api, overview?.appVersion])
 
-  if (error) {
-    return (
-      <SettingsSection>
-        <p className="text-sm" style={{ color: 'var(--c-status-error)' }}>{error}</p>
-      </SettingsSection>
-    )
-  }
-
-  if (!overview) return null
+  const appName = overview?.appName ?? 'Arkloop'
+  const appVersion = overview?.appVersion ?? fallbackVersion
+  const links = overview?.links ?? []
+  const iconDataUrl = overview?.iconDataUrl ?? null
 
   return (
     <div className="flex flex-col gap-6">
@@ -225,18 +234,20 @@ function AboutPane({
             className="flex h-14 w-14 items-center justify-center overflow-hidden rounded-2xl bg-[var(--c-bg-deep)]"
             style={{ border: '0.5px solid var(--c-border-subtle)' }}
           >
-            {overview.iconDataUrl ? (
-              <img src={overview.iconDataUrl} alt={overview.appName} className="h-full w-full object-cover" />
+            {iconDataUrl ? (
+              <img src={iconDataUrl} alt={appName} className="h-full w-full object-cover" />
             ) : (
               <HardDrive size={22} className="text-[var(--c-text-muted)]" />
             )}
           </div>
           <div className="min-w-[12rem] flex-1">
-            <div className="text-lg font-semibold text-[var(--c-text-heading)]">{overview.appName}</div>
-            <div className="mt-0.5 text-sm text-[var(--c-text-secondary)]">{overview.appVersion}</div>
+            <div className="text-lg font-semibold text-[var(--c-text-heading)]">{appName}</div>
+            <div className="mt-0.5 text-sm text-[var(--c-text-secondary)]">
+              {appVersion || (loading ? '...' : '')}
+            </div>
           </div>
           <div className="flex basis-full flex-wrap gap-2 xl:ml-auto xl:basis-auto xl:justify-end">
-            {overview.links.map((link) => (
+            {links.map((link) => (
               <Button
                 key={link.url}
                 onClick={() => openExternal(link.url)}
@@ -251,6 +262,12 @@ function AboutPane({
           </div>
         </div>
       </SettingsSection>
+
+      {error && (
+        <SettingsSection>
+          <p className="text-sm" style={{ color: 'var(--c-status-error)' }}>{error}</p>
+        </SettingsSection>
+      )}
 
       <SettingsSection>
         <UpdateSettingsContent />
@@ -417,16 +434,18 @@ function UsagePane({
   accessToken,
   defaultYear,
   defaultMonth,
+  initialUsage,
 }: {
   accessToken: string
   defaultYear: number
   defaultMonth: number
+  initialUsage?: UsageState | null
 }) {
   const { t } = useLocale()
   const { timeZone } = useTimeZone()
   const ds = t.desktopSettings
-  const [usage, setUsage] = useState<UsageState>({ summary: null, daily: [], hourly: [], byModel: [] })
-  const [loading, setLoading] = useState(false)
+  const [usage, setUsage] = useState<UsageState>(initialUsage ?? EMPTY_USAGE_STATE)
+  const [loading, setLoading] = useState(() => !initialUsage)
   const [error, setError] = useState('')
   const [year, setYear] = useState(defaultYear)
   const [month, setMonth] = useState(defaultMonth)
@@ -438,6 +457,7 @@ function UsagePane({
   const heatmapScrollRef = useRef<HTMLDivElement>(null)
   const isShiftScrollingHeatmapRef = useRef(false)
   const heatmapShiftScrollResetRef = useRef<number | null>(null)
+  const skippedInitialFetchRef = useRef(false)
 
   const loadUsage = useCallback(async () => {
     setLoading(true)
@@ -461,7 +481,20 @@ function UsagePane({
     }
   }, [accessToken, year, month, t.requestFailed])
 
-  useEffect(() => { void loadUsage() }, [loadUsage])
+  useEffect(() => {
+    if (!skippedInitialFetchRef.current && initialUsage && year === defaultYear && month === defaultMonth) {
+      skippedInitialFetchRef.current = true
+      return
+    }
+    void loadUsage()
+  }, [defaultMonth, defaultYear, initialUsage, loadUsage, month, year])
+
+  useEffect(() => {
+    if (!initialUsage) return
+    if (year !== defaultYear || month !== defaultMonth) return
+    setUsage(initialUsage)
+    setLoading(false)
+  }, [defaultMonth, defaultYear, initialUsage, month, year])
 
   // heatmap: past 365 days, independent of year/month selection
   useEffect(() => {
@@ -1320,6 +1353,7 @@ export function AdvancedSettings({ accessToken }: Props) {
   const [overview, setOverview] = useState<DesktopAdvancedOverview | null>(null)
   const [overviewLoading, setOverviewLoading] = useState(true)
   const [overviewError, setOverviewError] = useState('')
+  const [prefetchedUsage, setPrefetchedUsage] = useState<UsageState | null>(null)
 
   const loadOverview = useCallback(async () => {
     if (!api?.advanced) return
@@ -1337,6 +1371,30 @@ export function AdvancedSettings({ accessToken }: Props) {
 
   useEffect(() => { void loadOverview() }, [loadOverview])
 
+  useEffect(() => {
+    let active = true
+    const monthStart = `${defaultYear}-${String(defaultMonth).padStart(2, '0')}-01`
+    const nextMonthYear = defaultMonth === 12 ? defaultYear + 1 : defaultYear
+    const nextMonthValue = defaultMonth === 12 ? 1 : defaultMonth + 1
+    const monthEnd = `${nextMonthYear}-${String(nextMonthValue).padStart(2, '0')}-01`
+
+    void Promise.all([
+      getMyUsage(accessToken, defaultYear, defaultMonth),
+      getMyDailyUsage(accessToken, monthStart, monthEnd),
+      getMyHourlyUsage(accessToken, monthStart, monthEnd),
+      getMyUsageByModel(accessToken, defaultYear, defaultMonth),
+    ])
+      .then(([summary, daily, hourly, byModel]) => {
+        if (!active) return
+        setPrefetchedUsage({ summary, daily, hourly, byModel })
+      })
+      .catch(() => {})
+
+    return () => {
+      active = false
+    }
+  }, [accessToken, defaultMonth, defaultYear])
+
   const navItems: Array<{ key: AdvancedKey; icon: LucideIcon; label: string }> = [
     { key: 'about', icon: Info, label: ds.about },
     { key: 'network', icon: Network, label: ds.advancedNetwork },
@@ -1348,7 +1406,7 @@ export function AdvancedSettings({ accessToken }: Props) {
 
   return (
     <div className="-m-6 flex min-h-0 min-w-0 overflow-hidden" style={{ height: 'calc(100% + 48px)' }}>
-      <div className="flex w-[160px] shrink-0 flex-col overflow-hidden border-r border-[var(--c-border-subtle)] max-[1230px]:w-[140px] xl:w-[180px]">
+      <div className="flex w-[160px] shrink-0 flex-col overflow-hidden max-[1230px]:w-[140px] xl:w-[180px]" style={{ borderRight: '0.5px solid var(--c-border-subtle)' }}>
         <div className="flex-1 overflow-y-auto px-2 py-1">
           <div className="flex flex-col gap-[3px]">
             {navItems.map(({ key, icon: Icon, label }) => (
@@ -1386,6 +1444,7 @@ export function AdvancedSettings({ accessToken }: Props) {
               accessToken={accessToken}
               defaultYear={defaultYear}
               defaultMonth={defaultMonth}
+              initialUsage={prefetchedUsage}
             />
           )}
           {activeKey === 'modules' && (

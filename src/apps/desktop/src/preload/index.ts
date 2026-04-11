@@ -247,6 +247,7 @@ export type ArkloopDesktopApi = {
     listLogs: (input?: DesktopLogQuery) => Promise<{ entries: DesktopLogEntry[] }>
   }
   updater: {
+    getCached: () => Promise<UpdaterStatus>
     check: () => Promise<UpdaterStatus>
     apply: (opts: { component: UpdaterComponent }) => Promise<{ ok: boolean }>
     onProgress: (callback: (data: DownloadProgress & { component: UpdaterComponent }) => void) => () => void
@@ -394,6 +395,7 @@ const api: ArkloopDesktopApi = {
   },
 
   updater: {
+    getCached: () => ipcRenderer.invoke('arkloop:updater:get-cached'),
     check: () => ipcRenderer.invoke('arkloop:updater:check'),
     apply: (opts) => ipcRenderer.invoke('arkloop:updater:apply', opts),
     onProgress: (callback) => {

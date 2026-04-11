@@ -12,7 +12,7 @@ import {
   getBridgeBaseUrl,
   type SidecarRuntime,
 } from './sidecar'
-import { checkForUpdates, applyUpdate } from './updater'
+import { checkForUpdates, applyUpdate, getCachedUpdateStatus } from './updater'
 import { getAppUpdaterState, checkForAppUpdates, downloadAppUpdate, installAppUpdate } from './app-updater'
 import { DEFAULT_CONFIG } from './types'
 import { getDesktopLogDir, getDesktopLogPaths } from './logging'
@@ -177,6 +177,10 @@ export function registerIpcHandlers(
 
   ipcMain.handle('arkloop:updater:check', async () => {
     return checkForUpdates()
+  })
+
+  ipcMain.handle('arkloop:updater:get-cached', () => {
+    return getCachedUpdateStatus()
   })
 
   ipcMain.handle('arkloop:updater:apply', async (_event, { component }: { component: 'openviking' | 'sandbox_kernel' | 'sandbox_rootfs' | 'rtk' | 'opencli' }) => {
@@ -804,8 +808,6 @@ async function buildAdvancedOverview(): Promise<{
   } catch {
     updater = null
   }
-  const componentUpdates = await checkForUpdates().catch(() => null)
-  const usage = await loadMonthlyUsage().catch(() => null)
   const releaseLabel = readReleaseLabel()
   const versionDisplay = releaseLabel ? `${app.getVersion()} ${releaseLabel}` : app.getVersion()
   return {
@@ -827,9 +829,8 @@ async function buildAdvancedOverview(): Promise<{
       { label: 'Connection', value: config.mode, tone: config.mode === 'local' ? 'success' : 'default' },
       { label: 'Sidecar', value: runtime.status, tone: runtime.status === 'running' ? 'success' : runtime.status === 'crashed' ? 'danger' : 'warning' },
       { label: 'App Update', value: updater?.phase ?? 'idle', tone: updater?.phase === 'available' || updater?.phase === 'downloaded' ? 'warning' : 'default' },
-      { label: 'OpenViking', value: componentUpdates?.openviking.available ? 'update_available' : (componentUpdates?.openviking.current ?? 'not_installed') },
     ],
-    usage,
+    usage: null,
   }
 }
 
@@ -1196,12 +1197,4 @@ function parseDesktopLogLine(source: 'main' | 'sidecar', line: string): {
           ? 'info'
           : 'other'
   return { timestamp, level, source, message, raw: line }
-}
-
-async function loadMonthlyUsage(): Promise<unknown> {
-  const apiBaseUrl = getLocalApiBaseUrl()
-  if (!apiBaseUrl) return null
-  const now = new Date()
-  const token = getDesktopAccessToken()
-  return await makeApiRequest(`${apiBaseUrl}/v1/me/usage?year=${now.getUTCFullYear()}&month=${now.getUTCMonth() + 1}`, 'GET', token)
 }

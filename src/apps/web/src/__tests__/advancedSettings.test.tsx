@@ -95,6 +95,7 @@ describe('AdvancedSettings', () => {
         ...actual,
         getMyUsage: vi.fn().mockResolvedValue(null),
         getMyDailyUsage: vi.fn().mockResolvedValue([]),
+        getMyHourlyUsage: vi.fn().mockResolvedValue([]),
         getMyUsageByModel: vi.fn().mockResolvedValue([]),
       }
     })
@@ -236,6 +237,7 @@ describe('AdvancedSettings', () => {
           record_count: 2,
         }),
         getMyDailyUsage: vi.fn().mockResolvedValue([]),
+        getMyHourlyUsage: vi.fn().mockResolvedValue([]),
         getMyUsageByModel: vi.fn().mockResolvedValue([]),
       }
     })
@@ -346,6 +348,7 @@ describe('AdvancedSettings', () => {
         ...actual,
         getMyUsage: vi.fn().mockResolvedValue(null),
         getMyDailyUsage: vi.fn().mockResolvedValue([]),
+        getMyHourlyUsage: vi.fn().mockResolvedValue([]),
         getMyUsageByModel: vi.fn().mockResolvedValue([]),
       }
     })

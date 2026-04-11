@@ -97,7 +97,7 @@ function parseDesktopManifest(raw: unknown): DesktopManifest {
 type LocalVersions = VersionsState
 
 const GITHUB_REPO = 'qqqqqf-q/Arkloop'
-const GITHUB_API_LATEST_RELEASE = `https://api.github.com/repos/${GITHUB_REPO}/releases/latest`
+const GITHUB_LATEST_MANIFEST_URL = `https://github.com/${GITHUB_REPO}/releases/latest/download/desktop-manifest.json`
 const VM_DIR = path.join(os.homedir(), '.arkloop', 'vm')
 const OPENCLI_VERSION_FILE_LEGACY = path.join(os.homedir(), '.arkloop', 'bin', 'opencli.version.json')
 
@@ -113,12 +113,53 @@ function isReleaseMissingStatus(statusCode: number | undefined): boolean {
   return statusCode === 404
 }
 
+function isReleaseTemporaryFailureStatus(statusCode: number | undefined): boolean {
+  return statusCode === 403 || statusCode === 429
+}
+
 export function loadLocalVersions(): LocalVersions {
   return loadVersionsFile()
 }
 
 export function saveLocalVersions(v: LocalVersions): void {
   saveVersionsFile(v)
+}
+
+function buildComponentStatus(current: string | null, latest: string | null): ComponentStatus {
+  return {
+    current,
+    latest,
+    available: !!(latest && latest !== current),
+  }
+}
+
+export function getCachedUpdateStatus(): UpdateStatus {
+  const local = loadLocalVersions()
+  const cache = local.update_check
+
+  const ovCurrent = normalizeComponentVersion(local.openviking?.version ?? null)
+  const kernelCurrent = normalizeComponentVersion(local.sandbox?.kernel?.version ?? null)
+  const rootfsCurrent = normalizeComponentVersion(local.sandbox?.rootfs?.version ?? null)
+  const rtkCurrent = normalizeComponentVersion(local.rtk?.version ?? null)
+  const opencliCurrent = normalizeComponentVersion(resolveLocalOpenCLIVersion(local))
+
+  const ovLatest = normalizeComponentVersion(cache?.openviking ?? null)
+  const kernelLatest = normalizeComponentVersion(cache?.sandbox_kernel ?? null)
+  const rootfsLatest = normalizeComponentVersion(cache?.sandbox_rootfs ?? null)
+  const rtkLatest = normalizeComponentVersion(cache?.rtk ?? null)
+  const opencliLatest = normalizeComponentVersion(cache?.opencli ?? null)
+
+  return {
+    openviking: buildComponentStatus(ovCurrent, ovLatest),
+    sandbox: {
+      kernel: buildComponentStatus(kernelCurrent, kernelLatest),
+      rootfs: buildComponentStatus(rootfsCurrent, rootfsLatest),
+    },
+    bins: {
+      rtk: buildComponentStatus(rtkCurrent, rtkLatest),
+      opencli: buildComponentStatus(opencliCurrent, opencliLatest),
+    },
+  }
 }
 
 function httpsGet(url: string, maxRedirects = 5): Promise<http.IncomingMessage> {
@@ -139,28 +180,7 @@ function httpsGet(url: string, maxRedirects = 5): Promise<http.IncomingMessage> 
 }
 
 async function fetchManifest(): Promise<DesktopManifest> {
-  const releaseRes = await httpsGet(GITHUB_API_LATEST_RELEASE)
-  const releaseBody = await new Promise<string>((resolve, reject) => {
-    const chunks: Buffer[] = []
-    releaseRes.on('data', (c: Buffer) => chunks.push(c))
-    releaseRes.on('end', () => resolve(Buffer.concat(chunks).toString()))
-    releaseRes.on('error', reject)
-  })
-  if (releaseRes.statusCode !== 200) {
-    if (isReleaseMissingStatus(releaseRes.statusCode)) {
-      throw new Error('no release published')
-    }
-    throw new Error(`failed to fetch release info: ${releaseRes.statusCode}`)
-  }
-
-  const release = JSON.parse(releaseBody) as { tag_name?: string; assets?: Array<{ name: string; browser_download_url: string }> }
-  const assets = release.assets ?? []
-  const manifestAsset = assets.find((a) => a.name === 'desktop-manifest.json')
-  if (!manifestAsset) {
-    throw new Error('desktop-manifest.json not found in release assets')
-  }
-
-  const manifestRes = await httpsGet(manifestAsset.browser_download_url)
+  const manifestRes = await httpsGet(GITHUB_LATEST_MANIFEST_URL)
   const manifestBody = await new Promise<string>((resolve, reject) => {
     const chunks: Buffer[] = []
     manifestRes.on('data', (c: Buffer) => chunks.push(c))
@@ -168,6 +188,12 @@ async function fetchManifest(): Promise<DesktopManifest> {
     manifestRes.on('error', reject)
   })
   if (manifestRes.statusCode !== 200) {
+    if (isReleaseMissingStatus(manifestRes.statusCode)) {
+      throw new Error('no release published')
+    }
+    if (isReleaseTemporaryFailureStatus(manifestRes.statusCode)) {
+      throw new Error(`release info temporarily unavailable: ${manifestRes.statusCode}`)
+    }
     throw new Error(`failed to fetch manifest: ${manifestRes.statusCode}`)
   }
 
@@ -306,8 +332,8 @@ export async function syncLocalVersions(includeBridge = false): Promise<LocalVer
 }
 
 export async function checkForUpdates(): Promise<UpdateStatus> {
-  const manifest = await fetchManifest()
   const local = loadLocalVersions()
+  const manifest = await fetchManifest()
 
   const ovCurrent = normalizeComponentVersion(local.openviking?.version ?? null)
   const ovLatest = normalizeComponentVersion(manifest.openviking.version)
@@ -320,37 +346,31 @@ export async function checkForUpdates(): Promise<UpdateStatus> {
   const opencliCurrent = normalizeComponentVersion(resolveLocalOpenCLIVersion(local))
   const opencliLatest = normalizeComponentVersion(manifest.bins?.opencli?.version ?? null)
 
-  return {
-    openviking: {
-      current: ovCurrent,
-      latest: ovLatest,
-      available: !!(ovLatest && ovLatest !== ovCurrent),
-    },
+  const next: UpdateStatus = {
+    openviking: buildComponentStatus(ovCurrent, ovLatest),
     sandbox: {
-      kernel: {
-        current: kernelCurrent,
-        latest: kernelLatest,
-        available: !!(kernelLatest && kernelLatest !== kernelCurrent),
-      },
-      rootfs: {
-        current: rootfsCurrent,
-        latest: rootfsLatest,
-        available: !!(rootfsLatest && rootfsLatest !== rootfsCurrent),
-      },
+      kernel: buildComponentStatus(kernelCurrent, kernelLatest),
+      rootfs: buildComponentStatus(rootfsCurrent, rootfsLatest),
     },
     bins: {
-      rtk: {
-        current: rtkCurrent,
-        latest: rtkLatest,
-        available: !!(rtkLatest && rtkLatest !== rtkCurrent),
-      },
-      opencli: {
-        current: opencliCurrent,
-        latest: opencliLatest,
-        available: !!(opencliLatest && opencliLatest !== opencliCurrent),
-      },
+      rtk: buildComponentStatus(rtkCurrent, rtkLatest),
+      opencli: buildComponentStatus(opencliCurrent, opencliLatest),
     },
   }
+
+  saveVersionsFile({
+    ...local,
+    update_check: {
+      checked_at: new Date().toISOString(),
+      openviking: ovLatest,
+      sandbox_kernel: kernelLatest,
+      sandbox_rootfs: rootfsLatest,
+      rtk: rtkLatest,
+      opencli: opencliLatest,
+    },
+  })
+
+  return next
 }
 
 export type DownloadProgress = {
