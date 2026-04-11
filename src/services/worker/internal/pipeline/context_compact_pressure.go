@@ -27,6 +27,9 @@ type ContextCompactPressureStats struct {
 	LastRealPromptTokens             int
 	LastRequestContextEstimateTokens int
 	Anchored                         bool
+	TargetChunkCount                 int
+	PreviousReplacementCount         int
+	SingleAtomPartial                bool
 }
 
 // ApplyContextCompactPressure 用 gemini-cli 风格口径估算当前上下文压力。
@@ -74,6 +77,15 @@ func ApplyContextCompactPressureFields(payload map[string]any, stats ContextComp
 	if stats.Anchored {
 		payload["last_real_prompt_tokens"] = stats.LastRealPromptTokens
 		payload["last_request_context_estimate_tokens"] = stats.LastRequestContextEstimateTokens
+	}
+	if stats.TargetChunkCount > 0 {
+		payload["target_chunk_count"] = stats.TargetChunkCount
+	}
+	if stats.PreviousReplacementCount > 0 {
+		payload["previous_replacement_count"] = stats.PreviousReplacementCount
+	}
+	if stats.SingleAtomPartial {
+		payload["single_atom_partial"] = true
 	}
 }
 

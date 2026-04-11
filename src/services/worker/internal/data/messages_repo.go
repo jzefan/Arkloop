@@ -246,6 +246,66 @@ func (MessagesRepository) ListByThread(
 	return out, nil
 }
 
+func (MessagesRepository) ListRawByThread(
+	ctx context.Context,
+	tx pgx.Tx,
+	accountID uuid.UUID,
+	threadID uuid.UUID,
+	limit int,
+) ([]ThreadMessage, error) {
+	if limit <= 0 {
+		limit = 200
+	}
+	rows, err := tx.Query(
+		ctx,
+		`SELECT recent.id, recent.role, recent.content, recent.content_json, recent.metadata_json, recent.created_at,
+		        recent.thread_seq,
+		        COALESCE(u.output_tokens, 0) as output_tokens
+		 FROM (
+				SELECT id, role, content, content_json, created_at, metadata_json, thread_seq
+				  FROM messages m
+				 WHERE m.account_id = $1
+				   AND m.thread_id = $2
+				   AND m.deleted_at IS NULL
+				 ORDER BY thread_seq DESC
+				 LIMIT $3
+			 ) recent
+		 LEFT JOIN LATERAL (
+			SELECT output_tokens
+			  FROM usage_records
+			 WHERE run_id = (recent.metadata_json->>'run_id')::uuid
+			   AND usage_type = 'llm'
+			 LIMIT 1
+		 ) u ON true
+		 ORDER BY recent.thread_seq ASC`,
+		accountID,
+		threadID,
+		limit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := []ThreadMessage{}
+	for rows.Next() {
+		var item ThreadMessage
+		if err := rows.Scan(&item.ID, &item.Role, &item.Content, &item.ContentJSON, &item.MetadataJSON, &item.CreatedAt, &item.ThreadSeq, &item.OutputTokens); err != nil {
+			return nil, err
+		}
+		item.Role = strings.TrimSpace(item.Role)
+		item.Content = strings.TrimSpace(item.Content)
+		if item.Role == "" {
+			continue
+		}
+		out = append(out, item)
+	}
+	if rows.Err() != nil {
+		return nil, rows.Err()
+	}
+	return out, nil
+}
+
 func (MessagesRepository) ListByThreadUpToID(
 	ctx context.Context,
 	tx pgx.Tx,
@@ -335,6 +395,78 @@ func (MessagesRepository) ListByThreadUpToID(
 	}
 	if len(out) == 0 {
 		return nil, fmt.Errorf("thread history upper bound message not found")
+	}
+	return out, nil
+}
+
+func (MessagesRepository) ListRawByThreadUpToID(
+	ctx context.Context,
+	tx pgx.Tx,
+	accountID uuid.UUID,
+	threadID uuid.UUID,
+	upToMessageID uuid.UUID,
+	limit int,
+) ([]ThreadMessage, error) {
+	if limit <= 0 {
+		limit = 200
+	}
+	if upToMessageID == uuid.Nil {
+		return nil, fmt.Errorf("up_to_message_id must not be empty")
+	}
+	rows, err := tx.Query(
+		ctx,
+		`SELECT recent.id, recent.role, recent.content, recent.content_json, recent.metadata_json, recent.created_at,
+			        recent.thread_seq,
+			        COALESCE(u.output_tokens, 0) as output_tokens
+			 FROM (
+				SELECT id, role, content, content_json, created_at, metadata_json, thread_seq
+				  FROM messages m
+				 WHERE m.account_id = $1
+				   AND m.thread_id = $2
+				   AND m.deleted_at IS NULL
+				   AND m.thread_seq <= (
+				     SELECT thread_seq FROM messages
+				      WHERE account_id = $1
+				        AND thread_id = $2
+				        AND id = $3
+				        AND deleted_at IS NULL
+				   )
+				 ORDER BY thread_seq DESC
+				 LIMIT $4
+			 ) recent
+			 LEFT JOIN LATERAL (
+				SELECT output_tokens
+				  FROM usage_records
+				 WHERE run_id = (recent.metadata_json->>'run_id')::uuid
+				   AND usage_type = 'llm'
+				 LIMIT 1
+			 ) u ON true
+			 ORDER BY recent.thread_seq ASC`,
+		accountID,
+		threadID,
+		upToMessageID,
+		limit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := []ThreadMessage{}
+	for rows.Next() {
+		var item ThreadMessage
+		if err := rows.Scan(&item.ID, &item.Role, &item.Content, &item.ContentJSON, &item.MetadataJSON, &item.CreatedAt, &item.ThreadSeq, &item.OutputTokens); err != nil {
+			return nil, err
+		}
+		item.Role = strings.TrimSpace(item.Role)
+		item.Content = strings.TrimSpace(item.Content)
+		if item.Role == "" {
+			continue
+		}
+		out = append(out, item)
+	}
+	if rows.Err() != nil {
+		return nil, rows.Err()
 	}
 	return out, nil
 }

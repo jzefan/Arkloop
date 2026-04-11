@@ -2,17 +2,35 @@ package pipeline
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"arkloop/services/shared/messagecontent"
 	"arkloop/services/worker/internal/data"
 	"arkloop/services/worker/internal/llm"
+	"arkloop/services/worker/internal/routing"
 
 	"github.com/google/uuid"
 	"github.com/pkoukk/tiktoken-go"
 )
+
+type stubCompactGateway struct {
+	summary string
+	calls   int
+	lastReq llm.Request
+}
+
+func (g *stubCompactGateway) Stream(_ context.Context, request llm.Request, yield func(llm.StreamEvent) error) error {
+	g.calls++
+	g.lastReq = request
+	if err := yield(llm.StreamMessageDelta{ContentDelta: g.summary, Role: "assistant"}); err != nil {
+		return err
+	}
+	return yield(llm.StreamRunCompleted{})
+}
 
 func TestCompactThreadMessages_trimCount(t *testing.T) {
 	msgs := []llm.Message{
@@ -118,6 +136,236 @@ func TestTrimEntriesToMessageLimitPreservesAllLeadingReplacements(t *testing.T) 
 	}
 	if out[2].StartThreadSeq != 22 || out[3].StartThreadSeq != 23 {
 		t.Fatalf("expected tail real messages preserved, got %#v", out[2:])
+	}
+}
+
+func TestTrimEntriesToMessageLimitDoesNotSplitAtom(t *testing.T) {
+	atomA := "atom:a"
+	atomB := "atom:b"
+	entries := []canonicalThreadContextEntry{
+		{IsReplacement: true, StartThreadSeq: 1, EndThreadSeq: 10, ThreadMessageID: uuid.Nil},
+		{IsReplacement: false, AtomKey: atomA, StartThreadSeq: 21, EndThreadSeq: 21, ThreadMessageID: uuid.New()},
+		{IsReplacement: false, AtomKey: atomA, StartThreadSeq: 22, EndThreadSeq: 22, ThreadMessageID: uuid.New()},
+		{IsReplacement: false, AtomKey: atomB, StartThreadSeq: 23, EndThreadSeq: 23, ThreadMessageID: uuid.New()},
+	}
+
+	out := trimEntriesToMessageLimit(entries, 2)
+	if len(out) != 4 {
+		t.Fatalf("expected atom-preserving trim to keep 4 entries, got %d", len(out))
+	}
+	if out[1].AtomKey != atomA || out[2].AtomKey != atomA || out[3].AtomKey != atomB {
+		t.Fatalf("unexpected atom layout after trim: %#v", out)
+	}
+}
+
+func TestSelectRenderableReplacementSpansKeepsLastChunkOfLastAtomRaw(t *testing.T) {
+	lastAtom := &canonicalAtom{
+		Kind:            canonicalAtomUserText,
+		StartContextSeq: 9,
+		EndContextSeq:   12,
+		Messages: []data.ThreadMessage{{
+			ID:        uuid.New(),
+			Role:      "user",
+			Content:   "alpha\n\nbeta\n\ngamma",
+			ThreadSeq: 1,
+		}},
+	}
+	spans := []canonicalReplacementSpan{
+		{
+			Record: data.ThreadContextReplacementRecord{
+				ID:          uuid.New(),
+				SummaryText: "older summary",
+				Layer:       3,
+			},
+			StartContextSeq: 1,
+			EndContextSeq:   8,
+		},
+		{
+			Record: data.ThreadContextReplacementRecord{
+				ID:          uuid.New(),
+				SummaryText: "prefix of last atom",
+				Layer:       4,
+			},
+			StartContextSeq: 9,
+			EndContextSeq:   10,
+		},
+		{
+			Record: data.ThreadContextReplacementRecord{
+				ID:          uuid.New(),
+				SummaryText: "touches atom tail",
+				Layer:       5,
+			},
+			StartContextSeq: 11,
+			EndContextSeq:   12,
+		},
+	}
+
+	out := selectRenderableReplacementSpans(spans, lastAtom)
+	if len(out) != 2 {
+		t.Fatalf("expected two replacements after keeping last chunk raw, got %d", len(out))
+	}
+	if out[0].StartContextSeq != 1 || out[0].EndContextSeq != 8 {
+		t.Fatalf("unexpected first surviving replacement: %#v", out[0])
+	}
+	if out[1].StartContextSeq != 9 || out[1].EndContextSeq != 10 {
+		t.Fatalf("unexpected second surviving replacement: %#v", out[1])
+	}
+}
+
+func TestMaybeInlineCompactSingleOversizedTextAtomRejectsToolCalls(t *testing.T) {
+	rc := &RunContext{
+		Gateway: &stubCompactGateway{summary: "summary"},
+		SelectedRoute: &routing.SelectedProviderRoute{
+			Route: routing.ProviderRouteRule{Model: "stub"},
+		},
+	}
+	msg := llm.Message{
+		Role: "assistant",
+		Content: []llm.TextPart{{
+			Text: strings.Repeat("tool payload ", 400),
+		}},
+		ToolCalls: []llm.ToolCall{{
+			ToolCallID: "call_1",
+			ToolName:   "search",
+		}},
+	}
+
+	out, changed, err := maybeInlineCompactSingleOversizedTextAtom(context.Background(), rc, msg, nil)
+	if err != nil {
+		t.Fatalf("maybeInlineCompactSingleOversizedTextAtom returned error: %v", err)
+	}
+	if changed {
+		t.Fatalf("expected tool episode message to stay intact, got %#v", out)
+	}
+}
+
+func TestRenderCanonicalThreadMessagesFromGraphRendersPartialTailForLastTextAtom(t *testing.T) {
+	msg := data.ThreadMessage{
+		ID:        uuid.New(),
+		Role:      "user",
+		Content:   "alpha\n\nbeta\n\ngamma",
+		ThreadSeq: 1,
+	}
+	atoms, chunks := buildCanonicalAtomGraph([]data.ThreadMessage{msg})
+	if len(atoms) != 1 || len(chunks) < 3 {
+		t.Fatalf("expected one atom and chunked text, got atoms=%d chunks=%d", len(atoms), len(chunks))
+	}
+
+	entries, _, err := renderCanonicalThreadMessagesFromGraph(context.Background(), nil, atoms, chunks, []canonicalReplacementSpan{
+		{
+			Record: data.ThreadContextReplacementRecord{
+				ID:          uuid.New(),
+				SummaryText: "summary",
+				Layer:       1,
+			},
+			StartContextSeq: chunks[0].ContextSeq,
+			EndContextSeq:   chunks[1].ContextSeq,
+		},
+	})
+	if err != nil {
+		t.Fatalf("render graph: %v", err)
+	}
+	if len(entries) != 2 {
+		t.Fatalf("expected replacement plus tail entry, got %d", len(entries))
+	}
+	if !entries[0].IsReplacement {
+		t.Fatalf("expected first entry replacement, got %#v", entries[0])
+	}
+	if entries[1].IsReplacement {
+		t.Fatalf("expected second entry to be raw tail, got %#v", entries[1])
+	}
+	if got := messageText(entries[1].Message); got != "gamma" {
+		t.Fatalf("expected tail text gamma, got %q", got)
+	}
+}
+
+func TestSelectRenderableReplacementSpansKeepsWholeRichLastAtomRaw(t *testing.T) {
+	raw, err := json.Marshal(map[string]any{
+		"parts": []map[string]any{
+			{"type": "text", "text": "caption"},
+			{"type": "file", "attachment": map[string]any{"key": "docs/a.txt"}, "extracted_text": "file body"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("marshal content json: %v", err)
+	}
+	lastAtom := &canonicalAtom{
+		Kind:            canonicalAtomUserText,
+		StartContextSeq: 9,
+		EndContextSeq:   12,
+		Messages: []data.ThreadMessage{{
+			ID:          uuid.New(),
+			Role:        "user",
+			Content:     "caption",
+			ContentJSON: raw,
+			ThreadSeq:   99,
+		}},
+	}
+	spans := []canonicalReplacementSpan{
+		{
+			Record: data.ThreadContextReplacementRecord{
+				ID:          uuid.New(),
+				SummaryText: "older summary",
+				Layer:       3,
+			},
+			StartContextSeq: 1,
+			EndContextSeq:   8,
+		},
+		{
+			Record: data.ThreadContextReplacementRecord{
+				ID:          uuid.New(),
+				SummaryText: "should be skipped",
+				Layer:       4,
+			},
+			StartContextSeq: 9,
+			EndContextSeq:   10,
+		},
+	}
+
+	out := selectRenderableReplacementSpans(spans, lastAtom)
+	if len(out) != 1 {
+		t.Fatalf("expected only non-overlapping older replacement, got %#v", out)
+	}
+	if out[0].StartContextSeq != 1 || out[0].EndContextSeq != 8 {
+		t.Fatalf("unexpected surviving replacement: %#v", out[0])
+	}
+}
+
+func TestSelectPromotionReplacementsUsesOldestSideOrder(t *testing.T) {
+	now := time.Now().UTC()
+	items := []data.ThreadContextReplacementRecord{
+		{
+			ID:              uuid.New(),
+			StartContextSeq: 21,
+			EndContextSeq:   30,
+			SummaryText:     "newer high layer",
+			Layer:           3,
+			CreatedAt:       now.Add(2 * time.Minute),
+		},
+		{
+			ID:              uuid.New(),
+			StartContextSeq: 1,
+			EndContextSeq:   10,
+			SummaryText:     "first",
+			Layer:           1,
+			CreatedAt:       now,
+		},
+		{
+			ID:              uuid.New(),
+			StartContextSeq: 11,
+			EndContextSeq:   20,
+			SummaryText:     "second",
+			Layer:           1,
+			CreatedAt:       now.Add(30 * time.Second),
+		},
+	}
+
+	selected := selectPromotionReplacements(items)
+	if len(selected) != 3 {
+		t.Fatalf("expected 3 promotion candidates, got %#v", selected)
+	}
+	if selected[0].SummaryText != "first" || selected[1].SummaryText != "second" || selected[2].SummaryText != "newer high layer" {
+		t.Fatalf("expected oldest-side ordering, got %#v", selected)
 	}
 }
 
@@ -258,6 +506,90 @@ func TestComputeTailKeepByTokenBudget_ZeroBudget(t *testing.T) {
 	got := computeTailKeepByTokenBudget(enc, msgs, 0, 0)
 	if got != 0 {
 		t.Fatalf("expected 0, got %d", got)
+	}
+}
+
+func TestMaybeInlineCompactMessages_SingleOversizedTextAtom(t *testing.T) {
+	gateway := &stubCompactGateway{summary: "compacted head"}
+	huge := strings.Repeat("alpha beta gamma delta\n\n", 240)
+	rc := &RunContext{
+		ContextCompact: ContextCompactSettings{
+			PersistEnabled:              true,
+			PersistTriggerApproxTokens:  1,
+			PersistTriggerContextPct:    0,
+			FallbackContextWindowTokens: 1_000_000,
+			PersistKeepLastMessages:     1,
+		},
+		Gateway: gateway,
+		SelectedRoute: &routing.SelectedProviderRoute{
+			Route: routing.ProviderRouteRule{Model: "gpt-4o", ID: "route-1"},
+			Credential: routing.ProviderCredential{
+				ProviderKind: routing.ProviderKindOpenAI,
+			},
+		},
+	}
+	msgs := []llm.Message{{Role: "user", Content: []llm.TextPart{{Text: huge}}}}
+	out, stats, changed, err := MaybeInlineCompactMessages(context.Background(), rc, msgs, nil)
+	if err != nil {
+		t.Fatalf("MaybeInlineCompactMessages: %v", err)
+	}
+	if !changed {
+		t.Fatal("expected single oversized atom to be compacted")
+	}
+	if len(out) != 2 {
+		t.Fatalf("expected snapshot + tail message, got %d", len(out))
+	}
+	if !strings.Contains(messageText(out[0]), compactSnapshotHeader) {
+		t.Fatalf("expected leading snapshot header, got %q", messageText(out[0]))
+	}
+	if strings.TrimSpace(messageText(out[1])) == "" {
+		t.Fatal("expected tail message kept")
+	}
+	if !stats.SingleAtomPartial {
+		t.Fatalf("expected single atom partial flag in stats, got %#v", stats)
+	}
+	if stats.TargetChunkCount < 2 {
+		t.Fatalf("expected chunk-driven compact stats, got %#v", stats)
+	}
+	if gateway.calls != 1 {
+		t.Fatalf("expected compact gateway called once, got %d", gateway.calls)
+	}
+	body := messageText(gateway.lastReq.Messages[1])
+	if !strings.Contains(body, "<target-chunks>") {
+		t.Fatalf("expected chunk contract block, got %q", body)
+	}
+}
+
+func TestBuildCanonicalCompactChunks_ToolEpisodePreservesSkeleton(t *testing.T) {
+	enc, err := tiktoken.GetEncoding(tiktoken.MODEL_O200K_BASE)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hugePayload := strings.Repeat("z", compactToolPayloadMaxRunes+300)
+	msgs := []llm.Message{
+		{
+			Role: "assistant",
+			ToolCalls: []llm.ToolCall{{
+				ToolCallID:    "call_1",
+				ToolName:      "read_file",
+				ArgumentsJSON: map[string]any{"path": "/tmp/huge.txt"},
+			}},
+		},
+		{Role: "tool", Content: []llm.TextPart{{Text: fmt.Sprintf(`{"tool_call_id":"call_1","tool_name":"read_file","result":{"data":"%s"}}`, hugePayload)}}},
+	}
+	chunks := buildCanonicalCompactChunks(enc, msgs)
+	if len(chunks) == 0 {
+		t.Fatal("expected chunks for tool episode")
+	}
+	if chunks[0].AtomType != compactAtomToolEpisode {
+		t.Fatalf("expected tool episode atom, got %s", chunks[0].AtomType)
+	}
+	serialized := serializeCompactChunksForLLM(chunks)
+	if !strings.Contains(serialized, "Tool result: read_file") {
+		t.Fatalf("expected tool skeleton in serialized chunks, got %q", serialized)
+	}
+	if !strings.Contains(serialized, "truncated") {
+		t.Fatalf("expected oversized payload to be compacted, got %q", serialized)
 	}
 }
 

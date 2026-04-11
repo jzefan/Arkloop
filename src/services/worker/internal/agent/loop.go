@@ -214,6 +214,7 @@ func (l *Loop) Run(
 			if compactErr != nil {
 				ev := emitter.Emit("run.context_compact", map[string]any{
 					"op":              "local",
+					"mode":            "canonical_chunks",
 					"phase":           "llm_failed",
 					"messages_before": beforeCompact,
 					"llm_error":       compactErr.Error(),
@@ -226,6 +227,7 @@ func (l *Loop) Run(
 				messages = compacted
 				ev := emitter.Emit("run.context_compact", map[string]any{
 					"op":              "local",
+					"mode":            "canonical_chunks",
 					"phase":           "completed",
 					"messages_before": beforeCompact,
 					"messages_after":  len(messages),
@@ -1396,6 +1398,7 @@ func maybeRecoverOversizeRequest(
 	}
 	ev := emitter.Emit("run.context_compact", map[string]any{
 		"op":                           "rewrite",
+		"mode":                         "canonical_chunks",
 		"phase":                        phase,
 		"turn_index":                   turnIndex,
 		"trigger_phase":                triggerPhase,
@@ -1403,6 +1406,9 @@ func maybeRecoverOversizeRequest(
 		"images_stripped":              stats.ImagesStripped,
 		"tool_results_microcompacted":  stats.ToolResultsMicrocompacted,
 		"compact_applied":              stats.CompactApplied,
+		"target_chunk_count":           stats.TargetChunkCount,
+		"previous_replacement_count":   stats.PreviousReplacementCount,
+		"single_atom_partial":          stats.SingleAtomPartial,
 		"request_bytes_before_rewrite": stats.RequestBytesBeforeRewrite,
 		"request_bytes_after_rewrite":  stats.RequestBytesAfterRewrite,
 	}, nil, nil)

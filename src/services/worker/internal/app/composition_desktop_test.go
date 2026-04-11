@@ -1417,7 +1417,19 @@ func TestDesktopInputLoaderPropagatesActiveCompactSnapshotState(t *testing.T) {
 			args: []any{runID},
 		},
 		{
-			sql:  `INSERT INTO thread_compaction_snapshots (account_id, thread_id, summary_text, metadata_json, is_active) VALUES ($1, $2, $3, '{}', 1)`,
+			sql:  `INSERT INTO messages (id, account_id, thread_id, thread_seq, role, content, metadata_json, hidden, created_at) VALUES ($1, $2, $3, 1, 'user', 'seed', '{}', FALSE, '2026-04-09 05:18:30.100000000 +0000')`,
+			args: []any{uuid.New(), accountID, threadID},
+		},
+		{
+			sql:  `INSERT INTO messages (id, account_id, thread_id, thread_seq, role, content, metadata_json, hidden, created_at) VALUES ($1, $2, $3, 2, 'assistant', 'tail', '{}', FALSE, '2026-04-09 05:18:31.100000000 +0000')`,
+			args: []any{uuid.New(), accountID, threadID},
+		},
+		{
+			sql:  `UPDATE threads SET next_message_seq = 3 WHERE id = $1`,
+			args: []any{threadID},
+		},
+		{
+			sql:  `INSERT INTO thread_context_replacements (account_id, thread_id, start_thread_seq, end_thread_seq, start_context_seq, end_context_seq, summary_text, layer, metadata_json) VALUES ($1, $2, 1, 1, 1, 1, $3, 1, '{}')`,
 			args: []any{accountID, threadID, "desktop snapshot"},
 		},
 	} {
@@ -1440,9 +1452,9 @@ func TestDesktopInputLoaderPropagatesActiveCompactSnapshotState(t *testing.T) {
 			t.Fatal("expected active compact snapshot")
 		}
 		if got.ActiveCompactSnapshotText != "desktop snapshot" {
-			t.Fatalf("unexpected snapshot text: %q", got.ActiveCompactSnapshotText)
+			t.Fatalf("unexpected replacement text: %q", got.ActiveCompactSnapshotText)
 		}
-		if len(got.Messages) != 1 || got.Messages[0].Role != "user" {
+		if len(got.Messages) != 2 || got.Messages[0].Role != "user" || got.Messages[1].Role != "assistant" {
 			t.Fatalf("unexpected prompt messages: %#v", got.Messages)
 		}
 		return nil
@@ -1976,8 +1988,54 @@ func TestDesktopEventWriterCapturesTelegramReplyOverride(t *testing.T) {
 	if writer.pendingReplyOverride != "6592" {
 		t.Fatalf("expected pendingReplyOverride=6592, got %q", writer.pendingReplyOverride)
 	}
-	if len(writer.toolDeliveredTexts) != 0 {
-		t.Fatalf("telegram_reply should not contribute to toolDeliveredTexts, got %v", writer.toolDeliveredTexts)
+	if got := writer.visibleAssistantOutput(); got != "" {
+		t.Fatalf("telegram_reply should not contribute visible assistant output, got %q", got)
+	}
+}
+
+func TestDesktopEventWriterIgnoresTelegramSendFileCaptionAsAssistantOutput(t *testing.T) {
+	ctx := context.Background()
+
+	sqlitePool, err := sqliteadapter.AutoMigrate(ctx, filepath.Join(t.TempDir(), "desktop.db"))
+	if err != nil {
+		t.Fatalf("auto migrate sqlite: %v", err)
+	}
+	defer sqlitePool.Close()
+
+	db := sqlitepgx.New(sqlitePool.Unwrap())
+
+	accountID := uuid.New()
+	userID := uuid.New()
+	threadID := uuid.New()
+	runID := uuid.New()
+	seedDesktopRunBindingAccount(t, db, accountID, userID)
+	seedDesktopRunBindingThread(t, db, accountID, threadID, nil, &userID)
+	seedDesktopRunBindingRun(t, db, accountID, threadID, &userID, runID)
+
+	writer := &desktopEventWriter{
+		db:         db,
+		run:        data.Run{ID: runID, AccountID: accountID, ThreadID: threadID},
+		traceID:    "telegram-send-file",
+		runsRepo:   data.DesktopRunsRepository{},
+		eventsRepo: data.DesktopRunEventsRepository{},
+		usageRepo:  data.UsageRecordsRepository{},
+	}
+
+	sendFileCall := events.NewEmitter("telegram-send-file").Emit("tool.call", map[string]any{
+		"tool_name":    "telegram_send_file",
+		"tool_call_id": "call-1",
+		"arguments": map[string]any{
+			"file_url": "https://example.com/a.png",
+			"kind":     "photo",
+			"caption":  "这句不应该被当成 assistant output",
+		},
+	}, nil, nil)
+	if err := writer.append(ctx, runID, sendFileCall, "normal"); err != nil {
+		t.Fatalf("append tool.call: %v", err)
+	}
+
+	if got := writer.visibleAssistantOutput(); got != "" {
+		t.Fatalf("telegram_send_file should not contribute visible assistant output, got %q", got)
 	}
 }
 
