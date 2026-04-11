@@ -12,6 +12,7 @@ import (
 type RunPipelineEventsDB interface {
 	Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error)
 	BeginTx(ctx context.Context, txOptions pgx.TxOptions) (pgx.Tx, error)
+	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
 }
 
 type RunPipelineEventRecord struct {
@@ -26,4 +27,15 @@ type RunPipelineEventRecord struct {
 type RunPipelineEventsWriter interface {
 	InsertBatch(ctx context.Context, records []RunPipelineEventRecord) error
 	DeleteOlderThan(ctx context.Context, cutoff time.Time) error
+}
+
+type RunPipelineEventRow struct {
+	ID         int64
+	RunID      uuid.UUID
+	AccountID  uuid.UUID
+	Middleware string
+	EventName  string
+	Seq        int
+	FieldsJSON map[string]any
+	CreatedAt  time.Time
 }

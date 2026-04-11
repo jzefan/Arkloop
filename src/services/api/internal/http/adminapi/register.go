@@ -1,8 +1,8 @@
 package adminapi
 
 import (
-	nethttp "net/http"
 	"log/slog"
+	nethttp "net/http"
 
 	"arkloop/services/api/internal/audit"
 	"arkloop/services/api/internal/auth"
@@ -14,40 +14,41 @@ import (
 )
 
 type Deps struct {
-	AuthService          *auth.Service
-	AccountMembershipRepo    *data.AccountMembershipRepository
-	UsersRepo            *data.UserRepository
-	RunEventRepo         *data.RunEventRepository
-	UsageRepo            *data.UsageRepository
-	AccountRepo              *data.AccountRepository
-	APIKeysRepo          *data.APIKeysRepository
-	MessageRepo          *data.MessageRepository
-	LlmCredentialsRepo   *data.LlmCredentialsRepository
-	ThreadRepo           *data.ThreadRepository
-	ThreadReportRepo     *data.ThreadReportRepository
-	AuditWriter          *audit.Writer
-	InviteCodesRepo      *data.InviteCodeRepository
-	ReferralsRepo        *data.ReferralRepository
-	CreditsRepo          *data.CreditsRepository
-	RedemptionCodesRepo  *data.RedemptionCodesRepository
-	NotificationsRepo    *data.NotificationsRepository
-	Pool                 data.DB
-	Logger               *slog.Logger
-	GatewayRedisClient   *redis.Client
-	PlatformSettingsRepo *data.PlatformSettingsRepository
-	ConfigResolver       sharedconfig.Resolver
-	ConfigInvalidator    sharedconfig.Invalidator
-	ConfigRegistry       *sharedconfig.Registry
-	PersonasRepo         *data.PersonasRepository
-	RepoPersonas         []repopersonas.RepoPersona
-	JobRepo              *data.JobRepository
-	SmtpProviderRepo     *data.SmtpProviderRepository
-	UserCredentialRepo   *data.UserCredentialRepository
+	AuthService           *auth.Service
+	AccountMembershipRepo *data.AccountMembershipRepository
+	UsersRepo             *data.UserRepository
+	RunEventRepo          *data.RunEventRepository
+	RunPipelineEventsRepo *data.RunPipelineEventsRepository
+	UsageRepo             *data.UsageRepository
+	AccountRepo           *data.AccountRepository
+	APIKeysRepo           *data.APIKeysRepository
+	MessageRepo           *data.MessageRepository
+	LlmCredentialsRepo    *data.LlmCredentialsRepository
+	ThreadRepo            *data.ThreadRepository
+	ThreadReportRepo      *data.ThreadReportRepository
+	AuditWriter           *audit.Writer
+	InviteCodesRepo       *data.InviteCodeRepository
+	ReferralsRepo         *data.ReferralRepository
+	CreditsRepo           *data.CreditsRepository
+	RedemptionCodesRepo   *data.RedemptionCodesRepository
+	NotificationsRepo     *data.NotificationsRepository
+	Pool                  data.DB
+	Logger                *slog.Logger
+	GatewayRedisClient    *redis.Client
+	PlatformSettingsRepo  *data.PlatformSettingsRepository
+	ConfigResolver        sharedconfig.Resolver
+	ConfigInvalidator     sharedconfig.Invalidator
+	ConfigRegistry        *sharedconfig.Registry
+	PersonasRepo          *data.PersonasRepository
+	RepoPersonas          []repopersonas.RepoPersona
+	JobRepo               *data.JobRepository
+	SmtpProviderRepo      *data.SmtpProviderRepository
+	UserCredentialRepo    *data.UserCredentialRepository
 }
 
 func RegisterRoutes(mux *nethttp.ServeMux, deps Deps) {
 	mux.HandleFunc("/v1/admin/dashboard", adminDashboard(deps.AuthService, deps.AccountMembershipRepo, deps.UsersRepo, deps.RunEventRepo, deps.UsageRepo, deps.AccountRepo, deps.APIKeysRepo))
-	mux.HandleFunc("/v1/admin/runs/", adminRunsEntry(deps.AuthService, deps.AccountMembershipRepo, deps.RunEventRepo, deps.UsersRepo, deps.APIKeysRepo, deps.MessageRepo, deps.LlmCredentialsRepo, deps.ThreadRepo))
+	mux.HandleFunc("/v1/admin/runs/", adminRunsEntry(deps.AuthService, deps.AccountMembershipRepo, deps.RunEventRepo, deps.RunPipelineEventsRepo, deps.UsersRepo, deps.APIKeysRepo, deps.MessageRepo, deps.LlmCredentialsRepo, deps.ThreadRepo))
 	mux.HandleFunc("/v1/admin/reports", adminReportsEntry(deps.AuthService, deps.AccountMembershipRepo, deps.ThreadReportRepo, deps.APIKeysRepo))
 	mux.HandleFunc("/v1/admin/users", adminUsersEntry(deps.AuthService, deps.AccountMembershipRepo, deps.UsersRepo, deps.APIKeysRepo, deps.UserCredentialRepo))
 	mux.HandleFunc("/v1/admin/users/", adminUserEntry(deps.AuthService, deps.AccountMembershipRepo, deps.UsersRepo, deps.APIKeysRepo, deps.AuditWriter, deps.InviteCodesRepo, deps.UserCredentialRepo))
