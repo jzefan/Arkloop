@@ -29,6 +29,13 @@ type WorkingMemory struct {
 	Available bool
 }
 
+type MemoryDetail struct {
+	ID             string
+	Title          string
+	Content        string
+	SourceThreadID string
+}
+
 type SearchResult struct {
 	ID              string
 	Title           string
@@ -87,6 +94,29 @@ type DistillResult struct {
 	MemoriesCreated int
 }
 
+type GraphConnection struct {
+	MemoryID   string
+	NodeID     string
+	NodeType   string
+	Title      string
+	Snippet    string
+	EdgeType   string
+	Relation   string
+	Weight     float64
+	SourceType string
+}
+
+type TimelineEvent struct {
+	ID               string
+	EventType        string
+	Label            string
+	Title            string
+	Description      string
+	CreatedAt        string
+	MemoryID         string
+	RelatedMemoryIDs []string
+}
+
 type ThreadAppender interface {
 	CreateThread(ctx context.Context, ident memory.MemoryIdentity, threadID, title, source string, messages []ThreadMessage) (string, error)
 	AppendThread(ctx context.Context, ident memory.MemoryIdentity, threadID string, messages []ThreadMessage, idempotencyKey string) (int, error)
@@ -105,6 +135,11 @@ type ContextReader interface {
 type Distiller interface {
 	TriageConversation(ctx context.Context, ident memory.MemoryIdentity, content string) (TriageResult, error)
 	DistillThread(ctx context.Context, ident memory.MemoryIdentity, threadID, title, content string) (DistillResult, error)
+}
+
+type GraphReader interface {
+	Connections(ctx context.Context, ident memory.MemoryIdentity, memoryID string, depth, limit int) ([]GraphConnection, error)
+	Timeline(ctx context.Context, ident memory.MemoryIdentity, lastNDays int, dateFrom, dateTo, eventType string, tier1Only bool, limit int) ([]TimelineEvent, error)
 }
 
 type Client struct {
@@ -144,20 +179,12 @@ func (c *Client) Find(ctx context.Context, ident memory.MemoryIdentity, _ string
 }
 
 func (c *Client) Content(ctx context.Context, ident memory.MemoryIdentity, uri string, layer memory.MemoryLayer) (string, error) {
-	memoryID, err := parseMemoryURI(uri)
+	detail, err := c.MemoryDetail(ctx, ident, uri)
 	if err != nil {
 		return "", err
 	}
-	var response struct {
-		ID      string `json:"id"`
-		Title   string `json:"title"`
-		Content string `json:"content"`
-	}
-	if err := c.doJSON(ctx, ident, http.MethodGet, "/memories/"+url.PathEscape(memoryID), nil, &response); err != nil {
-		return "", err
-	}
-	title := strings.TrimSpace(response.Title)
-	content := strings.TrimSpace(response.Content)
+	title := strings.TrimSpace(detail.Title)
+	content := strings.TrimSpace(detail.Content)
 	if title == "" {
 		return content, nil
 	}
@@ -173,6 +200,32 @@ func (c *Client) Content(ctx context.Context, ident memory.MemoryIdentity, uri s
 		}
 		return title + "\n\n" + content, nil
 	}
+}
+
+func (c *Client) MemoryDetail(ctx context.Context, ident memory.MemoryIdentity, uri string) (MemoryDetail, error) {
+	memoryID, err := parseMemoryURI(uri)
+	if err != nil {
+		return MemoryDetail{}, err
+	}
+	var response struct {
+		ID           string `json:"id"`
+		Title        string `json:"title"`
+		Content      string `json:"content"`
+		SourceThread any    `json:"source_thread"`
+		Metadata     struct {
+			SourceThreadID string `json:"source_thread_id"`
+		} `json:"metadata"`
+		SourceThreadID string `json:"source_thread_id"`
+	}
+	if err := c.doJSON(ctx, ident, http.MethodGet, "/memories/"+url.PathEscape(memoryID), nil, &response); err != nil {
+		return MemoryDetail{}, err
+	}
+	return MemoryDetail{
+		ID:             strings.TrimSpace(response.ID),
+		Title:          strings.TrimSpace(response.Title),
+		Content:        strings.TrimSpace(response.Content),
+		SourceThreadID: extractSourceThreadID(response.SourceThread, response.SourceThreadID, response.Metadata.SourceThreadID),
+	}, nil
 }
 
 func (c *Client) ListDir(context.Context, memory.MemoryIdentity, string) ([]string, error) {
@@ -350,17 +403,7 @@ func (c *Client) SearchRich(ctx context.Context, ident memory.MemoryIdentity, qu
 	}
 	results := make([]SearchResult, 0, len(response.Memories))
 	for _, item := range response.Memories {
-		sourceThreadID := item.Metadata.SourceThreadID
-		if sourceThreadID == "" {
-			switch value := item.SourceThread.(type) {
-			case string:
-				sourceThreadID = strings.TrimSpace(value)
-			case map[string]any:
-				if rawID, ok := value["id"].(string); ok {
-					sourceThreadID = strings.TrimSpace(rawID)
-				}
-			}
-		}
+		sourceThreadID := extractSourceThreadID(item.SourceThread, "", item.Metadata.SourceThreadID)
 		score := item.Score
 		if score == 0 {
 			score = item.Confidence
@@ -580,6 +623,151 @@ func (c *Client) TriageConversation(ctx context.Context, ident memory.MemoryIden
 	return TriageResult{ShouldDistill: response.ShouldDistill, Reason: strings.TrimSpace(response.Reason)}, nil
 }
 
+func (c *Client) Connections(ctx context.Context, ident memory.MemoryIdentity, memoryID string, depth, limit int) ([]GraphConnection, error) {
+	memoryID = strings.TrimSpace(memoryID)
+	if memoryID == "" {
+		return nil, fmt.Errorf("nowledge connections: memory_id is empty")
+	}
+	if depth <= 0 {
+		depth = 1
+	}
+	if limit <= 0 {
+		limit = 20
+	}
+	var response struct {
+		Neighbors []struct {
+			ID          string `json:"id"`
+			Label       string `json:"label"`
+			Title       string `json:"title"`
+			NodeType    string `json:"node_type"`
+			Type        string `json:"type"`
+			Content     string `json:"content"`
+			Description string `json:"description"`
+			Summary     string `json:"summary"`
+			SourceType  string `json:"source_type"`
+			Metadata    struct {
+				Title      string `json:"title"`
+				Content    string `json:"content"`
+				SourceType string `json:"source_type"`
+			} `json:"metadata"`
+		} `json:"neighbors"`
+		Edges []struct {
+			Source     string  `json:"source"`
+			Target     string  `json:"target"`
+			EdgeType   string  `json:"edge_type"`
+			Type       string  `json:"type"`
+			Weight     float64 `json:"weight"`
+			Label      string  `json:"label"`
+			ContentRel string  `json:"content_relation"`
+			Metadata   struct {
+				RelationType string `json:"relation_type"`
+			} `json:"metadata"`
+		} `json:"edges"`
+	}
+	path := fmt.Sprintf("/graph/expand/%s?depth=%d&limit=%d", url.PathEscape(memoryID), depth, limit)
+	if err := c.doJSON(ctx, ident, http.MethodGet, path, nil, &response); err != nil {
+		return nil, err
+	}
+	nodeByID := make(map[string]struct {
+		Title      string
+		NodeType   string
+		Snippet    string
+		SourceType string
+	}, len(response.Neighbors))
+	for _, node := range response.Neighbors {
+		title := firstNonEmpty(node.Label, node.Metadata.Title, node.Title)
+		snippet := compactContent(firstNonEmpty(node.Metadata.Content, node.Content, node.Summary, node.Description), 150)
+		nodeByID[node.ID] = struct {
+			Title      string
+			NodeType   string
+			Snippet    string
+			SourceType string
+		}{
+			Title:      strings.TrimSpace(title),
+			NodeType:   firstNonEmpty(node.NodeType, node.Type, "memory"),
+			Snippet:    strings.TrimSpace(snippet),
+			SourceType: firstNonEmpty(node.Metadata.SourceType, node.SourceType),
+		}
+	}
+	out := make([]GraphConnection, 0, len(response.Edges))
+	for _, edge := range response.Edges {
+		neighborID := edge.Target
+		if strings.TrimSpace(edge.Target) == memoryID {
+			neighborID = edge.Source
+		}
+		node, ok := nodeByID[neighborID]
+		if !ok {
+			continue
+		}
+		out = append(out, GraphConnection{
+			MemoryID:   memoryID,
+			NodeID:     neighborID,
+			NodeType:   node.NodeType,
+			Title:      node.Title,
+			Snippet:    node.Snippet,
+			EdgeType:   firstNonEmpty(edge.EdgeType, edge.Type, "RELATED"),
+			Relation:   firstNonEmpty(edge.Metadata.RelationType, edge.ContentRel, edge.Label),
+			Weight:     edge.Weight,
+			SourceType: node.SourceType,
+		})
+	}
+	return out, nil
+}
+
+func (c *Client) Timeline(ctx context.Context, ident memory.MemoryIdentity, lastNDays int, dateFrom, dateTo, eventType string, tier1Only bool, limit int) ([]TimelineEvent, error) {
+	if lastNDays <= 0 {
+		lastNDays = 7
+	}
+	if limit <= 0 {
+		limit = 100
+	}
+	values := url.Values{}
+	values.Set("last_n_days", strconv.Itoa(lastNDays))
+	values.Set("limit", strconv.Itoa(limit))
+	if strings.TrimSpace(eventType) != "" {
+		values.Set("event_type", strings.TrimSpace(eventType))
+	}
+	if strings.TrimSpace(dateFrom) != "" {
+		values.Set("date_from", strings.TrimSpace(dateFrom))
+	}
+	if strings.TrimSpace(dateTo) != "" {
+		values.Set("date_to", strings.TrimSpace(dateTo))
+	}
+	if !tier1Only {
+		values.Set("tier1_only", "false")
+	}
+	var response struct {
+		Events []struct {
+			ID               string   `json:"id"`
+			EventType        string   `json:"event_type"`
+			Title            string   `json:"title"`
+			Description      string   `json:"description"`
+			Content          string   `json:"content"`
+			CreatedAt        string   `json:"created_at"`
+			Timestamp        string   `json:"timestamp"`
+			MemoryID         string   `json:"memory_id"`
+			RelatedMemoryIDs []string `json:"related_memory_ids"`
+		} `json:"events"`
+	}
+	if err := c.doJSON(ctx, ident, http.MethodGet, "/agent/feed/events?"+values.Encode(), nil, &response); err != nil {
+		return nil, err
+	}
+	out := make([]TimelineEvent, 0, len(response.Events))
+	for _, item := range response.Events {
+		out = append(out, TimelineEvent{
+			ID:               strings.TrimSpace(item.ID),
+			EventType:        strings.TrimSpace(item.EventType),
+			Label:            timelineLabelForType(item.EventType),
+			Title:            strings.TrimSpace(firstNonEmpty(item.Title, item.Description, item.Content)),
+			Description:      strings.TrimSpace(firstNonEmpty(item.Description, item.Content)),
+			CreatedAt:        strings.TrimSpace(firstNonEmpty(item.CreatedAt, item.Timestamp)),
+			MemoryID:         strings.TrimSpace(item.MemoryID),
+			RelatedMemoryIDs: append([]string(nil), item.RelatedMemoryIDs...),
+		})
+	}
+	return out, nil
+}
+
 func (c *Client) DistillThread(ctx context.Context, ident memory.MemoryIdentity, threadID, title, content string) (DistillResult, error) {
 	var response struct {
 		MemoriesCreated int   `json:"memories_created"`
@@ -700,6 +888,63 @@ func parseMemoryURI(uri string) (string, error) {
 
 func MemoryIDFromURI(uri string) (string, error) {
 	return parseMemoryURI(uri)
+}
+
+func extractSourceThreadID(raw any, direct string, metadata string) string {
+	if value := strings.TrimSpace(direct); value != "" {
+		return value
+	}
+	if value := strings.TrimSpace(metadata); value != "" {
+		return value
+	}
+	switch value := raw.(type) {
+	case string:
+		return strings.TrimSpace(value)
+	case map[string]any:
+		if rawID, ok := value["id"].(string); ok {
+			return strings.TrimSpace(rawID)
+		}
+	}
+	return ""
+}
+
+func timelineLabelForType(eventType string) string {
+	switch strings.TrimSpace(eventType) {
+	case "memory_created":
+		return "Memory saved"
+	case "insight_generated":
+		return "Insight"
+	case "pattern_detected":
+		return "Pattern"
+	case "agent_observation":
+		return "Observation"
+	case "daily_briefing":
+		return "Daily briefing"
+	case "crystal_created":
+		return "Crystal"
+	case "flag_contradiction":
+		return "Flag: contradiction"
+	case "flag_stale":
+		return "Flag: stale"
+	case "flag_merge_candidate":
+		return "Flag: duplicate"
+	case "flag_review":
+		return "Flag: review"
+	case "source_ingested":
+		return "Document ingested"
+	case "source_extracted":
+		return "Knowledge extracted"
+	case "working_memory_updated":
+		return "Working Memory updated"
+	case "evolves_detected":
+		return "Knowledge evolution"
+	case "kg_extraction":
+		return "Entity extraction"
+	case "url_captured":
+		return "URL captured"
+	default:
+		return strings.TrimSpace(eventType)
+	}
 }
 
 type writableMetadata struct {

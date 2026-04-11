@@ -113,6 +113,33 @@ func TestClientContentParsesNowledgeURI(t *testing.T) {
 	}
 }
 
+func TestClientMemoryDetailIncludesSourceThreadID(t *testing.T) {
+	t.Setenv(sharedoutbound.AllowLoopbackHTTPEnv, "true")
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/memories/mem-9" {
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"id":      "mem-9",
+			"title":   "Preference",
+			"content": "Prefers concise updates",
+			"metadata": map[string]any{
+				"source_thread_id": "thread-42",
+			},
+		})
+	}))
+	defer srv.Close()
+
+	c := NewClient(Config{BaseURL: srv.URL})
+	detail, err := c.MemoryDetail(context.Background(), testIdent(), "nowledge://memory/mem-9")
+	if err != nil {
+		t.Fatalf("MemoryDetail failed: %v", err)
+	}
+	if detail.SourceThreadID != "thread-42" {
+		t.Fatalf("unexpected detail: %#v", detail)
+	}
+}
+
 func TestClientListMemories(t *testing.T) {
 	t.Setenv(sharedoutbound.AllowLoopbackHTTPEnv, "true")
 	var sawAuth bool
@@ -352,5 +379,63 @@ func TestClientDistillEndpoints(t *testing.T) {
 	distill, err := c.DistillThread(context.Background(), testIdent(), "thread-1", "Decision", "content")
 	if err != nil || distill.MemoriesCreated != 3 {
 		t.Fatalf("DistillThread failed: %v %#v", err, distill)
+	}
+}
+
+func TestClientConnections(t *testing.T) {
+	t.Setenv(sharedoutbound.AllowLoopbackHTTPEnv, "true")
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/graph/expand/mem-1" {
+			t.Fatalf("unexpected path: %s", r.URL.String())
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"neighbors": []map[string]any{
+				{"id": "node-1", "label": "SeaweedFS", "node_type": "entity", "description": "storage backend"},
+			},
+			"edges": []map[string]any{
+				{"source": "mem-1", "target": "node-1", "edge_type": "MENTIONS", "weight": 0.8},
+			},
+		})
+	}))
+	defer srv.Close()
+
+	c := NewClient(Config{BaseURL: srv.URL})
+	connections, err := c.Connections(context.Background(), testIdent(), "mem-1", 1, 20)
+	if err != nil {
+		t.Fatalf("Connections failed: %v", err)
+	}
+	if len(connections) != 1 || connections[0].NodeID != "node-1" || connections[0].EdgeType != "MENTIONS" {
+		t.Fatalf("unexpected connections: %#v", connections)
+	}
+}
+
+func TestClientTimeline(t *testing.T) {
+	t.Setenv(sharedoutbound.AllowLoopbackHTTPEnv, "true")
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/agent/feed/events" {
+			t.Fatalf("unexpected path: %s", r.URL.String())
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"events": []map[string]any{
+				{
+					"id":                 "evt-1",
+					"event_type":         "memory_created",
+					"title":              "Deploy decision",
+					"created_at":         "2026-04-12T10:00:00Z",
+					"memory_id":          "mem-1",
+					"related_memory_ids": []string{"mem-2"},
+				},
+			},
+		})
+	}))
+	defer srv.Close()
+
+	c := NewClient(Config{BaseURL: srv.URL})
+	events, err := c.Timeline(context.Background(), testIdent(), 7, "", "", "", true, 100)
+	if err != nil {
+		t.Fatalf("Timeline failed: %v", err)
+	}
+	if len(events) != 1 || events[0].Label != "Memory saved" || events[0].MemoryID != "mem-1" {
+		t.Fatalf("unexpected events: %#v", events)
 	}
 }
