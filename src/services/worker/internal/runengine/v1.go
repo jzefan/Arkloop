@@ -26,6 +26,7 @@ import (
 	"arkloop/services/worker/internal/mcp"
 	"arkloop/services/worker/internal/memory"
 	notebookprovider "arkloop/services/worker/internal/memory/notebook"
+	"arkloop/services/worker/internal/memory/nowledge"
 	"arkloop/services/worker/internal/personas"
 	"arkloop/services/worker/internal/pipeline"
 	"arkloop/services/worker/internal/queue"
@@ -205,6 +206,20 @@ func NewEngineV1(deps EngineV1Deps) (*EngineV1, error) {
 	hookRegistry := pipeline.NewHookRegistry()
 	hookRegistry.RegisterContextContributor(pipeline.NewNotebookContextContributor(notebookprovider.NewProvider(deps.DBPool)))
 	hookRegistry.RegisterContextContributor(pipeline.NewImpressionContextContributor(pipeline.NewPgxImpressionStore(deps.DBPool)))
+	if nowledgeProvider := resolveNowledgeProvider(context.Background(), deps.ConfigResolver); nowledgeProvider != nil {
+		linkRepo := data.ExternalThreadLinksRepository{}
+		hookRegistry.RegisterContextContributor(pipeline.NewNowledgeContextContributor(nowledgeProvider))
+		hookRegistry.RegisterCompactionAdvisor(pipeline.NewNowledgeCompactionAdvisor(nowledgeProvider))
+		_ = hookRegistry.SetThreadPersistenceProvider(pipeline.NewNowledgeThreadPersistenceProvider(
+			nowledgeProvider,
+			pgxExternalThreadLinks{repo: linkRepo, pool: deps.DBPool},
+		))
+		hookRegistry.RegisterAfterThreadPersistHook(pipeline.NewNowledgeDistillObserver(
+			nowledgeProvider,
+			pgxExternalThreadLinks{repo: linkRepo, pool: deps.DBPool},
+			deps.ConfigResolver,
+		))
+	}
 	hookRegistry.RegisterAfterThreadPersistHook(pipeline.NewLegacyMemoryDistillObserver(
 		pipeline.NewPgxMemorySnapshotStore(deps.DBPool),
 		deps.DBPool,
@@ -248,6 +263,55 @@ func NewEngineV1(deps EngineV1Deps) (*EngineV1, error) {
 		releaseSlot:           releaseSlot,
 		rolloutBlobStore:      deps.RolloutBlobStore,
 	}, nil
+}
+
+type pgxExternalThreadLinks struct {
+	repo data.ExternalThreadLinksRepository
+	pool *pgxpool.Pool
+}
+
+func (s pgxExternalThreadLinks) Get(ctx context.Context, accountID, threadID uuid.UUID, provider string) (string, bool, error) {
+	return s.repo.Get(ctx, s.pool, accountID, threadID, provider)
+}
+
+func (s pgxExternalThreadLinks) Upsert(ctx context.Context, accountID, threadID uuid.UUID, provider, externalThreadID string) error {
+	return s.repo.Upsert(ctx, s.pool, accountID, threadID, provider, externalThreadID)
+}
+
+func resolveNowledgeProvider(ctx context.Context, resolver sharedconfig.Resolver) *nowledge.Client {
+	providerName := strings.TrimSpace(os.Getenv("ARKLOOP_MEMORY_PROVIDER"))
+	if providerName == "" && resolver != nil {
+		baseURL, _ := resolver.Resolve(ctx, "nowledge.base_url", sharedconfig.Scope{})
+		if strings.TrimSpace(baseURL) != "" {
+			providerName = "nowledge"
+		}
+	}
+	if providerName != "nowledge" {
+		return nil
+	}
+	cfg := nowledge.Config{
+		BaseURL:          strings.TrimSpace(os.Getenv("ARKLOOP_NOWLEDGE_BASE_URL")),
+		APIKey:           strings.TrimSpace(os.Getenv("ARKLOOP_NOWLEDGE_API_KEY")),
+		RequestTimeoutMs: 30000,
+	}
+	if resolver != nil {
+		if cfg.BaseURL == "" {
+			if value, err := resolver.Resolve(ctx, "nowledge.base_url", sharedconfig.Scope{}); err == nil {
+				cfg.BaseURL = strings.TrimSpace(value)
+			}
+		}
+		if cfg.APIKey == "" {
+			if value, err := resolver.Resolve(ctx, "nowledge.api_key", sharedconfig.Scope{}); err == nil {
+				cfg.APIKey = strings.TrimSpace(value)
+			}
+		}
+		if value, err := resolver.Resolve(ctx, "nowledge.request_timeout_ms", sharedconfig.Scope{}); err == nil {
+			if parsed, parseErr := strconv.Atoi(strings.TrimSpace(value)); parseErr == nil && parsed > 0 {
+				cfg.RequestTimeoutMs = parsed
+			}
+		}
+	}
+	return nowledge.NewClient(cfg)
 }
 
 func (e *EngineV1) Execute(ctx context.Context, pool *pgxpool.Pool, run data.Run, input ExecuteInput) error {
@@ -364,11 +428,11 @@ func (e *EngineV1) Execute(ctx context.Context, pool *pgxpool.Pool, run data.Run
 
 	if e.jobQueue != nil && e.broadcastRDB != nil {
 		subAgentLimits := subagentctl.SubAgentLimits{
-			MaxDepth:                 resolveNonNegativeInt(ctx, e.configResolver, registry, "limit.subagent_max_depth", platformScope, 5),
-			MaxActivePerRootRun:      resolveNonNegativeInt(ctx, e.configResolver, registry, "limit.subagent_max_active_per_root_run", platformScope, 20),
-			MaxParallelChildren:      resolveNonNegativeInt(ctx, e.configResolver, registry, "limit.subagent_max_parallel_children", platformScope, 5),
-			MaxDescendantsPerRootRun: resolveNonNegativeInt(ctx, e.configResolver, registry, "limit.subagent_max_descendants_per_root_run", platformScope, 50),
-			MaxPendingPerRootRun:     resolveNonNegativeInt(ctx, e.configResolver, registry, "limit.subagent_max_pending_per_root_run", platformScope, 20),
+			MaxDepth:                     resolveNonNegativeInt(ctx, e.configResolver, registry, "limit.subagent_max_depth", platformScope, 5),
+			MaxActivePerThread:           resolveNonNegativeInt(ctx, e.configResolver, registry, "limit.subagent_max_active_per_thread", platformScope, 20),
+			MaxParallelChildrenPerThread: resolveNonNegativeInt(ctx, e.configResolver, registry, "limit.subagent_max_parallel_children_per_thread", platformScope, 5),
+			MaxDescendantsPerThread:      resolveNonNegativeInt(ctx, e.configResolver, registry, "limit.subagent_max_descendants_per_thread", platformScope, 50),
+			MaxPendingPerThread:          resolveNonNegativeInt(ctx, e.configResolver, registry, "limit.subagent_max_pending_per_thread", platformScope, 20),
 		}
 		bpConfig := subagentctl.BackpressureConfig{
 			Enabled:        resolveBool(ctx, e.configResolver, registry, "backpressure.enabled", platformScope, true),
@@ -551,6 +615,7 @@ func buildBaseLayer(
 	return []pipeline.RunMiddleware{
 		pipeline.NewCancelGuardMiddleware(runsRepo, eventsRepo, runControlHub),
 		pipeline.NewInputLoaderMiddleware(runsRepo, eventsRepo, messagesRepo, attachmentStore, rolloutStore),
+		pipeline.NewSubAgentCallbackMiddleware(),
 		pipeline.NewEntitlementMiddleware(resolver, runsRepo, eventsRepo, releaseSlot),
 	}
 }

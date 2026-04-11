@@ -111,6 +111,45 @@ func (p impressionMemoryProviderStub) Delete(_ context.Context, _ memory.MemoryI
 	return nil
 }
 
+type impressionFragmentProviderStub struct {
+	fragments   []memory.MemoryFragment
+	treeTouched bool
+}
+
+func (p *impressionFragmentProviderStub) Find(context.Context, memory.MemoryIdentity, string, string, int) ([]memory.MemoryHit, error) {
+	return nil, nil
+}
+
+func (p *impressionFragmentProviderStub) Content(context.Context, memory.MemoryIdentity, string, memory.MemoryLayer) (string, error) {
+	p.treeTouched = true
+	return "", fmt.Errorf("tree path should not be used")
+}
+
+func (p *impressionFragmentProviderStub) ListDir(context.Context, memory.MemoryIdentity, string) ([]string, error) {
+	p.treeTouched = true
+	return nil, fmt.Errorf("tree path should not be used")
+}
+
+func (p *impressionFragmentProviderStub) AppendSessionMessages(context.Context, memory.MemoryIdentity, string, []memory.MemoryMessage) error {
+	return nil
+}
+
+func (p *impressionFragmentProviderStub) CommitSession(context.Context, memory.MemoryIdentity, string) error {
+	return nil
+}
+
+func (p *impressionFragmentProviderStub) Write(context.Context, memory.MemoryIdentity, memory.MemoryScope, memory.MemoryEntry) error {
+	return nil
+}
+
+func (p *impressionFragmentProviderStub) Delete(context.Context, memory.MemoryIdentity, string) error {
+	return nil
+}
+
+func (p *impressionFragmentProviderStub) ListFragments(_ context.Context, _ memory.MemoryIdentity, _ int) ([]memory.MemoryFragment, error) {
+	return append([]memory.MemoryFragment(nil), p.fragments...), nil
+}
+
 func TestImpressionPrepareMiddlewareUsesAccountToolRoute(t *testing.T) {
 	routeCfg := routing.ProviderRoutingConfig{
 		Credentials: []routing.ProviderCredential{
@@ -230,6 +269,82 @@ func TestImpressionPrepareMiddlewareInjectsOverviewAndLeafReadContent(t *testing
 		}
 		if !strings.Contains(text, "Vic 和 owner 正在讨论 impression 应该更长") {
 			t.Fatalf("expected L2 leaf content in injected message, got %q", text)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestImpressionPrepareMiddlewareUsesFragmentsWhenAvailable(t *testing.T) {
+	uid := uuid.New()
+	provider := &impressionFragmentProviderStub{
+		fragments: []memory.MemoryFragment{{
+			ID:      "mem-1",
+			URI:     "nowledge://memory/mem-1",
+			Title:   "Owner preference",
+			Content: "回答保持简洁，聚焦后端语义和真实数据闭环。",
+		}},
+	}
+
+	mw := NewImpressionPrepareMiddleware(nil, nil, nil, false, nil)
+	rc := &RunContext{
+		Run: data.Run{
+			ID:        uuid.New(),
+			AccountID: uuid.New(),
+		},
+		InputJSON: map[string]any{
+			"run_kind": "impression",
+		},
+		UserID:         &uid,
+		MemoryProvider: provider,
+	}
+
+	err := mw(context.Background(), rc, func(_ context.Context, inner *RunContext) error {
+		if len(inner.Messages) != 1 {
+			t.Fatalf("expected one injected message, got %d", len(inner.Messages))
+		}
+		text := llm.VisibleMessageText(inner.Messages[0])
+		if !strings.Contains(text, "## 记忆条目") {
+			t.Fatalf("expected fragment section, got %q", text)
+		}
+		if strings.Contains(text, "## 记忆目录概览") {
+			t.Fatalf("did not expect tree overview section, got %q", text)
+		}
+		if !strings.Contains(text, "Owner preference") || !strings.Contains(text, "后端语义和真实数据闭环") {
+			t.Fatalf("expected fragment title and content, got %q", text)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if provider.treeTouched {
+		t.Fatal("did not expect tree snapshot path when fragment source is available")
+	}
+}
+
+func TestImpressionPrepareMiddlewareSkipsInjectionWhenFragmentsEmpty(t *testing.T) {
+	uid := uuid.New()
+	provider := &impressionFragmentProviderStub{}
+
+	mw := NewImpressionPrepareMiddleware(nil, nil, nil, false, nil)
+	rc := &RunContext{
+		Run: data.Run{
+			ID:        uuid.New(),
+			AccountID: uuid.New(),
+		},
+		InputJSON: map[string]any{
+			"run_kind": "impression",
+		},
+		UserID:         &uid,
+		MemoryProvider: provider,
+	}
+
+	err := mw(context.Background(), rc, func(_ context.Context, inner *RunContext) error {
+		if len(inner.Messages) != 0 {
+			t.Fatalf("expected no injected message, got %#v", inner.Messages)
 		}
 		return nil
 	})

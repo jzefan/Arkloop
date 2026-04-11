@@ -35,6 +35,7 @@ import (
 	"arkloop/services/worker/internal/mcp"
 	"arkloop/services/worker/internal/memory"
 	localmemory "arkloop/services/worker/internal/memory/local"
+	"arkloop/services/worker/internal/memory/nowledge"
 	"arkloop/services/worker/internal/memory/openviking"
 	"arkloop/services/worker/internal/personas"
 	"arkloop/services/worker/internal/pipeline"
@@ -243,8 +244,10 @@ func ComposeDesktopEngine(ctx context.Context, db data.DesktopDB, bus eventbus.E
 	executors[conversationtool.GroupSearchAgentSpec.Name] = groupSearchExec
 
 	memEnabled := strings.TrimSpace(os.Getenv("ARKLOOP_MEMORY_ENABLED")) != "false"
+	memoryProviderName := strings.TrimSpace(os.Getenv("ARKLOOP_MEMORY_PROVIDER"))
 	ovURL := strings.TrimSpace(os.Getenv("ARKLOOP_OPENVIKING_BASE_URL"))
 	ovKey := strings.TrimSpace(os.Getenv("ARKLOOP_OPENVIKING_ROOT_API_KEY"))
+	nowledgeCfg := nowledge.LoadConfigFromEnv()
 
 	var notebookProvider memory.MemoryProvider
 	var memProvider memory.MemoryProvider
@@ -253,7 +256,15 @@ func ComposeDesktopEngine(ctx context.Context, db data.DesktopDB, bus eventbus.E
 		notebookProvider = localmemory.NewProvider(db)
 		slog.Info("desktop: notebook enabled")
 	}
-	if memEnabled && ovURL != "" {
+	if memEnabled && memoryProviderName == "nowledge" {
+		nowledgeCfg = nowledge.ResolveDesktopConfig(nowledgeCfg)
+		memProvider = nowledge.NewProvider(nowledgeCfg)
+		if memProvider != nil {
+			useOV = true
+			desktop.SetMemoryRuntime("nowledge")
+			slog.Info("desktop: using Nowledge memory provider", "url", nowledgeCfg.BaseURL)
+		}
+	} else if memEnabled && ovURL != "" {
 		memProvider = openviking.NewProvider(openviking.Config{BaseURL: ovURL, RootAPIKey: ovKey})
 		useOV = true
 		desktop.SetMemoryRuntime("openviking")
@@ -334,6 +345,14 @@ func ComposeDesktopEngine(ctx context.Context, db data.DesktopDB, bus eventbus.E
 	}
 	desktopImpStore := pipeline.NewDesktopImpressionStore(db)
 	hookRegistry.RegisterContextContributor(pipeline.NewImpressionContextContributor(desktopImpStore))
+	if typed, ok := memProvider.(*nowledge.Client); ok {
+		linkRepo := data.ExternalThreadLinksRepository{}
+		linkStore := desktopExternalThreadLinks{repo: linkRepo, db: db}
+		hookRegistry.RegisterContextContributor(pipeline.NewNowledgeContextContributor(typed))
+		hookRegistry.RegisterCompactionAdvisor(pipeline.NewNowledgeCompactionAdvisor(typed))
+		_ = hookRegistry.SetThreadPersistenceProvider(pipeline.NewNowledgeThreadPersistenceProvider(typed, linkStore))
+		hookRegistry.RegisterAfterThreadPersistHook(pipeline.NewNowledgeDistillObserver(typed, linkStore, promptInjection.Resolver))
+	}
 	hookRegistry.RegisterAfterThreadPersistHook(pipeline.NewLegacyMemoryDistillObserver(
 		pipeline.NewDesktopMemorySnapshotStore(db),
 		db,
@@ -377,9 +396,15 @@ func ComposeDesktopEngine(ctx context.Context, db data.DesktopDB, bus eventbus.E
 		)
 	}
 	if useOV && memProvider != nil {
-		mergedRT = mergedRT.WithMergedBuiltinToolNames(
-			"memory_search", "memory_read", "memory_write", "memory_edit", "memory_forget",
-		)
+		if _, ok := memProvider.(*nowledge.Provider); ok {
+			mergedRT = mergedRT.WithMergedBuiltinToolNames(
+				"memory_search", "memory_read", "memory_write", "memory_forget", "memory_thread_search", "memory_thread_fetch",
+			)
+		} else {
+			mergedRT = mergedRT.WithMergedBuiltinToolNames(
+				"memory_search", "memory_read", "memory_write", "memory_edit", "memory_forget",
+			)
+		}
 	}
 	runtimeSnapshot = &mergedRT
 
@@ -446,6 +471,19 @@ func ComposeDesktopEngine(ctx context.Context, db data.DesktopDB, bus eventbus.E
 		hookRuntime:            pipeline.NewHookRuntime(hookRegistry, pipeline.NewDefaultHookResultApplier()),
 		hookRegistry:           hookRegistry,
 	}, nil
+}
+
+type desktopExternalThreadLinks struct {
+	repo data.ExternalThreadLinksRepository
+	db   data.DesktopDB
+}
+
+func (s desktopExternalThreadLinks) Get(ctx context.Context, accountID, threadID uuid.UUID, provider string) (string, bool, error) {
+	return s.repo.Get(ctx, s.db, accountID, threadID, provider)
+}
+
+func (s desktopExternalThreadLinks) Upsert(ctx context.Context, accountID, threadID uuid.UUID, provider, externalThreadID string) error {
+	return s.repo.Upsert(ctx, s.db, accountID, threadID, provider, externalThreadID)
 }
 
 func loadPersonaRegistryFromFS() func() *personas.Registry {
@@ -2696,12 +2734,12 @@ func (w *desktopEventWriter) append(ctx context.Context, runID uuid.UUID, ev eve
 			return err
 		}
 		if w.projector != nil {
-			nextRunID, err := w.projector.ProjectRunTerminal(ctx, tx, w.run, status, ev.DataJSON, ev.ErrorClass)
+			projection, err := w.projector.ProjectRunTerminal(ctx, tx, w.run, status, ev.DataJSON, ev.ErrorClass)
 			if err != nil {
 				return err
 			}
-			if nextRunID != nil {
-				nextRunIDs = append(nextRunIDs, *nextRunID)
+			if projection.NextRunID != nil {
+				nextRunIDs = append(nextRunIDs, *projection.NextRunID)
 			}
 		}
 	} else if err := w.runsRepo.TouchRunActivity(ctx, tx, w.run.ID); err != nil {
@@ -2831,12 +2869,12 @@ func (w *desktopEventWriter) transitionCancelled(ctx context.Context, tx pgx.Tx,
 	}
 	var nextRunIDs []uuid.UUID
 	if w.projector != nil {
-		nextRunID, err := w.projector.ProjectRunTerminal(ctx, tx, w.run, data.SubAgentStatusCancelled, map[string]any{"run_id": runID.String()}, nil)
+		projection, err := w.projector.ProjectRunTerminal(ctx, tx, w.run, data.SubAgentStatusCancelled, map[string]any{"run_id": runID.String()}, nil)
 		if err != nil {
 			return nil, err
 		}
-		if nextRunID != nil {
-			nextRunIDs = append(nextRunIDs, *nextRunID)
+		if projection.NextRunID != nil {
+			nextRunIDs = append(nextRunIDs, *projection.NextRunID)
 		}
 	}
 	if err := w.runsRepo.UpdateRunTerminalStatus(ctx, tx, runID, data.TerminalStatusUpdate{

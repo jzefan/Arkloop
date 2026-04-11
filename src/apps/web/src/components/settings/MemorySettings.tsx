@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef, useLayoutEffect } from 'react'
-import { FileText, RefreshCw, Settings, Database, AlertTriangle, Brain, Check, ChevronRight } from 'lucide-react'
+import { FileText, RefreshCw, Settings, AlertTriangle, Brain, Check, ChevronRight } from 'lucide-react'
 import { PillToggle, Modal } from '@arkloop/shared'
+import { TabBar } from '@arkloop/shared/components/prompt-injection'
 import { SpinnerIcon } from '@arkloop/shared/components/auth-ui'
 import { useLocale } from '../../contexts/LocaleContext'
 import { getDesktopApi } from '@arkloop/shared/desktop'
@@ -573,6 +574,9 @@ export function MemorySettings({ accessToken }: Props) {
   const [loading, setLoading] = useState(true)
   const [rebuilding, setRebuilding] = useState(false)
   const [configModalOpen, setConfigModalOpen] = useState(false)
+  const [configModalProvider, setConfigModalProvider] = useState<'openviking' | 'nowledge'>('openviking')
+  const [viewTab, setViewTab] = useState<'openviking' | 'nowledge'>('openviking')
+  const [switching, setSwitching] = useState(false)
   const [errorsModalOpen, setErrorsModalOpen] = useState(false)
   const [memoryErrors, setMemoryErrors] = useState<MemoryErrorEvent[]>([])
   const [impression, setImpression] = useState('')
@@ -588,10 +592,27 @@ export function MemorySettings({ accessToken }: Props) {
   const api = getDesktopApi()
 
   const probeHealth = useCallback(async (cfg: MemoryConfig | null) => {
-    const isConfigured = Boolean(cfg?.openviking?.vlmModel && cfg?.openviking?.embeddingModel)
+    if (!cfg?.enabled) {
+      setHealth('checking')
+      setHealthLabel('')
+      return
+    }
+    if (cfg.provider === 'notebook') {
+      setHealth('ok')
+      setHealthLabel(ds.memorySystemSimple)
+      return
+    }
+    const isConfigured = cfg?.provider === 'nowledge'
+      ? Boolean(cfg?.nowledge?.baseUrl)
+      : Boolean(cfg?.openviking?.vlmModel && cfg?.openviking?.embeddingModel)
     if (!isConfigured) {
       setHealth('error')
       setHealthLabel(ds.memoryNotConfiguredHint)
+      return
+    }
+    if (cfg?.provider === 'nowledge') {
+      setHealth('ok')
+      setHealthLabel(ds.memoryConfigured)
       return
     }
     try {
@@ -637,6 +658,10 @@ export function MemorySettings({ accessToken }: Props) {
     try {
       const cfg = await api.memory.getConfig()
       setMemConfigState(cfg)
+      // viewTab 跟随激活后端
+      if (cfg.provider === 'openviking' || cfg.provider === 'nowledge') {
+        setViewTab(cfg.provider)
+      }
       if (!quiet) setLoading(false)
       void probeHealth(cfg)
       if (accessToken) {
@@ -646,7 +671,10 @@ export function MemorySettings({ accessToken }: Props) {
           })
           .catch((err) => { console.error('listMemoryErrors failed', err) })
       }
-      if (cfg.enabled) {
+      const hasSemanticBackend = cfg.provider === 'nowledge'
+        ? Boolean(cfg?.nowledge?.baseUrl)
+        : Boolean(cfg?.openviking?.vlmModel && cfg?.openviking?.embeddingModel)
+      if (cfg.enabled && hasSemanticBackend) {
         setSnapshotLoading(true)
         void api.memory.getSnapshot()
           .then((snap) => {
@@ -655,6 +683,12 @@ export function MemorySettings({ accessToken }: Props) {
           })
           .catch((err) => { console.error('getSnapshot failed', err) })
           .finally(() => setSnapshotLoading(false))
+      } else {
+        setSnapshot('')
+        setHits([])
+        setSnapshotLoading(false)
+      }
+      if (cfg.enabled) {
         if (api.memory.getImpression) {
           setImpressionLoading(true)
           void api.memory.getImpression()
@@ -719,7 +753,9 @@ export function MemorySettings({ accessToken }: Props) {
     if (!api?.memory) return
     await api.memory.setConfig(next)
     setMemConfigState(next)
-  }, [api])
+    void probeHealth(next)
+    void loadData(true)
+  }, [api, loadData, probeHealth])
 
   const loadContent = useCallback(async (uri: string, layer: 'overview' | 'read'): Promise<string> => {
     if (!api?.memory?.getContent) return ''
@@ -756,7 +792,12 @@ export function MemorySettings({ accessToken }: Props) {
   }
 
   const enabled = memConfig?.enabled ?? true
-  const isConfigured = Boolean(memConfig?.openviking?.vlmModel && memConfig?.openviking?.embeddingModel)
+  const activeProvider = memConfig?.provider ?? 'notebook'
+  const isConfigured = memConfig?.provider === 'nowledge'
+    ? Boolean(memConfig?.nowledge?.baseUrl)
+    : Boolean(memConfig?.openviking?.vlmModel && memConfig?.openviking?.embeddingModel)
+  const showSemanticCards = (activeProvider === 'openviking' || activeProvider === 'nowledge') && isConfigured
+  const showSnapshotCard = showSemanticCards
 
   return (
     <div className="flex flex-col gap-6">
@@ -823,98 +864,178 @@ export function MemorySettings({ accessToken }: Props) {
 
       {enabled && memConfig && (
         <>
-          {/* Impression card */}
-          <ImpressionCard
-            impression={impression}
-            updatedAt={impressionUpdatedAt}
-            loading={impressionLoading}
-            onRebuild={() => void rebuildImpression()}
-            rebuilding={rebuildingImpression}
-            rebuildDone={rebuildImpressionDone}
-            titles={{
-              title: ds.memoryImpressionTitle,
-              updatedAgo: ds.memoryImpressionUpdatedAgo,
-              empty: ds.memoryImpressionEmpty,
-              viewEdit: ds.memoryImpressionViewEdit,
-              rebuild: ds.memoryImpressionRebuild,
-              modalTitle: ds.memoryImpressionModalTitle,
-            }}
-          />
-
-          {/* Memories card — snapshot hits in Impression-style mini preview */}
-          {isConfigured && (
-            <MemoriesCard
-              hits={hits}
-              snapshot={snapshot}
-              loading={snapshotLoading}
-              onRebuild={() => void rebuildSnapshot()}
-              rebuilding={rebuilding}
-              onLoadContent={loadContent}
-              titles={{
-                title: ds.memorySnapshotTitle,
-                empty: ds.memorySnapshotEmpty,
-                viewEdit: ds.memorySnapshotViewEdit,
-                rebuild: ds.memoryRebuildSnapshot,
-                modalTitle: ds.memorySnapshotTitle,
-              }}
-            />
+          {showSemanticCards && (
+            <>
+              <ImpressionCard
+                impression={impression}
+                updatedAt={impressionUpdatedAt}
+                loading={impressionLoading}
+                onRebuild={() => void rebuildImpression()}
+                rebuilding={rebuildingImpression}
+                rebuildDone={rebuildImpressionDone}
+                titles={{
+                  title: ds.memoryImpressionTitle,
+                  updatedAgo: ds.memoryImpressionUpdatedAgo,
+                  empty: ds.memoryImpressionEmpty,
+                  viewEdit: ds.memoryImpressionViewEdit,
+                  rebuild: ds.memoryImpressionRebuild,
+                  modalTitle: ds.memoryImpressionModalTitle,
+                }}
+              />
+              {showSnapshotCard && (
+                <MemoriesCard
+                  hits={hits}
+                  snapshot={snapshot}
+                  loading={snapshotLoading}
+                  onRebuild={() => void rebuildSnapshot()}
+                  rebuilding={rebuilding}
+                  onLoadContent={loadContent}
+                  titles={{
+                    title: ds.memorySnapshotTitle,
+                    empty: ds.memorySnapshotEmpty,
+                    viewEdit: ds.memorySnapshotViewEdit,
+                    rebuild: ds.memoryRebuildSnapshot,
+                    modalTitle: ds.memorySnapshotTitle,
+                  }}
+                />
+              )}
+            </>
           )}
 
-          {/* OpenViking provider card */}
+          {/* 向量记忆后端选择 */}
           <div
-            className="rounded-xl transition-[border-color] duration-150"
-            style={{
-              border: '1.5px solid var(--c-accent)',
-              background: 'var(--c-bg-menu)',
-            }}
+            className="rounded-xl"
+            style={{ border: '1px solid var(--c-border-subtle)', background: 'var(--c-bg-menu)' }}
           >
-            <div className="flex w-full items-start gap-3 rounded-xl p-4 text-left">
-              <div
-                className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center"
-                style={{ color: 'var(--c-accent)' }}
-              >
-                <Database size={18} />
-              </div>
-              <div className="min-w-0 flex-1">
-                <span className="text-sm font-medium text-[var(--c-text-heading)]">OpenViking</span>
-                <p className="mt-0.5 text-xs leading-relaxed text-[var(--c-text-muted)]">
-                  {ds.memoryOpenvikingProviderDesc}
-                </p>
+            <div className="border-b border-[var(--c-border-subtle)] px-3 py-2">
+              <style>{`
+                .memory-tab-bar [data-tab="${activeProvider}"]::before {
+                  content: '';
+                  display: inline-block;
+                  width: 6px;
+                  height: 6px;
+                  border-radius: 50%;
+                  background: #22c55e;
+                  margin-right: 5px;
+                  vertical-align: middle;
+                }
+              `}</style>
+              <div className="memory-tab-bar">
+                <TabBar
+                  key={activeProvider}
+                  tabs={[
+                    { key: 'openviking', label: ds.memoryProviderOpenviking },
+                    { key: 'nowledge', label: ds.memoryNowledgeProvider },
+                  ]}
+                  active={viewTab}
+                  onChange={setViewTab}
+                />
               </div>
             </div>
-            <div className="flex items-center justify-end gap-3 border-t border-[var(--c-border-subtle)] px-4 py-3">
-              {memoryErrors.length > 0 && (
-                <button
-                  type="button"
-                  onClick={() => setErrorsModalOpen(true)}
-                  className={secondaryButtonSmCls}
-                  style={{ border: '0.5px solid var(--c-status-warning-text)', color: 'var(--c-status-warning-text)' }}
-                >
-                  <AlertTriangle size={14} />
-                  {ds.memoryRecentErrors}
-                </button>
+
+            <div className="px-4 py-4">
+              {viewTab === 'openviking' && (
+                <div className="flex items-center gap-2">
+                  {activeProvider === 'openviking' ? (
+                    <>
+                      {memoryErrors.length > 0 && (
+                        <button
+                          type="button"
+                          onClick={() => setErrorsModalOpen(true)}
+                          className={secondaryButtonSmCls}
+                          style={{ border: '0.5px solid var(--c-status-warning-text)', color: 'var(--c-status-warning-text)' }}
+                        >
+                          <AlertTriangle size={14} />
+                          {ds.memoryRecentErrors}
+                        </button>
+                      )}
+                      <div className="flex items-center gap-1.5">
+                        <div className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: statusDotColor(health) }} />
+                        <span className="text-xs" style={{ color: health === 'ok' ? 'var(--c-text-muted)' : statusDotColor(health) }}>
+                          {healthLabel}
+                        </span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => { setConfigModalProvider('openviking'); setConfigModalOpen(true) }}
+                        className={secondaryButtonSmCls}
+                        style={secondaryButtonBorderStyle}
+                      >
+                        <Settings size={14} />
+                        {ds.memoryConfigureButton}
+                      </button>
+                    </>
+                  ) : (
+                    <button
+                      type="button"
+                      disabled={switching}
+                      onClick={() => {
+                        if (!memConfig) return
+                        setSwitching(true)
+                        void saveConfig({ ...memConfig, provider: 'openviking' }).finally(() => setSwitching(false))
+                      }}
+                      className={secondaryButtonSmCls}
+                      style={secondaryButtonBorderStyle}
+                    >
+                      {switching ? <SpinnerIcon /> : null}
+                      {ds.memoryActivate}
+                    </button>
+                  )}
+                </div>
               )}
-              <div className="flex items-center gap-2">
-                <div
-                  className="h-2 w-2 shrink-0 rounded-full"
-                  style={{ background: statusDotColor(health) }}
-                />
-                <span
-                  className="text-xs"
-                  style={{ color: health === 'ok' ? 'var(--c-text-muted)' : statusDotColor(health) }}
-                >
-                  {healthLabel}
-                </span>
-              </div>
-              <button
-                type="button"
-                onClick={() => setConfigModalOpen(true)}
-                className={secondaryButtonSmCls}
-                style={secondaryButtonBorderStyle}
-              >
-                <Settings size={14} />
-                {ds.memoryConfigureButton}
-              </button>
+
+              {viewTab === 'nowledge' && (
+                <div className="flex items-center gap-2">
+                  {activeProvider === 'nowledge' ? (
+                    <>
+                      <div className="flex items-center gap-1.5">
+                        <div className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: statusDotColor(health) }} />
+                        <span className="text-xs" style={{ color: health === 'ok' ? 'var(--c-text-muted)' : statusDotColor(health) }}>
+                          {healthLabel}
+                        </span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => { setConfigModalProvider('nowledge'); setConfigModalOpen(true) }}
+                        className={secondaryButtonSmCls}
+                        style={secondaryButtonBorderStyle}
+                      >
+                        <Settings size={14} />
+                        {ds.memoryConfigureButton}
+                      </button>
+                    </>
+                  ) : (
+                    <button
+                      type="button"
+                      disabled={switching}
+                      onClick={() => {
+                        if (!memConfig) return
+                        setSwitching(true)
+                        void (async () => {
+                          let baseUrl = memConfig.nowledge?.baseUrl ?? ''
+                          if (!baseUrl) {
+                            try {
+                              const res = await fetch('http://127.0.0.1:14242/health', { signal: AbortSignal.timeout(3000) })
+                              if (res.ok) baseUrl = 'http://127.0.0.1:14242'
+                            } catch { /* 未检测到 */ }
+                          }
+                          const next: MemoryConfig = {
+                            ...memConfig,
+                            provider: 'nowledge',
+                            nowledge: { ...memConfig.nowledge, baseUrl: baseUrl || memConfig.nowledge?.baseUrl },
+                          }
+                          await saveConfig(next)
+                        })().finally(() => setSwitching(false))
+                      }}
+                      className={secondaryButtonSmCls}
+                      style={secondaryButtonBorderStyle}
+                    >
+                      {switching ? <SpinnerIcon /> : null}
+                      {ds.memoryActivate}
+                    </button>
+                  )}
+                </div>
+              )}
             </div>
           </div>
         </>
@@ -925,6 +1046,7 @@ export function MemorySettings({ accessToken }: Props) {
         onClose={() => setConfigModalOpen(false)}
         accessToken={accessToken}
         memConfig={memConfig}
+        provider={configModalProvider}
         onConfigSaved={(cfg) => { setMemConfigState(cfg); void probeHealth(cfg); void loadData(true) }}
       />
 
