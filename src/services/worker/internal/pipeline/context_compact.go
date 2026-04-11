@@ -47,6 +47,9 @@ type OversizeRewriteStats struct {
 	ImagesStripped            int
 	ToolResultsMicrocompacted int
 	CompactApplied            bool
+	TargetChunkCount          int
+	PreviousReplacementCount  int
+	SingleAtomPartial         bool
 	RequestBytesBeforeRewrite int
 	RequestBytesAfterRewrite  int
 }
@@ -416,11 +419,14 @@ func RewriteOversizeRequest(
 		stats.ToolResultsMicrocompacted = microcompacted
 	}
 
-	compacted, _, changed, err := MaybeInlineCompactMessages(ctx, rc, rewritten.Messages, anchor)
+	compacted, compactStats, changed, err := MaybeInlineCompactMessages(ctx, rc, rewritten.Messages, anchor)
 	if changed {
 		rewritten.Messages = compacted
 		stats.RewriteApplied = true
 		stats.CompactApplied = true
+		stats.TargetChunkCount = compactStats.TargetChunkCount
+		stats.PreviousReplacementCount = compactStats.PreviousReplacementCount
+		stats.SingleAtomPartial = compactStats.SingleAtomPartial
 	}
 
 	if requestBytes != nil {

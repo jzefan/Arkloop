@@ -501,7 +501,7 @@ func persistGroupCompact(
 			return
 		}
 	}
-	startThreadSeq, endThreadSeq, layer, ok, rangeErr := resolvePersistReplacementRange(
+	persistPlan, ok, rangeErr := resolvePersistReplacementPlan(
 		postCtx,
 		tx,
 		dep.MessagesRepo,
@@ -519,20 +519,27 @@ func persistGroupCompact(
 	if ok {
 		replacementsRepo := data.ThreadContextReplacementsRepository{}
 		replacement, insErr := replacementsRepo.Insert(postCtx, tx, data.ThreadContextReplacementInsertInput{
-			AccountID:      accountID,
-			ThreadID:       threadID,
-			StartThreadSeq: startThreadSeq,
-			EndThreadSeq:   endThreadSeq,
-			SummaryText:    result.Summary,
-			Layer:          layer,
-			MetadataJSON:   compactReplacementMetadata("group_context_compact"),
+			AccountID:       accountID,
+			ThreadID:        threadID,
+			StartThreadSeq:  persistPlan.StartThreadSeq,
+			EndThreadSeq:    persistPlan.EndThreadSeq,
+			StartContextSeq: persistPlan.StartContextSeq,
+			EndContextSeq:   persistPlan.EndContextSeq,
+			SummaryText:     result.Summary,
+			Layer:           persistPlan.Layer,
+			MetadataJSON:    compactReplacementMetadata("group_context_compact"),
 		})
 		if insErr != nil {
 			_ = tx.Rollback(postCtx)
 			slog.WarnContext(ctx, "group_compact", "phase", "insert_replacement", "err", insErr.Error(), "run_id", runID.String())
 			return
 		}
-		if supErr := replacementsRepo.SupersedeActiveOverlaps(postCtx, tx, accountID, threadID, replacement.StartThreadSeq, replacement.EndThreadSeq, replacement.ID); supErr != nil {
+		if edgeErr := writeReplacementSupersessionEdges(postCtx, tx, accountID, threadID, replacement.ID, persistPlan); edgeErr != nil {
+			_ = tx.Rollback(postCtx)
+			slog.WarnContext(ctx, "group_compact", "phase", "write_replacement_edges", "err", edgeErr.Error(), "run_id", runID.String())
+			return
+		}
+		if supErr := replacementsRepo.SupersedeActiveOverlapsByContextSeq(postCtx, tx, accountID, threadID, replacement.StartContextSeq, replacement.EndContextSeq, replacement.ID); supErr != nil {
 			_ = tx.Rollback(postCtx)
 			slog.WarnContext(ctx, "group_compact", "phase", "supersede_replacements", "err", supErr.Error(), "run_id", runID.String())
 			return

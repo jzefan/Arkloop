@@ -635,7 +635,7 @@ func (e *DesktopEngine) Execute(ctx context.Context, run data.Run, traceID strin
 		desktopObservedStage("channel_qq_tools", eventsRepo, pipeline.NewChannelQQToolsMiddleware(pipeline.ChannelQQToolsDeps{
 			ConfigLoader:    &desktopQQOneBotConfigLoader{db: e.db},
 			GroupSearchExec: e.groupSearchExec,
-			GroupSearchSpec:  conversationtool.GroupSearchLlmSpec,
+			GroupSearchSpec: conversationtool.GroupSearchLlmSpec,
 		})),
 		desktopObservedStage("sub_agent_context", eventsRepo, desktopSubAgentContext(e.db, subagentctl.NewSnapshotStorage())),
 		desktopObservedStage("skill_context", eventsRepo, pipeline.NewSkillContextMiddleware(pipeline.SkillContextConfig{
@@ -2422,7 +2422,6 @@ type desktopEventWriter struct {
 	terminalStatus           string
 	visibleAssistantText     string
 	visibleAssistantTexts    []string
-	toolDeliveredTexts       []string
 	pendingReplyOverride     string
 	draftVisibleContent      string
 	draftUseVisible          bool
@@ -2838,27 +2837,19 @@ func (w *desktopEventWriter) visibleAssistantOutput() string {
 	if strings.TrimSpace(w.visibleAssistantText) != "" {
 		return strings.TrimSpace(w.visibleAssistantText)
 	}
-	if len(w.toolDeliveredTexts) > 0 {
-		return strings.Join(w.toolDeliveredTexts, "")
-	}
 	return strings.Join(w.assistantDeltas, "")
 }
 
 func (w *desktopEventWriter) visibleAssistantOutputs() []string {
-	if len(w.visibleAssistantTexts) == 0 && len(w.toolDeliveredTexts) == 0 {
+	if len(w.visibleAssistantTexts) == 0 {
 		output := strings.TrimSpace(w.visibleAssistantOutput())
 		if output == "" {
 			return nil
 		}
 		return []string{output}
 	}
-	out := make([]string, 0, len(w.visibleAssistantTexts)+len(w.toolDeliveredTexts))
+	out := make([]string, 0, len(w.visibleAssistantTexts))
 	for _, item := range w.visibleAssistantTexts {
-		if trimmed := strings.TrimSpace(item); trimmed != "" {
-			out = append(out, trimmed)
-		}
-	}
-	for _, item := range w.toolDeliveredTexts {
 		if trimmed := strings.TrimSpace(item); trimmed != "" {
 			out = append(out, trimmed)
 		}
@@ -2899,23 +2890,8 @@ func (w *desktopEventWriter) captureChannelToolCallOutput(dataJSON map[string]an
 		if mid, _ := args["reply_to_message_id"].(string); strings.TrimSpace(mid) != "" {
 			w.pendingReplyOverride = strings.TrimSpace(mid)
 		}
-		return
-	case "telegram_send_file":
-		// send_file 仍然是立即发送工具，保留 delivered text 捕获
 	default:
 		return
-	}
-
-	var text string
-	text, _ = args["caption"].(string)
-	if strings.TrimSpace(text) == "" {
-		text, _ = args["text"].(string)
-	}
-	if trimmed := strings.TrimSpace(text); trimmed != "" {
-		w.toolDeliveredTexts = append(w.toolDeliveredTexts, trimmed)
-		if strings.TrimSpace(w.visibleAssistantText) == "" {
-			w.visibleAssistantText = trimmed
-		}
 	}
 }
 
@@ -3157,7 +3133,6 @@ func desktopPersistFinalAssistantOutput(
 		rc.FinalAssistantOutput = content
 		rc.FinalAssistantOutputs = w.visibleAssistantOutputs()
 		rc.TelegramStreamDeliveryRemainder = w.telegramStreamRemainder()
-		rc.ChannelOutputDelivered = len(w.toolDeliveredTexts) > 0
 		if hasStreamedChunks {
 			rc.FinalAssistantOutputs = w.telegramUnsentOutputs()
 		}

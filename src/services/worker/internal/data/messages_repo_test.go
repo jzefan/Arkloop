@@ -2,6 +2,7 @@ package data
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -87,5 +88,132 @@ func TestMessagesRepository_SearchVisibleByOwner(t *testing.T) {
 	}
 	if len(escapedHits) != 1 || escapedHits[0].Content != "100!% sure" {
 		t.Fatalf("unexpected escaped search hits: %+v", escapedHits)
+	}
+}
+
+func TestMessagesRepository_ListRawByThreadIncludesHiddenAndCompacted(t *testing.T) {
+	db := testutil.SetupPostgresDatabase(t, "worker_messages_list_raw")
+	ctx := context.Background()
+	pool, err := pgxpool.New(ctx, db.DSN)
+	if err != nil {
+		t.Fatalf("new pool: %v", err)
+	}
+	defer pool.Close()
+
+	repo := MessagesRepository{}
+	accountID := uuid.New()
+	projectID := uuid.New()
+	threadID := uuid.New()
+	if _, err := pool.Exec(ctx, `INSERT INTO accounts (id, type) VALUES ($1, 'personal')`, accountID); err != nil {
+		t.Fatalf("insert account: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO projects (id, account_id, name) VALUES ($1, $2, 'p')`, projectID, accountID); err != nil {
+		t.Fatalf("insert project: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO threads (id, account_id, project_id) VALUES ($1, $2, $3)`, threadID, accountID, projectID); err != nil {
+		t.Fatalf("insert thread: %v", err)
+	}
+
+	for _, row := range []struct {
+		seq       int
+		role      string
+		content   string
+		hidden    bool
+		compacted bool
+	}{
+		{1, "user", "visible", false, false},
+		{2, "assistant", "hidden", true, false},
+		{3, "assistant", "compacted", true, true},
+	} {
+		if _, err := pool.Exec(ctx, `
+			INSERT INTO messages (id, account_id, thread_id, thread_seq, role, content, metadata_json, hidden, compacted, created_at)
+			VALUES ($1, $2, $3, $4, $5, $6, '{}'::jsonb, $7, $8, now())`,
+			uuid.New(), accountID, threadID, row.seq, row.role, row.content, row.hidden, row.compacted,
+		); err != nil {
+			t.Fatalf("insert message: %v", err)
+		}
+	}
+
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin tx: %v", err)
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck
+
+	msgs, err := repo.ListRawByThread(ctx, tx, accountID, threadID, 50)
+	if err != nil {
+		t.Fatalf("list raw by thread: %v", err)
+	}
+	if len(msgs) != 3 {
+		t.Fatalf("expected 3 raw messages, got %#v", msgs)
+	}
+	if msgs[1].Content != "hidden" || msgs[2].Content != "compacted" {
+		t.Fatalf("unexpected raw ordering: %#v", msgs)
+	}
+}
+
+func TestMessagesRepository_ListRawByThreadUpToIDIncludesHiddenAndCompacted(t *testing.T) {
+	db := testutil.SetupPostgresDatabase(t, "worker_messages_list_raw_upto")
+	ctx := context.Background()
+	pool, err := pgxpool.New(ctx, db.DSN)
+	if err != nil {
+		t.Fatalf("new pool: %v", err)
+	}
+	defer pool.Close()
+
+	repo := MessagesRepository{}
+	accountID := uuid.New()
+	projectID := uuid.New()
+	threadID := uuid.New()
+	if _, err := pool.Exec(ctx, `INSERT INTO accounts (id, type) VALUES ($1, 'personal')`, accountID); err != nil {
+		t.Fatalf("insert account: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO projects (id, account_id, name) VALUES ($1, $2, 'p')`, projectID, accountID); err != nil {
+		t.Fatalf("insert project: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO threads (id, account_id, project_id) VALUES ($1, $2, $3)`, threadID, accountID, projectID); err != nil {
+		t.Fatalf("insert thread: %v", err)
+	}
+	var upToID uuid.UUID
+	for _, row := range []struct {
+		seq       int
+		role      string
+		content   string
+		hidden    bool
+		compacted bool
+	}{
+		{1, "user", "visible", false, false},
+		{2, "assistant", "hidden", true, false},
+		{3, "assistant", "compacted", true, true},
+	} {
+		id := uuid.New()
+		if row.seq == 2 {
+			upToID = id
+		}
+		contentJSON, _ := json.Marshal(map[string]any{})
+		if _, err := pool.Exec(ctx, `
+			INSERT INTO messages (id, account_id, thread_id, thread_seq, role, content, content_json, metadata_json, hidden, compacted, created_at)
+			VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, '{}'::jsonb, $8, $9, now())`,
+			id, accountID, threadID, row.seq, row.role, row.content, string(contentJSON), row.hidden, row.compacted,
+		); err != nil {
+			t.Fatalf("insert message: %v", err)
+		}
+	}
+
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin tx: %v", err)
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck
+
+	msgs, err := repo.ListRawByThreadUpToID(ctx, tx, accountID, threadID, upToID, 50)
+	if err != nil {
+		t.Fatalf("list raw by thread up to id: %v", err)
+	}
+	if len(msgs) != 2 {
+		t.Fatalf("expected 2 raw messages, got %#v", msgs)
+	}
+	if msgs[1].Content != "hidden" {
+		t.Fatalf("expected hidden message included, got %#v", msgs)
 	}
 }

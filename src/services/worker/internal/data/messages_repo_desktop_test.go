@@ -312,6 +312,54 @@ func TestMessagesRepository_ListByThreadDesktopSkipsRolledBackIntermediateHistor
 	}
 }
 
+func TestMessagesRepository_ListRawByThreadDesktopIncludesHiddenAndCompacted(t *testing.T) {
+	ctx := context.Background()
+	sqlitePool, err := sqliteadapter.AutoMigrate(ctx, filepath.Join(t.TempDir(), "raw.db"))
+	if err != nil {
+		t.Fatalf("auto migrate sqlite: %v", err)
+	}
+	defer sqlitePool.Close()
+
+	pool := sqlitepgx.New(sqlitePool.Unwrap())
+	accountID := uuid.New()
+	projectID := uuid.New()
+	threadID := uuid.New()
+
+	seedDesktopAccount(t, pool, accountID)
+	seedDesktopProject(t, pool, accountID, projectID)
+	seedDesktopThread(t, pool, accountID, projectID, threadID)
+
+	if err := insertDesktopRepoMessage(ctx, pool, accountID, threadID, uuid.New(), 1, "user", "visible", `{}`, false, ""); err != nil {
+		t.Fatalf("insert visible: %v", err)
+	}
+	if err := insertDesktopRepoMessage(ctx, pool, accountID, threadID, uuid.New(), 2, "assistant", "hidden", `{}`, true, ""); err != nil {
+		t.Fatalf("insert hidden: %v", err)
+	}
+	if err := insertDesktopRepoMessage(ctx, pool, accountID, threadID, uuid.New(), 3, "assistant", "compacted", `{}`, true, ""); err != nil {
+		t.Fatalf("insert compacted: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE messages SET compacted = TRUE WHERE content = 'compacted'`); err != nil {
+		t.Fatalf("mark compacted: %v", err)
+	}
+
+	tx, err := pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		t.Fatalf("begin read: %v", err)
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck
+
+	msgs, err := (MessagesRepository{}).ListRawByThread(ctx, tx, accountID, threadID, 50)
+	if err != nil {
+		t.Fatalf("list raw by thread: %v", err)
+	}
+	if len(msgs) != 3 {
+		t.Fatalf("expected 3 raw messages, got %#v", msgs)
+	}
+	if msgs[1].Content != "hidden" || msgs[2].Content != "compacted" {
+		t.Fatalf("unexpected raw ordering: %#v", msgs)
+	}
+}
+
 func insertDesktopRepoMessage(
 	ctx context.Context,
 	pool *sqlitepgx.Pool,
