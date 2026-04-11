@@ -77,6 +77,54 @@ var ThreadFetchLlmSpec = llm.ToolSpec{
 	},
 }
 
+var ConnectionsAgentSpec = tools.AgentToolSpec{
+	Name:        "memory_connections",
+	Version:     "1",
+	Description: "explore graph connections around one memory or topic",
+	RiskLevel:   tools.RiskLevelLow,
+	SideEffects: false,
+}
+
+var ConnectionsLlmSpec = llm.ToolSpec{
+	Name:        "memory_connections",
+	Description: stringPtr(sharedtoolmeta.Must("memory_connections").LLMDescription),
+	JSONSchema: map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"memory_id": map[string]any{"type": "string"},
+			"query":     map[string]any{"type": "string"},
+			"depth":     map[string]any{"type": "integer", "minimum": 1, "maximum": 3},
+			"limit":     map[string]any{"type": "integer", "minimum": 1, "maximum": 50},
+		},
+		"additionalProperties": false,
+	},
+}
+
+var TimelineAgentSpec = tools.AgentToolSpec{
+	Name:        "memory_timeline",
+	Version:     "1",
+	Description: "browse chronological knowledge activity",
+	RiskLevel:   tools.RiskLevelLow,
+	SideEffects: false,
+}
+
+var TimelineLlmSpec = llm.ToolSpec{
+	Name:        "memory_timeline",
+	Description: stringPtr(sharedtoolmeta.Must("memory_timeline").LLMDescription),
+	JSONSchema: map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"last_n_days": map[string]any{"type": "integer", "minimum": 1, "maximum": 365},
+			"date_from":   map[string]any{"type": "string"},
+			"date_to":     map[string]any{"type": "string"},
+			"event_type":  map[string]any{"type": "string"},
+			"tier1_only":  map[string]any{"type": "boolean"},
+			"limit":       map[string]any{"type": "integer", "minimum": 1, "maximum": 200},
+		},
+		"additionalProperties": false,
+	},
+}
+
 // --- memory_read ---
 
 var ReadAgentSpec = tools.AgentToolSpec{
@@ -298,6 +346,8 @@ func MemoryAgentSpecs() []tools.AgentToolSpec {
 		SearchAgentSpec,
 		ThreadSearchAgentSpec,
 		ThreadFetchAgentSpec,
+		ConnectionsAgentSpec,
+		TimelineAgentSpec,
 		ReadAgentSpec,
 		WriteAgentSpec,
 		EditAgentSpec,
@@ -324,6 +374,8 @@ func MemoryLlmSpecs() []llm.ToolSpec {
 		SearchLlmSpec,
 		ThreadSearchLlmSpec,
 		ThreadFetchLlmSpec,
+		ConnectionsLlmSpec,
+		TimelineLlmSpec,
 		ReadLlmSpec,
 		WriteLlmSpec,
 		EditLlmSpec,

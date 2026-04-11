@@ -288,11 +288,31 @@ var registry = []ToolMeta{
 			"Start small and only fetch more pages when you need extra detail from that thread.",
 	},
 	{
+		Name:      "memory_connections",
+		Group:     GroupMemory,
+		Label:     "Memory connections",
+		ShortDesc: "explore graph connections around one memory or topic",
+		LLMDescription: "explore graph connections around one memory or topic in the Nowledge knowledge graph. " +
+			"Use when you need related memories, entities, graph neighbors, or source-linked context that normal semantic search would not surface. " +
+			"Pass either memory_id from a memory result or query to search first, then expand. " +
+			"Results include edge_type, relation, weight, node_type, and node identifiers for follow-up.",
+	},
+	{
+		Name:      "memory_timeline",
+		Group:     GroupMemory,
+		Label:     "Memory timeline",
+		ShortDesc: "browse chronological knowledge activity",
+		LLMDescription: "browse chronological Nowledge activity when the user asks what happened over time, what they worked on last week, or when a memory/document/insight was recorded. " +
+			"Supports last_n_days, date_from/date_to, and event_type filters. " +
+			"Results are grouped activity records with event labels, dates, and related memory ids for follow-up.",
+	},
+	{
 		Name:      "memory_read",
 		Group:     GroupMemory,
 		Label:     "Memory read",
 		ShortDesc: "read the full content of a memory entry by URI",
 		LLMDescription: "read the full content of an auto-organized memory entry by URI copied from a memory_search hit or from memory_write. " +
+			"For Nowledge, MEMORY.md is a valid alias for Working Memory. Results may include source_thread_id when the memory was distilled from a conversation. " +
 			"These URIs belong to semantic memory recall, not Notebook. Never guess uri from category/key alone.",
 	},
 	{

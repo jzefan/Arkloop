@@ -6,11 +6,13 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	sharedconfig "arkloop/services/shared/config"
 	sharedoutbound "arkloop/services/shared/outboundurl"
 	"arkloop/services/worker/internal/data"
+	"arkloop/services/worker/internal/llm"
 	"arkloop/services/worker/internal/memory/nowledge"
 
 	"github.com/google/uuid"
@@ -168,5 +170,252 @@ func TestBuildNowledgeThreadPayloadCarriesOpenClawStyleMetadata(t *testing.T) {
 		if externalID, _ := message.Metadata["external_id"].(string); externalID == "" {
 			t.Fatalf("missing external_id at %d: %#v", index, message.Metadata)
 		}
+	}
+}
+
+func TestNowledgeContextContributorInjectsBehavioralGuidanceWithoutRecall(t *testing.T) {
+	t.Setenv(sharedoutbound.AllowLoopbackHTTPEnv, "true")
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/agent/working-memory":
+			_ = json.NewEncoder(w).Encode(map[string]any{"exists": false, "content": ""})
+		default:
+			t.Fatalf("unexpected nowledge request: %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer srv.Close()
+
+	provider := nowledge.NewClient(nowledge.Config{BaseURL: srv.URL})
+	contributor := NewNowledgeContextContributor(provider)
+	userID := uuid.New()
+	rc := &RunContext{
+		Run: data.Run{
+			ID:        uuid.New(),
+			AccountID: uuid.New(),
+			ThreadID:  uuid.New(),
+		},
+		UserID: &userID,
+		Messages: []llm.Message{
+			{Role: "user", Content: []llm.ContentPart{{Type: "text", Text: "hi"}}},
+		},
+	}
+
+	fragments, err := contributor.BeforePromptAssemble(context.Background(), rc)
+	if err != nil {
+		t.Fatalf("BeforePromptAssemble: %v", err)
+	}
+	for _, fragment := range fragments {
+		if fragment.Key == nowledgeGuidanceTag {
+			t.Fatalf("guidance should not be emitted as prompt fragment: %#v", fragment)
+		}
+	}
+	segmentHook, ok := contributor.(BeforePromptSegmentsHook)
+	if !ok {
+		t.Fatal("expected before prompt segments hook")
+	}
+	segments, err := segmentHook.BeforePromptSegments(context.Background(), rc)
+	if err != nil {
+		t.Fatalf("BeforePromptSegments: %v", err)
+	}
+	guidance := ""
+	for _, segment := range segments {
+		if segment.Name == "hook.before.nowledge.guidance" {
+			guidance = segment.Text
+			break
+		}
+	}
+	if guidance == "" {
+		t.Fatal("expected guidance segment")
+	}
+	if !strings.Contains(guidance, "memory_search") || !strings.Contains(guidance, "memory_connections") || !strings.Contains(guidance, "memory_timeline") {
+		t.Fatalf("guidance missing tool references: %q", guidance)
+	}
+	if strings.Contains(guidance, "已注入") {
+		t.Fatalf("guidance should not claim injected context: %q", guidance)
+	}
+}
+
+func TestNowledgeContextContributorAdjustsBehavioralGuidanceWhenContextInjected(t *testing.T) {
+	t.Setenv(sharedoutbound.AllowLoopbackHTTPEnv, "true")
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/agent/working-memory":
+			_ = json.NewEncoder(w).Encode(map[string]any{"exists": true, "content": "今天聚焦 memory 系统"})
+		case "/memories/search":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"memories": []map[string]any{{
+					"id":               "mem-1",
+					"title":            "最近决策",
+					"content":          "统一走 SeaweedFS",
+					"score":            0.91,
+					"relevance_reason": "topic match",
+				}},
+			})
+		case "/threads/search":
+			_ = json.NewEncoder(w).Encode(map[string]any{"threads": []map[string]any{}})
+		default:
+			t.Fatalf("unexpected nowledge request: %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer srv.Close()
+
+	provider := nowledge.NewClient(nowledge.Config{BaseURL: srv.URL})
+	contributor := NewNowledgeContextContributor(provider)
+	userID := uuid.New()
+	rc := &RunContext{
+		Run: data.Run{
+			ID:        uuid.New(),
+			AccountID: uuid.New(),
+			ThreadID:  uuid.New(),
+		},
+		UserID: &userID,
+		Messages: []llm.Message{
+			{Role: "user", Content: []llm.ContentPart{{Type: "text", Text: "附件存储方案最后定了吗"}}},
+		},
+	}
+
+	fragments, err := contributor.BeforePromptAssemble(context.Background(), rc)
+	if err != nil {
+		t.Fatalf("BeforePromptAssemble: %v", err)
+	}
+	keys := map[string]PromptFragment{}
+	for _, fragment := range fragments {
+		keys[fragment.Key] = fragment
+	}
+	if _, ok := keys["nowledge_working_memory"]; !ok {
+		t.Fatal("expected working memory fragment")
+	}
+	if _, ok := keys["nowledge_recalled_memories"]; !ok {
+		t.Fatal("expected recalled memories fragment")
+	}
+	if _, ok := keys[nowledgeGuidanceTag]; ok {
+		t.Fatal("guidance should not be emitted as prompt fragment")
+	}
+	segmentHook, ok := contributor.(BeforePromptSegmentsHook)
+	if !ok {
+		t.Fatal("expected before prompt segments hook")
+	}
+	segments, err := segmentHook.BeforePromptSegments(context.Background(), rc)
+	if err != nil {
+		t.Fatalf("BeforePromptSegments: %v", err)
+	}
+	guidance := ""
+	for _, segment := range segments {
+		if segment.Name == "hook.before.nowledge.guidance" {
+			guidance = segment.Text
+			break
+		}
+	}
+	if !strings.Contains(guidance, "已注入 Working Memory和相关记忆") {
+		t.Fatalf("guidance should acknowledge injected context: %q", guidance)
+	}
+}
+
+func TestNowledgeContextContributorKeepsWorkingMemoryWhenRecallFails(t *testing.T) {
+	t.Setenv(sharedoutbound.AllowLoopbackHTTPEnv, "true")
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/agent/working-memory":
+			_ = json.NewEncoder(w).Encode(map[string]any{"exists": true, "content": "今天聚焦 memory 系统"})
+		case "/memories/search":
+			http.Error(w, "boom", http.StatusInternalServerError)
+		default:
+			t.Fatalf("unexpected nowledge request: %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer srv.Close()
+
+	provider := nowledge.NewClient(nowledge.Config{BaseURL: srv.URL})
+	contributor := NewNowledgeContextContributor(provider)
+	userID := uuid.New()
+	rc := &RunContext{
+		Run: data.Run{
+			ID:        uuid.New(),
+			AccountID: uuid.New(),
+			ThreadID:  uuid.New(),
+		},
+		UserID: &userID,
+		Messages: []llm.Message{
+			{Role: "user", Content: []llm.ContentPart{{Type: "text", Text: "附件存储方案最后定了吗"}}},
+		},
+	}
+
+	fragments, err := contributor.BeforePromptAssemble(context.Background(), rc)
+	if err != nil {
+		t.Fatalf("BeforePromptAssemble: %v", err)
+	}
+	if len(fragments) != 1 || fragments[0].Key != "nowledge_working_memory" {
+		t.Fatalf("unexpected fragments on recall failure: %#v", fragments)
+	}
+	segmentHook, ok := contributor.(BeforePromptSegmentsHook)
+	if !ok {
+		t.Fatal("expected before prompt segments hook")
+	}
+	segments, err := segmentHook.BeforePromptSegments(context.Background(), rc)
+	if err != nil {
+		t.Fatalf("BeforePromptSegments: %v", err)
+	}
+	foundGuidance := false
+	for _, segment := range segments {
+		if segment.Name == "hook.before.nowledge.guidance" {
+			foundGuidance = true
+			break
+		}
+	}
+	if !foundGuidance {
+		t.Fatal("expected guidance segment when recall fails")
+	}
+}
+
+func TestNowledgeContextContributorBeforePromptSegmentsIncludesGuidanceSegment(t *testing.T) {
+	t.Setenv(sharedoutbound.AllowLoopbackHTTPEnv, "true")
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/agent/working-memory":
+			_ = json.NewEncoder(w).Encode(map[string]any{"exists": false, "content": ""})
+		default:
+			t.Fatalf("unexpected nowledge request: %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer srv.Close()
+
+	provider := nowledge.NewClient(nowledge.Config{BaseURL: srv.URL})
+	contributor := NewNowledgeContextContributor(provider)
+	userID := uuid.New()
+	rc := &RunContext{
+		Run: data.Run{
+			ID:        uuid.New(),
+			AccountID: uuid.New(),
+			ThreadID:  uuid.New(),
+		},
+		UserID: &userID,
+		Messages: []llm.Message{
+			{Role: "user", Content: []llm.ContentPart{{Type: "text", Text: "hi"}}},
+		},
+	}
+
+	segmentHook, ok := contributor.(BeforePromptSegmentsHook)
+	if !ok {
+		t.Fatal("expected before prompt segments hook")
+	}
+	segments, err := segmentHook.BeforePromptSegments(context.Background(), rc)
+	if err != nil {
+		t.Fatalf("BeforePromptSegments: %v", err)
+	}
+	found := false
+	for _, segment := range segments {
+		if segment.Name != "hook.before.nowledge.guidance" {
+			continue
+		}
+		found = true
+		if segment.Target != PromptTargetSystemPrefix || segment.Role != "system" {
+			t.Fatalf("unexpected guidance segment placement: %#v", segment)
+		}
+		if !strings.Contains(segment.Text, "memory_search") {
+			t.Fatalf("unexpected guidance text: %#v", segment)
+		}
+	}
+	if !found {
+		t.Fatal("expected guidance segment")
 	}
 }

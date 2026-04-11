@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -38,6 +39,16 @@ type snapshotAppender interface {
 
 type richSearchProvider interface {
 	SearchRich(ctx context.Context, ident memory.MemoryIdentity, query string, limit int) ([]nowledge.SearchResult, error)
+}
+
+type graphProvider interface {
+	Connections(ctx context.Context, ident memory.MemoryIdentity, memoryID string, depth, limit int) ([]nowledge.GraphConnection, error)
+	Timeline(ctx context.Context, ident memory.MemoryIdentity, lastNDays int, dateFrom, dateTo, eventType string, tier1Only bool, limit int) ([]nowledge.TimelineEvent, error)
+}
+
+type detailedReadProvider interface {
+	MemoryDetail(ctx context.Context, ident memory.MemoryIdentity, uri string) (nowledge.MemoryDetail, error)
+	ReadWorkingMemory(ctx context.Context, ident memory.MemoryIdentity) (nowledge.WorkingMemory, error)
 }
 
 // ToolExecutor 实现 tools.Executor，将 memory_search/read/write/forget 分发到 MemoryProvider。
@@ -93,6 +104,10 @@ func (e *ToolExecutor) Execute(
 		return e.threadSearch(ctx, args, ident, started)
 	case "memory_thread_fetch":
 		return e.threadFetch(ctx, args, ident, started)
+	case "memory_connections":
+		return e.connections(ctx, args, ident, started)
+	case "memory_timeline":
+		return e.timeline(ctx, args, ident, started)
 	case "memory_read":
 		return e.read(ctx, args, ident, started)
 	case "memory_write":
@@ -287,9 +302,41 @@ func (e *ToolExecutor) read(ctx context.Context, args map[string]any, ident memo
 	if !ok || strings.TrimSpace(uri) == "" {
 		return argError("uri must be a non-empty string", started)
 	}
+	depth := "overview"
+	if value, ok := args["depth"].(string); ok && strings.EqualFold(strings.TrimSpace(value), "full") {
+		depth = "full"
+	}
+	if provider, ok := e.provider.(detailedReadProvider); ok {
+		normalizedURI := strings.TrimSpace(uri)
+		lowerURI := strings.ToLower(normalizedURI)
+		if lowerURI == "memory.md" || lowerURI == "memory" {
+			wm, err := provider.ReadWorkingMemory(ctx, ident)
+			if err != nil {
+				return providerError("read", err, started)
+			}
+			return tools.ExecutionResult{
+				ResultJSON: map[string]any{
+					"content": summarizeMemoryRead("", wm.Content, depth),
+					"source":  "working_memory",
+				},
+				DurationMs: durationMs(started),
+			}
+		}
+		if strings.HasPrefix(normalizedURI, "nowledge://memory/") {
+			detail, err := provider.MemoryDetail(ctx, ident, normalizedURI)
+			if err != nil {
+				return providerError("read", err, started)
+			}
+			result := map[string]any{"content": summarizeMemoryRead(detail.Title, detail.Content, depth)}
+			if strings.TrimSpace(detail.SourceThreadID) != "" {
+				result["source_thread_id"] = strings.TrimSpace(detail.SourceThreadID)
+			}
+			return tools.ExecutionResult{ResultJSON: result, DurationMs: durationMs(started)}
+		}
+	}
 
 	layer := memory.MemoryLayerOverview
-	if depth, ok := args["depth"].(string); ok && depth == "full" {
+	if depth == "full" {
 		layer = memory.MemoryLayerRead
 	}
 
@@ -302,6 +349,186 @@ func (e *ToolExecutor) read(ctx context.Context, args map[string]any, ident memo
 		ResultJSON: map[string]any{"content": content},
 		DurationMs: durationMs(started),
 	}
+}
+
+func (e *ToolExecutor) connections(ctx context.Context, args map[string]any, ident memory.MemoryIdentity, started time.Time) tools.ExecutionResult {
+	provider, ok := e.provider.(graphProvider)
+	if !ok {
+		return stateError("memory connections are not available in this runtime", started)
+	}
+	memoryID, _ := args["memory_id"].(string)
+	query, _ := args["query"].(string)
+	memoryID = strings.TrimSpace(memoryID)
+	query = strings.TrimSpace(query)
+	if memoryID == "" && query == "" {
+		return argError("memory_id or query must be provided", started)
+	}
+	if memoryID == "" {
+		results, err := e.searchResults(ctx, ident, query, 1)
+		if err != nil {
+			return providerError("connections", err, started)
+		}
+		if len(results) == 0 {
+			return tools.ExecutionResult{ResultJSON: map[string]any{"connections": []map[string]any{}, "memory_id": "", "query": query}, DurationMs: durationMs(started)}
+		}
+		if uri, _ := results[0]["uri"].(string); strings.TrimSpace(uri) != "" {
+			var err error
+			memoryID, err = nowledge.MemoryIDFromURI(uri)
+			if err != nil {
+				return providerError("connections", err, started)
+			}
+		}
+	}
+	depth := 1
+	if raw, ok := args["depth"].(float64); ok && raw >= 1 {
+		depth = int(raw)
+	}
+	limit := 20
+	if raw, ok := args["limit"].(float64); ok && raw >= 1 {
+		limit = int(raw)
+	}
+	connections, err := provider.Connections(ctx, ident, memoryID, depth, limit)
+	if err != nil {
+		return providerError("connections", err, started)
+	}
+	out := make([]map[string]any, 0, len(connections))
+	for _, item := range connections {
+		out = append(out, map[string]any{
+			"memory_id":   item.MemoryID,
+			"node_id":     item.NodeID,
+			"node_type":   item.NodeType,
+			"title":       item.Title,
+			"snippet":     item.Snippet,
+			"edge_type":   item.EdgeType,
+			"relation":    item.Relation,
+			"weight":      item.Weight,
+			"source_type": item.SourceType,
+		})
+	}
+	return tools.ExecutionResult{
+		ResultJSON: map[string]any{
+			"memory_id":   memoryID,
+			"query":       query,
+			"depth":       depth,
+			"connections": out,
+			"total_found": len(out),
+		},
+		DurationMs: durationMs(started),
+	}
+}
+
+func (e *ToolExecutor) timeline(ctx context.Context, args map[string]any, ident memory.MemoryIdentity, started time.Time) tools.ExecutionResult {
+	provider, ok := e.provider.(graphProvider)
+	if !ok {
+		return stateError("memory timeline is not available in this runtime", started)
+	}
+	lastNDays := 7
+	if raw, ok := args["last_n_days"].(float64); ok && raw >= 1 {
+		lastNDays = int(raw)
+	}
+	dateFrom, _ := args["date_from"].(string)
+	dateTo, _ := args["date_to"].(string)
+	eventType, _ := args["event_type"].(string)
+	tier1Only := true
+	if raw, ok := args["tier1_only"].(bool); ok {
+		tier1Only = raw
+	}
+	limit := 100
+	if raw, ok := args["limit"].(float64); ok && raw >= 1 {
+		limit = int(raw)
+	}
+	events, err := provider.Timeline(ctx, ident, lastNDays, strings.TrimSpace(dateFrom), strings.TrimSpace(dateTo), strings.TrimSpace(eventType), tier1Only, limit)
+	if err != nil {
+		return providerError("timeline", err, started)
+	}
+	grouped := make(map[string][]map[string]any)
+	dates := make([]string, 0)
+	for _, item := range events {
+		date := strings.TrimSpace(item.CreatedAt)
+		if len(date) >= 10 {
+			date = date[:10]
+		}
+		if date == "" {
+			date = "unknown"
+		}
+		if _, ok := grouped[date]; !ok {
+			dates = append(dates, date)
+		}
+		grouped[date] = append(grouped[date], map[string]any{
+			"id":                 item.ID,
+			"event_type":         item.EventType,
+			"label":              item.Label,
+			"title":              item.Title,
+			"description":        item.Description,
+			"created_at":         item.CreatedAt,
+			"memory_id":          item.MemoryID,
+			"related_memory_ids": append([]string(nil), item.RelatedMemoryIDs...),
+		})
+	}
+	sort.SliceStable(dates, func(i, j int) bool {
+		return dates[i] > dates[j]
+	})
+	days := make([]map[string]any, 0, len(dates))
+	for _, date := range dates {
+		days = append(days, map[string]any{
+			"date":   date,
+			"count":  len(grouped[date]),
+			"events": grouped[date],
+		})
+	}
+	return tools.ExecutionResult{
+		ResultJSON: map[string]any{
+			"last_n_days": lastNDays,
+			"date_from":   strings.TrimSpace(dateFrom),
+			"date_to":     strings.TrimSpace(dateTo),
+			"event_type":  strings.TrimSpace(eventType),
+			"tier1_only":  tier1Only,
+			"days":        days,
+			"total_found": len(events),
+		},
+		DurationMs: durationMs(started),
+	}
+}
+
+func summarizeMemoryRead(title, content, depth string) string {
+	title = strings.TrimSpace(title)
+	content = strings.TrimSpace(content)
+	if strings.EqualFold(depth, "full") {
+		if title == "" {
+			return content
+		}
+		if content == "" {
+			return title
+		}
+		return title + "\n\n" + content
+	}
+	summary := compactReadSnippet(firstReadValue(title, content), 240)
+	if title == "" || summary == title || content == "" {
+		return summary
+	}
+	return title + "\n\n" + summary
+}
+
+func compactReadSnippet(text string, maxRunes int) string {
+	text = strings.TrimSpace(strings.Join(strings.Fields(text), " "))
+	if text == "" || maxRunes <= 0 {
+		return text
+	}
+	runes := []rune(text)
+	if len(runes) <= maxRunes {
+		return text
+	}
+	return string(runes[:maxRunes]) + "..."
+}
+
+func firstReadValue(values ...string) string {
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 func (e *ToolExecutor) threadSearch(ctx context.Context, args map[string]any, ident memory.MemoryIdentity, started time.Time) tools.ExecutionResult {

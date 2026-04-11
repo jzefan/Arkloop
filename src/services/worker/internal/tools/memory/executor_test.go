@@ -27,6 +27,14 @@ type mockProvider struct {
 	findErr     error
 	contentText string
 	contentErr  error
+	detail      nowledge.MemoryDetail
+	detailErr   error
+	wm          nowledge.WorkingMemory
+	wmErr       error
+	connections []nowledge.GraphConnection
+	connErr     error
+	timeline    []nowledge.TimelineEvent
+	timelineErr error
 	writeErr    error
 	updateErr   error
 	deleteErr   error
@@ -116,6 +124,22 @@ func (m *mockProvider) Find(_ context.Context, _ workermemory.MemoryIdentity, _ 
 func (m *mockProvider) Content(_ context.Context, _ workermemory.MemoryIdentity, _ string, _ workermemory.MemoryLayer) (string, error) {
 	m.contentCalled = true
 	return m.contentText, m.contentErr
+}
+
+func (m *mockProvider) MemoryDetail(_ context.Context, _ workermemory.MemoryIdentity, _ string) (nowledge.MemoryDetail, error) {
+	return m.detail, m.detailErr
+}
+
+func (m *mockProvider) ReadWorkingMemory(_ context.Context, _ workermemory.MemoryIdentity) (nowledge.WorkingMemory, error) {
+	return m.wm, m.wmErr
+}
+
+func (m *mockProvider) Connections(_ context.Context, _ workermemory.MemoryIdentity, _ string, _ int, _ int) ([]nowledge.GraphConnection, error) {
+	return m.connections, m.connErr
+}
+
+func (m *mockProvider) Timeline(_ context.Context, _ workermemory.MemoryIdentity, _ int, _ string, _ string, _ string, _ bool, _ int) ([]nowledge.TimelineEvent, error) {
+	return m.timeline, m.timelineErr
 }
 
 func (m *richMockProvider) SearchRich(_ context.Context, _ workermemory.MemoryIdentity, _ string, _ int) ([]nowledge.SearchResult, error) {
@@ -349,6 +373,130 @@ func TestMemoryExecutor_Read_FullDepth(t *testing.T) {
 	}
 	if result.ResultJSON["content"] != "full content" {
 		t.Fatalf("unexpected content: %v", result.ResultJSON["content"])
+	}
+}
+
+func TestMemoryExecutor_Read_NowledgeWorkingMemoryAlias(t *testing.T) {
+	mp := &mockProvider{wm: nowledge.WorkingMemory{Content: "today focus", Available: true}}
+	ex := NewToolExecutor(mp, nil, nil)
+	result := ex.Execute(context.Background(), "memory_read", map[string]any{"uri": "MEMORY.md"}, newUserExecCtx(), "")
+	if result.Error != nil {
+		t.Fatalf("unexpected error: %v", result.Error.Message)
+	}
+	if result.ResultJSON["content"] != "today focus" {
+		t.Fatalf("unexpected content: %#v", result.ResultJSON)
+	}
+	if result.ResultJSON["source"] != "working_memory" {
+		t.Fatalf("unexpected source: %#v", result.ResultJSON)
+	}
+}
+
+func TestMemoryExecutor_Read_NowledgeDetailIncludesProvenance(t *testing.T) {
+	mp := &mockProvider{detail: nowledge.MemoryDetail{Title: "Decision", Content: "Use SeaweedFS", SourceThreadID: "thread-1"}}
+	ex := NewToolExecutor(mp, nil, nil)
+	result := ex.Execute(context.Background(), "memory_read", map[string]any{"uri": "nowledge://memory/mem-1", "depth": "full"}, newUserExecCtx(), "")
+	if result.Error != nil {
+		t.Fatalf("unexpected error: %v", result.Error.Message)
+	}
+	if result.ResultJSON["source_thread_id"] != "thread-1" {
+		t.Fatalf("unexpected provenance: %#v", result.ResultJSON)
+	}
+	if !strings.Contains(result.ResultJSON["content"].(string), "SeaweedFS") {
+		t.Fatalf("unexpected content: %#v", result.ResultJSON)
+	}
+}
+
+func TestMemoryExecutor_Read_NowledgeOverviewKeepsDepthContract(t *testing.T) {
+	mp := &mockProvider{detail: nowledge.MemoryDetail{
+		Title:   "Decision",
+		Content: "Use SeaweedFS as the only attachment backend for now and do not integrate MinIO in this phase because the rollout should stay simple.",
+	}}
+	ex := NewToolExecutor(mp, nil, nil)
+	result := ex.Execute(context.Background(), "memory_read", map[string]any{
+		"uri":   "nowledge://memory/mem-1",
+		"depth": "overview",
+	}, newUserExecCtx(), "")
+	if result.Error != nil {
+		t.Fatalf("unexpected error: %v", result.Error.Message)
+	}
+	content, _ := result.ResultJSON["content"].(string)
+	if !strings.Contains(content, "Decision") {
+		t.Fatalf("unexpected content: %#v", result.ResultJSON)
+	}
+	if strings.Contains(content, "do not integrate MinIO in this phase") {
+		t.Fatalf("overview should not return full content: %#v", result.ResultJSON)
+	}
+}
+
+func TestMemoryExecutor_Connections_ByMemoryID(t *testing.T) {
+	mp := &mockProvider{
+		connections: []nowledge.GraphConnection{
+			{MemoryID: "mem-1", NodeID: "node-1", NodeType: "memory", Title: "Deploy note", Snippet: "Use SeaweedFS", EdgeType: "EVOLVES", Relation: "enriches", Weight: 0.8},
+		},
+	}
+	ex := NewToolExecutor(mp, nil, nil)
+	result := ex.Execute(context.Background(), "memory_connections", map[string]any{"memory_id": "mem-1"}, newUserExecCtx(), "")
+	if result.Error != nil {
+		t.Fatalf("unexpected error: %v", result.Error.Message)
+	}
+	if result.ResultJSON["total_found"] != 1 {
+		t.Fatalf("unexpected result: %#v", result.ResultJSON)
+	}
+	connections, _ := result.ResultJSON["connections"].([]map[string]any)
+	if len(connections) == 0 {
+		raw, _ := json.Marshal(result.ResultJSON["connections"])
+		var arr []map[string]any
+		_ = json.Unmarshal(raw, &arr)
+		connections = arr
+	}
+	if len(connections) != 1 || connections[0]["node_id"] != "node-1" {
+		t.Fatalf("unexpected connections: %#v", result.ResultJSON)
+	}
+}
+
+func TestMemoryExecutor_Connections_ByQuery(t *testing.T) {
+	mp := &richMockProvider{
+		mockProvider: mockProvider{
+			connections: []nowledge.GraphConnection{
+				{MemoryID: "mem-1", NodeID: "node-2", NodeType: "entity", Title: "SeaweedFS", EdgeType: "MENTIONS"},
+			},
+		},
+		richResults: []nowledge.SearchResult{{ID: "mem-1", Title: "Decision"}},
+	}
+	ex := NewToolExecutor(mp, nil, nil)
+	result := ex.Execute(context.Background(), "memory_connections", map[string]any{"query": "deploy"}, newUserExecCtx(), "")
+	if result.Error != nil {
+		t.Fatalf("unexpected error: %v", result.Error.Message)
+	}
+	if result.ResultJSON["memory_id"] != "mem-1" {
+		t.Fatalf("unexpected memory_id: %#v", result.ResultJSON)
+	}
+}
+
+func TestMemoryExecutor_Timeline(t *testing.T) {
+	mp := &mockProvider{
+		timeline: []nowledge.TimelineEvent{
+			{ID: "evt-1", EventType: "memory_created", Label: "Memory saved", Title: "Yesterday", CreatedAt: "2026-04-11T10:00:00Z", MemoryID: "mem-1"},
+			{ID: "evt-2", EventType: "insight_generated", Label: "Insight", Title: "Today", CreatedAt: "2026-04-12T11:00:00Z", MemoryID: "mem-2"},
+		},
+	}
+	ex := NewToolExecutor(mp, nil, nil)
+	result := ex.Execute(context.Background(), "memory_timeline", map[string]any{"last_n_days": float64(3)}, newUserExecCtx(), "")
+	if result.Error != nil {
+		t.Fatalf("unexpected error: %v", result.Error.Message)
+	}
+	if result.ResultJSON["total_found"] != 2 {
+		t.Fatalf("unexpected result: %#v", result.ResultJSON)
+	}
+	days, _ := result.ResultJSON["days"].([]map[string]any)
+	if len(days) == 0 {
+		raw, _ := json.Marshal(result.ResultJSON["days"])
+		var arr []map[string]any
+		_ = json.Unmarshal(raw, &arr)
+		days = arr
+	}
+	if len(days) != 2 || days[0]["date"] != "2026-04-12" || days[1]["date"] != "2026-04-11" {
+		t.Fatalf("unexpected grouped days: %#v", result.ResultJSON)
 	}
 }
 
