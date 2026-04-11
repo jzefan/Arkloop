@@ -4,8 +4,8 @@ package http
 
 import (
 	"context"
-	nethttp "net/http"
 	"log/slog"
+	nethttp "net/http"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -46,6 +46,14 @@ func defaultSSEConfig() SSEConfig {
 		HeartbeatSeconds: 1.0,
 		BatchLimit:       500,
 	}
+}
+
+func atoiDefault(raw string, fallback int) int {
+	value, err := strconv.Atoi(strings.TrimSpace(raw))
+	if err != nil || value <= 0 {
+		return fallback
+	}
+	return value
 }
 
 type artifactStore interface {
@@ -311,43 +319,43 @@ func NewHandler(cfg HandlerConfig) nethttp.Handler {
 	})
 
 	accountapi.RegisterRoutes(mux, accountapi.Deps{
-		AuthService:             cfg.AuthService,
-		AccountMembershipRepo:   cfg.AccountMembershipRepo,
-		ThreadRepo:              cfg.ThreadRepo,
-		TeamRepo:                cfg.TeamRepo,
-		ProjectRepo:             cfg.ProjectRepo,
-		APIKeysRepo:             cfg.APIKeysRepo,
-		AuditWriter:             cfg.AuditWriter,
-		EntitlementService:      cfg.EntitlementService,
-		Pool:                    cfg.Pool,
-		AccountRepo:             cfg.AccountRepo,
-		AccountService:          cfg.AccountService,
-		WebhookRepo:             cfg.WebhookRepo,
-		SecretsRepo:             cfg.SecretsRepo,
-		LlmCredentialsRepo:      cfg.LlmCredentialsRepo,
-		LlmRoutesRepo:           cfg.LlmRoutesRepo,
-		ChannelsRepo:            cfg.ChannelsRepo,
-		ChannelIdentitiesRepo:   cfg.ChannelIdentitiesRepo,
+		AuthService:              cfg.AuthService,
+		AccountMembershipRepo:    cfg.AccountMembershipRepo,
+		ThreadRepo:               cfg.ThreadRepo,
+		TeamRepo:                 cfg.TeamRepo,
+		ProjectRepo:              cfg.ProjectRepo,
+		APIKeysRepo:              cfg.APIKeysRepo,
+		AuditWriter:              cfg.AuditWriter,
+		EntitlementService:       cfg.EntitlementService,
+		Pool:                     cfg.Pool,
+		AccountRepo:              cfg.AccountRepo,
+		AccountService:           cfg.AccountService,
+		WebhookRepo:              cfg.WebhookRepo,
+		SecretsRepo:              cfg.SecretsRepo,
+		LlmCredentialsRepo:       cfg.LlmCredentialsRepo,
+		LlmRoutesRepo:            cfg.LlmRoutesRepo,
+		ChannelsRepo:             cfg.ChannelsRepo,
+		ChannelIdentitiesRepo:    cfg.ChannelIdentitiesRepo,
 		ChannelIdentityLinksRepo: cfg.ChannelIdentityLinksRepo,
-		ChannelBindCodesRepo:    cfg.ChannelBindCodesRepo,
-		ChannelDMThreadsRepo:    cfg.ChannelDMThreadsRepo,
-		ChannelGroupThreadsRepo: cfg.ChannelGroupThreadsRepo,
-		ChannelReceiptsRepo:     cfg.ChannelReceiptsRepo,
-		UsersRepo:               cfg.UsersRepo,
-		MessageRepo:             cfg.MessageRepo,
-		JobRepo:                 cfg.JobRepo,
-		CreditsRepo:             cfg.CreditsRepo,
-		PersonasRepo:            cfg.PersonasRepo,
-		TelegramBotClient:       telegramClient,
-		DiscordBotClient:        discordClient,
-		TelegramMode:            "polling",
-		AppBaseURL:              cfg.AppBaseURL,
-		EnvironmentStore:        cfg.EnvironmentStore,
-		RunEventRepo:            cfg.RunEventRepo,
-		GatewayRedisClient:      nil,
-		EntitlementsRepo:        cfg.EntitlementsRepo,
-		ConfigResolver:          resolver,
-		MessageAttachmentStore:  cfg.MessageAttachmentStore,
+		ChannelBindCodesRepo:     cfg.ChannelBindCodesRepo,
+		ChannelDMThreadsRepo:     cfg.ChannelDMThreadsRepo,
+		ChannelGroupThreadsRepo:  cfg.ChannelGroupThreadsRepo,
+		ChannelReceiptsRepo:      cfg.ChannelReceiptsRepo,
+		UsersRepo:                cfg.UsersRepo,
+		MessageRepo:              cfg.MessageRepo,
+		JobRepo:                  cfg.JobRepo,
+		CreditsRepo:              cfg.CreditsRepo,
+		PersonasRepo:             cfg.PersonasRepo,
+		TelegramBotClient:        telegramClient,
+		DiscordBotClient:         discordClient,
+		TelegramMode:             "polling",
+		AppBaseURL:               cfg.AppBaseURL,
+		EnvironmentStore:         cfg.EnvironmentStore,
+		RunEventRepo:             cfg.RunEventRepo,
+		GatewayRedisClient:       nil,
+		EntitlementsRepo:         cfg.EntitlementsRepo,
+		ConfigResolver:           resolver,
+		MessageAttachmentStore:   cfg.MessageAttachmentStore,
 	})
 
 	platformapi.RegisterRoutes(mux, platformapi.Deps{
@@ -400,9 +408,13 @@ func NewHandler(cfg HandlerConfig) nethttp.Handler {
 	})
 
 	memoryapi.RegisterRoutes(mux, memoryapi.Deps{
-		Pool:              cfg.Pool,
-		OpenVikingBaseURL: os.Getenv("ARKLOOP_OPENVIKING_BASE_URL"),
-		OpenVikingAPIKey:  os.Getenv("ARKLOOP_OPENVIKING_ROOT_API_KEY"),
+		Pool:                     cfg.Pool,
+		MemoryProvider:           os.Getenv("ARKLOOP_MEMORY_PROVIDER"),
+		OpenVikingBaseURL:        os.Getenv("ARKLOOP_OPENVIKING_BASE_URL"),
+		OpenVikingAPIKey:         os.Getenv("ARKLOOP_OPENVIKING_ROOT_API_KEY"),
+		NowledgeBaseURL:          os.Getenv("ARKLOOP_NOWLEDGE_BASE_URL"),
+		NowledgeAPIKey:           os.Getenv("ARKLOOP_NOWLEDGE_API_KEY"),
+		NowledgeRequestTimeoutMs: atoiDefault(os.Getenv("ARKLOOP_NOWLEDGE_REQUEST_TIMEOUT_MS"), 30000),
 	})
 
 	// NapCat (QQ channel) lifecycle API -- desktop only

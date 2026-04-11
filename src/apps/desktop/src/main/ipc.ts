@@ -243,8 +243,12 @@ export function registerIpcHandlers(
   ipcMain.handle('arkloop:memory:set-config', async (_event, memory: MemoryConfig) => {
     const config = loadConfig()
     const next: AppConfig = { ...config, memory }
+    const shouldRebuildDerivedState = shouldAutoRebuildSemanticMemory(config.memory, memory)
     await controller.applyConfigUpdate(next, { forceLocalSidecarRestart: true })
-    return { ok: true }
+    if (shouldRebuildDerivedState) {
+      await rebuildSemanticMemoryDerivedState()
+    }
+    return { ok: true, rebuildTriggered: shouldRebuildDerivedState }
   })
 
   ipcMain.handle('arkloop:memory:list', async (_event) => {
@@ -469,6 +473,27 @@ function getLocalApiBaseUrl(): string | null {
   const runtime = getSidecarRuntime()
   if (runtime.status !== 'running' || !runtime.port) return null
   return `http://127.0.0.1:${runtime.port}`
+}
+
+function isSemanticMemoryProvider(provider: MemoryConfig['provider']): boolean {
+  return provider === 'openviking' || provider === 'nowledge'
+}
+
+function shouldAutoRebuildSemanticMemory(previous: MemoryConfig, next: MemoryConfig): boolean {
+  if (!next.enabled || !isSemanticMemoryProvider(next.provider)) {
+    return false
+  }
+  return !previous.enabled || previous.provider !== next.provider
+}
+
+async function rebuildSemanticMemoryDerivedState(): Promise<void> {
+  const apiBaseUrl = getLocalApiBaseUrl()
+  if (!apiBaseUrl) {
+    throw new Error('sidecar not running')
+  }
+  const token = getDesktopAccessToken()
+  await makeApiRequest(`${apiBaseUrl}/v1/desktop/memory/snapshot/rebuild`, 'POST', token)
+  await makeApiRequest(`${apiBaseUrl}/v1/desktop/memory/impression/rebuild`, 'POST', token)
 }
 
 type ToolProviderItem = {

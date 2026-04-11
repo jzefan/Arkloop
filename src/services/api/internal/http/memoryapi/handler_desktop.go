@@ -13,6 +13,8 @@ import (
 	"io"
 	nethttp "net/http"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -37,14 +39,26 @@ type MemoryEntry struct {
 
 // Deps holds the dependencies for the notebook API.
 type Deps struct {
-	Pool              data.DB
-	OpenVikingBaseURL string
-	OpenVikingAPIKey  string
+	Pool                     data.DB
+	MemoryProvider           string
+	OpenVikingBaseURL        string
+	OpenVikingAPIKey         string
+	NowledgeBaseURL          string
+	NowledgeAPIKey           string
+	NowledgeRequestTimeoutMs int
 }
 
 // RegisterRoutes registers notebook management routes onto mux.
 func RegisterRoutes(mux *nethttp.ServeMux, deps Deps) {
-	h := &handler{pool: deps.Pool, ovBaseURL: deps.OpenVikingBaseURL, ovAPIKey: deps.OpenVikingAPIKey}
+	h := &handler{
+		pool:                     deps.Pool,
+		memoryProvider:           strings.TrimSpace(deps.MemoryProvider),
+		ovBaseURL:                deps.OpenVikingBaseURL,
+		ovAPIKey:                 deps.OpenVikingAPIKey,
+		nowledgeBaseURL:          deps.NowledgeBaseURL,
+		nowledgeAPIKey:           deps.NowledgeAPIKey,
+		nowledgeRequestTimeoutMs: deps.NowledgeRequestTimeoutMs,
+	}
 	mux.HandleFunc("/v1/desktop/memory/entries", h.dispatchEntries)
 	mux.HandleFunc("/v1/desktop/memory/entries/", h.dispatchEntryByID)
 	mux.HandleFunc("/v1/desktop/memory/snapshot", h.getSnapshot)
@@ -55,9 +69,13 @@ func RegisterRoutes(mux *nethttp.ServeMux, deps Deps) {
 }
 
 type handler struct {
-	pool      data.DB
-	ovBaseURL string
-	ovAPIKey  string
+	pool                     data.DB
+	memoryProvider           string
+	ovBaseURL                string
+	ovAPIKey                 string
+	nowledgeBaseURL          string
+	nowledgeAPIKey           string
+	nowledgeRequestTimeoutMs int
 }
 
 var impressionRebuildWaitTimeout = 90 * time.Second
@@ -68,6 +86,30 @@ type impressionState struct {
 	updatedAt  string
 	found      bool
 }
+
+type nowledgeConfig struct {
+	baseURL        string
+	apiKey         string
+	requestTimeout time.Duration
+}
+
+type nowledgeListedMemory struct {
+	ID         string   `json:"id"`
+	Title      string   `json:"title"`
+	Content    string   `json:"content"`
+	Rating     float64  `json:"rating"`
+	Time       string   `json:"time"`
+	LabelIDs   []string `json:"label_ids"`
+	Confidence float64  `json:"confidence"`
+}
+
+const (
+	nowledgeMemoryURIPrefix  = "nowledge://memory/"
+	nowledgeDefaultBaseURL   = "http://127.0.0.1:14242"
+	nowledgeLocalConfigPath  = ".nowledge-mem/config.json"
+	nowledgeSnapshotLimit    = 30
+	nowledgeContentTimeoutMs = 30000
+)
 
 func (h *handler) dispatchEntries(w nethttp.ResponseWriter, r *nethttp.Request) {
 	if !checkDesktopToken(w, r) {
@@ -220,15 +262,11 @@ func (h *handler) rebuildSnapshotHandler(w nethttp.ResponseWriter, r *nethttp.Re
 		httpkit.WriteError(w, nethttp.StatusMethodNotAllowed, "method_not_allowed", "method not allowed", "", nil)
 		return
 	}
-	if strings.TrimSpace(h.ovBaseURL) == "" {
-		httpkit.WriteError(w, nethttp.StatusServiceUnavailable, "unavailable", "openviking not configured", "", nil)
-		return
-	}
 	accountID := auth.DesktopAccountID.String()
 	userID := auth.DesktopUserID.String()
 	agentID := agentIDFromQuery(r)
 
-	block, hits, err := h.findAndBuildMemoryBlock(r.Context(), userID)
+	block, hits, err := h.rebuildSnapshot(r.Context(), agentID, userID)
 	if err != nil {
 		httpkit.WriteError(w, nethttp.StatusBadGateway, "upstream_error", err.Error(), "", nil)
 		return
@@ -246,6 +284,20 @@ func (h *handler) rebuildSnapshotHandler(w nethttp.ResponseWriter, r *nethttp.Re
 		return
 	}
 	writeJSON(w, map[string]any{"memory_block": block, "hits": hits})
+}
+
+func (h *handler) rebuildSnapshot(ctx context.Context, agentID, userID string) (string, []snapshotHit, error) {
+	switch h.activeMemoryProvider() {
+	case "nowledge":
+		return h.findAndBuildNowledgeMemoryBlock(ctx, agentID)
+	case "openviking":
+		if strings.TrimSpace(h.ovBaseURL) == "" {
+			return "", nil, fmt.Errorf("openviking not configured")
+		}
+		return h.findAndBuildMemoryBlock(ctx, userID)
+	default:
+		return "", nil, fmt.Errorf("memory provider does not support snapshot rebuild")
+	}
 }
 
 func (h *handler) findAndBuildMemoryBlock(ctx context.Context, userID string) (string, []snapshotHit, error) {
@@ -582,17 +634,24 @@ func (h *handler) getContent(w nethttp.ResponseWriter, r *nethttp.Request) {
 		httpkit.WriteError(w, nethttp.StatusBadRequest, "bad_request", "layer must be overview or read", "", nil)
 		return
 	}
-	if strings.TrimSpace(h.ovBaseURL) == "" {
-		httpkit.WriteError(w, nethttp.StatusServiceUnavailable, "unavailable", "openviking not configured", "", nil)
-		return
-	}
-
-	content, err := h.fetchOVContent(r.Context(), uri, layer)
+	content, err := h.fetchContent(r.Context(), agentIDFromQuery(r), uri, layer)
 	if err != nil {
 		httpkit.WriteError(w, nethttp.StatusBadGateway, "upstream_error", err.Error(), "", nil)
 		return
 	}
 	writeJSON(w, map[string]any{"content": content})
+}
+
+func (h *handler) fetchContent(ctx context.Context, agentID, uri, layer string) (string, error) {
+	switch {
+	case strings.HasPrefix(strings.TrimSpace(uri), nowledgeMemoryURIPrefix):
+		return h.fetchNowledgeContent(ctx, agentID, uri, layer)
+	default:
+		if strings.TrimSpace(h.ovBaseURL) == "" {
+			return "", fmt.Errorf("openviking not configured")
+		}
+		return h.fetchOVContent(ctx, uri, layer)
+	}
 }
 
 func (h *handler) fetchOVContent(ctx context.Context, uri, layer string) (string, error) {
@@ -638,6 +697,264 @@ func (h *handler) fetchOVContent(ctx context.Context, uri, layer string) (string
 		return string(wrapper.Result), nil
 	}
 	return content, nil
+}
+
+func (h *handler) activeMemoryProvider() string {
+	switch provider := strings.TrimSpace(h.memoryProvider); provider {
+	case "nowledge", "openviking":
+		return provider
+	}
+	if strings.TrimSpace(h.nowledgeBaseURL) != "" {
+		return "nowledge"
+	}
+	if strings.TrimSpace(h.ovBaseURL) != "" {
+		return "openviking"
+	}
+	return "notebook"
+}
+
+func (h *handler) resolveNowledgeConfig() (nowledgeConfig, error) {
+	cfg := nowledgeConfig{
+		baseURL: strings.TrimSpace(h.nowledgeBaseURL),
+		apiKey:  strings.TrimSpace(h.nowledgeAPIKey),
+	}
+	if h.nowledgeRequestTimeoutMs > 0 {
+		cfg.requestTimeout = time.Duration(h.nowledgeRequestTimeoutMs) * time.Millisecond
+	} else {
+		cfg.requestTimeout = nowledgeContentTimeoutMs * time.Millisecond
+	}
+
+	if cfg.baseURL == "" || cfg.apiKey == "" {
+		localCfg, err := loadNowledgeLocalConfigFile()
+		if err == nil {
+			if cfg.baseURL == "" {
+				cfg.baseURL = localCfg.baseURL
+			}
+			if cfg.apiKey == "" {
+				cfg.apiKey = localCfg.apiKey
+			}
+		}
+	}
+	if cfg.baseURL == "" {
+		cfg.baseURL = nowledgeDefaultBaseURL
+	}
+	if cfg.requestTimeout <= 0 {
+		cfg.requestTimeout = nowledgeContentTimeoutMs * time.Millisecond
+	}
+	return cfg, nil
+}
+
+func loadNowledgeLocalConfigFile() (nowledgeConfig, error) {
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return nowledgeConfig{}, err
+	}
+	raw, err := os.ReadFile(filepath.Join(homeDir, nowledgeLocalConfigPath))
+	if err != nil {
+		return nowledgeConfig{}, err
+	}
+	var payload struct {
+		APIURL string `json:"apiUrl"`
+		APIKey string `json:"apiKey"`
+	}
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		return nowledgeConfig{}, err
+	}
+	return nowledgeConfig{
+		baseURL: strings.TrimSpace(payload.APIURL),
+		apiKey:  strings.TrimSpace(payload.APIKey),
+	}, nil
+}
+
+func (h *handler) findAndBuildNowledgeMemoryBlock(ctx context.Context, agentID string) (string, []snapshotHit, error) {
+	memories, err := h.listNowledgeMemories(ctx, agentID, nowledgeSnapshotLimit)
+	if err != nil {
+		return "", nil, err
+	}
+	return buildNowledgeSnapshotBlock(memories), buildNowledgeSnapshotHits(memories), nil
+}
+
+func (h *handler) listNowledgeMemories(ctx context.Context, agentID string, limit int) ([]nowledgeListedMemory, error) {
+	if limit <= 0 {
+		limit = nowledgeSnapshotLimit
+	}
+	cfg, err := h.resolveNowledgeConfig()
+	if err != nil {
+		return nil, err
+	}
+	values := url.Values{}
+	values.Set("limit", fmt.Sprintf("%d", limit))
+	req, err := nethttp.NewRequestWithContext(ctx, nethttp.MethodGet, strings.TrimRight(cfg.baseURL, "/")+"/memories?"+values.Encode(), nil)
+	if err != nil {
+		return nil, err
+	}
+	h.setNowledgeHeaders(req, agentID, cfg.apiKey)
+	client := &nethttp.Client{Timeout: cfg.requestTimeout}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("nowledge list memories: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 512*1024))
+	if err != nil {
+		return nil, fmt.Errorf("read nowledge memories: %w", err)
+	}
+	if resp.StatusCode >= 400 {
+		return nil, fmt.Errorf("nowledge %d: %s", resp.StatusCode, string(body))
+	}
+
+	var wrapper struct {
+		Memories []nowledgeListedMemory `json:"memories"`
+	}
+	if err := json.Unmarshal(body, &wrapper); err != nil {
+		return nil, fmt.Errorf("decode nowledge memories: %w", err)
+	}
+	return wrapper.Memories, nil
+}
+
+func buildNowledgeSnapshotBlock(memories []nowledgeListedMemory) string {
+	if len(memories) == 0 {
+		return ""
+	}
+	var sb strings.Builder
+	sb.WriteString("\n\n<memory>\n")
+	for _, item := range memories {
+		line := formatNowledgeSnapshotLine(item)
+		if line == "" {
+			continue
+		}
+		sb.WriteString("- ")
+		sb.WriteString(line)
+		sb.WriteString("\n")
+	}
+	sb.WriteString("</memory>")
+	if strings.TrimSpace(strings.ReplaceAll(strings.ReplaceAll(sb.String(), "<memory>", ""), "</memory>", "")) == "" {
+		return ""
+	}
+	return sb.String()
+}
+
+func buildNowledgeSnapshotHits(memories []nowledgeListedMemory) []snapshotHit {
+	hits := make([]snapshotHit, 0, len(memories))
+	for _, item := range memories {
+		uri := strings.TrimSpace(item.ID)
+		if uri == "" {
+			continue
+		}
+		hits = append(hits, snapshotHit{
+			URI:      nowledgeMemoryURIPrefix + uri,
+			Abstract: firstNonEmpty(strings.TrimSpace(item.Title), compactInline(item.Content, 160)),
+			IsLeaf:   true,
+		})
+	}
+	return hits
+}
+
+func formatNowledgeSnapshotLine(item nowledgeListedMemory) string {
+	title := strings.TrimSpace(item.Title)
+	content := compactInline(item.Content, 160)
+	switch {
+	case title != "" && content != "" && content != title:
+		return "[" + title + "] " + content
+	case title != "":
+		return "[" + title + "]"
+	default:
+		return content
+	}
+}
+
+func (h *handler) fetchNowledgeContent(ctx context.Context, agentID, uri, layer string) (string, error) {
+	memoryID, err := nowledgeMemoryIDFromURI(uri)
+	if err != nil {
+		return "", err
+	}
+	cfg, err := h.resolveNowledgeConfig()
+	if err != nil {
+		return "", err
+	}
+	req, err := nethttp.NewRequestWithContext(ctx, nethttp.MethodGet, strings.TrimRight(cfg.baseURL, "/")+"/memories/"+url.PathEscape(memoryID), nil)
+	if err != nil {
+		return "", err
+	}
+	h.setNowledgeHeaders(req, agentID, cfg.apiKey)
+	client := &nethttp.Client{Timeout: cfg.requestTimeout}
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("nowledge content: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 512*1024))
+	if err != nil {
+		return "", fmt.Errorf("read nowledge content: %w", err)
+	}
+	if resp.StatusCode >= 400 {
+		return "", fmt.Errorf("nowledge %d: %s", resp.StatusCode, string(body))
+	}
+
+	var payload struct {
+		Title   string `json:"title"`
+		Content string `json:"content"`
+	}
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return "", fmt.Errorf("decode nowledge content: %w", err)
+	}
+	title := strings.TrimSpace(payload.Title)
+	content := strings.TrimSpace(payload.Content)
+	if title == "" {
+		return content, nil
+	}
+	if layer == "overview" && content != "" {
+		return title + "\n" + content, nil
+	}
+	if content == "" {
+		return title, nil
+	}
+	return title + "\n\n" + content, nil
+}
+
+func (h *handler) setNowledgeHeaders(req *nethttp.Request, agentID, apiKey string) {
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+	if strings.TrimSpace(apiKey) != "" {
+		req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(apiKey))
+		req.Header.Set("x-nmem-api-key", strings.TrimSpace(apiKey))
+	}
+	req.Header.Set("X-Arkloop-Account", auth.DesktopAccountID.String())
+	req.Header.Set("X-Arkloop-User", auth.DesktopUserID.String())
+	req.Header.Set("X-Arkloop-Agent", strings.TrimSpace(agentID))
+}
+
+func nowledgeMemoryIDFromURI(uri string) (string, error) {
+	value := strings.TrimSpace(uri)
+	if !strings.HasPrefix(value, nowledgeMemoryURIPrefix) {
+		return "", fmt.Errorf("invalid nowledge memory uri: %q", uri)
+	}
+	id := strings.TrimSpace(strings.TrimPrefix(value, nowledgeMemoryURIPrefix))
+	if id == "" {
+		return "", fmt.Errorf("invalid nowledge memory uri: %q", uri)
+	}
+	return id, nil
+}
+
+func compactInline(text string, maxRunes int) string {
+	text = strings.Join(strings.Fields(strings.TrimSpace(text)), " ")
+	runes := []rune(text)
+	if len(runes) <= maxRunes {
+		return text
+	}
+	return string(runes[:maxRunes]) + "..."
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 // ---------- helpers ----------

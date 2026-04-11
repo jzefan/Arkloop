@@ -58,17 +58,31 @@ func NewImpressionPrepareMiddleware(impStore ImpressionStore, pool CompactPersis
 			AgentID:   StableAgentID(rc),
 		}
 
-		skelCtx, skelCancel := context.WithTimeout(ctx, memorySkeletonTimeout)
-		skeletonLines, leafLines, _, ok := buildSnapshotFromTree(skelCtx, provider, ident)
-		skelCancel()
+		if source, ok := provider.(memory.MemoryFragmentSource); ok {
+			if fragments, listed := buildSnapshotFromFragments(ctx, source, ident, impressionFragmentLimit); listed && len(fragments) > 0 {
+				content := buildImpressionInputFromFragments(fragments)
+				if strings.TrimSpace(content) == "" {
+					return next(ctx, rc)
+				}
+				rc.Messages = append(rc.Messages, llm.Message{
+					Role:    "user",
+					Content: []llm.ContentPart{{Type: "text", Text: content}},
+				})
+				rc.ThreadMessageIDs = append(rc.ThreadMessageIDs, uuid.Nil)
+			}
+		} else {
+			skelCtx, skelCancel := context.WithTimeout(ctx, memorySkeletonTimeout)
+			skeletonLines, leafLines, _, ok := buildSnapshotFromTree(skelCtx, provider, ident)
+			skelCancel()
 
-		if ok && (len(skeletonLines) > 0 || len(leafLines) > 0) {
-			content := formatImpressionInput(skeletonLines, leafLines)
-			rc.Messages = append(rc.Messages, llm.Message{
-				Role:    "user",
-				Content: []llm.ContentPart{{Type: "text", Text: content}},
-			})
-			rc.ThreadMessageIDs = append(rc.ThreadMessageIDs, uuid.Nil)
+			if ok && (len(skeletonLines) > 0 || len(leafLines) > 0) {
+				content := formatImpressionInput(skeletonLines, leafLines)
+				rc.Messages = append(rc.Messages, llm.Message{
+					Role:    "user",
+					Content: []llm.ContentPart{{Type: "text", Text: content}},
+				})
+				rc.ThreadMessageIDs = append(rc.ThreadMessageIDs, uuid.Nil)
+			}
 		}
 
 		err := next(ctx, rc)
@@ -112,4 +126,29 @@ func formatImpressionInput(skeletonLines, leafLines []string) string {
 		}
 	}
 	return sb.String()
+}
+
+func buildImpressionInputFromFragments(fragments []memory.MemoryFragment) string {
+	var sb strings.Builder
+	sb.WriteString("以下是 bot 的记忆条目，请基于这些信息生成画像。\n\n")
+	sb.WriteString("## 记忆条目\n")
+	count := 0
+	for _, fragment := range fragments {
+		title := strings.TrimSpace(firstNonEmptyString(fragment.Title, compactInline(fragment.Content, 80)))
+		content := compactInline(fragment.Content, 300)
+		if title == "" && content == "" {
+			continue
+		}
+		count++
+		sb.WriteString("- 标题：")
+		sb.WriteString(title)
+		sb.WriteString("\n")
+		sb.WriteString("  内容：")
+		sb.WriteString(content)
+		sb.WriteString("\n")
+	}
+	if count == 0 {
+		return ""
+	}
+	return strings.TrimRight(sb.String(), "\n") + "\n"
 }

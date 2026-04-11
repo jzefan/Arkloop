@@ -22,9 +22,11 @@ const (
 	memoryFlushTimeout = 120 * time.Second
 
 	// 目录树快照常量
-	memorySkeletonTimeout = 10 * time.Second // 骨架读取总超时
-	memorySkeletonMaxDirs = 10               // 最多读取的一级子目录数
-	memoryLeafMaxPerDir   = 30               // 每个目录下最多读取的叶子 abstract 数
+	memorySkeletonTimeout   = 10 * time.Second // 骨架读取总超时
+	memorySkeletonMaxDirs   = 10               // 最多读取的一级子目录数
+	memoryLeafMaxPerDir     = 30               // 每个目录下最多读取的叶子 abstract 数
+	memoryFragmentLimit     = 30
+	impressionFragmentLimit = 20
 )
 
 var usageRepo = data.UsageRecordsRepository{}
@@ -159,6 +161,10 @@ func rebuildSnapshotBlock(ctx context.Context, provider memory.MemoryProvider, i
 		return "", nil, false
 	}
 
+	if source, ok := provider.(memory.MemoryFragmentSource); ok {
+		return rebuildSnapshotBlockFromFragments(ctx, source, ident)
+	}
+
 	skelCtx, skelCancel := context.WithTimeout(ctx, memorySkeletonTimeout)
 	skeletonLines, leafLines, hits, ok := buildSnapshotFromTree(skelCtx, provider, ident)
 	skelCancel()
@@ -172,6 +178,14 @@ func rebuildSnapshotBlock(ctx context.Context, provider memory.MemoryProvider, i
 		return "", nil, false
 	}
 	return block, hits, true
+}
+
+func rebuildSnapshotBlockFromFragments(ctx context.Context, source memory.MemoryFragmentSource, ident memory.MemoryIdentity) (string, []memory.MemoryHit, bool) {
+	fragments, ok := buildSnapshotFromFragments(ctx, source, ident, memoryFragmentLimit)
+	if !ok {
+		return "", nil, false
+	}
+	return buildLinearMemoryBlock(fragments), hitsFromFragments(fragments), true
 }
 
 // buildSnapshotFromTree 通过 ls + Content 构建完整的目录树快照。
@@ -246,6 +260,14 @@ func buildSnapshotFromTree(ctx context.Context, provider memory.MemoryProvider, 
 	return skeletonLines, leafLines, hits, true
 }
 
+func buildSnapshotFromFragments(ctx context.Context, source memory.MemoryFragmentSource, ident memory.MemoryIdentity, limit int) ([]memory.MemoryFragment, bool) {
+	fragments, err := source.ListFragments(ctx, ident, limit)
+	if err != nil {
+		return nil, false
+	}
+	return fragments, true
+}
+
 func memoryFirstLine(s string) string {
 	if i := strings.IndexByte(s, '\n'); i >= 0 {
 		s = s[:i]
@@ -292,6 +314,60 @@ func buildTreeShapedMemoryBlock(skeletonLines []string, leafLines []string) stri
 		return ""
 	}
 	return block
+}
+
+func buildLinearMemoryBlock(fragments []memory.MemoryFragment) string {
+	if len(fragments) == 0 {
+		return ""
+	}
+	lines := make([]string, 0, len(fragments))
+	for _, fragment := range fragments {
+		line := formatFragmentSnapshotLine(fragment)
+		if line != "" {
+			lines = append(lines, line)
+		}
+	}
+	if len(lines) == 0 {
+		return ""
+	}
+	var sb strings.Builder
+	sb.WriteString("\n\n<memory>\n")
+	for _, line := range lines {
+		sb.WriteString("- ")
+		sb.WriteString(line)
+		sb.WriteString("\n")
+	}
+	sb.WriteString("</memory>")
+	return sb.String()
+}
+
+func formatFragmentSnapshotLine(fragment memory.MemoryFragment) string {
+	title := strings.TrimSpace(fragment.Title)
+	content := compactInline(firstNonEmptyString(fragment.Content, fragment.Abstract), 160)
+	switch {
+	case title != "" && content != "" && content != title:
+		return "[" + title + "] " + content
+	case title != "":
+		return "[" + title + "]"
+	default:
+		return strings.TrimSpace(firstNonEmptyString(fragment.Abstract, content))
+	}
+}
+
+func hitsFromFragments(fragments []memory.MemoryFragment) []memory.MemoryHit {
+	if len(fragments) == 0 {
+		return nil
+	}
+	hits := make([]memory.MemoryHit, 0, len(fragments))
+	for _, fragment := range fragments {
+		hits = append(hits, memory.MemoryHit{
+			URI:      strings.TrimSpace(fragment.URI),
+			Abstract: strings.TrimSpace(fragment.Abstract),
+			Score:    fragment.Score,
+			IsLeaf:   true,
+		})
+	}
+	return hits
 }
 
 func tryRefreshSnapshotFromQueries(ctx context.Context, snap MemorySnapshotStore, provider memory.MemoryProvider, ident memory.MemoryIdentity, queries map[string][]string) (bool, error) {
