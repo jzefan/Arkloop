@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	sharedconfig "arkloop/services/shared/config"
+	"arkloop/services/worker/internal/data"
 	"arkloop/services/worker/internal/llm"
 	"arkloop/services/worker/internal/memory"
 	"arkloop/services/worker/internal/memory/nowledge"
@@ -232,13 +233,33 @@ type NowledgeDistillObserver struct {
 	provider       *nowledge.Client
 	links          externalThreadLinkStore
 	configResolver sharedconfig.Resolver
+	snap           MemorySnapshotStore
+	mdb            data.MemoryMiddlewareDB
+	impStore       ImpressionStore
+	impRefresh     ImpressionRefreshFunc
 }
 
-func NewNowledgeDistillObserver(provider *nowledge.Client, links externalThreadLinkStore, configResolver sharedconfig.Resolver) AfterThreadPersistHook {
+func NewNowledgeDistillObserver(
+	provider *nowledge.Client,
+	links externalThreadLinkStore,
+	configResolver sharedconfig.Resolver,
+	snap MemorySnapshotStore,
+	mdb data.MemoryMiddlewareDB,
+	impStore ImpressionStore,
+	impRefresh ImpressionRefreshFunc,
+) AfterThreadPersistHook {
 	if provider == nil || links == nil {
 		return nil
 	}
-	return &NowledgeDistillObserver{provider: provider, links: links, configResolver: configResolver}
+	return &NowledgeDistillObserver{
+		provider:       provider,
+		links:          links,
+		configResolver: configResolver,
+		snap:           snap,
+		mdb:            mdb,
+		impStore:       impStore,
+		impRefresh:     impRefresh,
+	}
 }
 
 func (o *NowledgeDistillObserver) HookProviderName() string { return nowledgeProviderName }
@@ -274,8 +295,52 @@ func (o *NowledgeDistillObserver) AfterThreadPersist(ctx context.Context, rc *Ru
 	if err != nil || !triage.ShouldDistill {
 		return nil, err
 	}
-	_, err = o.provider.DistillThread(ctx, ident, threadID, buildNowledgeThreadTitle(delta), conversation)
-	return nil, err
+	distill, err := o.provider.DistillThread(ctx, ident, threadID, buildNowledgeThreadTitle(delta), conversation)
+	if err != nil {
+		return nil, err
+	}
+	if distill.MemoriesCreated <= 0 {
+		return nil, nil
+	}
+	if o.impStore != nil {
+		addImpressionScore(ctx, o.impStore, ident, impressionScoreForRun(rc), o.configResolver, o.impRefresh)
+	}
+	scheduleSnapshotRefresh(
+		o.provider,
+		o.snap,
+		o.mdb,
+		rc.Run.ID,
+		rc.TraceID,
+		ident,
+		threadID,
+		buildNowledgeSnapshotQueries(delta),
+		"memory.distill",
+		"distill",
+	)
+	return nil, nil
+}
+
+func buildNowledgeSnapshotQueries(delta ThreadDelta) map[string][]string {
+	queries := make([]string, 0, len(delta.Messages))
+	for _, msg := range delta.Messages {
+		if msg.Role != "user" {
+			continue
+		}
+		if text := strings.TrimSpace(msg.Content); text != "" {
+			queries = append(queries, text)
+		}
+	}
+	if len(queries) == 0 {
+		if title := strings.TrimSpace(buildNowledgeThreadTitle(delta)); title != "" {
+			queries = append(queries, title)
+		}
+	}
+	if len(queries) == 0 {
+		return nil
+	}
+	return map[string][]string{
+		string(memory.MemoryScopeUser): queries,
+	}
 }
 
 func buildNowledgeRecallQuery(rc *RunContext) string {
