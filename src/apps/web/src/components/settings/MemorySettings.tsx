@@ -336,7 +336,7 @@ function ModalHitCard({ hit, onLoadContent }: {
                     style={{
                       background: 'var(--c-bg-input)',
                       fontFamily: 'var(--c-font-body)',
-                      fontWeight: 'var(--c-fw-325)',
+                      fontWeight: 'var(--c-text-body-weight)',
                       fontSynthesis: 'none',
                     }}
                   >
@@ -357,7 +357,7 @@ function ModalHitCard({ hit, onLoadContent }: {
                       willChange: 'max-height',
                       maxHeight: resolvedMaxHeight(isCollapsed, fullHeight),
                       fontFamily: 'var(--c-font-body)',
-                      fontWeight: 'var(--c-fw-325)',
+                      fontWeight: 'var(--c-text-body-weight)',
                       fontSynthesis: 'none',
                       ...(isCollapsed
                         ? { WebkitMaskImage: fadeMask, maskImage: fadeMask }
@@ -552,7 +552,7 @@ function MemoriesCard({
             style={{
               background: 'var(--c-bg-input)',
               fontFamily: 'var(--c-font-body)',
-              fontWeight: 'var(--c-fw-325)',
+              fontWeight: 'var(--c-text-body-weight)',
               fontSynthesis: 'none',
             }}
           >

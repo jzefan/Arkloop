@@ -249,7 +249,7 @@ export function WorkspaceResource({ file, runId, projectId, accessToken }: Props
             whiteSpace: 'pre-wrap',
             wordBreak: 'break-word',
             fontFamily: 'var(--c-font-body)',
-            fontWeight: 'var(--c-fw-325)',
+            fontWeight: 'var(--c-text-body-weight)',
             fontSynthesis: 'none',
           }}
         >
