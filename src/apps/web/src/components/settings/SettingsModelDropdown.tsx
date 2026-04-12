@@ -121,7 +121,15 @@ export function SettingsModelDropdown({
           transition: 'border-color 0.15s, background-color 0.15s',
         }}
       >
-        <span className="truncate">{currentLabel}</span>
+        <span
+          className="truncate"
+          style={{
+            fontWeight: 'var(--c-fw-365)',
+            fontSynthesis: 'none',
+          }}
+        >
+          {currentLabel}
+        </span>
         <ChevronDown size={13} className="ml-2 shrink-0" />
       </button>
 
