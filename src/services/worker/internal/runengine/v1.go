@@ -244,7 +244,8 @@ func NewEngineV1(deps EngineV1Deps) (*EngineV1, error) {
 	//   InjectionScan   — 在 Routing 前：扫描结果影响路由决策（trust source）
 	//   Routing         — 在 ContextCompact/TitleSummarizer 前：后两者依赖 Gateway
 	//   ToolBuild       — 必须最后：依赖前面所有 mw 对 ToolRegistry/Specs 的修改
-	//   ChannelDelivery — 必须最后：包裹 handler，在 run 结束后执行投递
+	//   ThreadPersist   — 包裹 ChannelDelivery：thread persist 依赖最终助手输出
+	//   ChannelDelivery — 包裹 handler：run 结束后立刻停 typing 并执行渠道投递
 	middlewares := buildPipeline(deps, runsRepo, eventsRepo, messagesRepo, resolver, releaseSlot, promptInjection, baseAllowlistSet)
 
 	terminal := pipeline.NewAgentLoopHandler(runsRepo, eventsRepo, messagesRepo, deps.RunLimiterRDB, deps.JobQueue, usageRepo, creditsRepo, resolver)
@@ -755,8 +756,8 @@ func buildToolFinalizeLayer(deps EngineV1Deps) []pipeline.RunMiddleware {
 
 func buildDeliveryLayer(deps EngineV1Deps) []pipeline.RunMiddleware {
 	return []pipeline.RunMiddleware{
-		pipeline.NewChannelDeliveryMiddleware(deps.DBPool),
 		pipeline.NewThreadPersistHookMiddleware(),
+		pipeline.NewChannelDeliveryMiddleware(deps.DBPool),
 	}
 }
 

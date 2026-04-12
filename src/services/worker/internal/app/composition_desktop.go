@@ -731,8 +731,8 @@ func (e *DesktopEngine) Execute(ctx context.Context, run data.Run, traceID strin
 		pipeline.NewConditionalToolsMiddleware(),
 		pipeline.NewToolBuildMiddleware(),
 		pipeline.NewResultSummarizerMiddleware(nil, e.auxGateway, e.emitDebugEvents, 0, e.routingLoader),
-		desktopChannelDelivery(e.db),
 		pipeline.NewThreadPersistHookMiddleware(),
+		desktopChannelDelivery(e.db),
 	)
 	terminal := desktopAgentLoop(e.db, e.bus, e.jobQueue, runsRepo, eventsRepo, e.shellExecutor, e.runtimeSnapshot)
 	handler := pipeline.Build(middlewares, terminal)
@@ -1163,7 +1163,7 @@ func desktopInputLoader(
 			rc.Tracer.Event("input_loader", "input_loader.loaded", map[string]any{
 				"run_kind":      strings.TrimSpace(desktopStringValue(loaded.InputJSON["run_kind"])),
 				"message_count": len(rc.Messages),
-				"history_limit": messageLimit,
+				"history_limit": rc.ThreadMessageHistoryLimit,
 			})
 		}
 
