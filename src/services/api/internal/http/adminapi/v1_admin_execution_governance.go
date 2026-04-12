@@ -22,7 +22,6 @@ import (
 var executionGovernanceKeys = []string{
 	"limit.agent_reasoning_iterations",
 	"limit.tool_continuation_budget",
-	"limit.thread_message_history",
 	"limit.max_input_content_bytes",
 	"limit.max_parallel_tasks",
 	"llm.max_response_bytes",

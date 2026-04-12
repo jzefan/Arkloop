@@ -39,10 +39,8 @@ func TestInputLoaderMiddleware_NilPoolPanic(t *testing.T) {
 	_ = h(context.Background(), rc)
 }
 
-// 验证 ThreadMessageHistoryLimit <= 0 时默认值为 200：
-// 通过 panic 证明 loadRunInputs 被调用（messageLimit 参数已被设为 200）。
-// 这里无法直接观测 messageLimit 数值，但能确认 loadRunInputs 确实被执行。
-func TestInputLoaderMiddleware_DefaultMessageLimit(t *testing.T) {
+// 非正数历史限制应保留为“不限”语义；这里通过 panic 证明 loadRunInputs 确实被调用。
+func TestInputLoaderMiddleware_UnboundedMessageLimit(t *testing.T) {
 	mw := pipeline.NewInputLoaderMiddleware(data.RunsRepository{}, data.RunEventsRepository{}, data.MessagesRepository{}, nil, nil)
 
 	rc := &pipeline.RunContext{
@@ -64,8 +62,8 @@ func TestInputLoaderMiddleware_DefaultMessageLimit(t *testing.T) {
 	_ = h(context.Background(), rc)
 }
 
-// 负值同样应回退到默认 200
-func TestInputLoaderMiddleware_NegativeMessageLimitFallback(t *testing.T) {
+// 负值同样表示不限。
+func TestInputLoaderMiddleware_NegativeMessageLimitIsUnbounded(t *testing.T) {
 	mw := pipeline.NewInputLoaderMiddleware(data.RunsRepository{}, data.RunEventsRepository{}, data.MessagesRepository{}, nil, nil)
 
 	rc := &pipeline.RunContext{

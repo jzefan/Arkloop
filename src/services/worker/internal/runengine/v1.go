@@ -392,7 +392,7 @@ func (e *EngineV1) Execute(ctx context.Context, pool *pgxpool.Pool, run data.Run
 
 	registry := sharedconfig.DefaultRegistry()
 	platformScope := sharedconfig.Scope{}
-	rc.ThreadMessageHistoryLimit = resolvePositiveInt(ctx, e.configResolver, registry, "limit.thread_message_history", platformScope, 200)
+	rc.ThreadMessageHistoryLimit = 0
 	persistPct := resolveNonNegativeInt(ctx, e.configResolver, registry, "context.compact.persist_trigger_context_pct", platformScope, 0)
 	if persistPct > 100 {
 		persistPct = 100

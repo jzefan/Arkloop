@@ -597,7 +597,7 @@ func (e *DesktopEngine) Execute(ctx context.Context, run data.Run, traceID strin
 		LlmRetryMaxAttempts: 10,
 		LlmRetryBaseDelayMs: 1000,
 
-		ThreadMessageHistoryLimit:     200,
+		ThreadMessageHistoryLimit:     0,
 		AgentReasoningIterationsLimit: 0,
 		ToolContinuationBudgetLimit:   32,
 		MaxParallelTasks:              4,
@@ -1140,11 +1140,7 @@ func desktopInputLoader(
 	rolloutStore objectstore.BlobStore,
 ) pipeline.RunMiddleware {
 	return func(ctx context.Context, rc *pipeline.RunContext, next pipeline.RunHandler) error {
-		messageLimit := rc.ThreadMessageHistoryLimit
-		if messageLimit <= 0 {
-			messageLimit = 200
-		}
-		loaded, err := pipeline.LoadRunInputs(ctx, db, rc.Run, rc.JobPayload, runsRepo, eventsRepo, data.MessagesRepository{}, attachmentStore, rolloutStore, messageLimit)
+		loaded, err := pipeline.LoadRunInputs(ctx, db, rc.Run, rc.JobPayload, runsRepo, eventsRepo, data.MessagesRepository{}, attachmentStore, rolloutStore, rc.ThreadMessageHistoryLimit)
 		if err != nil {
 			if pipeline.IsResumeUnavailableError(err) {
 				if pipeline.IsRuntimeRecoveryJob(rc.JobPayload) {

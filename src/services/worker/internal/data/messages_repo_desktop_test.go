@@ -4,6 +4,7 @@ package data
 
 import (
 	"context"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -357,6 +358,47 @@ func TestMessagesRepository_ListRawByThreadDesktopIncludesHiddenAndCompacted(t *
 	}
 	if msgs[1].Content != "hidden" || msgs[2].Content != "compacted" {
 		t.Fatalf("unexpected raw ordering: %#v", msgs)
+	}
+}
+
+func TestMessagesRepository_ListByThreadDesktopWithoutLimitLoadsFullVisibleHistory(t *testing.T) {
+	ctx := context.Background()
+	sqlitePool, err := sqliteadapter.AutoMigrate(ctx, filepath.Join(t.TempDir(), "unbounded.db"))
+	if err != nil {
+		t.Fatalf("auto migrate sqlite: %v", err)
+	}
+	defer sqlitePool.Close()
+
+	pool := sqlitepgx.New(sqlitePool.Unwrap())
+	accountID := uuid.New()
+	projectID := uuid.New()
+	threadID := uuid.New()
+
+	seedDesktopAccount(t, pool, accountID)
+	seedDesktopProject(t, pool, accountID, projectID)
+	seedDesktopThread(t, pool, accountID, projectID, threadID)
+
+	for seq := int64(1); seq <= 205; seq++ {
+		if err := insertDesktopRepoMessage(ctx, pool, accountID, threadID, uuid.New(), seq, "user", fmt.Sprintf("msg-%03d", seq), `{}`, false, ""); err != nil {
+			t.Fatalf("insert message %d: %v", seq, err)
+		}
+	}
+
+	tx, err := pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		t.Fatalf("begin read: %v", err)
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck
+
+	msgs, err := (MessagesRepository{}).ListByThread(ctx, tx, accountID, threadID, 0)
+	if err != nil {
+		t.Fatalf("list by thread: %v", err)
+	}
+	if len(msgs) != 205 {
+		t.Fatalf("expected full visible history, got %d", len(msgs))
+	}
+	if msgs[0].Content != "msg-001" || msgs[len(msgs)-1].Content != "msg-205" {
+		t.Fatalf("unexpected ordering: first=%q last=%q", msgs[0].Content, msgs[len(msgs)-1].Content)
 	}
 }
 
