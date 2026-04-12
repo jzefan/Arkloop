@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	sharedconfig "arkloop/services/shared/config"
 	datarepo "arkloop/services/worker/internal/data"
 	"arkloop/services/worker/internal/events"
 	"arkloop/services/worker/internal/memory"
@@ -20,9 +21,12 @@ import (
 )
 
 type ToolExecutor struct {
-	provider  memory.MemoryProvider
-	db        datarepo.DesktopDB
-	snapshots desktopSnapshotAppender
+	provider       memory.MemoryProvider
+	db             datarepo.DesktopDB
+	snapshots      desktopSnapshotAppender
+	impStore       pipeline.ImpressionStore
+	impRefresh     pipeline.ImpressionRefreshFunc
+	configResolver sharedconfig.Resolver
 }
 
 type desktopSnapshotAppender interface {
@@ -68,6 +72,15 @@ func NewToolExecutor(provider memory.MemoryProvider, db datarepo.DesktopDB, snap
 		snapshots = datarepo.MemorySnapshotRepository{}
 	}
 	return &ToolExecutor{provider: provider, db: db, snapshots: snapshots}
+}
+
+func (e *ToolExecutor) ConfigureImpression(store pipeline.ImpressionStore, refresh pipeline.ImpressionRefreshFunc, resolver sharedconfig.Resolver) {
+	if e == nil {
+		return
+	}
+	e.impStore = store
+	e.impRefresh = refresh
+	e.configResolver = resolver
 }
 
 func (e *ToolExecutor) Execute(
@@ -779,6 +792,12 @@ func (e *ToolExecutor) write(ctx context.Context, args map[string]any, ident mem
 		if err != nil {
 			return providerError("write", err, started)
 		}
+		if e.db != nil && isNowledgeProvider(e.provider) {
+			pipeline.EditSnapshotRefresh(e.provider, pipeline.NewDesktopMemorySnapshotStore(e.db), e.db, execCtx.RunID, execCtx.TraceID, ident, strings.TrimSpace(content))
+			if e.impStore != nil {
+				pipeline.BumpImpressionScore(ctx, e.impStore, ident, 5, e.configResolver, e.impRefresh)
+			}
+		}
 		return tools.ExecutionResult{
 			ResultJSON: map[string]any{"status": "ok", "uri": uri},
 			DurationMs: durationMs(started),
@@ -821,7 +840,7 @@ func (e *ToolExecutor) forget(ctx context.Context, args map[string]any, ident me
 	if err := e.provider.Delete(ctx, ident, uri); err != nil {
 		return providerError("forget", err, started)
 	}
-	if _, local := e.provider.(memory.DesktopLocalMemoryWriteURI); !local && e.db != nil {
+	if e.db != nil && shouldScheduleDesktopSnapshotRefresh(e.provider) {
 		pipeline.ForgetSnapshotRefresh(e.provider, pipeline.NewDesktopMemorySnapshotStore(e.db), e.db, execCtx.RunID, execCtx.TraceID, ident)
 	}
 	return tools.ExecutionResult{
@@ -846,13 +865,26 @@ func (e *ToolExecutor) edit(ctx context.Context, args map[string]any, ident memo
 	if err := editor.UpdateByURI(ctx, ident, strings.TrimSpace(uri), memory.MemoryEntry{Content: strings.TrimSpace(content)}); err != nil {
 		return providerError("edit", err, started)
 	}
-	if _, local := e.provider.(memory.DesktopLocalMemoryWriteURI); !local && e.db != nil {
+	if e.db != nil && shouldScheduleDesktopSnapshotRefresh(e.provider) {
 		pipeline.EditSnapshotRefresh(e.provider, pipeline.NewDesktopMemorySnapshotStore(e.db), e.db, execCtx.RunID, execCtx.TraceID, ident, strings.TrimSpace(content))
 	}
 	return tools.ExecutionResult{
 		ResultJSON: map[string]any{"status": "ok", "uri": strings.TrimSpace(uri)},
 		DurationMs: durationMs(started),
 	}
+}
+
+func isNowledgeProvider(provider memory.MemoryProvider) bool {
+	_, ok := provider.(*nowledge.Client)
+	return ok
+}
+
+func shouldScheduleDesktopSnapshotRefresh(provider memory.MemoryProvider) bool {
+	if isNowledgeProvider(provider) {
+		return true
+	}
+	_, local := provider.(memory.DesktopLocalMemoryWriteURI)
+	return !local
 }
 
 // ---------- shared helpers (duplicated from executor.go to avoid build-tag conflicts) ----------
