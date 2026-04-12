@@ -21,7 +21,7 @@ button:not(:disabled) {
 :root {
   color-scheme: dark;
   /* Font variables — overridden by AppearanceContext */
-  --c-font-body: 'Geist Variable', Geist, 'MiSans Adjusted', system-ui, sans-serif;
+  --c-font-body: 'MiSans Adjusted', system-ui, sans-serif;
   --c-font-code: 'JetBrains Mono', 'Cascadia Code', 'Fira Code', monospace;
   --c-font-size-base: 14px;
   --c-fw-250: 250;

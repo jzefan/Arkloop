@@ -234,9 +234,6 @@ importers:
       '@arkloop/shared':
         specifier: workspace:*
         version: link:../shared
-      '@fontsource-variable/geist':
-        specifier: 5.2.8
-        version: 5.2.8
       framer-motion:
         specifier: ^12.34.3
         version: 12.34.4(react-dom@19.2.4(react@19.2.4))(react@19.2.4)
@@ -899,9 +896,6 @@ packages:
 
   '@floating-ui/utils@0.2.11':
     resolution: {integrity: sha512-RiB/yIh78pcIxl6lLMG0CgBXAZ2Y0eVHqMPYugu+9U0AeT6YBeiJpf7lbdJNIugFP5SIjwNRgo4DhR1Qxi26Gg==}
-
-  '@fontsource-variable/geist@5.2.8':
-    resolution: {integrity: sha512-cJ6m9e+8MQ5dCYJsLylfZrgBh6KkG4bOLckB35Tr9J/EqdkEM6QllH5PxqP1dhTvFup+HtMRPuz9xOjxXJggxw==}
 
   '@formatjs/intl-localematcher@0.5.10':
     resolution: {integrity: sha512-af3qATX+m4Rnd9+wHcjJ4w2ijq+rAVP3CCinJQvFv1kgSu1W6jypUmvleJxcewdxmutM8dmIRZFxO/IQBZmP2Q==}
@@ -5742,8 +5736,6 @@ snapshots:
       react-dom: 19.2.4(react@19.2.4)
 
   '@floating-ui/utils@0.2.11': {}
-
-  '@fontsource-variable/geist@5.2.8': {}
 
   '@formatjs/intl-localematcher@0.5.10':
     dependencies:

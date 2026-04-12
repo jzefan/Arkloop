@@ -14,7 +14,6 @@
   },
   "dependencies": {
     "@arkloop/shared": "workspace:*",
-    "@fontsource-variable/geist": "5.2.8",
     "framer-motion": "^12.34.3",
     "highlight.js": "^11.11.1",
     "katex": "^0.16.28",
