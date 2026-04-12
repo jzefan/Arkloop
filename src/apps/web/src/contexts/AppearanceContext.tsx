@@ -17,7 +17,7 @@ import {
 
 // Font stacks
 const FONT_STACKS: Record<FontFamily, string> = {
-  'default': "'Geist Variable', Geist, 'MiSans Adjusted', system-ui, sans-serif",
+  'default': "'MiSans Adjusted', system-ui, sans-serif",
   'inter': "'Inter', system-ui, sans-serif",
   'system': "system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
   'serif': "ui-serif, Georgia, Cambria, 'Times New Roman', Times, serif",

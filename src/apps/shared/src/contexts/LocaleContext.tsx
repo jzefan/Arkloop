@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, useMemo, type ReactNode } from 'react'
+import { createContext, useContext, useEffect, useState, useMemo, type ReactNode } from 'react'
 
 export type Locale = 'zh' | 'en'
 
@@ -23,6 +23,11 @@ export function createLocaleContext<T>() {
     writeLocale: (l: Locale) => void
   }) {
     const [locale, setLocaleState] = useState<Locale>(readLocale)
+
+    useEffect(() => {
+      if (typeof document === 'undefined') return
+      document.documentElement.lang = locale === 'zh' ? 'zh-CN' : 'en'
+    }, [locale])
 
     const setLocale = (l: Locale) => {
       writeLocale(l)
