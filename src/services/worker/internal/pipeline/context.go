@@ -131,20 +131,23 @@ type RunContext struct {
 	AgentConfigName string
 
 	// -- PersonaResolutionMiddleware 写入 --
-	SystemPrompt            string
-	PersonaDefinition       *personas.Definition
-	MaxOutputTokens         *int
-	Temperature             *float64
-	TopP                    *float64
-	ToolTimeoutMs           *int
-	ToolBudget              map[string]any
-	PerToolSoftLimits       tools.PerToolSoftLimits
-	MaxCostMicros           *int64
-	MaxTotalOutputTokens    *int64
-	PreferredCredentialName string // Persona.PreferredCredential 解析结果，供 RoutingMiddleware 使用
-	ReasoningMode           string // "auto" | "enabled" | "disabled" | "none"
-	StreamThinking          bool   // persona.stream_thinking，默认 true
-	ToolChoice              *llm.ToolChoice
+	PromptAssembly               PromptAssembly
+	SystemPrompt                 string
+	RuntimePrompt                string
+	InheritedPromptCacheSnapshot *subagentctl.PromptCacheSnapshot
+	PersonaDefinition            *personas.Definition
+	MaxOutputTokens              *int
+	Temperature                  *float64
+	TopP                         *float64
+	ToolTimeoutMs                *int
+	ToolBudget                   map[string]any
+	PerToolSoftLimits            tools.PerToolSoftLimits
+	MaxCostMicros                *int64
+	MaxTotalOutputTokens         *int64
+	PreferredCredentialName      string // Persona.PreferredCredential 解析结果，供 RoutingMiddleware 使用
+	ReasoningMode                string // "auto" | "enabled" | "disabled" | "none"
+	StreamThinking               bool   // persona.stream_thinking，默认 true
+	ToolChoice                   *llm.ToolChoice
 
 	// -- 初始化时写入 base 值，MCPDiscovery/ToolBuild 覆盖 --
 	ToolSpecs     []llm.ToolSpec
@@ -324,6 +327,85 @@ func (rc *RunContext) RuntimeUserMessages() []memory.MemoryMessage {
 		return nil
 	}
 	return append([]memory.MemoryMessage(nil), rc.runtimeUserMessages...)
+}
+
+func (rc *RunContext) ResetPromptAssembly() {
+	if rc == nil {
+		return
+	}
+	rc.PromptAssembly.Reset()
+	rc.syncLegacyPromptViews()
+}
+
+func (rc *RunContext) ReplacePromptAssembly(assembly PromptAssembly) {
+	if rc == nil {
+		return
+	}
+	rc.PromptAssembly = assembly.Clone()
+	rc.syncLegacyPromptViews()
+}
+
+func (rc *RunContext) PromptSegments() []PromptSegment {
+	if rc == nil || len(rc.PromptAssembly.Segments) == 0 {
+		return nil
+	}
+	out := make([]PromptSegment, len(rc.PromptAssembly.Segments))
+	copy(out, rc.PromptAssembly.Segments)
+	return out
+}
+
+func (rc *RunContext) UpsertPromptSegment(segment PromptSegment) {
+	if rc == nil {
+		return
+	}
+	rc.PromptAssembly.Upsert(segment)
+	rc.syncLegacyPromptViews()
+}
+
+func (rc *RunContext) AppendPromptSegment(segment PromptSegment) {
+	if rc == nil {
+		return
+	}
+	rc.PromptAssembly.Append(segment)
+	rc.syncLegacyPromptViews()
+}
+
+func (rc *RunContext) RemovePromptSegment(name string) {
+	if rc == nil {
+		return
+	}
+	rc.PromptAssembly.Remove(name)
+	rc.syncLegacyPromptViews()
+}
+
+func (rc *RunContext) RemovePromptSegmentsByPrefix(prefix string) {
+	if rc == nil {
+		return
+	}
+	rc.PromptAssembly.RemoveByPrefix(prefix)
+	rc.syncLegacyPromptViews()
+}
+
+func (rc *RunContext) MaterializedSystemPrompt() string {
+	if rc == nil {
+		return ""
+	}
+	return rc.PromptAssembly.MaterializeSystemPrompt()
+}
+
+func (rc *RunContext) MaterializedRuntimePrompt() string {
+	if rc == nil {
+		return ""
+	}
+	return rc.PromptAssembly.MaterializeRuntimePrompt()
+}
+
+func (rc *RunContext) syncLegacyPromptViews() {
+	if rc == nil {
+		return
+	}
+	rc.SystemPrompt = rc.PromptAssembly.MaterializeSystemPrompt()
+	rc.RuntimePrompt = rc.PromptAssembly.MaterializeRuntimePrompt()
 }
 
 // SetContextCompactPressureAnchor 记录当前 run 内最近一次真实 request 的 compact 压力锚点。

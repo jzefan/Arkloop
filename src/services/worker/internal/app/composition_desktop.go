@@ -737,10 +737,10 @@ func traceDesktopMemoryInjection(inner pipeline.RunMiddleware) pipeline.RunMiddl
 		return nil
 	}
 	return func(ctx context.Context, rc *pipeline.RunContext, next pipeline.RunHandler) error {
-		before := rc.SystemPrompt
+		before := rc.MaterializedSystemPrompt()
 		err := inner(ctx, rc, next)
 		if rc != nil && rc.Tracer != nil {
-			delta := rc.SystemPrompt
+			delta := rc.MaterializedSystemPrompt()
 			if strings.HasPrefix(delta, before) {
 				delta = delta[len(before):]
 			}
@@ -929,15 +929,18 @@ func desktopMemoryInjection(db data.DesktopDB) pipeline.RunMiddleware {
 		if rc.UserID == nil || db == nil {
 			return next(ctx, rc)
 		}
+		rc.RemovePromptSegment("memory.notebook_snapshot")
 		provider := localmemory.NewProvider(db)
 		block, err := provider.GetSnapshot(ctx, rc.Run.AccountID, *rc.UserID, pipeline.StableAgentID(rc))
 		if err == nil && strings.TrimSpace(block) != "" {
-			notebookBlock := strings.TrimSpace(block)
-			if strings.TrimSpace(rc.SystemPrompt) != "" {
-				rc.SystemPrompt = rc.SystemPrompt + "\n\n" + notebookBlock
-			} else {
-				rc.SystemPrompt = notebookBlock
-			}
+			rc.UpsertPromptSegment(pipeline.PromptSegment{
+				Name:          "memory.notebook_snapshot",
+				Target:        pipeline.PromptTargetSystemPrefix,
+				Role:          "system",
+				Text:          strings.TrimSpace(block),
+				Stability:     pipeline.PromptStabilitySessionPrefix,
+				CacheEligible: true,
+			})
 		}
 		// Ignore ErrNoRows / any DB errors — no memory is a valid state.
 		return next(ctx, rc)
@@ -2044,7 +2047,16 @@ func desktopPersonaResolution(
 		)
 
 		rc.AgentConfig = agentConfig
-		rc.SystemPrompt = profile.SystemPrompt
+		rc.ResetPromptAssembly()
+		cacheSystemPrompt := agentConfig != nil && agentConfig.PromptCacheControl == "system_prompt"
+		rc.UpsertPromptSegment(pipeline.PromptSegment{
+			Name:          "persona.system_prompt",
+			Target:        pipeline.PromptTargetSystemPrefix,
+			Role:          "system",
+			Text:          profile.SystemPrompt,
+			Stability:     pipeline.PromptStabilityStablePrefix,
+			CacheEligible: cacheSystemPrompt,
+		})
 		rc.ReasoningIterations = profile.ReasoningIterations
 		rc.ToolContinuationBudget = profile.ToolContinuationBudget
 		rc.MaxOutputTokens = profile.MaxOutputTokens

@@ -405,12 +405,14 @@ func parseSpawnArgs(args map[string]any, execCtx tools.ExecutionContext) (subage
 		ParentContext: subagentctl.SpawnParentContext{
 			ToolAllowlist: append([]string(nil), execCtx.ToolAllowlist...),
 			ToolDenylist:  append([]string(nil), execCtx.ToolDenylist...),
+			PersonaID:     strings.TrimSpace(execCtx.PersonaID),
 			RouteID:       strings.TrimSpace(execCtx.RouteID),
 			Model:         strings.TrimSpace(execCtx.Model),
 			ProfileRef:    strings.TrimSpace(execCtx.ProfileRef),
 			WorkspaceRef:  strings.TrimSpace(execCtx.WorkspaceRef),
 			EnabledSkills: append([]skillstore.ResolvedSkill(nil), execCtx.EnabledSkills...),
 			MemoryScope:   firstNonEmpty(strings.TrimSpace(execCtx.MemoryScope), subagentctl.MemoryScopeSameUser),
+			PromptCache:   subagentctl.ClonePromptCacheSnapshot(execCtx.PromptCacheSnapshot),
 		},
 	}
 	if raw, ok := args["role"]; ok {

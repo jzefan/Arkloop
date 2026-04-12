@@ -33,6 +33,7 @@ type SkillContextConfig struct {
 
 func NewSkillContextMiddleware(cfg SkillContextConfig) RunMiddleware {
 	return func(ctx context.Context, rc *RunContext, next RunHandler) error {
+		rc.RemovePromptSegment("skills.available")
 		var externalSkills []skillstore.ExternalSkill
 		if cfg.ExternalDirs != nil {
 			externalSkills = skillstore.DiscoverExternalSkills(cfg.ExternalDirs(ctx))
@@ -40,7 +41,14 @@ func NewSkillContextMiddleware(cfg SkillContextConfig) RunMiddleware {
 		}
 		if cfg.Resolve == nil || rc.Run.AccountID == uuid.Nil {
 			if block := buildAvailableSkillsPromptBlock(nil, externalSkills); block != "" {
-				rc.SystemPrompt += block
+				rc.UpsertPromptSegment(PromptSegment{
+					Name:          "skills.available",
+					Target:        PromptTargetSystemPrefix,
+					Role:          "system",
+					Text:          block,
+					Stability:     PromptStabilitySessionPrefix,
+					CacheEligible: true,
+				})
 			}
 			return next(ctx, rc)
 		}
@@ -61,7 +69,14 @@ func NewSkillContextMiddleware(cfg SkillContextConfig) RunMiddleware {
 		}
 		rc.EnabledSkills = append([]skillstore.ResolvedSkill(nil), skills...)
 		if block := buildAvailableSkillsPromptBlock(skills, externalSkills); block != "" {
-			rc.SystemPrompt += block
+			rc.UpsertPromptSegment(PromptSegment{
+				Name:          "skills.available",
+				Target:        PromptTargetSystemPrefix,
+				Role:          "system",
+				Text:          block,
+				Stability:     PromptStabilitySessionPrefix,
+				CacheEligible: true,
+			})
 		}
 		return next(ctx, rc)
 	}

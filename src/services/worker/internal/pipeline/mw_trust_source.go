@@ -39,8 +39,15 @@ func NewTrustSourceMiddleware(configResolver sharedconfig.Resolver) RunMiddlewar
 			}
 		}
 
-		if !strings.Contains(rc.SystemPrompt, "SECURITY POLICY:") {
-			rc.SystemPrompt += securityPolicyBlock
+		if !strings.Contains(rc.MaterializedSystemPrompt(), "SECURITY POLICY:") {
+			rc.UpsertPromptSegment(PromptSegment{
+				Name:          "security.trust_source_policy",
+				Target:        PromptTargetSystemPrefix,
+				Role:          "system",
+				Text:          securityPolicyBlock,
+				Stability:     PromptStabilityStablePrefix,
+				CacheEligible: true,
+			})
 		}
 
 		return next(ctx, rc)

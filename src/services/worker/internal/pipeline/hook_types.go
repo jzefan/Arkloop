@@ -40,15 +40,7 @@ type HookProvider interface {
 	HookProviderName() string
 }
 
-type PromptFragment struct {
-	Key      string
-	XMLTag   string
-	Content  string
-	Source   string
-	Priority int
-}
-
-type PromptFragments []PromptFragment
+type PromptSegments []PromptSegment
 
 type ModelCallHint struct {
 	Key      string
@@ -160,14 +152,14 @@ type ThreadPersistResult struct {
 	Err              error
 }
 
-type BeforePromptAssembleHook interface {
+type BeforePromptSegmentsHook interface {
 	HookProvider
-	BeforePromptAssemble(ctx context.Context, rc *RunContext) (PromptFragments, error)
+	BeforePromptSegments(ctx context.Context, rc *RunContext) (PromptSegments, error)
 }
 
-type AfterPromptAssembleHook interface {
+type AfterPromptSegmentsHook interface {
 	HookProvider
-	AfterPromptAssemble(ctx context.Context, rc *RunContext, assembledPrompt string) (PromptFragments, error)
+	AfterPromptSegments(ctx context.Context, rc *RunContext, assembledPrompt string) (PromptSegments, error)
 }
 
 type BeforeModelCallHook interface {
@@ -206,8 +198,8 @@ type AfterThreadPersistHook interface {
 }
 
 type ContextContributor interface {
-	BeforePromptAssembleHook
-	AfterPromptAssembleHook
+	BeforePromptSegmentsHook
+	AfterPromptSegmentsHook
 }
 
 type CompactionAdvisor interface {

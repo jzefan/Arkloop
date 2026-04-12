@@ -34,20 +34,20 @@ func (s *spyTracer) Event(middleware, event string, fields map[string]any) {
 
 type fakeContextContributor struct {
 	name      string
-	before    PromptFragments
-	after     PromptFragments
+	before    PromptSegments
+	after     PromptSegments
 	beforeErr error
 	afterErr  error
 }
 
 func (f fakeContextContributor) HookProviderName() string { return f.name }
-func (f fakeContextContributor) BeforePromptAssemble(context.Context, *RunContext) (PromptFragments, error) {
+func (f fakeContextContributor) BeforePromptSegments(context.Context, *RunContext) (PromptSegments, error) {
 	if f.beforeErr != nil {
 		return nil, f.beforeErr
 	}
 	return f.before, nil
 }
-func (f fakeContextContributor) AfterPromptAssemble(context.Context, *RunContext, string) (PromptFragments, error) {
+func (f fakeContextContributor) AfterPromptSegments(context.Context, *RunContext, string) (PromptSegments, error) {
 	if f.afterErr != nil {
 		return nil, f.afterErr
 	}
@@ -153,29 +153,29 @@ func TestHookRuntimeBeforePromptAssembleSortsAndIgnoresErrors(t *testing.T) {
 	})
 	registry.RegisterContextContributor(fakeContextContributor{
 		name: "good-a",
-		before: PromptFragments{
-			{Key: "a", XMLTag: "notebook", Content: "A", Priority: 20},
+		before: PromptSegments{
+			{Name: "a", Target: PromptTargetSystemPrefix, Role: "system", Text: "A"},
 		},
 	})
 	registry.RegisterContextContributor(fakeContextContributor{
 		name: "good-b",
-		before: PromptFragments{
-			{Key: "b", XMLTag: "impression", Content: "B", Priority: 10},
+		before: PromptSegments{
+			{Name: "b", Target: PromptTargetSystemPrefix, Role: "system", Text: "B"},
 		},
 	})
 	rt := NewHookRuntime(registry, NewDefaultHookResultApplier())
 	tracer := &spyTracer{}
 	rc := &RunContext{Tracer: tracer}
 
-	fragments := rt.BeforePromptAssemble(context.Background(), rc)
-	if len(fragments) != 2 {
-		t.Fatalf("expected 2 fragments, got %d", len(fragments))
+	segments := rt.BeforePromptSegments(context.Background(), rc, "hook.before")
+	if len(segments) != 2 {
+		t.Fatalf("expected 2 segments, got %d", len(segments))
 	}
-	if got := fragments[0].Key; got != "b" {
-		t.Fatalf("expected priority-sorted fragment key b, got %s", got)
+	if got := segments[0].Name; got != "a" {
+		t.Fatalf("expected first normalized segment name a, got %s", got)
 	}
-	if got := fragments[1].Key; got != "a" {
-		t.Fatalf("expected second fragment key a, got %s", got)
+	if got := segments[1].Name; got != "b" {
+		t.Fatalf("expected second normalized segment name b, got %s", got)
 	}
 
 	failed := findTraceEvent(tracer.records, "runtime_hook.failed")
@@ -194,11 +194,11 @@ func TestHookRuntimeAllNineHooksEmitTraceAndReturnData(t *testing.T) {
 	registry := NewHookRegistry()
 	registry.RegisterContextContributor(fakeContextContributor{
 		name: "ctx",
-		before: PromptFragments{
-			{Key: "nb", XMLTag: "notebook", Content: "note", Priority: 5},
+		before: PromptSegments{
+			{Name: "nb", Target: PromptTargetSystemPrefix, Role: "system", Text: "note"},
 		},
-		after: PromptFragments{
-			{Key: "imp", XMLTag: "impression", Content: "impress", Priority: 5},
+		after: PromptSegments{
+			{Name: "imp", Target: PromptTargetSystemPrefix, Role: "system", Text: "impress"},
 		},
 	})
 	registry.RegisterModelLifecycleHook(fakeModelLifecycleHook{
@@ -245,10 +245,10 @@ func TestHookRuntimeAllNineHooksEmitTraceAndReturnData(t *testing.T) {
 	tracer := &spyTracer{}
 	rc := &RunContext{Tracer: tracer}
 
-	if got := len(rt.BeforePromptAssemble(context.Background(), rc)); got != 1 {
+	if got := len(rt.BeforePromptSegments(context.Background(), rc, "hook.before")); got != 1 {
 		t.Fatalf("before prompt results = %d, want 1", got)
 	}
-	if got := len(rt.AfterPromptAssemble(context.Background(), rc, "x")); got != 1 {
+	if got := len(rt.AfterPromptSegments(context.Background(), rc, "x", "hook.after")); got != 1 {
 		t.Fatalf("after prompt results = %d, want 1", got)
 	}
 	if got := len(rt.BeforeModelCall(context.Background(), rc, llm.Request{})); got != 1 {
@@ -308,27 +308,8 @@ func TestHookRuntimeAllNineHooksEmitTraceAndReturnData(t *testing.T) {
 	}
 }
 
-func TestDefaultHookResultApplierAppliesPromptAndCompactInOrder(t *testing.T) {
+func TestDefaultHookResultApplierAppliesCompactHintsInOrder(t *testing.T) {
 	applier := NewDefaultHookResultApplier()
-
-	prompt := applier.ApplyPromptFragments("base", PromptFragments{
-		{XMLTag: "impression", Content: "b", Priority: 20},
-		{XMLTag: "notebook", Content: "a", Priority: 10},
-		{XMLTag: "invalid tag<>", Content: "c", Priority: 30},
-		{XMLTag: "ignored", Content: "   ", Priority: 40},
-	})
-	if !strings.Contains(prompt, "<notebook>\na\n</notebook>") {
-		t.Fatalf("prompt missing notebook block: %s", prompt)
-	}
-	if !strings.Contains(prompt, "<impression>\nb\n</impression>") {
-		t.Fatalf("prompt missing impression block: %s", prompt)
-	}
-	if strings.Contains(prompt, "invalid tag<>") || strings.Contains(prompt, "<invalidtag>") {
-		t.Fatalf("prompt should ignore unsupported tag: %s", prompt)
-	}
-	if strings.Index(prompt, "<notebook>") > strings.Index(prompt, "<impression>") {
-		t.Fatalf("prompt blocks not sorted by priority: %s", prompt)
-	}
 
 	compact := applier.ApplyCompactHints(CompactInput{SystemPrompt: "p"}, CompactHints{
 		{Content: "hint-b", Priority: 20},

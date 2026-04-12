@@ -30,7 +30,7 @@ func NewNotebookContextContributor(reader notebookSnapshotReader) ContextContrib
 
 func (c *notebookContextContributor) HookProviderName() string { return "notebook" }
 
-func (c *notebookContextContributor) BeforePromptAssemble(ctx context.Context, rc *RunContext) (PromptFragments, error) {
+func (c *notebookContextContributor) BeforePromptSegments(ctx context.Context, rc *RunContext) (PromptSegments, error) {
 	if c == nil || c.reader == nil || rc == nil || rc.UserID == nil {
 		return nil, nil
 	}
@@ -45,16 +45,17 @@ func (c *notebookContextContributor) BeforePromptAssemble(ctx context.Context, r
 	if content == "" {
 		return nil, nil
 	}
-	return PromptFragments{{
-		Key:      "notebook",
-		XMLTag:   "notebook",
-		Content:  content,
-		Source:   "notebook",
-		Priority: 100,
+	return PromptSegments{{
+		Name:          "hook.before.notebook.notebook",
+		Target:        PromptTargetSystemPrefix,
+		Role:          "system",
+		Text:          "<notebook>\n" + content + "\n</notebook>",
+		Stability:     PromptStabilitySessionPrefix,
+		CacheEligible: true,
 	}}, nil
 }
 
-func (c *notebookContextContributor) AfterPromptAssemble(context.Context, *RunContext, string) (PromptFragments, error) {
+func (c *notebookContextContributor) AfterPromptSegments(context.Context, *RunContext, string) (PromptSegments, error) {
 	return nil, nil
 }
 
@@ -71,7 +72,7 @@ func NewImpressionContextContributor(store ImpressionStore) ContextContributor {
 
 func (c *impressionContextContributor) HookProviderName() string { return "impression" }
 
-func (c *impressionContextContributor) BeforePromptAssemble(ctx context.Context, rc *RunContext) (PromptFragments, error) {
+func (c *impressionContextContributor) BeforePromptSegments(ctx context.Context, rc *RunContext) (PromptSegments, error) {
 	if c == nil || c.store == nil || rc == nil || rc.UserID == nil {
 		return nil, nil
 	}
@@ -86,16 +87,17 @@ func (c *impressionContextContributor) BeforePromptAssemble(ctx context.Context,
 	if content == "" {
 		return nil, nil
 	}
-	return PromptFragments{{
-		Key:      "impression",
-		XMLTag:   "impression",
-		Content:  content,
-		Source:   "impression",
-		Priority: 200,
+	return PromptSegments{{
+		Name:          "hook.before.impression.impression",
+		Target:        PromptTargetSystemPrefix,
+		Role:          "system",
+		Text:          "<impression>\n" + content + "\n</impression>",
+		Stability:     PromptStabilitySessionPrefix,
+		CacheEligible: true,
 	}}, nil
 }
 
-func (c *impressionContextContributor) AfterPromptAssemble(context.Context, *RunContext, string) (PromptFragments, error) {
+func (c *impressionContextContributor) AfterPromptSegments(context.Context, *RunContext, string) (PromptSegments, error) {
 	return nil, nil
 }
 

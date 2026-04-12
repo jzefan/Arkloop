@@ -142,8 +142,15 @@ func NewHeartbeatPrepareMiddleware() RunMiddleware {
 		})
 		rc.ThreadMessageIDs = append(rc.ThreadMessageIDs, uuid.Nil)
 
-		// SystemProtocolSnippet 保留在 system prompt：机制约束放 system 层
-		rc.SystemPrompt = appendSystemPromptBlock(rc.SystemPrompt, heartbeattool.SystemProtocolSnippet())
+		// SystemProtocolSnippet 保留在 system prefix：机制约束放 system 层
+		rc.UpsertPromptSegment(PromptSegment{
+			Name:          "heartbeat.system_protocol",
+			Target:        PromptTargetSystemPrefix,
+			Role:          "system",
+			Text:          heartbeattool.SystemProtocolSnippet(),
+			Stability:     PromptStabilitySessionPrefix,
+			CacheEligible: true,
+		})
 
 		if rc.AllowlistSet == nil {
 			rc.AllowlistSet = map[string]struct{}{}
@@ -190,18 +197,6 @@ func NewHeartbeatPrepareMiddleware() RunMiddleware {
 
 		return err
 	}
-}
-
-func appendSystemPromptBlock(base string, block string) string {
-	trimmedBlock := strings.TrimSpace(block)
-	if trimmedBlock == "" {
-		return base
-	}
-	trimmedBase := strings.TrimSpace(base)
-	if trimmedBase == "" {
-		return trimmedBlock
-	}
-	return trimmedBase + "\n\n" + trimmedBlock
 }
 
 func containsToolName(names []string, target string) bool {

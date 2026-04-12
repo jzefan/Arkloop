@@ -445,7 +445,7 @@ func normalizePersonaStreamThinking(value any) bool {
 
 func normalizePersonaPromptCacheControl(value *string) string {
 	if value == nil {
-		return "none"
+		return "system_prompt"
 	}
 	switch strings.TrimSpace(*value) {
 	case "system_prompt", "none":

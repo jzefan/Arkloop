@@ -105,6 +105,151 @@ func TestToAnthropicMessages_ToolEnvelope(t *testing.T) {
 	}
 }
 
+func TestToAnthropicTools_SortsByCanonicalName(t *testing.T) {
+	tools := toAnthropicTools([]ToolSpec{
+		{Name: "web_search", JSONSchema: map[string]any{"type": "object"}},
+		{Name: "read", JSONSchema: map[string]any{"type": "object"}},
+		{Name: "browser", JSONSchema: map[string]any{"type": "object"}},
+	})
+
+	if len(tools) != 3 {
+		t.Fatalf("unexpected tools len: %d", len(tools))
+	}
+
+	got := []string{
+		tools[0]["name"].(string),
+		tools[1]["name"].(string),
+		tools[2]["name"].(string),
+	}
+	want := []string{"browser", "read", "web_search"}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("unexpected tool order: got=%v want=%v", got, want)
+		}
+	}
+}
+
+func TestToAnthropicTools_EmitsCacheControlFromHint(t *testing.T) {
+	tools := toAnthropicTools([]ToolSpec{
+		{
+			Name:       "web_search",
+			JSONSchema: map[string]any{"type": "object"},
+			CacheHint: &CacheHint{
+				Action: CacheHintActionWrite,
+				Scope:  "global",
+			},
+		},
+	})
+	if len(tools) != 1 {
+		t.Fatalf("unexpected tools len: %d", len(tools))
+	}
+	cc, ok := tools[0]["cache_control"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected cache_control, got %#v", tools[0])
+	}
+	if cc["type"] != "ephemeral" {
+		t.Fatalf("unexpected cache_control type: %#v", cc)
+	}
+	if cc["scope"] != "global" {
+		t.Fatalf("unexpected cache_control scope: %#v", cc)
+	}
+}
+
+func TestToAnthropicMessagesWithPlan_MessageCacheAndReferences(t *testing.T) {
+	system, messages, err := toAnthropicMessagesWithPlan([]Message{
+		{
+			Role: "assistant",
+			ToolCalls: []ToolCall{
+				{
+					ToolCallID:    "call_1",
+					ToolName:      "web_search",
+					ArgumentsJSON: map[string]any{"query": "hello"},
+				},
+			},
+		},
+		{
+			Role: "tool",
+			Content: []TextPart{{
+				Text: `{"tool_call_id":"call_1","tool_name":"web_search","result":{"ok":true}}`,
+			}},
+		},
+		{
+			Role:    "user",
+			Content: []TextPart{{Text: "next turn"}},
+		},
+	}, &PromptPlan{
+		SystemBlocks: []PromptPlanBlock{
+			{
+				Name:          "persona",
+				Target:        PromptTargetSystemPrefix,
+				Role:          "system",
+				Text:          "stable system",
+				Stability:     CacheStabilityStablePrefix,
+				CacheEligible: true,
+			},
+		},
+		MessageCache: MessageCachePlan{
+			Enabled:                   true,
+			MarkerMessageIndex:        2,
+			ToolResultCacheCutIndex:   2,
+			ToolResultCacheReferences: true,
+			NewCacheEdits: &PromptCacheEditsBlock{
+				UserMessageIndex: 2,
+				Edits: []PromptCacheEdit{
+					{Type: CacheHintActionDelete, CacheReference: "call_legacy"},
+				},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("toAnthropicMessagesWithPlan failed: %v", err)
+	}
+	if len(system) != 1 {
+		t.Fatalf("unexpected system blocks: %#v", system)
+	}
+	if _, ok := system[0]["cache_control"].(map[string]any); !ok {
+		t.Fatalf("expected system cache_control: %#v", system[0])
+	}
+	if len(messages) != 3 {
+		t.Fatalf("unexpected messages len: %d", len(messages))
+	}
+
+	toolWrapper := messages[1]
+	toolBlocks, ok := toolWrapper["content"].([]map[string]any)
+	if !ok || len(toolBlocks) == 0 {
+		t.Fatalf("unexpected tool wrapper content: %#v", toolWrapper["content"])
+	}
+	toolResult := toolBlocks[0]
+	if toolResult["type"] != "tool_result" {
+		t.Fatalf("expected tool_result block: %#v", toolResult)
+	}
+	if toolResult["cache_reference"] != "call_1" {
+		t.Fatalf("expected cache_reference on tool_result, got %#v", toolResult)
+	}
+
+	lastUser := messages[2]
+	lastBlocks, ok := lastUser["content"].([]map[string]any)
+	if !ok || len(lastBlocks) < 2 {
+		t.Fatalf("unexpected last user content: %#v", lastUser["content"])
+	}
+	textBlock := lastBlocks[0]
+	cc, ok := textBlock["cache_control"].(map[string]any)
+	if !ok || cc["type"] != "ephemeral" {
+		t.Fatalf("expected message cache marker on text block, got %#v", textBlock)
+	}
+	cacheEdits := lastBlocks[len(lastBlocks)-1]
+	if cacheEdits["type"] != "cache_edits" {
+		t.Fatalf("expected cache_edits block, got %#v", cacheEdits)
+	}
+	rawEdits, ok := cacheEdits["edits"].([]map[string]any)
+	if !ok || len(rawEdits) != 1 {
+		t.Fatalf("unexpected cache_edits payload: %#v", cacheEdits["edits"])
+	}
+	if rawEdits[0]["cache_reference"] != "call_legacy" {
+		t.Fatalf("unexpected cache edit reference: %#v", rawEdits[0])
+	}
+}
+
 func TestAnthropicGateway_Stream_PreflightOversizeSkipsHTTP(t *testing.T) {
 	calls := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

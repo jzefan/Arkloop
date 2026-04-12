@@ -21,6 +21,38 @@ func TestBuildRuntimeContextBlock_IncludesTimeContextWithoutChannel(t *testing.T
 	if !strings.Contains(block, "User Local Now: ") {
 		t.Fatalf("expected local now line, got %q", block)
 	}
+	if !strings.Contains(block, "[SYSTEM_RUNTIME_CONTEXT]") {
+		t.Fatalf("expected runtime context wrapper, got %q", block)
+	}
+}
+
+func TestRuntimeContextMiddleware_StoresRuntimePromptWithoutTouchingSystemPrompt(t *testing.T) {
+	rc := &RunContext{
+		Run: data.Run{AccountID: uuid.New()},
+		PromptAssembly: PromptAssembly{
+			Segments: []PromptSegment{{
+				Name:      "test.system",
+				Target:    PromptTargetSystemPrefix,
+				Role:      "system",
+				Text:      "base system prompt",
+				Stability: PromptStabilityStablePrefix,
+			}},
+		},
+	}
+	rc.SystemPrompt = rc.MaterializedSystemPrompt()
+	mw := NewRuntimeContextMiddleware()
+	err := mw(context.Background(), rc, func(_ context.Context, nextRC *RunContext) error {
+		if nextRC.SystemPrompt != "base system prompt" {
+			t.Fatalf("expected system prompt unchanged, got %q", nextRC.SystemPrompt)
+		}
+		if !strings.Contains(nextRC.RuntimePrompt, "User Local Now: ") {
+			t.Fatalf("expected runtime prompt to contain local now, got %q", nextRC.RuntimePrompt)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("middleware failed: %v", err)
+	}
 }
 
 func TestFormatRuntimeLocalNow_FormatsOffset(t *testing.T) {

@@ -2,6 +2,7 @@ package pipeline
 
 import (
 	"context"
+	"fmt"
 	"strings"
 
 	"arkloop/services/worker/internal/llm"
@@ -16,10 +17,11 @@ func NewPromptHookMiddleware() RunMiddleware {
 		if rc.HookRuntime == nil {
 			return next(ctx, rc)
 		}
-		beforeFragments := rc.HookRuntime.BeforePromptAssemble(ctx, rc)
-		assembledPrompt := rc.HookRuntime.ResultApplier().ApplyPromptFragments(rc.SystemPrompt, beforeFragments)
-		afterFragments := rc.HookRuntime.AfterPromptAssemble(ctx, rc, assembledPrompt)
-		rc.SystemPrompt = rc.HookRuntime.ResultApplier().ApplyPromptFragments(assembledPrompt, afterFragments)
+		rc.RemovePromptSegmentsByPrefix("hook.before.")
+		rc.RemovePromptSegmentsByPrefix("hook.after.")
+		appendHookPromptSegments(rc, rc.HookRuntime.BeforePromptSegments(ctx, rc, "hook.before"))
+		assembledPrompt := rc.MaterializedSystemPrompt()
+		appendHookPromptSegments(rc, rc.HookRuntime.AfterPromptSegments(ctx, rc, assembledPrompt, "hook.after"))
 		return next(ctx, rc)
 	}
 }
@@ -95,4 +97,37 @@ func notifyCompactApplied(ctx context.Context, rc *RunContext, input CompactInpu
 		output.SystemPrompt = input.SystemPrompt
 	}
 	rc.HookRuntime.AfterCompact(ctx, rc, output)
+}
+
+func appendHookPromptSegments(rc *RunContext, segments PromptSegments) {
+	if rc == nil || len(segments) == 0 {
+		return
+	}
+	for _, segment := range segments {
+		rc.AppendPromptSegment(segment)
+	}
+}
+
+func normalizeHookPromptSegments(segmentPrefix string, segments PromptSegments) PromptSegments {
+	if len(segments) == 0 {
+		return nil
+	}
+	out := make(PromptSegments, 0, len(segments))
+	for i, segment := range segments {
+		normalized := segment
+		if strings.TrimSpace(normalized.Name) == "" {
+			normalized.Name = fmt.Sprintf("%s.%03d.segment", strings.TrimSpace(segmentPrefix), i)
+		}
+		out = append(out, normalized)
+	}
+	return out
+}
+
+func sanitizePromptSegmentName(name string) string {
+	cleaned := strings.TrimSpace(name)
+	if cleaned == "" {
+		return "segment"
+	}
+	replacer := strings.NewReplacer("/", "_", " ", "_", "\t", "_", "\n", "_")
+	return replacer.Replace(cleaned)
 }

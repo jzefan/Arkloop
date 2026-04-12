@@ -16,17 +16,16 @@ import (
 )
 
 func buildMinimalRC(gateway llm.Gateway, systemPrompt string, agentConfig *pipeline.ResolvedAgentConfig, advance map[string]any) *pipeline.RunContext {
-	return &pipeline.RunContext{
+	rc := &pipeline.RunContext{
 		Run: data.Run{
 			ID:        uuid.New(),
 			AccountID: uuid.New(),
 			ThreadID:  uuid.New(),
 		},
-		TraceID:      "test-trace",
-		Gateway:      gateway,
-		Messages:     []llm.Message{},
-		SystemPrompt: systemPrompt,
-		AgentConfig:  agentConfig,
+		TraceID:     "test-trace",
+		Gateway:     gateway,
+		Messages:    []llm.Message{},
+		AgentConfig: agentConfig,
 		SelectedRoute: &routing.SelectedProviderRoute{
 			Route: routing.ProviderRouteRule{
 				ID:           "default",
@@ -41,6 +40,18 @@ func buildMinimalRC(gateway llm.Gateway, systemPrompt string, agentConfig *pipel
 		PerToolSoftLimits:      tools.DefaultPerToolSoftLimits(),
 		FinalSpecs:             []llm.ToolSpec{},
 	}
+	if strings.TrimSpace(systemPrompt) != "" {
+		rc.PromptAssembly.Append(pipeline.PromptSegment{
+			Name:          "test.system",
+			Target:        pipeline.PromptTargetSystemPrefix,
+			Role:          "system",
+			Text:          systemPrompt,
+			Stability:     pipeline.PromptStabilityStablePrefix,
+			CacheEligible: agentConfig != nil && agentConfig.PromptCacheControl == "system_prompt",
+		})
+		rc.SystemPrompt = rc.MaterializedSystemPrompt()
+	}
+	return rc
 }
 
 func TestSimpleExecutor_EmitsExpectedEvents(t *testing.T) {
@@ -132,6 +143,45 @@ func TestSimpleExecutor_SystemPromptCacheControl(t *testing.T) {
 	}
 }
 
+func TestSimpleExecutor_RuntimePromptInjectedAsUserMessage(t *testing.T) {
+	var capturedMessages []llm.Message
+	gateway := &captureRequestGateway{
+		onCapture: func(req llm.Request) {
+			capturedMessages = append(capturedMessages, req.Messages...)
+		},
+	}
+
+	ex := &SimpleExecutor{}
+	emitter := events.NewEmitter("trace")
+	rc := buildMinimalRC(gateway, "stable system", nil, nil)
+	rc.AppendPromptSegment(pipeline.PromptSegment{
+		Name:          "test.runtime",
+		Target:        pipeline.PromptTargetRuntimeTail,
+		Role:          "user",
+		Text:          "[SYSTEM_RUNTIME_CONTEXT]\nUser Local Now: 2026-04-11 20:38:55 [UTC+8]\n[/SYSTEM_RUNTIME_CONTEXT]",
+		Stability:     pipeline.PromptStabilityVolatileTail,
+		CacheEligible: false,
+	})
+	rc.Messages = []llm.Message{
+		{Role: "user", Content: []llm.TextPart{{Text: "hello"}}},
+	}
+
+	_ = ex.Execute(context.Background(), rc, emitter, func(ev events.RunEvent) error { return nil })
+
+	if len(capturedMessages) != 3 {
+		t.Fatalf("expected system + user + runtime prompt, got %#v", capturedMessages)
+	}
+	if capturedMessages[0].Role != "system" || capturedMessages[0].Content[0].Text != "stable system" {
+		t.Fatalf("unexpected system message: %#v", capturedMessages[0])
+	}
+	if capturedMessages[1].Role != "user" || capturedMessages[1].Content[0].Text != "hello" {
+		t.Fatalf("unexpected original user message: %#v", capturedMessages[1])
+	}
+	if capturedMessages[2].Role != "user" || !strings.Contains(capturedMessages[2].Content[0].Text, "User Local Now:") {
+		t.Fatalf("expected runtime prompt as trailing user message, got %#v", capturedMessages[2])
+	}
+}
+
 func TestSimpleExecutor_NoSystemPromptWhenEmpty(t *testing.T) {
 	var capturedMessages []llm.Message
 	gateway := &captureRequestGateway{
@@ -156,7 +206,7 @@ func TestSimpleExecutor_NoSystemPromptWhenEmpty(t *testing.T) {
 	}
 }
 
-func TestSimpleExecutor_HeartbeatWithCompactSnapshotStillSendsSingleSystemMessage(t *testing.T) {
+func TestSimpleExecutor_HeartbeatWithCompactSnapshotSendsExpectedMessages(t *testing.T) {
 	var capturedMessages []llm.Message
 	gateway := &captureRequestGateway{
 		onCapture: func(req llm.Request) {
@@ -183,26 +233,47 @@ func TestSimpleExecutor_HeartbeatWithCompactSnapshotStillSendsSingleSystemMessag
 	}
 
 	systemCount := 0
+	personaSystemSeen := false
 	for _, msg := range capturedMessages {
 		if msg.Role == "system" {
 			systemCount++
+			if len(msg.Content) > 0 && msg.Content[0].Text == "persona prompt" {
+				personaSystemSeen = true
+			}
 		}
 	}
-	if systemCount != 1 {
-		t.Fatalf("expected only persona system message, got %d: %#v", systemCount, capturedMessages)
+	if systemCount < 1 {
+		t.Fatalf("expected at least one system message, got %#v", capturedMessages)
 	}
-	if len(capturedMessages) < 4 {
-		t.Fatalf("expected system + snapshot + latest user + heartbeat check, got %#v", capturedMessages)
+	if !personaSystemSeen {
+		t.Fatalf("expected persona system prompt to be present, got %#v", capturedMessages)
 	}
-	if capturedMessages[1].Role != "user" || capturedMessages[1].Content[0].Text != "[Context summary for continuation]\n<state_snapshot>\nexisting summary\n</state_snapshot>" {
-		t.Fatalf("unexpected compact snapshot message: %#v", capturedMessages[1])
+	var snapshotMsg *llm.Message
+	var latestUserMsg *llm.Message
+	var heartbeatMsg *llm.Message
+	for i := range capturedMessages {
+		msg := &capturedMessages[i]
+		if msg.Role != "user" || len(msg.Content) == 0 {
+			continue
+		}
+		text := msg.Content[0].Text
+		switch {
+		case text == "[Context summary for continuation]\n<state_snapshot>\nexisting summary\n</state_snapshot>":
+			snapshotMsg = msg
+		case text == "latest real user input":
+			latestUserMsg = msg
+		case strings.Contains(text, "[SYSTEM_HEARTBEAT_CHECK]"):
+			heartbeatMsg = msg
+		}
 	}
-	if capturedMessages[2].Role != "user" || capturedMessages[2].Content[0].Text != "latest real user input" {
-		t.Fatalf("unexpected latest user message: %#v", capturedMessages[2])
+	if snapshotMsg == nil {
+		t.Fatalf("missing compact snapshot user message: %#v", capturedMessages)
 	}
-	hbMsg := capturedMessages[3]
-	if hbMsg.Role != "user" {
-		t.Fatalf("expected heartbeat check as user message, got role=%s", hbMsg.Role)
+	if latestUserMsg == nil {
+		t.Fatalf("missing latest user input message: %#v", capturedMessages)
+	}
+	if heartbeatMsg == nil {
+		t.Fatalf("missing heartbeat check user message: %#v", capturedMessages)
 	}
 	for _, want := range []string{
 		"[SYSTEM_HEARTBEAT_CHECK]",
@@ -210,8 +281,8 @@ func TestSimpleExecutor_HeartbeatWithCompactSnapshotStillSendsSingleSystemMessag
 		"new_user_messages: 1",
 		"[/SYSTEM_HEARTBEAT_CHECK]",
 	} {
-		if !strings.Contains(hbMsg.Content[0].Text, want) {
-			t.Fatalf("expected heartbeat message to contain %q, got %q", want, hbMsg.Content[0].Text)
+		if !strings.Contains(heartbeatMsg.Content[0].Text, want) {
+			t.Fatalf("expected heartbeat message to contain %q, got %q", want, heartbeatMsg.Content[0].Text)
 		}
 	}
 }

@@ -53,6 +53,9 @@ func TestSubAgentContextMiddlewareRestoresRouteAndNarrowsAllowlist(t *testing.T)
 			ToolDenylist:  []string{"browser"},
 			RouteID:       "route_parent",
 		},
+		PromptCache: &subagentctl.PromptCacheSnapshot{
+			PersonaID: "researcher@1",
+		},
 	}); err != nil {
 		t.Fatalf("save snapshot: %v", err)
 	}
@@ -94,6 +97,9 @@ func TestSubAgentContextMiddlewareRestoresRouteAndNarrowsAllowlist(t *testing.T)
 		}
 		if len(rc.ToolDenylist) != 1 || rc.ToolDenylist[0] != "browser" {
 			return fmt.Errorf("unexpected denylist: %#v", rc.ToolDenylist)
+		}
+		if rc.InheritedPromptCacheSnapshot == nil || rc.InheritedPromptCacheSnapshot.PersonaID != "researcher@1" {
+			return fmt.Errorf("unexpected inherited prompt cache snapshot: %#v", rc.InheritedPromptCacheSnapshot)
 		}
 		return nil
 	}); err != nil {

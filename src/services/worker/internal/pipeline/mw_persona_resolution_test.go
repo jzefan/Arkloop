@@ -192,24 +192,26 @@ func TestPersonaResolutionAppendsPendingSubAgentCallbacksBlock(t *testing.T) {
 	}
 
 	var gotSystemPrompt string
+	var gotRuntimePrompt string
 	h := pipeline.Build([]pipeline.RunMiddleware{mw}, func(_ context.Context, rc *pipeline.RunContext) error {
 		gotSystemPrompt = rc.SystemPrompt
+		gotRuntimePrompt = rc.RuntimePrompt
 		return nil
 	})
 	if err := h(context.Background(), rc); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if gotSystemPrompt == "persona soul\n\nsystem prompt" {
-		t.Fatalf("expected pending callback block in system prompt, got %q", gotSystemPrompt)
+	if gotSystemPrompt != "persona soul\n\nsystem prompt" {
+		t.Fatalf("expected base persona prompt in system prompt, got %q", gotSystemPrompt)
 	}
-	if want := "<pending_subagent_callbacks>"; !strings.Contains(gotSystemPrompt, want) {
-		t.Fatalf("expected %q in system prompt, got %q", want, gotSystemPrompt)
+	if want := "<pending_subagent_callbacks>"; !strings.Contains(gotRuntimePrompt, want) {
+		t.Fatalf("expected %q in runtime prompt, got %q", want, gotRuntimePrompt)
 	}
-	if want := `"status":"completed"`; !strings.Contains(gotSystemPrompt, want) {
-		t.Fatalf("expected %q in system prompt, got %q", want, gotSystemPrompt)
+	if want := `"status":"completed"`; !strings.Contains(gotRuntimePrompt, want) {
+		t.Fatalf("expected %q in runtime prompt, got %q", want, gotRuntimePrompt)
 	}
-	if want := `"message":"phase one done"`; !strings.Contains(gotSystemPrompt, want) {
-		t.Fatalf("expected callback payload in system prompt, got %q", gotSystemPrompt)
+	if want := `"message":"phase one done"`; !strings.Contains(gotRuntimePrompt, want) {
+		t.Fatalf("expected callback payload in runtime prompt, got %q", gotRuntimePrompt)
 	}
 }
 
