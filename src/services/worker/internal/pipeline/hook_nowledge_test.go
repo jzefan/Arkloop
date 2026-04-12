@@ -8,11 +8,13 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	sharedconfig "arkloop/services/shared/config"
 	sharedoutbound "arkloop/services/shared/outboundurl"
 	"arkloop/services/worker/internal/data"
 	"arkloop/services/worker/internal/llm"
+	"arkloop/services/worker/internal/memory"
 	"arkloop/services/worker/internal/memory/nowledge"
 
 	"github.com/google/uuid"
@@ -44,6 +46,52 @@ func (s nowledgeResolverStub) ResolvePrefix(context.Context, string, sharedconfi
 	return nil, fmt.Errorf("not implemented")
 }
 
+type nowledgeSnapshotStoreCapture struct {
+	block string
+	hits  []data.MemoryHitCache
+	done  chan struct{}
+}
+
+func (s *nowledgeSnapshotStoreCapture) Get(context.Context, uuid.UUID, uuid.UUID, string) (string, bool, error) {
+	return "", false, nil
+}
+
+func (s *nowledgeSnapshotStoreCapture) UpsertWithHits(_ context.Context, _, _ uuid.UUID, _ string, block string, hits []data.MemoryHitCache) error {
+	s.block = block
+	s.hits = append([]data.MemoryHitCache(nil), hits...)
+	if s.done != nil {
+		select {
+		case s.done <- struct{}{}:
+		default:
+		}
+	}
+	return nil
+}
+
+type nowledgeImpressionStoreStub struct {
+	score      int
+	resetCalls int
+}
+
+func (s *nowledgeImpressionStoreStub) Get(context.Context, uuid.UUID, uuid.UUID, string) (string, bool, error) {
+	return "", false, nil
+}
+
+func (s *nowledgeImpressionStoreStub) Upsert(context.Context, uuid.UUID, uuid.UUID, string, string) error {
+	return nil
+}
+
+func (s *nowledgeImpressionStoreStub) AddScore(_ context.Context, _ uuid.UUID, _ uuid.UUID, _ string, delta int) (int, error) {
+	s.score += delta
+	return s.score, nil
+}
+
+func (s *nowledgeImpressionStoreStub) ResetScore(context.Context, uuid.UUID, uuid.UUID, string) error {
+	s.score = 0
+	s.resetCalls++
+	return nil
+}
+
 func TestNowledgeDistillObserverSkipsWhenDisabled(t *testing.T) {
 	t.Setenv(sharedoutbound.AllowLoopbackHTTPEnv, "true")
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -54,7 +102,7 @@ func TestNowledgeDistillObserverSkipsWhenDisabled(t *testing.T) {
 	provider := nowledge.NewClient(nowledge.Config{BaseURL: srv.URL})
 	observer := NewNowledgeDistillObserver(provider, nowledgeLinkStoreStub{}, nowledgeResolverStub{
 		values: map[string]string{"memory.distill_enabled": "false"},
-	})
+	}, nil, nil, nil, nil)
 	if observer == nil {
 		t.Fatal("expected observer")
 	}
@@ -108,7 +156,7 @@ func TestNowledgeDistillObserverRunsWhenEnabled(t *testing.T) {
 	defer srv.Close()
 
 	provider := nowledge.NewClient(nowledge.Config{BaseURL: srv.URL})
-	observer := NewNowledgeDistillObserver(provider, nowledgeLinkStoreStub{}, nil)
+	observer := NewNowledgeDistillObserver(provider, nowledgeLinkStoreStub{}, nil, nil, nil, nil, nil)
 	userID := uuid.New()
 	rc := &RunContext{
 		Run: data.Run{
@@ -138,6 +186,122 @@ func TestNowledgeDistillObserverRunsWhenEnabled(t *testing.T) {
 	}
 	if !triageCalled || !distillCalled {
 		t.Fatalf("expected nowledge distill flow to run, triage=%v distill=%v", triageCalled, distillCalled)
+	}
+}
+
+func TestNowledgeDistillObserverRefreshesSnapshotAndImpression(t *testing.T) {
+	t.Setenv(sharedoutbound.AllowLoopbackHTTPEnv, "true")
+
+	prevWindow := snapshotRefreshWindow
+	prevInterval := snapshotRefreshRetryInterval
+	prevAttempts := snapshotRefreshMaxAttempts
+	snapshotRefreshWindow = 200 * time.Millisecond
+	snapshotRefreshRetryInterval = 10 * time.Millisecond
+	snapshotRefreshMaxAttempts = 3
+	defer func() {
+		snapshotRefreshWindow = prevWindow
+		snapshotRefreshRetryInterval = prevInterval
+		snapshotRefreshMaxAttempts = prevAttempts
+	}()
+
+	var triageCalled bool
+	var distillCalled bool
+	var listCalled bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/memories/distill/triage":
+			triageCalled = true
+			_ = json.NewEncoder(w).Encode(map[string]any{"should_distill": true})
+		case "/memories/distill":
+			distillCalled = true
+			_ = json.NewEncoder(w).Encode(map[string]any{"memories_created": 1})
+		case "/memories":
+			listCalled = true
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"memories": []map[string]any{{
+					"id":         "mem-1",
+					"title":      "迁移决策",
+					"content":    "团队决定切到 nowledge knowledge 链路。",
+					"confidence": 0.91,
+				}},
+			})
+		default:
+			t.Fatalf("unexpected nowledge request: %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer srv.Close()
+
+	provider := nowledge.NewClient(nowledge.Config{BaseURL: srv.URL})
+	snapshotStore := &nowledgeSnapshotStoreCapture{done: make(chan struct{}, 1)}
+	impressionStore := &nowledgeImpressionStoreStub{score: 2}
+	refreshTriggered := make(chan struct{}, 1)
+	observer := NewNowledgeDistillObserver(
+		provider,
+		nowledgeLinkStoreStub{},
+		nowledgeResolverStub{values: map[string]string{"memory.impression_score_threshold": "3"}},
+		snapshotStore,
+		nil,
+		impressionStore,
+		func(context.Context, memory.MemoryIdentity, uuid.UUID, uuid.UUID) {
+			select {
+			case refreshTriggered <- struct{}{}:
+			default:
+			}
+		},
+	)
+
+	userID := uuid.New()
+	rc := &RunContext{
+		Run: data.Run{
+			ID:        uuid.New(),
+			AccountID: uuid.New(),
+			ThreadID:  uuid.New(),
+		},
+		UserID:  &userID,
+		TraceID: "trace-nowledge-refresh",
+	}
+	delta := ThreadDelta{
+		AccountID:       rc.Run.AccountID,
+		ThreadID:        rc.Run.ThreadID,
+		UserID:          userID,
+		AgentID:         "user_" + userID.String(),
+		Messages:        []ThreadDeltaMessage{{Role: "user", Content: "今天决定切到 nowledge knowledge"}, {Role: "assistant", Content: "我记住这个迁移决策。"}},
+		AssistantOutput: "我记住这个迁移决策。",
+	}
+	result := ThreadPersistResult{
+		Handled:          true,
+		Committed:        true,
+		ExternalThreadID: "thread-1",
+		Provider:         "nowledge",
+	}
+
+	if _, err := observer.AfterThreadPersist(context.Background(), rc, delta, result); err != nil {
+		t.Fatalf("AfterThreadPersist: %v", err)
+	}
+
+	select {
+	case <-snapshotStore.done:
+	case <-time.After(300 * time.Millisecond):
+		t.Fatal("timeout waiting for snapshot refresh")
+	}
+
+	if !triageCalled || !distillCalled || !listCalled {
+		t.Fatalf("expected full nowledge flow, triage=%v distill=%v list=%v", triageCalled, distillCalled, listCalled)
+	}
+	if !strings.Contains(snapshotStore.block, "迁移决策") {
+		t.Fatalf("expected snapshot block to include latest memory, got %q", snapshotStore.block)
+	}
+	if len(snapshotStore.hits) != 1 || snapshotStore.hits[0].URI != "nowledge://memory/mem-1" {
+		t.Fatalf("unexpected snapshot hits: %#v", snapshotStore.hits)
+	}
+	if impressionStore.resetCalls != 1 {
+		t.Fatalf("expected impression score reset once, got %d", impressionStore.resetCalls)
+	}
+
+	select {
+	case <-refreshTriggered:
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("expected impression refresh trigger")
 	}
 }
 
