@@ -781,6 +781,10 @@ func addImpressionScore(ctx context.Context, store ImpressionStore, ident memory
 	}
 }
 
+func BumpImpressionScore(ctx context.Context, store ImpressionStore, ident memory.MemoryIdentity, delta int, resolver sharedconfig.Resolver, refresh ImpressionRefreshFunc) {
+	addImpressionScore(ctx, store, ident, delta, resolver, refresh)
+}
+
 func resolveImpressionThreshold(resolver sharedconfig.Resolver) int {
 	if resolver == nil {
 		return 50

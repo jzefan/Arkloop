@@ -5,6 +5,7 @@ package pipeline
 import (
 	"context"
 	"errors"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -106,6 +107,90 @@ func (p *refreshProviderStub) Delete(_ context.Context, _ memory.MemoryIdentity,
 
 func (p *refreshProviderStub) ListDir(_ context.Context, _ memory.MemoryIdentity, _ string) ([]string, error) {
 	return nil, nil
+}
+
+type heartbeatDirectWriterStub struct {
+	mu sync.Mutex
+
+	appendCount int
+	commitCount int
+	writeCount  int
+	writeDelay  time.Duration
+	writeErr    error
+	writeDone   chan struct{}
+	fragments   []memory.MemoryFragment
+}
+
+func newHeartbeatDirectWriterStub() *heartbeatDirectWriterStub {
+	return &heartbeatDirectWriterStub{
+		writeDone: make(chan struct{}, 8),
+	}
+}
+
+func (p *heartbeatDirectWriterStub) Find(context.Context, memory.MemoryIdentity, string, string, int) ([]memory.MemoryHit, error) {
+	return nil, nil
+}
+
+func (p *heartbeatDirectWriterStub) Content(context.Context, memory.MemoryIdentity, string, memory.MemoryLayer) (string, error) {
+	return "", nil
+}
+
+func (p *heartbeatDirectWriterStub) AppendSessionMessages(context.Context, memory.MemoryIdentity, string, []memory.MemoryMessage) error {
+	p.mu.Lock()
+	p.appendCount++
+	p.mu.Unlock()
+	return nil
+}
+
+func (p *heartbeatDirectWriterStub) CommitSession(context.Context, memory.MemoryIdentity, string) error {
+	p.mu.Lock()
+	p.commitCount++
+	p.mu.Unlock()
+	return nil
+}
+
+func (p *heartbeatDirectWriterStub) Write(context.Context, memory.MemoryIdentity, memory.MemoryScope, memory.MemoryEntry) error {
+	return nil
+}
+
+func (p *heartbeatDirectWriterStub) WriteReturningURI(_ context.Context, _ memory.MemoryIdentity, _ memory.MemoryScope, entry memory.MemoryEntry) (string, error) {
+	if p.writeDelay > 0 {
+		time.Sleep(p.writeDelay)
+	}
+	if p.writeErr != nil {
+		return "", p.writeErr
+	}
+	content := strings.TrimSpace(entry.Content)
+	p.mu.Lock()
+	p.writeCount++
+	index := p.writeCount
+	p.fragments = append(p.fragments, memory.MemoryFragment{
+		ID:       "mem-" + strconv.Itoa(index),
+		URI:      "nowledge://memory/mem-" + strconv.Itoa(index),
+		Title:    content,
+		Content:  content,
+		Abstract: content,
+		Score:    1,
+	})
+	p.mu.Unlock()
+	if p.writeDone != nil {
+		p.writeDone <- struct{}{}
+	}
+	return "nowledge://memory/mem-" + strconv.Itoa(index), nil
+}
+
+func (p *heartbeatDirectWriterStub) Delete(context.Context, memory.MemoryIdentity, string) error {
+	return nil
+}
+
+func (p *heartbeatDirectWriterStub) ListDir(context.Context, memory.MemoryIdentity, string) ([]string, error) {
+	return nil, nil
+}
+
+func (p *heartbeatDirectWriterStub) ListFragments(_ context.Context, _ memory.MemoryIdentity, _ int) ([]memory.MemoryFragment, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return append([]memory.MemoryFragment(nil), p.fragments...), nil
 }
 
 type fragmentRefreshProviderStub struct {
@@ -551,6 +636,69 @@ func TestHeartbeatFragmentsCommitRunsAsyncAndEmitsEvents(t *testing.T) {
 		eventTypeMemoryHeartbeatCommitted,
 		"memory.heartbeat.snapshot_pending",
 	)
+}
+
+func TestHeartbeatFragmentsDirectWriteSupportsNowledgeStyleProviders(t *testing.T) {
+	withShortSnapshotRefresh(t)
+	pool, run, ident := setupMemoryRun(t, "memory_heartbeat_direct_write")
+
+	provider := newHeartbeatDirectWriterStub()
+	provider.writeDelay = 150 * time.Millisecond
+	userID := ident.UserID
+	rc := &RunContext{
+		Run:                 run,
+		Pool:                pool,
+		MemoryServiceDB:     pool,
+		MemorySnapshotStore: NewPgxMemorySnapshotStore(pool),
+		TraceID:             "trace-heartbeat-direct",
+		UserID:              &userID,
+		MemoryProvider:      provider,
+		JobPayload:          map[string]any{"run_kind": "heartbeat"},
+		HeartbeatToolOutcome: &HeartbeatDecisionOutcome{Fragments: []string{
+			"remember alpha",
+			"remember beta",
+		}},
+	}
+
+	mw := NewHeartbeatPrepareMiddleware()
+	started := time.Now()
+	if err := mw(context.Background(), rc, func(_ context.Context, rc *RunContext) error {
+		rc.HeartbeatToolOutcome = &HeartbeatDecisionOutcome{Fragments: []string{"remember alpha", "remember beta"}}
+		return nil
+	}); err != nil {
+		t.Fatalf("heartbeat middleware: %v", err)
+	}
+	if elapsed := time.Since(started); elapsed >= provider.writeDelay {
+		t.Fatalf("expected async heartbeat direct write, elapsed=%s delay=%s", elapsed, provider.writeDelay)
+	}
+
+	for i := 0; i < 2; i++ {
+		select {
+		case <-provider.writeDone:
+		case <-time.After(400 * time.Millisecond):
+			t.Fatal("timeout waiting for heartbeat direct write")
+		}
+	}
+
+	provider.mu.Lock()
+	appendCount := provider.appendCount
+	commitCount := provider.commitCount
+	writeCount := provider.writeCount
+	fragments := append([]memory.MemoryFragment(nil), provider.fragments...)
+	provider.mu.Unlock()
+	if appendCount != 0 || commitCount != 0 {
+		t.Fatalf("expected direct writer path to skip append/commit, append=%d commit=%d", appendCount, commitCount)
+	}
+	if writeCount != 2 {
+		t.Fatalf("expected two direct writes, got %d", writeCount)
+	}
+
+	waitForEventTypes(t, pool, run.ID,
+		eventTypeMemoryHeartbeatStarted,
+		eventTypeMemoryHeartbeatCommitted,
+		"memory.heartbeat.snapshot_pending",
+	)
+	waitForSnapshotBlock(t, pool, ident, buildLinearMemoryBlock(fragments))
 }
 
 func TestHeartbeatPrepareMiddlewareDoesNotDuplicateHeartbeatDecisionTool(t *testing.T) {

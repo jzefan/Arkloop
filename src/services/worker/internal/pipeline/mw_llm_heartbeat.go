@@ -24,6 +24,10 @@ const (
 	eventTypeMemoryHeartbeatCommitted    = "memory.heartbeat.committed"
 )
 
+type heartbeatFragmentDirectWriter interface {
+	WriteReturningURI(ctx context.Context, ident memory.MemoryIdentity, scope memory.MemoryScope, entry memory.MemoryEntry) (string, error)
+}
+
 // isHeartbeatRun checks whether run_kind=heartbeat is set in InputJSON or JobPayload.
 func isHeartbeatRun(input, job map[string]any) bool {
 	if s, ok := stringField(input, "run_kind"); ok && strings.EqualFold(s, runkind.Heartbeat) {
@@ -223,7 +227,8 @@ func commitHeartbeatFragments(ctx context.Context, rc *RunContext) {
 		UserID:    *rc.UserID,
 		AgentID:   StableAgentID(rc),
 	}
-	body := strings.Join(rc.HeartbeatToolOutcome.Fragments, "\n\n")
+	fragments := append([]string(nil), rc.HeartbeatToolOutcome.Fragments...)
+	body := strings.Join(fragments, "\n\n")
 	msgs := []memory.MemoryMessage{
 		{Role: "user", Content: body},
 		{Role: "assistant", Content: "Noted."},
@@ -234,13 +239,43 @@ func commitHeartbeatFragments(ctx context.Context, rc *RunContext) {
 		mdb = rc.Pool
 	}
 	appendAsyncRunEvent(context.Background(), mdb, rc.Run.ID, events.NewEmitter(rc.TraceID).Emit(eventTypeMemoryHeartbeatStarted, map[string]any{
-		"kind":          "heartbeat",
-		"session_id":    sessionID,
-		"message_count": 1,
+		"kind":           "heartbeat",
+		"session_id":     sessionID,
+		"message_count":  1,
+		"fragment_count": len(fragments),
 	}, nil, nil))
 	go func() {
 		runCtx, cancel := context.WithTimeout(context.Background(), memoryFlushTimeout)
 		defer cancel()
+
+		if writer, ok := rc.MemoryProvider.(heartbeatFragmentDirectWriter); ok {
+			for _, fragment := range fragments {
+				entry := memory.MemoryEntry{Content: strings.TrimSpace(fragment)}
+				if _, err := writer.WriteReturningURI(runCtx, ident, memory.MemoryScopeUser, entry); err != nil {
+					slog.Warn("memory: heartbeat write failed",
+						"account_id", rc.Run.AccountID.String(),
+						"session_id", sessionID,
+						"err", err.Error(),
+					)
+					appendAsyncRunEvent(context.Background(), mdb, rc.Run.ID, events.NewEmitter(rc.TraceID).Emit(eventTypeMemoryHeartbeatCommitFailed, map[string]any{
+						"kind":       "heartbeat",
+						"session_id": sessionID,
+						"message":    err.Error(),
+					}, nil, nil))
+					return
+				}
+			}
+			appendAsyncRunEvent(context.Background(), mdb, rc.Run.ID, events.NewEmitter(rc.TraceID).Emit(eventTypeMemoryHeartbeatCommitted, map[string]any{
+				"kind":       "heartbeat",
+				"session_id": sessionID,
+			}, nil, nil))
+			if rc.MemorySnapshotStore != nil && mdb != nil && len(fragments) > 0 {
+				scheduleSnapshotRefresh(rc.MemoryProvider, rc.MemorySnapshotStore, mdb, rc.Run.ID, rc.TraceID, ident, sessionID, map[string][]string{
+					string(memory.MemoryScopeUser): append([]string(nil), fragments...),
+				}, "memory.heartbeat", "heartbeat")
+			}
+			return
+		}
 
 		if err := rc.MemoryProvider.AppendSessionMessages(runCtx, ident, sessionID, msgs); err != nil {
 			slog.Warn("memory: heartbeat append failed",

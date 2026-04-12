@@ -344,6 +344,13 @@ func ComposeDesktopEngine(ctx context.Context, db data.DesktopDB, bus eventbus.E
 		}
 	}
 	desktopImpStore := pipeline.NewDesktopImpressionStore(db)
+	for _, exec := range executors {
+		if memExec, ok := exec.(interface {
+			ConfigureImpression(store pipeline.ImpressionStore, refresh pipeline.ImpressionRefreshFunc, resolver sharedconfig.Resolver)
+		}); ok {
+			memExec.ConfigureImpression(desktopImpStore, newDesktopImpressionRefresh(db, jobQueue), promptInjection.Resolver)
+		}
+	}
 	hookRegistry.RegisterContextContributor(pipeline.NewImpressionContextContributor(desktopImpStore))
 	if typed, ok := memProvider.(*nowledge.Client); ok {
 		linkRepo := data.ExternalThreadLinksRepository{}
