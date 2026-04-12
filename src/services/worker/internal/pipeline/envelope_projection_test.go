@@ -34,6 +34,9 @@ func TestParseEnvelope_withReply(t *testing.T) {
 	if f.ReplyToPreview != "Bob: 昨天的方案不错" {
 		t.Fatalf("ReplyToPreview = %q", f.ReplyToPreview)
 	}
+	if f.QuoteText != "" {
+		t.Fatalf("QuoteText should be empty, got %q", f.QuoteText)
+	}
 	if f.Body != "我同意" {
 		t.Fatalf("Body = %q, want 我同意", f.Body)
 	}
@@ -84,7 +87,7 @@ func TestFormatNaturalPrefix_withReply(t *testing.T) {
 		Body:           "我同意",
 	}
 	got := formatNaturalPrefix(f)
-	want := "Alice (#42, > Reply to #38 \"Bob: 昨天的方案不错\"):\n我同意"
+	want := "Alice (#42):\n[引用 #38] Bob: 昨天的方案不错 [/引用]\n我同意"
 	if got != want {
 		t.Fatalf("got:\n%s\nwant:\n%s", got, want)
 	}
@@ -135,7 +138,7 @@ func TestProjectGroupEnvelopes_mixedMessages(t *testing.T) {
 
 	// 第一条 user 消息应被投影
 	got := rc.Messages[0].Content[0].Text
-	want := "Alice (#12, > Reply to #10 \"Bob: hi\"):\n回复内容"
+	want := "Alice (#12):\n[引用 #10] Bob: hi [/引用]\n回复内容"
 	if got != want {
 		t.Fatalf("projected msg[0]:\n%s\nwant:\n%s", got, want)
 	}
@@ -171,6 +174,41 @@ func TestProjectGroupEnvelopes_escapedQuotes(t *testing.T) {
 	want := "O\\\"Brien (#5):\nbody"
 	if got != want {
 		t.Fatalf("got:\n%s\nwant:\n%s", got, want)
+	}
+}
+
+func TestFormatReplyQuoteBlock_withoutPreview(t *testing.T) {
+	got := formatReplyQuoteBlock("50", "", "")
+	want := "[引用 #50]"
+	if got != want {
+		t.Fatalf("got %q, want %q", got, want)
+	}
+}
+
+func TestFormatReplyQuoteBlock_prefersQuoteText(t *testing.T) {
+	got := formatReplyQuoteBlock("50", "Bob: 整条很长的原文", "选中的一句")
+	want := "[引用 #50] Bob: 选中的一句 [/引用]"
+	if got != want {
+		t.Fatalf("got %q, want %q", got, want)
+	}
+}
+
+func TestParseEnvelope_withQuoteText(t *testing.T) {
+	text := "---\n" +
+		`display-name: "Alice"` + "\n" +
+		`reply-to-message-id: "38"` + "\n" +
+		`reply-to-preview: "Bob: 很长的原文"` + "\n" +
+		`quote-text: "选中的一句"` + "\n" +
+		`message-id: "42"` + "\n" +
+		"---\n" +
+		"我同意"
+
+	f := parseEnvelope(text)
+	if f == nil {
+		t.Fatal("parseEnvelope returned nil")
+	}
+	if f.QuoteText != "选中的一句" {
+		t.Fatalf("QuoteText = %q", f.QuoteText)
 	}
 }
 

@@ -41,6 +41,9 @@ type telegramIncomingMessage struct {
 	MediaAttachments  []telegramInboundAttachment
 	ReplyToMsgID      *string
 	ReplyToPreview    string
+	QuoteText         string
+	QuotePosition     *int
+	QuoteIsManual     bool
 	MentionsBot       bool
 	IsReplyToBot      bool
 	MatchesKeyword    bool
@@ -81,6 +84,8 @@ func normalizeTelegramIncomingMessage(
 	}
 	replyToMessageID := optionalTelegramMessageID(msg.ReplyToMessage)
 	replyToPreview := buildTelegramReplyPreview(msg.ReplyToMessage)
+	quoteText := buildTelegramQuoteText(msg.Quote)
+	quotePosition := optionalTelegramQuotePosition(msg.Quote)
 	messageThreadID := optionalTelegramThreadID(msg.MessageThreadID)
 	forwardFromName := extractTelegramForwardOriginName(msg.ForwardOrigin)
 	incoming := &telegramIncomingMessage{
@@ -98,6 +103,9 @@ func normalizeTelegramIncomingMessage(
 		MediaAttachments:  attachments,
 		ReplyToMsgID:      replyToMessageID,
 		ReplyToPreview:    replyToPreview,
+		QuoteText:         quoteText,
+		QuotePosition:     quotePosition,
+		QuoteIsManual:     msg.Quote != nil && msg.Quote.IsManual,
 		MentionsBot:       telegramMessageMentionsBot(msg, botUsername),
 		IsReplyToBot:      telegramMessageRepliesToBot(msg, telegramBotUserID),
 		MatchesKeyword:    telegramMessageMatchesKeyword(msg, triggerKeywords),
@@ -302,6 +310,9 @@ func telegramInboundMetadataJSON(identity data.ChannelIdentity, incoming telegra
 		"media_attachments":   incoming.MediaAttachments,
 		"reply_to_message_id": incoming.ReplyToMsgID,
 		"message_thread_id":   incoming.MessageThreadID,
+		"quote_text":          incoming.QuoteText,
+		"quote_position":      incoming.QuotePosition,
+		"quote_is_manual":     incoming.QuoteIsManual,
 	})
 }
 
@@ -366,6 +377,15 @@ func buildTelegramEnvelopeText(identityID uuid.UUID, incoming telegramIncomingMe
 		lines = append(lines, fmt.Sprintf(`reply-to-message-id: "%s"`, escapeTelegramEnvelopeValue(strings.TrimSpace(*incoming.ReplyToMsgID))))
 		if strings.TrimSpace(incoming.ReplyToPreview) != "" {
 			lines = append(lines, fmt.Sprintf(`reply-to-preview: "%s"`, escapeTelegramEnvelopeValue(incoming.ReplyToPreview)))
+		}
+		if strings.TrimSpace(incoming.QuoteText) != "" {
+			lines = append(lines, fmt.Sprintf(`quote-text: "%s"`, escapeTelegramEnvelopeValue(incoming.QuoteText)))
+		}
+		if incoming.QuotePosition != nil {
+			lines = append(lines, fmt.Sprintf(`quote-position: "%d"`, *incoming.QuotePosition))
+		}
+		if incoming.QuoteIsManual {
+			lines = append(lines, `quote-is-manual: "true"`)
 		}
 	}
 	if incoming.MessageThreadID != nil && strings.TrimSpace(*incoming.MessageThreadID) != "" {
@@ -475,6 +495,13 @@ func telegramUserDisplayName(u *telegramUser) string {
 
 const telegramReplyPreviewMaxRunes = 80
 
+func buildTelegramQuoteText(quote *telegramTextQuote) string {
+	if quote == nil {
+		return ""
+	}
+	return strings.TrimSpace(quote.Text)
+}
+
 func buildTelegramReplyPreview(msg *telegramMessage) string {
 	if msg == nil {
 		return ""
@@ -501,6 +528,14 @@ func buildTelegramReplyPreview(msg *telegramMessage) string {
 		return senderName + ": " + text
 	}
 	return text
+}
+
+func optionalTelegramQuotePosition(quote *telegramTextQuote) *int {
+	if quote == nil || quote.Position < 0 {
+		return nil
+	}
+	value := quote.Position
+	return &value
 }
 
 func optionalTelegramThreadID(threadID *int64) *string {

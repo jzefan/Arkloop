@@ -10,6 +10,7 @@ type envelopeFields struct {
 	MessageID      string
 	ReplyToMsgID   string
 	ReplyToPreview string
+	QuoteText      string
 	ForwardFrom    string
 	Body           string
 }
@@ -27,39 +28,65 @@ func parseEnvelope(text string) *envelopeFields {
 		MessageID:      meta["message-id"],
 		ReplyToMsgID:   meta["reply-to-message-id"],
 		ReplyToPreview: meta["reply-to-preview"],
+		QuoteText:      meta["quote-text"],
 		ForwardFrom:    meta["forward-from"],
 		Body:           body,
 	}
 }
 
+func quoteSpeakerFromPreview(replyToPreview string) string {
+	replyToPreview = strings.TrimSpace(replyToPreview)
+	if replyToPreview == "" {
+		return ""
+	}
+	head, _, ok := strings.Cut(replyToPreview, ":")
+	if !ok {
+		return ""
+	}
+	return strings.TrimSpace(head)
+}
+
+func formatReplyQuoteBlock(replyToMsgID string, replyToPreview string, quoteText string) string {
+	replyToMsgID = strings.TrimSpace(replyToMsgID)
+	if replyToMsgID == "" {
+		return ""
+	}
+	replyToPreview = strings.TrimSpace(replyToPreview)
+	quoteText = strings.TrimSpace(quoteText)
+	if quoteText != "" {
+		if speaker := quoteSpeakerFromPreview(replyToPreview); speaker != "" {
+			quoteText = speaker + ": " + quoteText
+		}
+		return "[引用 #" + replyToMsgID + "] " + quoteText + " [/引用]"
+	}
+	if replyToPreview == "" {
+		return "[引用 #" + replyToMsgID + "]"
+	}
+	return "[引用 #" + replyToMsgID + "] " + replyToPreview + " [/引用]"
+}
+
 // formatNaturalPrefix 将 envelopeFields 格式化为简洁的聊天记录前缀。
 //
-//	Alice (#42, > #38 "Bob: 昨天的方案..."):
+//	Alice (#42):
+//	[引用 #38] Bob: 昨天的方案不错 [/引用]
 //	消息正文
 func formatNaturalPrefix(f *envelopeFields) string {
 	name := f.DisplayName
 	if name == "" {
 		name = "?"
 	}
-	var meta []string
-	if f.MessageID != "" {
-		meta = append(meta, "#"+f.MessageID)
-	}
-	if f.ReplyToMsgID != "" {
-		replyPart := "> Reply to #" + f.ReplyToMsgID
-		if f.ReplyToPreview != "" {
-			replyPart += ` "` + f.ReplyToPreview + `"`
-		}
-		meta = append(meta, replyPart)
-	}
-
 	var prefix string
-	if len(meta) > 0 {
-		prefix = name + " (" + strings.Join(meta, ", ") + "):"
+	if f.MessageID != "" {
+		prefix = name + " (#" + f.MessageID + "):"
 	} else {
 		prefix = name + ":"
 	}
-	return prefix + "\n" + f.Body
+	parts := []string{prefix}
+	if replyBlock := formatReplyQuoteBlock(f.ReplyToMsgID, f.ReplyToPreview, f.QuoteText); replyBlock != "" {
+		parts = append(parts, replyBlock)
+	}
+	parts = append(parts, f.Body)
+	return strings.Join(parts, "\n")
 }
 
 // projectGroupEnvelopes 遍历 rc.Messages，将 user 消息中的 YAML envelope 替换为自然语言前缀。

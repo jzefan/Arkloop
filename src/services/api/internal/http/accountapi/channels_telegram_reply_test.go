@@ -2,7 +2,10 @@ package accountapi
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
+
+	"github.com/google/uuid"
 )
 
 func TestTelegramMessageRepliesToBot_usesNumericBotID(t *testing.T) {
@@ -59,9 +62,95 @@ func TestTelegramMessageRepliesToBot_requiresBotIDWhenUnset(t *testing.T) {
 	}
 }
 
+func TestNormalizeTelegramIncomingMessage_extractsQuote(t *testing.T) {
+	update := telegramUpdate{
+		Message: &telegramMessage{
+			MessageID: 14,
+			Date:      1710000002,
+			Text:      "继续说",
+			Quote:     &telegramTextQuote{Text: "ENTP解析", Position: 3, IsManual: true},
+			ReplyToMessage: &telegramMessage{
+				MessageID: 11,
+				Date:      1710000001,
+				Text:      "bot old message with more context",
+				Chat: telegramChat{
+					ID:   -20001,
+					Type: "supergroup",
+				},
+				From: &telegramUser{
+					ID:        777002,
+					IsBot:     true,
+					FirstName: strPtr("Arkloop"),
+				},
+			},
+			Chat: telegramChat{
+				ID:   -20001,
+				Type: "supergroup",
+			},
+			From: &telegramUser{
+				ID:        10001,
+				IsBot:     false,
+				FirstName: strPtr("Alice"),
+			},
+		},
+	}
+
+	incoming, err := normalizeTelegramIncomingMessage(uuid.New(), "telegram", []byte(`{}`), update, "arkloopbot", 777002, nil)
+	if err != nil {
+		t.Fatalf("normalizeTelegramIncomingMessage error: %v", err)
+	}
+	if incoming == nil {
+		t.Fatal("expected incoming message")
+	}
+	if incoming.QuoteText != "ENTP解析" {
+		t.Fatalf("QuoteText = %q", incoming.QuoteText)
+	}
+	if incoming.QuotePosition == nil || *incoming.QuotePosition != 3 {
+		t.Fatalf("QuotePosition = %#v", incoming.QuotePosition)
+	}
+	if !incoming.QuoteIsManual {
+		t.Fatal("expected QuoteIsManual=true")
+	}
+}
+
+func TestBuildTelegramEnvelopeText_includesQuoteFields(t *testing.T) {
+	replyToID := "11"
+	position := 3
+	text := buildTelegramEnvelopeText(
+		uuid.MustParse("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"),
+		telegramIncomingMessage{
+			PlatformUsername:  "alice",
+			ChatType:          "supergroup",
+			ConversationTitle: "Arkloop",
+			ReplyToMsgID:      &replyToID,
+			ReplyToPreview:    "Arkloop: 很长的预览",
+			QuoteText:         "ENTP解析",
+			QuotePosition:     &position,
+			QuoteIsManual:     true,
+			PlatformMsgID:     "14",
+		},
+		"Alice",
+		"[Telegram in Arkloop] 继续说",
+		inboundTimeContext{Local: "2024-03-09 00:00:01 [UTC+8]", UTC: "2024-03-08T16:00:01Z", TimeZone: "Asia/Singapore"},
+	)
+	if !strings.Contains(text, `quote-text: "ENTP解析"`) {
+		t.Fatalf("expected quote-text in envelope, got %s", text)
+	}
+	if !strings.Contains(text, `quote-position: "3"`) {
+		t.Fatalf("expected quote-position in envelope, got %s", text)
+	}
+	if !strings.Contains(text, `quote-is-manual: "true"`) {
+		t.Fatalf("expected quote-is-manual in envelope, got %s", text)
+	}
+}
+
 func jsonInt(v int64) string {
 	b, _ := json.Marshal(v)
 	return string(b)
+}
+
+func strPtr(v string) *string {
+	return &v
 }
 
 func TestTelegramUserAllowed_emptyAllowlistOpens(t *testing.T) {
