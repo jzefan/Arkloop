@@ -107,7 +107,7 @@ const (
 	nowledgeMemoryURIPrefix  = "nowledge://memory/"
 	nowledgeDefaultBaseURL   = "http://127.0.0.1:14242"
 	nowledgeLocalConfigPath  = ".nowledge-mem/config.json"
-	nowledgeSnapshotLimit    = 30
+	nowledgeSnapshotLimit    = 200
 	nowledgeContentTimeoutMs = 30000
 )
 
