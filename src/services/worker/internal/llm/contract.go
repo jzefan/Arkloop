@@ -25,6 +25,45 @@ const (
 	ErrorClassPlatformError       = "internal_platform.error"
 )
 
+const (
+	CacheHintActionWrite     = "write"
+	CacheHintActionReference = "reference"
+	CacheHintActionDelete    = "delete"
+
+	CacheStabilityStablePrefix  = "stable_prefix"
+	CacheStabilitySessionPrefix = "session_prefix"
+	CacheStabilityVolatileTail  = "volatile_tail"
+
+	PromptTargetSystemPrefix       = "system_prefix"
+	PromptTargetConversationPrefix = "conversation_prefix"
+	PromptTargetRuntimeTail        = "runtime_tail"
+)
+
+// CacheHint 是 provider-neutral 的缓存语义提示。
+// action:
+//   - write: 将当前内容作为可缓存写入边界
+//   - reference: 复用前序缓存（例如 tool_result 的 cache_reference）
+//   - delete: 删除既有缓存引用（cache_edits delete）
+type CacheHint struct {
+	Action    string
+	Scope     string
+	Reference string
+}
+
+func (h CacheHint) ToJSON() map[string]any {
+	payload := map[string]any{}
+	if strings.TrimSpace(h.Action) != "" {
+		payload["action"] = strings.TrimSpace(h.Action)
+	}
+	if strings.TrimSpace(h.Scope) != "" {
+		payload["scope"] = strings.TrimSpace(h.Scope)
+	}
+	if strings.TrimSpace(h.Reference) != "" {
+		payload["reference"] = strings.TrimSpace(h.Reference)
+	}
+	return payload
+}
+
 type Usage struct {
 	InputTokens  *int
 	OutputTokens *int
@@ -93,6 +132,7 @@ type ContentPart struct {
 	Type          string
 	Text          string
 	Signature     string
+	CacheHint     *CacheHint
 	CacheControl  *string // "ephemeral"（Anthropic prompt caching）
 	Attachment    *messagecontent.AttachmentRef
 	ExtractedText string
@@ -150,6 +190,11 @@ func (p ContentPart) ToJSON() map[string]any {
 		return payload
 	default:
 		payload := map[string]any{"type": messagecontent.PartTypeText, "text": p.Text}
+		if p.CacheHint != nil {
+			if hint := p.CacheHint.ToJSON(); len(hint) > 0 {
+				payload["cache_hint"] = hint
+			}
+		}
 		if p.CacheControl != nil {
 			payload["cache_control"] = *p.CacheControl
 		}
@@ -262,6 +307,7 @@ type ToolSpec struct {
 	Name        string
 	Description *string
 	JSONSchema  map[string]any
+	CacheHint   *CacheHint
 }
 
 func (s ToolSpec) ToJSON() map[string]any {
@@ -272,6 +318,11 @@ func (s ToolSpec) ToJSON() map[string]any {
 	if s.Description != nil {
 		payload["description"] = *s.Description
 	}
+	if s.CacheHint != nil {
+		if hint := s.CacheHint.ToJSON(); len(hint) > 0 {
+			payload["cache_hint"] = hint
+		}
+	}
 	return payload
 }
 
@@ -281,6 +332,115 @@ type ToolChoice struct {
 	ToolName string // only used when Mode="specific"
 }
 
+type PromptPlanBlock struct {
+	Name          string
+	Target        string
+	Role          string
+	Text          string
+	Stability     string
+	CacheEligible bool
+}
+
+func (b PromptPlanBlock) ToJSON() map[string]any {
+	return map[string]any{
+		"name":           strings.TrimSpace(b.Name),
+		"target":         strings.TrimSpace(b.Target),
+		"role":           strings.TrimSpace(b.Role),
+		"text":           b.Text,
+		"stability":      strings.TrimSpace(b.Stability),
+		"cache_eligible": b.CacheEligible,
+	}
+}
+
+type PromptCacheEdit struct {
+	Type           string
+	CacheReference string
+}
+
+func (e PromptCacheEdit) ToJSON() map[string]any {
+	payload := map[string]any{}
+	if strings.TrimSpace(e.Type) != "" {
+		payload["type"] = strings.TrimSpace(e.Type)
+	}
+	if strings.TrimSpace(e.CacheReference) != "" {
+		payload["cache_reference"] = strings.TrimSpace(e.CacheReference)
+	}
+	return payload
+}
+
+type PromptCacheEditsBlock struct {
+	UserMessageIndex int
+	Edits            []PromptCacheEdit
+}
+
+func (b PromptCacheEditsBlock) ToJSON() map[string]any {
+	edits := make([]map[string]any, 0, len(b.Edits))
+	for _, edit := range b.Edits {
+		edits = append(edits, edit.ToJSON())
+	}
+	return map[string]any{
+		"user_message_index": b.UserMessageIndex,
+		"edits":              edits,
+	}
+}
+
+type MessageCachePlan struct {
+	Enabled                   bool
+	MarkerMessageIndex        int
+	ToolResultCacheCutIndex   int
+	SkipCacheWrite            bool
+	PinnedCacheEdits          []PromptCacheEditsBlock
+	NewCacheEdits             *PromptCacheEditsBlock
+	ToolResultCacheReferences bool
+}
+
+func (p MessageCachePlan) ToJSON() map[string]any {
+	payload := map[string]any{
+		"enabled":                      p.Enabled,
+		"marker_message_index":         p.MarkerMessageIndex,
+		"tool_result_cache_cut_index":  p.ToolResultCacheCutIndex,
+		"skip_cache_write":             p.SkipCacheWrite,
+		"tool_result_cache_references": p.ToolResultCacheReferences,
+	}
+	if len(p.PinnedCacheEdits) > 0 {
+		blocks := make([]map[string]any, 0, len(p.PinnedCacheEdits))
+		for _, block := range p.PinnedCacheEdits {
+			blocks = append(blocks, block.ToJSON())
+		}
+		payload["pinned_cache_edits"] = blocks
+	}
+	if p.NewCacheEdits != nil {
+		payload["new_cache_edits"] = p.NewCacheEdits.ToJSON()
+	}
+	return payload
+}
+
+type PromptPlan struct {
+	SystemBlocks  []PromptPlanBlock
+	MessageBlocks []PromptPlanBlock
+	MessageCache  MessageCachePlan
+}
+
+func (p PromptPlan) ToJSON() map[string]any {
+	payload := map[string]any{}
+	if len(p.SystemBlocks) > 0 {
+		blocks := make([]map[string]any, 0, len(p.SystemBlocks))
+		for _, block := range p.SystemBlocks {
+			blocks = append(blocks, block.ToJSON())
+		}
+		payload["system_blocks"] = blocks
+	}
+	if len(p.MessageBlocks) > 0 {
+		blocks := make([]map[string]any, 0, len(p.MessageBlocks))
+		for _, block := range p.MessageBlocks {
+			blocks = append(blocks, block.ToJSON())
+		}
+		payload["message_blocks"] = blocks
+	}
+	payload["message_cache"] = p.MessageCache.ToJSON()
+	return payload
+}
+
 type Request struct {
 	Model            string
 	Messages         []Message
@@ -288,6 +448,7 @@ type Request struct {
 	MaxOutputTokens  *int
 	Tools            []ToolSpec
 	ToolChoice       *ToolChoice
+	PromptPlan       *PromptPlan
 	Metadata         map[string]any
 	ExperimentalJSON map[string]any
 	ReasoningMode    string // "auto" | "enabled" | "disabled" | "none" | "minimal" | "low" | "medium" | "high" | "xhigh" (accepts aliases like "off"/"max")
@@ -310,6 +471,9 @@ func (r Request) ToJSON() map[string]any {
 			tools = append(tools, spec.ToJSON())
 		}
 		payload["tools"] = tools
+	}
+	if r.PromptPlan != nil {
+		payload["prompt_plan"] = r.PromptPlan.ToJSON()
 	}
 	if len(r.Metadata) > 0 {
 		payload["metadata"] = r.Metadata
@@ -354,6 +518,13 @@ type StreamLlmRequest struct {
 	RoleBytes            map[string]int // "system"/"user"/"assistant"/"tool" -> bytes
 	ToolSchemaBytesMap   map[string]int // tool name -> schema bytes
 	StablePrefixHash     string
+	SessionPrefixHash    string
+	VolatileTailHash     string
+	ToolSchemaHash       string
+	StablePrefixBytes    int
+	SessionPrefixBytes   int
+	VolatileTailBytes    int
+	CacheCandidateBytes  int
 }
 
 func (r StreamLlmRequest) ToDataJSON() map[string]any {
@@ -402,6 +573,27 @@ func (r StreamLlmRequest) ToDataJSON() map[string]any {
 	}
 	if r.StablePrefixHash != "" {
 		payload["stable_prefix_hash"] = r.StablePrefixHash
+	}
+	if r.SessionPrefixHash != "" {
+		payload["session_prefix_hash"] = r.SessionPrefixHash
+	}
+	if r.VolatileTailHash != "" {
+		payload["volatile_tail_hash"] = r.VolatileTailHash
+	}
+	if r.ToolSchemaHash != "" {
+		payload["tool_schema_hash"] = r.ToolSchemaHash
+	}
+	if r.StablePrefixBytes > 0 {
+		payload["stable_prefix_bytes"] = r.StablePrefixBytes
+	}
+	if r.SessionPrefixBytes > 0 {
+		payload["session_prefix_bytes"] = r.SessionPrefixBytes
+	}
+	if r.VolatileTailBytes > 0 {
+		payload["volatile_tail_bytes"] = r.VolatileTailBytes
+	}
+	if r.CacheCandidateBytes > 0 {
+		payload["cache_candidate_bytes"] = r.CacheCandidateBytes
 	}
 	return payload
 }
@@ -820,6 +1012,12 @@ func contentPartFromJSONMap(raw map[string]any) (ContentPart, error) {
 			Type: messagecontent.PartTypeText,
 			Text: stringValue(raw["text"]),
 		}
+		if cacheHintRaw, ok := raw["cache_hint"].(map[string]any); ok {
+			hint := cacheHintFromJSON(cacheHintRaw)
+			if hint != nil {
+				part.CacheHint = hint
+			}
+		}
 		if cacheControl, ok := raw["cache_control"].(string); ok && strings.TrimSpace(cacheControl) != "" {
 			trimmed := strings.TrimSpace(cacheControl)
 			part.CacheControl = &trimmed
@@ -912,4 +1110,19 @@ func firstNonNil(values ...any) any {
 		}
 	}
 	return nil
+}
+
+func cacheHintFromJSON(raw map[string]any) *CacheHint {
+	if raw == nil {
+		return nil
+	}
+	hint := &CacheHint{
+		Action:    strings.TrimSpace(stringValue(raw["action"])),
+		Scope:     strings.TrimSpace(stringValue(raw["scope"])),
+		Reference: strings.TrimSpace(stringValue(firstNonNil(raw["reference"], raw["cache_reference"]))),
+	}
+	if hint.Action == "" && hint.Scope == "" && hint.Reference == "" {
+		return nil
+	}
+	return hint
 }

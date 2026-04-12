@@ -41,44 +41,44 @@ func (r *HookRuntime) ResultApplier() HookResultApplier {
 	return r.applier
 }
 
-func (r *HookRuntime) BeforePromptAssemble(ctx context.Context, rc *RunContext) PromptFragments {
+func (r *HookRuntime) BeforePromptSegments(ctx context.Context, rc *RunContext, segmentPrefix string) PromptSegments {
 	if r == nil || r.registry == nil {
 		return nil
 	}
-	var out PromptFragments
+	var out PromptSegments
 	for _, hook := range r.registry.beforePromptHooks() {
 		start := time.Now()
 		name := providerName(hook)
 		traceHook(rc, HookBeforePromptAssemble, name, "invoked", 0, "", 0)
-		fragments, err := hook.BeforePromptAssemble(ctx, rc)
+		segments, err := hook.BeforePromptSegments(ctx, rc)
 		if err != nil {
 			traceHook(rc, HookBeforePromptAssemble, name, "failed", 0, err.Error(), time.Since(start).Milliseconds())
 			continue
 		}
-		traceHook(rc, HookBeforePromptAssemble, name, "completed", len(fragments), "", time.Since(start).Milliseconds())
-		out = append(out, fragments...)
+		traceHook(rc, HookBeforePromptAssemble, name, "completed", len(segments), "", time.Since(start).Milliseconds())
+		out = append(out, normalizeHookPromptSegments(segmentPrefix+"."+name, segments)...)
 	}
-	return sortPromptFragments(out)
+	return out
 }
 
-func (r *HookRuntime) AfterPromptAssemble(ctx context.Context, rc *RunContext, assembledPrompt string) PromptFragments {
+func (r *HookRuntime) AfterPromptSegments(ctx context.Context, rc *RunContext, assembledPrompt string, segmentPrefix string) PromptSegments {
 	if r == nil || r.registry == nil {
 		return nil
 	}
-	var out PromptFragments
+	var out PromptSegments
 	for _, hook := range r.registry.afterPromptHooks() {
 		start := time.Now()
 		name := providerName(hook)
 		traceHook(rc, HookAfterPromptAssemble, name, "invoked", 0, "", 0)
-		fragments, err := hook.AfterPromptAssemble(ctx, rc, assembledPrompt)
+		segments, err := hook.AfterPromptSegments(ctx, rc, assembledPrompt)
 		if err != nil {
 			traceHook(rc, HookAfterPromptAssemble, name, "failed", 0, err.Error(), time.Since(start).Milliseconds())
 			continue
 		}
-		traceHook(rc, HookAfterPromptAssemble, name, "completed", len(fragments), "", time.Since(start).Milliseconds())
-		out = append(out, fragments...)
+		traceHook(rc, HookAfterPromptAssemble, name, "completed", len(segments), "", time.Since(start).Milliseconds())
+		out = append(out, normalizeHookPromptSegments(segmentPrefix+"."+name, segments)...)
 	}
-	return sortPromptFragments(out)
+	return out
 }
 
 func (r *HookRuntime) BeforeModelCall(ctx context.Context, rc *RunContext, request llm.Request) ModelCallHints {

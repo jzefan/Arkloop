@@ -6,7 +6,6 @@ import (
 )
 
 type HookResultApplier interface {
-	ApplyPromptFragments(systemPrompt string, fragments PromptFragments) string
 	ApplyCompactHints(input CompactInput, hints CompactHints) CompactInput
 }
 
@@ -14,32 +13,6 @@ type DefaultHookResultApplier struct{}
 
 func NewDefaultHookResultApplier() HookResultApplier {
 	return DefaultHookResultApplier{}
-}
-
-func (DefaultHookResultApplier) ApplyPromptFragments(systemPrompt string, fragments PromptFragments) string {
-	normalized := sortPromptFragments(fragments)
-	if len(normalized) == 0 {
-		return systemPrompt
-	}
-
-	out := strings.TrimSpace(systemPrompt)
-	for _, fragment := range normalized {
-		content := strings.TrimSpace(fragment.Content)
-		if content == "" {
-			continue
-		}
-		tag, ok := allowedPromptTag(fragment.XMLTag)
-		if !ok {
-			continue
-		}
-		block := "<" + tag + ">\n" + content + "\n</" + tag + ">"
-		if out == "" {
-			out = block
-			continue
-		}
-		out += "\n\n" + block
-	}
-	return out
 }
 
 func (DefaultHookResultApplier) ApplyCompactHints(input CompactInput, hints CompactHints) CompactInput {
@@ -73,20 +46,6 @@ func BuildCompactHintsBlock(hints CompactHints) string {
 	return strings.TrimSpace(out.SystemPrompt)
 }
 
-func sortPromptFragments(fragments PromptFragments) PromptFragments {
-	filtered := make(PromptFragments, 0, len(fragments))
-	for _, fragment := range fragments {
-		if strings.TrimSpace(fragment.Content) == "" {
-			continue
-		}
-		filtered = append(filtered, fragment)
-	}
-	sort.SliceStable(filtered, func(i, j int) bool {
-		return filtered[i].Priority < filtered[j].Priority
-	})
-	return filtered
-}
-
 func sortCompactHints(hints CompactHints) CompactHints {
 	filtered := make(CompactHints, 0, len(hints))
 	for _, hint := range hints {
@@ -99,19 +58,4 @@ func sortCompactHints(hints CompactHints) CompactHints {
 		return filtered[i].Priority < filtered[j].Priority
 	})
 	return filtered
-}
-
-func allowedPromptTag(raw string) (string, bool) {
-	switch strings.TrimSpace(raw) {
-	case "notebook":
-		return "notebook", true
-	case "impression":
-		return "impression", true
-	case "working_memory":
-		return "working_memory", true
-	case "recalled_memories":
-		return "recalled_memories", true
-	default:
-		return "", false
-	}
 }

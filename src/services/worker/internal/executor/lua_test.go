@@ -858,7 +858,14 @@ end
 
 func TestLuaExecutor_ContextGet_SystemPrompt(t *testing.T) {
 	rc := buildLuaRC(nil)
-	rc.SystemPrompt = "You are a search assistant."
+	rc.PromptAssembly.Append(pipeline.PromptSegment{
+		Name:          "test.system",
+		Target:        pipeline.PromptTargetSystemPrefix,
+		Role:          "system",
+		Text:          "You are a search assistant.",
+		Stability:     pipeline.PromptStabilityStablePrefix,
+		CacheEligible: false,
+	})
 	evs := runLuaScript(t, `
 context.set_output(context.get("system_prompt"))
 `, rc)

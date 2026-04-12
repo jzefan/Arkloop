@@ -8,8 +8,8 @@ import (
 type HookRegistry struct {
 	mu sync.RWMutex
 
-	beforePromptAssemble []BeforePromptAssembleHook
-	afterPromptAssemble  []AfterPromptAssembleHook
+	beforePromptAssemble []BeforePromptSegmentsHook
+	afterPromptAssemble  []AfterPromptSegmentsHook
 	beforeModelCall      []BeforeModelCallHook
 	afterModelResponse   []AfterModelResponseHook
 	afterToolCall        []AfterToolCallHook
@@ -120,16 +120,16 @@ func (r *HookRegistry) ActiveThreadPersistenceProviderName() string {
 	return providerName(r.threadProvider)
 }
 
-func (r *HookRegistry) beforePromptHooks() []BeforePromptAssembleHook {
+func (r *HookRegistry) beforePromptHooks() []BeforePromptSegmentsHook {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	return append([]BeforePromptAssembleHook(nil), r.beforePromptAssemble...)
+	return append([]BeforePromptSegmentsHook(nil), r.beforePromptAssemble...)
 }
 
-func (r *HookRegistry) afterPromptHooks() []AfterPromptAssembleHook {
+func (r *HookRegistry) afterPromptHooks() []AfterPromptSegmentsHook {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	return append([]AfterPromptAssembleHook(nil), r.afterPromptAssemble...)
+	return append([]AfterPromptSegmentsHook(nil), r.afterPromptAssemble...)
 }
 
 func (r *HookRegistry) beforeModelHooks() []BeforeModelCallHook {

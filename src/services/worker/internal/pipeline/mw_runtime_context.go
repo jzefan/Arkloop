@@ -11,10 +11,14 @@ import (
 
 func NewRuntimeContextMiddleware() RunMiddleware {
 	return func(ctx context.Context, rc *RunContext, next RunHandler) error {
-		block := buildRuntimeContextBlock(ctx, rc)
-		if block != "" {
-			rc.SystemPrompt += "\n\n" + block
-		}
+		rc.UpsertPromptSegment(PromptSegment{
+			Name:          "runtime.context",
+			Target:        PromptTargetRuntimeTail,
+			Role:          "user",
+			Text:          buildRuntimeContextBlock(ctx, rc),
+			Stability:     PromptStabilityVolatileTail,
+			CacheEligible: false,
+		})
 		return next(ctx, rc)
 	}
 }
@@ -55,7 +59,7 @@ func buildRuntimeContextBlock(ctx context.Context, rc *RunContext) string {
 		"User Local Now: "+localNow,
 	)
 
-	return "## Runtime Context\n" + strings.Join(lines, "\n")
+	return "[SYSTEM_RUNTIME_CONTEXT]\n" + strings.Join(lines, "\n") + "\n[/SYSTEM_RUNTIME_CONTEXT]"
 }
 
 func formatBotIdentity(cc *ChannelContext) string {

@@ -384,13 +384,15 @@ func (rt *luaRuntime) agentClassify(L *lua.LState) int {
 		"Classify into exactly one of: %s.\nRespond with only the label, nothing else.",
 		strings.Join(labels, ", "),
 	)
-	req := llm.Request{
+	planned := planRequestFromRunContext(rt.rc, requestPlannerInput{
 		Model: rt.rc.SelectedRoute.Route.Model,
-		Messages: []llm.Message{
+		BaseMessages: []llm.Message{
 			{Role: "system", Content: []llm.TextPart{{Text: sysPrompt}}},
 			{Role: "user", Content: []llm.TextPart{{Text: prompt}}},
 		},
-	}
+		PromptMode: promptPlanModeRuntimeTail,
+	})
+	req := planned.Request
 
 	var chunks []string
 	var streamFailed *llm.StreamRunFailed
@@ -463,6 +465,7 @@ func (rt *luaRuntime) toolsCall(L *lua.LState) int {
 		ExternalSkills:                   append([]skillstore.ExternalSkill(nil), rt.rc.ExternalSkills...),
 		ToolAllowlist:                    sortedToolNames(rt.rc.AllowlistSet),
 		ToolDenylist:                     append([]string(nil), rt.rc.ToolDenylist...),
+		PersonaID:                        personaIDFromRunContext(rt.rc),
 		ActiveToolProviderConfigsByGroup: copyProviderConfigMap(rt.rc.ActiveToolProviderConfigsByGroup),
 		RouteID:                          routeIDFromRunContext(rt.rc),
 		Model:                            modelFromRunContext(rt.rc),
@@ -473,6 +476,7 @@ func (rt *luaRuntime) toolsCall(L *lua.LState) int {
 		Emitter:                          rt.emitter,
 		PendingMemoryWrites:              rt.rc.PendingMemoryWrites,
 		RuntimeSnapshot:                  rt.rc.Runtime,
+		PromptCacheSnapshot:              promptCacheSnapshotFromRunContext(rt.rc, rt.rc.Messages),
 		Channel:                          rt.rc.ChannelToolSurface,
 		StreamEvent:                      func(ev events.RunEvent) error { return rt.yield(ev) },
 	}
@@ -512,7 +516,7 @@ func (rt *luaRuntime) contextGet(L *lua.LState) int {
 	// RunContext 级字段优先
 	switch key {
 	case "system_prompt":
-		L.Push(lua.LString(rt.rc.SystemPrompt))
+		L.Push(lua.LString(rt.rc.MaterializedSystemPrompt()))
 		return 1
 	case "messages":
 		msgs := make([]map[string]any, 0, len(rt.rc.Messages))
@@ -666,12 +670,14 @@ func (rt *luaRuntime) parseSpawnRequest(tbl *lua.LTable) (subagentctl.SpawnReque
 		ParentContext: subagentctl.SpawnParentContext{
 			ToolAllowlist: append([]string(nil), sortedToolNames(rt.rc.AllowlistSet)...),
 			ToolDenylist:  append([]string(nil), rt.rc.ToolDenylist...),
+			PersonaID:     personaIDFromRunContext(rt.rc),
 			RouteID:       routeIDFromRunContext(rt.rc),
 			Model:         modelFromRunContext(rt.rc),
 			ProfileRef:    strings.TrimSpace(rt.rc.ProfileRef),
 			WorkspaceRef:  strings.TrimSpace(rt.rc.WorkspaceRef),
 			EnabledSkills: append([]skillstore.ResolvedSkill(nil), rt.rc.EnabledSkills...),
 			MemoryScope:   subagentctl.MemoryScopeSameUser,
+			PromptCache:   promptCacheSnapshotFromRunContext(rt.rc, rt.rc.Messages),
 		},
 	}, nil
 }
@@ -1048,14 +1054,16 @@ func (rt *luaRuntime) agentGenerate(L *lua.LState) int {
 	sysPrompt := L.CheckString(1)
 	userMessage := L.CheckString(2)
 
-	req := llm.Request{
+	planned := planRequestFromRunContext(rt.rc, requestPlannerInput{
 		Model: rt.rc.SelectedRoute.Route.Model,
-		Messages: []llm.Message{
+		BaseMessages: []llm.Message{
 			{Role: "system", Content: []llm.TextPart{{Text: sysPrompt}}},
 			{Role: "user", Content: []llm.TextPart{{Text: userMessage}}},
 		},
-	}
-	req.MaxOutputTokens = parseMaxTokensOption(L.OptTable(3, nil))
+		PromptMode:      promptPlanModeRuntimeTail,
+		MaxOutputTokens: parseMaxTokensOption(L.OptTable(3, nil)),
+	})
+	req := planned.Request
 
 	var chunks []string
 	var streamFailed *llm.StreamRunFailed
@@ -1124,6 +1132,7 @@ func (rt *luaRuntime) agentStream(L *lua.LState) int {
 		rt.rc.SelectedRoute.Route.Model,
 		messages,
 		maxTokens,
+		promptPlanModeRuntimeTail,
 		true,
 	)
 	if streamErr != nil {
@@ -1195,6 +1204,7 @@ func (rt *luaRuntime) agentStreamRoute(L *lua.LState) int {
 		model,
 		messages,
 		maxTokens,
+		promptPlanModeRuntimeTail,
 		true,
 	)
 	if streamErr != nil {
@@ -1292,6 +1302,7 @@ func (rt *luaRuntime) agentStreamAgent(L *lua.LState) int {
 		model,
 		messages,
 		maxTokens,
+		promptPlanModeRuntimeTail,
 		true,
 	)
 	if streamErr != nil {
@@ -1341,13 +1352,16 @@ func (rt *luaRuntime) streamWithGateway(
 	model string,
 	messages []llm.Message,
 	maxTokens *int,
+	promptMode promptPlanMode,
 	emitDelta bool,
 ) (string, bool, *llm.StreamRunFailed, error) {
-	req := llm.Request{
+	planned := planRequestFromRunContext(rt.rc, requestPlannerInput{
 		Model:           model,
-		Messages:        messages,
+		BaseMessages:    messages,
+		PromptMode:      promptMode,
 		MaxOutputTokens: maxTokens,
-	}
+	})
+	req := planned.Request
 
 	var chunks []string
 	var streamFailed *llm.StreamRunFailed
@@ -1475,13 +1489,15 @@ func (rt *luaRuntime) runAgentLoop(
 	terminalOnCompleted bool,
 	returnFailureError bool,
 ) (string, error) {
-	request := llm.Request{
+	planned := planRequestFromRunContext(rt.rc, requestPlannerInput{
 		Model:           rt.rc.SelectedRoute.Route.Model,
-		Messages:        messages,
-		Tools:           append([]llm.ToolSpec{}, rt.rc.FinalSpecs...),
+		BaseMessages:    messages,
+		PromptMode:      promptPlanModeRuntimeTail,
+		Tools:           rt.rc.FinalSpecs,
 		MaxOutputTokens: maxTokens,
 		ReasoningMode:   rt.rc.ReasoningMode,
-	}
+	})
+	request := planned.Request
 
 	maxIter := rt.rc.ReasoningIterations
 	if maxIter <= 0 {
@@ -1533,6 +1549,7 @@ func (rt *luaRuntime) runAgentLoop(
 		IdleHeartbeatInterval: rt.rc.IdleHeartbeatInterval,
 		StreamThinking:        rt.rc.StreamThinking,
 		PipelineRC:            rt.rc,
+		CacheSafeSnapshot:     planned.CacheSafeSnapshot,
 	}
 
 	capturedChunks := make([]string, 0, 16)
@@ -1692,6 +1709,7 @@ func (rt *luaRuntime) toolsCallParallel(L *lua.LState) int {
 				ExternalSkills:                   append([]skillstore.ExternalSkill(nil), rt.rc.ExternalSkills...),
 				ToolAllowlist:                    sortedToolNames(rt.rc.AllowlistSet),
 				ToolDenylist:                     append([]string(nil), rt.rc.ToolDenylist...),
+				PersonaID:                        personaIDFromRunContext(rt.rc),
 				ActiveToolProviderConfigsByGroup: copyProviderConfigMap(rt.rc.ActiveToolProviderConfigsByGroup),
 				RouteID:                          routeIDFromRunContext(rt.rc),
 				Model:                            modelFromRunContext(rt.rc),
@@ -1702,6 +1720,7 @@ func (rt *luaRuntime) toolsCallParallel(L *lua.LState) int {
 				Emitter:                          rt.emitter,
 				PendingMemoryWrites:              rt.rc.PendingMemoryWrites,
 				RuntimeSnapshot:                  rt.rc.Runtime,
+				PromptCacheSnapshot:              promptCacheSnapshotFromRunContext(rt.rc, rt.rc.Messages),
 				Channel:                          rt.rc.ChannelToolSurface,
 				StreamEvent: func(ev events.RunEvent) error {
 					return rt.yield(ev)

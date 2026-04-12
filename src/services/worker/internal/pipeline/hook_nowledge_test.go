@@ -200,20 +200,7 @@ func TestNowledgeContextContributorInjectsBehavioralGuidanceWithoutRecall(t *tes
 		},
 	}
 
-	fragments, err := contributor.BeforePromptAssemble(context.Background(), rc)
-	if err != nil {
-		t.Fatalf("BeforePromptAssemble: %v", err)
-	}
-	for _, fragment := range fragments {
-		if fragment.Key == nowledgeGuidanceTag {
-			t.Fatalf("guidance should not be emitted as prompt fragment: %#v", fragment)
-		}
-	}
-	segmentHook, ok := contributor.(BeforePromptSegmentsHook)
-	if !ok {
-		t.Fatal("expected before prompt segments hook")
-	}
-	segments, err := segmentHook.BeforePromptSegments(context.Background(), rc)
+	segments, err := contributor.BeforePromptSegments(context.Background(), rc)
 	if err != nil {
 		t.Fatalf("BeforePromptSegments: %v", err)
 	}
@@ -274,30 +261,19 @@ func TestNowledgeContextContributorAdjustsBehavioralGuidanceWhenContextInjected(
 		},
 	}
 
-	fragments, err := contributor.BeforePromptAssemble(context.Background(), rc)
-	if err != nil {
-		t.Fatalf("BeforePromptAssemble: %v", err)
-	}
-	keys := map[string]PromptFragment{}
-	for _, fragment := range fragments {
-		keys[fragment.Key] = fragment
-	}
-	if _, ok := keys["nowledge_working_memory"]; !ok {
-		t.Fatal("expected working memory fragment")
-	}
-	if _, ok := keys["nowledge_recalled_memories"]; !ok {
-		t.Fatal("expected recalled memories fragment")
-	}
-	if _, ok := keys[nowledgeGuidanceTag]; ok {
-		t.Fatal("guidance should not be emitted as prompt fragment")
-	}
-	segmentHook, ok := contributor.(BeforePromptSegmentsHook)
-	if !ok {
-		t.Fatal("expected before prompt segments hook")
-	}
-	segments, err := segmentHook.BeforePromptSegments(context.Background(), rc)
+	segments, err := contributor.BeforePromptSegments(context.Background(), rc)
 	if err != nil {
 		t.Fatalf("BeforePromptSegments: %v", err)
+	}
+	keys := map[string]PromptSegment{}
+	for _, segment := range segments {
+		keys[segment.Name] = segment
+	}
+	if _, ok := keys["hook.before.nowledge.working_memory"]; !ok {
+		t.Fatal("expected working memory segment")
+	}
+	if _, ok := keys["hook.before.nowledge.recalled_memories"]; !ok {
+		t.Fatal("expected recalled memories segment")
 	}
 	guidance := ""
 	for _, segment := range segments {
@@ -340,20 +316,12 @@ func TestNowledgeContextContributorKeepsWorkingMemoryWhenRecallFails(t *testing.
 		},
 	}
 
-	fragments, err := contributor.BeforePromptAssemble(context.Background(), rc)
-	if err != nil {
-		t.Fatalf("BeforePromptAssemble: %v", err)
-	}
-	if len(fragments) != 1 || fragments[0].Key != "nowledge_working_memory" {
-		t.Fatalf("unexpected fragments on recall failure: %#v", fragments)
-	}
-	segmentHook, ok := contributor.(BeforePromptSegmentsHook)
-	if !ok {
-		t.Fatal("expected before prompt segments hook")
-	}
-	segments, err := segmentHook.BeforePromptSegments(context.Background(), rc)
+	segments, err := contributor.BeforePromptSegments(context.Background(), rc)
 	if err != nil {
 		t.Fatalf("BeforePromptSegments: %v", err)
+	}
+	if len(segments) == 0 || segments[0].Name != "hook.before.nowledge.working_memory" {
+		t.Fatalf("unexpected segments on recall failure: %#v", segments)
 	}
 	foundGuidance := false
 	for _, segment := range segments {

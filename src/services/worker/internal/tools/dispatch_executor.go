@@ -14,6 +14,7 @@ import (
 	"arkloop/services/worker/internal/events"
 	"arkloop/services/worker/internal/llm"
 	"arkloop/services/worker/internal/memory"
+	"arkloop/services/worker/internal/subagentctl"
 	"github.com/google/uuid"
 )
 
@@ -42,6 +43,7 @@ type ExecutionContext struct {
 	ExternalSkills                   []skillstore.ExternalSkill
 	ToolAllowlist                    []string
 	ToolDenylist                     []string
+	PersonaID                        string
 	ActiveToolProviderConfigsByGroup map[string]sharedtoolruntime.ProviderConfig
 	RouteID                          string
 	Model                            string
@@ -53,6 +55,7 @@ type ExecutionContext struct {
 	Emitter                          events.Emitter
 	PendingMemoryWrites              *memory.PendingWriteBuffer
 	RuntimeSnapshot                  *sharedtoolruntime.RuntimeSnapshot
+	PromptCacheSnapshot              *subagentctl.PromptCacheSnapshot
 	GenerativeUIReadMeSeen           bool
 	Channel                          *ChannelToolSurface
 	// PipelineRC 由 agent.simple 注入为 *pipeline.RunContext；其它路径为 nil。

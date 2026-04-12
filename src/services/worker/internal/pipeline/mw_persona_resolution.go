@@ -125,9 +125,25 @@ func NewPersonaResolutionMiddleware(
 			toExecutionPersonaProfile(resolution.Definition),
 		)
 
-		rc.SystemPrompt = profile.SystemPrompt
+		rc.ResetPromptAssembly()
+		cacheSystemPrompt := rc.AgentConfig != nil && rc.AgentConfig.PromptCacheControl == "system_prompt"
+		rc.UpsertPromptSegment(PromptSegment{
+			Name:          "persona.system_prompt",
+			Target:        PromptTargetSystemPrefix,
+			Role:          "system",
+			Text:          profile.SystemPrompt,
+			Stability:     PromptStabilityStablePrefix,
+			CacheEligible: cacheSystemPrompt,
+		})
 		if len(rc.PendingSubAgentCallbacks) > 0 {
-			rc.SystemPrompt = appendSystemPromptBlock(rc.SystemPrompt, buildPendingSubAgentCallbacksBlock(rc.PendingSubAgentCallbacks))
+			rc.UpsertPromptSegment(PromptSegment{
+				Name:          "runtime.pending_subagent_callbacks",
+				Target:        PromptTargetRuntimeTail,
+				Role:          "user",
+				Text:          buildPendingSubAgentCallbacksBlock(rc.PendingSubAgentCallbacks),
+				Stability:     PromptStabilityVolatileTail,
+				CacheEligible: false,
+			})
 		}
 		rc.ReasoningIterations = profile.ReasoningIterations
 		rc.ToolContinuationBudget = profile.ToolContinuationBudget

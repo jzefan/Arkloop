@@ -30,7 +30,7 @@ type NowledgeContextContributor struct {
 }
 
 type nowledgePromptState struct {
-	fragments             PromptFragments
+	segments              PromptSegments
 	guidance              string
 	workingMemoryInjected bool
 	recalledInjected      bool
@@ -45,11 +45,6 @@ func NewNowledgeContextContributor(provider *nowledge.Client) ContextContributor
 
 func (c *NowledgeContextContributor) HookProviderName() string { return nowledgeProviderName }
 
-func (c *NowledgeContextContributor) BeforePromptAssemble(ctx context.Context, rc *RunContext) (PromptFragments, error) {
-	state, _ := c.collectPromptState(ctx, rc)
-	return state.fragments, nil
-}
-
 func (c *NowledgeContextContributor) collectPromptState(ctx context.Context, rc *RunContext) (nowledgePromptState, error) {
 	if c == nil || c.provider == nil || rc == nil || rc.UserID == nil {
 		return nowledgePromptState{}, nil
@@ -61,12 +56,13 @@ func (c *NowledgeContextContributor) collectPromptState(ctx context.Context, rc 
 	}
 	state := nowledgePromptState{}
 	if workingMemory, err := c.provider.ReadWorkingMemory(ctx, ident); err == nil && workingMemory.Available && strings.TrimSpace(workingMemory.Content) != "" {
-		state.fragments = append(state.fragments, PromptFragment{
-			Key:      "nowledge_working_memory",
-			XMLTag:   "working_memory",
-			Content:  strings.TrimSpace(workingMemory.Content),
-			Source:   nowledgeProviderName,
-			Priority: 300,
+		state.segments = append(state.segments, PromptSegment{
+			Name:          "hook.before.nowledge.working_memory",
+			Target:        PromptTargetSystemPrefix,
+			Role:          "system",
+			Text:          "<working_memory>\n" + strings.TrimSpace(workingMemory.Content) + "\n</working_memory>",
+			Stability:     PromptStabilitySessionPrefix,
+			CacheEligible: true,
 		})
 		state.workingMemoryInjected = true
 	}
@@ -92,12 +88,13 @@ func (c *NowledgeContextContributor) collectPromptState(ctx context.Context, rc 
 		state.guidance = buildNowledgeGuidanceText(state.workingMemoryInjected, state.recalledInjected)
 		return state, nil
 	}
-	state.fragments = append(state.fragments, PromptFragment{
-		Key:      "nowledge_recalled_memories",
-		XMLTag:   "recalled_memories",
-		Content:  strings.Join(lines, "\n"),
-		Source:   nowledgeProviderName,
-		Priority: 400,
+	state.segments = append(state.segments, PromptSegment{
+		Name:          "hook.before.nowledge.recalled_memories",
+		Target:        PromptTargetRuntimeTail,
+		Role:          "user",
+		Text:          "<recalled_memories>\n" + strings.Join(lines, "\n") + "\n</recalled_memories>",
+		Stability:     PromptStabilityVolatileTail,
+		CacheEligible: false,
 	})
 	state.recalledInjected = true
 	state.guidance = buildNowledgeGuidanceText(state.workingMemoryInjected, state.recalledInjected)
@@ -109,7 +106,7 @@ func (c *NowledgeContextContributor) BeforePromptSegments(ctx context.Context, r
 	if err != nil {
 		return nil, err
 	}
-	segments := promptSegmentsFromFragments("hook.before.nowledge", state.fragments)
+	segments := append(PromptSegments(nil), state.segments...)
 	if strings.TrimSpace(state.guidance) != "" {
 		segments = append(segments, PromptSegment{
 			Name:          "hook.before.nowledge.guidance",
@@ -121,10 +118,6 @@ func (c *NowledgeContextContributor) BeforePromptSegments(ctx context.Context, r
 		})
 	}
 	return segments, nil
-}
-
-func (c *NowledgeContextContributor) AfterPromptAssemble(context.Context, *RunContext, string) (PromptFragments, error) {
-	return nil, nil
 }
 
 func (c *NowledgeContextContributor) AfterPromptSegments(context.Context, *RunContext, string) (PromptSegments, error) {

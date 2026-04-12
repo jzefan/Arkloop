@@ -1424,6 +1424,31 @@ func TestAgentLoopProvider413StopsAfterSingleRecovery(t *testing.T) {
 	}
 }
 
+func TestCompactToolResultsWithStateKeepsReplacementStableAcrossTurns(t *testing.T) {
+	oldLimit := maxToolResultHistoryChars
+	maxToolResultHistoryChars = 40
+	defer func() { maxToolResultHistoryChars = oldLimit }()
+
+	state := &toolResultReplacementState{ByToolCallID: map[string]string{}}
+	original := llm.Message{
+		Role: "tool",
+		Content: []llm.TextPart{{
+			Text: `{"tool_call_id":"call_1","tool_name":"read","result":"` + strings.Repeat("x", 80) + `"}`,
+		}},
+	}
+
+	first := compactToolResultsWithState([]llm.Message{original}, state)
+	if got := joinTestMessageText(first[0]); !strings.Contains(got, `"compacted":true`) {
+		t.Fatalf("expected compacted stub on first pass, got %q", got)
+	}
+
+	maxToolResultHistoryChars = 1000
+	second := compactToolResultsWithState([]llm.Message{original}, state)
+	if got := joinTestMessageText(second[0]); !strings.Contains(got, `"compacted":true`) {
+		t.Fatalf("expected stable compacted stub on second pass, got %q", got)
+	}
+}
+
 func TestRetryBackoffMsCapsAt60Seconds(t *testing.T) {
 	got := []int{
 		retryBackoffMs(1000, 1),

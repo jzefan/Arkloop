@@ -57,6 +57,12 @@ func TestToolExecutorSpawnReturnsHandle(t *testing.T) {
 		if req.Nickname == nil || *req.Nickname != "Atlas" {
 			t.Fatalf("unexpected nickname: %#v", req.Nickname)
 		}
+		if req.ParentContext.PersonaID != "parent@1" {
+			t.Fatalf("unexpected parent persona id: %#v", req.ParentContext)
+		}
+		if req.ParentContext.PromptCache == nil || req.ParentContext.PromptCache.PersonaID != "parent@1" {
+			t.Fatalf("expected prompt cache snapshot, got %#v", req.ParentContext.PromptCache)
+		}
 		return subagentctl.StatusSnapshot{SubAgentID: subAgentID, Depth: 1, Status: "queued", CurrentRunID: &runID}, nil
 	}, wait: func(_ context.Context, _ subagentctl.WaitRequest) (subagentctl.StatusSnapshot, error) {
 		return subagentctl.StatusSnapshot{}, nil
@@ -71,7 +77,15 @@ func TestToolExecutorSpawnReturnsHandle(t *testing.T) {
 			"runtime": true,
 		},
 		"input": "collect facts",
-	}, tools.ExecutionContext{ToolAllowlist: []string{"browser"}, RouteID: "route_parent", Model: "gpt-4.1"}, "")
+	}, tools.ExecutionContext{
+		ToolAllowlist: []string{"browser"},
+		RouteID:       "route_parent",
+		Model:         "gpt-4.1",
+		PersonaID:     "parent@1",
+		PromptCacheSnapshot: &subagentctl.PromptCacheSnapshot{
+			PersonaID: "parent@1",
+		},
+	}, "")
 	if result.Error != nil {
 		t.Fatalf("unexpected error: %+v", result.Error)
 	}

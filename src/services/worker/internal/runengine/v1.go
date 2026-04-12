@@ -699,10 +699,10 @@ func traceMemoryInjectionMiddleware(inner pipeline.RunMiddleware) pipeline.RunMi
 		return nil
 	}
 	return func(ctx context.Context, rc *pipeline.RunContext, next pipeline.RunHandler) error {
-		before := rc.SystemPrompt
+		before := rc.MaterializedSystemPrompt()
 		err := inner(ctx, rc, next)
 		if rc != nil && rc.Tracer != nil {
-			delta := rc.SystemPrompt
+			delta := rc.MaterializedSystemPrompt()
 			if strings.HasPrefix(delta, before) {
 				delta = delta[len(before):]
 			}

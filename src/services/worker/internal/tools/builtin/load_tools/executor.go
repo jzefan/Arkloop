@@ -205,6 +205,9 @@ func matchTools(queries []string, searchable map[string]llm.ToolSpec, pool map[s
 			}
 		}
 	}
+	sort.SliceStable(result, func(i, j int) bool {
+		return result[i].Name < result[j].Name
+	})
 	return result
 }
 
@@ -243,6 +246,9 @@ func expandToolDependencies(matched []llm.ToolSpec, pool map[string]llm.ToolSpec
 			out = append(out, depSpec)
 		}
 	}
+	sort.SliceStable(out, func(i, j int) bool {
+		return out[i].Name < out[j].Name
+	})
 	return out
 }
 

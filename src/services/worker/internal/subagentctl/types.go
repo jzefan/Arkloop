@@ -7,6 +7,7 @@ import (
 
 	"arkloop/services/shared/objectstore"
 	"arkloop/services/shared/skillstore"
+	"arkloop/services/worker/internal/llm"
 	"github.com/google/uuid"
 )
 
@@ -28,12 +29,14 @@ type SpawnInheritRequest struct {
 type SpawnParentContext struct {
 	ToolAllowlist []string
 	ToolDenylist  []string
+	PersonaID     string
 	RouteID       string
 	Model         string
 	ProfileRef    string
 	WorkspaceRef  string
 	EnabledSkills []skillstore.ResolvedSkill
 	MemoryScope   string
+	PromptCache   *PromptCacheSnapshot
 }
 
 type SpawnRequest struct {
@@ -126,6 +129,7 @@ type ContextSnapshot struct {
 	Routing     *ContextSnapshotRouting    `json:"routing,omitempty"`
 	Runtime     ContextSnapshotRuntime     `json:"runtime"`
 	Memory      ContextSnapshotMemory      `json:"memory"`
+	PromptCache *PromptCacheSnapshot       `json:"prompt_cache,omitempty"`
 }
 
 type ContextSnapshotMessage struct {
@@ -157,6 +161,19 @@ type ContextSnapshotRuntime struct {
 
 type ContextSnapshotMemory struct {
 	Scope string `json:"scope"`
+}
+
+type PromptCacheSnapshot struct {
+	PersonaID       string          `json:"persona_id,omitempty"`
+	BaseMessages    []llm.Message   `json:"base_messages,omitempty"`
+	Messages        []llm.Message   `json:"messages,omitempty"`
+	Tools           []llm.ToolSpec  `json:"tools,omitempty"`
+	Model           string          `json:"model,omitempty"`
+	MaxOutputTokens *int            `json:"max_output_tokens,omitempty"`
+	Temperature     *float64        `json:"temperature,omitempty"`
+	ReasoningMode   string          `json:"reasoning_mode,omitempty"`
+	ToolChoice      *llm.ToolChoice `json:"tool_choice,omitempty"`
+	PromptPlan      *llm.PromptPlan `json:"prompt_plan,omitempty"`
 }
 
 func (s ContextSnapshot) EffectiveRouting() ContextSnapshotRouting {

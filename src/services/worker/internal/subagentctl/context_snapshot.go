@@ -130,6 +130,9 @@ func (b *SnapshotBuilder) Build(ctx context.Context, tx pgx.Tx, parentRun data.R
 			Model:         strings.TrimSpace(req.ParentContext.Model),
 		}
 	}
+	if req.Inherit.Messages && req.ParentContext.PromptCache != nil {
+		snapshot.PromptCache = ClonePromptCacheSnapshot(req.ParentContext.PromptCache)
+	}
 	return snapshot, nil
 }
 

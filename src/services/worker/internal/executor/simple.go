@@ -2,12 +2,10 @@ package executor
 
 import (
 	"context"
-	"strings"
 
 	"arkloop/services/shared/skillstore"
 	"arkloop/services/worker/internal/agent"
 	"arkloop/services/worker/internal/events"
-	"arkloop/services/worker/internal/llm"
 	"arkloop/services/worker/internal/pipeline"
 )
 
@@ -26,32 +24,18 @@ func (e *SimpleExecutor) Execute(
 	emitter events.Emitter,
 	yield func(events.RunEvent) error,
 ) error {
-	messages := append([]llm.Message{}, rc.Messages...)
-	if strings.TrimSpace(rc.SystemPrompt) != "" {
-		systemPart := llm.TextPart{Text: rc.SystemPrompt}
-		if rc.AgentConfig != nil && rc.AgentConfig.PromptCacheControl == "system_prompt" {
-			ephemeral := "ephemeral"
-			systemPart.CacheControl = &ephemeral
-		}
-		messages = append([]llm.Message{
-			{
-				Role:    "system",
-				Content: []llm.TextPart{systemPart},
-			},
-		}, messages...)
-	}
-
-	messages = applyImageFilter(rc.SelectedRoute, messages, rc.ReadCapabilities.ReadImageSourcesVisible)
-
-	agentRequest := llm.Request{
-		Model:           rc.SelectedRoute.Route.Model,
-		Messages:        messages,
-		Tools:           append([]llm.ToolSpec{}, rc.FinalSpecs...),
-		MaxOutputTokens: rc.MaxOutputTokens,
-		Temperature:     rc.Temperature,
-		ReasoningMode:   rc.ReasoningMode,
-		ToolChoice:      rc.ToolChoice,
-	}
+	planned := planRequestFromRunContext(rc, requestPlannerInput{
+		Model:            rc.SelectedRoute.Route.Model,
+		BaseMessages:     rc.Messages,
+		PromptMode:       promptPlanModeFull,
+		Tools:            rc.FinalSpecs,
+		MaxOutputTokens:  rc.MaxOutputTokens,
+		Temperature:      rc.Temperature,
+		ReasoningMode:    rc.ReasoningMode,
+		ToolChoice:       rc.ToolChoice,
+		ApplyImageFilter: true,
+	})
+	agentRequest := planned.Request
 
 	runCtx := agent.RunContext{
 		RunID:                            rc.Run.ID,
@@ -99,6 +83,7 @@ func (e *SimpleExecutor) Execute(
 		IdleHeartbeatInterval: rc.IdleHeartbeatInterval,
 		StreamThinking:        rc.StreamThinking,
 		PipelineRC:            rc,
+		CacheSafeSnapshot:     planned.CacheSafeSnapshot,
 		RolloutRecorder:       rc.RolloutRecorder,
 	}
 	loop := agent.NewLoop(rc.Gateway, rc.ToolExecutor)

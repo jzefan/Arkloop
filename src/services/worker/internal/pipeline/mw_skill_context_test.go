@@ -12,6 +12,23 @@ import (
 	"github.com/google/uuid"
 )
 
+func newSkillTestRunContext() *RunContext {
+	rc := &RunContext{
+		Run: data.Run{AccountID: uuid.New()},
+		PromptAssembly: PromptAssembly{
+			Segments: []PromptSegment{{
+				Name:      "test.system",
+				Target:    PromptTargetSystemPrefix,
+				Role:      "system",
+				Text:      "base",
+				Stability: PromptStabilityStablePrefix,
+			}},
+		},
+	}
+	rc.SystemPrompt = rc.MaterializedSystemPrompt()
+	return rc
+}
+
 func TestSkillContextMiddlewareInjectsPromptAndContext(t *testing.T) {
 	layout := skillstore.PathLayout{
 		MountRoot: "/tmp/skills",
@@ -28,7 +45,9 @@ func TestSkillContextMiddlewareInjectsPromptAndContext(t *testing.T) {
 		},
 		Layout: layout,
 	})
-	rc := &RunContext{Run: data.Run{AccountID: uuid.New()}, ProfileRef: "pref_test", WorkspaceRef: "wsref_test", SystemPrompt: "base"}
+	rc := newSkillTestRunContext()
+	rc.ProfileRef = "pref_test"
+	rc.WorkspaceRef = "wsref_test"
 	called := false
 	err := mw(context.Background(), rc, func(ctx context.Context, rc *RunContext) error {
 		called = true
@@ -59,7 +78,7 @@ func TestSkillContextMiddlewareInjectsPromptAndContext(t *testing.T) {
 
 func TestSkillContextMiddlewareSkipsWhenResolverMissing(t *testing.T) {
 	mw := NewSkillContextMiddleware(SkillContextConfig{})
-	rc := &RunContext{Run: data.Run{AccountID: uuid.New()}, SystemPrompt: "base"}
+	rc := newSkillTestRunContext()
 	if err := mw(context.Background(), rc, func(ctx context.Context, rc *RunContext) error { return nil }); err != nil {
 		t.Fatalf("middleware failed: %v", err)
 	}
@@ -87,7 +106,8 @@ func TestSkillContextMiddlewareUsesLayoutResolver(t *testing.T) {
 			return layout, nil
 		},
 	})
-	rc := &RunContext{Run: data.Run{ID: uuid.New(), AccountID: uuid.New()}, SystemPrompt: "base"}
+	rc := newSkillTestRunContext()
+	rc.Run.ID = uuid.New()
 	if err := mw(context.Background(), rc, func(ctx context.Context, rc *RunContext) error { return nil }); err != nil {
 		t.Fatalf("middleware failed: %v", err)
 	}
@@ -124,7 +144,7 @@ func TestSkillContextMiddlewareKeepsManualSkillsOutOfPrompt(t *testing.T) {
 		},
 		Layout: layout,
 	})
-	rc := &RunContext{Run: data.Run{AccountID: uuid.New()}, SystemPrompt: "base"}
+	rc := newSkillTestRunContext()
 	if err := mw(context.Background(), rc, func(ctx context.Context, rc *RunContext) error { return nil }); err != nil {
 		t.Fatalf("middleware failed: %v", err)
 	}
@@ -147,7 +167,7 @@ func TestSkillContextMiddlewareExternalSkillsEmptyDirsNoEffect(t *testing.T) {
 			return []string{emptyRoot}
 		},
 	})
-	rc := &RunContext{Run: data.Run{AccountID: uuid.New()}, SystemPrompt: "base"}
+	rc := newSkillTestRunContext()
 	if err := mw(context.Background(), rc, func(ctx context.Context, rc *RunContext) error { return nil }); err != nil {
 		t.Fatalf("middleware failed: %v", err)
 	}
@@ -169,7 +189,7 @@ func TestSkillContextMiddlewareExternalSkills(t *testing.T) {
 			return []string{root}
 		},
 	})
-	rc := &RunContext{Run: data.Run{AccountID: uuid.New()}, SystemPrompt: "base"}
+	rc := newSkillTestRunContext()
 	if err := mw(context.Background(), rc, func(ctx context.Context, rc *RunContext) error { return nil }); err != nil {
 		t.Fatalf("middleware failed: %v", err)
 	}

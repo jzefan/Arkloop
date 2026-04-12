@@ -21,6 +21,7 @@ import (
 	"arkloop/services/worker/internal/pipeline"
 	"arkloop/services/worker/internal/security"
 	"arkloop/services/worker/internal/stablejson"
+	"arkloop/services/worker/internal/subagentctl"
 	"arkloop/services/worker/internal/tools"
 	"arkloop/services/worker/internal/tools/builtin/askuser"
 	"github.com/google/uuid"
@@ -106,8 +107,25 @@ type RunContext struct {
 	// PipelineRC 由 agent.simple 注入；Lua 等路径为 nil。
 	PipelineRC *pipeline.RunContext
 
+	// CacheSafeSnapshot stores cache-key-critical request pieces for
+	// fork/subagent cache-chain reuse.
+	CacheSafeSnapshot *CacheSafeSnapshot
+
 	// RolloutRecorder 用于写入 rollout 日志，为 nil 时不记录
 	RolloutRecorder *rollout.Recorder
+}
+
+type promptCacheTurnState struct {
+	PreviousStableHash   string
+	PreviousSessionHash  string
+	PreviousVolatileHash string
+	PreviousToolHash     string
+	KnownToolResultRefs  map[string]struct{}
+	PinnedCacheEdits     []llm.PromptCacheEditsBlock
+}
+
+type toolResultReplacementState struct {
+	ByToolCallID map[string]string
 }
 
 type Loop struct {
@@ -159,6 +177,7 @@ func (l *Loop) Run(
 	completionTotals := newCompletionTotals()
 	reasoningTurnsUsed := 0
 	governor := NewLoopGovernor(runCtx)
+	toolResultReplacements := &toolResultReplacementState{ByToolCallID: map[string]string{}}
 	continuationState := continuationBudgetState{
 		Remaining:     maxInt(runCtx.ToolContinuationBudget, 0),
 		SessionCounts: map[string]int{},
@@ -207,7 +226,7 @@ func (l *Loop) Run(
 			messages = append(messages, drained...)
 			recordRuntimeUserMessages(runCtx.PipelineRC, drained)
 		}
-		messages = compactToolResults(messages)
+		messages = compactToolResultsWithState(messages, toolResultReplacements)
 		if turnIndex > 1 && runCtx.PipelineRC != nil {
 			beforeCompact := len(messages)
 			compacted, stats, changed, compactErr := pipeline.MaybeInlineCompactMessages(ctx, runCtx.PipelineRC, messages, pressureAnchor)
@@ -239,6 +258,7 @@ func (l *Loop) Run(
 			}
 		}
 		turnRequest := copyRequest(request, messages)
+		refreshCacheSafeSnapshot(&runCtx, messages, turnRequest)
 		turnRequestContextEstimateTokens := estimateTurnRequestContextTokens(runCtx, turnRequest.Messages)
 		if runCtx.PipelineRC != nil && runCtx.PipelineRC.HookRuntime != nil && runCtx.PipelineRC.HookRegistry != nil {
 			runCtx.PipelineRC.HookRuntime.BeforeModelCall(ctx, runCtx.PipelineRC, turnRequest)
@@ -925,6 +945,7 @@ func (l *Loop) executeToolCall(
 		ExternalSkills:                   externalSkills,
 		ToolAllowlist:                    append([]string(nil), runCtx.ToolAllowlist...),
 		ToolDenylist:                     append([]string(nil), runCtx.ToolDenylist...),
+		PersonaID:                        loopPersonaID(runCtx),
 		ActiveToolProviderConfigsByGroup: copyProviderConfigs(runCtx.ActiveToolProviderConfigsByGroup),
 		RouteID:                          runCtx.RouteID,
 		Model:                            runCtx.Model,
@@ -936,6 +957,7 @@ func (l *Loop) executeToolCall(
 		Emitter:                          emitter,
 		PendingMemoryWrites:              runCtx.PendingMemoryWrites,
 		RuntimeSnapshot:                  runCtx.Runtime,
+		PromptCacheSnapshot:              promptCacheSnapshotFromLoopContext(runCtx),
 		Channel:                          runCtx.Channel,
 		PipelineRC:                       runCtx.PipelineRC,
 		StreamEvent:                      streamEvent,
@@ -1755,14 +1777,320 @@ func (l *Loop) runSingleTurn(
 func copyRequest(request llm.Request, messages []llm.Message) llm.Request {
 	return llm.Request{
 		Model:           request.Model,
-		Messages:        append([]llm.Message{}, messages...),
+		Messages:        cloneMessages(messages),
 		Temperature:     request.Temperature,
 		MaxOutputTokens: request.MaxOutputTokens,
-		Tools:           append([]llm.ToolSpec{}, request.Tools...),
+		Tools:           cloneToolSpecs(request.Tools),
 		ToolChoice:      request.ToolChoice,
+		PromptPlan:      clonePromptPlan(request.PromptPlan),
 		Metadata:        copyMap(request.Metadata),
 		ReasoningMode:   request.ReasoningMode,
 	}
+}
+
+func refreshCacheSafeSnapshot(runCtx *RunContext, baseMessages []llm.Message, request llm.Request) {
+	if runCtx == nil {
+		return
+	}
+	runCtx.CacheSafeSnapshot = &CacheSafeSnapshot{
+		PersonaID:       loopPersonaID(*runCtx),
+		BaseMessages:    cloneMessages(baseMessages),
+		Model:           request.Model,
+		Messages:        cloneMessages(request.Messages),
+		Tools:           cloneToolSpecs(request.Tools),
+		MaxOutputTokens: cloneIntPtr(request.MaxOutputTokens),
+		Temperature:     cloneFloatPtr(request.Temperature),
+		ReasoningMode:   request.ReasoningMode,
+		ToolChoice:      cloneToolChoice(request.ToolChoice),
+		PromptPlan:      clonePromptPlan(request.PromptPlan),
+	}
+}
+
+func promptCacheSnapshotFromLoopContext(runCtx RunContext) *subagentctl.PromptCacheSnapshot {
+	if runCtx.CacheSafeSnapshot == nil {
+		return nil
+	}
+	snapshot := runCtx.CacheSafeSnapshot
+	return subagentctl.ClonePromptCacheSnapshot(&subagentctl.PromptCacheSnapshot{
+		PersonaID:       strings.TrimSpace(snapshot.PersonaID),
+		BaseMessages:    cloneMessages(snapshot.BaseMessages),
+		Messages:        cloneMessages(snapshot.Messages),
+		Tools:           cloneToolSpecs(snapshot.Tools),
+		Model:           strings.TrimSpace(snapshot.Model),
+		MaxOutputTokens: cloneIntPtr(snapshot.MaxOutputTokens),
+		Temperature:     cloneFloatPtr(snapshot.Temperature),
+		ReasoningMode:   strings.TrimSpace(snapshot.ReasoningMode),
+		ToolChoice:      cloneToolChoice(snapshot.ToolChoice),
+		PromptPlan:      clonePromptPlan(snapshot.PromptPlan),
+	})
+}
+
+func loopPersonaID(runCtx RunContext) string {
+	if runCtx.PipelineRC == nil || runCtx.PipelineRC.PersonaDefinition == nil {
+		return ""
+	}
+	return strings.TrimSpace(runCtx.PipelineRC.PersonaDefinition.ID)
+}
+
+func prepareTurnRequestPromptCache(request *llm.Request, runCtx RunContext, state *promptCacheTurnState) {
+	if request == nil || !promptCacheEnabled(runCtx) || len(request.Messages) == 0 {
+		return
+	}
+	request.Tools = annotateToolCacheHints(request.Tools, runCtx)
+	if request.PromptPlan == nil {
+		request.PromptPlan = &llm.PromptPlan{}
+	}
+	lastIdx := len(request.Messages) - 1
+	request.PromptPlan.MessageCache.Enabled = true
+	request.PromptPlan.MessageCache.MarkerMessageIndex = lastIdx
+	request.PromptPlan.MessageCache.ToolResultCacheCutIndex = lastIdx
+	request.PromptPlan.MessageCache.ToolResultCacheReferences = true
+	request.PromptPlan.MessageCache.PinnedCacheEdits = clonePromptCacheEditBlocks(state.PinnedCacheEdits)
+	request.PromptPlan.MessageCache.NewCacheEdits = nil
+
+	currentRefs := collectToolResultReferences(request.Messages, lastIdx)
+	if len(state.KnownToolResultRefs) > 0 {
+		deletions := missingToolResultReferences(state.KnownToolResultRefs, currentRefs)
+		if len(deletions) > 0 {
+			block := llm.PromptCacheEditsBlock{
+				UserMessageIndex: lastUserMessageIndex(request.Messages),
+				Edits:            make([]llm.PromptCacheEdit, 0, len(deletions)),
+			}
+			for _, ref := range deletions {
+				block.Edits = append(block.Edits, llm.PromptCacheEdit{
+					Type:           llm.CacheHintActionDelete,
+					CacheReference: ref,
+				})
+			}
+			request.PromptPlan.MessageCache.NewCacheEdits = &block
+			state.PinnedCacheEdits = append(state.PinnedCacheEdits, block)
+		}
+	}
+	state.KnownToolResultRefs = currentRefs
+}
+
+func emitPromptCacheBreakEvent(
+	request llm.Request,
+	state *promptCacheTurnState,
+	emitter events.Emitter,
+	yield func(events.RunEvent) error,
+) error {
+	if state == nil {
+		return nil
+	}
+	stats := llm.ComputeRequestStats(request)
+	if state.PreviousStableHash != "" {
+		changed := make([]string, 0, 4)
+		if state.PreviousStableHash != stats.StablePrefixHash {
+			changed = append(changed, "stable_prefix")
+		}
+		if state.PreviousSessionHash != stats.SessionPrefixHash {
+			changed = append(changed, "session_prefix")
+		}
+		if state.PreviousVolatileHash != stats.VolatileTailHash {
+			changed = append(changed, "volatile_tail")
+		}
+		if state.PreviousToolHash != stats.ToolSchemaHash {
+			changed = append(changed, "tool_schema")
+		}
+		if len(changed) > 0 {
+			payload := map[string]any{
+				"changed":                changed,
+				"previous_stable_hash":   state.PreviousStableHash,
+				"current_stable_hash":    stats.StablePrefixHash,
+				"previous_session_hash":  state.PreviousSessionHash,
+				"current_session_hash":   stats.SessionPrefixHash,
+				"previous_volatile_hash": state.PreviousVolatileHash,
+				"current_volatile_hash":  stats.VolatileTailHash,
+				"previous_tool_hash":     state.PreviousToolHash,
+				"current_tool_hash":      stats.ToolSchemaHash,
+			}
+			if request.PromptPlan != nil && request.PromptPlan.MessageCache.NewCacheEdits != nil {
+				payload["new_cache_edits"] = request.PromptPlan.MessageCache.NewCacheEdits.ToJSON()
+			}
+			if err := yield(emitter.Emit("run.prompt_cache_break", payload, nil, nil)); err != nil {
+				return err
+			}
+		}
+	}
+	state.PreviousStableHash = stats.StablePrefixHash
+	state.PreviousSessionHash = stats.SessionPrefixHash
+	state.PreviousVolatileHash = stats.VolatileTailHash
+	state.PreviousToolHash = stats.ToolSchemaHash
+	return nil
+}
+
+func promptCacheEnabled(runCtx RunContext) bool {
+	return runCtx.PipelineRC != nil &&
+		runCtx.PipelineRC.AgentConfig != nil &&
+		strings.TrimSpace(runCtx.PipelineRC.AgentConfig.PromptCacheControl) == "system_prompt"
+}
+
+func annotateToolCacheHints(specs []llm.ToolSpec, runCtx RunContext) []llm.ToolSpec {
+	if len(specs) == 0 || !promptCacheEnabled(runCtx) {
+		return specs
+	}
+	coreTools := map[string]struct{}{}
+	if runCtx.PipelineRC != nil && runCtx.PipelineRC.PersonaDefinition != nil {
+		for _, name := range runCtx.PipelineRC.PersonaDefinition.CoreTools {
+			coreTools[strings.TrimSpace(name)] = struct{}{}
+		}
+	}
+	out := make([]llm.ToolSpec, len(specs))
+	for i, spec := range specs {
+		out[i] = spec
+		if spec.CacheHint != nil {
+			continue
+		}
+		scope := "global"
+		if len(coreTools) > 0 {
+			if _, ok := coreTools[strings.TrimSpace(spec.Name)]; !ok {
+				scope = "org"
+			}
+		}
+		out[i].CacheHint = &llm.CacheHint{
+			Action: llm.CacheHintActionWrite,
+			Scope:  scope,
+		}
+	}
+	return out
+}
+
+func collectToolResultReferences(messages []llm.Message, maxIndex int) map[string]struct{} {
+	refs := map[string]struct{}{}
+	limit := len(messages)
+	if maxIndex >= 0 && maxIndex+1 < limit {
+		limit = maxIndex + 1
+	}
+	for i := 0; i < limit; i++ {
+		msg := messages[i]
+		if msg.Role != "tool" {
+			continue
+		}
+		ref := extractToolCallID(msg)
+		if ref == "" {
+			continue
+		}
+		refs[ref] = struct{}{}
+	}
+	return refs
+}
+
+func extractToolCallID(msg llm.Message) string {
+	var raw strings.Builder
+	for _, part := range msg.Content {
+		raw.WriteString(llm.PartPromptText(part))
+	}
+	text := strings.TrimSpace(raw.String())
+	if text == "" {
+		return ""
+	}
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(text), &payload); err != nil {
+		return ""
+	}
+	ref, _ := payload["tool_call_id"].(string)
+	return strings.TrimSpace(ref)
+}
+
+func missingToolResultReferences(previous map[string]struct{}, current map[string]struct{}) []string {
+	if len(previous) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(previous))
+	for ref := range previous {
+		if _, ok := current[ref]; ok {
+			continue
+		}
+		out = append(out, ref)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func lastUserMessageIndex(messages []llm.Message) int {
+	for i := len(messages) - 1; i >= 0; i-- {
+		if messages[i].Role == "user" {
+			return i
+		}
+	}
+	return -1
+}
+
+func clonePromptPlan(src *llm.PromptPlan) *llm.PromptPlan {
+	if src == nil {
+		return nil
+	}
+	cloned := *src
+	if len(src.SystemBlocks) > 0 {
+		cloned.SystemBlocks = append([]llm.PromptPlanBlock(nil), src.SystemBlocks...)
+	}
+	if len(src.MessageBlocks) > 0 {
+		cloned.MessageBlocks = append([]llm.PromptPlanBlock(nil), src.MessageBlocks...)
+	}
+	cloned.MessageCache.PinnedCacheEdits = clonePromptCacheEditBlocks(src.MessageCache.PinnedCacheEdits)
+	if src.MessageCache.NewCacheEdits != nil {
+		block := *src.MessageCache.NewCacheEdits
+		if len(block.Edits) > 0 {
+			block.Edits = append([]llm.PromptCacheEdit(nil), block.Edits...)
+		}
+		cloned.MessageCache.NewCacheEdits = &block
+	}
+	return &cloned
+}
+
+func clonePromptCacheEditBlocks(src []llm.PromptCacheEditsBlock) []llm.PromptCacheEditsBlock {
+	if len(src) == 0 {
+		return nil
+	}
+	out := make([]llm.PromptCacheEditsBlock, len(src))
+	for i, block := range src {
+		out[i] = block
+		if len(block.Edits) > 0 {
+			out[i].Edits = append([]llm.PromptCacheEdit(nil), block.Edits...)
+		}
+	}
+	return out
+}
+
+func cloneMessages(src []llm.Message) []llm.Message {
+	if len(src) == 0 {
+		return nil
+	}
+	cloned := subagentctl.ClonePromptCacheSnapshot(&subagentctl.PromptCacheSnapshot{BaseMessages: src})
+	return cloned.BaseMessages
+}
+
+func cloneToolSpecs(src []llm.ToolSpec) []llm.ToolSpec {
+	if len(src) == 0 {
+		return nil
+	}
+	cloned := subagentctl.ClonePromptCacheSnapshot(&subagentctl.PromptCacheSnapshot{Tools: src})
+	return cloned.Tools
+}
+
+func cloneToolChoice(src *llm.ToolChoice) *llm.ToolChoice {
+	if src == nil {
+		return nil
+	}
+	cloned := *src
+	return &cloned
+}
+
+func cloneIntPtr(src *int) *int {
+	if src == nil {
+		return nil
+	}
+	value := *src
+	return &value
+}
+
+func cloneFloatPtr(src *float64) *float64 {
+	if src == nil {
+		return nil
+	}
+	value := *src
+	return &value
 }
 
 func estimateTurnRequestContextTokens(runCtx RunContext, messages []llm.Message) int {
@@ -1855,15 +2183,20 @@ func pressureAnchorFromCompleted(data map[string]any) *pipeline.ContextCompactPr
 // maxToolResultHistoryChars is the soft cap on total accumulated tool result text
 // sent in a single LLM request. At ~4 chars/token this is ≈20K tokens.
 // Oldest tool results are compacted first when the cap is exceeded.
-const maxToolResultHistoryChars = 80_000
+var maxToolResultHistoryChars = 80_000
 
 // compactToolResults returns a copy of messages where the oldest tool result
 // messages are replaced by minimal placeholders if the total tool result
 // character count exceeds maxToolResultHistoryChars.
 // The original messages slice is never modified.
 func compactToolResults(messages []llm.Message) []llm.Message {
+	return compactToolResultsWithState(messages, nil)
+}
+
+func compactToolResultsWithState(messages []llm.Message, state *toolResultReplacementState) []llm.Message {
 	total := 0
-	for _, m := range messages {
+	prepared := applyStoredToolResultReplacements(messages, state)
+	for _, m := range prepared {
 		if m.Role == "tool" {
 			for _, p := range m.Content {
 				total += len(p.Text)
@@ -1871,11 +2204,11 @@ func compactToolResults(messages []llm.Message) []llm.Message {
 		}
 	}
 	if total <= maxToolResultHistoryChars {
-		return messages
+		return prepared
 	}
 
-	out := make([]llm.Message, len(messages))
-	copy(out, messages)
+	out := make([]llm.Message, len(prepared))
+	copy(out, prepared)
 
 	excess := total - maxToolResultHistoryChars
 	for i := range out {
@@ -1892,17 +2225,66 @@ func compactToolResults(messages []llm.Message) []llm.Message {
 		if msgSize == 0 {
 			continue
 		}
-		out[i] = compactedToolMessage(out[i])
+		out[i] = compactedToolMessage(out[i], state)
 		excess -= msgSize
+	}
+	return out
+}
+
+func applyStoredToolResultReplacements(messages []llm.Message, state *toolResultReplacementState) []llm.Message {
+	if state == nil || len(state.ByToolCallID) == 0 {
+		return messages
+	}
+	out := make([]llm.Message, len(messages))
+	copy(out, messages)
+	for i := range out {
+		if out[i].Role != "tool" {
+			continue
+		}
+		callID := toolMessageCallID(out[i])
+		if callID == "" {
+			continue
+		}
+		stubText, ok := state.ByToolCallID[callID]
+		if !ok || strings.TrimSpace(stubText) == "" {
+			continue
+		}
+		out[i] = llm.Message{
+			Role:    "tool",
+			Content: compactedContentParts(out[i].Content, stubText),
+		}
 	}
 	return out
 }
 
 // compactedToolMessage returns a minimal version of a tool result message,
 // preserving only the tool_call_id so the conversation structure stays valid.
-func compactedToolMessage(m llm.Message) llm.Message {
+func compactedToolMessage(m llm.Message, state *toolResultReplacementState) llm.Message {
 	if len(m.Content) == 0 {
 		return m
+	}
+	callID := toolMessageCallID(m)
+	if state != nil && callID != "" {
+		if stubText, ok := state.ByToolCallID[callID]; ok && strings.TrimSpace(stubText) != "" {
+			return llm.Message{
+				Role:    "tool",
+				Content: compactedContentParts(m.Content, stubText),
+			}
+		}
+	}
+	stubText := buildCompactedToolStubText(m)
+	if state != nil && callID != "" && strings.TrimSpace(stubText) != "" {
+		state.ByToolCallID[callID] = stubText
+	}
+	return llm.Message{
+		Role:    "tool",
+		Content: compactedContentParts(m.Content, stubText),
+	}
+}
+
+func buildCompactedToolStubText(m llm.Message) string {
+	if len(m.Content) == 0 {
+		return ""
 	}
 	var envelope map[string]any
 	if err := json.Unmarshal([]byte(m.Content[0].Text), &envelope); err != nil {
@@ -1912,14 +2294,11 @@ func compactedToolMessage(m llm.Message) llm.Message {
 			"result":       map[string]any{"compacted": true},
 		}
 		text, _ := json.Marshal(stub)
-		return llm.Message{
-			Role:    "tool",
-			Content: compactedContentParts(m.Content, string(text)),
-		}
+		return string(text)
 	}
 	toolName, _ := envelope["tool_name"].(string)
 	if tools.IsGenerativeUIBootstrapTool(toolName) {
-		return m
+		return m.Content[0].Text
 	}
 	stub := map[string]any{
 		"tool_call_id": envelope["tool_call_id"],
@@ -1929,10 +2308,7 @@ func compactedToolMessage(m llm.Message) llm.Message {
 		stub["tool_name"] = strings.TrimSpace(toolName)
 	}
 	text, _ := json.Marshal(stub)
-	return llm.Message{
-		Role:    "tool",
-		Content: compactedContentParts(m.Content, string(text)),
-	}
+	return string(text)
 }
 
 // compactedContentParts replaces the first text part with stubText
@@ -1961,6 +2337,13 @@ func extractToolCallIDFromText(text string) string {
 		return "unknown"
 	}
 	return text[start : start+end]
+}
+
+func toolMessageCallID(m llm.Message) string {
+	if len(m.Content) == 0 {
+		return ""
+	}
+	return extractToolCallIDFromText(m.Content[0].Text)
 }
 
 func assistantMessage(text string, toolCalls []llm.ToolCall) llm.Message {

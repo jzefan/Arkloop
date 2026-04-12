@@ -13,13 +13,15 @@ import (
 )
 
 // NewNotebookInjectionMiddleware injects the cached <notebook> block
-// into rc.SystemPrompt before the run, independently of the OpenViking
+// into prompt assembly before the run, independently of the OpenViking
 // memory snapshot.
 func NewNotebookInjectionMiddleware(pool *pgxpool.Pool) RunMiddleware {
 	return func(ctx context.Context, rc *RunContext, next RunHandler) error {
 		if pool == nil || rc.UserID == nil {
 			return next(ctx, rc)
 		}
+		rc.RemovePromptSegment("memory.notebook_snapshot")
+		rc.RemovePromptSegment("memory.notebook_unavailable")
 		provider := notebookprovider.NewProvider(pool)
 		block, err := provider.GetSnapshot(ctx, rc.Run.AccountID, *rc.UserID, StableAgentID(rc))
 		if err != nil {
@@ -27,11 +29,25 @@ func NewNotebookInjectionMiddleware(pool *pgxpool.Pool) RunMiddleware {
 			appendAsyncRunEvent(ctx, rc.MemoryServiceDB, rc.Run.ID, rc.Emitter.Emit("notebook.snapshot.read_failed", map[string]any{
 				"message": err.Error(),
 			}, nil, nil))
-			rc.SystemPrompt += "\n\n<notebook_unavailable>Notebook system temporarily unavailable. Proceed without notebook context.</notebook_unavailable>"
+			rc.UpsertPromptSegment(PromptSegment{
+				Name:          "memory.notebook_unavailable",
+				Target:        PromptTargetSystemPrefix,
+				Role:          "system",
+				Text:          "<notebook_unavailable>Notebook system temporarily unavailable. Proceed without notebook context.</notebook_unavailable>",
+				Stability:     PromptStabilitySessionPrefix,
+				CacheEligible: true,
+			})
 			return next(ctx, rc)
 		}
 		if strings.TrimSpace(block) != "" {
-			rc.SystemPrompt += block
+			rc.UpsertPromptSegment(PromptSegment{
+				Name:          "memory.notebook_snapshot",
+				Target:        PromptTargetSystemPrefix,
+				Role:          "system",
+				Text:          block,
+				Stability:     PromptStabilitySessionPrefix,
+				CacheEligible: true,
+			})
 		}
 		return next(ctx, rc)
 	}

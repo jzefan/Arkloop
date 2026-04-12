@@ -146,7 +146,7 @@ func (g *AnthropicGateway) Stream(ctx context.Context, request Request, yield fu
 	defer stopTimeout()
 	llmCallID := uuid.NewString()
 
-	system, messages, err := toAnthropicMessages(request.Messages)
+	system, messages, err := toAnthropicMessagesWithPlan(request.Messages, request.PromptPlan)
 	if err != nil {
 		return yield(StreamRunFailed{
 			LlmCallID: llmCallID,
@@ -222,6 +222,13 @@ func (g *AnthropicGateway) Stream(ctx context.Context, request Request, yield fu
 		RoleBytes:            stats.RoleBytes,
 		ToolSchemaBytesMap:   stats.ToolSchemaBytesMap,
 		StablePrefixHash:     stats.StablePrefixHash,
+		SessionPrefixHash:    stats.SessionPrefixHash,
+		VolatileTailHash:     stats.VolatileTailHash,
+		ToolSchemaHash:       stats.ToolSchemaHash,
+		StablePrefixBytes:    stats.StablePrefixBytes,
+		SessionPrefixBytes:   stats.SessionPrefixBytes,
+		VolatileTailBytes:    stats.VolatileTailBytes,
+		CacheCandidateBytes:  stats.CacheCandidateBytes,
 	}
 	if RequestPayloadTooLarge(len(encoded)) {
 		if err := yield(requestEvent); err != nil {
@@ -360,12 +367,27 @@ func parseAnthropicAdvancedJSON(raw map[string]any) (anthropicAdvancedConfig, er
 }
 
 func toAnthropicMessages(messages []Message) ([]map[string]any, []map[string]any, error) {
+	return toAnthropicMessagesWithPlan(messages, nil)
+}
+
+func toAnthropicMessagesWithPlan(messages []Message, plan *PromptPlan) ([]map[string]any, []map[string]any, error) {
 	systemBlocks := []map[string]any{}
 	out := []map[string]any{}
 	pendingToolResults := []map[string]any{}
 	lastAssistantToolUseIDs := map[string]struct{}{}
 	// 记录最后一个带 tool_use 的 assistant 在 out 中的索引，便于回退
 	lastToolUseAssistantIdx := -1
+	sourceToOut := map[int]int{}
+	userSourceToOut := map[int]int{}
+
+	if len(messages) == 0 {
+		return systemBlocks, out, nil
+	}
+
+	planSystemBlocks := anthropicSystemBlocksFromPlan(plan)
+	if len(planSystemBlocks) > 0 {
+		systemBlocks = append(systemBlocks, planSystemBlocks...)
+	}
 
 	flushToolResults := func() {
 		if len(pendingToolResults) == 0 {
@@ -427,14 +449,14 @@ func toAnthropicMessages(messages []Message) ([]map[string]any, []map[string]any
 		lastToolUseAssistantIdx = -1
 	}
 
-	for _, message := range messages {
+	for sourceIndex, message := range messages {
 		text := joinParts(message.Content)
 		if message.Role == "system" {
-			if strings.TrimSpace(text) != "" {
+			if len(planSystemBlocks) == 0 && strings.TrimSpace(text) != "" {
 				block := map[string]any{"type": "text", "text": text}
 				for _, part := range message.Content {
-					if part.CacheControl != nil && strings.TrimSpace(*part.CacheControl) != "" {
-						block["cache_control"] = map[string]any{"type": *part.CacheControl}
+					if cc := anthropicCacheControlFromHints(part.CacheHint, part.CacheControl); cc != nil {
+						block["cache_control"] = cc
 						break
 					}
 				}
@@ -476,6 +498,7 @@ func toAnthropicMessages(messages []Message) ([]map[string]any, []map[string]any
 				"role":    "assistant",
 				"content": blocks,
 			})
+			sourceToOut[sourceIndex] = len(out) - 1
 			continue
 		}
 
@@ -493,6 +516,10 @@ func toAnthropicMessages(messages []Message) ([]map[string]any, []map[string]any
 			"role":    message.Role,
 			"content": blocks,
 		})
+		sourceToOut[sourceIndex] = len(out) - 1
+		if message.Role == "user" {
+			userSourceToOut[sourceIndex] = len(out) - 1
+		}
 	}
 
 	flushToolResults()
@@ -506,7 +533,243 @@ func toAnthropicMessages(messages []Message) ([]map[string]any, []map[string]any
 		compacted = append(compacted, msg)
 	}
 
+	if plan != nil {
+		applyAnthropicMessageCachePlan(compacted, sourceToOut, userSourceToOut, plan.MessageCache)
+	}
+
 	return systemBlocks, compacted, nil
+}
+
+func anthropicSystemBlocksFromPlan(plan *PromptPlan) []map[string]any {
+	if plan == nil || len(plan.SystemBlocks) == 0 {
+		return nil
+	}
+	blocks := make([]map[string]any, 0, len(plan.SystemBlocks))
+	for _, block := range plan.SystemBlocks {
+		text := strings.TrimSpace(block.Text)
+		if text == "" {
+			continue
+		}
+		item := map[string]any{
+			"type": "text",
+			"text": text,
+		}
+		if block.CacheEligible {
+			cacheHint := &CacheHint{
+				Action: CacheHintActionWrite,
+				Scope:  cacheScopeFromStability(block.Stability),
+			}
+			if cc := anthropicCacheControlFromHints(cacheHint, nil); cc != nil {
+				item["cache_control"] = cc
+			}
+		}
+		blocks = append(blocks, item)
+	}
+	return blocks
+}
+
+func cacheScopeFromStability(stability string) string {
+	switch strings.ToLower(strings.TrimSpace(stability)) {
+	case CacheStabilityStablePrefix:
+		return "global"
+	case CacheStabilitySessionPrefix:
+		return "org"
+	default:
+		return ""
+	}
+}
+
+func anthropicCacheControlFromHints(hint *CacheHint, legacyCacheControl *string) map[string]any {
+	if hint != nil && strings.EqualFold(strings.TrimSpace(hint.Action), CacheHintActionWrite) {
+		payload := map[string]any{"type": "ephemeral"}
+		if scope := strings.TrimSpace(hint.Scope); scope != "" {
+			payload["scope"] = scope
+		}
+		return payload
+	}
+	if legacyCacheControl != nil && strings.TrimSpace(*legacyCacheControl) != "" {
+		return map[string]any{"type": strings.TrimSpace(*legacyCacheControl)}
+	}
+	return nil
+}
+
+func applyAnthropicMessageCachePlan(out []map[string]any, sourceToOut map[int]int, userSourceToOut map[int]int, plan MessageCachePlan) {
+	if len(out) == 0 {
+		return
+	}
+
+	if plan.Enabled {
+		clearMessageCacheControl(out)
+		markerOutIdx := resolveMarkerMessageIndex(plan.MarkerMessageIndex, sourceToOut, len(out))
+		if plan.SkipCacheWrite && markerOutIdx > 0 {
+			markerOutIdx--
+		}
+		applySingleMessageCacheMarker(out, markerOutIdx)
+		if plan.ToolResultCacheReferences {
+			cutOutIdx := resolveToolResultCacheCutIndex(plan.ToolResultCacheCutIndex, sourceToOut, markerOutIdx)
+			applyToolResultCacheReferences(out, cutOutIdx)
+		}
+	}
+
+	applyCacheEdits(out, userSourceToOut, plan)
+}
+
+func clearMessageCacheControl(messages []map[string]any) {
+	for _, msg := range messages {
+		content, ok := msg["content"].([]map[string]any)
+		if !ok {
+			continue
+		}
+		for _, block := range content {
+			delete(block, "cache_control")
+		}
+	}
+}
+
+func resolveMarkerMessageIndex(sourceIndex int, sourceToOut map[int]int, outLen int) int {
+	if outLen == 0 {
+		return -1
+	}
+	if sourceIndex >= 0 {
+		if idx, ok := sourceToOut[sourceIndex]; ok {
+			return idx
+		}
+	}
+	return outLen - 1
+}
+
+func resolveToolResultCacheCutIndex(sourceIndex int, sourceToOut map[int]int, fallback int) int {
+	if sourceIndex >= 0 {
+		if idx, ok := sourceToOut[sourceIndex]; ok {
+			return idx
+		}
+	}
+	return fallback
+}
+
+func applySingleMessageCacheMarker(messages []map[string]any, markerOutIdx int) {
+	for i := markerOutIdx; i >= 0 && i < len(messages); i-- {
+		msg := messages[i]
+		content, ok := msg["content"].([]map[string]any)
+		if !ok || len(content) == 0 {
+			continue
+		}
+		for j := len(content) - 1; j >= 0; j-- {
+			block := content[j]
+			blockType, _ := block["type"].(string)
+			if blockType != "text" {
+				continue
+			}
+			block["cache_control"] = map[string]any{"type": "ephemeral"}
+			return
+		}
+	}
+}
+
+func applyToolResultCacheReferences(messages []map[string]any, cutOutIdx int) {
+	if cutOutIdx <= 0 {
+		return
+	}
+	for i := 0; i < cutOutIdx && i < len(messages); i++ {
+		msg := messages[i]
+		role, _ := msg["role"].(string)
+		if role != "user" {
+			continue
+		}
+		content, ok := msg["content"].([]map[string]any)
+		if !ok {
+			continue
+		}
+		for _, block := range content {
+			blockType, _ := block["type"].(string)
+			if blockType != "tool_result" {
+				continue
+			}
+			if _, exists := block["cache_reference"]; exists {
+				continue
+			}
+			toolUseID, _ := block["tool_use_id"].(string)
+			toolUseID = strings.TrimSpace(toolUseID)
+			if toolUseID == "" {
+				continue
+			}
+			block["cache_reference"] = toolUseID
+		}
+	}
+}
+
+func applyCacheEdits(messages []map[string]any, userSourceToOut map[int]int, plan MessageCachePlan) {
+	seenReferences := map[string]struct{}{}
+	for _, block := range plan.PinnedCacheEdits {
+		applyCacheEditsBlockAt(messages, userSourceToOut, block, seenReferences)
+	}
+	if plan.NewCacheEdits != nil {
+		applyCacheEditsBlockAt(messages, userSourceToOut, *plan.NewCacheEdits, seenReferences)
+	}
+}
+
+func applyCacheEditsBlockAt(messages []map[string]any, userSourceToOut map[int]int, block PromptCacheEditsBlock, seen map[string]struct{}) {
+	if len(messages) == 0 {
+		return
+	}
+	outIndex := -1
+	if block.UserMessageIndex >= 0 {
+		if idx, ok := userSourceToOut[block.UserMessageIndex]; ok {
+			outIndex = idx
+		}
+	}
+	if outIndex < 0 {
+		for i := len(messages) - 1; i >= 0; i-- {
+			role, _ := messages[i]["role"].(string)
+			if role == "user" {
+				outIndex = i
+				break
+			}
+		}
+	}
+	if outIndex < 0 || outIndex >= len(messages) {
+		return
+	}
+	cacheEditsBlock := buildAnthropicCacheEditsBlock(block, seen)
+	if cacheEditsBlock == nil {
+		return
+	}
+	content, ok := messages[outIndex]["content"].([]map[string]any)
+	if !ok || len(content) == 0 {
+		messages[outIndex]["content"] = []map[string]any{cacheEditsBlock}
+		return
+	}
+	content = append(content, cacheEditsBlock)
+	messages[outIndex]["content"] = content
+}
+
+func buildAnthropicCacheEditsBlock(block PromptCacheEditsBlock, seen map[string]struct{}) map[string]any {
+	edits := make([]map[string]any, 0, len(block.Edits))
+	for _, edit := range block.Edits {
+		action := strings.ToLower(strings.TrimSpace(edit.Type))
+		if action == "" {
+			action = CacheHintActionDelete
+		}
+		ref := strings.TrimSpace(edit.CacheReference)
+		if ref == "" {
+			continue
+		}
+		if _, exists := seen[ref]; exists {
+			continue
+		}
+		seen[ref] = struct{}{}
+		edits = append(edits, map[string]any{
+			"type":            action,
+			"cache_reference": ref,
+		})
+	}
+	if len(edits) == 0 {
+		return nil
+	}
+	return map[string]any{
+		"type":  "cache_edits",
+		"edits": edits,
+	}
 }
 
 func subtractToolUseIDs(all map[string]struct{}, keep map[string]struct{}) map[string]struct{} {
@@ -576,8 +839,8 @@ func anthropicContentBlocks(parts []ContentPart) ([]map[string]any, error) {
 				continue
 			}
 			block := map[string]any{"type": "text", "text": part.Text}
-			if part.CacheControl != nil && strings.TrimSpace(*part.CacheControl) != "" {
-				block["cache_control"] = map[string]any{"type": *part.CacheControl}
+			if cc := anthropicCacheControlFromHints(part.CacheHint, part.CacheControl); cc != nil {
+				block["cache_control"] = cc
 			}
 			blocks = append(blocks, block)
 		case "thinking":
@@ -714,8 +977,21 @@ func anthropicToolChoice(tc *ToolChoice) map[string]any {
 }
 
 func toAnthropicTools(specs []ToolSpec) []map[string]any {
-	out := make([]map[string]any, 0, len(specs))
-	for _, spec := range specs {
+	sortedSpecs := append([]ToolSpec(nil), specs...)
+	sort.SliceStable(sortedSpecs, func(i, j int) bool {
+		left := CanonicalToolName(sortedSpecs[i].Name)
+		if left == "" {
+			left = sortedSpecs[i].Name
+		}
+		right := CanonicalToolName(sortedSpecs[j].Name)
+		if right == "" {
+			right = sortedSpecs[j].Name
+		}
+		return left < right
+	})
+
+	out := make([]map[string]any, 0, len(sortedSpecs))
+	for _, spec := range sortedSpecs {
 		name := CanonicalToolName(spec.Name)
 		if name == "" {
 			name = spec.Name
@@ -726,6 +1002,9 @@ func toAnthropicTools(specs []ToolSpec) []map[string]any {
 		}
 		if spec.Description != nil {
 			payload["description"] = *spec.Description
+		}
+		if cc := anthropicCacheControlFromHints(spec.CacheHint, nil); cc != nil {
+			payload["cache_control"] = cc
 		}
 		out = append(out, payload)
 	}

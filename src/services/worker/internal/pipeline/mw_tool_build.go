@@ -144,8 +144,19 @@ func NewToolBuildMiddleware() RunMiddleware {
 
 				catalog := loadtools.BuildCatalogPrompt(searchableMap)
 				if catalog != "" {
-					rc.SystemPrompt = strings.TrimRight(rc.SystemPrompt, "\n") + "\n" + catalog
+					rc.UpsertPromptSegment(PromptSegment{
+						Name:          "tools.searchable_catalog",
+						Target:        PromptTargetSystemPrefix,
+						Role:          "system",
+						Text:          catalog,
+						Stability:     PromptStabilitySessionPrefix,
+						CacheEligible: true,
+					})
+				} else {
+					rc.RemovePromptSegment("tools.searchable_catalog")
 				}
+			} else {
+				rc.RemovePromptSegment("tools.searchable_catalog")
 			}
 			allSpecs = coreSpecs
 		}
