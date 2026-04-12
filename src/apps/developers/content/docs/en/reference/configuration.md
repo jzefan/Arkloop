@@ -30,7 +30,6 @@ title: "Configuration Reference"
 | limit.max_input_content_bytes | int | both | 32768 | false | Maximum byte size for Run input content submission |
 | limit.max_parallel_tasks | int | platform | 32 | false | Maximum limit for Lua parallel tasks/parallel tool calls |
 | limit.team_members | int | both | 0 | false | Maximum team member limit; 0 means unlimited |
-| limit.thread_message_history | int | both | 200 | false | Maximum thread message history loading limit (count) |
 | llm.max_response_bytes | int | platform | 16384 | false | Maximum limit for reading LLM Provider HTTP responses (bytes) |
 | llm.retry.base_delay_ms | int | platform | 1000 | false | Base delay for LLM retries (milliseconds) |
 | llm.retry.max_attempts | int | platform | 3 | false | Maximum number of LLM retry attempts |

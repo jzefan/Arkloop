@@ -160,14 +160,6 @@ func RegisterTrackB(r *Registry) error {
 			Scope:       ScopeBoth,
 		},
 		{
-			Key:         "limit.thread_message_history",
-			Type:        TypeInt,
-			Default:     "200",
-			Description: "线程历史消息加载上限（条）",
-			Sensitive:   false,
-			Scope:       ScopeBoth,
-		},
-		{
 			Key:         "context.compact.enabled",
 			Type:        TypeBool,
 			Default:     "true",

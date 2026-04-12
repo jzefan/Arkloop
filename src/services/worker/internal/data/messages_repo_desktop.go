@@ -168,8 +168,11 @@ func (MessagesRepository) ListByThread(
 	threadID uuid.UUID,
 	limit int,
 ) ([]ThreadMessage, error) {
-	if limit <= 0 {
-		limit = 200
+	args := []any{accountID, threadID}
+	limitClause := ""
+	if limit > 0 {
+		limitClause = ` LIMIT $3`
+		args = append(args, limit)
 	}
 	rows, err := tx.Query(
 		ctx,
@@ -200,7 +203,7 @@ func (MessagesRepository) ListByThread(
 			     )
 			   )
 			 ORDER BY thread_seq DESC
-			 LIMIT $3
+			`+limitClause+`
 		 ) recent
 		 LEFT JOIN LATERAL (
 			SELECT output_tokens
@@ -210,9 +213,7 @@ func (MessagesRepository) ListByThread(
 			 LIMIT 1
 		 ) u ON true
 		 ORDER BY recent.thread_seq ASC`,
-		accountID,
-		threadID,
-		limit,
+		args...,
 	)
 	if err != nil {
 		return nil, err
@@ -245,8 +246,11 @@ func (MessagesRepository) ListRawByThread(
 	threadID uuid.UUID,
 	limit int,
 ) ([]ThreadMessage, error) {
-	if limit <= 0 {
-		limit = 200
+	args := []any{accountID, threadID}
+	limitClause := ""
+	if limit > 0 {
+		limitClause = ` LIMIT $3`
+		args = append(args, limit)
 	}
 	rows, err := tx.Query(
 		ctx,
@@ -256,12 +260,12 @@ func (MessagesRepository) ListRawByThread(
 		 FROM (
 				SELECT id, role, content, content_json, created_at, metadata_json, thread_seq
 				  FROM messages m
-				 WHERE m.account_id = $1
-				   AND m.thread_id = $2
-				   AND m.deleted_at IS NULL
-				 ORDER BY thread_seq DESC
-				 LIMIT $3
-			 ) recent
+			 WHERE m.account_id = $1
+			   AND m.thread_id = $2
+			   AND m.deleted_at IS NULL
+			 ORDER BY thread_seq DESC
+			`+limitClause+`
+		 ) recent
 		 LEFT JOIN (
 			SELECT run_id, output_tokens
 			  FROM usage_records
@@ -269,9 +273,7 @@ func (MessagesRepository) ListRawByThread(
 		 ) u
 		   ON u.run_id = json_extract(recent.metadata_json, '$.run_id')
 		 ORDER BY recent.thread_seq ASC`,
-		accountID,
-		threadID,
-		limit,
+		args...,
 	)
 	if err != nil {
 		return nil, err
@@ -305,11 +307,14 @@ func (MessagesRepository) ListByThreadUpToID(
 	upToMessageID uuid.UUID,
 	limit int,
 ) ([]ThreadMessage, error) {
-	if limit <= 0 {
-		limit = 200
-	}
 	if upToMessageID == uuid.Nil {
 		return nil, fmt.Errorf("up_to_message_id must not be empty")
+	}
+	args := []any{accountID, threadID, upToMessageID}
+	limitClause := ""
+	if limit > 0 {
+		limitClause = ` LIMIT $4`
+		args = append(args, limit)
 	}
 	rows, err := tx.Query(
 		ctx,
@@ -348,7 +353,7 @@ func (MessagesRepository) ListByThreadUpToID(
 			        AND deleted_at IS NULL
 			   )
 			 ORDER BY thread_seq DESC
-			 LIMIT $4
+			`+limitClause+`
 		 ) recent
 		 LEFT JOIN LATERAL (
 			SELECT output_tokens
@@ -358,10 +363,7 @@ func (MessagesRepository) ListByThreadUpToID(
 			 LIMIT 1
 		 ) u ON true
 		 ORDER BY recent.thread_seq ASC`,
-		accountID,
-		threadID,
-		upToMessageID,
-		limit,
+		args...,
 	)
 	if err != nil {
 		return nil, err
@@ -398,11 +400,14 @@ func (MessagesRepository) ListRawByThreadUpToID(
 	upToMessageID uuid.UUID,
 	limit int,
 ) ([]ThreadMessage, error) {
-	if limit <= 0 {
-		limit = 200
-	}
 	if upToMessageID == uuid.Nil {
 		return nil, fmt.Errorf("up_to_message_id must not be empty")
+	}
+	args := []any{accountID, threadID, upToMessageID}
+	limitClause := ""
+	if limit > 0 {
+		limitClause = ` LIMIT $4`
+		args = append(args, limit)
 	}
 	rows, err := tx.Query(
 		ctx,
@@ -421,10 +426,10 @@ func (MessagesRepository) ListRawByThreadUpToID(
 				        AND thread_id = $2
 				        AND id = $3
 				        AND deleted_at IS NULL
-				   )
-				 ORDER BY thread_seq DESC
-				 LIMIT $4
-			 ) recent
+			   )
+			 ORDER BY thread_seq DESC
+			`+limitClause+`
+		 ) recent
 			 LEFT JOIN (
 				SELECT run_id, output_tokens
 				  FROM usage_records
@@ -432,10 +437,7 @@ func (MessagesRepository) ListRawByThreadUpToID(
 			 ) u
 			   ON u.run_id = json_extract(recent.metadata_json, '$.run_id')
 			 ORDER BY recent.thread_seq ASC`,
-		accountID,
-		threadID,
-		upToMessageID,
-		limit,
+		args...,
 	)
 	if err != nil {
 		return nil, err

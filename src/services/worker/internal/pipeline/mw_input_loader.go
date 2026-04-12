@@ -84,11 +84,7 @@ func NewInputLoaderMiddleware(
 	rolloutStore objectstore.BlobStore,
 ) RunMiddleware {
 	return func(ctx context.Context, rc *RunContext, next RunHandler) error {
-		messageLimit := rc.ThreadMessageHistoryLimit
-		if messageLimit <= 0 {
-			messageLimit = 200
-		}
-		loaded, err := loadRunInputs(ctx, rc.Pool, rc.Run, rc.JobPayload, runsRepo, eventsRepo, messagesRepo, attachmentStore, rolloutStore, messageLimit)
+		loaded, err := loadRunInputs(ctx, rc.Pool, rc.Run, rc.JobPayload, runsRepo, eventsRepo, messagesRepo, attachmentStore, rolloutStore, rc.ThreadMessageHistoryLimit)
 		if err != nil {
 			var resumeErr *resumeUnavailableError
 			if errors.As(err, &resumeErr) {
@@ -116,7 +112,7 @@ func NewInputLoaderMiddleware(
 		emitTraceEvent(rc, "input_loader", "input_loader.loaded", map[string]any{
 			"run_kind":      strings.TrimSpace(stringValue(rc.InputJSON["run_kind"])),
 			"message_count": len(rc.Messages),
-			"history_limit": messageLimit,
+			"history_limit": rc.ThreadMessageHistoryLimit,
 		})
 
 		return next(ctx, rc)

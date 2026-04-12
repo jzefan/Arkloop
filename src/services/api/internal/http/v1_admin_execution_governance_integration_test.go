@@ -138,7 +138,6 @@ func TestAdminExecutionGovernanceReturnsPersonaCentricView(t *testing.T) {
 	if _, err := pool.Exec(ctx, `INSERT INTO platform_settings (key, value, updated_at) VALUES
 		('limit.agent_reasoning_iterations', '12', now()),
 		('limit.tool_continuation_budget', '30', now()),
-		('limit.thread_message_history', '250', now()),
 		('title_summarizer.model', 'summary-cred^gpt-summary', now())
 		ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()`); err != nil {
 		t.Fatalf("seed platform settings: %v", err)

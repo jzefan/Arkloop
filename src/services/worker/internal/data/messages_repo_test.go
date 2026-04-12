@@ -3,6 +3,7 @@ package data
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"testing"
 	"time"
 
@@ -215,5 +216,56 @@ func TestMessagesRepository_ListRawByThreadUpToIDIncludesHiddenAndCompacted(t *t
 	}
 	if msgs[1].Content != "hidden" {
 		t.Fatalf("expected hidden message included, got %#v", msgs)
+	}
+}
+
+func TestMessagesRepository_ListByThreadWithoutLimitLoadsFullVisibleHistory(t *testing.T) {
+	db := testutil.SetupPostgresDatabase(t, "worker_messages_unbounded_history")
+	ctx := context.Background()
+	pool, err := pgxpool.New(ctx, db.DSN)
+	if err != nil {
+		t.Fatalf("new pool: %v", err)
+	}
+	defer pool.Close()
+
+	repo := MessagesRepository{}
+	accountID := uuid.New()
+	projectID := uuid.New()
+	threadID := uuid.New()
+	if _, err := pool.Exec(ctx, `INSERT INTO accounts (id, type) VALUES ($1, 'personal')`, accountID); err != nil {
+		t.Fatalf("insert account: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO projects (id, account_id, name) VALUES ($1, $2, 'p')`, projectID, accountID); err != nil {
+		t.Fatalf("insert project: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO threads (id, account_id, project_id) VALUES ($1, $2, $3)`, threadID, accountID, projectID); err != nil {
+		t.Fatalf("insert thread: %v", err)
+	}
+
+	for seq := 1; seq <= 205; seq++ {
+		if _, err := pool.Exec(ctx, `
+			INSERT INTO messages (id, account_id, thread_id, thread_seq, role, content, metadata_json, hidden, compacted, created_at)
+			VALUES ($1, $2, $3, $4, 'user', $5, '{}'::jsonb, FALSE, FALSE, now())`,
+			uuid.New(), accountID, threadID, seq, fmt.Sprintf("msg-%03d", seq),
+		); err != nil {
+			t.Fatalf("insert message %d: %v", seq, err)
+		}
+	}
+
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin tx: %v", err)
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck
+
+	msgs, err := repo.ListByThread(ctx, tx, accountID, threadID, 0)
+	if err != nil {
+		t.Fatalf("list by thread: %v", err)
+	}
+	if len(msgs) != 205 {
+		t.Fatalf("expected full visible history, got %d", len(msgs))
+	}
+	if msgs[0].Content != "msg-001" || msgs[len(msgs)-1].Content != "msg-205" {
+		t.Fatalf("unexpected ordering: first=%q last=%q", msgs[0].Content, msgs[len(msgs)-1].Content)
 	}
 }

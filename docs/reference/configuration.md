@@ -52,7 +52,6 @@
 | limit.subagent_max_parallel_children | int | both | 5 | false | 单 run 下最大并行子 agent 数量 |
 | limit.subagent_max_pending_per_root_run | int | both | 20 | false | 单 root run 下待处理输入队列上限 |
 | limit.team_members | int | both | 0 | false | Team 成员数量上限，0 表示不限 |
-| limit.thread_message_history | int | both | 200 | false | 线程历史消息加载上限（条） |
 | limit.tool_continuation_budget | int | platform | 32 | false | 长工具 continuation 总预算上限 |
 | llm.max_response_bytes | int | platform | 16384 | false | LLM Provider HTTP 响应读取上限（字节） |
 | llm.retry.base_delay_ms | int | platform | 1000 | false | LLM 重试基础延迟（毫秒） |

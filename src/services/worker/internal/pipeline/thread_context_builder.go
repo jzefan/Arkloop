@@ -142,7 +142,7 @@ func buildCanonicalThreadContext(
 
 func canonicalHistoryFetchLimit(messageLimit int) int {
 	if messageLimit <= 0 {
-		messageLimit = 200
+		return canonicalPersistFetchLimit
 	}
 	return messageLimit
 }

@@ -30,7 +30,6 @@ title: "配置参考"
 | limit.max_input_content_bytes | int | both | 32768 | false | Run input 提交内容最大字节数 |
 | limit.max_parallel_tasks | int | platform | 32 | false | Lua 并行任务/并行工具调用上限 |
 | limit.team_members | int | both | 0 | false | Team 成员数量上限，0 表示不限 |
-| limit.thread_message_history | int | both | 200 | false | 线程历史消息加载上限（条） |
 | llm.max_response_bytes | int | platform | 16384 | false | LLM Provider HTTP 响应读取上限（字节） |
 | llm.retry.base_delay_ms | int | platform | 1000 | false | LLM 重试基础延迟（毫秒） |
 | llm.retry.max_attempts | int | platform | 3 | false | LLM 重试最大次数 |
