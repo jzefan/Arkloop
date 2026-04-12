@@ -760,7 +760,7 @@ message-id: "105"
 	if !ok {
 		t.Fatal("expected compact to succeed")
 	}
-	if !strings.Contains(text, `> Reply to #100 "Bob: 昨天说的方案"`) {
+	if !strings.Contains(text, `[引用 #100] Bob: 昨天说的方案 [/引用]`) {
 		t.Fatalf("expected reply reference in output, got %q", text)
 	}
 	if !strings.Contains(text, `我同意`) {
@@ -798,7 +798,7 @@ message-id: "106"
 		t.Fatal("expected compact to succeed")
 	}
 	// 合并到同一个 block，第二条带 reply
-	if !strings.Contains(text, `> Reply to #99 "Charlie: 你好"`) {
+	if !strings.Contains(text, `[引用 #99] Charlie: 你好 [/引用]`) {
 		t.Fatalf("expected reply in merged block, got %q", text)
 	}
 	if !strings.Contains(text, `普通消息`) {
@@ -806,6 +806,34 @@ message-id: "106"
 	}
 	if !strings.Contains(text, `回复消息`) {
 		t.Fatalf("expected second body, got %q", text)
+	}
+}
+
+func TestCompactWithReply_prefersQuoteText(t *testing.T) {
+	tail := []llm.Message{
+		{Role: "user", Content: []llm.ContentPart{{Type: "text", Text: `---
+display-name: "Alice"
+channel: "telegram"
+conversation-type: "supergroup"
+conversation-title: "Arkloop"
+sender-ref: "aaa11111"
+reply-to-message-id: "99"
+reply-to-preview: "Charlie: 很长的原文"
+quote-text: "选中的一句"
+time: "2026-04-03T10:00:05Z"
+message-id: "106"
+---
+[Telegram in Arkloop] 回复消息`}}},
+	}
+	text, _, ok := compactTelegramGroupEnvelopeBurst(tail)
+	if !ok {
+		t.Fatal("expected compact to succeed")
+	}
+	if !strings.Contains(text, `[引用 #99] Charlie: 选中的一句 [/引用]`) {
+		t.Fatalf("expected quote-text in output, got %q", text)
+	}
+	if strings.Contains(text, `Charlie: 很长的原文`) {
+		t.Fatalf("expected preview to be replaced by quote-text, got %q", text)
 	}
 }
 
@@ -827,12 +855,11 @@ message-id: "55"
 	if !ok {
 		t.Fatal("expected compact to succeed")
 	}
-	if !strings.Contains(text, `> Reply to #50`) {
+	if !strings.Contains(text, `[引用 #50]`) {
 		t.Fatalf("expected reply-to id, got %q", text)
 	}
-	// 没有 preview 时不应有引号
-	if strings.Contains(text, `""`) {
-		t.Fatalf("should not have empty quotes, got %q", text)
+	if strings.Contains(text, `[/引用]`) {
+		t.Fatalf("should not render empty closing quote block, got %q", text)
 	}
 }
 

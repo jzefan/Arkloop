@@ -66,6 +66,7 @@ type telegramMessage struct {
 	Chat            telegramChat            `json:"chat"`
 	From            *telegramUser           `json:"from"`
 	ReplyToMessage  *telegramMessage        `json:"reply_to_message,omitempty"`
+	Quote           *telegramTextQuote      `json:"quote,omitempty"`
 	ForwardOrigin   *telegramMessageOrigin  `json:"forward_origin,omitempty"`
 	Photo           []telegramPhotoSize     `json:"photo,omitempty"`
 	Document        *telegramDocument       `json:"document,omitempty"`
@@ -106,6 +107,13 @@ type telegramMessageEntity struct {
 	Offset int           `json:"offset"`
 	Length int           `json:"length"`
 	User   *telegramUser `json:"user,omitempty"`
+}
+
+type telegramTextQuote struct {
+	Text     string                  `json:"text"`
+	Entities []telegramMessageEntity `json:"entities,omitempty"`
+	Position int                     `json:"position"`
+	IsManual bool                    `json:"is_manual,omitempty"`
 }
 
 type telegramPhotoSize struct {
