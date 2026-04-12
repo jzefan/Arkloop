@@ -37,6 +37,17 @@ func (p *threadPersistProviderSpy) PersistThread(context.Context, *RunContext, T
 	return ThreadPersistResult{Handled: true, Provider: "thread_persist_provider_spy"}
 }
 
+type threadPersistOrderSpy struct {
+	events *[]string
+}
+
+func (p *threadPersistOrderSpy) HookProviderName() string { return "thread_persist_order_spy" }
+
+func (p *threadPersistOrderSpy) PersistThread(context.Context, *RunContext, ThreadDelta, ThreadPersistHints) ThreadPersistResult {
+	*p.events = append(*p.events, "thread_persist")
+	return ThreadPersistResult{Handled: true, Provider: "thread_persist_order_spy"}
+}
+
 func TestEscapeTelegramMarkdownV2EscapesReservedCharacters(t *testing.T) {
 	input := "_*[]()~`>#+-=|{}.!"
 	want := "\\_\\*\\[\\]\\(\\)\\~\\`\\>\\#\\+\\-\\=\\|\\{\\}\\.\\!"
@@ -366,14 +377,52 @@ func TestChannelDeliveryFailureDoesNotPreventThreadPersistHooks(t *testing.T) {
 	}
 
 	handler := Build([]RunMiddleware{
-		NewChannelDeliveryMiddleware(pool),
 		NewThreadPersistHookMiddleware(),
+		NewChannelDeliveryMiddleware(pool),
 	}, func(_ context.Context, _ *RunContext) error { return nil })
 	if err := handler(ctx, rc); err == nil {
 		t.Fatal("expected delivery error")
 	}
 	if !provider.called {
 		t.Fatal("expected thread persist provider to run before delivery error returned")
+	}
+}
+
+func TestDeliveryPostRunsBeforeThreadPersistPost(t *testing.T) {
+	events := []string{}
+	provider := &threadPersistOrderSpy{events: &events}
+	registry := NewHookRegistry()
+	if err := registry.SetThreadPersistenceProvider(provider); err != nil {
+		t.Fatalf("set thread provider: %v", err)
+	}
+
+	rc := &RunContext{
+		HookRuntime:        NewHookRuntime(registry, NewDefaultHookResultApplier()),
+		ThreadPersistReady: true,
+	}
+
+	handler := Build([]RunMiddleware{
+		NewThreadPersistHookMiddleware(),
+		func(ctx context.Context, rc *RunContext, next RunHandler) error {
+			events = append(events, "delivery_pre")
+			err := next(ctx, rc)
+			events = append(events, "delivery_post")
+			return err
+		},
+	}, func(_ context.Context, _ *RunContext) error { return nil })
+
+	if err := handler(context.Background(), rc); err != nil {
+		t.Fatalf("handler failed: %v", err)
+	}
+
+	want := []string{"delivery_pre", "delivery_post", "thread_persist"}
+	if len(events) != len(want) {
+		t.Fatalf("events len = %d, want %d: %#v", len(events), len(want), events)
+	}
+	for i := range want {
+		if events[i] != want[i] {
+			t.Fatalf("events[%d] = %q, want %q; all=%#v", i, events[i], want[i], events)
+		}
 	}
 }
 
