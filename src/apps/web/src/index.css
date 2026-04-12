@@ -40,9 +40,9 @@ button:not(:disabled) {
   --c-fw-500: 500;
   --c-fw-600: 600;
   --c-fw-700: 700;
-  --c-sidebar-nav-weight: var(--c-fw-300);
-  --c-sidebar-thread-weight: var(--c-fw-325);
-  --c-sidebar-section-weight: var(--c-fw-350);
+  --c-sidebar-nav-weight: 300;
+  --c-sidebar-thread-weight: 325;
+  --c-sidebar-section-weight: 350;
   --font-weight-light: var(--c-fw-300);
   --font-weight-normal: var(--c-fw-400);
   --font-weight-medium: var(--c-fw-500);
@@ -67,7 +67,7 @@ button:not(:disabled) {
   --c-text-secondary: #c2c0b6;
   --c-text-tertiary: #9c9a92;
   --c-text-muted: #6b6b68;
-  --c-narrative-weight: var(--c-fw-275);
+  --c-narrative-weight: 275;
   --c-text-icon: #7b7970;
   --c-text-icon2: #87867f;
   --c-placeholder: rgba(255, 255, 255, 0.42);
@@ -83,7 +83,7 @@ button:not(:disabled) {
   --c-chip-active-bg: var(--c-bg-deep);
   --c-chip-active-text: var(--c-text-secondary);
   --c-text-body: var(--c-text-primary);
-  --c-text-body-weight: var(--c-fw-325);
+  --c-text-body-weight: 325;
   --c-accent: #FAF9F6;
   --c-pro-bg: rgba(70, 145, 246, 0.12);
   --c-overlay: rgba(0, 0, 0, 0.60);
@@ -175,9 +175,11 @@ button:not(:disabled) {
   --c-fw-500: 440;
   --c-fw-600: 540;
   --c-fw-700: 640;
-  --c-sidebar-nav-weight: var(--c-fw-350);
-  --c-sidebar-thread-weight: var(--c-fw-350);
-  --c-sidebar-section-weight: var(--c-fw-375);
+  --c-sidebar-nav-weight: 290;
+  --c-sidebar-thread-weight: 290;
+  --c-sidebar-section-weight: 315;
+  --c-narrative-weight: 215;
+  --c-text-body-weight: 265;
 }
 
 @media (prefers-color-scheme: light) {
@@ -217,7 +219,7 @@ button:not(:disabled) {
     --c-chip-active-bg: var(--c-bg-deep);
     --c-chip-active-text: var(--c-text-secondary);
     --c-text-body: var(--c-text-primary);
-    --c-text-body-weight: var(--c-fw-365);
+    --c-text-body-weight: 365;
     --c-pro-bg: #EAF2FC;
     --c-overlay: rgba(0, 0, 0, 0.25);
     --c-lightbox-overlay: rgba(255, 255, 255, 0.55);
@@ -291,6 +293,10 @@ button:not(:disabled) {
     --c-status-warn-bg: #fff7ed;
     --c-status-warn-text: #c2410c;
   }
+
+  :root[data-body-font="default"]:not([data-theme="dark"]) {
+    --c-text-body-weight: 305;
+  }
 }
 
 :root[data-theme="light"] {
@@ -313,7 +319,7 @@ button:not(:disabled) {
   --c-text-secondary: #3D3D3B;
   --c-text-tertiary: #6B6B68;
   --c-text-muted: #8C8C8A;
-  --c-narrative-weight: var(--c-fw-300);
+  --c-narrative-weight: 300;
   --c-text-icon: #7A7A78;
   --c-text-icon2: #6E6E6C;
   --c-placeholder: rgba(0, 0, 0, 0.45);
@@ -330,7 +336,7 @@ button:not(:disabled) {
   --c-chip-active-bg: var(--c-bg-deep);
   --c-chip-active-text: var(--c-text-secondary);
   --c-text-body: var(--c-text-primary);
-  --c-text-body-weight: var(--c-fw-365);
+  --c-text-body-weight: 365;
   --c-pro-bg: #EAF2FC;
   --c-overlay: rgba(0, 0, 0, 0.25);
   --c-lightbox-overlay: rgba(255, 255, 255, 0.55);
@@ -403,6 +409,11 @@ button:not(:disabled) {
   --c-status-danger-text: #dc2626;
   --c-status-warn-bg: #fff7ed;
   --c-status-warn-text: #c2410c;
+}
+
+:root[data-theme="light"][data-body-font="default"] {
+  --c-narrative-weight: 240;
+  --c-text-body-weight: 305;
 }
 
 .chat-input-box {

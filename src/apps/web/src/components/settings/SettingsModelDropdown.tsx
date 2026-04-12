@@ -124,7 +124,7 @@ export function SettingsModelDropdown({
         <span
           className="truncate"
           style={{
-            fontWeight: 'var(--c-fw-365)',
+            fontWeight: 400,
             fontSynthesis: 'none',
           }}
         >

@@ -388,7 +388,7 @@ export function DesktopSettings({
           key={key}
           onClick={() => handleTabChange(key)}
           className={[
-            "flex h-[38px] items-center gap-2.5 rounded-lg px-2.5 text-[14px] font-[425] transition-all duration-[120ms] active:scale-[0.96]",
+            "flex h-[38px] items-center gap-2.5 rounded-lg px-2.5 text-[14px] font-normal transition-all duration-[120ms] active:scale-[0.96]",
             activeKey === key
               ? "bg-[var(--c-bg-deep)] text-[var(--c-text-heading)] rounded-[10px]"
               : "text-[var(--c-text-secondary)] hover:bg-[color-mix(in_srgb,var(--c-bg-deep)_60%,transparent)] hover:text-[var(--c-text-heading)]",
@@ -496,7 +496,7 @@ export function DesktopSettings({
           <div className="mb-4 px-4">
             <button
               onClick={onClose}
-              className="flex h-[38px] w-full items-center gap-2.5 rounded-lg px-2.5 text-[14px] font-medium transition-colors text-[var(--c-text-secondary)] hover:bg-[var(--c-bg-deep)] hover:text-[var(--c-text-heading)]"
+              className="flex h-[38px] w-full items-center gap-2.5 rounded-lg px-2.5 text-[14px] font-normal transition-colors text-[var(--c-text-secondary)] hover:bg-[var(--c-bg-deep)] hover:text-[var(--c-text-heading)]"
             >
               <ChevronLeft size={16} />
               {ds.settingsTitle}

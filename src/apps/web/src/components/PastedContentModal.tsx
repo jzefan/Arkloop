@@ -106,7 +106,7 @@ export function PastedContentModal({ text, size, lineCount, onClose, title, subt
               lineHeight: 1.6,
               color: 'var(--c-text-primary)',
               fontFamily: 'var(--c-font-body)',
-              fontWeight: 'var(--c-fw-325)',
+              fontWeight: 'var(--c-text-body-weight)',
               fontSynthesis: 'none',
             }}>
               {text}
