@@ -193,7 +193,6 @@ func (MessagesRepository) ListByThread(
 				 WHERE m.account_id = $1
 				   AND m.thread_id = $2
 				   AND m.deleted_at IS NULL
-				   AND COALESCE(m.compacted, false) = false
 				   AND (
 				     m.hidden = FALSE
 				     OR (
@@ -336,7 +335,6 @@ func (MessagesRepository) ListByThreadUpToID(
 				 WHERE m.account_id = $1
 				   AND m.thread_id = $2
 				   AND m.deleted_at IS NULL
-				   AND COALESCE(m.compacted, false) = false
 				   AND (
 				     m.hidden = FALSE
 				     OR (
@@ -562,7 +560,6 @@ func (MessagesRepository) ListRecentByThread(
 			 	   AND thread_id = $2
 			 	   AND (hidden = FALSE OR metadata_json->>'intermediate' = 'true')
 			 	   AND deleted_at IS NULL
-			 	   AND COALESCE(compacted, false) = false
 			 	 ORDER BY thread_seq DESC
 			 	 LIMIT $3
 			 ) recent
