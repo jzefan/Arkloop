@@ -1,4 +1,4 @@
-import { memo, Fragment, type ComponentProps } from 'react'
+import { memo, Fragment, type ComponentProps, useState, useRef, useEffect } from 'react'
 import { Info } from 'lucide-react'
 import { Button } from '@arkloop/shared'
 import { MessageBubble } from './MessageBubble'
@@ -6,6 +6,7 @@ import { CopTimeline, type WebSearchPhaseStep } from './CopTimeline'
 import { MarkdownRenderer } from './MarkdownRenderer'
 import { WidgetBlock } from './WidgetBlock'
 import { IncognitoDivider } from './IncognitoDivider'
+import { ErrorCallout, type AppError } from './ErrorCallout'
 import { useLocale } from '../contexts/LocaleContext'
 import { useChatSession } from '../contexts/chat-session'
 import { useRunLifecycle } from '../contexts/run-lifecycle'
@@ -44,11 +45,48 @@ function FailedRunRetryCard({
   title,
   actionLabel,
   onRetry,
+  error,
 }: {
   title: string
   actionLabel?: string
   onRetry?: () => void
+  error?: AppError | null
 }) {
+  const [open, setOpen] = useState(false)
+  const [popoverStyle, setPopoverStyle] = useState<{ position: 'fixed'; left: string; top?: string; bottom?: string; width: string; zIndex: number } | null>(null)
+  const badgeRef = useRef<HTMLButtonElement>(null)
+  const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const hasErrorDetails = error && (error.code || error.traceId || error.details)
+
+  const openPopover = () => {
+    if (closeTimerRef.current) clearTimeout(closeTimerRef.current)
+    if (!badgeRef.current || !hasErrorDetails) return
+    const rect = badgeRef.current.getBoundingClientRect()
+    const popoverWidth = 380
+    let left = rect.left
+    if (left + popoverWidth > window.innerWidth - 8) left = window.innerWidth - popoverWidth - 8
+    left = Math.max(8, left)
+    const spaceBelow = window.innerHeight - rect.bottom
+    const style: typeof popoverStyle = { position: 'fixed', left: `${left}px`, width: `${popoverWidth}px`, zIndex: 1000 }
+    if (spaceBelow >= 260 || rect.top < 260) {
+      style.top = `${rect.bottom + 6}px`
+    } else {
+      style.bottom = `${window.innerHeight - rect.top + 6}px`
+    }
+    setPopoverStyle(style)
+    setOpen(true)
+  }
+
+  const scheduleClose = () => {
+    closeTimerRef.current = setTimeout(() => setOpen(false), 150)
+  }
+
+  const cancelClose = () => {
+    if (closeTimerRef.current) clearTimeout(closeTimerRef.current)
+  }
+
+  useEffect(() => () => { if (closeTimerRef.current) clearTimeout(closeTimerRef.current) }, [])
+
   return (
     <div
       className="flex w-full max-w-[756px] items-center justify-between gap-3 rounded-2xl px-4 py-4"
@@ -57,6 +95,30 @@ function FailedRunRetryCard({
       <div className="flex min-w-0 items-center gap-2 text-[var(--c-text-secondary)]">
         <Info size={16} className="shrink-0 text-[var(--c-text-tertiary)]" />
         <span className="truncate text-[14px]">{title}</span>
+        {hasErrorDetails && (
+          <button
+            ref={badgeRef}
+            onMouseEnter={openPopover}
+            onMouseLeave={scheduleClose}
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              padding: '1px 6px',
+              borderRadius: '4px',
+              background: open ? 'var(--c-bg-page)' : 'var(--c-bg-deep)',
+              border: 'none',
+              fontSize: '11.5px',
+              color: 'var(--c-text-muted)',
+              cursor: 'default',
+              lineHeight: '1.5',
+              fontFamily: 'inherit',
+              transition: 'background 120ms',
+              flexShrink: 0,
+            }}
+          >
+            {error.code || 'error'}
+          </button>
+        )}
       </div>
       {actionLabel && (
         <Button
@@ -68,6 +130,53 @@ function FailedRunRetryCard({
         >
           {actionLabel}
         </Button>
+      )}
+
+      {open && popoverStyle && error && (
+        <div
+          style={{
+            ...popoverStyle,
+            background: 'var(--c-bg-page)',
+            border: '0.5px solid var(--c-border-mid)',
+            borderRadius: '12px',
+            boxShadow: '0 8px 32px rgba(0,0,0,0.18)',
+            padding: '14px',
+            overflow: 'hidden',
+            animation: 'failedRunPopoverIn 150ms ease-out',
+          }}
+          onMouseEnter={cancelClose}
+          onMouseLeave={scheduleClose}
+        >
+          <style>{`
+            @keyframes failedRunPopoverIn {
+              from { opacity: 0; transform: translateY(-4px) scale(0.97); }
+              to { opacity: 1; transform: translateY(0) scale(1); }
+            }
+          `}</style>
+          <div style={{ fontSize: '14px', fontWeight: 600, color: 'var(--c-text-primary)', marginBottom: '8px', lineHeight: 1.4 }}>
+            {error.message}
+          </div>
+          {error.code && (
+            <div style={{ fontSize: '12px', color: 'var(--c-text-muted)', marginBottom: '4px', fontFamily: 'monospace' }}>
+              {error.code}
+            </div>
+          )}
+          {error.traceId && (
+            <div style={{ fontSize: '12px', color: 'var(--c-text-muted)', marginBottom: '4px', fontFamily: 'monospace' }}>
+              trace: {error.traceId}
+            </div>
+          )}
+          {error.details && Object.keys(error.details).length > 0 && (
+            <div style={{ marginTop: '8px', paddingTop: '8px', borderTop: '0.5px solid var(--c-border-subtle)' }}>
+              {Object.entries(error.details).map(([key, value]) => (
+                <div key={key} style={{ fontSize: '12px', color: 'var(--c-text-secondary)', marginBottom: '3px', lineHeight: 1.5 }}>
+                  <span style={{ color: 'var(--c-text-muted)', fontFamily: 'monospace' }}>{key}:</span>{' '}
+                  <span style={{ fontFamily: 'monospace', wordBreak: 'break-all' }}>{typeof value === 'string' ? value : JSON.stringify(value)}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
       )}
     </div>
   )
@@ -91,6 +200,7 @@ export const MessageList = memo(function MessageList({
   actionLabelForTerminalRun,
   actionHandlerForTerminalRun,
   clearUserEnterAnimation,
+  failedRunError,
 }: {
   lastTurnRef: React.RefObject<HTMLDivElement | null>
   lastUserPromptRef: React.RefObject<HTMLDivElement | null>
@@ -126,6 +236,7 @@ export const MessageList = memo(function MessageList({
     hasOutput: boolean
   }) => (() => void) | undefined
   clearUserEnterAnimation: () => void
+  failedRunError?: import('./ErrorCallout').AppError | null
 }) {
   const { threadId, isSearchThread } = useChatSession()
   const { accessToken } = useAuth()
@@ -480,6 +591,7 @@ export const MessageList = memo(function MessageList({
             title={effectiveTerminalStatus === 'interrupted' ? t.runInterrupted : effectiveTerminalStatus === 'cancelled' ? t.runCancelled : t.failedRunRetryTitle}
             actionLabel={!isStreaming && !sending ? terminalActionLabel : undefined}
             onRetry={!isStreaming && !sending ? terminalActionHandler : undefined}
+            error={effectiveTerminalStatus === 'failed' ? (msgMeta?.failedError || failedRunError) : undefined}
           />
         )}
         {locationState?.isIncognitoFork && locationState.forkBaseCount != null && idx === locationState.forkBaseCount - 1 && (

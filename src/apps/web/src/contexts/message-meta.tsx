@@ -50,6 +50,7 @@ import {
   writeThreadRunHandoff,
 } from '../storage'
 import type { AssistantTurnUi } from '../assistantTurnSegments'
+import type { AppError } from '@arkloop/shared'
 
 export type MessageMeta = {
   sources?: WebSource[]
@@ -64,6 +65,7 @@ export type MessageMeta = {
   assistantTurn?: AssistantTurnUi
   widgets?: WidgetRef[]
   runEvents?: MsgRunEvent[]
+  failedError?: AppError
 }
 
 interface MessageMetaContextValue {
