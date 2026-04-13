@@ -389,24 +389,29 @@ func (e *EngineV1) Execute(ctx context.Context, pool *pgxpool.Pool, run data.Run
 	if persistPct > 100 {
 		persistPct = 100
 	}
-	persistKeepTailPct := resolveNonNegativeInt(ctx, e.configResolver, registry, "context.compact.persist_keep_tail_pct", platformScope, 0)
-	if persistKeepTailPct > 100 {
-		persistKeepTailPct = 100
+	targetPct := resolveNonNegativeInt(ctx, e.configResolver, registry, "context.compact.target_context_pct", platformScope, 75)
+	if targetPct > 100 {
+		targetPct = 100
 	}
+	if targetPct <= 0 {
+		targetPct = 75
+	}
+	compactEnabled := resolveBool(ctx, e.configResolver, registry, "context.compact.enabled", platformScope, false)
 	rc.ContextCompact = pipeline.ContextCompactSettings{
-		Enabled:                     resolveBool(ctx, e.configResolver, registry, "context.compact.enabled", platformScope, false),
+		Enabled:                     compactEnabled,
 		MaxMessages:                 resolveNonNegativeInt(ctx, e.configResolver, registry, "context.compact.max_messages", platformScope, 0),
 		MaxUserMessageTokens:        resolveNonNegativeInt(ctx, e.configResolver, registry, "context.compact.max_user_message_tokens", platformScope, 0),
 		MaxTotalTextTokens:          resolveNonNegativeInt(ctx, e.configResolver, registry, "context.compact.max_total_text_tokens", platformScope, 0),
 		MaxUserTextBytes:            resolveNonNegativeInt(ctx, e.configResolver, registry, "context.compact.max_user_text_bytes", platformScope, 0),
 		MaxTotalTextBytes:           resolveNonNegativeInt(ctx, e.configResolver, registry, "context.compact.max_total_text_bytes", platformScope, 0),
-		PersistEnabled:              resolveBool(ctx, e.configResolver, registry, "context.compact.persist_enabled", platformScope, false),
-		PersistTriggerApproxTokens:  resolvePositiveInt(ctx, e.configResolver, registry, "context.compact.persist_trigger_approx_tokens", platformScope, 0),
+		PersistEnabled:              compactEnabled,
+		PersistTriggerApproxTokens:  0,
 		PersistTriggerContextPct:    persistPct,
 		FallbackContextWindowTokens: resolvePositiveInt(ctx, e.configResolver, registry, "context.compact.fallback_context_window_tokens", platformScope, 128000),
-		PersistKeepLastMessages:     resolvePositiveInt(ctx, e.configResolver, registry, "context.compact.persist_keep_last_messages", platformScope, defaultPersistKeepLastMessagesWorker),
-		PersistKeepTailPct:          persistKeepTailPct,
-		MicrocompactKeepRecentTools: resolveNonNegativeInt(ctx, e.configResolver, registry, "context.compact.microcompact_keep_recent_tools", platformScope, 0),
+		TargetContextPct:            targetPct,
+		PersistKeepLastMessages:     defaultPersistKeepLastMessagesWorker,
+		PersistKeepTailPct:          0,
+		MicrocompactKeepRecentTools: 0,
 	}
 	rc.AgentReasoningIterationsLimit = resolveNonNegativeInt(ctx, e.configResolver, registry, "limit.agent_reasoning_iterations", platformScope, 0)
 	rc.ToolContinuationBudgetLimit = resolvePositiveInt(ctx, e.configResolver, registry, "limit.tool_continuation_budget", platformScope, 32)

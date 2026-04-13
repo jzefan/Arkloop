@@ -13,12 +13,8 @@
 | context.compact.max_total_text_tokens | int | platform | 0 | false | 全消息 tiktoken 累计上限（role+正文），0 表示不限制 |
 | context.compact.max_user_message_tokens | int | platform | 0 | false | 保留 user 的 tiktoken 累计上限（role+正文），0 表示不限制 |
 | context.compact.max_user_text_bytes | int | platform | 0 | false | 保留 user 文本字节上限，0 表示不限制 |
-| context.compact.microcompact_keep_recent_tools | int | platform | 8 | false | microcompact 保留最近 N 个 tool result 原文，0 = 不做 microcompact |
-| context.compact.persist_enabled | bool | platform | true | false | 超阈值时将较早消息摘要并标记 compacted（需迁移 00134） |
-| context.compact.persist_keep_last_messages | int | platform | 40 | false | 持久化摘要时保留的尾部消息条数（兜底上限） |
-| context.compact.persist_keep_tail_pct | int | platform | 25 | false | persist 时保留 context window 的百分比作为尾部 token 预算（1-100）；0 = 仅按条数 |
-| context.compact.persist_trigger_approx_tokens | int | platform | 120000 | false | 触发持久化摘要的 token 阈值（tiktoken）；PersistTriggerContextPct>0 时忽略此项 |
-| context.compact.persist_trigger_context_pct | int | platform | 80 | false | 按路由 available_catalog.context_length（否则 fallback）的百分比触发 persist，0 表示只用 persist_trigger_approx_tokens |
+| context.compact.persist_trigger_context_pct | int | platform | 80 | false | 按路由 available_catalog.context_length（否则 fallback）的百分比触发 compact |
+| context.compact.target_context_pct | int | platform | 75 | false | compact 循环压回的上下文窗口百分比目标 |
 | credit.deduction_policy | string | platform | {"tiers":[{"up_to_tokens":2000,"multiplier":0},{"multiplier":1}]} | false | 积分扣减策略（JSON） |
 | credit.initial_grant | int | platform | 1000 | false | 新账户初始积分发放数量 |
 | credit.invite_reward | int | platform | 500 | false | 邀请者奖励积分数量 |
