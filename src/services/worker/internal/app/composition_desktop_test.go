@@ -1378,7 +1378,7 @@ func TestResolveDesktopRunBindingsIgnoresWorkDirForWorkspaceAndSkills(t *testing
 	}
 }
 
-func TestDesktopInputLoaderPropagatesActiveCompactSnapshotState(t *testing.T) {
+func TestDesktopInputLoaderIgnoresLegacyCompactSnapshotReplacement(t *testing.T) {
 	ctx := context.Background()
 	sqlitePool, err := sqliteadapter.AutoMigrate(ctx, filepath.Join(t.TempDir(), "desktop-snapshot.db"))
 	if err != nil {
@@ -1428,6 +1428,7 @@ func TestDesktopInputLoaderPropagatesActiveCompactSnapshotState(t *testing.T) {
 			sql:  `UPDATE threads SET next_message_seq = 3 WHERE id = $1`,
 			args: []any{threadID},
 		},
+		// Legacy replacement rows without supersession edges should no longer shape frontier output.
 		{
 			sql:  `INSERT INTO thread_context_replacements (account_id, thread_id, start_thread_seq, end_thread_seq, start_context_seq, end_context_seq, summary_text, layer, metadata_json) VALUES ($1, $2, 1, 1, 1, 1, $3, 1, '{}')`,
 			args: []any{accountID, threadID, "desktop snapshot"},
@@ -1448,11 +1449,11 @@ func TestDesktopInputLoaderPropagatesActiveCompactSnapshotState(t *testing.T) {
 		ThreadMessageHistoryLimit: 10,
 	}
 	if err := loader(ctx, rc, func(_ context.Context, got *pipeline.RunContext) error {
-		if !got.HasActiveCompactSnapshot {
-			t.Fatal("expected active compact snapshot")
+		if len(got.ThreadContextFrontier) != 2 {
+			t.Fatalf("expected canonical frontier only, got %#v", got.ThreadContextFrontier)
 		}
-		if got.ActiveCompactSnapshotText != "desktop snapshot" {
-			t.Fatalf("unexpected replacement text: %q", got.ActiveCompactSnapshotText)
+		if strings.TrimSpace(got.ThreadContextFrontier[0].SourceText) != "seed" || strings.TrimSpace(got.ThreadContextFrontier[1].SourceText) != "tail" {
+			t.Fatalf("unexpected frontier content: %#v", got.ThreadContextFrontier)
 		}
 		if len(got.Messages) != 2 || got.Messages[0].Role != "user" || got.Messages[1].Role != "assistant" {
 			t.Fatalf("unexpected prompt messages: %#v", got.Messages)

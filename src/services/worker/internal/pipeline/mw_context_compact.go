@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"sort"
 	"strings"
 	"time"
 
@@ -56,50 +55,6 @@ Output rules:
 - Do not add headings such as Goal, Progress, Next Steps, or Decisions unless those words were part of the original conversation.
 - Do not answer the conversation.`
 
-const contextCompactUpdatePrompt = `Update the existing compressed conversation in <previous-replacements> using the new chunks in <target-chunks>.
-
-Rules:
-- Preserve earlier compressed content unless the new messages clearly replace or resolve it.
-- Keep chronological order.
-- Continue to compress faithfully rather than analyze.
-- Keep concrete details exact when they matter.
-- Remove filler and repeated phrasing.
-- Output only the updated compressed conversation as short bullet points.`
-
-const contextCompactGroupSystemPrompt = `You are a multi-participant dialogue compression assistant.
-
-Compress the conversation faithfully so another model can continue with minimal loss.
-
-Rules:
-- This is compression, not analysis.
-- Preserve who said what when speaker identity matters.
-- Do NOT infer goals, plans, moods, or conclusions unless they were explicitly stated.
-- Preserve usernames, links, numbers, commands, IDs, errors, and notable quoted wording when important.
-- Remove filler, repetition, greetings, and other low-information chatter.
-- Keep the output in the dominant language of the conversation.
-- Output only the compressed conversation text.`
-
-const contextCompactGroupInitialPrompt = `Rewrite the group content in <target-chunks> into a shorter faithful version.
-
-Output rules:
-- Keep chronological order.
-- Use short bullet points.
-- Prefix each bullet with the participant name only when needed.
-- Preserve concrete facts and speaker attribution exactly when they matter.
-- Do not turn the conversation into topics / mood / participant analysis.
-- Do not answer the conversation.`
-
-const contextCompactGroupUpdatePrompt = `Update the existing compressed group conversation in <previous-replacements> using the new chunks in <target-chunks>.
-
-Rules:
-- Preserve earlier compressed content unless the new messages clearly replace or resolve it.
-- Keep chronological order.
-- Preserve speaker attribution when it matters.
-- Continue to compress faithfully rather than analyze.
-- Keep concrete details exact when they matter.
-- Remove filler and repeated phrasing.
-- Output only the updated compressed conversation as short bullet points.`
-
 var errContextCompactStreamDone = errors.New("context_compact_stream_done")
 
 // NewContextCompactMiddleware 在 TitleSummarizer 之后运行：可选将头部区间摘要持久化，再按预算裁切消息。
@@ -132,9 +87,6 @@ func NewContextCompactMiddleware(
 			return next(ctx, rc)
 		}
 
-		// 群聊 compact 已在 GroupContextTrim 中独立处理，此处 skip persist 避免重复。
-		isGroupChat := rc.ChannelContext != nil && IsTelegramGroupLikeConversation(rc.ChannelContext.ConversationType)
-
 		var enc *tiktoken.Tiktoken
 		if rc.SelectedRoute != nil {
 			if tke, encErr := ResolveTiktokenForRoute(rc.SelectedRoute); encErr != nil {
@@ -156,20 +108,15 @@ func NewContextCompactMiddleware(
 		msgs := rc.Messages
 		ids := rc.ThreadMessageIDs
 		persistSplit := 0
-		var persistWindowMsgs []llm.Message
-		var persistWindowIDs []uuid.UUID
-		persistWindowActiveSnapshotText := strings.TrimSpace(rc.ActiveCompactSnapshotText)
+		var persistWindowNodes []FrontierNode
 		var persistPrefixIDs []uuid.UUID
 		var persistSummary string
 		persistTargetChunkCount := 0
-		persistPreviousReplacementCount := 0
-		var persistGateway llm.Gateway
-		var persistModel string
 		var persistStartedEvent map[string]any
 		var persistFailedEvent map[string]any
 		var persistCompletedEvent map[string]any
 
-		if cfg.PersistEnabled && !isGroupChat && pool != nil && rc.Gateway != nil && len(msgs) > 1 {
+		if cfg.PersistEnabled && pool != nil && rc.Gateway != nil && len(msgs) > 1 {
 			window := 0
 			if rc.SelectedRoute != nil {
 				window = routing.RouteContextWindowTokens(rc.SelectedRoute.Route)
@@ -202,44 +149,35 @@ func NewContextCompactMiddleware(
 				} else {
 					compactBase := msgs
 					compactBaseIDs := ids
-					var tailKeep int
-					tailPct := cfg.PersistKeepTailPct
-					if tailPct > 100 {
-						tailPct = 100
+					frontier := append([]FrontierNode(nil), rc.ThreadContextFrontier...)
+					if len(frontier) == 0 {
+						frontier = buildCompactFrontierNodesFromMessages(enc, compactBase)
 					}
-					if tailPct > 0 && window > 0 {
-						tailTokenBudget := window * tailPct / 100
-						tailKeep = computeTailKeepByTokenBudget(enc, compactBase, tailTokenBudget, keep)
-					} else {
-						tailKeep = keep
+					targetTokens := contextCompactTargetTokens(cfg, window)
+					if targetTokens <= 0 {
+						targetTokens = trigger
 					}
-					if tailKeep >= len(compactBase) {
-						tailKeep = len(compactBase) - 1
+					if targetTokens >= pressure.ContextPressureTokens {
+						targetTokens = trigger - 1
 					}
-					if tailKeep < 1 {
-						tailKeep = 1
+					if targetTokens < 1 {
+						targetTokens = 1
 					}
-					split := stabilizeCompactStart(compactBase, len(compactBase)-tailKeep, 0)
-					split = ensureToolPairIntegrity(compactBase, split)
-					if split > 0 {
-						split = clampPersistSplitBeforeSyntheticTail(compactBase, compactBaseIDs, split)
-					}
-					if split > 0 {
+					selection := selectCompactFrontierWindow(frontier, pressure.ContextPressureTokens-targetTokens, contextCompactMaxLLMInputTokens)
+					if len(selection.Nodes) > 0 {
 						gw, model := resolveCompactionGateway(ctx, pool, rc, auxGateway, emitDebugEvents, configLoader)
 						if gw == nil {
 							slog.WarnContext(ctx, "context_compact", "phase", "gateway_nil", "run_id", rc.Run.ID.String())
 						} else {
-							persistGateway = gw
-							persistModel = model
 							persistStartedEvent = map[string]any{
 								"op":                    "persist",
 								"mode":                  "canonical_chunks",
 								"phase":                 "started",
-								"persist_split":         split,
+								"persist_split":         selection.EndNodeIndex + 1,
 								"trigger_tokens":        trigger,
 								"context_window_tokens": window,
 								"trigger_context_pct":   cfg.PersistTriggerContextPct,
-								"tail_keep_effective":   tailKeep,
+								"tail_keep_effective":   keep,
 							}
 							ApplyContextCompactPressureFields(persistStartedEvent, pressure)
 
@@ -255,67 +193,56 @@ func NewContextCompactMiddleware(
 								}
 							}
 
-							summaryInputMsgs, summaryInputDropped := prepareCompactSummaryInput(enc, compactBase[:split])
-							summaryInputIDs := compactBaseIDs[summaryInputDropped:split]
-							persistTargetChunkCount = len(buildCanonicalCompactChunks(enc, summaryInputMsgs))
-							persistPreviousReplacementCount = len(compactLeadingReplacementSummaries(summaryInputMsgs))
-							if needsAdditionalPreviousSummary(summaryInputMsgs, persistWindowActiveSnapshotText) {
-								persistPreviousReplacementCount++
-							}
-							summary, sumErr := runContextCompactLLM(ctx, rc, gw, model, summaryInputMsgs, enc, persistWindowActiveSnapshotText)
+							targetNodes := selection.Nodes
+							persistTargetChunkCount = len(targetNodes)
+							summary, usedNodes, sumErr := compactNodesWithPersistRetry(ctx, rc, gw, model, targetNodes)
 							if sumErr != nil {
 								slog.WarnContext(ctx, "context_compact", "phase", "llm", "err", sumErr.Error(), "run_id", rc.Run.ID.String())
 								persistFailedEvent = map[string]any{
-									"op":                         "persist",
-									"mode":                       "canonical_chunks",
-									"phase":                      "llm_failed",
-									"persist_split":              split,
-									"llm_error":                  sumErr.Error(),
-									"trigger_tokens":             trigger,
-									"target_chunk_count":         persistTargetChunkCount,
-									"previous_replacement_count": persistPreviousReplacementCount,
+									"op":                 "persist",
+									"mode":               "canonical_chunks",
+									"phase":              "llm_failed",
+									"persist_split":      selection.EndNodeIndex + 1,
+									"llm_error":          sumErr.Error(),
+									"trigger_tokens":     trigger,
+									"target_chunk_count": persistTargetChunkCount,
 								}
 								ApplyContextCompactPressureFields(persistFailedEvent, pressure)
 							} else if strings.TrimSpace(summary) != "" {
-								persistSplit = split
-								persistWindowMsgs = append([]llm.Message(nil), summaryInputMsgs...)
-								persistWindowIDs = append([]uuid.UUID(nil), summaryInputIDs...)
-								persistWindowActiveSnapshotText = strings.TrimSpace(rc.ActiveCompactSnapshotText)
+								usedNodeCount := len(usedNodes)
+								if usedNodeCount == 0 {
+									usedNodeCount = len(targetNodes)
+									usedNodes = targetNodes
+								}
+								lastUsed := usedNodes[usedNodeCount-1]
+								persistSplit = lastUsed.MsgEnd + 1
 								persistSummary = strings.TrimSpace(summary)
-								persistPrefixIDs = append([]uuid.UUID(nil), filterNonNilUUIDs(summaryInputIDs)...)
+								persistWindowNodes = append([]FrontierNode(nil), usedNodes...)
+								persistPrefixIDs = append([]uuid.UUID(nil), filterNonNilUUIDs(compactBaseIDs[:persistSplit])...)
 								persistCompletedEvent = map[string]any{
-									"op":                         "persist",
-									"mode":                       "canonical_chunks",
-									"phase":                      "completed",
-									"persist_split":              split,
-									"messages_before":            beforeN,
-									"context_window_tokens":      window,
-									"trigger_tokens":             trigger,
-									"trigger_context_pct":        cfg.PersistTriggerContextPct,
-									"tail_keep_configured":       keep,
-									"tail_keep_effective":        tailKeep,
-									"target_chunk_count":         persistTargetChunkCount,
-									"previous_replacement_count": persistPreviousReplacementCount,
+									"op":                    "persist",
+									"mode":                  "canonical_chunks",
+									"phase":                 "completed",
+									"persist_split":         persistSplit,
+									"messages_before":       beforeN,
+									"context_window_tokens": window,
+									"trigger_tokens":        trigger,
+									"trigger_context_pct":   cfg.PersistTriggerContextPct,
+									"tail_keep_configured":  keep,
+									"tail_keep_effective":   keep,
+									"target_chunk_count":    persistTargetChunkCount,
 								}
 								ApplyContextCompactPressureFields(persistCompletedEvent, pressure)
-								unsummarizedHead := make([]llm.Message, summaryInputDropped)
-								copy(unsummarizedHead, compactBase[:summaryInputDropped])
-								tail := make([]llm.Message, len(compactBase)-split)
-								copy(tail, compactBase[split:])
-								tail = truncateLargeTailMessages(enc, tail)
-								msgs = append(unsummarizedHead, makeCompactSnapshotMessage(persistSummary))
-								msgs = append(msgs, tail...)
-								ids = append([]uuid.UUID(nil), compactBaseIDs[:summaryInputDropped]...)
-								ids = append(ids, uuid.Nil)
-								ids = append(ids, compactBaseIDs[split:]...)
+								msgs = materializeCompactedPrefixMessages(compactBase, usedNodes, usedNodeCount-1, persistSummary)
+								msgs = truncateLargeTailMessages(enc, msgs)
+								ids = materializeCompactedPrefixIDs(compactBaseIDs, usedNodes, usedNodeCount-1)
 								rc.Messages = msgs
 								rc.ThreadMessageIDs = ids
-								rc.HasActiveCompactSnapshot = true
-								rc.ActiveCompactSnapshotText = firstCompactSummaryText(msgs, ids)
-								systemPrompt := compactSystemPromptForRun(ctx, rc, contextCompactSystemPrompt, summaryInputMsgs)
+								rc.ThreadContextFrontier = append([]FrontierNode(nil), frontier...)
+								systemPrompt := compactSystemPromptForRun(ctx, rc, contextCompactSystemPrompt, nil)
 								notifyCompactApplied(ctx, rc, CompactInput{
 									SystemPrompt: systemPrompt,
-									Messages:     append([]llm.Message(nil), summaryInputMsgs...),
+									Messages:     append([]llm.Message(nil), compactBase...),
 								}, CompactOutput{
 									SystemPrompt: systemPrompt,
 									Messages:     append([]llm.Message(nil), rc.Messages...),
@@ -383,7 +310,7 @@ func NewContextCompactMiddleware(
 			}
 		}
 
-		if persistSplit > 0 && persistSummary != "" && pool != nil {
+		if persistSplit > 0 && persistSummary != "" && pool != nil && len(persistWindowNodes) > 0 {
 			tx, txErr := pool.BeginTx(postCtx, pgx.TxOptions{})
 			if txErr != nil {
 				slog.WarnContext(ctx, "context_compact", "phase", "tx_begin", "err", txErr.Error(), "run_id", rc.Run.ID.String())
@@ -404,12 +331,9 @@ func NewContextCompactMiddleware(
 						persistPlan, ok, rangeErr := resolvePersistReplacementPlan(
 							postCtx,
 							tx,
-							messagesRepo,
 							rc.Run.AccountID,
 							rc.Run.ThreadID,
-							persistWindowMsgs,
-							persistWindowIDs,
-							persistWindowActiveSnapshotText,
+							persistWindowNodes,
 						)
 						if rangeErr != nil {
 							_ = tx.Rollback(postCtx)
@@ -444,25 +368,6 @@ func NewContextCompactMiddleware(
 								slog.WarnContext(ctx, "context_compact", "phase", "supersede_replacements", "err", supErr.Error(), "run_id", rc.Run.ID.String())
 							} else {
 								evOk := true
-								promoted, promoteErr := maybePromoteLeadingReplacementTriple(
-									postCtx,
-									tx,
-									replacementsRepo,
-									rc.Run.AccountID,
-									rc.Run.ThreadID,
-									persistGateway,
-									persistModel,
-									enc,
-								)
-								if promoteErr != nil {
-									_ = tx.Rollback(postCtx)
-									evOk = false
-									emitContextCompactFailure(ctx, postCtx, pool, eventsRepo, rc, "persist", "promote_replacements", promoteErr)
-									slog.WarnContext(ctx, "context_compact", "phase", "promote_replacements", "err", promoteErr.Error(), "run_id", rc.Run.ID.String())
-								}
-								if promoted && persistCompletedEvent != nil {
-									persistCompletedEvent["promotion_applied"] = true
-								}
 								if evOk && persistCompletedEvent != nil && eventsRepo != nil {
 									ev := rc.Emitter.Emit("run.context_compact", persistCompletedEvent, nil, nil)
 									if _, evErr := eventsRepo.AppendRunEvent(postCtx, tx, rc.Run.ID, ev); evErr != nil {
@@ -474,9 +379,6 @@ func NewContextCompactMiddleware(
 								if evOk {
 									if err := tx.Commit(postCtx); err != nil {
 										slog.WarnContext(ctx, "context_compact", "phase", "tx_commit", "err", err.Error(), "run_id", rc.Run.ID.String())
-									} else {
-										rc.HasActiveCompactSnapshot = true
-										rc.ActiveCompactSnapshotText = firstCompactSummaryText(rc.Messages, rc.ThreadMessageIDs)
 									}
 								}
 							}
@@ -548,23 +450,15 @@ type persistReplacementPlan struct {
 func resolvePersistReplacementPlan(
 	ctx context.Context,
 	tx pgx.Tx,
-	messagesRepo data.MessagesRepository,
 	accountID uuid.UUID,
 	threadID uuid.UUID,
-	prefixMsgs []llm.Message,
-	prefixIDs []uuid.UUID,
-	activeSnapshotText string,
+	nodes []FrontierNode,
 ) (persistReplacementPlan, bool, error) {
 	if tx == nil {
 		return persistReplacementPlan{}, false, fmt.Errorf("tx must not be nil")
 	}
-	graph, err := ensureCanonicalThreadGraphPersisted(ctx, tx, messagesRepo, accountID, threadID)
-	if err != nil {
-		return persistReplacementPlan{}, false, err
-	}
-	var (
-		plan = persistReplacementPlan{Layer: 1}
-	)
+	_ = ctx
+	plan := persistReplacementPlan{Layer: 1}
 	mergeRange := func(startThreadSeq, endThreadSeq, startContextSeq, endContextSeq int64) {
 		if startThreadSeq <= 0 || endThreadSeq <= 0 || startThreadSeq > endThreadSeq {
 			return
@@ -586,47 +480,19 @@ func resolvePersistReplacementPlan(
 		}
 	}
 
-	rawIDs := filterNonNilUUIDs(prefixIDs)
-	if len(rawIDs) > 0 {
-		startThreadSeq, endThreadSeq, err := messagesRepo.GetThreadSeqRangeForMessageIDs(ctx, tx, accountID, threadID, rawIDs)
-		if err != nil {
-			return persistReplacementPlan{}, false, err
+	for _, node := range nodes {
+		if node.NodeID == uuid.Nil {
+			continue
 		}
-		chunkIDs, startContextSeq, endContextSeq, ok := graph.chunkTargetsForThreadSeqRange(startThreadSeq, endThreadSeq)
-		if !ok {
-			return persistReplacementPlan{}, false, fmt.Errorf("context chunks not found for raw prefix range")
-		}
-		mergeRange(startThreadSeq, endThreadSeq, startContextSeq, endContextSeq)
-		plan.SupersededChunkIDs = append(plan.SupersededChunkIDs, chunkIDs...)
-	}
-
-	compactedLeadingCount := leadingCompactPrefixMessageCount(prefixMsgs, prefixIDs)
-	if compactedLeadingCount > 0 {
-		replacementsRepo := data.ThreadContextReplacementsRepository{}
-		items, err := replacementsRepo.ListActiveByThreadUpToContextSeq(ctx, tx, accountID, threadID, nil)
-		if err != nil {
-			return persistReplacementPlan{}, false, err
-		}
-		selected := selectRenderableReplacements(items)
-		included := compactedLeadingCount
-		if included > len(selected) {
-			included = len(selected)
-		}
-		for i := 0; i < included; i++ {
-			mergeRange(
-				selected[i].StartThreadSeq,
-				selected[i].EndThreadSeq,
-				selected[i].StartContextSeq,
-				selected[i].EndContextSeq,
-			)
-			if selected[i].Layer+1 > plan.Layer {
-				plan.Layer = selected[i].Layer + 1
+		mergeRange(node.StartThreadSeq, node.EndThreadSeq, node.StartContextSeq, node.EndContextSeq)
+		if node.Kind == FrontierNodeReplacement {
+			plan.SupersededReplacementIDs = append(plan.SupersededReplacementIDs, node.NodeID)
+			if node.Layer+1 > plan.Layer {
+				plan.Layer = node.Layer + 1
 			}
-			plan.SupersededReplacementIDs = append(plan.SupersededReplacementIDs, selected[i].ID)
+			continue
 		}
-		if compactedLeadingCount > included && strings.TrimSpace(activeSnapshotText) != "" {
-			return persistReplacementPlan{}, false, fmt.Errorf("legacy snapshot replacement input is no longer supported")
-		}
+		plan.SupersededChunkIDs = append(plan.SupersededChunkIDs, node.NodeID)
 	}
 
 	plan.SupersededReplacementIDs = dedupeUUIDs(plan.SupersededReplacementIDs)
@@ -638,143 +504,6 @@ func resolvePersistReplacementPlan(
 		return persistReplacementPlan{}, false, fmt.Errorf("invalid context seq range for replacement plan")
 	}
 	return plan, true, nil
-}
-
-func maybePromoteLeadingReplacementTriple(
-	ctx context.Context,
-	tx pgx.Tx,
-	replacementsRepo data.ThreadContextReplacementsRepository,
-	accountID uuid.UUID,
-	threadID uuid.UUID,
-	gateway llm.Gateway,
-	model string,
-	enc *tiktoken.Tiktoken,
-) (bool, error) {
-	if tx == nil || accountID == uuid.Nil || threadID == uuid.Nil {
-		return false, nil
-	}
-	if gateway == nil || strings.TrimSpace(model) == "" {
-		return false, nil
-	}
-	items, err := replacementsRepo.ListActiveByThreadUpToContextSeq(ctx, tx, accountID, threadID, nil)
-	if err != nil {
-		return false, err
-	}
-	selected := selectPromotionReplacements(items)
-	if len(selected) < 3 {
-		return false, nil
-	}
-	for i := 0; i+2 < len(selected); i++ {
-		a := selected[i]
-		b := selected[i+1]
-		c := selected[i+2]
-		if a.Layer <= 0 || a.Layer != b.Layer || b.Layer != c.Layer {
-			continue
-		}
-		if strings.TrimSpace(a.SummaryText) == "" || strings.TrimSpace(b.SummaryText) == "" || strings.TrimSpace(c.SummaryText) == "" {
-			continue
-		}
-		if a.EndContextSeq+1 < b.StartContextSeq || b.EndContextSeq+1 < c.StartContextSeq {
-			continue
-		}
-		promotionSummary := strings.TrimSpace(strings.Join([]string{
-			strings.TrimSpace(a.SummaryText),
-			strings.TrimSpace(b.SummaryText),
-			strings.TrimSpace(c.SummaryText),
-		}, "\n\n"))
-		prefix := buildPromotionCompactMessages(
-			strings.TrimSpace(a.SummaryText),
-			strings.TrimSpace(b.SummaryText),
-			strings.TrimSpace(c.SummaryText),
-		)
-		if generated, genErr := runContextCompactLLM(ctx, nil, gateway, model, prefix, enc, ""); genErr == nil && strings.TrimSpace(generated) != "" {
-			promotionSummary = strings.TrimSpace(generated)
-		}
-		if promotionSummary == "" {
-			continue
-		}
-		inserted, insErr := replacementsRepo.Insert(ctx, tx, data.ThreadContextReplacementInsertInput{
-			AccountID:       accountID,
-			ThreadID:        threadID,
-			StartThreadSeq:  a.StartThreadSeq,
-			EndThreadSeq:    c.EndThreadSeq,
-			StartContextSeq: a.StartContextSeq,
-			EndContextSeq:   c.EndContextSeq,
-			SummaryText:     promotionSummary,
-			Layer:           a.Layer + 1,
-			MetadataJSON:    compactReplacementMetadata("context_compact_promotion"),
-		})
-		if insErr != nil {
-			return false, insErr
-		}
-		if edgeErr := writeReplacementSupersessionEdges(ctx, tx, accountID, threadID, inserted.ID, persistReplacementPlan{
-			SupersededReplacementIDs: []uuid.UUID{a.ID, b.ID, c.ID},
-		}); edgeErr != nil {
-			return false, edgeErr
-		}
-		if supErr := replacementsRepo.SupersedeActiveOverlapsByContextSeq(ctx, tx, accountID, threadID, inserted.StartContextSeq, inserted.EndContextSeq, inserted.ID); supErr != nil {
-			return false, supErr
-		}
-		return true, nil
-	}
-	return false, nil
-}
-
-func buildPromotionCompactMessages(summaries ...string) []llm.Message {
-	msgs := make([]llm.Message, 0, len(summaries))
-	for _, summary := range summaries {
-		summary = strings.TrimSpace(summary)
-		if summary == "" {
-			continue
-		}
-		msgs = append(msgs, llm.Message{
-			Role:    "user",
-			Content: []llm.TextPart{{Text: summary}},
-		})
-	}
-	return msgs
-}
-
-func selectPromotionReplacements(items []data.ThreadContextReplacementRecord) []data.ThreadContextReplacementRecord {
-	if len(items) == 0 {
-		return nil
-	}
-	candidates := make([]data.ThreadContextReplacementRecord, 0, len(items))
-	for _, item := range items {
-		if strings.TrimSpace(item.SummaryText) == "" {
-			continue
-		}
-		if item.StartContextSeq <= 0 || item.EndContextSeq <= 0 || item.StartContextSeq > item.EndContextSeq {
-			continue
-		}
-		candidates = append(candidates, item)
-	}
-	sort.SliceStable(candidates, func(i, j int) bool {
-		if candidates[i].StartContextSeq != candidates[j].StartContextSeq {
-			return candidates[i].StartContextSeq < candidates[j].StartContextSeq
-		}
-		if candidates[i].EndContextSeq != candidates[j].EndContextSeq {
-			return candidates[i].EndContextSeq < candidates[j].EndContextSeq
-		}
-		if candidates[i].CreatedAt != candidates[j].CreatedAt {
-			return candidates[i].CreatedAt.Before(candidates[j].CreatedAt)
-		}
-		return candidates[i].Layer < candidates[j].Layer
-	})
-
-	selected := make([]data.ThreadContextReplacementRecord, 0, len(candidates))
-	for _, candidate := range candidates {
-		if len(selected) == 0 {
-			selected = append(selected, candidate)
-			continue
-		}
-		last := selected[len(selected)-1]
-		if candidate.StartContextSeq <= last.EndContextSeq {
-			continue
-		}
-		selected = append(selected, candidate)
-	}
-	return selected
 }
 
 func writeReplacementSupersessionEdges(
@@ -840,19 +569,15 @@ func needsAdditionalPreviousSummary(prefix []llm.Message, previousSummary string
 }
 
 func leadingCompactPrefixMessageCount(msgs []llm.Message, ids []uuid.UUID) int {
-	if len(msgs) == 0 {
+	if len(msgs) == 0 || len(ids) != len(msgs) {
 		return 0
 	}
-	alignedIDs := len(ids) == len(msgs)
 	count := 0
 	for i := range msgs {
-		if alignedIDs && ids[i] != uuid.Nil {
+		if ids[i] != uuid.Nil {
 			break
 		}
 		if msgs[i].Role != "user" || len(msgs[i].Content) == 0 {
-			break
-		}
-		if !strings.HasPrefix(msgs[i].Content[0].Text, compactSnapshotHeader) {
 			break
 		}
 		count++
@@ -865,37 +590,11 @@ func firstCompactSummaryText(msgs []llm.Message, ids []uuid.UUID) string {
 	if count == 0 || len(msgs[0].Content) == 0 {
 		return ""
 	}
-	text := msgs[0].Content[0].Text
-	start := strings.Index(text, "<state_snapshot>")
-	end := strings.Index(text, "</state_snapshot>")
-	if start < 0 || end < 0 || end <= start {
-		return strings.TrimSpace(text)
-	}
-	start += len("<state_snapshot>")
-	return strings.TrimSpace(text[start:end])
+	return strings.TrimSpace(msgs[0].Content[0].Text)
 }
 
 func leadingCompactSnapshotPrefixCount(msgs []llm.Message, ids []uuid.UUID) int {
-	if len(msgs) == 0 {
-		return 0
-	}
-	aligned := len(ids) == len(msgs)
-	n := 0
-	for i := 0; i < len(msgs); i++ {
-		if aligned && ids[i] != uuid.Nil {
-			break
-		}
-		m := msgs[i]
-		if strings.TrimSpace(m.Role) != "user" || len(m.Content) == 0 {
-			break
-		}
-		// snapshot message uses a stable header; avoid treating replay/resume synthetic messages as snapshots.
-		if !strings.HasPrefix(strings.TrimSpace(m.Content[0].Text), compactSnapshotHeader) {
-			break
-		}
-		n++
-	}
-	return n
+	return leadingCompactPrefixMessageCount(msgs, ids)
 }
 
 // compactPrefixMessagesStillAvailable 事务内校验：待折叠的前缀消息仍全部存在，避免并发 persist 重复写 replacement。
@@ -1009,97 +708,78 @@ func MaybeInlineCompactMessages(
 	}
 	window := routing.RouteContextWindowTokens(rc.SelectedRoute.Route)
 	trigger, window := compactPersistTriggerTokens(cfg, window)
-	estimate := HistoryThreadPromptTokens(enc, msgs)
+	working := append([]llm.Message(nil), msgs...)
+	estimate := HistoryThreadPromptTokens(enc, working)
 	stats := ComputeContextCompactPressure(estimate, anchor)
 	if stats.ContextPressureTokens < trigger {
 		return msgs, stats, false, nil
 	}
-	if len(msgs) == 1 {
-		compactedSingle, changed, err := maybeInlineCompactSingleOversizedTextAtom(ctx, rc, msgs[0], enc)
-		if err != nil {
-			return msgs, stats, false, err
+	if len(working) == 1 {
+		compactedSingle, changed, compactErr := maybeInlineCompactSingleOversizedTextAtom(ctx, rc, working[0], enc)
+		if compactErr != nil {
+			return msgs, stats, false, compactErr
 		}
 		if changed {
-			stats.TargetChunkCount = len(buildCanonicalCompactChunks(enc, msgs))
-			stats.PreviousReplacementCount = 0
+			stats.TargetChunkCount = len(buildCanonicalCompactChunks(enc, working))
 			stats.SingleAtomPartial = true
 			return compactedSingle, stats, true, nil
 		}
 		return msgs, stats, false, nil
 	}
-	compactBase := append([]llm.Message(nil), msgs...)
-	keep := cfg.PersistKeepLastMessages
-	if keep <= 0 {
-		keep = defaultPersistKeepLastMessages
+
+	targetTokens := contextCompactTargetTokens(cfg, window)
+	if targetTokens <= 0 {
+		targetTokens = trigger
 	}
-	var tailKeep int
-	tailPct := cfg.PersistKeepTailPct
-	if tailPct > 100 {
-		tailPct = 100
+	if targetTokens >= stats.ContextPressureTokens {
+		targetTokens = trigger - 1
 	}
-	if tailPct > 0 && window > 0 {
-		tailTokenBudget := window * tailPct / 100
-		tailKeep = computeTailKeepByTokenBudget(enc, compactBase, tailTokenBudget, keep)
-	} else {
-		tailKeep = keep
+	if targetTokens < 1 {
+		targetTokens = 1
 	}
-	if tailKeep >= len(compactBase) {
-		tailKeep = len(compactBase) - 1
-	}
-	if tailKeep < 1 {
-		tailKeep = 1
-	}
-	split := stabilizeCompactStart(compactBase, len(compactBase)-tailKeep, 0)
-	split = ensureToolPairIntegrity(compactBase, split)
-	if split <= 0 {
-		compactedSingle, changed, err := maybeInlineCompactSingleOversizedTextAtom(ctx, rc, compactBase[0], enc)
-		if err != nil {
-			return msgs, stats, false, err
+
+	changedAny := false
+	for stats.ContextPressureTokens > targetTokens {
+		beforeEstimate := estimate
+		nodes := buildCompactFrontierNodesFromMessages(enc, working)
+		selection := selectCompactFrontierWindow(nodes, stats.ContextPressureTokens-targetTokens, contextCompactMaxLLMInputTokens)
+		if len(selection.Nodes) == 0 {
+			break
 		}
-		if changed {
-			out := append([]llm.Message(nil), compactedSingle...)
-			out = append(out, compactBase[1:]...)
-			stats.TargetChunkCount = len(buildCanonicalCompactChunks(enc, []llm.Message{compactBase[0]}))
-			stats.PreviousReplacementCount = 0
-			stats.SingleAtomPartial = true
-			return out, stats, true, nil
+		summary, usedNodes, compactErr := compactNodesWithShrinkRetry(ctx, rc, rc.Gateway, rc.SelectedRoute.Route.Model, selection.Nodes)
+		if compactErr != nil {
+			return msgs, stats, changedAny, compactErr
 		}
-		return msgs, stats, false, nil
+		summary = strings.TrimSpace(summary)
+		if summary == "" || len(usedNodes) == 0 {
+			break
+		}
+		working = materializeCompactedPrefixMessages(working, nodes, len(usedNodes)-1, summary)
+		working = truncateLargeTailMessages(enc, working)
+		stats.TargetChunkCount = len(usedNodes)
+		stats.PreviousReplacementCount = 0
+		stats.SingleAtomPartial = selection.PartialTail
+		estimate = HistoryThreadPromptTokens(enc, working)
+		stats = ComputeContextCompactPressure(estimate, anchor)
+		changedAny = true
+		systemPrompt := compactSystemPromptForRun(ctx, rc, contextCompactSystemPrompt, nil)
+		notifyCompactApplied(ctx, rc, CompactInput{
+			SystemPrompt: systemPrompt,
+			Messages:     append([]llm.Message(nil), msgs...),
+		}, CompactOutput{
+			SystemPrompt: systemPrompt,
+			Messages:     append([]llm.Message(nil), working...),
+			Summary:      summary,
+			Changed:      true,
+		})
+		if estimate >= beforeEstimate {
+			break
+		}
+		if cfg.PersistTriggerContextPct <= 0 {
+			break
+		}
 	}
-	summaryInputMsgs, summaryInputDropped := prepareCompactSummaryInput(enc, compactBase[:split])
-	targetChunks := buildCanonicalCompactChunks(enc, summaryInputMsgs)
-	stats.TargetChunkCount = len(targetChunks)
-	stats.PreviousReplacementCount = len(compactLeadingReplacementSummaries(summaryInputMsgs))
-	if needsAdditionalPreviousSummary(summaryInputMsgs, rc.ActiveCompactSnapshotText) {
-		stats.PreviousReplacementCount++
-	}
-	summary, err := runContextCompactLLM(ctx, rc, rc.Gateway, rc.SelectedRoute.Route.Model, summaryInputMsgs, enc, rc.ActiveCompactSnapshotText)
-	if err != nil {
-		return msgs, stats, false, err
-	}
-	summary = strings.TrimSpace(summary)
-	if summary == "" {
-		return msgs, stats, false, nil
-	}
-	unsummarizedHead := make([]llm.Message, summaryInputDropped)
-	copy(unsummarizedHead, compactBase[:summaryInputDropped])
-	tail := make([]llm.Message, len(compactBase)-split)
-	copy(tail, compactBase[split:])
-	tail = truncateLargeTailMessages(enc, tail)
-	compactedBase := append([]llm.Message(nil), unsummarizedHead...)
-	compactedBase = append(compactedBase, makeCompactSnapshotMessage(summary))
-	compactedBase = append(compactedBase, tail...)
-	systemPrompt := compactSystemPromptForRun(ctx, rc, contextCompactSystemPrompt, summaryInputMsgs)
-	notifyCompactApplied(ctx, rc, CompactInput{
-		SystemPrompt: systemPrompt,
-		Messages:     append([]llm.Message(nil), summaryInputMsgs...),
-	}, CompactOutput{
-		SystemPrompt: systemPrompt,
-		Messages:     append([]llm.Message(nil), compactedBase...),
-		Summary:      summary,
-		Changed:      true,
-	})
-	return compactedBase, stats, true, nil
+	return working, stats, changedAny, nil
 }
 
 func maybeInlineCompactSingleOversizedTextAtom(
@@ -1150,7 +830,7 @@ func maybeInlineCompactSingleOversizedTextAtom(
 		Phase:   msg.Phase,
 		Content: []llm.TextPart{{Text: strings.TrimSpace(strings.Join(tailParts, "\n\n"))}},
 	}
-	out := []llm.Message{makeCompactSnapshotMessage(summary), tailMsg}
+	out := []llm.Message{makeThreadContextReplacementMessage(summary), tailMsg}
 	systemPrompt := compactSystemPromptForRun(ctx, rc, contextCompactSystemPrompt, []llm.Message{msg})
 	notifyCompactApplied(ctx, rc, CompactInput{
 		SystemPrompt: systemPrompt,
@@ -1165,104 +845,12 @@ func maybeInlineCompactSingleOversizedTextAtom(
 }
 
 func runContextCompactLLM(ctx context.Context, rc *RunContext, gateway llm.Gateway, model string, prefix []llm.Message, enc *tiktoken.Tiktoken, previousSummary string) (string, error) {
-	if gateway == nil || strings.TrimSpace(model) == "" {
-		return "", fmt.Errorf("gateway or model missing")
-	}
-	leadingSummaries := compactLeadingReplacementSummaries(prefix)
-	if len(leadingSummaries) > 0 {
-		prefix = trimLeadingCompactSnapshotMessages(prefix)
-	}
-	previousSummary = strings.TrimSpace(previousSummary)
-	if previousSummary != "" {
-		mergedLeading := strings.TrimSpace(strings.Join(leadingSummaries, "\n\n"))
-		if mergedLeading == "" || previousSummary != mergedLeading {
-			leadingSummaries = append(leadingSummaries, previousSummary)
-		}
-	}
-	targetChunks := buildCanonicalCompactChunks(enc, prefix)
-	targetText := serializeCompactChunksForLLM(targetChunks)
-	if strings.TrimSpace(targetText) == "" && len(leadingSummaries) > 0 {
-		return strings.TrimSpace(strings.Join(leadingSummaries, "\n\n")), nil
-	}
-	if strings.TrimSpace(targetText) == "" {
-		return "", nil
-	}
-	runes := []rune(targetText)
-	if len(runes) > contextCompactMaxLLMInputRunes {
-		targetText = string(runes[len(runes)-contextCompactMaxLLMInputRunes:])
-	}
-
-	var userBlock strings.Builder
-	userBlock.WriteString("<target-chunks>\n")
-	userBlock.WriteString(targetText)
-	userBlock.WriteString("\n</target-chunks>\n\n")
-	if len(leadingSummaries) > 0 {
-		userBlock.WriteString("<previous-replacements>\n")
-		for i, s := range leadingSummaries {
-			if i > 0 {
-				userBlock.WriteString("\n\n")
-			}
-			userBlock.WriteString(s)
-		}
-		userBlock.WriteString("\n</previous-replacements>\n\n")
-		userBlock.WriteString(contextCompactUpdatePrompt)
-	} else {
-		userBlock.WriteString(contextCompactInitialPrompt)
-	}
-	maxTok := contextCompactMaxOut
-	systemPrompt := compactSystemPromptForRun(ctx, rc, contextCompactSystemPrompt, prefix)
-	req := llm.Request{
-		Model: model,
-		Messages: []llm.Message{
-			{Role: "system", Content: []llm.TextPart{{Text: systemPrompt}}},
-			{Role: "user", Content: []llm.TextPart{{Text: userBlock.String()}}},
-		},
-		MaxOutputTokens: &maxTok,
-	}
-	streamCtx, cancel := context.WithTimeout(ctx, contextCompactStreamTimeout)
-	defer cancel()
-
-	var chunks []string
-	err := gateway.Stream(streamCtx, req, func(ev llm.StreamEvent) error {
-		switch typed := ev.(type) {
-		case llm.StreamMessageDelta:
-			if typed.Channel != nil && *typed.Channel == "thinking" {
-				return nil
-			}
-			if typed.ContentDelta != "" {
-				chunks = append(chunks, typed.ContentDelta)
-			}
-		case llm.StreamRunCompleted:
-			return errContextCompactStreamDone
-		case llm.StreamRunFailed:
-			return fmt.Errorf("stream failed: %s", typed.Error.Message)
-		}
-		return nil
-	})
-	if err != nil && !errors.Is(err, errContextCompactStreamDone) {
-		return "", err
-	}
-	return strings.TrimSpace(strings.Join(chunks, "")), nil
+	_ = previousSummary
+	return runContextCompactLLMForNodes(ctx, rc, gateway, model, buildCompactFrontierNodesFromMessages(enc, prefix))
 }
 
 func trimLeadingCompactSnapshotMessages(msgs []llm.Message) []llm.Message {
-	start := 0
-	for start < len(msgs) {
-		msg := msgs[start]
-		if strings.TrimSpace(msg.Role) != "user" || len(msg.Content) == 0 {
-			break
-		}
-		if !strings.HasPrefix(strings.TrimSpace(msg.Content[0].Text), compactSnapshotHeader) {
-			break
-		}
-		start++
-	}
-	if start == 0 {
-		return msgs
-	}
-	out := make([]llm.Message, len(msgs)-start)
-	copy(out, msgs[start:])
-	return out
+	return msgs
 }
 
 func appendContextCompactRunEvent(
@@ -1378,78 +966,5 @@ func serializeMessagesForCompact(msgs []llm.Message) string {
 
 // runGroupCompactLLM 群聊专用的 compact LLM 调用，使用群聊 prompt 模板。
 func runGroupCompactLLM(ctx context.Context, gateway llm.Gateway, model string, prefix []llm.Message, enc *tiktoken.Tiktoken, previousSummary string) (string, error) {
-	if gateway == nil || strings.TrimSpace(model) == "" {
-		return "", fmt.Errorf("gateway or model missing")
-	}
-	leadingSummaries := compactLeadingReplacementSummaries(prefix)
-	if len(leadingSummaries) > 0 {
-		prefix = trimLeadingCompactSnapshotMessages(prefix)
-	}
-	if strings.TrimSpace(previousSummary) != "" {
-		leadingSummaries = append(leadingSummaries, strings.TrimSpace(previousSummary))
-	}
-	targetChunks := buildCanonicalCompactChunks(enc, prefix)
-	targetText := serializeCompactChunksForLLM(targetChunks)
-	if strings.TrimSpace(targetText) == "" && len(leadingSummaries) > 0 {
-		return strings.TrimSpace(strings.Join(leadingSummaries, "\n\n")), nil
-	}
-	if strings.TrimSpace(targetText) == "" {
-		return "", nil
-	}
-	runes := []rune(targetText)
-	if len(runes) > contextCompactMaxLLMInputRunes {
-		targetText = string(runes[len(runes)-contextCompactMaxLLMInputRunes:])
-	}
-
-	var userBlock strings.Builder
-	userBlock.WriteString("<target-chunks>\n")
-	userBlock.WriteString(targetText)
-	userBlock.WriteString("\n</target-chunks>\n\n")
-	if len(leadingSummaries) > 0 {
-		userBlock.WriteString("<previous-replacements>\n")
-		for i, s := range leadingSummaries {
-			if i > 0 {
-				userBlock.WriteString("\n\n")
-			}
-			userBlock.WriteString(s)
-		}
-		userBlock.WriteString("\n</previous-replacements>\n\n")
-		userBlock.WriteString(contextCompactGroupUpdatePrompt)
-	} else {
-		userBlock.WriteString(contextCompactGroupInitialPrompt)
-	}
-
-	maxTok := contextCompactGroupMaxOut
-	req := llm.Request{
-		Model: model,
-		Messages: []llm.Message{
-			{Role: "system", Content: []llm.TextPart{{Text: contextCompactGroupSystemPrompt}}},
-			{Role: "user", Content: []llm.TextPart{{Text: userBlock.String()}}},
-		},
-		MaxOutputTokens: &maxTok,
-	}
-	streamCtx, cancel := context.WithTimeout(ctx, contextCompactStreamTimeout)
-	defer cancel()
-
-	var chunks []string
-	err := gateway.Stream(streamCtx, req, func(ev llm.StreamEvent) error {
-		switch typed := ev.(type) {
-		case llm.StreamMessageDelta:
-			if typed.Channel != nil && *typed.Channel == "thinking" {
-				return nil
-			}
-			if typed.ContentDelta != "" {
-				chunks = append(chunks, typed.ContentDelta)
-			}
-		case llm.StreamRunCompleted:
-			return errContextCompactStreamDone
-		case llm.StreamRunFailed:
-			return fmt.Errorf("stream failed: %s", typed.Error.Message)
-		}
-		return nil
-	})
-	if err != nil && !errors.Is(err, errContextCompactStreamDone) {
-		return "", err
-	}
-	return strings.TrimSpace(strings.Join(chunks, "")), nil
+	return runContextCompactLLM(ctx, nil, gateway, model, prefix, enc, previousSummary)
 }

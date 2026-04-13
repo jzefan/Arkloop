@@ -38,11 +38,10 @@ type runRecordLoader interface {
 }
 
 type loadedRunInputs struct {
-	InputJSON                 map[string]any
-	Messages                  []llm.Message
-	ThreadMessageIDs          []uuid.UUID
-	HasActiveCompactSnapshot  bool
-	ActiveCompactSnapshotText string
+	InputJSON             map[string]any
+	Messages              []llm.Message
+	ThreadMessageIDs      []uuid.UUID
+	ThreadContextFrontier []FrontierNode
 }
 
 type LoadedRunInputs = loadedRunInputs
@@ -107,8 +106,7 @@ func NewInputLoaderMiddleware(
 
 		rc.InputJSON = loaded.InputJSON
 		rc.Messages, rc.ThreadMessageIDs = sanitizeToolPairs(loaded.Messages, loaded.ThreadMessageIDs)
-		rc.HasActiveCompactSnapshot = loaded.HasActiveCompactSnapshot
-		rc.ActiveCompactSnapshotText = loaded.ActiveCompactSnapshotText
+		rc.ThreadContextFrontier = append([]FrontierNode(nil), loaded.ThreadContextFrontier...)
 		emitTraceEvent(rc, "input_loader", "input_loader.loaded", map[string]any{
 			"run_kind":      strings.TrimSpace(stringValue(rc.InputJSON["run_kind"])),
 			"message_count": len(rc.Messages),
@@ -223,8 +221,6 @@ func loadRunInputs(
 		return nil, err
 	}
 	messages := canonicalContext.VisibleMessages
-	hasActiveSnapshot := canonicalContext.HasLeadingCompactSummary
-
 	replayInsertions := []resumeReplayInsertion(nil)
 	if IsRuntimeRecoveryJob(jobPayload) {
 		replayInsertions, err = loadRuntimeRecoveryReplay(ctx, tx, run, eventsRepo, rolloutStore, canonicalContext, messages)
@@ -244,7 +240,7 @@ func loadRunInputs(
 		}
 	}
 
-	if err := tx.Rollback(ctx); err != nil && !errors.Is(err, pgx.ErrTxClosed) {
+	if err := tx.Commit(ctx); err != nil {
 		return nil, err
 	}
 
@@ -255,7 +251,6 @@ func loadRunInputs(
 		replayCount += len(insertion.Messages)
 	}
 
-	activeSnapshotText := strings.TrimSpace(canonicalContext.LeadingCompactSummary)
 	llmMessages := make([]llm.Message, 0, len(canonicalContext.Messages)+replayCount)
 	ids := make([]uuid.UUID, 0, len(canonicalContext.ThreadMessageIDs)+replayCount)
 	for _, entry := range canonicalContext.Entries {
@@ -278,11 +273,10 @@ func loadRunInputs(
 	}
 
 	return &loadedRunInputs{
-		InputJSON:                 inputJSON,
-		Messages:                  llmMessages,
-		ThreadMessageIDs:          ids,
-		HasActiveCompactSnapshot:  hasActiveSnapshot,
-		ActiveCompactSnapshotText: activeSnapshotText,
+		InputJSON:             inputJSON,
+		Messages:              llmMessages,
+		ThreadMessageIDs:      ids,
+		ThreadContextFrontier: canonicalContext.Frontier,
 	}, nil
 }
 

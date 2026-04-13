@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"strings"
 	"testing"
-	"time"
 
 	"arkloop/services/shared/messagecontent"
 	"arkloop/services/worker/internal/data"
@@ -264,6 +263,7 @@ func TestMaybeInlineCompactMessagesAfterCompactReceivesRealOutput(t *testing.T) 
 			PersistEnabled:              true,
 			PersistTriggerApproxTokens:  1,
 			PersistTriggerContextPct:    0,
+			TargetContextPct:            1,
 			FallbackContextWindowTokens: 1_000_000,
 			PersistKeepLastMessages:     1,
 		},
@@ -420,44 +420,6 @@ func TestMapReplacementsToContextSpansPrefersCurrentThreadSeqMapping(t *testing.
 	}
 }
 
-func TestSelectPromotionReplacementsUsesOldestSideOrder(t *testing.T) {
-	now := time.Now().UTC()
-	items := []data.ThreadContextReplacementRecord{
-		{
-			ID:              uuid.New(),
-			StartContextSeq: 21,
-			EndContextSeq:   30,
-			SummaryText:     "newer high layer",
-			Layer:           3,
-			CreatedAt:       now.Add(2 * time.Minute),
-		},
-		{
-			ID:              uuid.New(),
-			StartContextSeq: 1,
-			EndContextSeq:   10,
-			SummaryText:     "first",
-			Layer:           1,
-			CreatedAt:       now,
-		},
-		{
-			ID:              uuid.New(),
-			StartContextSeq: 11,
-			EndContextSeq:   20,
-			SummaryText:     "second",
-			Layer:           1,
-			CreatedAt:       now.Add(30 * time.Second),
-		},
-	}
-
-	selected := selectPromotionReplacements(items)
-	if len(selected) != 3 {
-		t.Fatalf("expected 3 promotion candidates, got %#v", selected)
-	}
-	if selected[0].SummaryText != "first" || selected[1].SummaryText != "second" || selected[2].SummaryText != "newer high layer" {
-		t.Fatalf("expected oldest-side ordering, got %#v", selected)
-	}
-}
-
 func TestContextCompactMiddlewareStripsImagesEvenWhenDisabled(t *testing.T) {
 	messages := make([]llm.Message, 0, 12)
 	for i := 0; i < 12; i++ {
@@ -606,6 +568,7 @@ func TestMaybeInlineCompactMessages_SingleOversizedTextAtom(t *testing.T) {
 			PersistEnabled:              true,
 			PersistTriggerApproxTokens:  1,
 			PersistTriggerContextPct:    0,
+			TargetContextPct:            1,
 			FallbackContextWindowTokens: 1_000_000,
 			PersistKeepLastMessages:     1,
 		},
@@ -626,10 +589,10 @@ func TestMaybeInlineCompactMessages_SingleOversizedTextAtom(t *testing.T) {
 		t.Fatal("expected single oversized atom to be compacted")
 	}
 	if len(out) != 2 {
-		t.Fatalf("expected snapshot + tail message, got %d", len(out))
+		t.Fatalf("expected replacement + tail message, got %d", len(out))
 	}
-	if !strings.Contains(messageText(out[0]), compactSnapshotHeader) {
-		t.Fatalf("expected leading snapshot header, got %q", messageText(out[0]))
+	if strings.TrimSpace(messageText(out[0])) == "" {
+		t.Fatalf("expected leading replacement summary, got %q", messageText(out[0]))
 	}
 	if strings.TrimSpace(messageText(out[1])) == "" {
 		t.Fatal("expected tail message kept")
@@ -646,29 +609,6 @@ func TestMaybeInlineCompactMessages_SingleOversizedTextAtom(t *testing.T) {
 	body := messageText(gateway.lastReq.Messages[1])
 	if !strings.Contains(body, "<target-chunks>") {
 		t.Fatalf("expected chunk contract block, got %q", body)
-	}
-}
-
-func TestRunContextCompactLLM_PromotionUsesTargetChunksNotPreviousReplacements(t *testing.T) {
-	gateway := &stubCompactGateway{summary: "promoted compact"}
-	msgs := buildPromotionCompactMessages("summary one", "summary two", "summary three")
-
-	out, err := runContextCompactLLM(context.Background(), nil, gateway, "stub", msgs, nil, "")
-	if err != nil {
-		t.Fatalf("runContextCompactLLM: %v", err)
-	}
-	if out != "promoted compact" {
-		t.Fatalf("unexpected compact output: %q", out)
-	}
-	body := messageText(gateway.lastReq.Messages[1])
-	if !strings.Contains(body, "<target-chunks>") {
-		t.Fatalf("expected target chunks in request, got %q", body)
-	}
-	if strings.Contains(body, "<previous-replacements>") {
-		t.Fatalf("promotion input should not be treated as previous replacements: %q", body)
-	}
-	if !strings.Contains(body, "summary one") || !strings.Contains(body, "summary two") || !strings.Contains(body, "summary three") {
-		t.Fatalf("expected promotion summaries inside target chunks, got %q", body)
 	}
 }
 

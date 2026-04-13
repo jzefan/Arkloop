@@ -330,7 +330,7 @@ func compactLeadingReplacementSummaries(msgs []llm.Message) []string {
 			break
 		}
 		raw := strings.TrimSpace(msg.Content[0].Text)
-		if !strings.HasPrefix(raw, compactSnapshotHeader) {
+		if raw == "" {
 			break
 		}
 		s := extractCompactSnapshotSummary(raw)

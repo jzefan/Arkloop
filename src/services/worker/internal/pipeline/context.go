@@ -112,11 +112,9 @@ type RunContext struct {
 	InputJSON map[string]any
 	Messages  []llm.Message
 	// ThreadMessageIDs 与 Messages 对齐；synthetic snapshot/replay 条目使用 uuid.Nil 占位。
-	ThreadMessageIDs []uuid.UUID
-	// Active compact snapshot 由 InputLoader 从 thread artifact 读取，供装配与后续 compact 更新复用。
-	HasActiveCompactSnapshot  bool
-	ActiveCompactSnapshotText string
-	PendingSubAgentCallbacks  []data.ThreadSubAgentCallbackRecord
+	ThreadMessageIDs         []uuid.UUID
+	ThreadContextFrontier    []FrontierNode
+	PendingSubAgentCallbacks []data.ThreadSubAgentCallbackRecord
 
 	// -- EngineV1.Execute 注入：context compact（[middleware 内可能改写 Messages]） --
 	ContextCompact ContextCompactSettings

@@ -1156,8 +1156,7 @@ func desktopInputLoader(
 		}
 		rc.Messages = loaded.Messages
 		rc.ThreadMessageIDs = loaded.ThreadMessageIDs
-		rc.HasActiveCompactSnapshot = loaded.HasActiveCompactSnapshot
-		rc.ActiveCompactSnapshotText = loaded.ActiveCompactSnapshotText
+		rc.ThreadContextFrontier = append([]pipeline.FrontierNode(nil), loaded.ThreadContextFrontier...)
 		if rc.Tracer != nil {
 			rc.Tracer.Event("input_loader", "input_loader.loaded", map[string]any{
 				"run_kind":      strings.TrimSpace(desktopStringValue(loaded.InputJSON["run_kind"])),
