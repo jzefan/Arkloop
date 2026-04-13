@@ -10,17 +10,12 @@ import { PillToggle } from '@arkloop/shared'
 import { useToast } from '@arkloop/shared'
 import type { DesktopSettingsHydrationSnapshot } from '../DesktopSettings'
 
-/** 与 shared/config 注册表默认值一致（无 platform_settings 行时） */
-const DEFAULT_KEEP_LAST_MESSAGES = 40
 const DEFAULT_FALLBACK_WINDOW = 128_000
 
 const KEY_ENABLED = 'context.compact.enabled'
-const KEY_PERSIST = 'context.compact.persist_enabled'
 const KEY_PCT = 'context.compact.persist_trigger_context_pct'
+const KEY_TARGET = 'context.compact.target_context_pct'
 const KEY_FALLBACK = 'context.compact.fallback_context_window_tokens'
-/** 旧版绝对阈值，仅用于迁移显示 */
-const KEY_TRIGGER_LEGACY = 'context.compact.persist_trigger_approx_tokens'
-const KEY_KEEP = 'context.compact.persist_keep_last_messages'
 
 const cardShell =
   'rounded-xl border-[0.5px] border-[var(--c-border-subtle)] bg-[var(--c-bg-menu)]'
@@ -68,7 +63,7 @@ export function ChatSettings({
 
   const [autoOn, setAutoOn] = useState(false)
   const [thresholdPct, setThresholdPct] = useState(80)
-  const [keepLast, setKeepLast] = useState(4)
+  const [targetPct, setTargetPct] = useState(75)
   const [compactCardHovered, setCompactCardHovered] = useState(false)
   const [execCardHovered, setExecCardHovered] = useState(false)
 
@@ -78,37 +73,31 @@ export function ChatSettings({
 
   const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const initializedRef = useRef(false)
-  const persistedRef = useRef({ autoOn: false, thresholdPct: 80, keepLast: DEFAULT_KEEP_LAST_MESSAGES })
+  const persistedRef = useRef({ autoOn: false, thresholdPct: 80, targetPct: 75 })
 
   const applyPlatformSettingsSnapshot = useCallback((values: Record<string, string>, fallbackError = '') => {
     const enabled = parseBool(values[KEY_ENABLED])
-    const persist = parseBool(values[KEY_PERSIST])
-    const nextAutoOn = enabled && persist
+    const nextAutoOn = enabled
 
     let pct = parsePositiveInt(values[KEY_PCT], 0)
     if (pct > 100) pct = 100
     if (pct <= 0) {
       const fb = parsePositiveInt(values[KEY_FALLBACK], DEFAULT_FALLBACK_WINDOW)
-      const triggerTok = parsePositiveInt(values[KEY_TRIGGER_LEGACY], 0)
-      if (triggerTok > 0 && fb > 0) {
-        pct = Math.min(100, Math.max(5, Math.round((triggerTok / fb) * 100)))
-      } else {
-        pct = 80
-      }
+      pct = fb > 0 ? 80 : 80
     }
     const nextThresholdPct = Math.min(100, Math.max(5, pct))
 
-    const keep = parsePositiveInt(values[KEY_KEEP], DEFAULT_KEEP_LAST_MESSAGES)
-    const nextKeepLast = Math.min(50, Math.max(2, keep))
+    const target = parsePositiveInt(values[KEY_TARGET], 75)
+    const nextTargetPct = Math.min(95, Math.max(5, target))
 
     persistedRef.current = {
       autoOn: nextAutoOn,
       thresholdPct: nextThresholdPct,
-      keepLast: nextKeepLast,
+      targetPct: nextTargetPct,
     }
     setAutoOn(nextAutoOn)
     setThresholdPct(nextThresholdPct)
-    setKeepLast(nextKeepLast)
+    setTargetPct(nextTargetPct)
     setLoadErr(fallbackError)
     setLoading(false)
     initializedRef.current = true
@@ -144,42 +133,39 @@ export function ChatSettings({
   const normalizedState = useMemo(() => ({
     autoOn,
     thresholdPct: Math.min(100, Math.max(5, Math.round(thresholdPct))),
-    keepLast: Math.min(50, Math.max(2, Math.floor(keepLast))),
-  }), [autoOn, thresholdPct, keepLast])
+    targetPct: Math.min(95, Math.max(5, Math.round(targetPct))),
+  }), [autoOn, thresholdPct, targetPct])
 
   const handleSave = useCallback(async () => {
-    const keepClamped = normalizedState.keepLast
-    if (keepClamped !== keepLast) setKeepLast(keepClamped)
+    const targetClamped = normalizedState.targetPct
+    if (targetClamped !== targetPct) setTargetPct(targetClamped)
 
     const pctClamped = normalizedState.thresholdPct
     if (pctClamped !== thresholdPct) setThresholdPct(pctClamped)
 
     try {
       const enStr = normalizedState.autoOn ? 'true' : 'false'
-      const keepStr = String(keepClamped)
       await updatePlatformSetting(accessToken, KEY_ENABLED, enStr)
-      await updatePlatformSetting(accessToken, KEY_PERSIST, enStr)
       await updatePlatformSetting(accessToken, KEY_PCT, String(pctClamped))
-      await updatePlatformSetting(accessToken, KEY_KEEP, keepStr)
+      await updatePlatformSetting(accessToken, KEY_TARGET, String(targetClamped))
       onPlatformSettingsChange?.({
         [KEY_ENABLED]: enStr,
-        [KEY_PERSIST]: enStr,
         [KEY_PCT]: String(pctClamped),
-        [KEY_KEEP]: keepStr,
+        [KEY_TARGET]: String(targetClamped),
       })
       persistedRef.current = normalizedState
       addToast(st.chatCompactSaved, 'success')
     } catch (e) {
       addToast(e instanceof Error ? e.message : t.requestFailed, 'error')
     }
-  }, [accessToken, addToast, keepLast, normalizedState, onPlatformSettingsChange, st.chatCompactSaved, t.requestFailed, thresholdPct])
+  }, [accessToken, addToast, normalizedState, onPlatformSettingsChange, st.chatCompactSaved, t.requestFailed, targetPct, thresholdPct])
 
   useEffect(() => {
     if (!initializedRef.current) return
     if (
       persistedRef.current.autoOn === normalizedState.autoOn &&
       persistedRef.current.thresholdPct === normalizedState.thresholdPct &&
-      persistedRef.current.keepLast === normalizedState.keepLast
+      persistedRef.current.targetPct === normalizedState.targetPct
     ) {
       return
     }
@@ -314,13 +300,13 @@ export function ChatSettings({
           </div>
           <input
             type="number"
-            min={2}
-            max={50}
+            min={5}
+            max={95}
             step={1}
-            value={keepLast}
+            value={targetPct}
             onChange={(ev) => {
               const n = Number.parseInt(ev.target.value, 10)
-              if (Number.isFinite(n)) setKeepLast(n)
+              if (Number.isFinite(n)) setTargetPct(n)
             }}
             className="h-9 w-14 shrink-0 rounded-lg border border-[var(--c-border-subtle)] bg-[var(--c-bg-input)] px-1 text-center text-sm tabular-nums text-[var(--c-text-primary)] outline-none transition-colors duration-150 focus:border-[var(--c-border)]"
           />

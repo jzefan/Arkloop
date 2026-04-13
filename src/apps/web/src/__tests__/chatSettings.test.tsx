@@ -93,9 +93,8 @@ describe('ChatSettings', () => {
   it('初始加载不会自动保存，也不会因缺失键触发错误', async () => {
     listPlatformSettings.mockResolvedValue([
       { key: 'context.compact.enabled', value: 'true', updated_at: '2026-03-30T00:00:00Z' },
-      { key: 'context.compact.persist_enabled', value: 'true', updated_at: '2026-03-30T00:00:00Z' },
       { key: 'context.compact.persist_trigger_context_pct', value: '80', updated_at: '2026-03-30T00:00:00Z' },
-      { key: 'context.compact.persist_keep_last_messages', value: '40', updated_at: '2026-03-30T00:00:00Z' },
+      { key: 'context.compact.target_context_pct', value: '75', updated_at: '2026-03-30T00:00:00Z' },
     ])
 
     const { ChatSettings, LocaleProvider } = await loadSubject()
@@ -130,9 +129,8 @@ describe('ChatSettings', () => {
               config: null,
               platformSettings: {
                 'context.compact.enabled': 'true',
-                'context.compact.persist_enabled': 'true',
                 'context.compact.persist_trigger_context_pct': '70',
-                'context.compact.persist_keep_last_messages': '8',
+                'context.compact.target_context_pct': '75',
               },
               executionMode: 'vm',
               platformSettingsError: '',
