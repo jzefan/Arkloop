@@ -5,6 +5,7 @@ package sqliteadapter
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 
 	"arkloop/services/shared/database"
@@ -141,6 +142,8 @@ func TestAutoMigrate(t *testing.T) {
 	assertSQLiteForeignKeyTargets(t, ctx, pool, "sub_agent_events", "sub_agents", "runs")
 	assertSQLiteForeignKeyTargets(t, ctx, pool, "sub_agent_pending_inputs", "sub_agents")
 	assertSQLiteForeignKeyTargets(t, ctx, pool, "sub_agent_context_snapshots", "sub_agents")
+	assertSQLiteForeignKeyTargets(t, ctx, pool, "channel_message_ledger", "channels", "threads", "runs", "channel_identities", "messages")
+	assertSQLiteTableSQLContains(t, ctx, pool, "messages", "PRIMARY KEY DEFAULT (lower(hex(randomblob(4)))")
 
 	// PRAGMA foreign_key_check must return zero violations after all migrations.
 	rows, fkErr := pool.Query(ctx, "PRAGMA foreign_key_check")
@@ -204,6 +207,294 @@ func TestMigrations_UpDown(t *testing.T) {
 	if ver != 0 {
 		t.Errorf("version after down all = %d; want 0", ver)
 	}
+}
+
+func TestMigration00069RebuildsChannelMessageLedgerMessageForeignKey(t *testing.T) {
+	t.Parallel()
+
+	pool := openTestDB(t)
+	ctx := context.Background()
+	db := pool.Unwrap()
+
+	provider, err := newProvider(db)
+	if err != nil {
+		t.Fatalf("new provider: %v", err)
+	}
+	if _, err := provider.UpTo(ctx, 68); err != nil {
+		t.Fatalf("up to 68: %v", err)
+	}
+
+	_, _, _, _ = seedChannelLedgerFixture(t, ctx, pool, "00069")
+
+	if err := checkForeignKeys(ctx, db); err != nil {
+		t.Fatalf("foreign keys before 69: %v", err)
+	}
+	if _, err := provider.UpByOne(ctx); err != nil {
+		t.Fatalf("apply 69: %v", err)
+	}
+	if err := checkForeignKeys(ctx, db); err != nil {
+		t.Fatalf("foreign keys after 69: %v", err)
+	}
+	assertSQLiteForeignKeyTargets(t, ctx, pool, "channel_message_ledger", "channels", "threads", "runs", "channel_identities", "messages")
+}
+
+func TestMigration00070RepairsBrokenChannelMessageLedgerMessageForeignKey(t *testing.T) {
+	t.Parallel()
+
+	pool := openTestDB(t)
+	ctx := context.Background()
+	db := pool.Unwrap()
+
+	provider, err := newProvider(db)
+	if err != nil {
+		t.Fatalf("new provider: %v", err)
+	}
+	if _, err := provider.UpTo(ctx, 69); err != nil {
+		t.Fatalf("up to 69: %v", err)
+	}
+
+	accountID, threadID, channelID, messageID := seedChannelLedgerFixture(t, ctx, pool, "00070")
+
+	if _, err := pool.Exec(ctx, `PRAGMA foreign_keys = OFF`); err != nil {
+		t.Fatalf("disable foreign keys: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `ALTER TABLE channel_message_ledger RENAME TO channel_message_ledger_broken_00070`); err != nil {
+		t.Fatalf("rename ledger: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `CREATE TABLE channel_message_ledger (
+		id                         TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(4))) || '-' || lower(hex(randomblob(2))) || '-4' || substr(lower(hex(randomblob(2))),2) || '-' || substr('89ab',abs(random()) % 4 + 1, 1) || substr(lower(hex(randomblob(2))),2) || '-' || lower(hex(randomblob(6)))),
+		channel_id                 TEXT NOT NULL REFERENCES channels(id) ON DELETE CASCADE,
+		channel_type               TEXT NOT NULL,
+		direction                  TEXT NOT NULL,
+		thread_id                  TEXT REFERENCES threads(id) ON DELETE SET NULL,
+		run_id                     TEXT REFERENCES runs(id) ON DELETE SET NULL,
+		platform_conversation_id   TEXT NOT NULL,
+		platform_message_id        TEXT NOT NULL,
+		platform_parent_message_id TEXT,
+		platform_thread_id         TEXT,
+		sender_channel_identity_id TEXT REFERENCES channel_identities(id) ON DELETE SET NULL,
+		metadata_json              TEXT NOT NULL DEFAULT '{}',
+		created_at                 TEXT NOT NULL DEFAULT (datetime('now')),
+		message_id                 TEXT REFERENCES messages_old_00069(id) ON DELETE SET NULL,
+		CHECK (direction IN ('inbound', 'outbound')),
+		UNIQUE (channel_id, direction, platform_conversation_id, platform_message_id)
+	)`); err != nil {
+		t.Fatalf("create broken ledger: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO channel_message_ledger (
+		id, channel_id, channel_type, direction, thread_id, run_id, platform_conversation_id,
+		platform_message_id, platform_parent_message_id, platform_thread_id,
+		sender_channel_identity_id, metadata_json, created_at, message_id
+	) SELECT
+		id, channel_id, channel_type, direction, thread_id, run_id, platform_conversation_id,
+		platform_message_id, platform_parent_message_id, platform_thread_id,
+		sender_channel_identity_id, metadata_json, created_at, message_id
+	FROM channel_message_ledger_broken_00070`); err != nil {
+		t.Fatalf("copy broken ledger: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `DROP TABLE channel_message_ledger_broken_00070`); err != nil {
+		t.Fatalf("drop broken ledger source: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `CREATE INDEX idx_channel_message_ledger_channel_id ON channel_message_ledger(channel_id)`); err != nil {
+		t.Fatalf("create channel index: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `CREATE INDEX idx_channel_message_ledger_thread_id ON channel_message_ledger(thread_id)`); err != nil {
+		t.Fatalf("create thread index: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `CREATE INDEX idx_channel_message_ledger_run_id ON channel_message_ledger(run_id)`); err != nil {
+		t.Fatalf("create run index: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `CREATE INDEX idx_channel_message_ledger_sender_identity_id ON channel_message_ledger(sender_channel_identity_id)`); err != nil {
+		t.Fatalf("create sender index: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `CREATE INDEX idx_channel_message_ledger_message_id ON channel_message_ledger(message_id)`); err != nil {
+		t.Fatalf("create message index: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `PRAGMA foreign_keys = ON`); err != nil {
+		t.Fatalf("enable foreign keys: %v", err)
+	}
+
+	if err := checkForeignKeys(ctx, db); err == nil {
+		t.Fatal("expected broken ledger foreign key violations before 70 repair")
+	}
+	if _, err := provider.UpByOne(ctx); err != nil {
+		t.Fatalf("apply 70: %v", err)
+	}
+	if err := checkForeignKeys(ctx, db); err != nil {
+		t.Fatalf("foreign keys after 70: %v", err)
+	}
+
+	var linkedMessageID string
+	if err := pool.QueryRow(ctx,
+		`SELECT message_id FROM channel_message_ledger WHERE channel_id = ? AND thread_id = ?`,
+		channelID,
+		threadID,
+	).Scan(&linkedMessageID); err != nil {
+		t.Fatalf("load repaired ledger row: %v", err)
+	}
+	if linkedMessageID != messageID {
+		t.Fatalf("ledger message_id = %q; want %q", linkedMessageID, messageID)
+	}
+	assertSQLiteForeignKeyTargets(t, ctx, pool, "channel_message_ledger", "channels", "threads", "runs", "channel_identities", "messages")
+	_ = accountID
+}
+
+func TestMigration00071RepairsBrokenMessagesIDDefault(t *testing.T) {
+	t.Parallel()
+
+	pool := openTestDB(t)
+	ctx := context.Background()
+	db := pool.Unwrap()
+
+	provider, err := newProvider(db)
+	if err != nil {
+		t.Fatalf("new provider: %v", err)
+	}
+	if _, err := provider.UpTo(ctx, 70); err != nil {
+		t.Fatalf("up to 70: %v", err)
+	}
+
+	accountID, threadID, channelID, messageID := seedChannelLedgerFixture(t, ctx, pool, "00071")
+
+	if _, err := pool.Exec(ctx, `PRAGMA foreign_keys = OFF`); err != nil {
+		t.Fatalf("disable foreign keys: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `ALTER TABLE messages RENAME TO messages_broken_00071`); err != nil {
+		t.Fatalf("rename messages: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `CREATE TABLE messages (
+		id                 TEXT PRIMARY KEY,
+		thread_id          TEXT NOT NULL REFERENCES threads(id) ON DELETE CASCADE,
+		account_id         TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+		thread_seq         INTEGER NOT NULL,
+		created_by_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+		role               TEXT NOT NULL,
+		content            TEXT NOT NULL,
+		content_json       TEXT,
+		metadata_json      TEXT NOT NULL DEFAULT '{}',
+		hidden             INTEGER NOT NULL DEFAULT 0,
+		deleted_at         TEXT,
+		token_count        INTEGER,
+		created_at         TEXT NOT NULL DEFAULT (datetime('now'))
+	)`); err != nil {
+		t.Fatalf("create broken messages: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO messages (
+		id, thread_id, account_id, thread_seq, created_by_user_id, role, content, content_json,
+		metadata_json, hidden, deleted_at, token_count, created_at
+	) SELECT
+		id, thread_id, account_id, thread_seq, created_by_user_id, role, content, content_json,
+		metadata_json, hidden, deleted_at, token_count, created_at
+	FROM messages_broken_00071`); err != nil {
+		t.Fatalf("copy broken messages: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `DROP TABLE messages_broken_00071`); err != nil {
+		t.Fatalf("drop broken messages source: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `CREATE INDEX ix_messages_thread_id ON messages(thread_id)`); err != nil {
+		t.Fatalf("create ix_messages_thread_id: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `CREATE INDEX ix_messages_org_id_thread_id_created_at ON messages(account_id, thread_id, created_at)`); err != nil {
+		t.Fatalf("create ix_messages_org_id_thread_id_created_at: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `CREATE INDEX ix_messages_account_id_thread_id_thread_seq ON messages(account_id, thread_id, thread_seq)`); err != nil {
+		t.Fatalf("create ix_messages_account_id_thread_id_thread_seq: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `CREATE INDEX ix_messages_thread_id_thread_seq ON messages(thread_id, thread_seq)`); err != nil {
+		t.Fatalf("create ix_messages_thread_id_thread_seq: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `CREATE UNIQUE INDEX uq_messages_thread_id_thread_seq ON messages(thread_id, thread_seq)`); err != nil {
+		t.Fatalf("create uq_messages_thread_id_thread_seq: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `PRAGMA foreign_keys = ON`); err != nil {
+		t.Fatalf("enable foreign keys: %v", err)
+	}
+
+	assertSQLiteTableSQLNotContains(t, ctx, pool, "messages", "PRIMARY KEY DEFAULT (lower(hex(randomblob(4)))")
+	if err := checkForeignKeys(ctx, db); err == nil {
+		t.Fatal("expected broken messages default rebuild to invalidate channel_message_ledger foreign keys before 71 repair")
+	}
+	if _, err := provider.UpByOne(ctx); err != nil {
+		t.Fatalf("apply 71: %v", err)
+	}
+	if err := checkForeignKeys(ctx, db); err != nil {
+		t.Fatalf("foreign keys after 71: %v", err)
+	}
+
+	assertSQLiteForeignKeyTargets(t, ctx, pool, "channel_message_ledger", "channels", "threads", "runs", "channel_identities", "messages")
+
+	var messagesSQL string
+	if err := pool.QueryRow(ctx, `SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'messages'`).Scan(&messagesSQL); err != nil {
+		t.Fatalf("load messages schema: %v", err)
+	}
+	if !strings.Contains(messagesSQL, "DEFAULT (lower(hex(randomblob(4)))") {
+		t.Fatalf("messages schema did not restore id default: %s", messagesSQL)
+	}
+	assertSQLiteTableSQLContains(t, ctx, pool, "messages", "PRIMARY KEY DEFAULT (lower(hex(randomblob(4)))")
+
+	var linkedMessageID string
+	if err := pool.QueryRow(ctx,
+		`SELECT message_id FROM channel_message_ledger WHERE channel_id = ? AND thread_id = ?`,
+		channelID,
+		threadID,
+	).Scan(&linkedMessageID); err != nil {
+		t.Fatalf("load repaired ledger row: %v", err)
+	}
+	if linkedMessageID != messageID {
+		t.Fatalf("ledger message_id = %q; want %q", linkedMessageID, messageID)
+	}
+	_ = accountID
+}
+
+func seedChannelLedgerFixture(t *testing.T, ctx context.Context, pool *Pool, suffix string) (string, string, string, string) {
+	t.Helper()
+
+	accountID := fmt.Sprintf("00000000-0000-4000-8000-0000000%05s1", suffix)
+	threadID := fmt.Sprintf("00000000-0000-4000-8000-0000000%05s2", suffix)
+	channelID := fmt.Sprintf("00000000-0000-4000-8000-0000000%05s3", suffix)
+	messageID := fmt.Sprintf("00000000-0000-4000-8000-0000000%05s4", suffix)
+	ledgerID := fmt.Sprintf("00000000-0000-4000-8000-0000000%05s5", suffix)
+
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO accounts (id, slug, name, type, status) VALUES (?, ?, ?, 'personal', 'active')`,
+		accountID, "acct-"+suffix, "acct-"+suffix,
+	); err != nil {
+		t.Fatalf("insert account: %v", err)
+	}
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO threads (id, account_id, title, mode, next_message_seq) VALUES (?, ?, ?, 'chat', 2)`,
+		threadID, accountID, "thread-"+suffix,
+	); err != nil {
+		t.Fatalf("insert thread: %v", err)
+	}
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO channels (id, account_id, channel_type, is_active, config_json) VALUES (?, ?, ?, 1, '{}')`,
+		channelID, accountID, "telegram-"+suffix,
+	); err != nil {
+		t.Fatalf("insert channel: %v", err)
+	}
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO messages (id, thread_id, account_id, thread_seq, role, content, metadata_json, hidden) VALUES (?, ?, ?, 1, 'user', ?, '{}', 0)`,
+		messageID, threadID, accountID, "hello-"+suffix,
+	); err != nil {
+		t.Fatalf("insert message: %v", err)
+	}
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO channel_message_ledger (
+			id, channel_id, channel_type, direction, thread_id, platform_conversation_id,
+			platform_message_id, metadata_json, message_id
+		) VALUES (?, ?, ?, 'outbound', ?, ?, ?, '{}', ?)`,
+		ledgerID,
+		channelID,
+		"telegram-"+suffix,
+		threadID,
+		"chat-"+suffix,
+		"msg-"+suffix,
+		messageID,
+	); err != nil {
+		t.Fatalf("insert channel ledger row: %v", err)
+	}
+	return accountID, threadID, channelID, messageID
 }
 
 // ---------------------------------------------------------------------------
@@ -508,5 +799,37 @@ func assertSQLiteForeignKeyTargets(t *testing.T, ctx context.Context, pool *Pool
 		if !got[target] {
 			t.Fatalf("%s foreign key targets = %v; missing %s", table, got, target)
 		}
+	}
+}
+
+func sqliteTableSQL(t *testing.T, ctx context.Context, pool *Pool, table string) string {
+	t.Helper()
+
+	var sql string
+	if err := pool.QueryRow(ctx, `SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?`, table).Scan(&sql); err != nil {
+		t.Fatalf("load sqlite_master sql for %s: %v", table, err)
+	}
+	return sql
+}
+
+func assertSQLiteTableSQLContains(t *testing.T, ctx context.Context, pool *Pool, table string, needle string) {
+	t.Helper()
+	assertSQLiteTableSQLMatch(t, ctx, pool, table, needle, true)
+}
+
+func assertSQLiteTableSQLNotContains(t *testing.T, ctx context.Context, pool *Pool, table string, needle string) {
+	t.Helper()
+	assertSQLiteTableSQLMatch(t, ctx, pool, table, needle, false)
+}
+
+func assertSQLiteTableSQLMatch(t *testing.T, ctx context.Context, pool *Pool, table string, needle string, want bool) {
+	t.Helper()
+	var sql string
+	if err := pool.QueryRow(ctx, `SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?`, table).Scan(&sql); err != nil {
+		t.Fatalf("load sqlite_master sql for %s: %v", table, err)
+	}
+	has := strings.Contains(sql, needle)
+	if has != want {
+		t.Fatalf("table %s SQL contains %q = %v; sql=%s", table, needle, has, sql)
 	}
 }

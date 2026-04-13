@@ -77,15 +77,16 @@ func (MessagesRepository) InsertAssistantMessageWithMetadata(
 		return uuid.Nil, err
 	}
 	createdAt := currentTimestampText()
-	var messageID uuid.UUID
+	messageID := uuid.New()
 	err = tx.QueryRow(
 		ctx,
 		`INSERT INTO messages (
-			account_id, thread_id, thread_seq, created_by_user_id, role, content, content_json, metadata_json, hidden, created_at
+			id, account_id, thread_id, thread_seq, created_by_user_id, role, content, content_json, metadata_json, hidden, created_at
 		) VALUES (
-			$1, $2, $3, NULL, $4, $5, $6, $7::jsonb, $8, $9
+			$1, $2, $3, $4, NULL, $5, $6, $7, $8::jsonb, $9, $10
 		)
 		 RETURNING id`,
+		messageID,
 		accountID,
 		threadID,
 		threadSeq,
@@ -185,7 +186,6 @@ func (MessagesRepository) ListByThread(
 			 WHERE m.account_id = $1
 			   AND m.thread_id = $2
 			   AND m.deleted_at IS NULL
-			   AND COALESCE(m.compacted, 0) = 0
 			   AND (
 			     m.hidden = FALSE
 			     OR (
@@ -327,7 +327,6 @@ func (MessagesRepository) ListByThreadUpToID(
 			 WHERE m.account_id = $1
 			   AND m.thread_id = $2
 			   AND m.deleted_at IS NULL
-			   AND COALESCE(m.compacted, 0) = 0
 			   AND (
 			     m.hidden = FALSE
 			     OR (
@@ -552,7 +551,6 @@ func (MessagesRepository) ListRecentByThread(
 		 	   AND thread_id = $2
 		 	   AND (hidden = FALSE OR json_extract(metadata_json, '$.intermediate') = 1)
 		 	   AND deleted_at IS NULL
-		 	   AND COALESCE(compacted, 0) = 0
 		 	 ORDER BY thread_seq DESC
 		 	 LIMIT $3
 		 ) recent
@@ -621,15 +619,16 @@ func (MessagesRepository) InsertThreadMessage(
 		return uuid.Nil, err
 	}
 	createdAt := currentTimestampText()
-	var messageID uuid.UUID
+	messageID := uuid.New()
 	err = tx.QueryRow(
 		ctx,
 		`INSERT INTO messages (
-			account_id, thread_id, thread_seq, created_by_user_id, role, content, content_json, created_at
+			id, account_id, thread_id, thread_seq, created_by_user_id, role, content, content_json, created_at
 		) VALUES (
-			$1, $2, $3, $4, $5, $6, $7, $8
+			$1, $2, $3, $4, $5, $6, $7, $8, $9
 		)
 		 RETURNING id`,
+		messageID,
 		accountID,
 		threadID,
 		threadSeq,

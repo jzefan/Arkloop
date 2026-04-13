@@ -154,6 +154,308 @@ func TestCreateMessageDesktopWritesHighPrecisionCreatedAt(t *testing.T) {
 	}
 }
 
+func TestCreateStructuredWithMetadataDesktopGeneratesIDWhenMessagesDefaultIsMissing(t *testing.T) {
+	ctx := context.Background()
+
+	sqlitePool, err := sqliteadapter.AutoMigrate(ctx, filepath.Join(t.TempDir(), "missing-message-id-default.db"))
+	if err != nil {
+		t.Fatalf("auto migrate sqlite: %v", err)
+	}
+	defer sqlitePool.Close()
+
+	// 模拟 00069 跑坏后的本地库：messages.id 仍是主键，但丢了默认 UUID 表达式。
+	if _, err := sqlitePool.Exec(ctx, `PRAGMA foreign_keys = OFF`); err != nil {
+		t.Fatalf("disable foreign keys: %v", err)
+	}
+	if _, err := sqlitePool.Exec(ctx, `ALTER TABLE messages RENAME TO messages_broken_default`); err != nil {
+		t.Fatalf("rename messages: %v", err)
+	}
+	if _, err := sqlitePool.Exec(ctx, `CREATE TABLE messages (
+			id                 TEXT PRIMARY KEY,
+			thread_id          TEXT NOT NULL REFERENCES threads(id) ON DELETE CASCADE,
+			account_id         TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+			thread_seq         INTEGER NOT NULL,
+			created_by_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+			role               TEXT NOT NULL,
+			content            TEXT NOT NULL,
+			content_json       TEXT,
+			metadata_json      TEXT NOT NULL DEFAULT '{}',
+			hidden             INTEGER NOT NULL DEFAULT 0,
+			deleted_at         TEXT,
+			token_count        INTEGER,
+			created_at         TEXT NOT NULL DEFAULT (datetime('now'))
+		)`); err != nil {
+		t.Fatalf("create broken messages: %v", err)
+	}
+	if _, err := sqlitePool.Exec(ctx, `INSERT INTO messages (
+			id, thread_id, account_id, thread_seq, created_by_user_id, role, content, content_json,
+			metadata_json, hidden, deleted_at, token_count, created_at
+		)
+		SELECT
+			id, thread_id, account_id, thread_seq, created_by_user_id, role, content, content_json,
+			metadata_json, hidden, deleted_at, token_count, created_at
+		FROM messages_broken_default`); err != nil {
+		t.Fatalf("copy broken messages: %v", err)
+	}
+	if _, err := sqlitePool.Exec(ctx, `DROP TABLE messages_broken_default`); err != nil {
+		t.Fatalf("drop broken messages source: %v", err)
+	}
+	if _, err := sqlitePool.Exec(ctx, `CREATE INDEX ix_messages_thread_id ON messages(thread_id)`); err != nil {
+		t.Fatalf("create messages thread index: %v", err)
+	}
+	if _, err := sqlitePool.Exec(ctx, `CREATE INDEX ix_messages_org_id_thread_id_created_at ON messages(account_id, thread_id, created_at)`); err != nil {
+		t.Fatalf("create messages created_at index: %v", err)
+	}
+	if _, err := sqlitePool.Exec(ctx, `CREATE INDEX ix_messages_account_id_thread_id_thread_seq ON messages(account_id, thread_id, thread_seq)`); err != nil {
+		t.Fatalf("create messages account/thread_seq index: %v", err)
+	}
+	if _, err := sqlitePool.Exec(ctx, `CREATE INDEX ix_messages_thread_id_thread_seq ON messages(thread_id, thread_seq)`); err != nil {
+		t.Fatalf("create messages thread_seq index: %v", err)
+	}
+	if _, err := sqlitePool.Exec(ctx, `CREATE UNIQUE INDEX uq_messages_thread_id_thread_seq ON messages(thread_id, thread_seq)`); err != nil {
+		t.Fatalf("create messages unique thread_seq index: %v", err)
+	}
+	if _, err := sqlitePool.Exec(ctx, `PRAGMA foreign_keys = ON`); err != nil {
+		t.Fatalf("enable foreign keys: %v", err)
+	}
+
+	pool := sqlitepgx.New(sqlitePool.Unwrap())
+	if err := auth.SeedDesktopUser(ctx, pool); err != nil {
+		t.Fatalf("seed desktop user: %v", err)
+	}
+
+	projectRepo, err := data.NewProjectRepository(pool)
+	if err != nil {
+		t.Fatalf("new project repo: %v", err)
+	}
+	threadRepo, err := data.NewThreadRepository(pool)
+	if err != nil {
+		t.Fatalf("new thread repo: %v", err)
+	}
+	messageRepo, err := data.NewMessageRepository(pool)
+	if err != nil {
+		t.Fatalf("new message repo: %v", err)
+	}
+
+	project, err := projectRepo.GetOrCreateDefaultByOwner(ctx, auth.DesktopAccountID, auth.DesktopUserID)
+	if err != nil {
+		t.Fatalf("get or create default project: %v", err)
+	}
+
+	userID := auth.DesktopUserID
+	thread, err := threadRepo.Create(ctx, auth.DesktopAccountID, &userID, project.ID, nil, false)
+	if err != nil {
+		t.Fatalf("create thread: %v", err)
+	}
+	msg, err := messageRepo.CreateStructuredWithMetadata(
+		ctx,
+		auth.DesktopAccountID,
+		thread.ID,
+		"user",
+		"hello",
+		[]byte(`{"parts":[{"type":"text","text":"hello"}]}`),
+		[]byte(`{"source":"test"}`),
+		&userID,
+	)
+	if err != nil {
+		t.Fatalf("create structured message: %v", err)
+	}
+	if msg.ID == uuid.Nil {
+		t.Fatal("expected explicit generated message id, got uuid.Nil")
+	}
+
+	var storedID string
+	if err := pool.QueryRow(ctx, `SELECT id FROM messages WHERE thread_id = $1 AND thread_seq = 1`, thread.ID).Scan(&storedID); err != nil {
+		t.Fatalf("query stored id: %v", err)
+	}
+	if storedID != msg.ID.String() {
+		t.Fatalf("stored id = %q; want %q", storedID, msg.ID.String())
+	}
+}
+
+func TestCreateStructuredWithMetadataDesktopSurvivesBrokenMessageIDDefault(t *testing.T) {
+	ctx := context.Background()
+
+	sqlitePool, err := sqliteadapter.AutoMigrate(ctx, filepath.Join(t.TempDir(), "broken-message-id-default.db"))
+	if err != nil {
+		t.Fatalf("auto migrate sqlite: %v", err)
+	}
+	defer sqlitePool.Close()
+
+	pool := sqlitepgx.New(sqlitePool.Unwrap())
+	if err := auth.SeedDesktopUser(ctx, pool); err != nil {
+		t.Fatalf("seed desktop user: %v", err)
+	}
+
+	if _, err := pool.Exec(ctx, `PRAGMA foreign_keys = OFF`); err != nil {
+		t.Fatalf("disable foreign keys: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `ALTER TABLE messages RENAME TO messages_broken_default_test`); err != nil {
+		t.Fatalf("rename messages: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `CREATE TABLE messages (
+		id                 TEXT PRIMARY KEY,
+		thread_id          TEXT NOT NULL REFERENCES threads(id) ON DELETE CASCADE,
+		account_id         TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+		thread_seq         INTEGER NOT NULL,
+		created_by_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+		role               TEXT NOT NULL,
+		content            TEXT NOT NULL,
+		content_json       TEXT,
+		metadata_json      TEXT NOT NULL DEFAULT '{}',
+		hidden             INTEGER NOT NULL DEFAULT 0,
+		deleted_at         TEXT,
+		token_count        INTEGER,
+		created_at         TEXT NOT NULL DEFAULT (datetime('now'))
+	)`); err != nil {
+		t.Fatalf("create broken messages: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO messages (
+		id, thread_id, account_id, thread_seq, created_by_user_id, role, content, content_json,
+		metadata_json, hidden, deleted_at, token_count, created_at
+	) SELECT
+		id, thread_id, account_id, thread_seq, created_by_user_id, role, content, content_json,
+		metadata_json, hidden, deleted_at, token_count, created_at
+	FROM messages_broken_default_test`); err != nil {
+		t.Fatalf("copy messages: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `DROP TABLE messages_broken_default_test`); err != nil {
+		t.Fatalf("drop old messages: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `CREATE INDEX ix_messages_thread_id ON messages(thread_id)`); err != nil {
+		t.Fatalf("create ix_messages_thread_id: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `CREATE INDEX ix_messages_org_id_thread_id_created_at ON messages(account_id, thread_id, created_at)`); err != nil {
+		t.Fatalf("create ix_messages_org_id_thread_id_created_at: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `CREATE INDEX ix_messages_account_id_thread_id_thread_seq ON messages(account_id, thread_id, thread_seq)`); err != nil {
+		t.Fatalf("create ix_messages_account_id_thread_id_thread_seq: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `CREATE INDEX ix_messages_thread_id_thread_seq ON messages(thread_id, thread_seq)`); err != nil {
+		t.Fatalf("create ix_messages_thread_id_thread_seq: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `CREATE UNIQUE INDEX uq_messages_thread_id_thread_seq ON messages(thread_id, thread_seq)`); err != nil {
+		t.Fatalf("create uq_messages_thread_id_thread_seq: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `PRAGMA foreign_keys = ON`); err != nil {
+		t.Fatalf("enable foreign keys: %v", err)
+	}
+
+	projectRepo, err := data.NewProjectRepository(pool)
+	if err != nil {
+		t.Fatalf("new project repo: %v", err)
+	}
+	threadRepo, err := data.NewThreadRepository(pool)
+	if err != nil {
+		t.Fatalf("new thread repo: %v", err)
+	}
+	messageRepo, err := data.NewMessageRepository(pool)
+	if err != nil {
+		t.Fatalf("new message repo: %v", err)
+	}
+
+	project, err := projectRepo.GetOrCreateDefaultByOwner(ctx, auth.DesktopAccountID, auth.DesktopUserID)
+	if err != nil {
+		t.Fatalf("get or create default project: %v", err)
+	}
+
+	userID := auth.DesktopUserID
+	thread, err := threadRepo.Create(ctx, auth.DesktopAccountID, &userID, project.ID, nil, false)
+	if err != nil {
+		t.Fatalf("create thread: %v", err)
+	}
+	msg, err := messageRepo.CreateStructuredWithMetadata(
+		ctx,
+		auth.DesktopAccountID,
+		thread.ID,
+		"user",
+		"hello from broken schema",
+		nil,
+		nil,
+		&userID,
+	)
+	if err != nil {
+		t.Fatalf("CreateStructuredWithMetadata: %v", err)
+	}
+	if msg.ID == uuid.Nil {
+		t.Fatal("expected non-nil message id")
+	}
+
+	var persistedID uuid.UUID
+	if err := pool.QueryRow(ctx, `SELECT id FROM messages WHERE thread_id = $1 AND thread_seq = $2`, thread.ID, 1).Scan(&persistedID); err != nil {
+		t.Fatalf("load persisted message id: %v", err)
+	}
+	if persistedID != msg.ID {
+		t.Fatalf("persisted message id = %s; want %s", persistedID, msg.ID)
+	}
+}
+
+func TestCreateStructuredWithMetadataDesktopGeneratesIDWhenMessagesDefaultIsBroken(t *testing.T) {
+	ctx := context.Background()
+
+	sqlitePool, err := sqliteadapter.AutoMigrate(ctx, filepath.Join(t.TempDir(), "broken-messages-default.db"))
+	if err != nil {
+		t.Fatalf("auto migrate sqlite: %v", err)
+	}
+	defer sqlitePool.Close()
+
+	pool := sqlitepgx.New(sqlitePool.Unwrap())
+	if err := auth.SeedDesktopUser(ctx, pool); err != nil {
+		t.Fatalf("seed desktop user: %v", err)
+	}
+
+	projectRepo, err := data.NewProjectRepository(pool)
+	if err != nil {
+		t.Fatalf("new project repo: %v", err)
+	}
+	threadRepo, err := data.NewThreadRepository(pool)
+	if err != nil {
+		t.Fatalf("new thread repo: %v", err)
+	}
+	messageRepo, err := data.NewMessageRepository(pool)
+	if err != nil {
+		t.Fatalf("new message repo: %v", err)
+	}
+
+	project, err := projectRepo.GetOrCreateDefaultByOwner(ctx, auth.DesktopAccountID, auth.DesktopUserID)
+	if err != nil {
+		t.Fatalf("get or create default project: %v", err)
+	}
+
+	userID := auth.DesktopUserID
+	thread, err := threadRepo.Create(ctx, auth.DesktopAccountID, &userID, project.ID, nil, false)
+	if err != nil {
+		t.Fatalf("create thread: %v", err)
+	}
+
+	breakDesktopMessagesIDDefault(t, ctx, pool)
+
+	msg, err := messageRepo.CreateStructuredWithMetadata(
+		ctx,
+		auth.DesktopAccountID,
+		thread.ID,
+		"user",
+		"hello",
+		[]byte(`{"kind":"text"}`),
+		[]byte(`{"source":"test"}`),
+		&userID,
+	)
+	if err != nil {
+		t.Fatalf("create structured message: %v", err)
+	}
+	if msg.ID == uuid.Nil {
+		t.Fatal("expected generated message id")
+	}
+
+	var storedID string
+	if err := pool.QueryRow(ctx, `SELECT id FROM messages WHERE thread_id = $1 AND thread_seq = $2`, thread.ID, msg.ThreadSeq).Scan(&storedID); err != nil {
+		t.Fatalf("load stored message id: %v", err)
+	}
+	if storedID != msg.ID.String() {
+		t.Fatalf("unexpected stored id: got %q want %q", storedID, msg.ID.String())
+	}
+}
+
 func TestCopyUpToDesktopIncludesHiddenIntermediateHistory(t *testing.T) {
 	ctx := context.Background()
 
@@ -597,6 +899,51 @@ func TestCopyUpToDesktopSkipsRolledBackIntermediateHistory(t *testing.T) {
 	}
 	if len(roles) != 1 || roles[0] != "user" {
 		t.Fatalf("unexpected copied roles after rollback: %#v", roles)
+	}
+}
+
+func breakDesktopMessagesIDDefault(t *testing.T, ctx context.Context, pool *sqlitepgx.Pool) {
+	t.Helper()
+
+	statements := []string{
+		`PRAGMA foreign_keys = OFF`,
+		`ALTER TABLE messages RENAME TO messages_broken_default_test`,
+		`CREATE TABLE messages (
+			id                 TEXT PRIMARY KEY,
+			thread_id          TEXT NOT NULL REFERENCES threads(id) ON DELETE CASCADE,
+			account_id         TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+			thread_seq         INTEGER NOT NULL,
+			created_by_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+			role               TEXT NOT NULL,
+			content            TEXT NOT NULL,
+			content_json       TEXT,
+			metadata_json      TEXT NOT NULL DEFAULT '{}',
+			hidden             INTEGER NOT NULL DEFAULT 0,
+			deleted_at         TEXT,
+			token_count        INTEGER,
+			created_at         TEXT NOT NULL DEFAULT (datetime('now'))
+		)`,
+		`INSERT INTO messages (
+			id, thread_id, account_id, thread_seq, created_by_user_id, role, content, content_json,
+			metadata_json, hidden, deleted_at, token_count, created_at
+		)
+		SELECT
+			id, thread_id, account_id, thread_seq, created_by_user_id, role, content, content_json,
+			metadata_json, hidden, deleted_at, token_count, created_at
+		FROM messages_broken_default_test`,
+		`DROP TABLE messages_broken_default_test`,
+		`CREATE INDEX ix_messages_thread_id ON messages(thread_id)`,
+		`CREATE INDEX ix_messages_org_id_thread_id_created_at ON messages(account_id, thread_id, created_at)`,
+		`CREATE INDEX ix_messages_account_id_thread_id_thread_seq ON messages(account_id, thread_id, thread_seq)`,
+		`CREATE INDEX ix_messages_thread_id_thread_seq ON messages(thread_id, thread_seq)`,
+		`CREATE UNIQUE INDEX uq_messages_thread_id_thread_seq ON messages(thread_id, thread_seq)`,
+		`PRAGMA foreign_keys = ON`,
+	}
+
+	for _, stmt := range statements {
+		if _, err := pool.Exec(ctx, stmt); err != nil {
+			t.Fatalf("exec %q: %v", stmt, err)
+		}
 	}
 }
 
