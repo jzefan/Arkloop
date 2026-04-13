@@ -54,8 +54,8 @@ func TestLoadRunInputsDesktopBoundsFreshChannelHistoryAtThreadTail(t *testing.T)
 	if err := insertDesktopThreadMessage(ctx, db, accountID, threadID, hiddenID, 1, "assistant", "hidden", "2026-04-09 05:18:28.100000000 +0000"); err != nil {
 		t.Fatalf("insert hidden message: %v", err)
 	}
-	if _, err := db.Exec(ctx, `UPDATE messages SET hidden = TRUE, compacted = 1 WHERE id = $1`, hiddenID); err != nil {
-		t.Fatalf("mark hidden message compacted: %v", err)
+	if _, err := db.Exec(ctx, `UPDATE messages SET hidden = TRUE WHERE id = $1`, hiddenID); err != nil {
+		t.Fatalf("mark hidden message hidden: %v", err)
 	}
 	if err := insertDesktopThreadMessage(ctx, db, accountID, threadID, msg1ID, 2, "user", "one", "2026-04-09 05:18:30.100000000 +0000"); err != nil {
 		t.Fatalf("insert message one: %v", err)
@@ -86,10 +86,10 @@ func TestLoadRunInputsDesktopBoundsFreshChannelHistoryAtThreadTail(t *testing.T)
 	if len(loaded.Messages) != 2 {
 		t.Fatalf("expected 2 prompt messages, got %d", len(loaded.Messages))
 	}
-	if !loaded.HasActiveCompactSnapshot || loaded.ActiveCompactSnapshotText != "future summary" {
-		t.Fatalf("expected replacement prefix, got has=%v text=%q", loaded.HasActiveCompactSnapshot, loaded.ActiveCompactSnapshotText)
+	if len(loaded.ThreadContextFrontier) == 0 || loaded.ThreadContextFrontier[0].SourceText != "future summary" {
+		t.Fatalf("expected replacement prefix, got frontier=%#v", loaded.ThreadContextFrontier)
 	}
-	if loaded.Messages[0].Role != "user" || loaded.Messages[0].Content[0].Text != formatCompactSnapshotText("future summary") {
+	if loaded.Messages[0].Role != "user" || loaded.Messages[0].Content[0].Text != "future summary" {
 		t.Fatalf("unexpected replacement message: %#v", loaded.Messages[0])
 	}
 	if loaded.Messages[1].Role != "user" || loaded.Messages[1].Content[0].Text != "two" {
@@ -152,8 +152,8 @@ func TestLoadRunInputsDesktopResolvesChannelHistoryUpperBoundFromLedger(t *testi
 	if err := insertDesktopThreadMessage(ctx, db, accountID, threadID, hiddenID, 1, "assistant", "hidden", "2026-04-09 05:18:28.100000000 +0000"); err != nil {
 		t.Fatalf("insert hidden message: %v", err)
 	}
-	if _, err := db.Exec(ctx, `UPDATE messages SET hidden = TRUE, compacted = 1 WHERE id = $1`, hiddenID); err != nil {
-		t.Fatalf("mark hidden message compacted: %v", err)
+	if _, err := db.Exec(ctx, `UPDATE messages SET hidden = TRUE WHERE id = $1`, hiddenID); err != nil {
+		t.Fatalf("mark hidden message hidden: %v", err)
 	}
 	if err := insertDesktopThreadMessage(ctx, db, accountID, threadID, msg1ID, 2, "user", "one", "2026-04-09 05:18:30.100000000 +0000"); err != nil {
 		t.Fatalf("insert message one: %v", err)
@@ -187,13 +187,13 @@ func TestLoadRunInputsDesktopResolvesChannelHistoryUpperBoundFromLedger(t *testi
 	if got := loaded.InputJSON[runStartedThreadTailMessageIDKey]; got != msg2ID.String() {
 		t.Fatalf("unexpected resolved thread tail: %#v", got)
 	}
-	if !loaded.HasActiveCompactSnapshot || loaded.ActiveCompactSnapshotText != "future summary" {
-		t.Fatalf("expected replacement prefix, got has=%v text=%q", loaded.HasActiveCompactSnapshot, loaded.ActiveCompactSnapshotText)
+	if len(loaded.ThreadContextFrontier) == 0 || loaded.ThreadContextFrontier[0].SourceText != "future summary" {
+		t.Fatalf("expected replacement prefix, got frontier=%#v", loaded.ThreadContextFrontier)
 	}
 	if len(loaded.Messages) != 2 {
 		t.Fatalf("expected 2 bounded prompt messages, got %d", len(loaded.Messages))
 	}
-	if loaded.Messages[0].Content[0].Text != formatCompactSnapshotText("future summary") ||
+	if loaded.Messages[0].Content[0].Text != "future summary" ||
 		loaded.Messages[1].Content[0].Text != "two" {
 		t.Fatalf("unexpected bounded contents: %#v", loaded.Messages)
 	}
@@ -254,8 +254,8 @@ func TestLoadRunInputsDesktopSkipsSnapshotWhenChannelUpperBoundMissing(t *testin
 	if err := insertDesktopThreadMessage(ctx, db, accountID, threadID, hiddenID, 1, "assistant", "hidden", "2026-04-09 05:18:28.100000000 +0000"); err != nil {
 		t.Fatalf("insert hidden message: %v", err)
 	}
-	if _, err := db.Exec(ctx, `UPDATE messages SET hidden = TRUE, compacted = 1 WHERE id = $1`, hiddenID); err != nil {
-		t.Fatalf("mark hidden message compacted: %v", err)
+	if _, err := db.Exec(ctx, `UPDATE messages SET hidden = TRUE WHERE id = $1`, hiddenID); err != nil {
+		t.Fatalf("mark hidden message hidden: %v", err)
 	}
 	if err := insertDesktopThreadMessage(ctx, db, accountID, threadID, msg1ID, 2, "user", "one", "2026-04-09 05:18:30.100000000 +0000"); err != nil {
 		t.Fatalf("insert message one: %v", err)
@@ -283,13 +283,13 @@ func TestLoadRunInputsDesktopSkipsSnapshotWhenChannelUpperBoundMissing(t *testin
 	if err != nil {
 		t.Fatalf("loadRunInputs failed: %v", err)
 	}
-	if !loaded.HasActiveCompactSnapshot || loaded.ActiveCompactSnapshotText != "future summary" {
-		t.Fatalf("expected channel downgrade path to keep replacement prefix, got has=%v text=%q", loaded.HasActiveCompactSnapshot, loaded.ActiveCompactSnapshotText)
+	if len(loaded.ThreadContextFrontier) == 0 || loaded.ThreadContextFrontier[0].SourceText != "future summary" {
+		t.Fatalf("expected channel downgrade path to keep replacement prefix, got frontier=%#v", loaded.ThreadContextFrontier)
 	}
 	if len(loaded.Messages) != 3 {
 		t.Fatalf("expected replacement plus visible history tail, got %d", len(loaded.Messages))
 	}
-	if loaded.Messages[0].Content[0].Text != formatCompactSnapshotText("future summary") ||
+	if loaded.Messages[0].Content[0].Text != "future summary" ||
 		loaded.Messages[1].Content[0].Text != "two" ||
 		loaded.Messages[2].Content[0].Text != "future assistant" {
 		t.Fatalf("unexpected downgrade contents: %#v", loaded.Messages)

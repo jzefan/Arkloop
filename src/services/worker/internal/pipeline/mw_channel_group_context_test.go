@@ -3,7 +3,6 @@ package pipeline
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"strings"
 	"testing"
 
@@ -144,16 +143,15 @@ func TestNewChannelGroupContextTrimMiddleware_trimsSupergroup(t *testing.T) {
 	}
 }
 
-func TestNewChannelGroupContextTrimMiddlewareDropsSnapshotBeforeLatestRealMessage(t *testing.T) {
+func TestNewChannelGroupContextTrimMiddlewareDropsReplacementBeforeLatestRealMessage(t *testing.T) {
 	t.Setenv("ARKLOOP_CHANNEL_GROUP_MAX_CONTEXT_TOKENS", "40")
 	mw := NewChannelGroupContextTrimMiddleware()
-	snapshot := strings.Repeat("s", 400)
+	replacement := strings.Repeat("s", 400)
 	tail := strings.Repeat("t", 200)
 	rc := &RunContext{
-		ChannelContext:           &ChannelContext{ConversationType: "supergroup"},
-		HasActiveCompactSnapshot: true,
+		ChannelContext: &ChannelContext{ConversationType: "supergroup"},
 		Messages: []llm.Message{
-			makeCompactSnapshotMessage(snapshot),
+			makeThreadContextReplacementMessage(replacement),
 			{Role: "user", Content: []llm.ContentPart{{Type: "text", Text: strings.Repeat("w", 400)}}},
 			{Role: "user", Content: []llm.ContentPart{{Type: "text", Text: tail}}},
 		},
@@ -161,7 +159,7 @@ func TestNewChannelGroupContextTrimMiddlewareDropsSnapshotBeforeLatestRealMessag
 	}
 	_ = mw(context.Background(), rc, func(context.Context, *RunContext) error { return nil })
 	if len(rc.Messages) != 1 {
-		t.Fatalf("expected snapshot to be dropped in favor of latest real message, got %d", len(rc.Messages))
+		t.Fatalf("expected replacement to be dropped in favor of latest real message, got %d", len(rc.Messages))
 	}
 	if got := rc.Messages[0].Content[0].Text; got != tail {
 		t.Fatalf("unexpected kept latest message: %q", got)
@@ -172,10 +170,9 @@ func TestTrimRunContextMessagesToApproxTokensPreservesAllLeadingReplacements(t *
 	const budget = 120
 	long := strings.Repeat("w", 240)
 	rc := &RunContext{
-		HasActiveCompactSnapshot: true,
 		Messages: []llm.Message{
-			makeCompactSnapshotMessage("summary one"),
-			makeCompactSnapshotMessage("summary two"),
+			makeThreadContextReplacementMessage("summary one"),
+			makeThreadContextReplacementMessage("summary two"),
 			{Role: "user", Content: []llm.ContentPart{{Type: "text", Text: long}}},
 			{Role: "user", Content: []llm.ContentPart{{Type: "text", Text: "tail"}}},
 		},
@@ -187,8 +184,8 @@ func TestTrimRunContextMessagesToApproxTokensPreservesAllLeadingReplacements(t *
 	if len(rc.Messages) != 3 {
 		t.Fatalf("expected both replacements plus tail, got %d", len(rc.Messages))
 	}
-	if rc.Messages[0].Content[0].Text != formatCompactSnapshotText("summary one") ||
-		rc.Messages[1].Content[0].Text != formatCompactSnapshotText("summary two") ||
+	if rc.Messages[0].Content[0].Text != "summary one" ||
+		rc.Messages[1].Content[0].Text != "summary two" ||
 		rc.Messages[2].Content[0].Text != "tail" {
 		t.Fatalf("unexpected trimmed messages: %#v", rc.Messages)
 	}
@@ -298,11 +295,11 @@ func TestNewChannelGroupContextTrimMiddleware_skipsDebugEventWhenDisabled(t *tes
 	}
 }
 
-func TestBuildGroupTrimEventIncludesSnapshotFlag(t *testing.T) {
+func TestBuildGroupTrimEventIncludesReplacementFlag(t *testing.T) {
 	before := groupTrimStats{
 		MessageCount:         4,
 		RealMessageCount:     3,
-		HasSnapshotPrefix:    true,
+		HasReplacementPrefix: true,
 		EstimatedTrimWeight:  100,
 		EstimatedTextTokens:  80,
 		EstimatedImageTokens: 20,
@@ -310,7 +307,7 @@ func TestBuildGroupTrimEventIncludesSnapshotFlag(t *testing.T) {
 	after := groupTrimStats{
 		MessageCount:         3,
 		RealMessageCount:     2,
-		HasSnapshotPrefix:    true,
+		HasReplacementPrefix: true,
 		EstimatedTrimWeight:  60,
 		EstimatedTextTokens:  50,
 		EstimatedImageTokens: 10,
@@ -319,44 +316,11 @@ func TestBuildGroupTrimEventIncludesSnapshotFlag(t *testing.T) {
 	if ev == nil {
 		t.Fatal("expected event")
 	}
-	if ev["has_snapshot_prefix"] != true {
-		t.Fatalf("expected snapshot flag, got %#v", ev["has_snapshot_prefix"])
+	if ev["has_replacement_prefix"] != true {
+		t.Fatalf("expected replacement flag, got %#v", ev["has_replacement_prefix"])
 	}
 	if ev["dropped_count"] != 1 {
 		t.Fatalf("expected dropped_count=1, got %#v", ev["dropped_count"])
-	}
-}
-
-type retryingGroupCompactGateway struct {
-	calls   int
-	summary string
-}
-
-func (g *retryingGroupCompactGateway) Stream(_ context.Context, _ llm.Request, yield func(llm.StreamEvent) error) error {
-	g.calls++
-	if g.calls == 1 {
-		return errors.New("context_length_exceeded")
-	}
-	if err := yield(llm.StreamMessageDelta{Role: "assistant", ContentDelta: g.summary}); err != nil {
-		return err
-	}
-	return yield(llm.StreamRunCompleted{})
-}
-
-func TestRunGroupCompactWithRetryReturnsDroppedPrefixCount(t *testing.T) {
-	gateway := &retryingGroupCompactGateway{summary: "summary"}
-	prefix := []llm.Message{
-		{Role: "user", Content: []llm.TextPart{{Text: "one"}}},
-		{Role: "user", Content: []llm.TextPart{{Text: "two"}}},
-		{Role: "user", Content: []llm.TextPart{{Text: "three"}}},
-	}
-
-	summary, dropped := runGroupCompactWithRetry(context.Background(), gateway, "gpt-test", prefix, groupTrimEncoder(), "")
-	if summary != "summary" {
-		t.Fatalf("unexpected summary: %q", summary)
-	}
-	if dropped != 1 {
-		t.Fatalf("expected one dropped prefix message after retry shrink, got %d", dropped)
 	}
 }
 

@@ -32,6 +32,8 @@ type ContextCompactSettings struct {
 	PersistTriggerApproxTokens int
 	// PersistTriggerContextPct 1–100：按「上下文窗口」比例计算触发阈值；0 表示仅用 PersistTriggerApproxTokens。
 	PersistTriggerContextPct int
+	// TargetContextPct 1-100：compact 后尝试压回到上下文窗口的百分比；0 默认 75。
+	TargetContextPct int
 	// FallbackContextWindowTokens 路由无 available_catalog.context_length 时用于比例换算。
 	FallbackContextWindowTokens int
 	PersistKeepLastMessages     int

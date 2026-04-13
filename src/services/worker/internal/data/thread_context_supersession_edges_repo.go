@@ -157,6 +157,47 @@ func (ThreadContextSupersessionEdgesRepository) ListByReplacementID(
 	return out, nil
 }
 
+func (ThreadContextSupersessionEdgesRepository) DeleteBySupersededChunkIDs(
+	ctx context.Context,
+	tx pgx.Tx,
+	accountID uuid.UUID,
+	threadID uuid.UUID,
+	chunkIDs []uuid.UUID,
+) error {
+	if tx == nil {
+		return fmt.Errorf("tx must not be nil")
+	}
+	if accountID == uuid.Nil || threadID == uuid.Nil {
+		return fmt.Errorf("account_id and thread_id must not be empty")
+	}
+	if len(chunkIDs) == 0 {
+		return fmt.Errorf("chunk_ids must not be empty")
+	}
+	filtered := make([]uuid.UUID, 0, len(chunkIDs))
+	for _, chunkID := range chunkIDs {
+		if chunkID == uuid.Nil {
+			continue
+		}
+		filtered = append(filtered, chunkID)
+	}
+	if len(filtered) == 0 {
+		return fmt.Errorf("chunk_ids must include at least one non-empty id")
+	}
+	if _, err := tx.Exec(
+		ctx,
+		`DELETE FROM replacement_supersession_edges
+		  WHERE account_id = $1
+		    AND thread_id = $2
+		    AND superseded_chunk_id = ANY($3::uuid[])`,
+		accountID,
+		threadID,
+		filtered,
+	); err != nil {
+		return err
+	}
+	return nil
+}
+
 func ensureReplacementOwnership(
 	ctx context.Context,
 	tx pgx.Tx,

@@ -126,8 +126,7 @@ func NewHeartbeatPrepareMiddleware() RunMiddleware {
 			}
 		}
 
-		// 构建尾部 user message：元数据 + heartbeat.md 合并为一条，
-		// 放在消息尾部的注意力焦点位置，用结构化标记避免模型误认为人类发言。
+		// 构建 runtime tail：保持控制面提示独立，避免污染会话历史与 prompt-cache snapshot。
 		var sb strings.Builder
 		sb.WriteString("[SYSTEM_HEARTBEAT_CHECK]\n")
 		sb.WriteString(fmt.Sprintf("time_utc: %s\n", time.Now().UTC().Format(time.RFC3339)))
@@ -140,11 +139,14 @@ func NewHeartbeatPrepareMiddleware() RunMiddleware {
 		}
 		sb.WriteString("[/SYSTEM_HEARTBEAT_CHECK]")
 
-		rc.Messages = append(rc.Messages, llm.Message{
-			Role:    "user",
-			Content: []llm.ContentPart{{Type: "text", Text: sb.String()}},
+		rc.UpsertPromptSegment(PromptSegment{
+			Name:          "heartbeat.check",
+			Target:        PromptTargetRuntimeTail,
+			Role:          "user",
+			Text:          sb.String(),
+			Stability:     PromptStabilityVolatileTail,
+			CacheEligible: false,
 		})
-		rc.ThreadMessageIDs = append(rc.ThreadMessageIDs, uuid.Nil)
 
 		// SystemProtocolSnippet 保留在 system prefix：机制约束放 system 层
 		rc.UpsertPromptSegment(PromptSegment{

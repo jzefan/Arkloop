@@ -57,6 +57,7 @@ type persistedCanonicalThreadGraph struct {
 	Chunks                   []canonicalChunk
 	AtomRecordsByKey         map[string]*data.ProtocolAtomRecord
 	ChunkRecordsByContextSeq map[int64]*data.ContextChunkRecord
+	ChunkRecordsByID         map[uuid.UUID]*data.ContextChunkRecord
 }
 
 func buildCanonicalAtomGraph(messages []data.ThreadMessage) ([]canonicalAtom, []canonicalChunk) {
@@ -519,12 +520,29 @@ func ensureCanonicalThreadGraphPersisted(
 	if err != nil {
 		return nil, err
 	}
+	return ensureCanonicalThreadGraphPersistedFromMessages(ctx, tx, accountID, threadID, messages)
+}
+
+func ensureCanonicalThreadGraphPersistedFromMessages(
+	ctx context.Context,
+	tx pgx.Tx,
+	accountID uuid.UUID,
+	threadID uuid.UUID,
+	messages []data.ThreadMessage,
+) (*persistedCanonicalThreadGraph, error) {
+	if tx == nil {
+		return nil, fmt.Errorf("tx must not be nil")
+	}
+	if accountID == uuid.Nil || threadID == uuid.Nil {
+		return nil, fmt.Errorf("account_id and thread_id must not be empty")
+	}
 	atoms, chunks := buildCanonicalAtomGraph(messages)
 
 	atomsRepo := data.ThreadContextAtomsRepository{}
 	chunksRepo := data.ThreadContextChunksRepository{}
 	atomRecords := make(map[string]*data.ProtocolAtomRecord, len(atoms))
 	chunkRecords := make(map[int64]*data.ContextChunkRecord, len(chunks))
+	chunkRecordsByID := make(map[uuid.UUID]*data.ContextChunkRecord, len(chunks))
 
 	for i := range atoms {
 		role := ""
@@ -547,7 +565,67 @@ func ensureCanonicalThreadGraphPersisted(
 		atomRecords[atoms[i].Key] = record
 	}
 
+	type targetChunkKey struct {
+		AtomID   uuid.UUID
+		ChunkSeq int64
+	}
+	desiredChunkByContextSeq := make(map[int64]targetChunkKey, len(chunks))
 	chunkSeqByAtomKey := make(map[string]int64, len(atoms))
+	for i := range chunks {
+		atomRecord := atomRecords[chunks[i].AtomKey]
+		if atomRecord == nil {
+			return nil, fmt.Errorf("atom record missing for %s", chunks[i].AtomKey)
+		}
+		chunkSeqByAtomKey[chunks[i].AtomKey]++
+		desiredChunkByContextSeq[chunks[i].ContextSeq] = targetChunkKey{
+			AtomID:   atomRecord.ID,
+			ChunkSeq: chunkSeqByAtomKey[chunks[i].AtomKey],
+		}
+	}
+	existingChunks, err := chunksRepo.ListByThreadUpToContextSeq(ctx, tx, accountID, threadID, nil)
+	if err != nil {
+		return nil, err
+	}
+	staleChunkIDs := make([]uuid.UUID, 0)
+	staleChunkContextSeq := make([]int64, 0)
+	for _, chunk := range existingChunks {
+		target, ok := desiredChunkByContextSeq[chunk.ContextSeq]
+		if ok && chunk.AtomID == target.AtomID && chunk.ChunkSeq == target.ChunkSeq {
+			continue
+		}
+		staleChunkIDs = append(staleChunkIDs, chunk.ID)
+		staleChunkContextSeq = append(staleChunkContextSeq, chunk.ContextSeq)
+	}
+	supersessionEdgesRepo := data.ThreadContextSupersessionEdgesRepository{}
+	if len(staleChunkIDs) > 0 {
+		if err := supersessionEdgesRepo.DeleteBySupersededChunkIDs(ctx, tx, accountID, threadID, staleChunkIDs); err != nil {
+			return nil, err
+		}
+	}
+	for _, contextSeq := range staleChunkContextSeq {
+		if err := chunksRepo.DeleteByThreadContextSeq(ctx, tx, accountID, threadID, contextSeq); err != nil {
+			return nil, err
+		}
+	}
+
+	desiredAtomSeq := make(map[int64]struct{}, len(atoms))
+	for i := range atoms {
+		desiredAtomSeq[int64(i+1)] = struct{}{}
+	}
+	existingAtoms, err := atomsRepo.ListByThreadUpToAtomSeq(ctx, tx, accountID, threadID, nil)
+	if err != nil {
+		return nil, err
+	}
+	for _, atom := range existingAtoms {
+		if _, ok := desiredAtomSeq[atom.AtomSeq]; ok {
+			continue
+		}
+		if err := atomsRepo.DeleteByThreadAtomSeq(ctx, tx, accountID, threadID, atom.AtomSeq); err != nil {
+			return nil, err
+		}
+	}
+
+	chunkSeqByAtomKey = make(map[string]int64, len(atoms))
 	for i := range chunks {
 		atomRecord := atomRecords[chunks[i].AtomKey]
 		if atomRecord == nil {
@@ -567,6 +645,7 @@ func ensureCanonicalThreadGraphPersisted(
 			return nil, err
 		}
 		chunkRecords[chunks[i].ContextSeq] = record
+		chunkRecordsByID[record.ID] = record
 	}
 
 	return &persistedCanonicalThreadGraph{
@@ -574,6 +653,7 @@ func ensureCanonicalThreadGraphPersisted(
 		Chunks:                   chunks,
 		AtomRecordsByKey:         atomRecords,
 		ChunkRecordsByContextSeq: chunkRecords,
+		ChunkRecordsByID:         chunkRecordsByID,
 	}, nil
 }
 

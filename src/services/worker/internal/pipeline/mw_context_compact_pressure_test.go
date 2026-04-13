@@ -63,6 +63,7 @@ func TestMaybeInlineCompactMessagesUsesAnchorPressure(t *testing.T) {
 	}
 	estimate := HistoryThreadPromptTokensForRoute(rc.SelectedRoute, msgs)
 	rc.ContextCompact.PersistTriggerApproxTokens = estimate + 1
+	rc.ContextCompact.TargetContextPct = 1
 	anchor := &ContextCompactPressureAnchor{
 		LastRealPromptTokens:             estimate + 20,
 		LastRequestContextEstimateTokens: estimate,
@@ -314,10 +315,9 @@ func TestContextCompactMiddlewareAfterCompactReceivesPersistOutput(t *testing.T)
 			Route:      routing.ProviderRouteRule{Model: "gpt-4o", ID: "route-1"},
 			Credential: routing.ProviderCredential{ProviderKind: routing.ProviderKindOpenAI},
 		},
-		Messages:                  []llm.Message{{Role: "user", Content: []llm.TextPart{{Text: "m1"}}}, {Role: "assistant", Content: []llm.TextPart{{Text: "m2"}}}, {Role: "user", Content: []llm.TextPart{{Text: "m3"}}}},
-		ThreadMessageIDs:          []uuid.UUID{msg1ID, msg2ID, msg3ID},
-		HookRuntime:               NewHookRuntime(registry, NewDefaultHookResultApplier()),
-		ActiveCompactSnapshotText: "",
+		Messages:         []llm.Message{{Role: "user", Content: []llm.TextPart{{Text: "m1"}}}, {Role: "assistant", Content: []llm.TextPart{{Text: "m2"}}}, {Role: "user", Content: []llm.TextPart{{Text: "m3"}}}},
+		ThreadMessageIDs: []uuid.UUID{msg1ID, msg2ID, msg3ID},
+		HookRuntime:      NewHookRuntime(registry, NewDefaultHookResultApplier()),
 	}
 
 	mw := NewContextCompactMiddleware(pool, data.MessagesRepository{}, nil, rc.Gateway, false)
@@ -337,5 +337,144 @@ func TestContextCompactMiddlewareAfterCompactReceivesPersistOutput(t *testing.T)
 	}
 	if len(got.Messages) != len(rc.Messages) {
 		t.Fatalf("expected %d messages, got %d", len(rc.Messages), len(got.Messages))
+	}
+}
+
+func TestContextCompactMiddlewarePersistsReplacementFromThreadFrontier(t *testing.T) {
+	ctx := context.Background()
+	db := testutil.SetupPostgresDatabase(t, "context_compact_persist_from_frontier")
+	pool, err := pgxpool.New(ctx, db.DSN)
+	if err != nil {
+		t.Fatalf("pgxpool.New: %v", err)
+	}
+	t.Cleanup(pool.Close)
+
+	accountID := uuid.New()
+	projectID := uuid.New()
+	threadID := uuid.New()
+	runID := uuid.New()
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO accounts (id, type) VALUES ($1, 'personal')`,
+		accountID,
+	); err != nil {
+		t.Fatalf("insert account: %v", err)
+	}
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO projects (id, account_id, name) VALUES ($1, $2, 'p')`,
+		projectID, accountID,
+	); err != nil {
+		t.Fatalf("insert project: %v", err)
+	}
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO threads (id, account_id, project_id, next_message_seq) VALUES ($1, $2, $3, 10)`,
+		threadID, accountID, projectID,
+	); err != nil {
+		t.Fatalf("insert thread: %v", err)
+	}
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO runs (id, account_id, thread_id, status) VALUES ($1, $2, $3, 'running')`,
+		runID, accountID, threadID,
+	); err != nil {
+		t.Fatalf("insert run: %v", err)
+	}
+
+	huge := strings.Repeat("alpha beta gamma delta\n\n", 180)
+	msgs := []struct {
+		id        uuid.UUID
+		threadSeq int
+		role      string
+		content   string
+	}{
+		{id: uuid.New(), threadSeq: 1, role: "user", content: huge},
+		{id: uuid.New(), threadSeq: 2, role: "assistant", content: "done"},
+		{id: uuid.New(), threadSeq: 3, role: "user", content: "tail"},
+	}
+	for _, msg := range msgs {
+		if _, err := pool.Exec(ctx,
+			`INSERT INTO messages (id, account_id, thread_id, thread_seq, role, content, metadata_json, hidden, compacted)
+			 VALUES ($1, $2, $3, $4, $5, $6, '{}'::jsonb, false, false)`,
+			msg.id, accountID, threadID, msg.threadSeq, msg.role, msg.content,
+		); err != nil {
+			t.Fatalf("insert message: %v", err)
+		}
+	}
+
+	tx, err := pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		t.Fatalf("begin tx: %v", err)
+	}
+	canonical, err := buildCanonicalThreadContext(
+		ctx,
+		tx,
+		data.Run{AccountID: accountID, ThreadID: threadID},
+		data.MessagesRepository{},
+		nil,
+		nil,
+		0,
+	)
+	if err != nil {
+		_ = tx.Rollback(ctx)
+		t.Fatalf("build canonical context: %v", err)
+	}
+	if err := tx.Rollback(ctx); err != nil && !errors.Is(err, pgx.ErrTxClosed) {
+		t.Fatalf("rollback tx: %v", err)
+	}
+	if len(canonical.Frontier) == 0 {
+		t.Fatal("expected canonical frontier nodes")
+	}
+
+	rc := &RunContext{
+		Run:     data.Run{ID: runID, AccountID: accountID, ThreadID: threadID},
+		Emitter: events.NewEmitter("trace"),
+		ContextCompact: ContextCompactSettings{
+			PersistEnabled:              true,
+			PersistTriggerApproxTokens:  1,
+			PersistTriggerContextPct:    0,
+			TargetContextPct:            1,
+			FallbackContextWindowTokens: 1_000_000,
+			PersistKeepLastMessages:     1,
+		},
+		Gateway:               &compactSummaryGateway{summary: "persisted summary"},
+		SelectedRoute:         &routing.SelectedProviderRoute{Route: routing.ProviderRouteRule{Model: "gpt-4o", ID: "route-1"}, Credential: routing.ProviderCredential{ProviderKind: routing.ProviderKindOpenAI}},
+		Messages:              canonical.Messages,
+		ThreadMessageIDs:      canonical.ThreadMessageIDs,
+		ThreadContextFrontier: canonical.Frontier,
+	}
+
+	mw := NewContextCompactMiddleware(pool, data.MessagesRepository{}, nil, rc.Gateway, false)
+	if err := mw(ctx, rc, func(_ context.Context, _ *RunContext) error { return nil }); err != nil {
+		t.Fatalf("middleware failed: %v", err)
+	}
+
+	var replacementID uuid.UUID
+	var summary string
+	var startContextSeq int64
+	var endContextSeq int64
+	if err := pool.QueryRow(ctx,
+		`SELECT id, summary_text, start_context_seq, end_context_seq
+		   FROM thread_context_replacements
+		  WHERE account_id = $1 AND thread_id = $2
+		  ORDER BY created_at DESC
+		  LIMIT 1`,
+		accountID, threadID,
+	).Scan(&replacementID, &summary, &startContextSeq, &endContextSeq); err != nil {
+		t.Fatalf("query persisted replacement: %v", err)
+	}
+	if strings.TrimSpace(summary) != "persisted summary" {
+		t.Fatalf("unexpected persisted summary: %q", summary)
+	}
+	if startContextSeq <= 0 || endContextSeq < startContextSeq {
+		t.Fatalf("invalid persisted context range: start=%d end=%d", startContextSeq, endContextSeq)
+	}
+
+	var edgeCount int
+	if err := pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM replacement_supersession_edges WHERE account_id = $1 AND thread_id = $2 AND replacement_id = $3`,
+		accountID, threadID, replacementID,
+	).Scan(&edgeCount); err != nil {
+		t.Fatalf("query supersession edges: %v", err)
+	}
+	if edgeCount == 0 {
+		t.Fatal("expected persisted replacement to supersede at least one frontier node")
 	}
 }
