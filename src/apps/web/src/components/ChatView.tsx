@@ -158,11 +158,48 @@ function FailedRunRetryCard({
   title,
   actionLabel,
   onRetry,
+  error,
 }: {
   title: string
   actionLabel?: string
   onRetry?: () => void
+  error?: AppError | null
 }) {
+  const [open, setOpen] = useState(false)
+  const [popoverStyle, setPopoverStyle] = useState<{ position: 'fixed'; left: string; top?: string; bottom?: string; width: string; zIndex: number } | null>(null)
+  const badgeRef = useRef<HTMLButtonElement>(null)
+  const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const hasErrorDetails = error && (error.code || error.traceId || error.details)
+
+  const openPopover = () => {
+    if (closeTimerRef.current) clearTimeout(closeTimerRef.current)
+    if (!badgeRef.current || !hasErrorDetails) return
+    const rect = badgeRef.current.getBoundingClientRect()
+    const popoverWidth = 380
+    let left = rect.left
+    if (left + popoverWidth > window.innerWidth - 8) left = window.innerWidth - popoverWidth - 8
+    left = Math.max(8, left)
+    const spaceBelow = window.innerHeight - rect.bottom
+    const style: typeof popoverStyle = { position: 'fixed', left: `${left}px`, width: `${popoverWidth}px`, zIndex: 1000 }
+    if (spaceBelow >= 260 || rect.top < 260) {
+      style.top = `${rect.bottom + 6}px`
+    } else {
+      style.bottom = `${window.innerHeight - rect.top + 6}px`
+    }
+    setPopoverStyle(style)
+    setOpen(true)
+  }
+
+  const scheduleClose = () => {
+    closeTimerRef.current = setTimeout(() => setOpen(false), 150)
+  }
+
+  const cancelClose = () => {
+    if (closeTimerRef.current) clearTimeout(closeTimerRef.current)
+  }
+
+  useEffect(() => () => { if (closeTimerRef.current) clearTimeout(closeTimerRef.current) }, [])
+
   return (
     <div
       className="flex w-full max-w-[756px] items-center justify-between gap-3 rounded-2xl px-4 py-4"
@@ -171,6 +208,30 @@ function FailedRunRetryCard({
       <div className="flex min-w-0 items-center gap-2 text-[var(--c-text-secondary)]">
         <Info size={16} className="shrink-0 text-[var(--c-text-tertiary)]" />
         <span className="truncate text-[14px]">{title}</span>
+        {hasErrorDetails && (
+          <button
+            ref={badgeRef}
+            onMouseEnter={openPopover}
+            onMouseLeave={scheduleClose}
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              padding: '1px 6px',
+              borderRadius: '4px',
+              background: open ? 'var(--c-bg-page)' : 'var(--c-bg-deep)',
+              border: 'none',
+              fontSize: '11.5px',
+              color: 'var(--c-text-muted)',
+              cursor: 'default',
+              lineHeight: '1.5',
+              fontFamily: 'inherit',
+              transition: 'background 120ms',
+              flexShrink: 0,
+            }}
+          >
+            {error.code || 'error'}
+          </button>
+        )}
       </div>
       {actionLabel && (
         <Button
@@ -182,6 +243,53 @@ function FailedRunRetryCard({
         >
           {actionLabel}
         </Button>
+      )}
+
+      {open && popoverStyle && error && (
+        <div
+          style={{
+            ...popoverStyle,
+            background: 'var(--c-bg-page)',
+            border: '0.5px solid var(--c-border-mid)',
+            borderRadius: '12px',
+            boxShadow: '0 8px 32px rgba(0,0,0,0.18)',
+            padding: '14px',
+            overflow: 'hidden',
+            animation: 'failedRunPopoverIn 150ms ease-out',
+          }}
+          onMouseEnter={cancelClose}
+          onMouseLeave={scheduleClose}
+        >
+          <style>{`
+            @keyframes failedRunPopoverIn {
+              from { opacity: 0; transform: translateY(-4px) scale(0.97); }
+              to { opacity: 1; transform: translateY(0) scale(1); }
+            }
+          `}</style>
+          <div style={{ fontSize: '14px', fontWeight: 600, color: 'var(--c-text-primary)', marginBottom: '8px', lineHeight: 1.4 }}>
+            {error.message}
+          </div>
+          {error.code && (
+            <div style={{ fontSize: '12px', color: 'var(--c-text-muted)', marginBottom: '4px', fontFamily: 'monospace' }}>
+              {error.code}
+            </div>
+          )}
+          {error.traceId && (
+            <div style={{ fontSize: '12px', color: 'var(--c-text-muted)', marginBottom: '4px', fontFamily: 'monospace' }}>
+              trace: {error.traceId}
+            </div>
+          )}
+          {error.details && Object.keys(error.details).length > 0 && (
+            <div style={{ marginTop: '8px', paddingTop: '8px', borderTop: '0.5px solid var(--c-border-subtle)' }}>
+              {Object.entries(error.details).map(([key, value]) => (
+                <div key={key} style={{ fontSize: '12px', color: 'var(--c-text-secondary)', marginBottom: '3px', lineHeight: 1.5 }}>
+                  <span style={{ color: 'var(--c-text-muted)', fontFamily: 'monospace' }}>{key}:</span>{' '}
+                  <span style={{ fontFamily: 'monospace', wordBreak: 'break-all' }}>{typeof value === 'string' ? value : JSON.stringify(value)}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
       )}
     </div>
   )
@@ -232,6 +340,7 @@ type LiveRunPaneProps = {
   onCheckInDraftChange: (value: string) => void
   onCheckInSubmit: () => void
   terminalSseError: AppError | null
+  failedRunError: AppError | null
   pendingIncognito: boolean
   incognitoDividerText: string
   onIncognitoDividerComplete: () => void
@@ -289,6 +398,7 @@ const LiveRunPane = memo(function LiveRunPane({
   onCheckInDraftChange,
   onCheckInSubmit,
   terminalSseError,
+  failedRunError,
   pendingIncognito,
   incognitoDividerText,
   onIncognitoDividerComplete,
@@ -469,6 +579,7 @@ const LiveRunPane = memo(function LiveRunPane({
             status: terminalRunHandoffStatus,
             hasOutput: terminalRunHasOutput,
           })}
+          error={terminalRunHandoffStatus === 'failed' ? failedRunError : undefined}
         />
       )}
       <div ref={bottomRef} />
@@ -579,6 +690,7 @@ export function ChatView() {
     setSending,
     cancelSubmitting,
     setCancelSubmitting,
+    error,
     setError,
     injectionBlocked,
     setInjectionBlocked,
@@ -870,6 +982,7 @@ export function ChatView() {
         const thinkingMap = new Map<string, MessageThinkingRef>()
         const searchStepsMap = new Map<string, MessageSearchStepRef[]>()
         const terminalStatusMap = new Map<string, MessageTerminalStatusRef>()
+        const failedErrorMap = new Map<string, AppError>()
 
         const runEventsMap = new Map<string, MsgRunEvent[]>()
         const assistantTurnMap = new Map<string, AssistantTurnUi>()
@@ -912,6 +1025,9 @@ export function ChatView() {
             }
             if (latest?.status === 'failed' && latest.run_id && msg.run_id === latest.run_id) {
               failedError = failedErrorFromRunEvents(cachedRunEvents, t.failedRunRetryTitle)
+              if (failedError) {
+                failedErrorMap.set(msg.id, failedError)
+              }
             }
             const rebuiltTurn = buildAssistantTurnFromRunEvents(cachedRunEvents)
             if (rebuiltTurn.segments.length > 0) {
@@ -965,6 +1081,9 @@ export function ChatView() {
             }
             if (latest.status === 'failed') {
               failedError = failedErrorFromRunEvents(replayEvents, t.failedRunRetryTitle)
+              if (failedError && lastAssistant) {
+                failedErrorMap.set(lastAssistant.id, failedError)
+              }
             }
             if (lastAssistant && replayWidgetsNeeded) {
               const replayWidgets = buildMessageWidgetsFromRunEvents(replayEvents)
@@ -1052,6 +1171,7 @@ export function ChatView() {
         searchStepsMap.forEach((searchSteps, id) => mergeMeta(id, { searchSteps }))
         assistantTurnMap.forEach((assistantTurn, id) => mergeMeta(id, { assistantTurn }))
         runEventsMap.forEach((runEvents, id) => mergeMeta(id, { runEvents }))
+        failedErrorMap.forEach((failedError, id) => mergeMeta(id, { failedError }))
         loadFromStorage(items.filter((msg) => msg.role === 'assistant').map((msg) => msg.id))
         setMetaBatch(Array.from(metaEntries.entries()))
         if (interruptedError) {
@@ -2011,6 +2131,7 @@ export function ChatView() {
                     onCheckInDraftChange={setCheckInDraft}
                     onCheckInSubmit={() => void handleCheckInSubmit()}
                     terminalSseError={terminalSseError}
+                    failedRunError={error}
                     pendingIncognito={pendingIncognito}
                     incognitoDividerText={t.incognitoForkDivider}
                     onIncognitoDividerComplete={() => {
@@ -2048,6 +2169,7 @@ export function ChatView() {
                 sourcePanelMessageId={sourcePanelMessageId}
                 setRunDetailPanelRunId={setRunDetailPanelRunId}
                 clearUserEnterAnimation={clearUserEnterAnimation}
+                failedRunError={error}
               />
 
             </>

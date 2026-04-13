@@ -115,6 +115,9 @@ export function failedErrorFromRunEvents(
         : typeof payload.error_class === 'string'
           ? payload.error_class
           : undefined,
+      traceId: typeof payload.trace_id === 'string'
+        ? payload.trace_id
+        : undefined,
       details,
     }
   }
