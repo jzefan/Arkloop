@@ -260,6 +260,9 @@ type RunContext struct {
 	HeartbeatSilent      bool // 由 heartbeat_decision 工具执行时设置，AgentLoop 只读
 	HeartbeatToolOutcome *HeartbeatDecisionOutcome
 
+	// -- end_reply --
+	EndReplyRequested bool // set by end_reply tool, agent loop reads to terminate run
+
 	// -- Impression --
 	ImpressionRun bool
 
@@ -286,6 +289,14 @@ func (rc *RunContext) SetHeartbeatDecisionOutcome(reply bool, fragments []string
 		Fragments: fragments,
 	}
 	rc.HeartbeatSilent = !reply
+}
+
+// SetEndReplyRequested implements tools/builtin/end_reply.PipelineBinding.
+func (rc *RunContext) SetEndReplyRequested(requested bool) {
+	if rc == nil {
+		return
+	}
+	rc.EndReplyRequested = requested
 }
 
 // IsHeartbeatRun implements tools/builtin/heartbeat_decision.PipelineBinding.

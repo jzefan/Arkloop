@@ -654,6 +654,7 @@ func buildChannelLayer(deps EngineV1Deps, messagesRepo data.MessagesRepository, 
 			GroupSearchExec: deps.GroupSearchExecutor,
 			GroupSearchSpec: conversationtool.GroupSearchLlmSpec,
 		}),
+		pipeline.NewChannelEndReplyMiddleware(),
 	}
 }
 

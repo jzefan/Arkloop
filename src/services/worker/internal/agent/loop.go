@@ -689,6 +689,15 @@ func (l *Loop) Run(
 			}
 		}
 
+		// end_reply: terminate run without further output
+		if runCtx.PipelineRC != nil && runCtx.PipelineRC.EndReplyRequested {
+			reasoningTurnsUsed++
+			if runCtx.RolloutRecorder != nil {
+				appendRolloutSync(ctx, runCtx.RolloutRecorder, MakeRunEnd("completed"))
+			}
+			return yield(emitter.Emit("run.completed", completionTotals.Apply(turn.CompletedDataJSON), nil, nil))
+		}
+
 		// load_tools dynamic activation: inject newly activated tool specs
 		if l.toolExecutor != nil {
 			if activated := l.toolExecutor.DrainActivated(); len(activated) > 0 {

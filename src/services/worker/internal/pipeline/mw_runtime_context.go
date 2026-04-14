@@ -50,6 +50,16 @@ func buildRuntimeContextBlock(ctx context.Context, rc *RunContext) string {
 			line += fmt.Sprintf(" | Identity: %s", identity)
 		}
 		lines = append(lines, line)
+
+		// channel output behavior awareness
+		lines = append(lines,
+			"",
+			"[CHANNEL_OUTPUT_BEHAVIOR]",
+			"Your text outputs are delivered to the chat platform in real-time as separate messages.",
+			"When you call tools mid-reply, text before and after the tool call becomes distinct messages visible to the user.",
+			"Avoid repeating content that was already sent. If you have nothing new to add after a tool call, use end_reply.",
+			"[/CHANNEL_OUTPUT_BEHAVIOR]",
+		)
 	}
 
 	timeZone := runtimeContextTimeZone(ctx, rc)
