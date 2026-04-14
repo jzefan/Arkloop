@@ -36,6 +36,8 @@ type canonicalThreadContextEntry struct {
 	SummaryText     string
 }
 
+const compactSyntheticPhase = "system_compact"
+
 func buildCanonicalThreadContext(
 	ctx context.Context,
 	tx pgx.Tx,
@@ -663,8 +665,10 @@ func isLastRenderedMessage(entries []canonicalThreadContextEntry, messageID uuid
 }
 
 func makeThreadContextReplacementMessage(summary string) llm.Message {
+	phase := compactSyntheticPhase
 	return llm.Message{
 		Role:    "user",
+		Phase:   &phase,
 		Content: []llm.TextPart{{Text: strings.TrimSpace(summary)}},
 	}
 }

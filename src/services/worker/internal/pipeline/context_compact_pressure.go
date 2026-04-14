@@ -100,6 +100,49 @@ func contextCompactRequestMessages(systemPrompt string, msgs []llm.Message) []ll
 	}}, requestMsgs...)
 }
 
+// estimateContextCompactRequestBytes 按完整 request 口径估算 compact 当前请求大小。
+func estimateContextCompactRequestBytes(rc *RunContext, systemPrompt string, msgs []llm.Message) int {
+	request := buildContextCompactEstimateRequest(rc, systemPrompt, msgs)
+	if rc != nil && rc.EstimateProviderRequestBytes != nil {
+		estimated, err := rc.EstimateProviderRequestBytes(request)
+		if err == nil && estimated > 0 {
+			return estimated
+		}
+	}
+	return llm.EstimateRequestJSONBytes(request)
+}
+
+func buildContextCompactEstimateRequest(rc *RunContext, systemPrompt string, msgs []llm.Message) llm.Request {
+	request := llm.Request{
+		Messages: contextCompactRequestMessages(systemPrompt, msgs),
+	}
+	if rc == nil {
+		return request
+	}
+	if rc.SelectedRoute != nil {
+		request.Model = strings.TrimSpace(rc.SelectedRoute.Route.Model)
+	}
+	if len(rc.FinalSpecs) > 0 {
+		request.Tools = append([]llm.ToolSpec(nil), rc.FinalSpecs...)
+	} else if len(rc.ToolSpecs) > 0 {
+		request.Tools = append([]llm.ToolSpec(nil), rc.ToolSpecs...)
+	}
+	if rc.ToolChoice != nil {
+		choice := *rc.ToolChoice
+		request.ToolChoice = &choice
+	}
+	if rc.Temperature != nil {
+		temperature := *rc.Temperature
+		request.Temperature = &temperature
+	}
+	if rc.MaxOutputTokens != nil {
+		maxOutput := *rc.MaxOutputTokens
+		request.MaxOutputTokens = &maxOutput
+	}
+	request.ReasoningMode = strings.TrimSpace(rc.ReasoningMode)
+	return request
+}
+
 func latestContextCompactPressureAnchor(
 	ctx context.Context,
 	pool CompactPersistDB,
@@ -213,9 +256,17 @@ func compactConsecutiveFailures(ctx context.Context, pool CompactPersistDB, acco
 		switch {
 		case phase == "completed":
 			return count
-		case phase == "started":
-			// started 是中间状态，不中断也不累加
-		case strings.Contains(phase, "failed") || phase == "circuit_breaker" || payload["error"] != nil:
+		case phase == "started" ||
+			phase == "round_started" ||
+			phase == "round_completed" ||
+			phase == "evaluating" ||
+			phase == "middleware_completed" ||
+			phase == "llm_request_started" ||
+			phase == "llm_request_completed" ||
+			phase == "llm_request_retrying" ||
+			phase == "circuit_breaker":
+			// 中间态事件不计入失败，也不截断连续失败统计。
+		case strings.Contains(phase, "failed") || payload["error"] != nil:
 			count++
 		default:
 			return count
@@ -238,7 +289,7 @@ func resolveContextCompactPressureAnchor(
 			return anchor, true
 		}
 	}
-	if rc == nil {
+	if rc == nil || contextCompactHasSyntheticPrefix(rc.Messages) {
 		return ContextCompactPressureAnchor{}, false
 	}
 	anchor := latestContextCompactPressureAnchor(ctx, pool, rc.Run.AccountID, rc.Run.ThreadID)
@@ -246,4 +297,17 @@ func resolveContextCompactPressureAnchor(
 		return ContextCompactPressureAnchor{}, false
 	}
 	return *anchor, true
+}
+
+func contextCompactHasSyntheticPrefix(msgs []llm.Message) bool {
+	for _, msg := range msgs {
+		if msg.Phase != nil && strings.TrimSpace(*msg.Phase) == compactSyntheticPhase {
+			return true
+		}
+		if strings.TrimSpace(msg.Role) == "system" {
+			continue
+		}
+		break
+	}
+	return false
 }

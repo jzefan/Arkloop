@@ -131,6 +131,9 @@ func TestLoadRunInputsBoundsFreshChannelHistoryAtThreadTail(t *testing.T) {
 	if loaded.Messages[0].Role != "user" || loaded.Messages[0].Content[0].Text != "future summary" {
 		t.Fatalf("unexpected replacement message: %#v", loaded.Messages[0])
 	}
+	if loaded.Messages[0].Phase == nil || *loaded.Messages[0].Phase != compactSyntheticPhase {
+		t.Fatalf("unexpected replacement phase: %#v", loaded.Messages[0].Phase)
+	}
 	if loaded.Messages[1].Role != "user" || loaded.Messages[1].Content[0].Text != "two" {
 		t.Fatalf("unexpected bounded tail message: %#v", loaded.Messages[1])
 	}

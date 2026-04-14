@@ -13,6 +13,7 @@ import (
 	"arkloop/services/worker/internal/data"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 )
 
 func TestLoadRunInputsDesktopBoundsFreshChannelHistoryAtThreadTail(t *testing.T) {
@@ -66,12 +67,7 @@ func TestLoadRunInputsDesktopBoundsFreshChannelHistoryAtThreadTail(t *testing.T)
 	if err := insertDesktopThreadMessage(ctx, db, accountID, threadID, msg3ID, 4, "assistant", "future assistant", "2026-04-09 05:18:29.100000000 +0000"); err != nil {
 		t.Fatalf("insert future assistant: %v", err)
 	}
-	if _, err := db.Exec(ctx, `INSERT INTO thread_context_replacements (
-		account_id, thread_id,
-		start_thread_seq, end_thread_seq,
-		start_context_seq, end_context_seq,
-		summary_text, layer, metadata_json
-	) VALUES ($1, $2, 2, 2, 1, 1, 'future summary', 1, '{}')`, accountID, threadID); err != nil {
+	if err := insertDesktopReplacementPrefix(ctx, db, accountID, threadID, "future summary"); err != nil {
 		t.Fatalf("insert replacement: %v", err)
 	}
 
@@ -91,6 +87,9 @@ func TestLoadRunInputsDesktopBoundsFreshChannelHistoryAtThreadTail(t *testing.T)
 	}
 	if loaded.Messages[0].Role != "user" || loaded.Messages[0].Content[0].Text != "future summary" {
 		t.Fatalf("unexpected replacement message: %#v", loaded.Messages[0])
+	}
+	if loaded.Messages[0].Phase == nil || *loaded.Messages[0].Phase != compactSyntheticPhase {
+		t.Fatalf("unexpected replacement phase: %#v", loaded.Messages[0].Phase)
 	}
 	if loaded.Messages[1].Role != "user" || loaded.Messages[1].Content[0].Text != "two" {
 		t.Fatalf("unexpected bounded tail message: %#v", loaded.Messages[1])
@@ -167,12 +166,7 @@ func TestLoadRunInputsDesktopResolvesChannelHistoryUpperBoundFromLedger(t *testi
 	if _, err := db.Exec(ctx, `INSERT INTO channel_message_ledger (channel_id, channel_type, direction, thread_id, platform_conversation_id, platform_message_id, sender_channel_identity_id, message_id, metadata_json, created_at) VALUES ($1, 'telegram', 'inbound', $2, 'chat-1', 'm-2', $3, $4, '{}', $5)`, channelID, threadID, identityID, msg2ID, "2026-04-09 05:18:31.200000000 +0000"); err != nil {
 		t.Fatalf("insert ledger row: %v", err)
 	}
-	if _, err := db.Exec(ctx, `INSERT INTO thread_context_replacements (
-		account_id, thread_id,
-		start_thread_seq, end_thread_seq,
-		start_context_seq, end_context_seq,
-		summary_text, layer, metadata_json
-	) VALUES ($1, $2, 2, 2, 1, 1, 'future summary', 1, '{}')`, accountID, threadID); err != nil {
+	if err := insertDesktopReplacementPrefix(ctx, db, accountID, threadID, "future summary"); err != nil {
 		t.Fatalf("insert replacement: %v", err)
 	}
 
@@ -266,12 +260,7 @@ func TestLoadRunInputsDesktopSkipsSnapshotWhenChannelUpperBoundMissing(t *testin
 	if err := insertDesktopThreadMessage(ctx, db, accountID, threadID, msg3ID, 4, "assistant", "future assistant", "2026-04-09 05:18:29.100000000 +0000"); err != nil {
 		t.Fatalf("insert future assistant: %v", err)
 	}
-	if _, err := db.Exec(ctx, `INSERT INTO thread_context_replacements (
-		account_id, thread_id,
-		start_thread_seq, end_thread_seq,
-		start_context_seq, end_context_seq,
-		summary_text, layer, metadata_json
-	) VALUES ($1, $2, 2, 2, 1, 1, 'future summary', 1, '{}')`, accountID, threadID); err != nil {
+	if err := insertDesktopReplacementPrefix(ctx, db, accountID, threadID, "future summary"); err != nil {
 		t.Fatalf("insert replacement: %v", err)
 	}
 
@@ -340,4 +329,52 @@ func insertDesktopThreadMessage(
 		threadSeq,
 	)
 	return err
+}
+
+func insertDesktopReplacementPrefix(
+	ctx context.Context,
+	db *sqlitepgx.Pool,
+	accountID uuid.UUID,
+	threadID uuid.UUID,
+	summary string,
+) error {
+	tx, err := db.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck
+
+	graph, err := ensureCanonicalThreadGraphPersisted(ctx, tx, data.MessagesRepository{}, accountID, threadID)
+	if err != nil {
+		return err
+	}
+	if len(graph.Chunks) == 0 {
+		return fmt.Errorf("no chunks available for replacement seed")
+	}
+	firstChunk := graph.Chunks[0]
+	replacementsRepo := data.ThreadContextReplacementsRepository{}
+	edgesRepo := data.ThreadContextSupersessionEdgesRepository{}
+	replacement, err := replacementsRepo.Insert(ctx, tx, data.ThreadContextReplacementInsertInput{
+		AccountID:       accountID,
+		ThreadID:        threadID,
+		StartThreadSeq:  firstChunk.StartThreadSeq,
+		EndThreadSeq:    firstChunk.EndThreadSeq,
+		StartContextSeq: firstChunk.ContextSeq,
+		EndContextSeq:   firstChunk.ContextSeq,
+		SummaryText:     summary,
+		Layer:           1,
+	})
+	if err != nil {
+		return err
+	}
+	chunkID := graph.ChunkRecordsByContextSeq[firstChunk.ContextSeq].ID
+	if _, err := edgesRepo.Insert(ctx, tx, data.ThreadContextSupersessionEdgeInsertInput{
+		AccountID:         accountID,
+		ThreadID:          threadID,
+		ReplacementID:     replacement.ID,
+		SupersededChunkID: &chunkID,
+	}); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }

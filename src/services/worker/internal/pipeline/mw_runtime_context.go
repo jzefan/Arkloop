@@ -2,8 +2,6 @@ package pipeline
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
 	"strings"
 	"time"
@@ -11,16 +9,36 @@ import (
 
 func NewRuntimeContextMiddleware() RunMiddleware {
 	return func(ctx context.Context, rc *RunContext, next RunHandler) error {
+		if rc.ChannelContext != nil {
+			rc.UpsertPromptSegment(PromptSegment{
+				Name:          "runtime.channel_output_behavior",
+				Target:        PromptTargetSystemPrefix,
+				Role:          "system",
+				Text:          buildChannelOutputBehaviorBlock(),
+				Stability:     PromptStabilityStablePrefix,
+				CacheEligible: true,
+			})
+			isAdmin := checkSenderIsAdmin(ctx, rc)
+			rc.SenderIsAdmin = isAdmin
+		}
 		rc.UpsertPromptSegment(PromptSegment{
 			Name:          "runtime.context",
-			Target:        PromptTargetRuntimeTail,
-			Role:          "user",
+			Target:        PromptTargetSystemPrefix,
+			Role:          "system",
 			Text:          buildRuntimeContextBlock(ctx, rc),
-			Stability:     PromptStabilityVolatileTail,
-			CacheEligible: false,
+			Stability:     PromptStabilitySessionPrefix,
+			CacheEligible: true,
 		})
 		return next(ctx, rc)
 	}
+}
+
+func buildChannelOutputBehaviorBlock() string {
+	return `<channel_output_behavior>
+Your text outputs are delivered to the chat platform in real-time as separate messages.
+When you call tools mid-reply, text before and after the tool call becomes distinct messages visible to the user.
+Avoid repeating content that was already sent. If you have nothing new to add after a tool call, use end_reply.
+</channel_output_behavior>`
 }
 
 func buildRuntimeContextBlock(ctx context.Context, rc *RunContext) string {
@@ -28,48 +46,12 @@ func buildRuntimeContextBlock(ctx context.Context, rc *RunContext) string {
 		return ""
 	}
 
-	lines := make([]string, 0, 3)
-	if rc.ChannelContext != nil {
-		channelType := rc.ChannelContext.ChannelType
-		convType := rc.ChannelContext.ConversationType
-		host := hostMode
-
-		isAdmin := checkSenderIsAdmin(ctx, rc)
-		rc.SenderIsAdmin = isAdmin
-
-		line := fmt.Sprintf("Channel: %s | Type: %s | Host: %s | Admin: %v",
-			channelType, convType, host, isAdmin)
-
-		if rc.ChannelContext.SenderUserID != nil {
-			h := sha256.Sum256([]byte(rc.ChannelContext.SenderUserID.String()))
-			senderHash := hex.EncodeToString(h[:])[:12]
-			line += fmt.Sprintf(" | Sender: %s", senderHash)
-		}
-
-		if identity := formatBotIdentity(rc.ChannelContext); identity != "" {
-			line += fmt.Sprintf(" | Identity: %s", identity)
-		}
-		lines = append(lines, line)
-
-		// channel output behavior awareness
-		lines = append(lines,
-			"",
-			"[CHANNEL_OUTPUT_BEHAVIOR]",
-			"Your text outputs are delivered to the chat platform in real-time as separate messages.",
-			"When you call tools mid-reply, text before and after the tool call becomes distinct messages visible to the user.",
-			"Avoid repeating content that was already sent. If you have nothing new to add after a tool call, use end_reply.",
-			"[/CHANNEL_OUTPUT_BEHAVIOR]",
-		)
-	}
-
 	timeZone := runtimeContextTimeZone(ctx, rc)
-	localNow := formatRuntimeLocalNow(time.Now().UTC(), timeZone)
-	lines = append(lines,
-		"User Timezone: "+timeZone,
-		"User Local Now: "+localNow,
-	)
+	loc := loadRuntimeLocation(timeZone)
+	localDate := time.Now().UTC().In(loc).Format("2006-01-02")
 
-	return "[SYSTEM_RUNTIME_CONTEXT]\n" + strings.Join(lines, "\n") + "\n[/SYSTEM_RUNTIME_CONTEXT]"
+	return "User Timezone: " + timeZone + "\n" +
+		"User Local Date: " + localDate
 }
 
 func formatBotIdentity(cc *ChannelContext) string {

@@ -161,6 +161,8 @@ type RunContext struct {
 	// -- RoutingMiddleware 写入 --
 	Gateway       llm.Gateway
 	SelectedRoute *routing.SelectedProviderRoute
+	// ContextWindowTokens 保存当前主路由解析出的 context window；0 表示未提供，由后续走 fallback。
+	ContextWindowTokens int
 	// RoutingByokEnabled 与 RoutingMiddleware 中 feature.byok_enabled 一致，供后续按 selector 解析路由使用。
 	RoutingByokEnabled bool
 	// ResolveGatewayForRouteID 按 route_id 构建目标 Gateway，用于同一 run 内切换输出模型。
@@ -168,6 +170,8 @@ type RunContext struct {
 	ResolveGatewayForRouteID func(ctx context.Context, routeID string) (llm.Gateway, *routing.SelectedProviderRoute, error)
 	// ResolveGatewayForAgentName 按 Agent 配置名称构建目标 Gateway，用于 Lua 中直接按 agent 名称切换输出模型。
 	ResolveGatewayForAgentName func(ctx context.Context, agentName string) (llm.Gateway, *routing.SelectedProviderRoute, error)
+	// EstimateProviderRequestBytes 按当前主路由的最终 provider payload 形态估算 request bytes。
+	EstimateProviderRequestBytes func(req llm.Request) (int, error)
 	// -- ToolBuildMiddleware 写入：统一 read 能力事实（提示注入/占位引导仅依赖此对象） --
 	ReadCapabilities ReadCapabilities
 

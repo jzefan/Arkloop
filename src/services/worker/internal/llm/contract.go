@@ -387,6 +387,8 @@ func (b PromptCacheEditsBlock) ToJSON() map[string]any {
 type MessageCachePlan struct {
 	Enabled                   bool
 	MarkerMessageIndex        int
+	StableMarkerEnabled       bool
+	StableMarkerMessageIndex  int
 	ToolResultCacheCutIndex   int
 	SkipCacheWrite            bool
 	PinnedCacheEdits          []PromptCacheEditsBlock
@@ -396,11 +398,13 @@ type MessageCachePlan struct {
 
 func (p MessageCachePlan) ToJSON() map[string]any {
 	payload := map[string]any{
-		"enabled":                      p.Enabled,
-		"marker_message_index":         p.MarkerMessageIndex,
-		"tool_result_cache_cut_index":  p.ToolResultCacheCutIndex,
-		"skip_cache_write":             p.SkipCacheWrite,
-		"tool_result_cache_references": p.ToolResultCacheReferences,
+		"enabled":                       p.Enabled,
+		"marker_message_index":          p.MarkerMessageIndex,
+		"stable_marker_enabled":         p.StableMarkerEnabled,
+		"stable_marker_message_index":   p.StableMarkerMessageIndex,
+		"tool_result_cache_cut_index":   p.ToolResultCacheCutIndex,
+		"skip_cache_write":              p.SkipCacheWrite,
+		"tool_result_cache_references":  p.ToolResultCacheReferences,
 	}
 	if len(p.PinnedCacheEdits) > 0 {
 		blocks := make([]map[string]any, 0, len(p.PinnedCacheEdits))

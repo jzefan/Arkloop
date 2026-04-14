@@ -97,3 +97,74 @@ func TestPlanRequestFromRunContextReusesInheritedPromptCacheSnapshot(t *testing.
 		t.Fatalf("unexpected cache snapshot persona id: %q", got)
 	}
 }
+
+func TestBuildPromptPlan_StableMarker(t *testing.T) {
+	rc := &pipeline.RunContext{
+		AgentConfig: &pipeline.ResolvedAgentConfig{PromptCacheControl: "system_prompt"},
+		PromptAssembly: pipeline.PromptAssembly{
+			Segments: []pipeline.PromptSegment{
+				{
+					Name:      "persona.system_prompt",
+					Target:    pipeline.PromptTargetSystemPrefix,
+					Role:      "system",
+					Text:      "test system",
+					Stability: pipeline.PromptStabilityStablePrefix,
+				},
+			},
+		},
+	}
+
+	messages := []llm.Message{
+		{Role: "user", Content: []llm.ContentPart{{Text: "msg0"}}},
+		{Role: "assistant", Content: []llm.ContentPart{{Text: "msg1"}}},
+		{Role: "user", Content: []llm.ContentPart{{Text: "msg2"}}},
+		{Role: "assistant", Content: []llm.ContentPart{{Text: "msg3"}}},
+		{Role: "user", Content: []llm.ContentPart{{Text: "msg4"}}},
+	}
+
+	plan := buildPromptPlan(rc, promptPlanModeFull, messages, 2)
+
+	if plan == nil {
+		t.Fatal("expected non-nil prompt plan")
+	}
+	if !plan.MessageCache.StableMarkerEnabled {
+		t.Error("expected StableMarkerEnabled to be true")
+	}
+	if plan.MessageCache.StableMarkerMessageIndex != 2 {
+		t.Errorf("expected StableMarkerMessageIndex = 2, got %d", plan.MessageCache.StableMarkerMessageIndex)
+	}
+}
+
+func TestBuildPromptPlan_NoTail(t *testing.T) {
+	rc := &pipeline.RunContext{
+		AgentConfig: &pipeline.ResolvedAgentConfig{PromptCacheControl: "system_prompt"},
+		PromptAssembly: pipeline.PromptAssembly{
+			Segments: []pipeline.PromptSegment{
+				{
+					Name:      "persona.system_prompt",
+					Target:    pipeline.PromptTargetSystemPrefix,
+					Role:      "system",
+					Text:      "test system",
+					Stability: pipeline.PromptStabilityStablePrefix,
+				},
+			},
+		},
+	}
+
+	messages := []llm.Message{
+		{Role: "user", Content: []llm.ContentPart{{Text: "msg0"}}},
+		{Role: "assistant", Content: []llm.ContentPart{{Text: "msg1"}}},
+		{Role: "user", Content: []llm.ContentPart{{Text: "msg2"}}},
+		{Role: "assistant", Content: []llm.ContentPart{{Text: "msg3"}}},
+		{Role: "user", Content: []llm.ContentPart{{Text: "msg4"}}},
+	}
+
+	plan := buildPromptPlan(rc, promptPlanModeFull, messages, 0)
+
+	if plan == nil {
+		t.Fatal("expected non-nil prompt plan")
+	}
+	if plan.MessageCache.StableMarkerEnabled {
+		t.Error("expected StableMarkerEnabled to be false when tailCount is 0")
+	}
+}

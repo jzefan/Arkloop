@@ -35,8 +35,9 @@ func ResolveTiktokenForProviderModel(kind routing.ProviderKind, model string) (*
 			if enc, err := tiktoken.EncodingForModel(model); err == nil {
 				return enc, nil
 			}
+			return nil, nil
 		}
-		return tiktoken.GetEncoding(tiktoken.MODEL_O200K_BASE)
+		return nil, nil
 	}
 }
 

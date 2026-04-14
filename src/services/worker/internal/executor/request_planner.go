@@ -54,7 +54,7 @@ func planRequestFromRunContext(rc *pipeline.RunContext, input requestPlannerInpu
 			CacheSafeSnapshot: snapshot,
 		}
 	}
-	messages := applyPromptPlan(rc, baseMessages, input.PromptMode)
+	messages, tailCount := applyPromptPlan(rc, baseMessages, input.PromptMode)
 
 	req := llm.Request{
 		Model:           input.Model,
@@ -64,7 +64,7 @@ func planRequestFromRunContext(rc *pipeline.RunContext, input requestPlannerInpu
 		Temperature:     cloneFloatPtr(input.Temperature),
 		ReasoningMode:   strings.TrimSpace(input.ReasoningMode),
 		ToolChoice:      cloneToolChoice(input.ToolChoice),
-		PromptPlan:      buildPromptPlan(rc, input.PromptMode, messages),
+		PromptPlan:      buildPromptPlan(rc, input.PromptMode, messages, tailCount),
 	}
 
 	return plannedRequest{
@@ -73,23 +73,23 @@ func planRequestFromRunContext(rc *pipeline.RunContext, input requestPlannerInpu
 	}
 }
 
-func applyPromptPlan(rc *pipeline.RunContext, baseMessages []llm.Message, mode promptPlanMode) []llm.Message {
+func applyPromptPlan(rc *pipeline.RunContext, baseMessages []llm.Message, mode promptPlanMode) ([]llm.Message, int) {
 	switch mode {
 	case promptPlanModeNone:
-		return baseMessages
+		return baseMessages, 0
 	case promptPlanModeRuntimeTail:
-		out, _ := applyRuntimeTailFromAssembly(rc, baseMessages)
-		return out
+		out, tailCount, _ := applyRuntimeTailFromAssembly(rc, baseMessages)
+		return out, tailCount
 	default:
-		out, _ := applyFullPromptFromAssembly(rc, baseMessages)
-		return out
+		out, tailCount, _ := applyFullPromptFromAssembly(rc, baseMessages)
+		return out, tailCount
 	}
 }
 
-func applyFullPromptFromAssembly(rc *pipeline.RunContext, baseMessages []llm.Message) ([]llm.Message, bool) {
+func applyFullPromptFromAssembly(rc *pipeline.RunContext, baseMessages []llm.Message) ([]llm.Message, int, bool) {
 	segments, ok := promptSegmentsFromRunContext(rc)
 	if !ok || len(segments) == 0 {
-		return append([]llm.Message(nil), baseMessages...), false
+		return append([]llm.Message(nil), baseMessages...), 0, false
 	}
 
 	prefix := make([]llm.Message, 0, len(segments))
@@ -115,16 +115,16 @@ func applyFullPromptFromAssembly(rc *pipeline.RunContext, baseMessages []llm.Mes
 	}
 	out := append(prefix, baseMessages...)
 	out = append(out, tail...)
-	return out, true
+	return out, len(tail), true
 }
 
-func applyRuntimeTailFromAssembly(rc *pipeline.RunContext, baseMessages []llm.Message) ([]llm.Message, bool) {
+func applyRuntimeTailFromAssembly(rc *pipeline.RunContext, baseMessages []llm.Message) ([]llm.Message, int, bool) {
 	segments, ok := promptSegmentsFromRunContext(rc)
 	if !ok || len(segments) == 0 {
-		return append([]llm.Message(nil), baseMessages...), false
+		return append([]llm.Message(nil), baseMessages...), 0, false
 	}
 	out := append([]llm.Message(nil), baseMessages...)
-	appended := false
+	tailCount := 0
 	for _, seg := range segments {
 		text := strings.TrimSpace(seg.Text)
 		if text == "" {
@@ -138,12 +138,12 @@ func applyRuntimeTailFromAssembly(rc *pipeline.RunContext, baseMessages []llm.Me
 			Role:    role,
 			Content: []llm.TextPart{{Text: text}},
 		})
-		appended = true
+		tailCount++
 	}
-	if !appended {
-		return append([]llm.Message(nil), baseMessages...), false
+	if tailCount == 0 {
+		return append([]llm.Message(nil), baseMessages...), 0, false
 	}
-	return out, true
+	return out, tailCount, true
 }
 
 func normalizePromptSegmentRole(rawRole string, target string) string {
@@ -196,7 +196,7 @@ func promptSegmentsFromRunContext(rc *pipeline.RunContext) ([]promptSegment, boo
 	return out, true
 }
 
-func buildPromptPlan(rc *pipeline.RunContext, mode promptPlanMode, messages []llm.Message) *llm.PromptPlan {
+func buildPromptPlan(rc *pipeline.RunContext, mode promptPlanMode, messages []llm.Message, tailCount int) *llm.PromptPlan {
 	if mode == promptPlanModeNone {
 		return nil
 	}
@@ -228,6 +228,13 @@ func buildPromptPlan(rc *pipeline.RunContext, mode promptPlanMode, messages []ll
 			MarkerMessageIndex:        lastIndex,
 			ToolResultCacheCutIndex:   lastIndex,
 			ToolResultCacheReferences: true,
+		}
+		if tailCount > 0 {
+			candidate := lastIndex - tailCount
+			if candidate >= 0 && candidate < lastIndex {
+				plan.MessageCache.StableMarkerEnabled = true
+				plan.MessageCache.StableMarkerMessageIndex = candidate
+			}
 		}
 	}
 

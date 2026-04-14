@@ -198,8 +198,39 @@ func NewRoutingMiddleware(
 			return appendAndCommitSingle(ctx, rc.Pool, rc.Run, runsRepo, eventsRepo, failed, releaseFn, rc.BroadcastRDB, rc.EventBus)
 		}
 
-		gateway, err := gatewayFromSelectedRoute(*selected, auxGateway, emitDebugEvents, rc.LlmMaxResponseBytes)
-		if err != nil {
+		var (
+			gateway                  llm.Gateway
+			gatewayErr               error
+			estimateProviderReqBytes func(llm.Request) (int, error)
+		)
+		if selected.Credential.ProviderKind == routing.ProviderKindStub {
+			gateway = auxGateway
+		} else {
+			resolvedCfg, resolveErr := ResolveGatewayConfigFromSelectedRoute(*selected, emitDebugEvents, rc.LlmMaxResponseBytes)
+			if resolveErr != nil {
+				failed := rc.Emitter.Emit(
+					"run.failed",
+					map[string]any{
+						"error_class": llm.ErrorClassInternalError,
+						"code":        "internal.gateway_init_failed",
+						"message":     "gateway initialization failed",
+					},
+					nil,
+					StringPtr(llm.ErrorClassInternalError),
+				)
+				if commitErr := appendAndCommitSingle(ctx, rc.Pool, rc.Run, runsRepo, eventsRepo, failed, releaseFn, rc.BroadcastRDB, rc.EventBus); commitErr != nil {
+					return commitErr
+				}
+				return nil
+			}
+			gateway, gatewayErr = llm.NewGatewayFromResolvedConfig(resolvedCfg)
+			if gatewayErr == nil {
+				estimateProviderReqBytes = func(req llm.Request) (int, error) {
+					return llm.EstimateProviderPayloadBytes(resolvedCfg, req)
+				}
+			}
+		}
+		if gatewayErr != nil {
 			failed := rc.Emitter.Emit(
 				"run.failed",
 				map[string]any{
@@ -223,9 +254,11 @@ func NewRoutingMiddleware(
 
 		rc.Gateway = gateway
 		rc.SelectedRoute = selected
+		rc.ContextWindowTokens = routing.RouteContextWindowTokens(selected.Route)
 		if rc.Temperature == nil {
 			rc.Temperature = routing.RouteDefaultTemperature(selected.Route)
 		}
+		rc.EstimateProviderRequestBytes = estimateProviderReqBytes
 		slog.InfoContext(ctx, "routing_selected_model",
 			"run_id", rc.Run.ID.String(),
 			"thread_id", rc.Run.ThreadID.String(),
