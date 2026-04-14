@@ -159,26 +159,26 @@ button:not(:disabled) {
 }
 
 :root[data-body-font="default"] {
-  --c-fw-250: 190;
-  --c-fw-275: 215;
-  --c-fw-300: 240;
-  --c-fw-310: 250;
-  --c-fw-325: 265;
+  --c-fw-250: 170;
+  --c-fw-275: 195;
+  --c-fw-300: 260;
+  --c-fw-310: 230;
+  --c-fw-325: 245;
   --c-fw-350: 290;
-  --c-fw-360: 300;
-  --c-fw-365: 305;
-  --c-fw-375: 315;
-  --c-fw-400: 340;
-  --c-fw-420: 360;
-  --c-fw-425: 365;
-  --c-fw-450: 390;
-  --c-fw-500: 440;
-  --c-fw-600: 540;
-  --c-fw-700: 640;
-  --c-sidebar-nav-weight: 290;
+  --c-fw-360: 280;
+  --c-fw-365: 285;
+  --c-fw-375: 295;
+  --c-fw-400: 320;
+  --c-fw-420: 340;
+  --c-fw-425: 345;
+  --c-fw-450: 370;
+  --c-fw-500: 420;
+  --c-fw-600: 520;
+  --c-fw-700: 620;
+  --c-sidebar-nav-weight: 278;
   --c-sidebar-thread-weight: 290;
-  --c-sidebar-section-weight: 315;
-  --c-narrative-weight: 215;
+  --c-sidebar-section-weight: 295;
+  --c-narrative-weight: 195;
   --c-text-body-weight: 265;
 }
 
@@ -412,7 +412,7 @@ button:not(:disabled) {
 }
 
 :root[data-theme="light"][data-body-font="default"] {
-  --c-narrative-weight: 240;
+  --c-narrative-weight: 220;
   --c-text-body-weight: 305;
 }
 
