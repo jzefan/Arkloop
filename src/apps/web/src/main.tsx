@@ -2,7 +2,11 @@ import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { BrowserRouter, HashRouter } from 'react-router-dom'
 import { ToastProvider } from '@arkloop/shared'
-import './styles/misans-vf.css'
+if (navigator.platform.toLowerCase().includes('win')) {
+  import('./styles/misans-vf-win.css')
+} else {
+  import('./styles/misans-vf.css')
+}
 import './index.css'
 import App from './App.tsx'
 import { LocaleProvider } from './contexts/LocaleContext'

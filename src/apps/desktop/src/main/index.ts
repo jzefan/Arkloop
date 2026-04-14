@@ -26,6 +26,11 @@ import { syncLocalVersions } from './updater'
 import type { AppConfig, ApplyConfigUpdateOptions } from './types'
 
 app.setName('Arkloop')
+
+if (process.platform === 'win32') {
+  app.commandLine.appendSwitch('enable-lcd-text')
+}
+
 setupMainProcessLogging()
 
 let mainWindow: BrowserWindow | null = null
