@@ -3,6 +3,7 @@ package pipeline
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"strconv"
@@ -14,6 +15,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/pkoukk/tiktoken-go"
 )
+
+const defaultFallbackContextWindowTokens = 128000
 
 // ContextCompactSettings 来自平台配置，供 ContextCompactMiddleware 使用。
 type ContextCompactSettings struct {
@@ -45,15 +48,54 @@ type ContextCompactSettings struct {
 }
 
 type OversizeRewriteStats struct {
-	RewriteApplied            bool
-	ImagesStripped            int
-	ToolResultsMicrocompacted int
-	CompactApplied            bool
-	TargetChunkCount          int
-	PreviousReplacementCount  int
-	SingleAtomPartial         bool
-	RequestBytesBeforeRewrite int
-	RequestBytesAfterRewrite  int
+	RewriteApplied             bool
+	ImagesStripped             int
+	ToolResultsMicrocompacted  int
+	CompactApplied             bool
+	TargetChunkCount           int
+	PreviousReplacementCount   int
+	SingleAtomPartial          bool
+	ContextWindowTokens        int
+	RequestTokensBeforeRewrite int
+	RequestTokensAfterRewrite  int
+	MinimalRequestTokens       int
+	RequestBytesBeforeRewrite  int
+	RequestBytesAfterRewrite   int
+	MinimalRequestBytes        int
+	CurrentInputTooLarge       bool
+}
+
+type CurrentInputOversizeError struct {
+	CurrentRequestEstimate int
+	MinimalRequestEstimate int
+	CurrentRequestTokens   int
+	MinimalRequestTokens   int
+	ContextWindowTokens    int
+}
+
+func (e *CurrentInputOversizeError) Error() string {
+	if e == nil {
+		return "current input node exceeds request limit"
+	}
+	return fmt.Sprintf(
+		"current input node exceeds request limit: current=%d minimal=%d current_tokens=%d minimal_tokens=%d context_window=%d",
+		e.CurrentRequestEstimate,
+		e.MinimalRequestEstimate,
+		e.CurrentRequestTokens,
+		e.MinimalRequestTokens,
+		e.ContextWindowTokens,
+	)
+}
+
+func IsCurrentInputOversizeError(err error) (*CurrentInputOversizeError, bool) {
+	if err == nil {
+		return nil, false
+	}
+	var typed *CurrentInputOversizeError
+	if !errors.As(err, &typed) {
+		return nil, false
+	}
+	return typed, true
 }
 
 func approxTokensFromText(s string) int {
@@ -315,6 +357,7 @@ func alignIDs(ids []uuid.UUID, n int) []uuid.UUID {
 const (
 	tailTruncateThresholdTokens = 2000
 	tailTruncatePreviewTokens   = 512
+	tailTruncatePreviewRunes    = 1600
 )
 
 // truncateLargeTailMessages 对尾部保留区里超过阈值的 user 消息截断为预览（内存副本，不改 DB）。
@@ -337,6 +380,20 @@ func truncateLargeTailMessages(enc *tiktoken.Tiktoken, msgs []llm.Message) []llm
 			continue
 		}
 		text := messageText(out[i])
+		if shouldUseCompactRuneFallback(text) {
+			estimated := approxTokensFromText(text)
+			if estimated <= tailTruncateThresholdTokens {
+				continue
+			}
+			preview := compactRunePreview(text, tailTruncatePreviewRunes)
+			truncated := fmt.Sprintf("%s\n\n[... content truncated (%d tokens approx) ...]", preview, estimated)
+			out[i] = llm.Message{
+				Role:    out[i].Role,
+				Phase:   out[i].Phase,
+				Content: []llm.ContentPart{{Type: "text", Text: truncated}},
+			}
+			continue
+		}
 		encoded := enc.Encode(text, nil, nil)
 		if len(encoded) <= tailTruncateThresholdTokens {
 			continue
@@ -392,18 +449,40 @@ func RewriteOversizeRequest(
 	rc *RunContext,
 	request llm.Request,
 	anchor *ContextCompactPressureAnchor,
-	requestBytes func(llm.Request) int,
+	requestEstimate func(llm.Request) (int, error),
 ) (llm.Request, OversizeRewriteStats, error) {
 	stats := OversizeRewriteStats{}
 	if rc == nil {
-		if requestBytes != nil {
-			stats.RequestBytesBeforeRewrite = requestBytes(request)
-			stats.RequestBytesAfterRewrite = stats.RequestBytesBeforeRewrite
-		}
-		return request, stats, nil
+		return request, stats, fmt.Errorf("provider request estimator unavailable")
 	}
-	if requestBytes != nil {
-		stats.RequestBytesBeforeRewrite = requestBytes(request)
+	if requestEstimate == nil {
+		return request, stats, fmt.Errorf("provider request estimator unavailable")
+	}
+	currentEstimate, err := requestEstimate(request)
+	if err != nil {
+		return request, stats, err
+	}
+	contextWindowTokens := ResolveRunContextWindowTokens(rc)
+	stats.RequestBytesBeforeRewrite = currentEstimate
+	stats.ContextWindowTokens = contextWindowTokens
+	stats.RequestTokensBeforeRewrite = ComputeContextCompactPressure(EstimateRequestContextTokens(rc, request), anchor).ContextPressureTokens
+	minimalRequest := minimalCurrentInputRequest(request)
+	stats.MinimalRequestBytes, err = requestEstimate(minimalRequest)
+	if err != nil {
+		return request, stats, err
+	}
+	stats.MinimalRequestTokens = ComputeContextCompactPressure(EstimateRequestContextTokens(rc, minimalRequest), anchor).ContextPressureTokens
+	if llm.RequestExceedsLimits(stats.MinimalRequestBytes, stats.MinimalRequestTokens, contextWindowTokens) {
+		stats.CurrentInputTooLarge = true
+		stats.RequestBytesAfterRewrite = stats.RequestBytesBeforeRewrite
+		stats.RequestTokensAfterRewrite = stats.RequestTokensBeforeRewrite
+		return request, stats, &CurrentInputOversizeError{
+			CurrentRequestEstimate: stats.RequestBytesBeforeRewrite,
+			MinimalRequestEstimate: stats.MinimalRequestBytes,
+			CurrentRequestTokens:   stats.RequestTokensBeforeRewrite,
+			MinimalRequestTokens:   stats.MinimalRequestTokens,
+			ContextWindowTokens:    contextWindowTokens,
+		}
 	}
 
 	rewritten := request
@@ -421,7 +500,21 @@ func RewriteOversizeRequest(
 		stats.ToolResultsMicrocompacted = microcompacted
 	}
 
-	compacted, compactStats, changed, err := MaybeInlineCompactMessages(ctx, rc, rewritten.Messages, anchor)
+	stats.RequestBytesAfterRewrite, err = requestEstimate(rewritten)
+	if err != nil {
+		return request, stats, err
+	}
+	stats.RequestTokensAfterRewrite = ComputeContextCompactPressure(EstimateRequestContextTokens(rc, rewritten), anchor).ContextPressureTokens
+	if !llm.RequestExceedsLimits(
+		stats.RequestBytesAfterRewrite,
+		stats.RequestTokensAfterRewrite,
+		contextWindowTokens,
+	) {
+		return rewritten, stats, nil
+	}
+
+	forceCompact := llm.RequestPayloadTooLarge(stats.RequestBytesAfterRewrite)
+	compacted, compactStats, changed, err := MaybeInlineCompactMessages(ctx, rc, rewritten.Messages, anchor, forceCompact)
 	if changed {
 		rewritten.Messages = compacted
 		stats.RewriteApplied = true
@@ -431,12 +524,113 @@ func RewriteOversizeRequest(
 		stats.SingleAtomPartial = compactStats.SingleAtomPartial
 	}
 
-	if requestBytes != nil {
-		stats.RequestBytesAfterRewrite = requestBytes(rewritten)
-	} else {
-		stats.RequestBytesAfterRewrite = stats.RequestBytesBeforeRewrite
+	stats.RequestBytesAfterRewrite, err = requestEstimate(rewritten)
+	if err != nil {
+		return request, stats, err
 	}
+	stats.RequestTokensAfterRewrite = ComputeContextCompactPressure(EstimateRequestContextTokens(rc, rewritten), anchor).ContextPressureTokens
 	return rewritten, stats, err
+}
+
+func ResolveRunContextWindowTokens(rc *RunContext) int {
+	if rc == nil {
+		return defaultFallbackContextWindowTokens
+	}
+	if rc.ContextWindowTokens > 0 {
+		return rc.ContextWindowTokens
+	}
+	if rc.ContextCompact.FallbackContextWindowTokens > 0 {
+		return rc.ContextCompact.FallbackContextWindowTokens
+	}
+	return defaultFallbackContextWindowTokens
+}
+
+func compactApproxMessagePressure(msgs []llm.Message) int {
+	total := 0
+	for _, m := range msgs {
+		total += approxTokensFromText(messageText(m))
+		for _, tc := range m.ToolCalls {
+			total += approxTokensFromText(tc.ToolName)
+			if len(tc.ArgumentsJSON) > 0 {
+				total += len(tc.ArgumentsJSON) / 4
+			}
+		}
+	}
+	return total
+}
+
+func EstimateRequestContextTokens(rc *RunContext, request llm.Request) int {
+	estimate := compactApproxMessagePressure(request.Messages)
+	if request.PromptPlan != nil {
+		estimate += promptPlanTextTokens(request.PromptPlan)
+	}
+	if estimate < 1 {
+		return 1
+	}
+	return estimate
+}
+
+func EstimateProviderRequestBytesForRunContext(rc *RunContext, request llm.Request) (int, error) {
+	if rc == nil || rc.SelectedRoute == nil {
+		return 0, fmt.Errorf("provider request estimator unavailable")
+	}
+	resolved, err := ResolveGatewayConfigFromSelectedRoute(*rc.SelectedRoute, false, rc.LlmMaxResponseBytes)
+	if err != nil {
+		return 0, err
+	}
+	return llm.EstimateProviderPayloadBytes(resolved, request)
+}
+
+func minimalCurrentInputRequest(request llm.Request) llm.Request {
+	minimal := request
+	minimal.Messages = minimalCurrentInputMessages(request.Messages)
+	minimal.PromptPlan = minimalPromptPlanForCurrentInput(request.PromptPlan)
+	return minimal
+}
+
+func minimalCurrentInputMessages(messages []llm.Message) []llm.Message {
+	if len(messages) == 0 {
+		return nil
+	}
+	lastIdx := len(messages) - 1
+	out := make([]llm.Message, 0, len(messages))
+	for idx, msg := range messages {
+		if msg.Role == "system" {
+			out = append(out, msg)
+			continue
+		}
+		if idx == lastIdx {
+			out = append(out, msg)
+		}
+	}
+	if len(out) == 0 {
+		out = append(out, messages[lastIdx])
+	}
+	return out
+}
+
+func minimalPromptPlanForCurrentInput(plan *llm.PromptPlan) *llm.PromptPlan {
+	if plan == nil {
+		return nil
+	}
+	minimal := &llm.PromptPlan{
+		SystemBlocks: append([]llm.PromptPlanBlock(nil), plan.SystemBlocks...),
+	}
+	return minimal
+}
+
+func promptPlanTextTokens(plan *llm.PromptPlan) int {
+	if plan == nil {
+		return 0
+	}
+	total := 0
+	for _, block := range plan.SystemBlocks {
+		total += approxTokensFromText(strings.TrimSpace(block.Text))
+	}
+	for _, block := range plan.MessageBlocks {
+		total += approxTokensFromText(strings.TrimSpace(block.Text))
+	}
+	return total
 }
 
 // microcompactToolResults 保留最近 keepRecent 个 role="tool" 消息原文，其余替换为占位符。

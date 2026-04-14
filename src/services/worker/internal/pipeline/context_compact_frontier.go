@@ -4,8 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"math"
 	"strings"
+	"time"
 
 	"arkloop/services/shared/messagecontent"
 	"arkloop/services/worker/internal/llm"
@@ -43,12 +45,77 @@ type FrontierNode struct {
 	role      string
 }
 
+func compactFrontierNodeID(kind FrontierNodeKind, atomSeq int, msgStart int, msgEnd int, part int) uuid.UUID {
+	return uuid.NewSHA1(uuid.Nil, []byte(fmt.Sprintf("%s:%d:%d:%d:%d", kind, atomSeq, msgStart, msgEnd, part)))
+}
+
 type compactFrontierSelection struct {
 	Nodes          []FrontierNode
 	EndNodeIndex   int
 	TargetTokens   int
 	PartialTail    bool
 	SelectedTokens int
+}
+
+const compactMaxAtomsPerRound = 20
+
+type compactProgressRecorder struct {
+	base   map[string]any
+	emitFn func(context.Context, *RunContext, map[string]any) error
+}
+
+func newCompactProgressRecorder(
+	pool CompactPersistDB,
+	eventsRepo CompactRunEventAppender,
+	base map[string]any,
+) compactProgressRecorder {
+	return compactProgressRecorder{
+		base: cloneContextCompactEventData(base),
+		emitFn: func(ctx context.Context, rc *RunContext, data map[string]any) error {
+			return appendContextCompactRunEvent(ctx, pool, eventsRepo, rc, data)
+		},
+	}
+}
+
+func (r compactProgressRecorder) emit(ctx context.Context, rc *RunContext, phase string, data map[string]any) {
+	if rc == nil || r.emitFn == nil {
+		return
+	}
+	payload := cloneContextCompactEventData(r.base)
+	payload["phase"] = phase
+	for key, value := range data {
+		payload[key] = value
+	}
+	if err := r.emitFn(ctx, rc, payload); err != nil {
+		runID := uuid.Nil
+		if rc != nil {
+			runID = rc.Run.ID
+		}
+		slog.WarnContext(ctx, "context_compact", "phase", phase, "err", err.Error(), "run_id", runID.String())
+	}
+}
+
+func cloneContextCompactEventData(src map[string]any) map[string]any {
+	if len(src) == 0 {
+		return map[string]any{}
+	}
+	out := make(map[string]any, len(src))
+	for key, value := range src {
+		out[key] = value
+	}
+	return out
+}
+
+func compactNodesApproxTokens(nodes []FrontierNode) int {
+	total := 0
+	for _, node := range nodes {
+		if node.ApproxTokens > 0 {
+			total += node.ApproxTokens
+			continue
+		}
+		total += approxTokensFromText(node.SourceText)
+	}
+	return total
 }
 
 func contextCompactTargetTokens(cfg ContextCompactSettings, window int) int {
@@ -73,6 +140,10 @@ func contextCompactTargetTokens(cfg ContextCompactSettings, window int) int {
 }
 
 func buildCompactFrontierNodesFromMessages(enc *tiktoken.Tiktoken, msgs []llm.Message) []FrontierNode {
+	return buildCompactFrontierNodesFromMessagesWithOptions(enc, msgs, false)
+}
+
+func buildCompactFrontierNodesFromMessagesWithOptions(enc *tiktoken.Tiktoken, msgs []llm.Message, skipSynthetic bool) []FrontierNode {
 	if len(msgs) == 0 {
 		return nil
 	}
@@ -81,6 +152,10 @@ func buildCompactFrontierNodesFromMessages(enc *tiktoken.Tiktoken, msgs []llm.Me
 	nextAtomSeq := 1
 	for i := 0; i < len(msgs); {
 		msg := msgs[i]
+		if skipSynthetic && msg.Phase != nil && strings.TrimSpace(*msg.Phase) == compactSyntheticPhase {
+			i++
+			continue
+		}
 		if msg.Role == "assistant" && len(msg.ToolCalls) > 0 {
 			end := i + 1
 			for end < len(msgs) && strings.TrimSpace(msgs[end].Role) == "tool" {
@@ -88,10 +163,10 @@ func buildCompactFrontierNodesFromMessages(enc *tiktoken.Tiktoken, msgs []llm.Me
 			}
 			payload := serializeToolEpisodeForCompact(msgs[i:end])
 			parts := splitCompactPayload(enc, payload)
-			for _, part := range parts {
+			for partIndex, part := range parts {
 				nodes = append(nodes, FrontierNode{
 					Kind:            FrontierNodeChunk,
-					NodeID:          uuid.New(),
+					NodeID:          compactFrontierNodeID(FrontierNodeChunk, nextAtomSeq, i, end-1, partIndex),
 					StartContextSeq: nextContextSeq,
 					EndContextSeq:   nextContextSeq,
 					SourceText:      part,
@@ -111,10 +186,10 @@ func buildCompactFrontierNodesFromMessages(enc *tiktoken.Tiktoken, msgs []llm.Me
 		if strings.TrimSpace(msg.Role) == "tool" {
 			payload := serializeSingleToolForCompact(msg)
 			parts := splitCompactPayload(enc, payload)
-			for _, part := range parts {
+			for partIndex, part := range parts {
 				nodes = append(nodes, FrontierNode{
 					Kind:            FrontierNodeChunk,
-					NodeID:          uuid.New(),
+					NodeID:          compactFrontierNodeID(FrontierNodeChunk, nextAtomSeq, i, i, partIndex),
 					StartContextSeq: nextContextSeq,
 					EndContextSeq:   nextContextSeq,
 					SourceText:      part,
@@ -145,10 +220,10 @@ func buildCompactFrontierNodesFromMessages(enc *tiktoken.Tiktoken, msgs []llm.Me
 			atomType = compactAtomUserText
 		}
 		parts := splitCompactPayload(enc, rawText)
-		for _, part := range parts {
+		for partIndex, part := range parts {
 			nodes = append(nodes, FrontierNode{
 				Kind:            FrontierNodeChunk,
-				NodeID:          uuid.New(),
+				NodeID:          compactFrontierNodeID(FrontierNodeChunk, nextAtomSeq, i, i, partIndex),
 				StartContextSeq: nextContextSeq,
 				EndContextSeq:   nextContextSeq,
 				SourceText:      part,
@@ -165,6 +240,241 @@ func buildCompactFrontierNodesFromMessages(enc *tiktoken.Tiktoken, msgs []llm.Me
 		i++
 	}
 	return nodes
+}
+
+func buildCompactFrontierAtomsFromMessages(enc *tiktoken.Tiktoken, msgs []llm.Message) []FrontierNode {
+	return buildCompactFrontierAtomsFromMessagesWithOptions(enc, msgs, false)
+}
+
+func buildCompactFrontierAtomsFromMessagesWithOptions(enc *tiktoken.Tiktoken, msgs []llm.Message, skipSynthetic bool) []FrontierNode {
+	if len(msgs) == 0 {
+		return nil
+	}
+	nodes := make([]FrontierNode, 0, len(msgs))
+	nextContextSeq := int64(1)
+	nextAtomSeq := 1
+	for i := 0; i < len(msgs); {
+		msg := msgs[i]
+		if skipSynthetic && msg.Phase != nil && strings.TrimSpace(*msg.Phase) == compactSyntheticPhase {
+			i++
+			continue
+		}
+		// replacement messages from previous compact rounds → FrontierNodeReplacement
+		if msg.Phase != nil && strings.TrimSpace(*msg.Phase) == compactSyntheticPhase {
+			rawText := strings.TrimSpace(messageText(msg))
+			if rawText == "" {
+				rawText = compactFallbackContentText(msg)
+			}
+			if rawText != "" {
+				nodes = append(nodes, FrontierNode{
+					Kind:            FrontierNodeReplacement,
+					NodeID:          compactFrontierNodeID(FrontierNodeReplacement, nextAtomSeq, i, i, 0),
+					StartContextSeq: nextContextSeq,
+					EndContextSeq:   nextContextSeq,
+					SourceText:      rawText,
+					ApproxTokens:    compactTokenCount(enc, rawText),
+					MsgStart:        i,
+					MsgEnd:          i,
+					AtomSeq:         nextAtomSeq,
+					Role:            msg.Role,
+				})
+				nextContextSeq++
+				nextAtomSeq++
+			}
+			i++
+			continue
+		}
+		if msg.Role == "assistant" && len(msg.ToolCalls) > 0 {
+			end := i + 1
+			for end < len(msgs) && strings.TrimSpace(msgs[end].Role) == "tool" {
+				end++
+			}
+			sourceText := serializeToolEpisodeForCompact(msgs[i:end])
+			if strings.TrimSpace(sourceText) != "" {
+				nodes = append(nodes, FrontierNode{
+					Kind:            FrontierNodeChunk,
+					NodeID:          compactFrontierNodeID(FrontierNodeChunk, nextAtomSeq, i, end-1, 0),
+					StartContextSeq: nextContextSeq,
+					EndContextSeq:   nextContextSeq,
+					SourceText:      sourceText,
+					ApproxTokens:    compactTokenCount(enc, sourceText),
+					MsgStart:        i,
+					MsgEnd:          end - 1,
+					AtomSeq:         nextAtomSeq,
+					AtomType:        compactAtomToolEpisode,
+					Role:            "assistant",
+				})
+				nextContextSeq++
+				nextAtomSeq++
+			}
+			i = end
+			continue
+		}
+		if strings.TrimSpace(msg.Role) == "tool" {
+			sourceText := serializeSingleToolForCompact(msg)
+			if strings.TrimSpace(sourceText) != "" {
+				nodes = append(nodes, FrontierNode{
+					Kind:            FrontierNodeChunk,
+					NodeID:          compactFrontierNodeID(FrontierNodeChunk, nextAtomSeq, i, i, 0),
+					StartContextSeq: nextContextSeq,
+					EndContextSeq:   nextContextSeq,
+					SourceText:      sourceText,
+					ApproxTokens:    compactTokenCount(enc, sourceText),
+					MsgStart:        i,
+					MsgEnd:          i,
+					AtomSeq:         nextAtomSeq,
+					AtomType:        compactAtomToolEpisode,
+					Role:            "tool",
+				})
+				nextContextSeq++
+				nextAtomSeq++
+			}
+			i++
+			continue
+		}
+
+		rawText := strings.TrimSpace(messageText(msg))
+		if rawText == "" {
+			rawText = compactFallbackContentText(msg)
+		}
+		if rawText == "" {
+			i++
+			continue
+		}
+		atomType := compactAtomAssistantText
+		if strings.TrimSpace(msg.Role) == "user" {
+			atomType = compactAtomUserText
+		}
+		nodes = append(nodes, FrontierNode{
+			Kind:            FrontierNodeChunk,
+			NodeID:          compactFrontierNodeID(FrontierNodeChunk, nextAtomSeq, i, i, 0),
+			StartContextSeq: nextContextSeq,
+			EndContextSeq:   nextContextSeq,
+			SourceText:      rawText,
+			ApproxTokens:    compactTokenCount(enc, rawText),
+			MsgStart:        i,
+			MsgEnd:          i,
+			AtomSeq:         nextAtomSeq,
+			AtomType:        atomType,
+			Role:            msg.Role,
+		})
+		nextContextSeq++
+		nextAtomSeq++
+		i++
+	}
+	return nodes
+}
+
+func buildCompactFrontierAtomsFromPersistFrontier(frontier []FrontierNode) []FrontierNode {
+	if len(frontier) == 0 {
+		return nil
+	}
+	nodes := make([]FrontierNode, 0, len(frontier))
+	nextMsgIndex := 0
+	for i := 0; i < len(frontier); {
+		current := frontier[i]
+		if current.Kind == FrontierNodeReplacement {
+			text := strings.TrimSpace(current.SourceText)
+			if text != "" {
+				current.SourceText = text
+				if current.ApproxTokens <= 0 {
+					current.ApproxTokens = approxTokensFromText(text)
+				}
+				if strings.TrimSpace(current.Role) == "" {
+					current.Role = "user"
+				}
+				if current.AtomSeq <= 0 {
+					current.AtomSeq = nextMsgIndex + 1
+				}
+				current.MsgStart = nextMsgIndex
+				current.MsgEnd = nextMsgIndex
+				nodes = append(nodes, current)
+				nextMsgIndex++
+			}
+			i++
+			continue
+		}
+
+		merged := current
+		textParts := make([]string, 0, 4)
+		if text := strings.TrimSpace(current.SourceText); text != "" {
+			textParts = append(textParts, text)
+		}
+		approxTokens := current.ApproxTokens
+		j := i + 1
+		for j < len(frontier) {
+			next := frontier[j]
+			if next.Kind != FrontierNodeChunk {
+				break
+			}
+			if merged.atomKey != "" {
+				if next.atomKey != merged.atomKey {
+					break
+				}
+			} else if next.AtomSeq != merged.AtomSeq {
+				break
+			}
+			if next.StartContextSeq != merged.EndContextSeq+1 {
+				break
+			}
+			if text := strings.TrimSpace(next.SourceText); text != "" {
+				textParts = append(textParts, text)
+			}
+			if next.ApproxTokens > 0 {
+				approxTokens += next.ApproxTokens
+			}
+			if next.EndContextSeq > merged.EndContextSeq {
+				merged.EndContextSeq = next.EndContextSeq
+			}
+			if next.EndThreadSeq > merged.EndThreadSeq {
+				merged.EndThreadSeq = next.EndThreadSeq
+			}
+			j++
+		}
+
+		merged.SourceText = strings.TrimSpace(strings.Join(textParts, "\n\n"))
+		if merged.SourceText != "" {
+			if approxTokens <= 0 {
+				approxTokens = approxTokensFromText(merged.SourceText)
+			}
+			merged.ApproxTokens = approxTokens
+			if strings.TrimSpace(merged.Role) == "" {
+				merged.Role = strings.TrimSpace(merged.role)
+			}
+			if merged.AtomSeq <= 0 {
+				merged.AtomSeq = nextMsgIndex + 1
+			}
+			merged.MsgStart = nextMsgIndex
+			merged.MsgEnd = nextMsgIndex
+			nodes = append(nodes, merged)
+			nextMsgIndex++
+		}
+		i = j
+	}
+	return nodes
+}
+
+func mapSelectedAtomsToPersistFrontierNodes(selectedAtoms []FrontierNode, frontier []FrontierNode) []FrontierNode {
+	if len(selectedAtoms) == 0 || len(frontier) == 0 {
+		return nil
+	}
+	out := make([]FrontierNode, 0, len(selectedAtoms))
+	for _, selected := range selectedAtoms {
+		for _, node := range frontier {
+			if node.Kind != selected.Kind {
+				continue
+			}
+			if node.StartContextSeq != selected.StartContextSeq || node.EndContextSeq != selected.EndContextSeq {
+				continue
+			}
+			if node.StartThreadSeq != selected.StartThreadSeq || node.EndThreadSeq != selected.EndThreadSeq {
+				continue
+			}
+			out = append(out, node)
+			break
+		}
+	}
+	return out
 }
 
 func selectCompactFrontierWindow(nodes []FrontierNode, deficitTokens int, maxInputTokens int) compactFrontierSelection {
@@ -184,6 +494,9 @@ func selectCompactFrontierWindow(nodes []FrontierNode, deficitTokens int, maxInp
 	}
 
 	targetTokens := int(math.Ceil(float64(deficitTokens) / 0.8))
+	if maxTargetTokens := maxInputTokens / 2; maxTargetTokens > 0 && targetTokens > maxTargetTokens {
+		targetTokens = maxTargetTokens
+	}
 	if targetTokens < 1024 {
 		targetTokens = 1024
 	}
@@ -232,6 +545,50 @@ func selectCompactFrontierWindow(nodes []FrontierNode, deficitTokens int, maxInp
 	return selection
 }
 
+func selectCompactAtomWindow(nodes []FrontierNode, deficitTokens int, maxInputTokens int) compactFrontierSelection {
+	_ = deficitTokens
+	if len(nodes) == 0 {
+		return compactFrontierSelection{}
+	}
+	protectedAtomSeq := nodes[len(nodes)-1].AtomSeq
+	eligibleEnd := len(nodes)
+	for i := range nodes {
+		if nodes[i].AtomSeq == protectedAtomSeq {
+			eligibleEnd = i
+			break
+		}
+	}
+	if eligibleEnd <= 0 {
+		return compactFrontierSelection{}
+	}
+
+	targetTokens := maxInputTokens / 2
+	selection := compactFrontierSelection{
+		EndNodeIndex: -1,
+		TargetTokens: targetTokens,
+	}
+	for i := 0; i < eligibleEnd; i++ {
+		selection.Nodes = append(selection.Nodes, nodes[i])
+		selection.EndNodeIndex = i
+		selection.SelectedTokens += nodes[i].ApproxTokens
+		if len(selection.Nodes) >= compactMaxAtomsPerRound || (targetTokens > 0 && selection.SelectedTokens >= targetTokens) {
+			break
+		}
+	}
+	if selection.EndNodeIndex < 0 {
+		return compactFrontierSelection{}
+	}
+	if maxInputTokens > 0 && selection.SelectedTokens > maxInputTokens {
+		selection.SelectedTokens -= selection.Nodes[len(selection.Nodes)-1].ApproxTokens
+		selection.Nodes = selection.Nodes[:len(selection.Nodes)-1]
+		selection.EndNodeIndex--
+	}
+	if len(selection.Nodes) == 0 {
+		return compactFrontierSelection{}
+	}
+	return selection
+}
+
 func buildCompactSummaryInputFromNodes(nodes []FrontierNode) string {
 	if len(nodes) == 0 {
 		return ""
@@ -247,17 +604,45 @@ func buildCompactSummaryInputFromNodes(nodes []FrontierNode) string {
 	return strings.TrimSpace(strings.Join(parts, "\n\n"))
 }
 
+func buildCompactSummaryInputFromAtoms(nodes []FrontierNode) string {
+	if len(nodes) == 0 {
+		return ""
+	}
+	parts := make([]string, 0, len(nodes))
+	for _, node := range nodes {
+		text := strings.TrimSpace(node.SourceText)
+		if text == "" {
+			continue
+		}
+		tag := "[assistant]"
+		switch {
+		case node.Kind == FrontierNodeReplacement:
+			tag = "[summary]"
+		case node.AtomType == compactAtomToolEpisode:
+			tag = "[tool_episode]"
+		case strings.TrimSpace(node.Role) == "user" || node.AtomType == compactAtomUserText:
+			tag = "[user]"
+		case strings.TrimSpace(node.Role) == "assistant" || node.AtomType == compactAtomAssistantText:
+			tag = "[assistant]"
+		}
+		parts = append(parts, tag+"\n"+text)
+	}
+	return strings.TrimSpace(strings.Join(parts, "\n\n"))
+}
+
 func runContextCompactLLMForNodes(
 	ctx context.Context,
 	rc *RunContext,
 	gateway llm.Gateway,
 	model string,
 	nodes []FrontierNode,
+	progress compactProgressRecorder,
+	attempt int,
 ) (string, error) {
 	if gateway == nil || strings.TrimSpace(model) == "" {
 		return "", fmt.Errorf("gateway or model missing")
 	}
-	targetText := buildCompactSummaryInputFromNodes(nodes)
+	targetText := buildCompactSummaryInputFromAtoms(nodes)
 	if targetText == "" {
 		return "", nil
 	}
@@ -283,7 +668,17 @@ func runContextCompactLLMForNodes(
 	streamCtx, cancel := context.WithTimeout(ctx, contextCompactStreamTimeout)
 	defer cancel()
 
+	progress.emit(ctx, rc, "llm_request_started", map[string]any{
+		"attempt":                attempt,
+		"atoms_attempted":        len(nodes),
+		"input_tokens":           compactNodesApproxTokens(nodes),
+		"input_runes":            len([]rune(targetText)),
+		"model":                  model,
+		"stream_timeout_seconds": int(contextCompactStreamTimeout / time.Second),
+	})
+
 	var chunks []string
+	startedAt := time.Now()
 	err := gateway.Stream(streamCtx, req, func(ev llm.StreamEvent) error {
 		switch typed := ev.(type) {
 		case llm.StreamMessageDelta:
@@ -303,7 +698,14 @@ func runContextCompactLLMForNodes(
 	if err != nil && !errors.Is(err, errContextCompactStreamDone) {
 		return "", err
 	}
-	return strings.TrimSpace(strings.Join(chunks, "")), nil
+	summary := strings.TrimSpace(strings.Join(chunks, ""))
+	progress.emit(ctx, rc, "llm_request_completed", map[string]any{
+		"attempt":         attempt,
+		"atoms_attempted": len(nodes),
+		"summary_tokens":  approxTokensFromText(summary),
+		"elapsed_ms":      time.Since(startedAt).Milliseconds(),
+	})
+	return summary, nil
 }
 
 func compactNodesWithShrinkRetry(
@@ -312,17 +714,19 @@ func compactNodesWithShrinkRetry(
 	gateway llm.Gateway,
 	model string,
 	nodes []FrontierNode,
+	progress compactProgressRecorder,
 ) (string, []FrontierNode, error) {
 	if len(nodes) == 0 {
 		return "", nil, nil
 	}
 	current := append([]FrontierNode(nil), nodes...)
+	attempt := 1
 	for len(current) > 0 {
-		summary, err := runContextCompactLLMForNodes(ctx, rc, gateway, model, current)
+		summary, err := runContextCompactLLMForNodes(ctx, rc, gateway, model, current, progress, attempt)
 		if err == nil {
 			return summary, current, nil
 		}
-		if !isContextWindowExceeded(strings.ToLower(err.Error())) || len(current) == 1 {
+		if !shouldShrinkCompactNodes(err) || len(current) == 1 {
 			return "", current, err
 		}
 		last := current[len(current)-1]
@@ -332,9 +736,28 @@ func compactNodesWithShrinkRetry(
 				cut++
 			}
 		}
+		progress.emit(ctx, rc, "llm_request_retrying", map[string]any{
+			"attempt":         attempt,
+			"atoms_attempted": len(current),
+			"atoms_dropped":   cut,
+			"atoms_remaining": len(current) - cut,
+			"llm_error":       err.Error(),
+		})
 		current = current[:len(current)-cut]
+		attempt++
 	}
 	return "", nil, nil
+}
+
+func shouldShrinkCompactNodes(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return false
+	}
+	errMsg := strings.ToLower(strings.TrimSpace(err.Error()))
+	return !strings.Contains(errMsg, "unauthorized") && !strings.Contains(errMsg, "forbidden")
 }
 
 func shrinkFrontierNodesToMessageBoundary(nodes []FrontierNode) []FrontierNode {
@@ -361,10 +784,11 @@ func compactNodesWithPersistRetry(
 	gateway llm.Gateway,
 	model string,
 	nodes []FrontierNode,
+	progress compactProgressRecorder,
 ) (string, []FrontierNode, error) {
 	current := shrinkFrontierNodesToMessageBoundary(nodes)
 	for len(current) > 0 {
-		summary, usedNodes, err := compactNodesWithShrinkRetry(ctx, rc, gateway, model, current)
+		summary, usedNodes, err := compactNodesWithShrinkRetry(ctx, rc, gateway, model, current, progress)
 		if err != nil {
 			return "", usedNodes, err
 		}
@@ -388,6 +812,22 @@ func isContextWindowExceeded(errMsg string) bool {
 		}
 	}
 	return false
+}
+
+func materializeCompactedPrefixAtoms(
+	msgs []llm.Message,
+	nodes []FrontierNode,
+	endNodeIndex int,
+	summary string,
+) []llm.Message {
+	if len(msgs) == 0 || len(nodes) == 0 || endNodeIndex < 0 || endNodeIndex >= len(nodes) {
+		return msgs
+	}
+	endNode := nodes[endNodeIndex]
+	out := make([]llm.Message, 0, len(msgs)+1)
+	out = append(out, makeThreadContextReplacementMessage(summary))
+	out = append(out, msgs[endNode.MsgEnd+1:]...)
+	return out
 }
 
 func materializeCompactedPrefixMessages(

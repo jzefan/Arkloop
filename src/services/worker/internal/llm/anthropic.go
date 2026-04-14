@@ -644,6 +644,12 @@ func applyAnthropicMessageCachePlan(out []map[string]any, sourceToOut map[int]in
 			markerOutIdx--
 		}
 		applySingleMessageCacheMarker(out, markerOutIdx)
+		if plan.StableMarkerEnabled {
+			stableOutIdx := resolveStableMarkerMessageIndex(plan.StableMarkerMessageIndex, sourceToOut)
+			if stableOutIdx >= 0 && stableOutIdx < markerOutIdx {
+				applySingleMessageCacheMarker(out, stableOutIdx)
+			}
+		}
 		if plan.ToolResultCacheReferences {
 			cutOutIdx := resolveToolResultCacheCutIndex(plan.ToolResultCacheCutIndex, sourceToOut, markerOutIdx)
 			applyToolResultCacheReferences(out, cutOutIdx)
@@ -675,6 +681,16 @@ func resolveMarkerMessageIndex(sourceIndex int, sourceToOut map[int]int, outLen 
 		}
 	}
 	return outLen - 1
+}
+
+func resolveStableMarkerMessageIndex(sourceIndex int, sourceToOut map[int]int) int {
+	if sourceIndex < 0 {
+		return -1
+	}
+	if idx, ok := sourceToOut[sourceIndex]; ok {
+		return idx
+	}
+	return -1
 }
 
 func resolveToolResultCacheCutIndex(sourceIndex int, sourceToOut map[int]int, fallback int) int {

@@ -13,6 +13,10 @@ func RequestPayloadTooLarge(payloadBytes int) bool {
 	return payloadBytes > RequestPayloadLimitBytes
 }
 
+func RequestExceedsLimits(payloadBytes int, estimatedTokens int, contextWindowTokens int) bool {
+	return RequestPayloadTooLarge(payloadBytes) || (contextWindowTokens > 0 && estimatedTokens > contextWindowTokens)
+}
+
 func OversizeFailureDetails(payloadBytes int, phase string, base map[string]any) map[string]any {
 	details := map[string]any{}
 	for key, value := range base {

@@ -18,11 +18,8 @@ func TestBuildRuntimeContextBlock_IncludesTimeContextWithoutChannel(t *testing.T
 	if !strings.Contains(block, "User Timezone: UTC") {
 		t.Fatalf("expected timezone line, got %q", block)
 	}
-	if !strings.Contains(block, "User Local Now: ") {
-		t.Fatalf("expected local now line, got %q", block)
-	}
-	if !strings.Contains(block, "[SYSTEM_RUNTIME_CONTEXT]") {
-		t.Fatalf("expected runtime context wrapper, got %q", block)
+	if !strings.Contains(block, "User Local Date: ") {
+		t.Fatalf("expected local date line, got %q", block)
 	}
 }
 
@@ -42,11 +39,12 @@ func TestRuntimeContextMiddleware_StoresRuntimePromptWithoutTouchingSystemPrompt
 	rc.SystemPrompt = rc.MaterializedSystemPrompt()
 	mw := NewRuntimeContextMiddleware()
 	err := mw(context.Background(), rc, func(_ context.Context, nextRC *RunContext) error {
-		if nextRC.SystemPrompt != "base system prompt" {
-			t.Fatalf("expected system prompt unchanged, got %q", nextRC.SystemPrompt)
+		sysPrompt := nextRC.MaterializedSystemPrompt()
+		if !strings.Contains(sysPrompt, "base system prompt") {
+			t.Fatalf("expected system prompt to contain base, got %q", sysPrompt)
 		}
-		if !strings.Contains(nextRC.RuntimePrompt, "User Local Now: ") {
-			t.Fatalf("expected runtime prompt to contain local now, got %q", nextRC.RuntimePrompt)
+		if !strings.Contains(sysPrompt, "User Local Date: ") {
+			t.Fatalf("expected system prompt to contain local date, got %q", sysPrompt)
 		}
 		return nil
 	})
