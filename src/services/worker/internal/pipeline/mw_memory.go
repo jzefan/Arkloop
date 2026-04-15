@@ -280,6 +280,7 @@ func memoryFirstLine(s string) string {
 }
 
 // buildTreeShapedMemoryBlock 拼装骨架 + 叶子补充的 <memory> block。
+// 所有内容经过 sanitize 防止 XML 边界逃逸。
 func buildTreeShapedMemoryBlock(skeletonLines []string, leafLines []string) string {
 	if len(skeletonLines) == 0 && len(leafLines) == 0 {
 		return ""
@@ -291,7 +292,7 @@ func buildTreeShapedMemoryBlock(skeletonLines []string, leafLines []string) stri
 		if cleaned == "" {
 			continue
 		}
-		sb.WriteString(cleaned)
+		sb.WriteString(memory.SanitizeBlockContent(cleaned))
 		sb.WriteString("\n\n")
 	}
 	if len(leafLines) > 0 {
@@ -304,7 +305,7 @@ func buildTreeShapedMemoryBlock(skeletonLines []string, leafLines []string) stri
 				continue
 			}
 			sb.WriteString("- ")
-			sb.WriteString(cleaned)
+			sb.WriteString(memory.SanitizeBlockContent(cleaned))
 			sb.WriteString("\n")
 		}
 	}
@@ -334,7 +335,7 @@ func buildLinearMemoryBlock(fragments []memory.MemoryFragment) string {
 	sb.WriteString("\n\n<memory>\n")
 	for _, line := range lines {
 		sb.WriteString("- ")
-		sb.WriteString(line)
+		sb.WriteString(memory.SanitizeBlockContent(line))
 		sb.WriteString("\n")
 	}
 	sb.WriteString("</memory>")

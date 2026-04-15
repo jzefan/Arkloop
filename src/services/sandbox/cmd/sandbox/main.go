@@ -155,7 +155,7 @@ func run() error {
 	handler := sandboxhttp.NewHandler(mgr, envMgr, skillOverlay, shellMgr, processMgr, acpMgr, artifactStore, logger, cfg.AuthToken)
 
 	if cfg.AuthToken == "" {
-		logger.Warn("ARKLOOP_SANDBOX_AUTH_TOKEN not set, auth disabled", logging.LogFields{}, nil)
+		return fmt.Errorf("ARKLOOP_SANDBOX_AUTH_TOKEN must be set, refusing to start without auth")
 	}
 
 	application, err := app.NewApplication(cfg, logger, mgr)

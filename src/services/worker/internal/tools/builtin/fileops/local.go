@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 )
 
 // LocalBackend performs file operations directly on the host filesystem,
@@ -19,7 +20,12 @@ func (b *LocalBackend) resolvePath(path string) (string, error) {
 	if !filepath.IsAbs(path) {
 		path = filepath.Join(b.WorkDir, path)
 	}
-	return filepath.Clean(path), nil
+	cleaned := filepath.Clean(path)
+	wsClean := filepath.Clean(b.WorkDir)
+	if !strings.HasPrefix(cleaned, wsClean+string(filepath.Separator)) && cleaned != wsClean {
+		return "", fmt.Errorf("path %q is outside the workspace (path traversal blocked)", path)
+	}
+	return cleaned, nil
 }
 
 func (b *LocalBackend) ReadFile(_ context.Context, path string) ([]byte, error) {

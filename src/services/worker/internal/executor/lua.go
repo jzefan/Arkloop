@@ -65,6 +65,8 @@ func (e *LuaExecutor) Execute(
 	// base 库包含 dofile/loadfile，可从文件系统加载代码，必须移除
 	L.SetGlobal("dofile", lua.LNil)
 	L.SetGlobal("loadfile", lua.LNil)
+	L.SetGlobal("load", lua.LNil)
+	L.SetGlobal("loadstring", lua.LNil)
 
 	rt := &luaRuntime{
 		ctx:     ctx,

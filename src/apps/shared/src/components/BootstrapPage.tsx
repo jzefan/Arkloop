@@ -159,7 +159,7 @@ export function BootstrapPage({ onLoggedIn, t, locale, consoles }: Props) {
     if (target.current) {
       navigate('/dashboard', { replace: true })
     } else {
-      window.location.href = `${target.url}?_t=${encodeURIComponent(pendingAccessToken)}`
+      window.location.href = `${target.url}#_t=${encodeURIComponent(pendingAccessToken)}`
     }
   }
 

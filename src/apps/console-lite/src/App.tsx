@@ -33,13 +33,11 @@ function App() {
   useEffect(() => {
     const controller = new AbortController()
 
-    // bootstrap token handoff from another console
-    const params = new URLSearchParams(window.location.search)
-    const handoffToken = params.get('_t')
+    // bootstrap token handoff from another console (via URL fragment to avoid leaking token)
+    const hashParams = new URLSearchParams(window.location.hash.replace(/^#/, ''))
+    const handoffToken = hashParams.get('_t')
     if (handoffToken) {
-      params.delete('_t')
-      const qs = params.toString()
-      window.history.replaceState({}, '', `${window.location.pathname}${qs ? '?' + qs : ''}`)
+      window.history.replaceState({}, '', `${window.location.pathname}${window.location.search}`)
       writeAccessTokenToStorage(handoffToken)
       const raf = requestAnimationFrame(() => {
         setAccessToken(handoffToken)

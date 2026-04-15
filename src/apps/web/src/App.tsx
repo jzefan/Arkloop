@@ -76,7 +76,7 @@ function App() {
 
     // Local 模式: Go 后端使用固定 token，跳过刷新流程
     if (isLocalMode()) {
-      const desktopToken = getDesktopAccessToken() ?? 'arkloop-desktop-local-token'
+      const desktopToken = getDesktopAccessToken() ?? ''
       writeAccessTokenToStorage(desktopToken)
       const raf = requestAnimationFrame(() => {
         setAccessToken(desktopToken)
@@ -123,7 +123,7 @@ function App() {
   const handleLoggedOut = useCallback(() => {
     // Local mode uses a fixed token — logout should be a no-op (button hidden, but guard here too)
     if (isLocalMode()) {
-      const desktopToken = getDesktopAccessToken() ?? 'arkloop-desktop-local-token'
+      const desktopToken = getDesktopAccessToken() ?? ''
       writeAccessTokenToStorage(desktopToken)
       setAccessToken(desktopToken)
       return

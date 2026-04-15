@@ -399,7 +399,7 @@ func stripWritableHeader(raw string) string {
 }
 
 // buildNotebookBlock formats all entries into the XML notebook block used by the
-// system prompt injection.
+// system prompt injection. Each line is sanitized to prevent XML boundary escape.
 func buildNotebookBlock(lines []string) string {
 	if len(lines) == 0 {
 		return ""
@@ -408,7 +408,7 @@ func buildNotebookBlock(lines []string) string {
 	sb.WriteString("\n\n<notebook>\n")
 	for _, l := range lines {
 		sb.WriteString("- ")
-		sb.WriteString(strings.TrimSpace(l))
+		sb.WriteString(memory.SanitizeBlockContent(strings.TrimSpace(l)))
 		sb.WriteString("\n")
 	}
 	sb.WriteString("</notebook>")

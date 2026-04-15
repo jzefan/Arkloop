@@ -13,7 +13,7 @@ import (
 
 const (
 	DefaultBaseURL  = "http://127.0.0.1:19001"
-	DefaultToken    = "arkloop-desktop-local-token"
+	DefaultToken    = ""
 	ThreadPageLimit = 200
 )
 

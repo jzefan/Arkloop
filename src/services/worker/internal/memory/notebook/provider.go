@@ -305,6 +305,7 @@ func stripWritableHeader(raw string) string {
 }
 
 // BuildNotebookBlock formats entries into the <notebook> XML block.
+// Each line is sanitized to prevent XML boundary escape attacks.
 func BuildNotebookBlock(lines []string) string {
 	if len(lines) == 0 {
 		return ""
@@ -313,7 +314,7 @@ func BuildNotebookBlock(lines []string) string {
 	sb.WriteString("\n\n<notebook>\n")
 	for _, l := range lines {
 		sb.WriteString("- ")
-		sb.WriteString(strings.TrimSpace(l))
+		sb.WriteString(memory.SanitizeBlockContent(strings.TrimSpace(l)))
 		sb.WriteString("\n")
 	}
 	sb.WriteString("</notebook>")

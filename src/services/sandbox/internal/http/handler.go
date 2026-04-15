@@ -113,13 +113,8 @@ func recoverMiddleware(next http.Handler, logger *logging.JSONLogger) http.Handl
 
 // authMiddleware 对业务端点做 Bearer token 校验，healthz 免认证。
 func authMiddleware(next http.Handler, token string, logger *logging.JSONLogger) http.Handler {
-	enforced := token != ""
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/healthz" {
-			next.ServeHTTP(w, r)
-			return
-		}
-		if !enforced {
 			next.ServeHTTP(w, r)
 			return
 		}
