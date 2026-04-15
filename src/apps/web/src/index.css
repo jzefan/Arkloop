@@ -48,7 +48,7 @@ button:not(:disabled) {
   --font-weight-medium: var(--c-fw-500);
   --font-weight-semibold: var(--c-fw-600);
   --font-weight-bold: var(--c-fw-700);
-  --chat-input-area-height: 72px;
+  --chat-input-area-height: 160px;
   --c-bg-page: #1E1D1C;
   --c-bg-sidebar: #242422;
   --c-bg-deep: #141413;

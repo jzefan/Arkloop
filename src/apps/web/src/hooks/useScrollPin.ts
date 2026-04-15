@@ -1,8 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { AssistantTurnUi } from '../assistantTurnSegments'
 
-// bottom padding on the content wrapper — clears the input area overlay
-// spacer calculation subtracts this so total fill = viewportH - turnH
+// fallback reserved space before the input area is measured
 export const SCROLL_BOTTOM_PAD = 160
 
 // top offset when pinning user prompt — clears the top gradient overlay (h-10 = 40px)
@@ -80,6 +79,13 @@ export function useScrollPin(options: UseScrollPinOptions = {}): ScrollPinResult
   const anchorScrollMonitorFrameRef = useRef<number | null>(null)
   const anchorActivationPendingRef = useRef(false)
   const viewportAnchorRef = useRef<ViewportAnchor | null>(null)
+
+  const inputAreaHeight = useCallback(() => {
+    const inputArea = inputAreaRef.current
+    if (!inputArea) return SCROLL_BOTTOM_PAD
+    const height = inputArea.getBoundingClientRect().height
+    return Number.isFinite(height) && height > 0 ? height : SCROLL_BOTTOM_PAD
+  }, [])
 
   const rememberScrollTop = useCallback((container: HTMLDivElement | null) => {
     if (!container) return
@@ -417,7 +423,7 @@ export function useScrollPin(options: UseScrollPinOptions = {}): ScrollPinResult
 
     const viewportH = container.clientHeight
     const turnH = turn.getBoundingClientRect().height
-    let needed = Math.max(0, viewportH - turnH - SCROLL_BOTTOM_PAD - SCROLL_TOP_OFFSET)
+    let needed = Math.max(0, viewportH - turnH - inputAreaHeight() - SCROLL_TOP_OFFSET)
 
     if (userScrolledUpRef.current) {
       // ratchet: only allow decrease
@@ -428,7 +434,7 @@ export function useScrollPin(options: UseScrollPinOptions = {}): ScrollPinResult
 
     spacer.style.height = needed + 'px'
     spacerRatchetRef.current = needed
-  }, [])
+  }, [inputAreaHeight])
 
   // scroll so that the anchor turn top aligns below the top gradient overlay
   // during streaming, follow the bottom of tall turns to show latest output
@@ -879,16 +885,20 @@ export function useScrollPin(options: UseScrollPinOptions = {}): ScrollPinResult
   useEffect(() => {
     const el = inputAreaRef.current
     if (!el) return
+    const syncInputAreaHeight = () => {
+      document.documentElement.style.setProperty('--chat-input-area-height', `${Math.ceil(inputAreaHeight())}px`)
+    }
     if (typeof ResizeObserver === 'undefined') {
-      document.documentElement.style.setProperty('--chat-input-area-height', `${el.getBoundingClientRect().height}px`)
+      syncInputAreaHeight()
       return
     }
-    const ro = new ResizeObserver(([entry]) => {
-      document.documentElement.style.setProperty('--chat-input-area-height', `${entry.contentRect.height}px`)
+    syncInputAreaHeight()
+    const ro = new ResizeObserver(() => {
+      syncInputAreaHeight()
     })
     ro.observe(el)
     return () => ro.disconnect()
-  }, [])
+  }, [inputAreaHeight])
 
   // window resize: recalc spacer
   useEffect(() => {
