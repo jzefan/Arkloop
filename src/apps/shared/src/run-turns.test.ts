@@ -19,6 +19,61 @@ function makeEvent(params: {
 }
 
 describe('buildTurns', () => {
+  it('ignores context_compact scoped standard llm events', () => {
+    const turns = buildTurns([
+      makeEvent({
+        seq: 1,
+        type: 'llm.request',
+        data: {
+          event_scope: 'context_compact',
+          llm_call_id: 'compact_1',
+          payload: {
+            messages: [{ role: 'user', content: 'compact prompt' }],
+          },
+        },
+      }),
+      makeEvent({
+        seq: 2,
+        type: 'llm.turn.completed',
+        data: {
+          event_scope: 'context_compact',
+          llm_call_id: 'compact_1',
+          usage: { input_tokens: 3, output_tokens: 1 },
+        },
+      }),
+      makeEvent({
+        seq: 3,
+        type: 'llm.request',
+        data: {
+          llm_call_id: 'call_1',
+          payload: {
+            messages: [{ role: 'user', content: 'real input' }],
+          },
+        },
+      }),
+      makeEvent({
+        seq: 4,
+        type: 'message.delta',
+        data: {
+          role: 'assistant',
+          content_delta: 'real output',
+        },
+      }),
+      makeEvent({
+        seq: 5,
+        type: 'llm.turn.completed',
+        data: {
+          llm_call_id: 'call_1',
+          usage: { input_tokens: 5, output_tokens: 2 },
+        },
+      }),
+    ])
+
+    expect(turns).toHaveLength(1)
+    expect(turns[0]?.userInput).toBe('real input')
+    expect(turns[0]?.assistantText).toBe('real output')
+  })
+
   it('extracts telegram envelope input and final assistant output', () => {
     const turns = buildTurns([
       makeEvent({

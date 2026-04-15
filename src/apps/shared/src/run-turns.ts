@@ -617,10 +617,13 @@ export function buildTurns(events: RunEventRaw[]): LlmTurn[] {
   }
 
   for (const event of orderedEvents) {
+    const eventData = event.data as Record<string, unknown>
+    if (eventData?.event_scope === 'context_compact') continue
+
     if (event.type === 'llm.request') {
       flushAssistant()
 
-      const data = event.data as Record<string, unknown>
+      const data = eventData
       const payload = data.payload as Record<string, unknown> | undefined
       const inputJSON = data.input as Record<string, unknown> | undefined
       const input = extractLatestUserInput(payload, inputJSON)
@@ -654,7 +657,7 @@ export function buildTurns(events: RunEventRaw[]): LlmTurn[] {
 
     if (event.type === 'message.delta') {
       if (isACPDelegateEventData(event.data)) continue
-      const data = event.data as Record<string, unknown>
+      const data = eventData
       if (data.channel === 'thinking') continue
       const delta = String(data.content_delta ?? '')
       if (!delta) continue
@@ -669,7 +672,7 @@ export function buildTurns(events: RunEventRaw[]): LlmTurn[] {
     if (event.type === 'tool.call') {
       if (isACPDelegateEventData(event.data)) continue
       flushAssistant()
-      const data = event.data as Record<string, unknown>
+      const data = eventData
       const toolCallId = String(data.tool_call_id ?? '')
       const toolName = pickLogicalToolName(data, event.tool_name)
       const argsJSON = (data.arguments as Record<string, unknown>) ?? {}
@@ -691,7 +694,7 @@ export function buildTurns(events: RunEventRaw[]): LlmTurn[] {
     if (event.type === 'tool.result') {
       if (isACPDelegateEventData(event.data)) continue
       flushAssistant()
-      const data = event.data as Record<string, unknown>
+      const data = eventData
       const toolCallId = String(data.tool_call_id ?? '')
       const toolName = pickLogicalToolName(data, event.tool_name ?? toolNameByCallID.get(toolCallId) ?? '')
       const resultJSON = data.result as Record<string, unknown> | undefined
@@ -711,7 +714,7 @@ export function buildTurns(events: RunEventRaw[]): LlmTurn[] {
     }
 
     if (event.type === 'llm.turn.completed') {
-      const data = event.data as Record<string, unknown>
+      const data = eventData
       const llmCallId = String(data.llm_call_id ?? '')
       const requestState = requestStates.get(llmCallId)
       if (!requestState) continue

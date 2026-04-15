@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"arkloop/services/worker/internal/events"
 	"arkloop/services/worker/internal/data"
 	"arkloop/services/worker/internal/llm"
 	"arkloop/services/worker/internal/routing"
@@ -524,6 +525,38 @@ func appendContextCompactRunEvent(
 ) error {
 	ev := rc.Emitter.Emit("run.context_compact", data, nil, nil)
 	if eventsRepo == nil || pool == nil {
+		notifyRunEventSubscribers(ctx, rc)
+		return nil
+	}
+	tx, err := pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return err
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback(ctx)
+		}
+	}()
+	if _, err := eventsRepo.AppendRunEvent(ctx, tx, rc.Run.ID, ev); err != nil {
+		return err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return err
+	}
+	committed = true
+	notifyRunEventSubscribers(ctx, rc)
+	return nil
+}
+
+func appendScopedCompactStandardEvent(
+	ctx context.Context,
+	pool CompactPersistDB,
+	eventsRepo CompactRunEventAppender,
+	rc *RunContext,
+	ev events.RunEvent,
+) error {
+	if eventsRepo == nil || pool == nil || rc == nil {
 		notifyRunEventSubscribers(ctx, rc)
 		return nil
 	}
