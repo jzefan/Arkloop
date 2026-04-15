@@ -38,7 +38,9 @@ import {
   buildMessageSubAgentsFromRunEvents,
   buildMessageFileOpsFromRunEvents,
   buildMessageWebFetchesFromRunEvents,
+  buildTodosFromRunEvents,
 } from '../runEventProcessing'
+import { getThreadTodos, setThreadTodos, clearThreadTodos } from '../todoDb'
 import {
   buildAssistantTurnFromRunEvents,
   copSegmentCalls,
@@ -57,7 +59,7 @@ import { useRunLifecycle } from '../contexts/run-lifecycle'
 import { useMessageMeta, type MessageMeta } from '../contexts/message-meta'
 import { useStream } from '../contexts/stream'
 import { usePanels } from '../contexts/panels'
-import { useScrollPin, SCROLL_BOTTOM_PAD } from '../hooks/useScrollPin'
+import { useScrollPin } from '../hooks/useScrollPin'
 import { useDevTools } from '../hooks/useDevTools'
 import { useChatActions } from '../hooks/useChatActions'
 import { useThreadSseEffect } from '../hooks/useThreadSseEffect'
@@ -202,7 +204,7 @@ function FailedRunRetryCard({
 
   return (
     <div
-      className="flex w-full max-w-[756px] items-center justify-between gap-3 rounded-2xl px-4 py-4"
+      className="mt-3 flex w-full max-w-[756px] items-center justify-between gap-3 rounded-2xl px-4 py-4"
       style={{ background: 'var(--c-bg-sub)', border: '0.75px solid var(--c-border)' }}
     >
       <div className="flex min-w-0 items-center gap-2 text-[var(--c-text-secondary)]">
@@ -898,9 +900,10 @@ export function ChatView() {
   useEffect(() => {
     if (activeRunId && activeRunId !== prevActiveRunIdRef.current) {
       setWorkTodos([])
+      if (threadId) clearThreadTodos(threadId).catch(() => {})
     }
     prevActiveRunIdRef.current = activeRunId
-  }, [activeRunId])
+  }, [activeRunId, threadId])
 
   useEffect(() => {
     if (messagesLoading) {
@@ -947,6 +950,9 @@ export function ChatView() {
     const navUserEnterMessageId = locationState?.userEnterMessageId
 
     void (async () => {
+      getThreadTodos(threadId).then((cached) => {
+        if (cached.length > 0 && !disposed) setWorkTodos(cached)
+      })
       let loadedItems: MessageResponse[] | null = null
       try {
         const [initialItems, runs] = await Promise.all([
@@ -1056,6 +1062,7 @@ export function ChatView() {
         const replaySubAgentsNeeded = !!(lastAssistant && !subAgentsMap.has(lastAssistant.id))
         const replayFileOpsNeeded = !!(lastAssistant && !fileOpsMap.has(lastAssistant.id))
         const replayWebFetchesNeeded = !!(lastAssistant && !webFetchesMap.has(lastAssistant.id))
+        const replaySearchStepsNeeded = !!(lastAssistant && !searchStepsMap.has(lastAssistant.id))
         const replayAssistantTurnNeeded = !!(lastAssistant && !assistantTurnMap.has(lastAssistant.id))
         const shouldReplayLatestRun =
           !!latest &&
@@ -1070,7 +1077,9 @@ export function ChatView() {
               replaySubAgentsNeeded ||
               replayFileOpsNeeded ||
               replayWebFetchesNeeded ||
-              replayAssistantTurnNeeded
+              replaySearchStepsNeeded ||
+              replayAssistantTurnNeeded ||
+              true // always replay to restore todos
             ))
           )
         if (shouldReplayLatestRun && latest) {
@@ -1140,6 +1149,11 @@ export function ChatView() {
                 assistantTurnMap.set(lastAssistant.id, replayTurn)
                 writeMessageAssistantTurn(lastAssistant.id, replayTurn)
               }
+            }
+            const replayedTodos = buildTodosFromRunEvents(replayEvents)
+            if (replayedTodos.length > 0) {
+              setWorkTodos(replayedTodos)
+              setThreadTodos(threadId, replayedTodos).catch(() => {})
             }
             if (lastAssistant && (latest.status === 'completed' || latest.status === 'cancelled' || latest.status === 'interrupted')) {
               terminalStatusMap.set(lastAssistant.id, latest.status)
@@ -2080,7 +2094,11 @@ export function ChatView() {
             className="chat-scroll-hidden relative flex-1 min-h-0 overflow-y-auto bg-[var(--c-bg-page)] [scrollbar-gutter:stable]"
           >
         <div
-          style={{ maxWidth: 800, margin: '0 auto', padding: `50px ${isPanelOpen ? chatContentPadding.panelOpen : chatContentPadding.panelClosed} ${SCROLL_BOTTOM_PAD}px` }}
+          style={{
+            maxWidth: 800,
+            margin: '0 auto',
+            padding: `50px ${isPanelOpen ? chatContentPadding.panelOpen : chatContentPadding.panelClosed} var(--chat-input-area-height)`,
+          }}
           className="flex w-full flex-col gap-6"
         >
           {messagesLoading ? (

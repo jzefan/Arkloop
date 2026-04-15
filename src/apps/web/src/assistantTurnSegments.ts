@@ -31,9 +31,17 @@ export type AssistantTurnFoldState = {
 }
 
 const TIMELINE_TITLE_TOOL = 'timeline_title'
+const HIDDEN_COP_TOOLS = new Set(['end_reply'])
+
+function shouldHideCopTool(toolName: string): boolean {
+  return HIDDEN_COP_TOOLS.has(toolName.trim())
+}
 
 export function copSegmentCalls(segment: { type: 'cop'; items: CopBlockItem[] }): TurnToolCallRef[] {
-  return segment.items.filter((i): i is Extract<CopBlockItem, { kind: 'call' }> => i.kind === 'call').map((i) => i.call)
+  return segment.items
+    .filter((i): i is Extract<CopBlockItem, { kind: 'call' }> => i.kind === 'call')
+    .map((i) => i.call)
+    .filter((call) => !shouldHideCopTool(call.toolName))
 }
 
 function pickToolName(data: unknown): string {
@@ -342,6 +350,10 @@ export function foldAssistantTurnEvent(state: AssistantTurnFoldState, event: Run
       state.currentCop = currentCop
       return
     }
+    if (shouldHideCopTool(toolName)) {
+      state.currentCop = currentCop
+      return
+    }
     ensureCop()
     currentCop!.items.push({
       kind: 'call',
@@ -362,6 +374,7 @@ export function foldAssistantTurnEvent(state: AssistantTurnFoldState, event: Run
     if (isACPDelegateEventData(event.data)) return
     const toolName = pickToolName(event.data)
     if (toolName === TIMELINE_TITLE_TOOL) return
+    if (shouldHideCopTool(toolName)) return
     const toolCallId = pickToolCallId(event)
     const result = extractResultPayload(event)
     const err =

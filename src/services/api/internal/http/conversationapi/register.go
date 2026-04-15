@@ -94,7 +94,7 @@ func RegisterRoutes(mux *nethttp.ServeMux, deps Deps) {
 	)
 	mux.HandleFunc(
 		"/v1/artifacts/",
-		artifactsEntry(deps.AuthService, deps.AccountMembershipRepo, deps.APIKeysRepo, deps.RunEventRepo, deps.ThreadRepo, deps.ShellSessionRepo, deps.ThreadShareRepo, deps.AuditWriter, deps.ArtifactStore, deps.FlagService),
+		artifactsEntry(deps.AuthService, deps.AccountMembershipRepo, deps.APIKeysRepo, deps.RunEventRepo, deps.ShellSessionRepo, deps.ThreadShareRepo, deps.AuditWriter, deps.ArtifactStore),
 	)
 	mux.HandleFunc(
 		"/v1/attachments/stage",

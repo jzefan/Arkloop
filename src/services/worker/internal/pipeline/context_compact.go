@@ -3,17 +3,22 @@ package pipeline
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"strconv"
 	"strings"
 
 	"arkloop/services/shared/messagecontent"
+	"arkloop/services/worker/internal/data"
 	"arkloop/services/worker/internal/llm"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/pkoukk/tiktoken-go"
 )
+
+const defaultFallbackContextWindowTokens = 128000
 
 // ContextCompactSettings 来自平台配置，供 ContextCompactMiddleware 使用。
 type ContextCompactSettings struct {
@@ -28,37 +33,106 @@ type ContextCompactSettings struct {
 	MaxUserTextBytes     int
 	MaxTotalTextBytes    int
 
-	PersistEnabled             bool
+	PersistEnabled bool
+	// PersistTriggerApproxTokens 绝对 token 数触发阈值（soft trigger 备选）；优先级低于 PersistTriggerContextPct。
 	PersistTriggerApproxTokens int
-	// PersistTriggerContextPct 1–100：按「上下文窗口」比例计算触发阈值；0 表示仅用 PersistTriggerApproxTokens。
+	// PersistTriggerContextPct 1-100: soft trigger，后台维护 compact 的百分比触发阈值；0 表示仅用 PersistTriggerApproxTokens。
 	PersistTriggerContextPct int
+	// TargetContextPct 1-100: compact 目标线，compact loop 压回到此百分比后退出；0 默认 65。
+	TargetContextPct int
 	// FallbackContextWindowTokens 路由无 available_catalog.context_length 时用于比例换算。
 	FallbackContextWindowTokens int
 	PersistKeepLastMessages     int
 	// PersistKeepTailPct 1–100：persist 时保留 context window 的百分比作为尾部 token 预算；0 = 用旧的条数逻辑。
 	PersistKeepTailPct int
 
+	// CompactZoneBudgetPct 1–100：compact zone 最多占上下文窗口的百分比；超过时仅合并旧 replacement；0 默认 25。
+	CompactZoneBudgetPct int
+
 	// MicrocompactKeepRecentTools 保留最近 N 个 tool result 原文；0 = 不做 microcompact。
 	MicrocompactKeepRecentTools int
 }
 
 type OversizeRewriteStats struct {
-	RewriteApplied            bool
-	ImagesStripped            int
-	ToolResultsMicrocompacted int
-	CompactApplied            bool
-	TargetChunkCount          int
-	PreviousReplacementCount  int
-	SingleAtomPartial         bool
-	RequestBytesBeforeRewrite int
-	RequestBytesAfterRewrite  int
+	RewriteApplied             bool
+	ImagesStripped             int
+	ToolResultsMicrocompacted  int
+	CompactApplied             bool
+	TargetChunkCount           int
+	PreviousReplacementCount   int
+	SingleAtomPartial          bool
+	ContextWindowTokens        int
+	RequestTokensBeforeRewrite int
+	RequestTokensAfterRewrite  int
+	MinimalRequestTokens       int
+	RequestBytesBeforeRewrite  int
+	RequestBytesAfterRewrite   int
+	MinimalRequestBytes        int
+	CurrentInputTooLarge       bool
 }
 
+type CurrentInputOversizeError struct {
+	CurrentRequestEstimate int
+	MinimalRequestEstimate int
+	CurrentRequestTokens   int
+	MinimalRequestTokens   int
+	ContextWindowTokens    int
+}
+
+func (e *CurrentInputOversizeError) Error() string {
+	if e == nil {
+		return "current input node exceeds request limit"
+	}
+	return fmt.Sprintf(
+		"current input node exceeds request limit: current=%d minimal=%d current_tokens=%d minimal_tokens=%d context_window=%d",
+		e.CurrentRequestEstimate,
+		e.MinimalRequestEstimate,
+		e.CurrentRequestTokens,
+		e.MinimalRequestTokens,
+		e.ContextWindowTokens,
+	)
+}
+
+func IsCurrentInputOversizeError(err error) (*CurrentInputOversizeError, bool) {
+	if err == nil {
+		return nil, false
+	}
+	var typed *CurrentInputOversizeError
+	if !errors.As(err, &typed) {
+		return nil, false
+	}
+	return typed, true
+}
+
+// 按字符区分估算 token 数：1 个英文字符 ≈ 0.3 token，1 个中文字符 ≈ 0.6 token
 func approxTokensFromText(s string) int {
-	if s == "" {
+	n := len(s)
+	if n == 0 {
 		return 0
 	}
-	return (len(s) + 3) / 4
+	asciiChars := 0
+	nonAsciiChars := 0
+	for i := 0; i < n; {
+		if s[i] < 0x80 {
+			asciiChars++
+			i++
+		} else {
+			nonAsciiChars++
+			// 跳过 UTF-8 多字节序列
+			if s[i]&0xE0 == 0xC0 {
+				i += 2
+			} else if s[i]&0xF0 == 0xE0 {
+				i += 3
+			} else {
+				i += 4
+			}
+		}
+	}
+	tokens := int(float64(asciiChars)*0.3 + float64(nonAsciiChars)*0.6)
+	if tokens < 1 {
+		return 1
+	}
+	return tokens
 }
 
 func messageText(m llm.Message) string {
@@ -274,33 +348,10 @@ func budgetOK(msgs []llm.Message, start int, cfg ContextCompactSettings, enc *ti
 	return true
 }
 
-// CompactThreadMessages 从头部裁掉消息直到满足预算；保证切口不以孤立的 tool 开头（尽力左扩）。
-// enc 为 nil 时 token 类预算退化为字节/4 近似（仅供测试）；生产路径应传入非 nil。
-// ids 若与 msgs 等长则同步裁切；否则 ids 原样截断或置 nil。
+// CompactThreadMessages 的 delete-based trim 语义已退役。
+// 历史 compact 只允许通过 replacement frontier 表达，因此这里保持 no-op。
 func CompactThreadMessages(msgs []llm.Message, ids []uuid.UUID, cfg ContextCompactSettings, enc *tiktoken.Tiktoken) ([]llm.Message, []uuid.UUID, int) {
-	if len(msgs) == 0 {
-		return msgs, ids, 0
-	}
-	start := 0
-	if cfg.MaxMessages > 0 && len(msgs) > cfg.MaxMessages {
-		start = len(msgs) - cfg.MaxMessages
-	}
-	start = stabilizeCompactStart(msgs, start, cfg.MaxMessages)
-	for start < len(msgs) && !budgetOK(msgs, start, cfg, enc) {
-		start++
-		start = stabilizeCompactStart(msgs, start, cfg.MaxMessages)
-	}
-	if start <= 0 {
-		return msgs, alignIDs(ids, len(msgs)), 0
-	}
-	out := make([]llm.Message, len(msgs)-start)
-	copy(out, msgs[start:])
-	var outIDs []uuid.UUID
-	if len(ids) == len(msgs) {
-		outIDs = make([]uuid.UUID, len(ids)-start)
-		copy(outIDs, ids[start:])
-	}
-	return out, outIDs, start
+	return msgs, alignIDs(ids, len(msgs)), 0
 }
 
 func alignIDs(ids []uuid.UUID, n int) []uuid.UUID {
@@ -313,6 +364,7 @@ func alignIDs(ids []uuid.UUID, n int) []uuid.UUID {
 const (
 	tailTruncateThresholdTokens = 2000
 	tailTruncatePreviewTokens   = 512
+	tailTruncatePreviewRunes    = 1600
 )
 
 // truncateLargeTailMessages 对尾部保留区里超过阈值的 user 消息截断为预览（内存副本，不改 DB）。
@@ -335,6 +387,20 @@ func truncateLargeTailMessages(enc *tiktoken.Tiktoken, msgs []llm.Message) []llm
 			continue
 		}
 		text := messageText(out[i])
+		if shouldUseCompactRuneFallback(text) {
+			estimated := approxTokensFromText(text)
+			if estimated <= tailTruncateThresholdTokens {
+				continue
+			}
+			preview := compactRunePreview(text, tailTruncatePreviewRunes)
+			truncated := fmt.Sprintf("%s\n\n[... content truncated (%d tokens approx) ...]", preview, estimated)
+			out[i] = llm.Message{
+				Role:    out[i].Role,
+				Phase:   out[i].Phase,
+				Content: []llm.ContentPart{{Type: "text", Text: truncated}},
+			}
+			continue
+		}
 		encoded := enc.Encode(text, nil, nil)
 		if len(encoded) <= tailTruncateThresholdTokens {
 			continue
@@ -390,18 +456,40 @@ func RewriteOversizeRequest(
 	rc *RunContext,
 	request llm.Request,
 	anchor *ContextCompactPressureAnchor,
-	requestBytes func(llm.Request) int,
+	requestEstimate func(llm.Request) (int, error),
 ) (llm.Request, OversizeRewriteStats, error) {
 	stats := OversizeRewriteStats{}
 	if rc == nil {
-		if requestBytes != nil {
-			stats.RequestBytesBeforeRewrite = requestBytes(request)
-			stats.RequestBytesAfterRewrite = stats.RequestBytesBeforeRewrite
-		}
-		return request, stats, nil
+		return request, stats, fmt.Errorf("provider request estimator unavailable")
 	}
-	if requestBytes != nil {
-		stats.RequestBytesBeforeRewrite = requestBytes(request)
+	if requestEstimate == nil {
+		return request, stats, fmt.Errorf("provider request estimator unavailable")
+	}
+	currentEstimate, err := requestEstimate(request)
+	if err != nil {
+		return request, stats, err
+	}
+	contextWindowTokens := ResolveRunContextWindowTokens(rc)
+	stats.RequestBytesBeforeRewrite = currentEstimate
+	stats.ContextWindowTokens = contextWindowTokens
+	stats.RequestTokensBeforeRewrite = ComputeContextCompactPressure(EstimateRequestContextTokens(rc, request), anchor).ContextPressureTokens
+	minimalRequest := minimalCurrentInputRequest(request)
+	stats.MinimalRequestBytes, err = requestEstimate(minimalRequest)
+	if err != nil {
+		return request, stats, err
+	}
+	stats.MinimalRequestTokens = ComputeContextCompactPressure(EstimateRequestContextTokens(rc, minimalRequest), anchor).ContextPressureTokens
+	if llm.RequestExceedsLimits(stats.MinimalRequestBytes, stats.MinimalRequestTokens, contextWindowTokens) {
+		stats.CurrentInputTooLarge = true
+		stats.RequestBytesAfterRewrite = stats.RequestBytesBeforeRewrite
+		stats.RequestTokensAfterRewrite = stats.RequestTokensBeforeRewrite
+		return request, stats, &CurrentInputOversizeError{
+			CurrentRequestEstimate: stats.RequestBytesBeforeRewrite,
+			MinimalRequestEstimate: stats.MinimalRequestBytes,
+			CurrentRequestTokens:   stats.RequestTokensBeforeRewrite,
+			MinimalRequestTokens:   stats.MinimalRequestTokens,
+			ContextWindowTokens:    contextWindowTokens,
+		}
 	}
 
 	rewritten := request
@@ -419,22 +507,739 @@ func RewriteOversizeRequest(
 		stats.ToolResultsMicrocompacted = microcompacted
 	}
 
-	compacted, compactStats, changed, err := MaybeInlineCompactMessages(ctx, rc, rewritten.Messages, anchor)
+	stats.RequestBytesAfterRewrite, err = requestEstimate(rewritten)
+	if err != nil {
+		return request, stats, err
+	}
+	stats.RequestTokensAfterRewrite = ComputeContextCompactPressure(EstimateRequestContextTokens(rc, rewritten), anchor).ContextPressureTokens
+	if !llm.RequestExceedsLimits(
+		stats.RequestBytesAfterRewrite,
+		stats.RequestTokensAfterRewrite,
+		contextWindowTokens,
+	) {
+		return rewritten, stats, nil
+	}
+
+	emergencyCompact, compactStats, changed, compactErr := rewriteOversizeRequestWithPersistedReplacement(ctx, rc, rewritten, anchor, requestEstimate)
+	if compactErr != nil {
+		return request, stats, compactErr
+	}
 	if changed {
-		rewritten.Messages = compacted
+		rewritten = emergencyCompact
 		stats.RewriteApplied = true
 		stats.CompactApplied = true
 		stats.TargetChunkCount = compactStats.TargetChunkCount
 		stats.PreviousReplacementCount = compactStats.PreviousReplacementCount
 		stats.SingleAtomPartial = compactStats.SingleAtomPartial
+		stats.RequestBytesAfterRewrite = compactStats.ContextEstimateTokens
 	}
 
-	if requestBytes != nil {
-		stats.RequestBytesAfterRewrite = requestBytes(rewritten)
-	} else {
-		stats.RequestBytesAfterRewrite = stats.RequestBytesBeforeRewrite
+	stats.RequestBytesAfterRewrite, err = requestEstimate(rewritten)
+	if err != nil {
+		return request, stats, err
 	}
-	return rewritten, stats, err
+	stats.RequestTokensAfterRewrite = ComputeContextCompactPressure(EstimateRequestContextTokens(rc, rewritten), anchor).ContextPressureTokens
+	return rewritten, stats, nil
+}
+
+func rewriteOversizeRequestWithPersistedReplacement(
+	ctx context.Context,
+	rc *RunContext,
+	request llm.Request,
+	anchor *ContextCompactPressureAnchor,
+	requestEstimate func(llm.Request) (int, error),
+) (llm.Request, ContextCompactPressureStats, bool, error) {
+	stats := ComputeContextCompactPressure(EstimateRequestContextTokens(rc, request), anchor)
+	if rc == nil || rc.DB == nil || rc.Gateway == nil || rc.SelectedRoute == nil {
+		return request, stats, false, nil
+	}
+	window := ResolveRunContextWindowTokens(rc)
+	if window <= 0 {
+		return request, stats, false, nil
+	}
+	current := request
+	changedAny := false
+	for round := 1; ; round++ {
+		currentBytes, err := requestEstimate(current)
+		if err != nil {
+			return request, stats, changedAny, err
+		}
+		stats = ComputeContextCompactPressure(EstimateRequestContextTokens(rc, current), anchor)
+		if !llm.RequestExceedsLimits(currentBytes, stats.ContextPressureTokens, window) {
+			return current, stats, changedAny, nil
+		}
+		next, roundStats, changed, err := persistEmergencyReplacementRound(ctx, rc, current, anchor, round)
+		if err != nil {
+			return request, stats, changedAny, err
+		}
+		if !changed {
+			return current, stats, changedAny, nil
+		}
+		current = next
+		stats = roundStats
+		changedAny = true
+	}
+}
+
+func persistEmergencyReplacementRound(
+	ctx context.Context,
+	rc *RunContext,
+	request llm.Request,
+	anchor *ContextCompactPressureAnchor,
+	round int,
+) (llm.Request, ContextCompactPressureStats, bool, error) {
+	stats := ComputeContextCompactPressure(EstimateRequestContextTokens(rc, request), anchor)
+	if rc == nil || rc.DB == nil || rc.Gateway == nil || rc.SelectedRoute == nil {
+		return request, stats, false, nil
+	}
+	releaseLock, err := CompactThreadCompactionLock(ctx, rc.Run.ThreadID)
+	if err != nil {
+		return request, stats, false, err
+	}
+	defer releaseLock()
+	basePrefixCount := compactRequestBasePrefixCount(request.Messages, rc.Messages)
+	if basePrefixCount <= 0 || len(rc.ThreadContextFrontier) == 0 {
+		return request, stats, false, nil
+	}
+	tx, err := rc.DB.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return request, stats, false, err
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback(ctx)
+		}
+	}()
+	if err := compactThreadCompactionAdvisoryXactLock(ctx, tx, rc.Run.ThreadID); err != nil {
+		return request, stats, false, err
+	}
+	canonical, err := buildCanonicalThreadContext(ctx, tx, rc.Run, data.MessagesRepository{}, nil, nil, 0)
+	if err != nil {
+		return request, stats, false, err
+	}
+	if len(canonical.Frontier) == 0 {
+		return request, stats, false, nil
+	}
+	selection, ok := selectPersistFrontierWindowForPressure(rc, canonical.Frontier, stats.ContextPressureTokens)
+	if !ok {
+		return request, stats, false, nil
+	}
+	if hostMode == "desktop" {
+		if err := tx.Commit(ctx); err != nil {
+			return request, stats, false, err
+		}
+		committed = true
+		tx = nil
+	}
+	progress := newCompactProgressRecorder(rc.DB, data.RunEventsRepository{}, map[string]any{
+		"op":    "persist_emergency",
+		"round": round,
+	})
+	progress.emit(ctx, rc, "round_started", map[string]any{
+		"context_pressure_tokens": stats.ContextPressureTokens,
+	})
+	summary, usedNodes, err := compactNodesWithPersistRetry(ctx, rc, rc.Gateway, rc.SelectedRoute.Route.Model, selection, progress)
+	if err != nil {
+		progress.emit(ctx, rc, "llm_failed", map[string]any{"error": err.Error()})
+		return request, stats, false, err
+	}
+	summary = strings.TrimSpace(summary)
+	if summary == "" || len(usedNodes) == 0 {
+		return request, stats, false, nil
+	}
+	persistNodes := mapSelectedAtomsToPersistFrontierNodes(usedNodes, canonical.Frontier)
+	if len(persistNodes) == 0 {
+		persistNodes = append([]FrontierNode(nil), usedNodes...)
+	}
+	if hostMode == "desktop" {
+		tx, err = rc.DB.BeginTx(ctx, pgx.TxOptions{})
+		if err != nil {
+			return request, stats, false, err
+		}
+		committed = false
+	}
+	plan, ok, err := resolvePersistReplacementPlan(ctx, tx, rc.Run.AccountID, rc.Run.ThreadID, persistNodes)
+	if err != nil {
+		return request, stats, false, err
+	}
+	if !ok {
+		return request, stats, false, nil
+	}
+	replacementsRepo := data.ThreadContextReplacementsRepository{}
+	replacement, err := replacementsRepo.Insert(ctx, tx, data.ThreadContextReplacementInsertInput{
+		AccountID:       rc.Run.AccountID,
+		ThreadID:        rc.Run.ThreadID,
+		StartThreadSeq:  plan.StartThreadSeq,
+		EndThreadSeq:    plan.EndThreadSeq,
+		StartContextSeq: plan.StartContextSeq,
+		EndContextSeq:   plan.EndContextSeq,
+		SummaryText:     summary,
+		Layer:           plan.Layer,
+		MetadataJSON:    compactReplacementMetadata("context_compact_emergency"),
+	})
+	if err != nil {
+		return request, stats, false, err
+	}
+	if err := writeReplacementSupersessionEdges(ctx, tx, rc.Run.AccountID, rc.Run.ThreadID, replacement.ID, plan); err != nil {
+		return request, stats, false, err
+	}
+	if err := replacementsRepo.SupersedeActiveOverlapsByContextSeq(ctx, tx, rc.Run.AccountID, rc.Run.ThreadID, replacement.StartContextSeq, replacement.EndContextSeq, replacement.ID); err != nil {
+		return request, stats, false, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return request, stats, false, err
+	}
+	committed = true
+
+	rebuilt, err := rebuildCanonicalThreadContextForCompact(ctx, rc)
+	if err != nil {
+		return request, stats, false, err
+	}
+	rc.Messages = append([]llm.Message(nil), rebuilt.Messages...)
+	rc.ThreadMessageIDs = append([]uuid.UUID(nil), rebuilt.ThreadMessageIDs...)
+	rc.ThreadContextFrontier = append([]FrontierNode(nil), rebuilt.Frontier...)
+	rebuiltRequest := request
+	rebuiltRequest.Messages = applyRebuiltHistoryToRequest(rebuilt.Messages, request.Messages, basePrefixCount)
+	rebuiltStats := ComputeContextCompactPressure(EstimateRequestContextTokens(rc, rebuiltRequest), anchor)
+	rebuiltStats.TargetChunkCount = len(usedNodes)
+	rebuiltStats.PreviousReplacementCount = countReplacementFrontierNodes(canonical.Frontier)
+	progress.emit(ctx, rc, "round_completed", map[string]any{
+		"context_pressure_tokens": rebuiltStats.ContextPressureTokens,
+		"target_chunk_count":      rebuiltStats.TargetChunkCount,
+	})
+	return rebuiltRequest, rebuiltStats, true, nil
+}
+
+func rebuildCanonicalThreadContextForCompact(ctx context.Context, rc *RunContext) (*canonicalThreadContext, error) {
+	return rebuildCanonicalThreadContextForCompactUpTo(ctx, rc, nil)
+}
+
+func rebuildCanonicalThreadContextForCompactUpTo(ctx context.Context, rc *RunContext, upperBoundMessageID *uuid.UUID) (*canonicalThreadContext, error) {
+	if rc == nil || rc.DB == nil {
+		return nil, fmt.Errorf("run context db unavailable")
+	}
+	tx, err := rc.DB.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	return buildCanonicalThreadContext(ctx, tx, rc.Run, data.MessagesRepository{}, nil, upperBoundMessageID, 0)
+}
+
+func selectEmergencyPersistFrontierWindow(
+	rc *RunContext,
+	frontier []FrontierNode,
+	pressureTokens int,
+) ([]FrontierNode, ContextCompactPressureStats, bool) {
+	selection, ok := selectPersistFrontierWindowForPressure(rc, frontier, pressureTokens)
+	stats := ContextCompactPressureStats{ContextPressureTokens: pressureTokens, ContextEstimateTokens: pressureTokens}
+	if !ok {
+		return nil, stats, false
+	}
+	return selection, stats, true
+}
+
+func selectPersistFrontierWindowForPressure(
+	rc *RunContext,
+	frontier []FrontierNode,
+	pressureTokens int,
+) ([]FrontierNode, bool) {
+	selectionFrontier := buildCompactFrontierAtomsFromPersistFrontier(frontier)
+	if len(selectionFrontier) == 0 {
+		return nil, false
+	}
+	window := ResolveRunContextWindowTokens(rc)
+	targetTokens := contextCompactTargetTokens(rc.ContextCompact, window)
+	if targetTokens <= 0 {
+		targetTokens = window * 65 / 100
+	}
+	if targetTokens <= 0 {
+		targetTokens = 1
+	}
+	rawBudget := window - targetTokens
+	if pressureTokens <= targetTokens {
+		rawBudget = 0
+	}
+	rawStart := recentRawZoneStartIndex(selectionFrontier, rawBudget)
+	if rawStart <= 0 {
+		return nil, false
+	}
+	eligible := selectionFrontier[:rawStart]
+
+	// 双分支选区：根据 compact zone 是否满来决定选谁
+	compactZoneBudgetPct := rc.ContextCompact.CompactZoneBudgetPct
+	if compactZoneBudgetPct <= 0 {
+		compactZoneBudgetPct = 25
+	}
+	compactZoneBudget := window * compactZoneBudgetPct / 100
+	compactZoneTokens := 0
+	for _, node := range eligible {
+		if node.Kind == FrontierNodeReplacement {
+			compactZoneTokens += node.ApproxTokens
+		}
+	}
+	if compactZoneTokens >= compactZoneBudget {
+		// 10.2: compact zone 满了，只选 replacement 做 compact of compact
+		replacementsOnly := make([]FrontierNode, 0, len(eligible))
+		for _, node := range eligible {
+			if node.Kind == FrontierNodeReplacement {
+				replacementsOnly = append(replacementsOnly, node)
+			}
+		}
+		// 11.1: 禁止单独 compact 一个 replacement，至少要 2 个
+		if len(replacementsOnly) > 1 {
+			eligible = replacementsOnly
+		} else {
+			// zone 满但只有 1 个 replacement：退化选 raw chunk 先扩大覆盖，下轮再 compact-of-compact
+			rawOnly := make([]FrontierNode, 0, len(eligible))
+			for _, node := range eligible {
+				if node.Kind != FrontierNodeReplacement {
+					rawOnly = append(rawOnly, node)
+				}
+			}
+			if len(rawOnly) > 0 {
+				eligible = rawOnly
+			}
+			// rawOnly 也为空时 eligible 保持原混合集
+		}
+	} else {
+		// 10.1: compact zone 没满，只选 raw chunk，让覆盖范围向右推进
+		rawOnly := make([]FrontierNode, 0, len(eligible))
+		for _, node := range eligible {
+			if node.Kind != FrontierNodeReplacement {
+				rawOnly = append(rawOnly, node)
+			}
+		}
+		if len(rawOnly) > 0 {
+			eligible = rawOnly
+		}
+	}
+
+	selection := selectCompactAtomWindow(eligible, pressureTokens-targetTokens, contextCompactMaxLLMInputTokens)
+	if len(selection.Nodes) == 0 {
+		return nil, false
+	}
+	return selection.Nodes, true
+}
+
+func recentRawZoneStartIndex(nodes []FrontierNode, rawBudget int) int {
+	if len(nodes) == 0 {
+		return 0
+	}
+	lastAtomSeq := nodes[len(nodes)-1].AtomSeq
+	start := len(nodes) - 1
+	for start > 0 && nodes[start-1].AtomSeq == lastAtomSeq {
+		start--
+	}
+	accum := compactNodesApproxTokens(nodes[start:])
+	if rawBudget < accum {
+		rawBudget = accum
+	}
+	for i := start - 1; i >= 0; {
+		atomSeq := nodes[i].AtomSeq
+		atomStart := i
+		atomTokens := 0
+		for atomStart >= 0 && nodes[atomStart].AtomSeq == atomSeq {
+			atomTokens += nodes[atomStart].ApproxTokens
+			atomStart--
+		}
+		if accum+atomTokens > rawBudget {
+			break
+		}
+		accum += atomTokens
+		start = atomStart + 1
+		i = atomStart
+	}
+	return start
+}
+
+func compactRequestBasePrefixCount(requestMessages []llm.Message, baseMessages []llm.Message) int {
+	if len(requestMessages) == 0 || len(baseMessages) == 0 {
+		return 0
+	}
+	if len(baseMessages) > len(requestMessages) {
+		return len(requestMessages)
+	}
+	for i := 0; i < len(baseMessages); i++ {
+		if !compactMessagesEquivalentForPrefix(baseMessages[i], requestMessages[i]) {
+			return len(baseMessages)
+		}
+	}
+	return len(baseMessages)
+}
+
+func compactMessagesEquivalentForPrefix(left llm.Message, right llm.Message) bool {
+	if strings.TrimSpace(left.Role) != strings.TrimSpace(right.Role) {
+		return false
+	}
+	leftPhase := ""
+	if left.Phase != nil {
+		leftPhase = strings.TrimSpace(*left.Phase)
+	}
+	rightPhase := ""
+	if right.Phase != nil {
+		rightPhase = strings.TrimSpace(*right.Phase)
+	}
+	if leftPhase != rightPhase {
+		return false
+	}
+	return strings.TrimSpace(messageText(left)) == strings.TrimSpace(messageText(right))
+}
+
+func applyRebuiltHistoryToRequest(rebuiltBase []llm.Message, current []llm.Message, basePrefixCount int) []llm.Message {
+	tailCount := 0
+	if basePrefixCount < len(current) {
+		tailCount = len(current) - basePrefixCount
+	}
+	out := make([]llm.Message, 0, len(rebuiltBase)+tailCount)
+	out = append(out, cloneLLMMessages(rebuiltBase)...)
+	if basePrefixCount < len(current) {
+		out = append(out, cloneLLMMessages(current[basePrefixCount:])...)
+	}
+	return out
+}
+
+func cloneLLMMessages(src []llm.Message) []llm.Message {
+	if len(src) == 0 {
+		return nil
+	}
+	out := make([]llm.Message, len(src))
+	copy(out, src)
+	return out
+}
+
+func countReplacementFrontierNodes(frontier []FrontierNode) int {
+	total := 0
+	for _, node := range frontier {
+		if node.Kind == FrontierNodeReplacement {
+			total++
+		}
+	}
+	return total
+}
+
+func ExecuteContextCompactMaintenanceJob(
+	ctx context.Context,
+	rc *RunContext,
+	upperBoundMessageID *uuid.UUID,
+	eventsRepo CompactRunEventAppender,
+) error {
+	if rc == nil || rc.DB == nil || rc.Gateway == nil || rc.SelectedRoute == nil {
+		return nil
+	}
+	releaseLock, err := CompactThreadCompactionLock(ctx, rc.Run.ThreadID)
+	if err != nil {
+		return err
+	}
+	defer releaseLock()
+	if failures := compactConsecutiveFailures(ctx, rc.DB, rc.Run.AccountID, rc.Run.ThreadID); failures >= maxConsecutiveCompactFailures {
+		appendErr := appendContextCompactRunEvent(ctx, rc.DB, eventsRepo, rc, map[string]any{
+			"op":    "persist_background",
+			"phase": "circuit_breaker",
+		})
+		if appendErr != nil {
+			return appendErr
+		}
+		return nil
+	}
+
+	var anchorPtr *ContextCompactPressureAnchor
+	if anchor, ok := resolveContextCompactPressureAnchor(ctx, rc.DB, rc); ok {
+		anchorCopy := anchor
+		anchorPtr = &anchorCopy
+	}
+
+	progress := newCompactProgressRecorder(rc.DB, eventsRepo, map[string]any{
+		"op": "persist_background",
+	})
+	progress.emit(ctx, rc, "evaluating", nil)
+
+	window := ResolveRunContextWindowTokens(rc)
+	targetTokens := contextCompactTargetTokens(rc.ContextCompact, window)
+	if targetTokens <= 0 {
+		targetTokens = window * 65 / 100
+	}
+	if targetTokens <= 0 {
+		targetTokens = 1
+	}
+
+	var lastPressureTokens int
+	const maxCompactRounds = 10
+	for round := 1; ; round++ {
+		if round > maxCompactRounds {
+			progress.emit(ctx, rc, "max_rounds_reached", map[string]any{
+				"max_rounds":           maxCompactRounds,
+				"last_pressure_tokens": lastPressureTokens,
+				"target_tokens":        targetTokens,
+				"gap_tokens":           lastPressureTokens - targetTokens,
+			})
+			return nil
+		}
+		tx, err := rc.DB.BeginTx(ctx, pgx.TxOptions{})
+		if err != nil {
+			return err
+		}
+		if err := compactThreadCompactionAdvisoryXactLock(ctx, tx, rc.Run.ThreadID); err != nil {
+			_ = tx.Rollback(ctx)
+			return err
+		}
+		canonical, err := buildCanonicalThreadContext(ctx, tx, rc.Run, data.MessagesRepository{}, nil, upperBoundMessageID, 0)
+		if err != nil {
+			_ = tx.Rollback(ctx)
+			return err
+		}
+		stats := ComputeContextCompactPressure(EstimateRequestContextTokens(rc, llm.Request{Messages: canonical.Messages}), anchorPtr)
+		lastPressureTokens = stats.ContextPressureTokens
+		if stats.ContextPressureTokens <= targetTokens {
+			if err := tx.Commit(ctx); err != nil {
+				return err
+			}
+			progress.emit(ctx, rc, "completed", map[string]any{
+				"context_pressure_tokens": stats.ContextPressureTokens,
+			})
+			return nil
+		}
+		selection, ok := selectPersistFrontierWindowForPressure(rc, canonical.Frontier, stats.ContextPressureTokens)
+		if !ok {
+			if err := tx.Commit(ctx); err != nil {
+				return err
+			}
+			progress.emit(ctx, rc, "completed", map[string]any{
+				"context_pressure_tokens": stats.ContextPressureTokens,
+			})
+			return nil
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return err
+		}
+		progress.emit(ctx, rc, "round_started", map[string]any{
+			"round":                   round,
+			"context_pressure_tokens": stats.ContextPressureTokens,
+		})
+		summary, usedNodes, err := compactNodesWithPersistRetry(ctx, rc, rc.Gateway, rc.SelectedRoute.Route.Model, selection, progress)
+		if err != nil {
+			progress.emit(ctx, rc, "llm_failed", map[string]any{
+				"round": round,
+				"error": err.Error(),
+			})
+			return err
+		}
+		summary = strings.TrimSpace(summary)
+		if summary == "" || len(usedNodes) == 0 {
+			progress.emit(ctx, rc, "completed", map[string]any{
+				"round": round,
+			})
+			return nil
+		}
+		persistNodes := mapSelectedAtomsToPersistFrontierNodes(usedNodes, canonical.Frontier)
+		if len(persistNodes) == 0 {
+			persistNodes = append([]FrontierNode(nil), usedNodes...)
+		}
+		tx, err = rc.DB.BeginTx(ctx, pgx.TxOptions{})
+		if err != nil {
+			return err
+		}
+		plan, ok, err := resolvePersistReplacementPlan(ctx, tx, rc.Run.AccountID, rc.Run.ThreadID, persistNodes)
+		if err != nil {
+			_ = tx.Rollback(ctx)
+			return err
+		}
+		if !ok {
+			_ = tx.Rollback(ctx)
+			return nil
+		}
+		replacementsRepo := data.ThreadContextReplacementsRepository{}
+		replacement, err := replacementsRepo.Insert(ctx, tx, data.ThreadContextReplacementInsertInput{
+			AccountID:       rc.Run.AccountID,
+			ThreadID:        rc.Run.ThreadID,
+			StartThreadSeq:  plan.StartThreadSeq,
+			EndThreadSeq:    plan.EndThreadSeq,
+			StartContextSeq: plan.StartContextSeq,
+			EndContextSeq:   plan.EndContextSeq,
+			SummaryText:     summary,
+			Layer:           plan.Layer,
+			MetadataJSON:    compactReplacementMetadata("context_compact_background"),
+		})
+		if err != nil {
+			_ = tx.Rollback(ctx)
+			return err
+		}
+		if err := writeReplacementSupersessionEdges(ctx, tx, rc.Run.AccountID, rc.Run.ThreadID, replacement.ID, plan); err != nil {
+			_ = tx.Rollback(ctx)
+			return err
+		}
+		if err := replacementsRepo.SupersedeActiveOverlapsByContextSeq(ctx, tx, rc.Run.AccountID, rc.Run.ThreadID, replacement.StartContextSeq, replacement.EndContextSeq, replacement.ID); err != nil {
+			_ = tx.Rollback(ctx)
+			return err
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return err
+		}
+
+		rebuilt, err := rebuildCanonicalThreadContextForCompactUpTo(ctx, rc, upperBoundMessageID)
+		if err != nil {
+			return err
+		}
+		rc.Messages = append([]llm.Message(nil), rebuilt.Messages...)
+		rc.ThreadMessageIDs = append([]uuid.UUID(nil), rebuilt.ThreadMessageIDs...)
+		rc.ThreadContextFrontier = append([]FrontierNode(nil), rebuilt.Frontier...)
+		rebuiltStats := ComputeContextCompactPressure(EstimateRequestContextTokens(rc, llm.Request{Messages: rebuilt.Messages}), anchorPtr)
+		progress.emit(ctx, rc, "round_completed", map[string]any{
+			"round":                   round,
+			"context_pressure_tokens": rebuiltStats.ContextPressureTokens,
+			"target_chunk_count":      len(usedNodes),
+		})
+		if rebuiltStats.ContextPressureTokens <= targetTokens {
+			progress.emit(ctx, rc, "completed", map[string]any{
+				"round":                   round,
+				"context_pressure_tokens": rebuiltStats.ContextPressureTokens,
+			})
+			return nil
+		}
+	}
+}
+
+func ResolveRunContextWindowTokens(rc *RunContext) int {
+	if rc == nil {
+		return defaultFallbackContextWindowTokens
+	}
+	if rc.ContextWindowTokens > 0 {
+		return rc.ContextWindowTokens
+	}
+	if rc.ContextCompact.FallbackContextWindowTokens > 0 {
+		return rc.ContextCompact.FallbackContextWindowTokens
+	}
+	return defaultFallbackContextWindowTokens
+}
+
+func compactApproxMessagePressure(msgs []llm.Message) int {
+	total := 0
+	for _, m := range msgs {
+		total += approxTokensFromText(messageText(m))
+		for _, tc := range m.ToolCalls {
+			total += approxTokensFromText(tc.ToolName)
+			if len(tc.ArgumentsJSON) > 0 {
+				if raw, err := json.Marshal(tc.ArgumentsJSON); err == nil {
+					total += approxTokensFromText(string(raw))
+				}
+			}
+		}
+	}
+	return total
+}
+
+func EstimateRequestContextTokens(rc *RunContext, request llm.Request) int {
+	// system prompt 统一从 rc.SystemPrompt 估算，跳过 messages 里的 system 角色消息避免重复
+	estimate := compactApproxNonSystemMessagePressure(request.Messages)
+	if rc != nil && rc.SystemPrompt != "" {
+		estimate += approxTokensFromText(rc.SystemPrompt)
+	}
+	// PromptPlan 的 MessageBlocks（非 system 部分）
+	if request.PromptPlan != nil {
+		for _, block := range request.PromptPlan.MessageBlocks {
+			estimate += approxTokensFromText(strings.TrimSpace(block.Text))
+		}
+	}
+	// tool schemas 的 token 开销
+	for _, t := range request.Tools {
+		estimate += approxTokensFromText(t.Name)
+		if t.Description != nil {
+			estimate += approxTokensFromText(*t.Description)
+		}
+		if len(t.JSONSchema) > 0 {
+			if raw, err := json.Marshal(t.JSONSchema); err == nil {
+				estimate += approxTokensFromText(string(raw))
+			}
+		}
+	}
+	if estimate < 1 {
+		return 1
+	}
+	return estimate
+}
+
+// compactApproxNonSystemMessagePressure 与 compactApproxMessagePressure 相同，但跳过 role="system"
+func compactApproxNonSystemMessagePressure(msgs []llm.Message) int {
+	total := 0
+	for _, m := range msgs {
+		if m.Role == "system" {
+			continue
+		}
+		total += approxTokensFromText(messageText(m))
+		for _, tc := range m.ToolCalls {
+			total += approxTokensFromText(tc.ToolName)
+			if len(tc.ArgumentsJSON) > 0 {
+				if raw, err := json.Marshal(tc.ArgumentsJSON); err == nil {
+					total += approxTokensFromText(string(raw))
+				}
+			}
+		}
+	}
+	return total
+}
+
+func EstimateProviderRequestBytesForRunContext(rc *RunContext, request llm.Request) (int, error) {
+	if rc == nil || rc.SelectedRoute == nil {
+		return 0, fmt.Errorf("provider request estimator unavailable")
+	}
+	resolved, err := ResolveGatewayConfigFromSelectedRoute(*rc.SelectedRoute, false, rc.LlmMaxResponseBytes)
+	if err != nil {
+		return 0, err
+	}
+	return llm.EstimateProviderPayloadBytes(resolved, request)
+}
+
+func minimalCurrentInputRequest(request llm.Request) llm.Request {
+	minimal := request
+	minimal.Messages = minimalCurrentInputMessages(request.Messages)
+	minimal.PromptPlan = minimalPromptPlanForCurrentInput(request.PromptPlan)
+	return minimal
+}
+
+func minimalCurrentInputMessages(messages []llm.Message) []llm.Message {
+	if len(messages) == 0 {
+		return nil
+	}
+	lastIdx := len(messages) - 1
+	out := make([]llm.Message, 0, len(messages))
+	for idx, msg := range messages {
+		if msg.Role == "system" {
+			out = append(out, msg)
+			continue
+		}
+		if idx == lastIdx {
+			out = append(out, msg)
+		}
+	}
+	if len(out) == 0 {
+		out = append(out, messages[lastIdx])
+	}
+	return out
+}
+
+func minimalPromptPlanForCurrentInput(plan *llm.PromptPlan) *llm.PromptPlan {
+	if plan == nil {
+		return nil
+	}
+	minimal := &llm.PromptPlan{
+		SystemBlocks: append([]llm.PromptPlanBlock(nil), plan.SystemBlocks...),
+	}
+	return minimal
+}
+
+func promptPlanTextTokens(plan *llm.PromptPlan) int {
+	if plan == nil {
+		return 0
+	}
+	total := 0
+	for _, block := range plan.SystemBlocks {
+		total += approxTokensFromText(strings.TrimSpace(block.Text))
+	}
+	for _, block := range plan.MessageBlocks {
+		total += approxTokensFromText(strings.TrimSpace(block.Text))
+	}
+	return total
 }
 
 // microcompactToolResults 保留最近 keepRecent 个 role="tool" 消息原文，其余替换为占位符。

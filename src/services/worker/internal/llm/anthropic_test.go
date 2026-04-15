@@ -1460,3 +1460,74 @@ func TestAnthropicGateway_Stream_RequestBodyDoesNotLeakProviderToolName(t *testi
 		t.Fatalf("expected anthropic request body to keep canonical tool name, got %s", bodyText)
 	}
 }
+
+func TestResolveStableMarkerMessageIndex(t *testing.T) {
+	sourceToOut := map[int]int{
+		0: 0,
+		1: 1,
+		5: 3,
+	}
+
+	tests := []struct {
+		name        string
+		sourceIndex int
+		want        int
+	}{
+		{"sentinel passthrough", -1, -1},
+		{"found in map", 1, 1},
+		{"found with different output index", 5, 3},
+		{"not found in map", 10, -1},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := resolveStableMarkerMessageIndex(tt.sourceIndex, sourceToOut)
+			if got != tt.want {
+				t.Errorf("resolveStableMarkerMessageIndex(%d) = %d, want %d", tt.sourceIndex, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestApplyAnthropicMessageCachePlan_StableMarker(t *testing.T) {
+	messages := []map[string]any{
+		{"role": "user", "content": []map[string]any{{"type": "text", "text": "msg0"}}},
+		{"role": "assistant", "content": []map[string]any{{"type": "text", "text": "msg1"}}},
+		{"role": "user", "content": []map[string]any{{"type": "text", "text": "msg2"}}},
+		{"role": "assistant", "content": []map[string]any{{"type": "text", "text": "msg3"}}},
+	}
+
+	sourceToOut := map[int]int{0: 0, 1: 1, 2: 2, 3: 3}
+	userSourceToOut := map[int]int{0: 0, 2: 2}
+
+	plan := MessageCachePlan{
+		Enabled:                  true,
+		MarkerMessageIndex:       3,
+		StableMarkerEnabled:      true,
+		StableMarkerMessageIndex: 1,
+	}
+
+	applyAnthropicMessageCachePlan(messages, sourceToOut, userSourceToOut, plan)
+
+	content1 := messages[1]["content"].([]map[string]any)
+	if len(content1) == 0 {
+		t.Fatal("messages[1] has no content blocks")
+	}
+	cc1, ok := content1[0]["cache_control"].(map[string]any)
+	if !ok {
+		t.Errorf("messages[1] content[0] missing cache_control")
+	} else if cc1["type"] != "ephemeral" {
+		t.Errorf("messages[1] cache_control type = %v, want ephemeral", cc1["type"])
+	}
+
+	content3 := messages[3]["content"].([]map[string]any)
+	if len(content3) == 0 {
+		t.Fatal("messages[3] has no content blocks")
+	}
+	cc3, ok := content3[0]["cache_control"].(map[string]any)
+	if !ok {
+		t.Errorf("messages[3] content[0] missing cache_control")
+	} else if cc3["type"] != "ephemeral" {
+		t.Errorf("messages[3] cache_control type = %v, want ephemeral", cc3["type"])
+	}
+}

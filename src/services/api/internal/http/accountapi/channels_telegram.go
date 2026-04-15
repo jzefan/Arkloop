@@ -1389,8 +1389,9 @@ func (c telegramConnector) resolveTelegramThreadID(
 	threadRepoTx := c.threadRepo.WithTx(tx)
 
 	if incoming.IsPrivate() {
+		platformThreadID := telegramDMPlatformThreadID(incoming)
 		dmRepo := c.channelDMThreadsRepo.WithTx(tx)
-		threadMap, err := dmRepo.GetByBinding(ctx, ch.ID, identity.ID, personaID)
+		threadMap, err := dmRepo.GetByBinding(ctx, ch.ID, identity.ID, personaID, platformThreadID)
 		if err != nil {
 			return uuid.Nil, err
 		}
@@ -1398,14 +1399,14 @@ func (c telegramConnector) resolveTelegramThreadID(
 			if existing, _ := threadRepoTx.GetByID(ctx, threadMap.ThreadID); existing != nil {
 				return threadMap.ThreadID, nil
 			}
-			slog.InfoContext(ctx, "tg_stale_dm_binding", "thread_id", threadMap.ThreadID, "channel_id", ch.ID)
-			_ = dmRepo.DeleteByBinding(ctx, ch.ID, identity.ID, personaID)
+			slog.InfoContext(ctx, "tg_stale_dm_binding", "thread_id", threadMap.ThreadID, "channel_id", ch.ID, "platform_thread_id", platformThreadID)
+			_ = dmRepo.DeleteByBinding(ctx, ch.ID, identity.ID, personaID, platformThreadID)
 		}
 		thread, err := threadRepoTx.Create(ctx, ch.AccountID, identity.UserID, projectID, nil, false)
 		if err != nil {
 			return uuid.Nil, err
 		}
-		if _, err := dmRepo.Create(ctx, ch.ID, identity.ID, personaID, thread.ID); err != nil {
+		if _, err := dmRepo.Create(ctx, ch.ID, identity.ID, personaID, platformThreadID, thread.ID); err != nil {
 			return uuid.Nil, err
 		}
 		return thread.ID, nil
@@ -1431,6 +1432,13 @@ func (c telegramConnector) resolveTelegramThreadID(
 		return uuid.Nil, err
 	}
 	return thread.ID, nil
+}
+
+func telegramDMPlatformThreadID(incoming telegramIncomingMessage) string {
+	if !incoming.IsPrivate() || incoming.MessageThreadID == nil {
+		return ""
+	}
+	return strings.TrimSpace(*incoming.MessageThreadID)
 }
 
 func (c telegramConnector) deliverTelegramMessageToActiveRun(
@@ -1640,6 +1648,7 @@ func handleTelegramCommand(
 	channel *data.Channel,
 	identity data.ChannelIdentity,
 	text string,
+	platformThreadID string,
 	channelBindCodesRepo *data.ChannelBindCodesRepository,
 	channelIdentitiesRepo *data.ChannelIdentitiesRepository,
 	channelIdentityLinksRepo *data.ChannelIdentityLinksRepository,
@@ -1675,7 +1684,7 @@ func handleTelegramCommand(
 		if channel == nil || channel.PersonaID == nil || *channel.PersonaID == uuid.Nil {
 			return true, "当前会话未配置 persona。", nil
 		}
-		if err := channelDMThreadsRepo.WithTx(tx).DeleteByBinding(ctx, channel.ID, identity.ID, *channel.PersonaID); err != nil {
+		if err := channelDMThreadsRepo.WithTx(tx).DeleteByBinding(ctx, channel.ID, identity.ID, *channel.PersonaID, platformThreadID); err != nil {
 			return true, "", err
 		}
 		return true, "已开启新会话。", nil
@@ -1683,7 +1692,7 @@ func handleTelegramCommand(
 		if channel == nil || channel.PersonaID == nil || *channel.PersonaID == uuid.Nil {
 			return true, "当前没有运行中的任务。", nil
 		}
-		dmThread, err := channelDMThreadsRepo.GetByBinding(ctx, channel.ID, identity.ID, *channel.PersonaID)
+		dmThread, err := channelDMThreadsRepo.GetByBinding(ctx, channel.ID, identity.ID, *channel.PersonaID, platformThreadID)
 		if err != nil {
 			return true, "", err
 		}

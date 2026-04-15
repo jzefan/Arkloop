@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"unicode/utf8"
 
 	"arkloop/services/shared/messagecontent"
 	"arkloop/services/worker/internal/llm"
@@ -24,6 +25,7 @@ const (
 	compactChunkFallbackRunes   = 1200
 	compactToolPayloadMaxRunes  = 900
 	compactToolArgsPreviewRunes = 320
+	compactChunkFastPathRunes   = 24000
 )
 
 type compactChunk struct {
@@ -120,6 +122,10 @@ func splitCompactPayload(enc *tiktoken.Tiktoken, payload string) []string {
 		if block == "" {
 			continue
 		}
+		if shouldUseCompactRuneFallback(block) {
+			out = append(out, splitCompactBlockByRunes(block)...)
+			continue
+		}
 		if compactTokenCount(enc, block) <= compactChunkTokenLimit {
 			out = append(out, block)
 			continue
@@ -137,23 +143,8 @@ func splitCompactBlockByToken(enc *tiktoken.Tiktoken, block string) []string {
 	if block == "" {
 		return nil
 	}
-	if enc == nil {
-		runes := []rune(block)
-		out := make([]string, 0, (len(runes)/compactChunkFallbackRunes)+1)
-		for start := 0; start < len(runes); start += compactChunkFallbackRunes {
-			end := start + compactChunkFallbackRunes
-			if end > len(runes) {
-				end = len(runes)
-			}
-			part := strings.TrimSpace(string(runes[start:end]))
-			if part != "" {
-				out = append(out, part)
-			}
-		}
-		if len(out) == 0 {
-			return []string{block}
-		}
-		return out
+	if enc == nil || shouldUseCompactRuneFallback(block) {
+		return splitCompactBlockByRunes(block)
 	}
 
 	encoded := enc.Encode(block, nil, nil)
@@ -181,10 +172,39 @@ func compactTokenCount(enc *tiktoken.Tiktoken, text string) int {
 	if strings.TrimSpace(text) == "" {
 		return 0
 	}
-	if enc == nil {
+	if enc == nil || shouldUseCompactRuneFallback(text) {
 		return approxTokensFromText(text)
 	}
 	return len(enc.Encode(text, nil, nil))
+}
+
+func splitCompactBlockByRunes(block string) []string {
+	runes := []rune(strings.TrimSpace(block))
+	if len(runes) == 0 {
+		return nil
+	}
+	out := make([]string, 0, (len(runes)/compactChunkFallbackRunes)+1)
+	for start := 0; start < len(runes); start += compactChunkFallbackRunes {
+		end := start + compactChunkFallbackRunes
+		if end > len(runes) {
+			end = len(runes)
+		}
+		part := strings.TrimSpace(string(runes[start:end]))
+		if part != "" {
+			out = append(out, part)
+		}
+	}
+	if len(out) == 0 {
+		return []string{strings.TrimSpace(block)}
+	}
+	return out
+}
+
+func shouldUseCompactRuneFallback(text string) bool {
+	if strings.TrimSpace(text) == "" {
+		return false
+	}
+	return utf8.RuneCountInString(text) > compactChunkFastPathRunes
 }
 
 func serializeToolEpisodeForCompact(msgs []llm.Message) string {
@@ -326,11 +346,11 @@ func compactHeadTailChunks(chunks []compactChunk, keepTail int) (head []compactC
 func compactLeadingReplacementSummaries(msgs []llm.Message) []string {
 	summaries := make([]string, 0, 2)
 	for _, msg := range msgs {
-		if strings.TrimSpace(msg.Role) != "user" || len(msg.Content) == 0 {
+		if msg.Phase == nil || strings.TrimSpace(*msg.Phase) != compactSyntheticPhase || len(msg.Content) == 0 {
 			break
 		}
 		raw := strings.TrimSpace(msg.Content[0].Text)
-		if !strings.HasPrefix(raw, compactSnapshotHeader) {
+		if raw == "" {
 			break
 		}
 		s := extractCompactSnapshotSummary(raw)

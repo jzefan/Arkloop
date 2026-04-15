@@ -112,11 +112,9 @@ type RunContext struct {
 	InputJSON map[string]any
 	Messages  []llm.Message
 	// ThreadMessageIDs 与 Messages 对齐；synthetic snapshot/replay 条目使用 uuid.Nil 占位。
-	ThreadMessageIDs []uuid.UUID
-	// Active compact snapshot 由 InputLoader 从 thread artifact 读取，供装配与后续 compact 更新复用。
-	HasActiveCompactSnapshot  bool
-	ActiveCompactSnapshotText string
-	PendingSubAgentCallbacks  []data.ThreadSubAgentCallbackRecord
+	ThreadMessageIDs         []uuid.UUID
+	ThreadContextFrontier    []FrontierNode
+	PendingSubAgentCallbacks []data.ThreadSubAgentCallbackRecord
 
 	// -- EngineV1.Execute 注入：context compact（[middleware 内可能改写 Messages]） --
 	ContextCompact ContextCompactSettings
@@ -163,6 +161,8 @@ type RunContext struct {
 	// -- RoutingMiddleware 写入 --
 	Gateway       llm.Gateway
 	SelectedRoute *routing.SelectedProviderRoute
+	// ContextWindowTokens 保存当前主路由解析出的 context window；0 表示未提供，由后续走 fallback。
+	ContextWindowTokens int
 	// RoutingByokEnabled 与 RoutingMiddleware 中 feature.byok_enabled 一致，供后续按 selector 解析路由使用。
 	RoutingByokEnabled bool
 	// ResolveGatewayForRouteID 按 route_id 构建目标 Gateway，用于同一 run 内切换输出模型。
@@ -170,6 +170,8 @@ type RunContext struct {
 	ResolveGatewayForRouteID func(ctx context.Context, routeID string) (llm.Gateway, *routing.SelectedProviderRoute, error)
 	// ResolveGatewayForAgentName 按 Agent 配置名称构建目标 Gateway，用于 Lua 中直接按 agent 名称切换输出模型。
 	ResolveGatewayForAgentName func(ctx context.Context, agentName string) (llm.Gateway, *routing.SelectedProviderRoute, error)
+	// EstimateProviderRequestBytes 按当前主路由的最终 provider payload 形态估算 request bytes。
+	EstimateProviderRequestBytes func(req llm.Request) (int, error)
 	// -- ToolBuildMiddleware 写入：统一 read 能力事实（提示注入/占位引导仅依赖此对象） --
 	ReadCapabilities ReadCapabilities
 
@@ -275,18 +277,16 @@ type RunContext struct {
 
 // HeartbeatDecisionOutcome 保存 heartbeat_decision 工具的调用结果。
 type HeartbeatDecisionOutcome struct {
-	Reply     bool
-	Fragments []string
+	Reply bool
 }
 
 // SetHeartbeatDecisionOutcome implements tools/builtin/heartbeat_decision.PipelineBinding.
-func (rc *RunContext) SetHeartbeatDecisionOutcome(reply bool, fragments []string) {
+func (rc *RunContext) SetHeartbeatDecisionOutcome(reply bool, _ []string) {
 	if rc == nil {
 		return
 	}
 	rc.HeartbeatToolOutcome = &HeartbeatDecisionOutcome{
-		Reply:     reply,
-		Fragments: fragments,
+		Reply: reply,
 	}
 	rc.HeartbeatSilent = !reply
 }

@@ -322,7 +322,6 @@ func (p *SubAgentStateProjector) enqueueCallbackRunIfIdle(ctx context.Context, c
 		  WHERE thread_id = $1
 		    AND hidden = FALSE
 		    AND deleted_at IS NULL
-		    AND COALESCE(compacted, false) = false
 		  ORDER BY thread_seq DESC
 		  LIMIT 1`,
 		callback.ThreadID,

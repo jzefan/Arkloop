@@ -2,6 +2,7 @@ package executor
 
 import (
 	"fmt"
+	"math"
 	"strings"
 
 	"arkloop/services/worker/internal/pipeline"
@@ -35,6 +36,76 @@ func requiredUUID(values map[string]any, key string) (uuid.UUID, error) {
 		return uuid.Nil, fmt.Errorf("%s is not a valid UUID", key)
 	}
 	return id, nil
+}
+
+func requiredInt64(values map[string]any, key string) (int64, error) {
+	raw, ok := values[key]
+	if !ok {
+		return 0, fmt.Errorf("missing %s", key)
+	}
+	value, ok := numberToInt64(raw)
+	if !ok {
+		return 0, fmt.Errorf("%s must be a number", key)
+	}
+	return value, nil
+}
+
+func optionalInt(values map[string]any, key string) (int, error) {
+	raw, ok := values[key]
+	if !ok || raw == nil {
+		return 0, nil
+	}
+	value, ok := numberToInt64(raw)
+	if !ok {
+		return 0, fmt.Errorf("%s must be a number", key)
+	}
+	if value > math.MaxInt || value < math.MinInt {
+		return 0, fmt.Errorf("%s is out of range", key)
+	}
+	return int(value), nil
+}
+
+func numberToInt64(raw any) (int64, bool) {
+	switch value := raw.(type) {
+	case int:
+		return int64(value), true
+	case int8:
+		return int64(value), true
+	case int16:
+		return int64(value), true
+	case int32:
+		return int64(value), true
+	case int64:
+		return value, true
+	case uint:
+		if uint64(value) > math.MaxInt64 {
+			return 0, false
+		}
+		return int64(value), true
+	case uint8:
+		return int64(value), true
+	case uint16:
+		return int64(value), true
+	case uint32:
+		return int64(value), true
+	case uint64:
+		if value > math.MaxInt64 {
+			return 0, false
+		}
+		return int64(value), true
+	case float32:
+		if math.Trunc(float64(value)) != float64(value) {
+			return 0, false
+		}
+		return int64(value), true
+	case float64:
+		if math.Trunc(value) != value {
+			return 0, false
+		}
+		return int64(value), true
+	default:
+		return 0, false
+	}
 }
 
 func stringPtr(value string) *string {

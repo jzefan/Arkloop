@@ -482,7 +482,7 @@ func (c discordConnector) resolveDiscordDMThreadID(
 	projectID uuid.UUID,
 	identity data.ChannelIdentity,
 ) (uuid.UUID, error) {
-	threadMap, err := c.channelDMThreadsRepo.WithTx(tx).GetByBinding(ctx, ch.ID, identity.ID, personaID)
+	threadMap, err := c.channelDMThreadsRepo.WithTx(tx).GetByBinding(ctx, ch.ID, identity.ID, personaID, "")
 	if err != nil {
 		return uuid.Nil, err
 	}
@@ -493,7 +493,7 @@ func (c discordConnector) resolveDiscordDMThreadID(
 	if err != nil {
 		return uuid.Nil, err
 	}
-	if _, err := c.channelDMThreadsRepo.WithTx(tx).Create(ctx, ch.ID, identity.ID, personaID, thread.ID); err != nil {
+	if _, err := c.channelDMThreadsRepo.WithTx(tx).Create(ctx, ch.ID, identity.ID, personaID, "", thread.ID); err != nil {
 		return uuid.Nil, err
 	}
 	return thread.ID, nil
@@ -983,7 +983,7 @@ func handleDiscordCommand(
 		if channel == nil || channel.PersonaID == nil || *channel.PersonaID == uuid.Nil {
 			return &discordInteractionReply{Content: "当前会话未配置 persona。", Ephemeral: true}, nil
 		}
-		if err := channelDMThreadsRepo.WithTx(tx).DeleteByBinding(ctx, channel.ID, identity.ID, *channel.PersonaID); err != nil {
+		if err := channelDMThreadsRepo.WithTx(tx).DeleteByBinding(ctx, channel.ID, identity.ID, *channel.PersonaID, ""); err != nil {
 			return nil, err
 		}
 		return &discordInteractionReply{Content: "已开启新会话。", Ephemeral: true}, nil

@@ -3,19 +3,29 @@ package pipeline
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
-	"time"
 
 	"arkloop/services/shared/messagecontent"
 	"arkloop/services/worker/internal/data"
+	"arkloop/services/worker/internal/events"
 	"arkloop/services/worker/internal/llm"
 	"arkloop/services/worker/internal/routing"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/pkoukk/tiktoken-go"
 )
+
+func testProviderRequestEstimate(req llm.Request) (int, error) {
+	raw, err := json.Marshal(req.ToJSON())
+	if err != nil {
+		return 0, err
+	}
+	return len(raw), nil
+}
 
 type stubCompactGateway struct {
 	summary string
@@ -26,11 +36,83 @@ type stubCompactGateway struct {
 func (g *stubCompactGateway) Stream(_ context.Context, request llm.Request, yield func(llm.StreamEvent) error) error {
 	g.calls++
 	g.lastReq = request
+	if err := yield(llm.StreamLlmRequest{
+		LlmCallID:    "compact-call-1",
+		ProviderKind: "stub",
+		APIMode:      "responses",
+		InputJSON: map[string]any{
+			"messages": request.Messages,
+		},
+		PayloadJSON: request.ToJSON(),
+	}); err != nil {
+		return err
+	}
+	if err := yield(llm.StreamMessageDelta{ContentDelta: g.summary, Role: "assistant"}); err != nil {
+		return err
+	}
+	return yield(llm.StreamRunCompleted{
+		LlmCallID: "compact-call-1",
+		Usage: &llm.Usage{
+			InputTokens:  ptrInt(12),
+			OutputTokens: ptrInt(4),
+		},
+	})
+}
+
+type flakyCompactGateway struct {
+	calls   int
+	summary string
+}
+
+func (g *flakyCompactGateway) Stream(_ context.Context, _ llm.Request, yield func(llm.StreamEvent) error) error {
+	g.calls++
+	if g.calls == 1 {
+		return fmt.Errorf("sse stream interrupted")
+	}
 	if err := yield(llm.StreamMessageDelta{ContentDelta: g.summary, Role: "assistant"}); err != nil {
 		return err
 	}
 	return yield(llm.StreamRunCompleted{})
 }
+
+type shrinkRetryGateway struct {
+	summary string
+}
+
+func (g *shrinkRetryGateway) Stream(_ context.Context, request llm.Request, yield func(llm.StreamEvent) error) error {
+	if len(request.Messages) > 1 && len(request.Messages[1].Content) > 0 {
+		text := request.Messages[1].Content[0].Text
+		if strings.Contains(text, "first") && strings.Contains(text, "second") {
+			return errors.New("sse stream interrupted")
+		}
+	}
+	if err := yield(llm.StreamLlmRequest{
+		LlmCallID:    "compact-call-retry",
+		ProviderKind: "stub",
+		APIMode:      "responses",
+		InputJSON: map[string]any{
+			"messages": request.Messages,
+		},
+		PayloadJSON: request.ToJSON(),
+	}); err != nil {
+		return err
+	}
+	if err := yield(llm.StreamMessageDelta{ContentDelta: g.summary, Role: "assistant"}); err != nil {
+		return err
+	}
+	return yield(llm.StreamRunCompleted{LlmCallID: "compact-call-retry"})
+}
+
+type captureCompactEventAppender struct {
+	events []events.RunEvent
+}
+
+func (c *captureCompactEventAppender) AppendRunEvent(_ context.Context, _ pgx.Tx, _ uuid.UUID, ev events.RunEvent) (int64, error) {
+	c.events = append(c.events, ev)
+	return int64(len(c.events)), nil
+}
+
+func ptrInt(v int) *int { return &v }
 
 type captureCompactionAdvisor struct {
 	outputs []CompactOutput
@@ -56,12 +138,11 @@ func TestCompactThreadMessages_trimCount(t *testing.T) {
 	ids := []uuid.UUID{uuid.New(), uuid.New(), uuid.New()}
 	cfg := ContextCompactSettings{Enabled: true, MaxMessages: 2}
 	out, outIDs, dropped := CompactThreadMessages(msgs, ids, cfg, nil)
-	// stabilizeCompactStart skips past assistant to land on user
-	if dropped != 2 || len(out) != 1 {
-		t.Fatalf("expected drop 2, len 1, got dropped=%d len=%d", dropped, len(out))
+	if dropped != 0 || len(out) != len(msgs) {
+		t.Fatalf("expected delete-based trim retired, got dropped=%d len=%d", dropped, len(out))
 	}
-	if out[0].Role != "user" || outIDs[0] != ids[2] {
-		t.Fatalf("expected user start, got %q", out[0].Role)
+	if out[0].Role != "user" || outIDs[0] != ids[0] {
+		t.Fatalf("expected no-op compact result, got role=%q ids=%#v", out[0].Role, outIDs)
 	}
 }
 
@@ -74,8 +155,8 @@ func TestCompactThreadMessages_userTokenBudget(t *testing.T) {
 	}
 	cfg := ContextCompactSettings{Enabled: true, MaxUserMessageTokens: 120}
 	out, _, dropped := CompactThreadMessages(msgs, nil, cfg, nil)
-	if dropped == 0 || len(out) == len(msgs) {
-		t.Fatalf("expected head dropped, dropped=%d len=%d", dropped, len(out))
+	if dropped != 0 || len(out) != len(msgs) {
+		t.Fatalf("expected delete-based trim retired, dropped=%d len=%d", dropped, len(out))
 	}
 	if out[len(out)-1].Role != "user" {
 		t.Fatal("expected tail preserved")
@@ -106,6 +187,557 @@ func TestTrimPrefixMessagesForCompactLLM_keepsNewestUnderCap(t *testing.T) {
 	}
 	if messageText(out[0]) != "tail-marker" {
 		t.Fatalf("expected newest segment kept")
+	}
+}
+
+func TestSelectCompactFrontierWindowCapsTargetTokens(t *testing.T) {
+	nodes := make([]FrontierNode, 0, 73)
+	for i := 0; i < 72; i++ {
+		nodes = append(nodes, FrontierNode{
+			ApproxTokens: 1000,
+			AtomSeq:      i + 1,
+			AtomType:     compactAtomUserText,
+			SourceText:   fmt.Sprintf("chunk-%d", i),
+		})
+	}
+	nodes = append(nodes, FrontierNode{
+		ApproxTokens: 1000,
+		AtomSeq:      73,
+		AtomType:     compactAtomUserText,
+		SourceText:   "protected-tail",
+	})
+
+	selection := selectCompactFrontierWindow(nodes, 200_000, contextCompactMaxLLMInputTokens)
+	if selection.TargetTokens != contextCompactMaxLLMInputTokens/2 {
+		t.Fatalf("expected target cap %d, got %d", contextCompactMaxLLMInputTokens/2, selection.TargetTokens)
+	}
+	if selection.SelectedTokens < selection.TargetTokens {
+		t.Fatalf("expected selected tokens >= target, got selected=%d target=%d", selection.SelectedTokens, selection.TargetTokens)
+	}
+	if selection.SelectedTokens > contextCompactMaxLLMInputTokens {
+		t.Fatalf("expected selected tokens <= max input %d, got %d", contextCompactMaxLLMInputTokens, selection.SelectedTokens)
+	}
+}
+
+func TestSelectCompactFrontierWindowEnforcesMinimumTargetTokens(t *testing.T) {
+	nodes := []FrontierNode{
+		{ApproxTokens: 200, AtomSeq: 1, AtomType: compactAtomUserText, SourceText: "a"},
+		{ApproxTokens: 200, AtomSeq: 2, AtomType: compactAtomUserText, SourceText: "b"},
+		{ApproxTokens: 200, AtomSeq: 3, AtomType: compactAtomUserText, SourceText: "tail"},
+	}
+
+	selection := selectCompactFrontierWindow(nodes, 1, contextCompactMaxLLMInputTokens)
+	if selection.TargetTokens != 1024 {
+		t.Fatalf("expected minimum target 1024, got %d", selection.TargetTokens)
+	}
+}
+
+func TestBuildCompactFrontierAtomsFromMessages_BasicGrouping(t *testing.T) {
+	enc, err := tiktoken.GetEncoding(tiktoken.MODEL_O200K_BASE)
+	if err != nil {
+		t.Fatal(err)
+	}
+	msgs := []llm.Message{
+		{Role: "user", Content: []llm.TextPart{{Text: "user-1"}}},
+		{Role: "assistant", Content: []llm.TextPart{{Text: "assistant-1"}}},
+		{
+			Role: "assistant",
+			ToolCalls: []llm.ToolCall{{
+				ToolCallID:    "call_1",
+				ToolName:      "read_file",
+				ArgumentsJSON: map[string]any{"path": "/tmp/demo.txt"},
+			}},
+		},
+		{Role: "tool", Content: []llm.TextPart{{Text: `{"tool_call_id":"call_1","tool_name":"read_file","result":{"ok":true}}`}}},
+		{Role: "assistant", Content: []llm.TextPart{{Text: "assistant-2"}}},
+		{Role: "user", Content: []llm.TextPart{{Text: "user-2"}}},
+	}
+
+	nodes := buildCompactFrontierAtomsFromMessages(enc, msgs)
+	if len(nodes) != 5 {
+		t.Fatalf("expected 5 atom nodes, got %d", len(nodes))
+	}
+	if nodes[0].AtomType != compactAtomUserText || nodes[0].Role != "user" || nodes[0].MsgStart != 0 || nodes[0].MsgEnd != 0 {
+		t.Fatalf("unexpected first atom: %#v", nodes[0])
+	}
+	if nodes[1].AtomType != compactAtomAssistantText || nodes[1].Role != "assistant" || nodes[1].MsgStart != 1 || nodes[1].MsgEnd != 1 {
+		t.Fatalf("unexpected second atom: %#v", nodes[1])
+	}
+	if nodes[2].AtomType != compactAtomToolEpisode || nodes[2].Role != "assistant" || nodes[2].MsgStart != 2 || nodes[2].MsgEnd != 3 {
+		t.Fatalf("unexpected tool episode atom: %#v", nodes[2])
+	}
+	if !strings.Contains(nodes[2].SourceText, "Tool result: read_file") {
+		t.Fatalf("expected serialized tool episode, got %q", nodes[2].SourceText)
+	}
+	for i, node := range nodes {
+		wantSeq := int64(i + 1)
+		if node.StartContextSeq != wantSeq || node.EndContextSeq != wantSeq || node.AtomSeq != i+1 {
+			t.Fatalf("unexpected sequence at %d: %#v", i, node)
+		}
+	}
+}
+
+func TestBuildCompactFrontierAtomsFromMessages_NoChunkSplitting(t *testing.T) {
+	enc, err := tiktoken.GetEncoding(tiktoken.MODEL_O200K_BASE)
+	if err != nil {
+		t.Fatal(err)
+	}
+	huge := strings.Repeat("x", 10000)
+	msgs := []llm.Message{
+		{Role: "user", Content: []llm.TextPart{{Text: huge}}},
+	}
+
+	nodes := buildCompactFrontierAtomsFromMessages(enc, msgs)
+	if len(nodes) != 1 {
+		t.Fatalf("expected exactly one atom node, got %d", len(nodes))
+	}
+	if nodes[0].SourceText != huge {
+		t.Fatalf("expected full raw text preserved, got %d chars", len(nodes[0].SourceText))
+	}
+	if nodes[0].ApproxTokens <= compactChunkTokenLimit {
+		t.Fatalf("expected unsplit atom to exceed chunk token limit, got %d", nodes[0].ApproxTokens)
+	}
+}
+
+func TestSelectCompactAtomWindow_MaxAtomsCap(t *testing.T) {
+	// token 预算是主要约束，50 个极小 atom 全部在预算内
+	nodes := make([]FrontierNode, 0, 50)
+	for i := 0; i < 50; i++ {
+		nodes = append(nodes, FrontierNode{
+			Kind:         FrontierNodeChunk,
+			ApproxTokens: 10,
+			AtomSeq:      i + 1,
+			AtomType:     compactAtomUserText,
+			Role:         "user",
+			SourceText:   fmt.Sprintf("atom-%d", i+1),
+		})
+	}
+
+	selection := selectCompactAtomWindow(nodes, 999999, contextCompactMaxLLMInputTokens)
+	// protected = atom 50, eligible = 49, 49*10=490 远低于 token 预算，全选
+	expectedCount := 49
+	if len(selection.Nodes) != expectedCount {
+		t.Fatalf("expected %d selected (all eligible), got %d", expectedCount, len(selection.Nodes))
+	}
+	if selection.EndNodeIndex != expectedCount-1 {
+		t.Fatalf("unexpected end node index %d", selection.EndNodeIndex)
+	}
+	if selection.PartialTail {
+		t.Fatal("expected atom selection to never set partial tail")
+	}
+	if selection.Nodes[len(selection.Nodes)-1].AtomSeq != expectedCount {
+		t.Fatalf("expected last selected atom %d, got %d", expectedCount, selection.Nodes[len(selection.Nodes)-1].AtomSeq)
+	}
+}
+
+func TestSelectCompactAtomWindow_TokenCap(t *testing.T) {
+	nodes := []FrontierNode{
+		{Kind: FrontierNodeChunk, ApproxTokens: 2000, AtomSeq: 1, AtomType: compactAtomUserText, Role: "user", SourceText: "a"},
+		{Kind: FrontierNodeChunk, ApproxTokens: 2000, AtomSeq: 2, AtomType: compactAtomUserText, Role: "user", SourceText: "b"},
+		{Kind: FrontierNodeChunk, ApproxTokens: 2000, AtomSeq: 3, AtomType: compactAtomUserText, Role: "user", SourceText: "c"},
+		{Kind: FrontierNodeChunk, ApproxTokens: 2000, AtomSeq: 4, AtomType: compactAtomUserText, Role: "user", SourceText: "d"},
+		{Kind: FrontierNodeChunk, ApproxTokens: 2000, AtomSeq: 5, AtomType: compactAtomUserText, Role: "user", SourceText: "tail"},
+	}
+
+	selection := selectCompactAtomWindow(nodes, 1, contextCompactMaxLLMInputTokens)
+	if len(selection.Nodes) != 1 {
+		t.Fatalf("expected minimal deficit-driven selection, got %d", len(selection.Nodes))
+	}
+	if selection.SelectedTokens != 2000 {
+		t.Fatalf("expected 2000 selected tokens, got %d", selection.SelectedTokens)
+	}
+	if selection.TargetTokens != 1024 {
+		t.Fatalf("expected minimum target 1024, got %d", selection.TargetTokens)
+	}
+}
+
+func TestSelectCompactAtomWindow_ProtectsLastAtom(t *testing.T) {
+	nodes := []FrontierNode{
+		{Kind: FrontierNodeChunk, ApproxTokens: 10, AtomSeq: 1, AtomType: compactAtomUserText, Role: "user", SourceText: "head"},
+		{Kind: FrontierNodeChunk, ApproxTokens: 10, AtomSeq: 2, AtomType: compactAtomAssistantText, Role: "assistant", SourceText: "middle"},
+		{Kind: FrontierNodeChunk, ApproxTokens: 10, AtomSeq: 3, AtomType: compactAtomUserText, Role: "user", SourceText: "tail"},
+	}
+
+	selection := selectCompactAtomWindow(nodes, 1, contextCompactMaxLLMInputTokens)
+	if len(selection.Nodes) != 2 {
+		t.Fatalf("expected last atom protected, got %d selected atoms", len(selection.Nodes))
+	}
+	for _, node := range selection.Nodes {
+		if node.AtomSeq == 3 {
+			t.Fatalf("protected tail atom should not be selected: %#v", selection.Nodes)
+		}
+	}
+}
+
+func TestSelectCompactAtomWindow_SingleReplacementExtended(t *testing.T) {
+	nodes := []FrontierNode{
+		{Kind: FrontierNodeReplacement, ApproxTokens: 5000, AtomSeq: 1, SourceText: "old summary"},
+		{Kind: FrontierNodeChunk, ApproxTokens: 100, AtomSeq: 2, AtomType: compactAtomUserText, Role: "user", SourceText: "chunk1"},
+		{Kind: FrontierNodeChunk, ApproxTokens: 100, AtomSeq: 3, AtomType: compactAtomUserText, Role: "user", SourceText: "tail"},
+	}
+	// deficit small enough that selector would normally pick only R1
+	selection := selectCompactAtomWindow(nodes, 1, contextCompactMaxLLMInputTokens)
+	if len(selection.Nodes) < 2 {
+		t.Fatalf("expected guard to extend single replacement, got %d nodes", len(selection.Nodes))
+	}
+	if selection.Nodes[0].Kind != FrontierNodeReplacement {
+		t.Fatal("expected replacement as first node")
+	}
+	if selection.Nodes[1].Kind != FrontierNodeChunk {
+		t.Fatal("expected chunk as second node (rightward progress)")
+	}
+}
+
+func TestSelectCompactAtomWindow_SingleReplacementAloneReturnsEmpty(t *testing.T) {
+	nodes := []FrontierNode{
+		{Kind: FrontierNodeReplacement, ApproxTokens: 5000, AtomSeq: 1, SourceText: "old summary"},
+		{Kind: FrontierNodeChunk, ApproxTokens: 100, AtomSeq: 2, AtomType: compactAtomUserText, Role: "user", SourceText: "tail"},
+	}
+	// Only 2 nodes: replacement + protected tail. Eligible = [R] only.
+	selection := selectCompactAtomWindow(nodes, 1, contextCompactMaxLLMInputTokens)
+	if len(selection.Nodes) != 0 {
+		t.Fatalf("expected empty selection for lone replacement, got %d nodes", len(selection.Nodes))
+	}
+}
+
+func TestSelectCompactAtomWindow_MultipleReplacementsAllowed(t *testing.T) {
+	nodes := []FrontierNode{
+		{Kind: FrontierNodeReplacement, ApproxTokens: 3000, AtomSeq: 1, SourceText: "summary1"},
+		{Kind: FrontierNodeReplacement, ApproxTokens: 3000, AtomSeq: 2, SourceText: "summary2"},
+		{Kind: FrontierNodeChunk, ApproxTokens: 100, AtomSeq: 3, AtomType: compactAtomUserText, Role: "user", SourceText: "chunk"},
+		{Kind: FrontierNodeChunk, ApproxTokens: 100, AtomSeq: 4, AtomType: compactAtomUserText, Role: "user", SourceText: "tail"},
+	}
+	selection := selectCompactAtomWindow(nodes, 999999, contextCompactMaxLLMInputTokens)
+	if len(selection.Nodes) < 2 {
+		t.Fatalf("expected at least 2 nodes for multi-replacement selection, got %d", len(selection.Nodes))
+	}
+	// Guard should NOT trigger since we have 2+ nodes
+}
+
+func TestSelectCompactAtomWindow_SingleReplacementNextNodeTooBig(t *testing.T) {
+	nodes := []FrontierNode{
+		{Kind: FrontierNodeReplacement, ApproxTokens: 100000, AtomSeq: 1, SourceText: "huge summary"},
+		{Kind: FrontierNodeChunk, ApproxTokens: 30000, AtomSeq: 2, AtomType: compactAtomUserText, Role: "user", SourceText: "big chunk"},
+		{Kind: FrontierNodeChunk, ApproxTokens: 100, AtomSeq: 3, AtomType: compactAtomUserText, Role: "user", SourceText: "tail"},
+	}
+	// R(100k) + next(30k) = 130k > maxInputTokens(120k)
+	selection := selectCompactAtomWindow(nodes, 1, contextCompactMaxLLMInputTokens)
+	if len(selection.Nodes) != 0 {
+		t.Fatalf("expected empty when single replacement + next exceeds maxInputTokens, got %d", len(selection.Nodes))
+	}
+}
+
+func TestBuildCompactSummaryInputFromAtoms_StructuredFormat(t *testing.T) {
+	nodes := []FrontierNode{
+		{Kind: FrontierNodeChunk, AtomType: compactAtomUserText, Role: "user", SourceText: "user text"},
+		{Kind: FrontierNodeChunk, AtomType: compactAtomAssistantText, Role: "assistant", SourceText: "assistant text"},
+		{Kind: FrontierNodeChunk, AtomType: compactAtomToolEpisode, Role: "assistant", SourceText: "tool trace"},
+		{Kind: FrontierNodeReplacement, SourceText: "older summary"},
+	}
+
+	input := buildCompactSummaryInputFromAtoms(nodes)
+	for _, want := range []string{"[user]\nuser text", "[assistant]\nassistant text", "[tool_episode]\ntool trace", "[summary]\nolder summary"} {
+		if !strings.Contains(input, want) {
+			t.Fatalf("expected structured segment %q in %q", want, input)
+		}
+	}
+}
+
+func TestBuildCompactSummaryInputFromAtoms_ProjectsTelegramEnvelopeBurst(t *testing.T) {
+	nodes := []FrontierNode{
+		{
+			Kind:     FrontierNodeChunk,
+			AtomType: compactAtomUserText,
+			Role:     "user",
+			SourceText: "---\n" +
+				"display-name: \"清凤\"\n" +
+				"channel: \"telegram\"\n" +
+				"conversation-type: \"supergroup\"\n" +
+				"sender-ref: \"cf842dbb-a8e5-4d0c-876d-533c8d0d1b11\"\n" +
+				"platform-username: \"chiffoncha\"\n" +
+				"conversation-title: \"Arkloop\"\n" +
+				"message-id: \"7158\"\n" +
+				"time: \"2026-04-06T15:28:38Z\"\n" +
+				"---\n" +
+				"[Telegram in Arkloop] 也就是，质量和热度缺一不可？",
+		},
+		{
+			Kind:     FrontierNodeChunk,
+			AtomType: compactAtomUserText,
+			Role:     "user",
+			SourceText: "---\n" +
+				"display-name: \"清凤\"\n" +
+				"channel: \"telegram\"\n" +
+				"conversation-type: \"supergroup\"\n" +
+				"sender-ref: \"cf842dbb-a8e5-4d0c-876d-533c8d0d1b11\"\n" +
+				"platform-username: \"chiffoncha\"\n" +
+				"conversation-title: \"Arkloop\"\n" +
+				"message-id: \"7159\"\n" +
+				"time: \"2026-04-06T15:28:41Z\"\n" +
+				"---\n" +
+				"[Telegram in Arkloop] 草洛",
+		},
+	}
+
+	input := buildCompactSummaryInputFromAtoms(nodes)
+	for _, bad := range []string{"display-name:", "sender-ref:", "platform-username:", "conversation-title:"} {
+		if strings.Contains(input, bad) {
+			t.Fatalf("expected projected compact input without raw metadata %q, got %q", bad, input)
+		}
+	}
+	for _, want := range []string{"[user]\nTelegram supergroup \"Arkloop\"", "清凤", "质量和热度缺一不可", "草洛"} {
+		if !strings.Contains(input, want) {
+			t.Fatalf("expected projected compact input to contain %q, got %q", want, input)
+		}
+	}
+}
+
+func TestMaterializeCompactedPrefixAtoms_NoPartialTail(t *testing.T) {
+	msgs := []llm.Message{
+		{Role: "user", Content: []llm.TextPart{{Text: "head"}}},
+		{Role: "assistant", Content: []llm.TextPart{{Text: "middle"}}},
+		{Role: "user", Content: []llm.TextPart{{Text: "tail"}}},
+	}
+	nodes := []FrontierNode{
+		{Kind: FrontierNodeChunk, MsgStart: 0, MsgEnd: 0, AtomSeq: 1, AtomType: compactAtomUserText, Role: "user"},
+		{Kind: FrontierNodeChunk, MsgStart: 1, MsgEnd: 1, AtomSeq: 2, AtomType: compactAtomAssistantText, Role: "assistant"},
+		{Kind: FrontierNodeChunk, MsgStart: 2, MsgEnd: 2, AtomSeq: 3, AtomType: compactAtomUserText, Role: "user"},
+	}
+
+	out := materializeCompactedPrefixAtoms(msgs, nodes, 1, "summary")
+	if len(out) != 2 {
+		t.Fatalf("expected replacement plus untouched tail, got %d messages", len(out))
+	}
+	if out[0].Role != "system" {
+		t.Fatalf("expected compact replacement rendered as system, got %q", out[0].Role)
+	}
+	if out[0].Phase == nil || *out[0].Phase != compactSyntheticPhase {
+		t.Fatalf("expected compact synthetic replacement, got %#v", out[0].Phase)
+	}
+	if got := messageText(out[0]); got != "summary" {
+		t.Fatalf("unexpected replacement text %q", got)
+	}
+	if got := messageText(out[1]); got != "tail" {
+		t.Fatalf("expected clean tail boundary, got %q", got)
+	}
+}
+
+func TestInlineCompactAtomFrontierCarriesPriorReplacementAcrossRounds(t *testing.T) {
+	enc, err := tiktoken.GetEncoding(tiktoken.MODEL_O200K_BASE)
+	if err != nil {
+		t.Fatal(err)
+	}
+	working := make([]llm.Message, 0, 100)
+	for i := 1; i <= 100; i++ {
+		working = append(working, llm.Message{
+			Role:    "user",
+			Content: []llm.TextPart{{Text: fmt.Sprintf("atom-%d", i)}},
+		})
+	}
+
+	// token 预算远大于全部 atom 总 token，每轮选全部 eligible
+	// 第 1 轮: 99 eligible → compact → [R1, atom-100]
+	// 第 2 轮: R1 是 replacement 且是唯一 eligible 以外的 protected atom-100
+	//          单 replacement 扩展不可能（没有更多 eligible），返回 empty
+	nodes := buildCompactFrontierAtomsFromMessagesWithOptions(enc, working, false)
+	selection := selectCompactAtomWindow(nodes, 999999, contextCompactMaxLLMInputTokens)
+	if len(selection.Nodes) == 0 {
+		t.Fatal("round 1: expected non-empty selection")
+	}
+	// 验证 replacement head 在第一轮不存在
+	working = materializeCompactedPrefixAtoms(working, nodes, len(selection.Nodes)-1, "R1")
+
+	if len(working) != 2 {
+		t.Fatalf("expected 2 messages after round 1 (summary + protected tail), got %d", len(working))
+	}
+	if got := messageText(working[0]); got != "R1" {
+		t.Fatalf("expected head summary R1, got %q", got)
+	}
+	if got := messageText(working[len(working)-1]); got != "atom-100" {
+		t.Fatalf("expected protected tail atom-100, got %q", got)
+	}
+}
+
+func TestBuildCompactFrontierAtomsFromPersistFrontier_PreservesCanonicalSeqRanges(t *testing.T) {
+	frontier := []FrontierNode{
+		{
+			Kind:            FrontierNodeReplacement,
+			NodeID:          uuid.New(),
+			StartContextSeq: 1,
+			EndContextSeq:   20,
+			StartThreadSeq:  1,
+			EndThreadSeq:    20,
+			SourceText:      "R1",
+			ApproxTokens:    32,
+		},
+	}
+	for seq := int64(21); seq <= 40; seq++ {
+		frontier = append(frontier, FrontierNode{
+			Kind:            FrontierNodeChunk,
+			NodeID:          uuid.New(),
+			StartContextSeq: seq,
+			EndContextSeq:   seq,
+			StartThreadSeq:  seq,
+			EndThreadSeq:    seq,
+			SourceText:      fmt.Sprintf("atom-%d", seq),
+			ApproxTokens:    8,
+			AtomSeq:         int(seq),
+			AtomType:        compactAtomUserText,
+			Role:            "user",
+			atomKey:         fmt.Sprintf("atom:%d", seq),
+		})
+	}
+
+	atoms := buildCompactFrontierAtomsFromPersistFrontier(frontier)
+	selection := selectCompactAtomWindow(atoms, 999999, contextCompactMaxLLMInputTokens)
+	// 所有 atom token 极小，全部 eligible 都会被选中（除 protected tail）
+	expectedCount := len(atoms) - 1 // protected tail excluded
+	if len(selection.Nodes) != expectedCount {
+		t.Fatalf("expected %d selected atoms, got %d", expectedCount, len(selection.Nodes))
+	}
+	if selection.Nodes[0].StartContextSeq != 1 || selection.Nodes[0].EndContextSeq != 20 {
+		t.Fatalf("expected replacement seq 1..20, got %#v", selection.Nodes[0])
+	}
+	if selection.Nodes[1].StartContextSeq != 21 || selection.Nodes[1].EndContextSeq != 21 {
+		t.Fatalf("expected next atom seq 21..21, got %#v", selection.Nodes[1])
+	}
+	if selection.Nodes[len(selection.Nodes)-1].StartContextSeq != 39 || selection.Nodes[len(selection.Nodes)-1].EndContextSeq != 39 {
+		t.Fatalf("expected last selected atom seq 39..39, got %#v", selection.Nodes[len(selection.Nodes)-1])
+	}
+}
+
+func TestMapSelectedAtomsToPersistFrontierNodes_UsesCanonicalSeqRanges(t *testing.T) {
+	selectedAtoms := []FrontierNode{
+		{
+			Kind:            FrontierNodeReplacement,
+			StartContextSeq: 1,
+			EndContextSeq:   20,
+			StartThreadSeq:  1,
+			EndThreadSeq:    20,
+			AtomSeq:         1,
+		},
+		{
+			Kind:            FrontierNodeChunk,
+			StartContextSeq: 21,
+			EndContextSeq:   21,
+			StartThreadSeq:  21,
+			EndThreadSeq:    21,
+			AtomSeq:         21,
+		},
+	}
+	frontier := []FrontierNode{
+		{
+			Kind:            FrontierNodeReplacement,
+			NodeID:          uuid.New(),
+			StartContextSeq: 1,
+			EndContextSeq:   20,
+			StartThreadSeq:  1,
+			EndThreadSeq:    20,
+		},
+		{
+			Kind:            FrontierNodeChunk,
+			NodeID:          uuid.New(),
+			StartContextSeq: 21,
+			EndContextSeq:   21,
+			StartThreadSeq:  21,
+			EndThreadSeq:    21,
+		},
+		{
+			Kind:            FrontierNodeChunk,
+			NodeID:          uuid.New(),
+			StartContextSeq: 22,
+			EndContextSeq:   22,
+			StartThreadSeq:  22,
+			EndThreadSeq:    22,
+		},
+	}
+
+	got := mapSelectedAtomsToPersistFrontierNodes(selectedAtoms, frontier)
+	if len(got) != 2 {
+		t.Fatalf("expected replacement plus first raw chunk, got %#v", got)
+	}
+	if got[0].StartContextSeq != 1 || got[0].EndContextSeq != 20 {
+		t.Fatalf("unexpected first mapped node %#v", got[0])
+	}
+	if got[1].StartContextSeq != 21 || got[1].EndContextSeq != 21 {
+		t.Fatalf("unexpected second mapped node %#v", got[1])
+	}
+}
+
+func TestMapSelectedAtomsToPersistFrontierNodes_ExpandsMergedChunkAtom(t *testing.T) {
+	selectedAtoms := []FrontierNode{
+		{
+			Kind:            FrontierNodeChunk,
+			StartContextSeq: 21,
+			EndContextSeq:   23,
+			StartThreadSeq:  21,
+			EndThreadSeq:    23,
+			AtomSeq:         21,
+			atomKey:         "atom:21-23",
+		},
+	}
+	chunk1 := uuid.New()
+	chunk2 := uuid.New()
+	chunk3 := uuid.New()
+	frontier := []FrontierNode{
+		{
+			Kind:            FrontierNodeChunk,
+			NodeID:          chunk1,
+			StartContextSeq: 21,
+			EndContextSeq:   21,
+			StartThreadSeq:  21,
+			EndThreadSeq:    21,
+			atomKey:         "atom:21-23",
+		},
+		{
+			Kind:            FrontierNodeChunk,
+			NodeID:          chunk2,
+			StartContextSeq: 22,
+			EndContextSeq:   22,
+			StartThreadSeq:  22,
+			EndThreadSeq:    22,
+			atomKey:         "atom:21-23",
+		},
+		{
+			Kind:            FrontierNodeChunk,
+			NodeID:          chunk3,
+			StartContextSeq: 23,
+			EndContextSeq:   23,
+			StartThreadSeq:  23,
+			EndThreadSeq:    23,
+			atomKey:         "atom:21-23",
+		},
+	}
+
+	got := mapSelectedAtomsToPersistFrontierNodes(selectedAtoms, frontier)
+	if len(got) != 3 {
+		t.Fatalf("expected merged atom to expand to all chunks, got %#v", got)
+	}
+	if got[0].NodeID != chunk1 || got[1].NodeID != chunk2 || got[2].NodeID != chunk3 {
+		t.Fatalf("unexpected mapped chunks %#v", got)
+	}
+}
+
+func TestCompactNodesWithShrinkRetryRetriesOnNonWindowError(t *testing.T) {
+	gateway := &flakyCompactGateway{summary: "summary"}
+	nodes := []FrontierNode{
+		{AtomSeq: 1, AtomType: compactAtomUserText, SourceText: "one"},
+		{AtomSeq: 2, AtomType: compactAtomUserText, SourceText: "two"},
+		{AtomSeq: 3, AtomType: compactAtomUserText, SourceText: "three"},
+	}
+
+	summary, usedNodes, err := compactNodesWithShrinkRetry(context.Background(), &RunContext{}, gateway, "stub", nodes, compactProgressRecorder{})
+	if err != nil {
+		t.Fatalf("compactNodesWithShrinkRetry: %v", err)
+	}
+	if strings.TrimSpace(summary) != "summary" {
+		t.Fatalf("unexpected summary: %q", summary)
+	}
+	if gateway.calls != 2 {
+		t.Fatalf("expected shrink retry to call gateway twice, got %d", gateway.calls)
+	}
+	if len(usedNodes) != 2 {
+		t.Fatalf("expected one node to be dropped on retry, got %d nodes", len(usedNodes))
 	}
 }
 
@@ -215,7 +847,7 @@ func TestSelectRenderableReplacementSpansKeepsLastChunkOfLastAtomRaw(t *testing.
 		},
 	}
 
-	out := selectRenderableReplacementSpans(spans, lastAtom)
+	out := selectRenderableReplacementSpans(spans, 1, lastAtom)
 	if len(out) != 2 {
 		t.Fatalf("expected two replacements after keeping last chunk raw, got %d", len(out))
 	}
@@ -227,30 +859,129 @@ func TestSelectRenderableReplacementSpansKeepsLastChunkOfLastAtomRaw(t *testing.
 	}
 }
 
-func TestMaybeInlineCompactSingleOversizedTextAtomRejectsToolCalls(t *testing.T) {
-	rc := &RunContext{
-		Gateway: &stubCompactGateway{summary: "summary"},
-		SelectedRoute: &routing.SelectedProviderRoute{
-			Route: routing.ProviderRouteRule{Model: "stub"},
-		},
-	}
-	msg := llm.Message{
-		Role: "assistant",
-		Content: []llm.TextPart{{
-			Text: strings.Repeat("tool payload ", 400),
-		}},
-		ToolCalls: []llm.ToolCall{{
-			ToolCallID: "call_1",
-			ToolName:   "search",
-		}},
+func TestCompactNodesWithShrinkRetryRetriesOnStreamInterrupt(t *testing.T) {
+	nodes := []FrontierNode{
+		{SourceText: "first", AtomSeq: 1, AtomType: compactAtomUserText},
+		{SourceText: "second", AtomSeq: 2, AtomType: compactAtomUserText},
 	}
 
-	out, changed, err := maybeInlineCompactSingleOversizedTextAtom(context.Background(), rc, msg, nil)
+	summary, usedNodes, err := compactNodesWithShrinkRetry(context.Background(), &RunContext{}, &shrinkRetryGateway{summary: "shrunk"}, "stub", nodes, compactProgressRecorder{})
 	if err != nil {
-		t.Fatalf("maybeInlineCompactSingleOversizedTextAtom returned error: %v", err)
+		t.Fatalf("compactNodesWithShrinkRetry: %v", err)
 	}
-	if changed {
-		t.Fatalf("expected tool episode message to stay intact, got %#v", out)
+	if summary != "shrunk" {
+		t.Fatalf("unexpected summary %q", summary)
+	}
+	if len(usedNodes) != 1 || usedNodes[0].SourceText != "first" {
+		t.Fatalf("expected shrink retry to keep only first node, got %#v", usedNodes)
+	}
+}
+
+func TestCompactNodesWithShrinkRetryEmitsAttemptProgress(t *testing.T) {
+	nodes := []FrontierNode{
+		{SourceText: "first", AtomSeq: 1, AtomType: compactAtomUserText, ApproxTokens: 10},
+		{SourceText: "second", AtomSeq: 2, AtomType: compactAtomUserText, ApproxTokens: 12},
+	}
+	rc := &RunContext{}
+	var phases []string
+	var payloads []map[string]any
+	progress := compactProgressRecorder{
+		base: map[string]any{
+			"op":    "persist",
+			"mode":  "canonical_atoms",
+			"round": 1,
+		},
+		emitFn: func(_ context.Context, _ *RunContext, data map[string]any) error {
+			payloads = append(payloads, cloneContextCompactEventData(data))
+			phase, _ := data["phase"].(string)
+			phases = append(phases, phase)
+			return nil
+		},
+	}
+
+	summary, usedNodes, err := compactNodesWithShrinkRetry(context.Background(), rc, &shrinkRetryGateway{summary: "shrunk"}, "stub", nodes, progress)
+	if err != nil {
+		t.Fatalf("compactNodesWithShrinkRetry: %v", err)
+	}
+	if summary != "shrunk" {
+		t.Fatalf("unexpected summary %q", summary)
+	}
+	if len(usedNodes) != 1 {
+		t.Fatalf("expected one surviving node after retry, got %d", len(usedNodes))
+	}
+	wantPhases := []string{"llm_request_started", "llm_request_retrying", "llm_request_started", "llm_request_completed"}
+	if strings.Join(phases, ",") != strings.Join(wantPhases, ",") {
+		t.Fatalf("unexpected phases: got %v want %v", phases, wantPhases)
+	}
+	if got := payloads[0]["attempt"]; got != 1 {
+		t.Fatalf("expected first attempt=1, got %#v", got)
+	}
+	if got := payloads[1]["atoms_dropped"]; got != 1 {
+		t.Fatalf("expected retry to drop one atom, got %#v", got)
+	}
+	if got := payloads[1]["atoms_remaining"]; got != 1 {
+		t.Fatalf("expected retry to keep one atom, got %#v", got)
+	}
+	if got := payloads[3]["attempt"]; got != 2 {
+		t.Fatalf("expected completion on attempt 2, got %#v", got)
+	}
+}
+
+func TestCompactNodesWithShrinkRetryEmitsStandardLLMEvents(t *testing.T) {
+	nodes := []FrontierNode{
+		{SourceText: "first", AtomSeq: 1, AtomType: compactAtomUserText, ApproxTokens: 10},
+	}
+	rc := &RunContext{
+		Run: data.Run{ID: uuid.New()},
+	}
+	appender := &captureCompactEventAppender{}
+	progress := compactProgressRecorder{
+		base: map[string]any{
+			"op": "persist",
+		},
+		appendStandardFn: func(_ context.Context, _ *RunContext, ev events.RunEvent) error {
+			_, err := appender.AppendRunEvent(context.Background(), nil, uuid.Nil, ev)
+			return err
+		},
+	}
+
+	_, _, err := compactNodesWithShrinkRetry(context.Background(), rc, &stubCompactGateway{summary: "shrunk"}, "stub", nodes, progress)
+	if err != nil {
+		t.Fatalf("compactNodesWithShrinkRetry: %v", err)
+	}
+	if len(appender.events) != 2 {
+		t.Fatalf("expected 2 standard compact llm events, got %d", len(appender.events))
+	}
+	if appender.events[0].Type != "llm.request" {
+		t.Fatalf("expected first event llm.request, got %q", appender.events[0].Type)
+	}
+	if got := appender.events[0].DataJSON["event_scope"]; got != "context_compact" {
+		t.Fatalf("expected llm.request event_scope=context_compact, got %#v", got)
+	}
+	if appender.events[1].Type != "llm.turn.completed" {
+		t.Fatalf("expected second event llm.turn.completed, got %q", appender.events[1].Type)
+	}
+	if got := appender.events[1].DataJSON["llm_call_id"]; got != "compact-call-1" {
+		t.Fatalf("expected llm_call_id to be propagated, got %#v", got)
+	}
+}
+
+func TestCompactNodesWithShrinkRetryDropsWholeChunkedToolEpisode(t *testing.T) {
+	nodes := []FrontierNode{
+		{SourceText: "keep", AtomSeq: 1, AtomType: compactAtomUserText},
+		{SourceText: "first", AtomSeq: 2, AtomType: compactAtomToolEpisode},
+		{SourceText: "second", AtomSeq: 2, AtomType: compactAtomToolEpisode},
+	}
+
+	summary, usedNodes, err := compactNodesWithShrinkRetry(context.Background(), &RunContext{}, &shrinkRetryGateway{summary: "shrunk"}, "stub", nodes, compactProgressRecorder{})
+	if err != nil {
+		t.Fatalf("compactNodesWithShrinkRetry: %v", err)
+	}
+	if summary != "shrunk" {
+		t.Fatalf("unexpected summary %q", summary)
+	}
+	if len(usedNodes) != 1 || usedNodes[0].SourceText != "keep" {
+		t.Fatalf("expected shrink retry to drop the whole tool episode, got %#v", usedNodes)
 	}
 }
 
@@ -258,16 +989,18 @@ func TestMaybeInlineCompactMessagesAfterCompactReceivesRealOutput(t *testing.T) 
 	advisor := &captureCompactionAdvisor{}
 	registry := NewHookRegistry()
 	registry.RegisterCompactionAdvisor(advisor)
+	gateway := &stubCompactGateway{summary: "summary"}
 
 	rc := &RunContext{
 		ContextCompact: ContextCompactSettings{
 			PersistEnabled:              true,
 			PersistTriggerApproxTokens:  1,
 			PersistTriggerContextPct:    0,
+			TargetContextPct:            1,
 			FallbackContextWindowTokens: 1_000_000,
 			PersistKeepLastMessages:     1,
 		},
-		Gateway: &stubCompactGateway{summary: "summary"},
+		Gateway: gateway,
 		SelectedRoute: &routing.SelectedProviderRoute{
 			Route: routing.ProviderRouteRule{Model: "stub"},
 		},
@@ -279,25 +1012,21 @@ func TestMaybeInlineCompactMessagesAfterCompactReceivesRealOutput(t *testing.T) 
 		{Role: "user", Content: []llm.TextPart{{Text: "tail"}}},
 	}
 
-	out, _, changed, err := MaybeInlineCompactMessages(context.Background(), rc, msgs, nil)
+	out, _, changed, err := MaybeInlineCompactMessages(context.Background(), rc, msgs, nil, false)
 	if err != nil {
 		t.Fatalf("MaybeInlineCompactMessages: %v", err)
 	}
-	if !changed {
-		t.Fatal("expected inline compact change")
+	if changed {
+		t.Fatal("expected normal inline compact retired")
 	}
-	if len(advisor.outputs) != 1 {
-		t.Fatalf("expected one after compact callback, got %d", len(advisor.outputs))
+	if len(advisor.outputs) != 0 {
+		t.Fatalf("expected no compact callback, got %d", len(advisor.outputs))
 	}
-	got := advisor.outputs[0]
-	if !got.Changed {
-		t.Fatal("expected compact output Changed=true")
+	if len(out) != len(msgs) {
+		t.Fatalf("expected messages unchanged, got %d", len(out))
 	}
-	if strings.TrimSpace(got.Summary) != "summary" {
-		t.Fatalf("unexpected summary: %q", got.Summary)
-	}
-	if len(got.Messages) != len(out) {
-		t.Fatalf("expected %d output messages, got %d", len(out), len(got.Messages))
+	if gateway.calls != 0 {
+		t.Fatalf("expected no compact gateway call, got %d", gateway.calls)
 	}
 }
 
@@ -384,7 +1113,7 @@ func TestSelectRenderableReplacementSpansKeepsWholeRichLastAtomRaw(t *testing.T)
 		},
 	}
 
-	out := selectRenderableReplacementSpans(spans, lastAtom)
+	out := selectRenderableReplacementSpans(spans, 1, lastAtom)
 	if len(out) != 1 {
 		t.Fatalf("expected only non-overlapping older replacement, got %#v", out)
 	}
@@ -417,44 +1146,6 @@ func TestMapReplacementsToContextSpansPrefersCurrentThreadSeqMapping(t *testing.
 	}
 	if spans[0].StartContextSeq != 1 || spans[0].EndContextSeq != 2 {
 		t.Fatalf("expected thread-seq remap to current chunks, got %#v", spans[0])
-	}
-}
-
-func TestSelectPromotionReplacementsUsesOldestSideOrder(t *testing.T) {
-	now := time.Now().UTC()
-	items := []data.ThreadContextReplacementRecord{
-		{
-			ID:              uuid.New(),
-			StartContextSeq: 21,
-			EndContextSeq:   30,
-			SummaryText:     "newer high layer",
-			Layer:           3,
-			CreatedAt:       now.Add(2 * time.Minute),
-		},
-		{
-			ID:              uuid.New(),
-			StartContextSeq: 1,
-			EndContextSeq:   10,
-			SummaryText:     "first",
-			Layer:           1,
-			CreatedAt:       now,
-		},
-		{
-			ID:              uuid.New(),
-			StartContextSeq: 11,
-			EndContextSeq:   20,
-			SummaryText:     "second",
-			Layer:           1,
-			CreatedAt:       now.Add(30 * time.Second),
-		},
-	}
-
-	selected := selectPromotionReplacements(items)
-	if len(selected) != 3 {
-		t.Fatalf("expected 3 promotion candidates, got %#v", selected)
-	}
-	if selected[0].SummaryText != "first" || selected[1].SummaryText != "second" || selected[2].SummaryText != "newer high layer" {
-		t.Fatalf("expected oldest-side ordering, got %#v", selected)
 	}
 }
 
@@ -598,7 +1289,7 @@ func TestComputeTailKeepByTokenBudget_ZeroBudget(t *testing.T) {
 	}
 }
 
-func TestMaybeInlineCompactMessages_SingleOversizedTextAtom(t *testing.T) {
+func TestMaybeInlineCompactMessages_SingleOversizedTextAtomRetired(t *testing.T) {
 	gateway := &stubCompactGateway{summary: "compacted head"}
 	huge := strings.Repeat("alpha beta gamma delta\n\n", 240)
 	rc := &RunContext{
@@ -606,6 +1297,7 @@ func TestMaybeInlineCompactMessages_SingleOversizedTextAtom(t *testing.T) {
 			PersistEnabled:              true,
 			PersistTriggerApproxTokens:  1,
 			PersistTriggerContextPct:    0,
+			TargetContextPct:            1,
 			FallbackContextWindowTokens: 1_000_000,
 			PersistKeepLastMessages:     1,
 		},
@@ -618,57 +1310,27 @@ func TestMaybeInlineCompactMessages_SingleOversizedTextAtom(t *testing.T) {
 		},
 	}
 	msgs := []llm.Message{{Role: "user", Content: []llm.TextPart{{Text: huge}}}}
-	out, stats, changed, err := MaybeInlineCompactMessages(context.Background(), rc, msgs, nil)
+	out, stats, changed, err := MaybeInlineCompactMessages(context.Background(), rc, msgs, nil, false)
 	if err != nil {
 		t.Fatalf("MaybeInlineCompactMessages: %v", err)
 	}
-	if !changed {
-		t.Fatal("expected single oversized atom to be compacted")
+	if changed {
+		t.Fatal("expected inline compact path retired")
 	}
-	if len(out) != 2 {
-		t.Fatalf("expected snapshot + tail message, got %d", len(out))
+	if len(out) != 1 {
+		t.Fatalf("expected message unchanged, got %d", len(out))
 	}
-	if !strings.Contains(messageText(out[0]), compactSnapshotHeader) {
-		t.Fatalf("expected leading snapshot header, got %q", messageText(out[0]))
+	if strings.TrimSpace(messageText(out[0])) != strings.TrimSpace(huge) {
+		t.Fatalf("expected original message preserved")
 	}
-	if strings.TrimSpace(messageText(out[1])) == "" {
-		t.Fatal("expected tail message kept")
+	if stats.SingleAtomPartial {
+		t.Fatalf("expected no single atom partial flag, got %#v", stats)
 	}
-	if !stats.SingleAtomPartial {
-		t.Fatalf("expected single atom partial flag in stats, got %#v", stats)
+	if stats.TargetChunkCount != 0 {
+		t.Fatalf("expected no chunk-driven compact stats, got %#v", stats)
 	}
-	if stats.TargetChunkCount < 2 {
-		t.Fatalf("expected chunk-driven compact stats, got %#v", stats)
-	}
-	if gateway.calls != 1 {
-		t.Fatalf("expected compact gateway called once, got %d", gateway.calls)
-	}
-	body := messageText(gateway.lastReq.Messages[1])
-	if !strings.Contains(body, "<target-chunks>") {
-		t.Fatalf("expected chunk contract block, got %q", body)
-	}
-}
-
-func TestRunContextCompactLLM_PromotionUsesTargetChunksNotPreviousReplacements(t *testing.T) {
-	gateway := &stubCompactGateway{summary: "promoted compact"}
-	msgs := buildPromotionCompactMessages("summary one", "summary two", "summary three")
-
-	out, err := runContextCompactLLM(context.Background(), nil, gateway, "stub", msgs, nil, "")
-	if err != nil {
-		t.Fatalf("runContextCompactLLM: %v", err)
-	}
-	if out != "promoted compact" {
-		t.Fatalf("unexpected compact output: %q", out)
-	}
-	body := messageText(gateway.lastReq.Messages[1])
-	if !strings.Contains(body, "<target-chunks>") {
-		t.Fatalf("expected target chunks in request, got %q", body)
-	}
-	if strings.Contains(body, "<previous-replacements>") {
-		t.Fatalf("promotion input should not be treated as previous replacements: %q", body)
-	}
-	if !strings.Contains(body, "summary one") || !strings.Contains(body, "summary two") || !strings.Contains(body, "summary three") {
-		t.Fatalf("expected promotion summaries inside target chunks, got %q", body)
+	if gateway.calls != 0 {
+		t.Fatalf("expected no compact gateway call, got %d", gateway.calls)
 	}
 }
 
@@ -887,7 +1549,7 @@ func TestRewriteOversizeRequest_StripsOlderImagePartsBeyondTailBudget(t *testing
 	)
 	request := llm.Request{Messages: messages}
 
-	rewritten, stats, err := RewriteOversizeRequest(context.Background(), rc, request, nil, llm.EstimateRequestJSONBytes)
+	rewritten, stats, err := RewriteOversizeRequest(context.Background(), rc, request, nil, testProviderRequestEstimate)
 	if err != nil {
 		t.Fatalf("RewriteOversizeRequest failed: %v", err)
 	}
@@ -932,7 +1594,7 @@ func TestRewriteOversizeRequest_MicrocompactsOldToolResults(t *testing.T) {
 		},
 	}
 
-	rewritten, stats, err := RewriteOversizeRequest(context.Background(), rc, request, nil, llm.EstimateRequestJSONBytes)
+	rewritten, stats, err := RewriteOversizeRequest(context.Background(), rc, request, nil, testProviderRequestEstimate)
 	if err != nil {
 		t.Fatalf("RewriteOversizeRequest failed: %v", err)
 	}
@@ -944,6 +1606,134 @@ func TestRewriteOversizeRequest_MicrocompactsOldToolResults(t *testing.T) {
 	}
 	if !strings.Contains(messageText(rewritten.Messages[1]), `"new":true`) {
 		t.Fatalf("expected latest tool result preserved, got %q", messageText(rewritten.Messages[1]))
+	}
+}
+
+func TestRewriteOversizeRequest_CurrentInputNodeTooLarge(t *testing.T) {
+	rc := &RunContext{
+		ContextCompact: ContextCompactSettings{
+			PersistEnabled:              true,
+			MicrocompactKeepRecentTools: 1,
+		},
+	}
+	request := llm.Request{
+		Model: "stub",
+		Messages: []llm.Message{
+			{Role: "system", Content: []llm.TextPart{{Text: "sys"}}},
+			{Role: "user", Content: []llm.TextPart{{Text: strings.Repeat("x", llm.RequestPayloadLimitBytes+2048)}}},
+		},
+	}
+
+	rewritten, stats, err := RewriteOversizeRequest(context.Background(), rc, request, nil, testProviderRequestEstimate)
+	if err == nil {
+		t.Fatal("expected current input oversize error")
+	}
+	inputErr, ok := IsCurrentInputOversizeError(err)
+	if !ok || inputErr == nil {
+		t.Fatalf("expected CurrentInputOversizeError, got %T", err)
+	}
+	if !stats.CurrentInputTooLarge {
+		t.Fatal("expected CurrentInputTooLarge=true")
+	}
+	if stats.MinimalRequestBytes <= llm.RequestPayloadLimitBytes {
+		t.Fatalf("expected minimal request to exceed limit, got %d", stats.MinimalRequestBytes)
+	}
+	if rewritten.Messages[1].Role != "user" {
+		t.Fatalf("rewrite should not mutate messages when current input is oversize, got %#v", rewritten.Messages)
+	}
+}
+
+func TestRewriteOversizeRequest_CurrentInputTokenWindowTooLarge(t *testing.T) {
+	rc := &RunContext{
+		ContextCompact: ContextCompactSettings{
+			PersistEnabled:              true,
+			FallbackContextWindowTokens: 12,
+		},
+		ContextWindowTokens: 12,
+		SelectedRoute: &routing.SelectedProviderRoute{
+			Route:      routing.ProviderRouteRule{Model: "gpt-4o", ID: "route-1"},
+			Credential: routing.ProviderCredential{ProviderKind: routing.ProviderKindOpenAI},
+		},
+	}
+	request := llm.Request{
+		Model: "stub",
+		Messages: []llm.Message{
+			{Role: "system", Content: []llm.TextPart{{Text: "sys"}}},
+			{Role: "user", Content: []llm.TextPart{{Text: "one two three four five six seven eight nine ten eleven twelve thirteen"}}},
+		},
+	}
+
+	rewritten, stats, err := RewriteOversizeRequest(context.Background(), rc, request, nil, testProviderRequestEstimate)
+	if err == nil {
+		t.Fatal("expected current input token window error")
+	}
+	inputErr, ok := IsCurrentInputOversizeError(err)
+	if !ok || inputErr == nil {
+		t.Fatalf("expected CurrentInputOversizeError, got %T", err)
+	}
+	if !stats.CurrentInputTooLarge {
+		t.Fatal("expected CurrentInputTooLarge=true")
+	}
+	if stats.MinimalRequestBytes >= llm.RequestPayloadLimitBytes {
+		t.Fatalf("expected minimal request bytes to stay below bytes limit, got %d", stats.MinimalRequestBytes)
+	}
+	if inputErr.MinimalRequestTokens <= rc.ContextWindowTokens {
+		t.Fatalf("expected minimal request tokens to exceed context window, got %d <= %d", inputErr.MinimalRequestTokens, rc.ContextWindowTokens)
+	}
+	if rewritten.Messages[1].Role != "user" {
+		t.Fatalf("rewrite should not mutate messages when token window is exceeded, got %#v", rewritten.Messages)
+	}
+}
+
+func TestRewriteOversizeRequest_ForceCompactsWhenOnlyBytesOversize(t *testing.T) {
+	gateway := &compactSummaryGateway{summary: "summary"}
+	rc := &RunContext{
+		ContextCompact: ContextCompactSettings{
+			PersistEnabled:              true,
+			PersistTriggerContextPct:    85,
+			TargetContextPct:            50,
+			FallbackContextWindowTokens: 4096,
+			PersistKeepLastMessages:     1,
+		},
+		ContextWindowTokens: 4096,
+		Gateway:             gateway,
+		SelectedRoute: &routing.SelectedProviderRoute{
+			Route:      routing.ProviderRouteRule{Model: "gpt-4o", ID: "route-1"},
+			Credential: routing.ProviderCredential{ProviderKind: routing.ProviderKindOpenAI},
+		},
+	}
+	request := llm.Request{
+		Model: "stub",
+		Messages: []llm.Message{
+			{Role: "user", Content: []llm.TextPart{{Text: "small"}}},
+			{Role: "assistant", Content: []llm.TextPart{{Text: "tiny"}}},
+			{Role: "user", Content: []llm.TextPart{{Text: "tail"}}},
+		},
+	}
+	requestEstimateCalls := 0
+	requestEstimate := func(req llm.Request) (int, error) {
+		requestEstimateCalls++
+		if len(req.Messages) >= 3 {
+			return llm.RequestPayloadLimitBytes + 1024, nil
+		}
+		return llm.RequestPayloadLimitBytes - 1024, nil
+	}
+
+	rewritten, stats, err := RewriteOversizeRequest(context.Background(), rc, request, nil, requestEstimate)
+	if err != nil {
+		t.Fatalf("RewriteOversizeRequest failed: %v", err)
+	}
+	if stats.CompactApplied {
+		t.Fatalf("expected no emergency persist without DB context, got %#v", stats)
+	}
+	if len(gateway.requests) != 0 {
+		t.Fatalf("expected compact gateway idle without DB context, got %d", len(gateway.requests))
+	}
+	if requestEstimateCalls < 2 {
+		t.Fatalf("expected estimator used during rewrite checks, got %d calls", requestEstimateCalls)
+	}
+	if len(rewritten.Messages) != len(request.Messages) {
+		t.Fatalf("expected request unchanged without persistence substrate, got %d != %d", len(rewritten.Messages), len(request.Messages))
 	}
 }
 
@@ -1045,11 +1835,11 @@ func TestCompactConsecutiveFailures_NilPool(t *testing.T) {
 }
 
 func TestCompactConsecutiveFailures_NilIDs(t *testing.T) {
-	got := compactConsecutiveFailures(t.Context(), noopCompactPersistDB{}, uuid.Nil, uuid.New())
+	got := compactConsecutiveFailures(t.Context(), nil, uuid.Nil, uuid.New())
 	if got != 0 {
 		t.Fatalf("expected 0 for nil accountID, got %d", got)
 	}
-	got = compactConsecutiveFailures(t.Context(), noopCompactPersistDB{}, uuid.New(), uuid.Nil)
+	got = compactConsecutiveFailures(t.Context(), nil, uuid.New(), uuid.Nil)
 	if got != 0 {
 		t.Fatalf("expected 0 for nil threadID, got %d", got)
 	}
@@ -1340,5 +2130,91 @@ func TestSanitizeToolPairs_EmptyAssistantToolCallsKeepsVisibleText(t *testing.T)
 	}
 	if out[1].Role != "assistant" || len(out[1].ToolCalls) != 0 {
 		t.Fatalf("expected visible assistant text without orphan tool calls, got %#v", out[1])
+	}
+}
+
+func TestSelectPersistFrontierWindowForPressure_CompactZoneUnderBudget(t *testing.T) {
+	// compact zone under budget → selection includes both replacements and chunks
+	frontier := []FrontierNode{
+		{Kind: FrontierNodeReplacement, StartContextSeq: 1, EndContextSeq: 5, StartThreadSeq: 1, EndThreadSeq: 5, SourceText: "small R", ApproxTokens: 100, AtomSeq: 1},
+	}
+	for seq := int64(6); seq <= 30; seq++ {
+		frontier = append(frontier, FrontierNode{
+			Kind: FrontierNodeChunk, StartContextSeq: seq, EndContextSeq: seq, StartThreadSeq: seq, EndThreadSeq: seq,
+			SourceText: fmt.Sprintf("c%d", seq), ApproxTokens: 2000, AtomSeq: int(seq), AtomType: compactAtomUserText, Role: "user",
+			atomKey: fmt.Sprintf("a:%d", seq),
+		})
+	}
+	rc := &RunContext{
+		ContextCompact: ContextCompactSettings{
+			PersistEnabled:              true,
+			TargetContextPct:            65,
+			CompactZoneBudgetPct:        25,
+			FallbackContextWindowTokens: 128000,
+		},
+		ContextWindowTokens: 128000,
+	}
+	selected, ok := selectPersistFrontierWindowForPressure(rc, frontier, 100000)
+	if !ok || len(selected) == 0 {
+		t.Fatal("expected non-empty selection when compact zone under budget")
+	}
+	hasChunk := false
+	for _, n := range selected {
+		if n.Kind == FrontierNodeChunk {
+			hasChunk = true
+			break
+		}
+	}
+	if !hasChunk {
+		t.Fatal("expected selection to include chunks when compact zone is under budget")
+	}
+}
+
+func TestSelectPersistFrontierWindowForPressure_CompactZoneOverBudget(t *testing.T) {
+	// compact zone over budget -> selection restricted to replacements only (compact-of-compact).
+	// 6 replacements at 4000 tokens each, plus chunks at the tail.
+	// window=128000, targetTokens=65%=83200, rawBudget=44800
+	// raw zone scans from end: 15 chunks(30000) + R6(4000) = 34000 < 44800, + R5(4000) = 38000, + R4(4000) = 42000, + R3(4000) = 46000 > 44800
+	// -> rawStart = index of R3 (=2), eligible = [R1, R2, R3]
+	// compact zone budget = 25% of 128000 = 32000, replacement tokens in eligible = R1+R2+R3 = 12000
+	// hmm, that's under budget. Use lower window so budget is smaller.
+	frontier := []FrontierNode{
+		{Kind: FrontierNodeReplacement, StartContextSeq: 1, EndContextSeq: 3, StartThreadSeq: 1, EndThreadSeq: 3, SourceText: "R1", ApproxTokens: 4000, AtomSeq: 1},
+		{Kind: FrontierNodeReplacement, StartContextSeq: 4, EndContextSeq: 6, StartThreadSeq: 4, EndThreadSeq: 6, SourceText: "R2", ApproxTokens: 4000, AtomSeq: 2},
+		{Kind: FrontierNodeReplacement, StartContextSeq: 7, EndContextSeq: 9, StartThreadSeq: 7, EndThreadSeq: 9, SourceText: "R3", ApproxTokens: 4000, AtomSeq: 3},
+		{Kind: FrontierNodeReplacement, StartContextSeq: 10, EndContextSeq: 12, StartThreadSeq: 10, EndThreadSeq: 12, SourceText: "R4", ApproxTokens: 4000, AtomSeq: 4},
+	}
+	for seq := int64(13); seq <= 22; seq++ {
+		frontier = append(frontier, FrontierNode{
+			Kind: FrontierNodeChunk, StartContextSeq: seq, EndContextSeq: seq, StartThreadSeq: seq, EndThreadSeq: seq,
+			SourceText: fmt.Sprintf("c%d", seq), ApproxTokens: 2000, AtomSeq: int(seq), AtomType: compactAtomUserText, Role: "user",
+			atomKey: fmt.Sprintf("a:%d", seq),
+		})
+	}
+	// window=40000, targetTokens=65%=26000, rawBudget=14000
+	// raw zone from end: chunks 13-22 = 10*2000 = 20000 > 14000
+	// -> scans backwards until sum > 14000: c22(2000)..c16(2000) = 7*2000 = 14000, c15 would be 16000 > 14000
+	// rawStart is at R4+c13..c15 boundary area. eligible includes R1..R3 plus some chunks.
+	// compact zone budget = 10% of 40000 = 4000, replacement tokens in eligible >= 12000 > 4000
+	// -> filter to replacements only
+	// selectCompactAtomWindow: protects last AtomSeq in eligible, selects from front
+	// R1(4000) + R2(4000) = 8000 <= maxInputTokens(10000) -> selects R1+R2
+	rc := &RunContext{
+		ContextCompact: ContextCompactSettings{
+			PersistEnabled:              true,
+			TargetContextPct:            65,
+			CompactZoneBudgetPct:        10,
+			FallbackContextWindowTokens: 40000,
+		},
+		ContextWindowTokens: 40000,
+	}
+	selected, ok := selectPersistFrontierWindowForPressure(rc, frontier, 35000)
+	if !ok || len(selected) == 0 {
+		t.Fatal("expected non-empty selection for compact-of-compact")
+	}
+	for _, n := range selected {
+		if n.Kind == FrontierNodeChunk {
+			t.Fatalf("expected only replacement nodes when compact zone over budget, got chunk: %+v", n)
+		}
 	}
 }

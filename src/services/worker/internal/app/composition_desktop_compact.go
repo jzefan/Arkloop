@@ -26,24 +26,29 @@ func resolveDesktopContextCompact(ctx context.Context, db data.DesktopDB) (pipel
 	if persistPct > 100 {
 		persistPct = 100
 	}
-	persistKeepTailPct := desktopResolveNonNegInt(ctx, resolver, registry, "context.compact.persist_keep_tail_pct", scope, 0)
-	if persistKeepTailPct > 100 {
-		persistKeepTailPct = 100
+	targetPct := desktopResolveNonNegInt(ctx, resolver, registry, "context.compact.target_context_pct", scope, 75)
+	if targetPct > 100 {
+		targetPct = 100
 	}
+	if targetPct <= 0 {
+		targetPct = 75
+	}
+	compactEnabled := desktopResolveBool(ctx, resolver, registry, "context.compact.enabled", scope, false)
 	return pipeline.ContextCompactSettings{
-		Enabled:                     desktopResolveBool(ctx, resolver, registry, "context.compact.enabled", scope, false),
+		Enabled:                     compactEnabled,
 		MaxMessages:                 desktopResolveNonNegInt(ctx, resolver, registry, "context.compact.max_messages", scope, 0),
 		MaxUserMessageTokens:        desktopResolveNonNegInt(ctx, resolver, registry, "context.compact.max_user_message_tokens", scope, 0),
 		MaxTotalTextTokens:          desktopResolveNonNegInt(ctx, resolver, registry, "context.compact.max_total_text_tokens", scope, 0),
 		MaxUserTextBytes:            desktopResolveNonNegInt(ctx, resolver, registry, "context.compact.max_user_text_bytes", scope, 0),
 		MaxTotalTextBytes:           desktopResolveNonNegInt(ctx, resolver, registry, "context.compact.max_total_text_bytes", scope, 0),
-		PersistEnabled:              desktopResolveBool(ctx, resolver, registry, "context.compact.persist_enabled", scope, false),
-		PersistTriggerApproxTokens:  desktopResolvePositiveInt(ctx, resolver, registry, "context.compact.persist_trigger_approx_tokens", scope, 0),
+		PersistEnabled:              compactEnabled,
+		PersistTriggerApproxTokens:  0,
 		PersistTriggerContextPct:    persistPct,
 		FallbackContextWindowTokens: desktopResolvePositiveInt(ctx, resolver, registry, "context.compact.fallback_context_window_tokens", scope, 128000),
-		PersistKeepLastMessages:     desktopResolvePositiveInt(ctx, resolver, registry, "context.compact.persist_keep_last_messages", scope, 40),
-		PersistKeepTailPct:          persistKeepTailPct,
-		MicrocompactKeepRecentTools: desktopResolveNonNegInt(ctx, resolver, registry, "context.compact.microcompact_keep_recent_tools", scope, 0),
+		TargetContextPct:            targetPct,
+		PersistKeepLastMessages:     40,
+		PersistKeepTailPct:          0,
+		MicrocompactKeepRecentTools: 0,
 	}, nil
 }
 

@@ -362,21 +362,6 @@ func initRunsSchema(t *testing.T, dsn string) error {
 			consumed_by_run_id  UUID        NULL
 		)`,
 		`CREATE INDEX idx_thread_subagent_callbacks_thread_pending ON thread_subagent_callbacks (thread_id, created_at)`,
-		`CREATE TABLE thread_compaction_snapshots (
-			id                     UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
-			account_id             UUID        NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
-			thread_id              UUID        NOT NULL REFERENCES threads(id) ON DELETE CASCADE,
-			summary_text           TEXT        NOT NULL,
-			metadata_json          JSONB       NOT NULL DEFAULT '{}'::jsonb,
-			supersedes_snapshot_id UUID        NULL REFERENCES thread_compaction_snapshots(id) ON DELETE SET NULL,
-			is_active              BOOLEAN     NOT NULL DEFAULT TRUE,
-			created_at             TIMESTAMPTZ NOT NULL DEFAULT now()
-		)`,
-		`CREATE UNIQUE INDEX uq_thread_compaction_snapshots_active_thread
-		    ON thread_compaction_snapshots (thread_id)
-		 WHERE is_active = TRUE`,
-		`CREATE INDEX ix_thread_compaction_snapshots_thread_created_at
-		    ON thread_compaction_snapshots (thread_id, created_at DESC)`,
 		`CREATE TABLE thread_context_replacements (
 			id               UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
 			account_id       UUID        NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
@@ -672,7 +657,6 @@ func initRunsSchema(t *testing.T, dsn string) error {
 			content_json       JSONB       NULL,
 			metadata_json      JSONB       NOT NULL DEFAULT '{}'::jsonb,
 			hidden             BOOLEAN     NOT NULL DEFAULT FALSE,
-			compacted          BOOLEAN     NOT NULL DEFAULT FALSE,
 			deleted_at         TIMESTAMPTZ NULL,
 			created_at         TIMESTAMPTZ NOT NULL DEFAULT now()
 		)`,

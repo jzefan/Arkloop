@@ -136,12 +136,14 @@ func (r *MessageRepository) Create(
 		if err != nil {
 			return err
 		}
+		messageID := uuid.New()
 		return q.QueryRow(
 			ctx,
-			`INSERT INTO messages (account_id, thread_id, thread_seq, created_by_user_id, role, content, created_at)
-			 VALUES ($1, $2, $3, $4, $5, $6, $7)
+			`INSERT INTO messages (id, account_id, thread_id, thread_seq, created_by_user_id, role, content, created_at)
+			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 			 RETURNING id, account_id, thread_id, created_by_user_id, role, content,
 			           content_json, metadata_json, token_count, deleted_at, created_at, hidden, thread_seq`,
+			messageID,
 			accountID,
 			threadID,
 			threadSeq,
@@ -231,12 +233,14 @@ func (r *MessageRepository) CreateStructuredWithMetadata(
 		if err != nil {
 			return err
 		}
+		messageID := uuid.New()
 		return q.QueryRow(
 			ctx,
-			`INSERT INTO messages (account_id, thread_id, thread_seq, created_by_user_id, role, content, content_json, metadata_json, created_at)
-			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+			`INSERT INTO messages (id, account_id, thread_id, thread_seq, created_by_user_id, role, content, content_json, metadata_json, created_at)
+			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
 			 RETURNING id, account_id, thread_id, created_by_user_id, role, content,
 			           content_json, metadata_json, token_count, deleted_at, created_at, hidden, thread_seq`,
+			messageID,
 			accountID,
 			threadID,
 			threadSeq,
@@ -306,7 +310,6 @@ func (r *MessageRepository) ListByThread(
 			   AND thread_id = $2
 			   AND hidden = FALSE
 			   AND deleted_at IS NULL
-			   AND COALESCE(compacted, false) = false
 			 ORDER BY thread_seq DESC
 			 LIMIT $3
 		 ) recent
@@ -421,8 +424,7 @@ func (r *MessageRepository) GetLatestVisibleMessage(
 		    AND thread_id = $2
 		    AND hidden = FALSE
 		    AND deleted_at IS NULL
-		    AND COALESCE(compacted, false) = false
-		  ORDER BY thread_seq DESC
+		 ORDER BY thread_seq DESC
 		  LIMIT 1`,
 		accountID,
 		threadID,
@@ -743,7 +745,6 @@ func (r *MessageRepository) CopyUpTo(
 		 WHERE m.account_id = $1
 		   AND m.thread_id = $2
 		   AND m.deleted_at IS NULL
-		   AND COALESCE(m.compacted, false) = false
 		   AND (
 		     m.hidden = FALSE
 		     OR (

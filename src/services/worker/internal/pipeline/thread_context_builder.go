@@ -14,14 +14,13 @@ import (
 )
 
 type canonicalThreadContext struct {
-	VisibleMessages          []data.ThreadMessage
-	Atoms                    []canonicalAtom
-	Chunks                   []canonicalChunk
-	Entries                  []canonicalThreadContextEntry
-	Messages                 []llm.Message
-	ThreadMessageIDs         []uuid.UUID
-	HasLeadingCompactSummary bool
-	LeadingCompactSummary    string
+	VisibleMessages  []data.ThreadMessage
+	Atoms            []canonicalAtom
+	Chunks           []canonicalChunk
+	Frontier         []FrontierNode
+	Entries          []canonicalThreadContextEntry
+	Messages         []llm.Message
+	ThreadMessageIDs []uuid.UUID
 }
 
 type canonicalThreadContextEntry struct {
@@ -36,6 +35,8 @@ type canonicalThreadContextEntry struct {
 	IsReplacement   bool
 	SummaryText     string
 }
+
+const compactSyntheticPhase = "system_compact"
 
 func buildCanonicalThreadContext(
 	ctx context.Context,
@@ -78,6 +79,10 @@ func buildCanonicalThreadContext(
 		lastContextSeq := chunks[len(chunks)-1].ContextSeq
 		upperBoundContextSeq = &lastContextSeq
 	}
+	graph, err := ensureCanonicalThreadGraphPersistedFromMessages(ctx, tx, run.AccountID, run.ThreadID, renderableMessages)
+	if err != nil {
+		return nil, err
+	}
 
 	replacementsRepo := data.ThreadContextReplacementsRepository{}
 	var replacements []data.ThreadContextReplacementRecord
@@ -102,13 +107,21 @@ func buildCanonicalThreadContext(
 		return nil, err
 	}
 
+	frontier, err := buildThreadContextFrontier(ctx, tx, graph, run.AccountID, run.ThreadID, replacements, upperBoundContextSeq)
+	if err != nil {
+		return nil, err
+	}
 	lastAtom := (*canonicalAtom)(nil)
 	if len(atoms) > 0 {
 		lastAtom = &atoms[len(atoms)-1]
 	}
 	mapped := mapReplacementsToContextSpans(replacements, chunks, upperBoundContextSeq)
-	selected := selectRenderableReplacementSpans(mapped, lastAtom)
-	entries, leadingSummary, err := renderCanonicalThreadMessagesFromGraph(ctx, attachmentStore, atoms, chunks, selected)
+	firstContextSeq := int64(0)
+	if len(chunks) > 0 {
+		firstContextSeq = chunks[0].ContextSeq
+	}
+	selected := selectRenderableReplacementSpans(mapped, firstContextSeq, lastAtom)
+	entries, _, err := renderCanonicalThreadMessagesFromGraph(ctx, attachmentStore, atoms, chunks, selected)
 	if err != nil {
 		return nil, err
 	}
@@ -120,6 +133,7 @@ func buildCanonicalThreadContext(
 	}
 	if messageLimit > 0 {
 		entries = trimEntriesToMessageLimit(entries, messageLimit)
+		frontier = reindexFrontierToEntries(frontier, entries)
 		renderedMessages = renderedMessages[:0]
 		renderedIDs = renderedIDs[:0]
 		for _, entry := range entries {
@@ -129,14 +143,13 @@ func buildCanonicalThreadContext(
 	}
 
 	return &canonicalThreadContext{
-		VisibleMessages:          renderableMessages,
-		Atoms:                    atoms,
-		Chunks:                   chunks,
-		Entries:                  entries,
-		Messages:                 renderedMessages,
-		ThreadMessageIDs:         renderedIDs,
-		HasLeadingCompactSummary: strings.TrimSpace(leadingSummary) != "",
-		LeadingCompactSummary:    strings.TrimSpace(leadingSummary),
+		VisibleMessages:  renderableMessages,
+		Atoms:            atoms,
+		Chunks:           chunks,
+		Frontier:         frontier,
+		Entries:          entries,
+		Messages:         renderedMessages,
+		ThreadMessageIDs: renderedIDs,
 	}, nil
 }
 
@@ -241,9 +254,47 @@ func renderCanonicalThreadMessages(
 	replacements []data.ThreadContextReplacementRecord,
 ) ([]canonicalThreadContextEntry, string, error) {
 	atoms, chunks := buildCanonicalAtomGraph(messages)
-	mapped := mapReplacementsToContextSpans(replacements, chunks, nil)
-	selected := selectRenderableReplacementSpans(mapped, nil)
-	return renderCanonicalThreadMessagesFromGraph(ctx, attachmentStore, atoms, chunks, selected)
+	frontier := make([]FrontierNode, 0, len(chunks)+len(replacements))
+	for _, chunk := range chunks {
+		frontier = append(frontier, FrontierNode{
+			Kind:            FrontierNodeChunk,
+			StartContextSeq: chunk.ContextSeq,
+			EndContextSeq:   chunk.ContextSeq,
+			StartThreadSeq:  chunk.StartThreadSeq,
+			EndThreadSeq:    chunk.EndThreadSeq,
+			SourceText:      strings.TrimSpace(chunk.Content),
+			ApproxTokens:    approxTokensFromText(chunk.Content),
+			atomKey:         chunk.AtomKey,
+			chunkSeq:        chunk.ContextSeq,
+		})
+	}
+	for _, replacement := range replacements {
+		if strings.TrimSpace(replacement.SummaryText) == "" {
+			continue
+		}
+		frontier = append(frontier, FrontierNode{
+			Kind:            FrontierNodeReplacement,
+			NodeID:          replacement.ID,
+			StartContextSeq: replacement.StartContextSeq,
+			EndContextSeq:   replacement.EndContextSeq,
+			StartThreadSeq:  replacement.StartThreadSeq,
+			EndThreadSeq:    replacement.EndThreadSeq,
+			SourceText:      strings.TrimSpace(replacement.SummaryText),
+			ApproxTokens:    approxTokensFromText(replacement.SummaryText),
+			role:            "system",
+		})
+	}
+	sort.SliceStable(frontier, func(i, j int) bool {
+		if frontier[i].StartContextSeq != frontier[j].StartContextSeq {
+			return frontier[i].StartContextSeq < frontier[j].StartContextSeq
+		}
+		if frontier[i].Kind != frontier[j].Kind {
+			return frontier[i].Kind == FrontierNodeReplacement
+		}
+		return frontier[i].EndContextSeq < frontier[j].EndContextSeq
+	})
+	entries, err := renderCanonicalThreadMessagesFromFrontier(ctx, attachmentStore, atoms, chunks, frontier)
+	return entries, "", err
 }
 
 func renderCanonicalThreadMessagesFromGraph(
@@ -253,27 +304,75 @@ func renderCanonicalThreadMessagesFromGraph(
 	chunks []canonicalChunk,
 	replacements []canonicalReplacementSpan,
 ) ([]canonicalThreadContextEntry, string, error) {
-	entries := make([]canonicalThreadContextEntry, 0, len(atoms)+len(replacements))
-	leadingSummaries := make([]string, 0, 2)
-	atomIndex := 0
-	seenRealMessage := false
-
-	appendReplacement := func(replacement canonicalReplacementSpan) {
+	frontier := make([]FrontierNode, 0, len(chunks)+len(replacements))
+	skipped := make(map[int64]struct{})
+	for _, replacement := range replacements {
 		summary := strings.TrimSpace(replacement.Record.SummaryText)
-		entries = append(entries, canonicalThreadContextEntry{
-			AnchorKey:       replacementAnchorKey(replacement.Record.ID),
-			Message:         makeCompactSnapshotMessage(summary),
-			ThreadMessageID: uuid.Nil,
-			StartThreadSeq:  replacement.Record.StartThreadSeq,
-			EndThreadSeq:    replacement.Record.EndThreadSeq,
+		if summary == "" {
+			continue
+		}
+		for seq := replacement.StartContextSeq; seq <= replacement.EndContextSeq; seq++ {
+			skipped[seq] = struct{}{}
+		}
+		frontier = append(frontier, FrontierNode{
+			Kind:            FrontierNodeReplacement,
+			NodeID:          replacement.Record.ID,
 			StartContextSeq: replacement.StartContextSeq,
 			EndContextSeq:   replacement.EndContextSeq,
-			IsReplacement:   true,
-			SummaryText:     summary,
+			StartThreadSeq:  replacement.Record.StartThreadSeq,
+			EndThreadSeq:    replacement.Record.EndThreadSeq,
+			SourceText:      summary,
+			ApproxTokens:    approxTokensFromText(summary),
+			role:            "system",
 		})
-		if !seenRealMessage && summary != "" {
-			leadingSummaries = append(leadingSummaries, summary)
+	}
+	for _, chunk := range chunks {
+		if _, ok := skipped[chunk.ContextSeq]; ok {
+			continue
 		}
+		frontier = append(frontier, FrontierNode{
+			Kind:            FrontierNodeChunk,
+			StartContextSeq: chunk.ContextSeq,
+			EndContextSeq:   chunk.ContextSeq,
+			StartThreadSeq:  chunk.StartThreadSeq,
+			EndThreadSeq:    chunk.EndThreadSeq,
+			SourceText:      strings.TrimSpace(chunk.Content),
+			ApproxTokens:    approxTokensFromText(chunk.Content),
+			atomKey:         chunk.AtomKey,
+			chunkSeq:        chunk.ContextSeq,
+		})
+	}
+	sort.SliceStable(frontier, func(i, j int) bool {
+		if frontier[i].StartContextSeq != frontier[j].StartContextSeq {
+			return frontier[i].StartContextSeq < frontier[j].StartContextSeq
+		}
+		if frontier[i].Kind != frontier[j].Kind {
+			return frontier[i].Kind == FrontierNodeReplacement
+		}
+		return frontier[i].EndContextSeq < frontier[j].EndContextSeq
+	})
+	entries, err := renderCanonicalThreadMessagesFromFrontier(ctx, attachmentStore, atoms, chunks, frontier)
+	return entries, "", err
+}
+
+func renderCanonicalThreadMessagesFromFrontier(
+	ctx context.Context,
+	attachmentStore MessageAttachmentStore,
+	atoms []canonicalAtom,
+	chunks []canonicalChunk,
+	frontier []FrontierNode,
+) ([]canonicalThreadContextEntry, error) {
+	entries := make([]canonicalThreadContextEntry, 0, len(frontier))
+	if len(frontier) == 0 {
+		return entries, nil
+	}
+	atomByKey := make(map[string]canonicalAtom, len(atoms))
+	chunkBySeq := make(map[int64]canonicalChunk, len(chunks))
+	for _, atom := range atoms {
+		atomByKey[atom.Key] = atom
+	}
+	for _, chunk := range chunks {
+		chunkBySeq[chunk.ContextSeq] = chunk
 	}
 
 	appendThreadMessage := func(atom canonicalAtom, msg data.ThreadMessage) error {
@@ -282,7 +381,11 @@ func renderCanonicalThreadMessagesFromGraph(
 		}
 		parts, err := BuildMessageParts(ctx, attachmentStore, msg)
 		if err != nil {
-			return err
+			if attachmentStore == nil {
+				parts = fallbackTextParts(msg.Content)
+			} else {
+				return err
+			}
 		}
 		if msg.Role == "tool" {
 			parts = canonicalizeToolMessageParts(parts)
@@ -311,43 +414,115 @@ func renderCanonicalThreadMessagesFromGraph(
 			EndContextSeq:   atom.EndContextSeq,
 			IsReplacement:   false,
 		})
-		seenRealMessage = true
 		return nil
 	}
 
-	appendAtom := func(atom canonicalAtom) error {
-		for _, msg := range atom.Messages {
-			if err := appendThreadMessage(atom, msg); err != nil {
-				return err
-			}
+	appendReplacement := func(node FrontierNode) {
+		summary := strings.TrimSpace(node.SourceText)
+		if summary == "" {
+			return
 		}
+		entries = append(entries, canonicalThreadContextEntry{
+			AnchorKey:       replacementAnchorKey(node.NodeID),
+			Message:         makeThreadContextReplacementMessage(summary),
+			ThreadMessageID: uuid.Nil,
+			StartThreadSeq:  node.StartThreadSeq,
+			EndThreadSeq:    node.EndThreadSeq,
+			StartContextSeq: node.StartContextSeq,
+			EndContextSeq:   node.EndContextSeq,
+			IsReplacement:   true,
+			SummaryText:     summary,
+		})
+	}
+
+	appendChunkRange := func(atom canonicalAtom, startContextSeq, endContextSeq int64) error {
+		if startContextSeq == atom.StartContextSeq && endContextSeq == atom.EndContextSeq {
+			for _, msg := range atom.Messages {
+				if err := appendThreadMessage(atom, msg); err != nil {
+					return err
+				}
+			}
+			return nil
+		}
+		if !atomSupportsPartialTail(atom) {
+			for _, msg := range atom.Messages {
+				if err := appendThreadMessage(atom, msg); err != nil {
+					return err
+				}
+			}
+			return nil
+		}
+		textParts := make([]string, 0, endContextSeq-startContextSeq+1)
+		for seq := startContextSeq; seq <= endContextSeq; seq++ {
+			chunk, ok := chunkBySeq[seq]
+			if !ok || chunk.AtomKey != atom.Key {
+				continue
+			}
+			textParts = append(textParts, strings.TrimSpace(chunk.Content))
+		}
+		visibleText := strings.TrimSpace(strings.Join(textParts, "\n\n"))
+		if visibleText == "" {
+			return nil
+		}
+		msg := atom.Messages[0]
+		entries = append(entries, canonicalThreadContextEntry{
+			AnchorKey:       messageAnchorKey(msg.ID),
+			AtomKey:         atom.Key,
+			Message:         llm.Message{Role: msg.Role, Content: []llm.TextPart{{Text: visibleText}}, OutputTokens: msg.OutputTokens},
+			ThreadMessageID: msg.ID,
+			StartThreadSeq:  msg.ThreadSeq,
+			EndThreadSeq:    msg.ThreadSeq,
+			StartContextSeq: startContextSeq,
+			EndContextSeq:   endContextSeq,
+			IsReplacement:   false,
+		})
 		return nil
 	}
 
-	for _, replacement := range replacements {
-		for atomIndex < len(atoms) && atoms[atomIndex].EndContextSeq < replacement.StartContextSeq {
-			if err := appendAtom(atoms[atomIndex]); err != nil {
-				return nil, "", err
+	for i := 0; i < len(frontier); {
+		node := frontier[i]
+		if node.Kind == FrontierNodeReplacement {
+			msgStart := len(entries)
+			appendReplacement(node)
+			if len(entries) > msgStart {
+				frontier[i].MsgStart = msgStart
+				frontier[i].MsgEnd = len(entries) - 1
+				frontier[i].Role = "system"
 			}
-			atomIndex++
+			i++
+			continue
 		}
-		appendReplacement(replacement)
-		for atomIndex < len(atoms) && atoms[atomIndex].StartContextSeq <= replacement.EndContextSeq {
-			if tailEntry, ok := renderReplacementTailEntry(ctx, attachmentStore, atoms[atomIndex], chunks, replacement); ok {
-				entries = append(entries, tailEntry)
-				seenRealMessage = true
+		atom, ok := atomByKey[node.atomKey]
+		if !ok {
+			i++
+			continue
+		}
+		startContextSeq := node.StartContextSeq
+		endContextSeq := node.EndContextSeq
+		j := i + 1
+		for j < len(frontier) {
+			next := frontier[j]
+			if next.Kind != FrontierNodeChunk || next.atomKey != node.atomKey || next.StartContextSeq != endContextSeq+1 {
+				break
 			}
-			atomIndex++
+			endContextSeq = next.EndContextSeq
+			j++
 		}
-	}
-	for atomIndex < len(atoms) {
-		if err := appendAtom(atoms[atomIndex]); err != nil {
-			return nil, "", err
+		msgStart := len(entries)
+		if err := appendChunkRange(atom, startContextSeq, endContextSeq); err != nil {
+			return nil, err
 		}
-		atomIndex++
+		if len(entries) > msgStart {
+			msgEnd := len(entries) - 1
+			for k := i; k < j; k++ {
+				frontier[k].MsgStart = msgStart
+				frontier[k].MsgEnd = msgEnd
+				frontier[k].Role = atom.Messages[0].Role
+			}
+		}
+		i = j
 	}
-	leadingSummary := strings.TrimSpace(strings.Join(leadingSummaries, "\n\n"))
-	return entries, leadingSummary, nil
+	return entries, nil
 }
 
 func trimEntriesToMessageLimit(entries []canonicalThreadContextEntry, messageLimit int) []canonicalThreadContextEntry {
@@ -399,6 +574,56 @@ func trimEntriesToMessageLimit(entries []canonicalThreadContextEntry, messageLim
 	return append(prefix, tail...)
 }
 
+func reindexFrontierToEntries(frontier []FrontierNode, entries []canonicalThreadContextEntry) []FrontierNode {
+	if len(frontier) == 0 || len(entries) == 0 {
+		return frontier
+	}
+	out := make([]FrontierNode, 0, len(frontier))
+	for _, node := range frontier {
+		start, end, ok := frontierEntryRange(node, entries)
+		if !ok {
+			continue
+		}
+		node.MsgStart = start
+		node.MsgEnd = end
+		out = append(out, node)
+	}
+	return out
+}
+
+func frontierEntryRange(node FrontierNode, entries []canonicalThreadContextEntry) (int, int, bool) {
+	if len(entries) == 0 {
+		return 0, 0, false
+	}
+	if node.Kind == FrontierNodeReplacement {
+		anchor := replacementAnchorKey(node.NodeID)
+		for i, entry := range entries {
+			if entry.IsReplacement && entry.AnchorKey == anchor {
+				return i, i, true
+			}
+		}
+		return 0, 0, false
+	}
+	start := -1
+	end := -1
+	for i, entry := range entries {
+		if entry.IsReplacement || entry.AtomKey != node.atomKey {
+			continue
+		}
+		if entry.StartContextSeq > node.StartContextSeq || entry.EndContextSeq < node.EndContextSeq {
+			continue
+		}
+		if start < 0 {
+			start = i
+		}
+		end = i
+	}
+	if start < 0 || end < start {
+		return 0, 0, false
+	}
+	return start, end, true
+}
+
 func compactReplacementMetadata(kind string) json.RawMessage {
 	payload, _ := json.Marshal(map[string]string{"kind": kind})
 	if len(payload) == 0 {
@@ -419,17 +644,6 @@ func replacementAnchorKey(replacementID uuid.UUID) string {
 		return ""
 	}
 	return "replacement:" + replacementID.String()
-}
-
-func leadingCompactEntryCount(entries []canonicalThreadContextEntry) int {
-	count := 0
-	for _, entry := range entries {
-		if !entry.IsReplacement {
-			break
-		}
-		count++
-	}
-	return count
 }
 
 func renderedMessageAnchorKey(entries []canonicalThreadContextEntry, messageID uuid.UUID) string {
@@ -458,80 +672,11 @@ func isLastRenderedMessage(entries []canonicalThreadContextEntry, messageID uuid
 	return !last.IsReplacement && last.ThreadMessageID == messageID
 }
 
-func renderReplacementTailEntry(
-	ctx context.Context,
-	attachmentStore MessageAttachmentStore,
-	atom canonicalAtom,
-	chunks []canonicalChunk,
-	replacement canonicalReplacementSpan,
-) (canonicalThreadContextEntry, bool) {
-	if !atomSupportsPartialTail(atom) {
-		return canonicalThreadContextEntry{}, false
+func makeThreadContextReplacementMessage(summary string) llm.Message {
+	phase := compactSyntheticPhase
+	return llm.Message{
+		Role:    "system",
+		Phase:   &phase,
+		Content: []llm.TextPart{{Text: strings.TrimSpace(summary)}},
 	}
-	if replacement.StartContextSeq > atom.StartContextSeq || replacement.EndContextSeq >= atom.EndContextSeq {
-		return canonicalThreadContextEntry{}, false
-	}
-	role := strings.TrimSpace(atom.Messages[0].Role)
-	if role != "user" && role != "assistant" {
-		return canonicalThreadContextEntry{}, false
-	}
-	tailParts := make([]string, 0, atom.EndContextSeq-replacement.EndContextSeq)
-	for _, chunk := range chunks {
-		if chunk.AtomKey != atom.Key {
-			continue
-		}
-		if chunk.ContextSeq <= replacement.EndContextSeq {
-			continue
-		}
-		tailParts = append(tailParts, strings.TrimSpace(chunk.Content))
-	}
-	tailText := strings.TrimSpace(strings.Join(tailParts, "\n\n"))
-	if tailText == "" {
-		return canonicalThreadContextEntry{}, false
-	}
-	originalParts, err := BuildMessageParts(ctx, attachmentStore, atom.Messages[0])
-	if err != nil {
-		return canonicalThreadContextEntry{}, false
-	}
-	tailContent, ok := replaceTextPartsKeepingTail(originalParts, tailText)
-	if !ok {
-		return canonicalThreadContextEntry{}, false
-	}
-	return canonicalThreadContextEntry{
-		AnchorKey:       messageAnchorKey(atom.Messages[0].ID),
-		AtomKey:         atom.Key,
-		Message:         llm.Message{Role: role, Content: tailContent, OutputTokens: atom.Messages[0].OutputTokens},
-		ThreadMessageID: atom.Messages[0].ID,
-		StartThreadSeq:  atom.Messages[0].ThreadSeq,
-		EndThreadSeq:    atom.Messages[0].ThreadSeq,
-		StartContextSeq: replacement.EndContextSeq + 1,
-		EndContextSeq:   atom.EndContextSeq,
-		IsReplacement:   false,
-	}, true
-}
-
-func replaceTextPartsKeepingTail(parts []llm.ContentPart, tailText string) ([]llm.ContentPart, bool) {
-	if strings.TrimSpace(tailText) == "" || len(parts) == 0 {
-		return nil, false
-	}
-	out := make([]llm.ContentPart, 0, len(parts))
-	inserted := false
-	for _, part := range parts {
-		if part.Kind() != "text" {
-			out = append(out, part)
-			continue
-		}
-		if inserted {
-			continue
-		}
-		replaced := part
-		replaced.Type = "text"
-		replaced.Text = tailText
-		out = append(out, replaced)
-		inserted = true
-	}
-	if !inserted {
-		return nil, false
-	}
-	return out, true
 }

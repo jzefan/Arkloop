@@ -12,9 +12,10 @@ import (
 )
 
 const (
-	RunExecuteJobType     = "run.execute"
-	WebhookDeliverJobType = "webhook.deliver"
-	EmailSendJobType      = "email.send"
+	RunExecuteJobType             = "run.execute"
+	WebhookDeliverJobType         = "webhook.deliver"
+	EmailSendJobType              = "email.send"
+	ContextCompactMaintainJobType = "context_compact_maintain"
 
 	JobStatusQueued = "queued"
 	JobStatusLeased = "leased"
@@ -34,6 +35,8 @@ const (
 
 var traceIDRegex = regexp.MustCompile(`^[0-9a-fA-F]{32}$`)
 var ErrRunExecuteAlreadyQueued = errors.New("run.execute already queued")
+
+const compactPayloadThreadIDKey = "thread_id"
 
 func normalizeTraceID(value string) string {
 	cleaned := strings.TrimSpace(value)
@@ -61,6 +64,25 @@ func normalizeJobTypes(values []string) []string {
 		deduped = append(deduped, cleaned)
 	}
 	return deduped
+}
+
+func contextCompactThreadIDFromPayload(payload map[string]any) (uuid.UUID, bool) {
+	if len(payload) == 0 {
+		return uuid.Nil, false
+	}
+	raw, ok := payload[compactPayloadThreadIDKey]
+	if !ok {
+		return uuid.Nil, false
+	}
+	text, ok := raw.(string)
+	if !ok {
+		return uuid.Nil, false
+	}
+	id, err := uuid.Parse(strings.TrimSpace(text))
+	if err != nil || id == uuid.Nil {
+		return uuid.Nil, false
+	}
+	return id, true
 }
 
 type JobLease struct {

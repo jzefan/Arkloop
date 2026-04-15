@@ -907,7 +907,14 @@ func TestAgentLoopEmitsContextPressureAnchorOnTurnCompleted(t *testing.T) {
 	if value := mustInt64(t, completed.DataJSON["last_real_prompt_tokens"]); value != 10 {
 		t.Fatalf("expected last_real_prompt_tokens=10, got %d", value)
 	}
-	wantEstimate := int64(pipeline.HistoryThreadPromptTokensForRoute(nil, requestMessages))
+	requestEstimate := llm.EstimateRequestJSONBytes(llm.Request{
+		Model:    "stub",
+		Messages: requestMessages,
+	})
+	wantEstimate := int64(requestEstimate / 4)
+	if wantEstimate < 1 {
+		wantEstimate = 1
+	}
 	if value := mustInt64(t, completed.DataJSON["last_request_context_estimate_tokens"]); value != wantEstimate {
 		t.Fatalf("expected last_request_context_estimate_tokens=%d, got %d", wantEstimate, value)
 	}
@@ -960,37 +967,18 @@ func TestAgentLoopCompactsBeforeSecondTurnWhenToolOutputInflatesContext(t *testi
 	if err != nil {
 		t.Fatalf("loop.Run failed: %v", err)
 	}
-	if gateway.calls != 3 {
-		t.Fatalf("expected 3 gateway calls (turn, compact, turn), got %d", gateway.calls)
+	if gateway.calls != 2 {
+		t.Fatalf("expected 2 gateway calls (turn, turn), got %d", gateway.calls)
 	}
-	assertHasEvent(t, got, "run.context_compact")
-	var compactCompleted events.RunEvent
-	found := false
-	for _, ev := range got {
-		if ev.Type == "run.context_compact" && ev.DataJSON["phase"] == "completed" {
-			compactCompleted = ev
-			found = true
-			break
-		}
+	if hasEventType(got, "run.context_compact") {
+		t.Fatalf("expected no normal-turn compact event, got %#v", got)
 	}
-	if !found {
-		t.Fatal("expected completed local compact event")
-	}
-	if compactCompleted.DataJSON["op"] != "local" {
-		t.Fatalf("expected local compact op, got %#v", compactCompleted.DataJSON["op"])
-	}
-	if mustInt64(t, compactCompleted.DataJSON["context_pressure_tokens"]) <= mustInt64(t, compactCompleted.DataJSON["context_estimate_tokens"]) {
-		t.Fatalf("expected anchored pressure to exceed estimate: %#v", compactCompleted.DataJSON)
-	}
-	secondTurn := gateway.requests[2]
+	secondTurn := gateway.requests[1]
 	if len(secondTurn.Messages) < 2 {
-		t.Fatalf("expected compacted second turn messages, got %d", len(secondTurn.Messages))
-	}
-	if secondTurn.Messages[0].Role != "user" {
-		t.Fatalf("expected summary snapshot user message at second turn head, got %q", secondTurn.Messages[0].Role)
+		t.Fatalf("expected second turn messages, got %d", len(secondTurn.Messages))
 	}
 	if text := llm.PartPromptText(secondTurn.Messages[len(secondTurn.Messages)-1].Content[0]); strings.Contains(text, huge) {
-		t.Fatal("expected huge tool output to be compacted before second turn")
+		t.Fatal("expected huge tool output to stay microcompacted before second turn")
 	}
 }
 
@@ -1259,6 +1247,13 @@ func TestAgentLoopPreflightOversizeRewritesBeforeFirstProviderRequest(t *testing
 					PersistEnabled:              false,
 					MicrocompactKeepRecentTools: 1,
 				},
+				SelectedRoute: &routing.SelectedProviderRoute{
+					Route: routing.ProviderRouteRule{Model: "gpt-4o", ID: "route-1"},
+					Credential: routing.ProviderCredential{
+						ProviderKind: routing.ProviderKindOpenAI,
+						APIKeyValue:  stringPtr("test-key"),
+					},
+				},
 			},
 		},
 		llm.Request{
@@ -1287,6 +1282,191 @@ func TestAgentLoopPreflightOversizeRewritesBeforeFirstProviderRequest(t *testing
 	}
 	if primary.requests[0].Messages[0].Role != "tool" || !strings.Contains(joinTestMessageText(primary.requests[0].Messages[0]), `"cleared":true`) {
 		t.Fatalf("expected first tool message microcompacted, got %#v", primary.requests[0].Messages[0])
+	}
+}
+
+func TestAgentLoopPreflightTokenWindowRewritesBeforeFirstProviderRequest(t *testing.T) {
+	primary := &oversizeSuccessGateway{phase: llm.OversizePhasePreflight}
+	compact := &compactSummaryGateway{}
+	loop := NewLoop(primary, nil)
+	emitter := events.NewEmitter("trace")
+
+	pipelineRC := newCompactPipelineRC(compact, 1, 1)
+	pipelineRC.ContextCompact.PersistTriggerContextPct = 85
+	pipelineRC.ContextCompact.TargetContextPct = 50
+	pipelineRC.ContextCompact.FallbackContextWindowTokens = 24
+	pipelineRC.ContextWindowTokens = 24
+
+	request := llm.Request{
+		Model: "stub",
+		Messages: []llm.Message{
+			{Role: "user", Content: []llm.TextPart{{Text: "alpha beta gamma delta epsilon zeta eta theta iota kappa lambda"}}},
+			{Role: "assistant", Content: []llm.TextPart{{Text: "ack"}}},
+			{Role: "user", Content: []llm.TextPart{{Text: "mu nu xi omicron pi rho sigma tau upsilon phi chi psi omega"}}},
+		},
+	}
+
+	var got []events.RunEvent
+	err := loop.Run(
+		context.Background(),
+		RunContext{
+			RunID:               uuid.New(),
+			TraceID:             "trace",
+			InputJSON:           map[string]any{},
+			ReasoningIterations: 1,
+			CancelSignal:        func() bool { return false },
+			PipelineRC:          pipelineRC,
+		},
+		request,
+		emitter,
+		func(ev events.RunEvent) error {
+			got = append(got, ev)
+			return nil
+		},
+	)
+	if err != nil {
+		t.Fatalf("loop.Run failed: %v", err)
+	}
+	if compact.calls != 0 {
+		t.Fatalf("expected token-gated preflight compaction retired, got %d", compact.calls)
+	}
+	if primary.calls != 1 {
+		t.Fatalf("expected provider call to proceed without preflight compact, got %d", primary.calls)
+	}
+	if !hasEventType(got, "run.context_compact") {
+		t.Fatalf("expected rewrite status event, got %#v", got)
+	}
+	first := firstEventOfType(got, "run.context_compact")
+	if phase, _ := first.DataJSON["phase"].(string); phase != "no_rewrite" {
+		t.Fatalf("expected no_rewrite phase, got %#v", first.DataJSON)
+	}
+}
+
+func TestAgentLoopPreflightOversizeRunsMultipleRoundsUntilFits(t *testing.T) {
+	primary := &oversizeSuccessGateway{phase: llm.OversizePhasePreflight}
+	compact := &compactSummaryGateway{}
+	loop := NewLoop(primary, nil)
+	emitter := events.NewEmitter("trace")
+
+	pipelineRC := newCompactPipelineRC(compact, 1, 1)
+	pipelineRC.EstimateProviderRequestBytes = func(req llm.Request) (int, error) {
+		if len(req.Messages) <= 1 {
+			return llm.RequestPayloadLimitBytes - 1000, nil
+		}
+		containsSummary := false
+		for _, msg := range req.Messages {
+			if strings.Contains(joinTestMessageText(msg), "summary") {
+				containsSummary = true
+				break
+			}
+		}
+		if !containsSummary {
+			return llm.RequestPayloadLimitBytes + 9000, nil
+		}
+		if compact.calls < 2 {
+			return llm.RequestPayloadLimitBytes + 1000, nil
+		}
+		return llm.RequestPayloadLimitBytes - 1000, nil
+	}
+
+	messages := []llm.Message{
+		{Role: "user", Content: []llm.TextPart{{Text: "chunk-1"}}},
+		{Role: "assistant", Content: []llm.TextPart{{Text: "ack"}}},
+		{Role: "user", Content: []llm.TextPart{{Text: "chunk-2"}}},
+		{Role: "assistant", Content: []llm.TextPart{{Text: "ack"}}},
+		{Role: "user", Content: []llm.TextPart{{Text: "chunk-3"}}},
+		{Role: "assistant", Content: []llm.TextPart{{Text: "tail"}}},
+	}
+
+	var got []events.RunEvent
+	err := loop.Run(
+		context.Background(),
+		RunContext{
+			RunID:               uuid.New(),
+			TraceID:             "trace",
+			InputJSON:           map[string]any{},
+			ReasoningIterations: 1,
+			CancelSignal:        func() bool { return false },
+			PipelineRC:          pipelineRC,
+		},
+		llm.Request{
+			Model:    "stub",
+			Messages: messages,
+		},
+		emitter,
+		func(ev events.RunEvent) error {
+			got = append(got, ev)
+			return nil
+		},
+	)
+	if err != nil {
+		t.Fatalf("loop.Run failed: %v", err)
+	}
+	if primary.calls != 0 {
+		t.Fatalf("expected provider call to stay blocked without persisted rewrite substrate, got %d", primary.calls)
+	}
+	if compact.calls != 0 {
+		t.Fatalf("expected preflight compaction retired, got %d", compact.calls)
+	}
+	if countEventType(got, "run.context_compact") != 1 {
+		t.Fatalf("expected exactly one rewrite status event, got %#v", got)
+	}
+	first := firstEventOfType(got, "run.context_compact")
+	if phase, _ := first.DataJSON["phase"].(string); phase != "no_rewrite" {
+		t.Fatalf("expected no_rewrite phase, got %#v", first.DataJSON)
+	}
+}
+
+func TestAgentLoopPreflightCurrentInputOversizeFailsWithoutProviderCall(t *testing.T) {
+	primary := &oversizeSuccessGateway{phase: llm.OversizePhasePreflight}
+	compact := &compactSummaryGateway{}
+	loop := NewLoop(primary, nil)
+	emitter := events.NewEmitter("trace")
+
+	var got []events.RunEvent
+	err := loop.Run(
+		context.Background(),
+		RunContext{
+			RunID:               uuid.New(),
+			TraceID:             "trace",
+			InputJSON:           map[string]any{},
+			ReasoningIterations: 1,
+			CancelSignal:        func() bool { return false },
+			PipelineRC:          newCompactPipelineRC(compact, 1, 1),
+		},
+		llm.Request{
+			Model: "stub",
+			Messages: []llm.Message{
+				{Role: "system", Content: []llm.TextPart{{Text: "sys"}}},
+				{Role: "user", Content: []llm.TextPart{{Text: strings.Repeat("x", llm.RequestPayloadLimitBytes+2048)}}},
+			},
+		},
+		emitter,
+		func(ev events.RunEvent) error {
+			got = append(got, ev)
+			return nil
+		},
+	)
+	if err != nil {
+		t.Fatalf("loop.Run failed: %v", err)
+	}
+	if primary.calls != 0 {
+		t.Fatalf("expected provider not called when current input itself is oversize, got %d", primary.calls)
+	}
+	if compact.calls != 0 {
+		t.Fatalf("expected compact llm not called when current input itself is oversize, got %d", compact.calls)
+	}
+	if got[len(got)-1].Type != "run.failed" {
+		t.Fatalf("expected final run.failed, got %s", got[len(got)-1].Type)
+	}
+	details, _ := got[len(got)-1].DataJSON["details"].(map[string]any)
+	flag, _ := details["current_input_oversize"].(bool)
+	if !flag {
+		t.Fatalf("expected current_input_oversize=true in details, got %#v", details)
+	}
+	minimalBytes, _ := anyToInt64(details["minimal_payload_bytes"])
+	if minimalBytes <= int64(llm.RequestPayloadLimitBytes) {
+		t.Fatalf("expected minimal payload bytes to exceed limit, got %d", minimalBytes)
 	}
 }
 
@@ -1348,16 +1528,13 @@ func TestAgentLoopProvider413RecoversOnceAndRewritesHistory(t *testing.T) {
 	if primary.calls != 2 {
 		t.Fatalf("expected 2 provider calls, got %d", primary.calls)
 	}
-	if compact.calls != 1 {
-		t.Fatalf("expected compact to run once, got %d", compact.calls)
-	}
-	if !strings.Contains(compact.lastConversation(), `[image attachment_key="attachments/old.png"]`) {
-		t.Fatalf("expected old image placeholder in compact request, got %q", compact.lastConversation())
-	}
-	if !strings.Contains(compact.lastConversation(), `"cleared":true`) {
-		t.Fatalf("expected microcompacted tool result in compact request, got %q", compact.lastConversation())
+	if compact.calls != 0 {
+		t.Fatalf("expected compact gateway to stay unused once direct rewrites are sufficient, got %d", compact.calls)
 	}
 	lastRequest := primary.requests[len(primary.requests)-1]
+	if got := joinTestMessageText(lastRequest.Messages[1]); !strings.Contains(got, `"cleared":true`) {
+		t.Fatalf("expected old tool result to be microcompacted in rewritten provider request, got %q", got)
+	}
 	lastMessage := lastRequest.Messages[len(lastRequest.Messages)-1]
 	if lastMessage.Content[0].Kind() != messagecontent.PartTypeImage {
 		t.Fatalf("expected latest user image to survive rewrite, got %#v", lastMessage.Content[0])
@@ -1413,11 +1590,14 @@ func TestAgentLoopProvider413StopsAfterSingleRecovery(t *testing.T) {
 	if err != nil {
 		t.Fatalf("loop.Run failed: %v", err)
 	}
-	if primary.calls != 2 {
-		t.Fatalf("expected exactly 2 provider calls, got %d", primary.calls)
+	if primary.calls != 1 {
+		t.Fatalf("expected exactly 1 provider call, got %d", primary.calls)
 	}
-	if countEventType(got, "run.context_compact") != 1 {
-		t.Fatalf("expected one rewrite event, got %#v", got)
+	if count := countEventType(got, "run.context_compact"); count > 0 {
+		phase, _ := firstEventOfType(got, "run.context_compact").DataJSON["phase"].(string)
+		if phase == "completed" {
+			t.Fatalf("expected rewrite phase to avoid completed when request still cannot be sent, got %#v", got)
+		}
 	}
 	if got[len(got)-1].Type != "run.failed" {
 		t.Fatalf("expected final run.failed, got %s", got[len(got)-1].Type)
@@ -3813,9 +3993,23 @@ func newCompactPipelineRC(gateway llm.Gateway, keepLast int, keepTools int) *pip
 		SelectedRoute: &routing.SelectedProviderRoute{
 			Route: routing.ProviderRouteRule{
 				Model: "compact-model",
+				ID:    "route-1",
+			},
+			Credential: routing.ProviderCredential{
+				ProviderKind: routing.ProviderKindOpenAI,
+				APIKeyValue:  stringPtr("test-key"),
 			},
 		},
 	}
+}
+
+func firstEventOfType(runEvents []events.RunEvent, typ string) events.RunEvent {
+	for _, ev := range runEvents {
+		if ev.Type == typ {
+			return ev
+		}
+	}
+	return events.RunEvent{}
 }
 
 func hasEventType(events []events.RunEvent, typ string) bool {

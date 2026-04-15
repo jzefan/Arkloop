@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import {
   ChevronDown,
   Check,
@@ -402,6 +402,33 @@ export function WorkRightPanel({
 
   const workingFolderTitle = folderDisplayName ?? t.work.workingFolder
 
+  const scrollRef = useRef<HTMLDivElement>(null)
+  const [scrollEdge, setScrollEdge] = useState<'top' | 'bottom' | 'both' | 'none'>('none')
+
+  useEffect(() => {
+    const el = scrollRef.current
+    if (!el) return
+    const update = () => {
+      const { scrollTop, scrollHeight, clientHeight } = el
+      if (scrollHeight <= clientHeight + 1) { setScrollEdge('none'); return }
+      const atTop = scrollTop <= 1
+      const atBottom = scrollTop + clientHeight >= scrollHeight - 1
+      if (atTop && atBottom) setScrollEdge('none')
+      else if (atTop) setScrollEdge('bottom')
+      else if (atBottom) setScrollEdge('top')
+      else setScrollEdge('both')
+    }
+    update()
+    el.addEventListener('scroll', update)
+    return () => el.removeEventListener('scroll', update)
+  }, [])
+
+  const mask =
+    scrollEdge === 'top' ? 'linear-gradient(to bottom, black 85%, transparent)' :
+    scrollEdge === 'bottom' ? 'linear-gradient(to top, black 85%, transparent)' :
+    scrollEdge === 'both' ? 'linear-gradient(to bottom, transparent, black 12%, black 88%, transparent)' :
+    undefined
+
   return (
     <div
       style={{
@@ -415,6 +442,7 @@ export function WorkRightPanel({
       }}
     >
       <div
+        ref={scrollRef}
         style={{
           flex: 1,
           overflowY: 'auto',
@@ -422,6 +450,8 @@ export function WorkRightPanel({
           display: 'flex',
           flexDirection: 'column',
           gap: 8,
+          maskImage: mask,
+          WebkitMaskImage: mask,
         }}
       >
         <Card title={t.work.progress} badge={steps.length > 0 ? `${doneCount} of ${steps.length}` : undefined} defaultOpen>

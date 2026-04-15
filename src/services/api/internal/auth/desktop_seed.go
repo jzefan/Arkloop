@@ -71,5 +71,14 @@ func SeedDesktopUser(ctx context.Context, q data.Querier) error {
 		return fmt.Errorf("seed desktop credits: %w", err)
 	}
 
+	_, err = q.Exec(ctx, `
+		INSERT INTO feature_flags (key, description, default_value)
+		VALUES ('work_enabled', 'Enable work', true)
+		ON CONFLICT (key) DO NOTHING`,
+	)
+	if err != nil {
+		return fmt.Errorf("seed desktop work_enabled flag: %w", err)
+	}
+
 	return nil
 }

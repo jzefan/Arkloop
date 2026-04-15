@@ -40,6 +40,58 @@ type ThreadContextReplacementInsertInput struct {
 
 type ThreadContextReplacementsRepository struct{}
 
+func (ThreadContextReplacementsRepository) GetByID(
+	ctx context.Context,
+	tx pgx.Tx,
+	accountID uuid.UUID,
+	threadID uuid.UUID,
+	replacementID uuid.UUID,
+) (*ThreadContextReplacementRecord, error) {
+	if tx == nil {
+		return nil, fmt.Errorf("tx must not be nil")
+	}
+	if accountID == uuid.Nil || threadID == uuid.Nil || replacementID == uuid.Nil {
+		return nil, fmt.Errorf("account_id, thread_id and replacement_id must not be empty")
+	}
+
+	var item ThreadContextReplacementRecord
+	err := tx.QueryRow(
+		ctx,
+		`SELECT id, account_id, thread_id, start_thread_seq, end_thread_seq,
+		        start_context_seq, end_context_seq,
+		        summary_text, layer, metadata_json, superseded_at, created_at
+		   FROM thread_context_replacements
+		  WHERE account_id = $1
+		    AND thread_id = $2
+		    AND id = $3`,
+		accountID,
+		threadID,
+		replacementID,
+	).Scan(
+		&item.ID,
+		&item.AccountID,
+		&item.ThreadID,
+		&item.StartThreadSeq,
+		&item.EndThreadSeq,
+		&item.StartContextSeq,
+		&item.EndContextSeq,
+		&item.SummaryText,
+		&item.Layer,
+		&item.MetadataJSON,
+		&item.SupersededAt,
+		&item.CreatedAt,
+	)
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			return nil, nil
+		}
+		return nil, err
+	}
+	item.SummaryText = strings.TrimSpace(item.SummaryText)
+	normalizeReplacementRecordRanges(&item)
+	return &item, nil
+}
+
 func (ThreadContextReplacementsRepository) ListActiveByThreadUpToSeq(
 	ctx context.Context,
 	tx pgx.Tx,

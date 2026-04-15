@@ -141,7 +141,14 @@ export function ExecutionCard({ variant, toolName, label, code, output, errorMes
     }
     update()
     el.addEventListener('scroll', update, { passive: true })
-    return () => el.removeEventListener('scroll', update)
+    // Framer Motion 展开动画期间容器高度从 0 渐变到实际值，
+    // scroll 事件不会触发，需要 ResizeObserver 在尺寸稳定后重算
+    const ro = new ResizeObserver(update)
+    ro.observe(el)
+    return () => {
+      el.removeEventListener('scroll', update)
+      ro.disconnect()
+    }
   }, [expanded, displayOutput])
 
   const mask = maskFor(scrollEdge)

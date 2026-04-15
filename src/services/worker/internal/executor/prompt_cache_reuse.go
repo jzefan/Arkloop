@@ -61,7 +61,7 @@ func inheritedPromptCacheRequest(
 		return llm.Request{}, nil, false
 	}
 
-	plan := buildInheritedPromptPlan(snapshot, buildPromptPlan(rc, input.PromptMode, nil))
+	plan := buildInheritedPromptPlan(snapshot, buildPromptPlan(rc, input.PromptMode, nil, 0))
 	messages := buildInheritedPromptMessages(snapshot, plan, baseMessages)
 	if promptCacheEnabled(rc) && len(messages) > 0 {
 		if plan == nil {
