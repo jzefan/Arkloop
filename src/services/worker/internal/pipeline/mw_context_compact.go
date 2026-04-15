@@ -69,6 +69,12 @@ func NewContextCompactMiddleware(
 ) RunMiddleware {
 	_ = loaders
 	return func(ctx context.Context, rc *RunContext, next RunHandler) error {
+		// 跨 run 恢复 anchor：新 run 首次进入时从历史 run_events 补齐校准锚点
+		if !rc.HasContextCompactAnchor && pool != nil {
+			if anchor, ok := resolveContextCompactPressureAnchor(ctx, pool, rc); ok {
+				rc.SetContextCompactPressureAnchor(anchor.LastRealPromptTokens, anchor.LastRequestContextEstimateTokens)
+			}
+		}
 		beforeMsgs := append([]llm.Message(nil), rc.Messages...)
 		cfg := rc.ContextCompact
 		if rewritten, stripped := stripOlderImagePartsKeepingTail(rc.Messages, resolveContextKeepImageTail()); stripped > 0 {
@@ -465,6 +471,7 @@ func resolveCompactionGateway(
 	return gw, selected.Route.Model
 }
 
+// compactPersistTriggerTokens 计算 soft trigger 的 token 阈值；hard trigger（前台 emergency）由 llm.RequestExceedsLimits 判定。
 func compactPersistTriggerTokens(cfg ContextCompactSettings, windowFromRoute int) (trigger int, window int) {
 	window = windowFromRoute
 	if window <= 0 {
