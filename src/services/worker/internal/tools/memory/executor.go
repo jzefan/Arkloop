@@ -116,6 +116,8 @@ func (e *ToolExecutor) Execute(
 		return e.notebookEdit(ctx, args, ident, started)
 	case "notebook_forget":
 		return e.notebookForget(ctx, args, ident, started)
+	case "memory_list":
+		return e.list(ctx, args, ident, started)
 	case "memory_search":
 		return e.search(ctx, args, ident, execCtx, started)
 	case "memory_thread_search":
@@ -234,6 +236,73 @@ func (e *ToolExecutor) notebookForget(ctx context.Context, args map[string]any, 
 	}
 	return tools.ExecutionResult{
 		ResultJSON: map[string]any{"status": "ok"},
+		DurationMs: durationMs(started),
+	}
+}
+
+func (e *ToolExecutor) list(ctx context.Context, args map[string]any, ident memory.MemoryIdentity, started time.Time) tools.ExecutionResult {
+	uri, _ := args["uri"].(string)
+	uri = strings.TrimSpace(uri)
+	limit := parseListLimit(args, 50)
+	offset := parseOffset(args)
+
+	// Nowledge backend: ListFragments 不支持 offset，请求 offset+limit 条后截断
+	if source, ok := e.provider.(memory.MemoryFragmentSource); ok {
+		fragments, err := source.ListFragments(ctx, ident, offset+limit)
+		if err != nil {
+			return providerError("list", err, started)
+		}
+		if offset > len(fragments) {
+			offset = len(fragments)
+		}
+		fragments = fragments[offset:]
+		if limit > 0 && len(fragments) > limit {
+			fragments = fragments[:limit]
+		}
+		entries := make([]map[string]any, 0, len(fragments))
+		for _, f := range fragments {
+			entry := map[string]any{
+				"uri":   f.URI,
+				"title": strings.TrimSpace(f.Title),
+			}
+			if strings.TrimSpace(f.Abstract) != "" {
+				entry["abstract"] = strings.TrimSpace(f.Abstract)
+			}
+			if f.Score != 0 {
+				entry["score"] = f.Score
+			}
+			if f.RecordedAt != "" {
+				entry["recorded_at"] = f.RecordedAt
+			}
+			entries = append(entries, entry)
+		}
+		return tools.ExecutionResult{
+			ResultJSON: map[string]any{"entries": entries, "total": len(entries), "offset": offset},
+			DurationMs: durationMs(started),
+		}
+	}
+
+	// OpenViking backend: ListDir 不支持分页，在结果上做 slice
+	if uri == "" {
+		uri = memory.SelfURI(ident.UserID.String())
+	}
+	items, err := e.provider.ListDir(ctx, ident, uri)
+	if err != nil {
+		return providerError("list", err, started)
+	}
+	if offset > len(items) {
+		offset = len(items)
+	}
+	items = items[offset:]
+	if limit > 0 && len(items) > limit {
+		items = items[:limit]
+	}
+	entries := make([]map[string]any, 0, len(items))
+	for _, item := range items {
+		entries = append(entries, map[string]any{"uri": item})
+	}
+	return tools.ExecutionResult{
+		ResultJSON: map[string]any{"entries": entries, "total": len(entries), "offset": offset, "parent_uri": uri},
 		DurationMs: durationMs(started),
 	}
 }
@@ -998,6 +1067,50 @@ func parseLimit(args map[string]any, fallback int) int {
 		}
 	}
 	return fallback
+}
+
+func parseListLimit(args map[string]any, fallback int) int {
+	switch v := args["limit"].(type) {
+	case float64:
+		if n := int(v); n >= 1 && n <= 100 {
+			return n
+		}
+	case int:
+		if v >= 1 && v <= 100 {
+			return v
+		}
+	case int64:
+		if v >= 1 && v <= 100 {
+			return int(v)
+		}
+	case json.Number:
+		if n, err := v.Int64(); err == nil && n >= 1 && n <= 100 {
+			return int(n)
+		}
+	}
+	return fallback
+}
+
+func parseOffset(args map[string]any) int {
+	switch v := args["offset"].(type) {
+	case float64:
+		if n := int(v); n >= 0 {
+			return n
+		}
+	case int:
+		if v >= 0 {
+			return v
+		}
+	case int64:
+		if v >= 0 {
+			return int(v)
+		}
+	case json.Number:
+		if n, err := v.Int64(); err == nil && n >= 0 {
+			return int(n)
+		}
+	}
+	return 0
 }
 
 func renderThreadReadContent(data map[string]any, depth string) string {

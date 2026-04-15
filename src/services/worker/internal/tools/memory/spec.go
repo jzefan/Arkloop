@@ -8,6 +8,30 @@ import (
 
 func stringPtr(s string) *string { return &s }
 
+// --- memory_list ---
+
+var ListAgentSpec = tools.AgentToolSpec{
+	Name:        "memory_list",
+	Version:     "1",
+	Description: "list memory entries or directory contents",
+	RiskLevel:   tools.RiskLevelLow,
+	SideEffects: false,
+}
+
+var ListLlmSpec = llm.ToolSpec{
+	Name:        "memory_list",
+	Description: stringPtr(sharedtoolmeta.Must("memory_list").LLMDescription),
+	JSONSchema: map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"uri":    map[string]any{"type": "string"},
+			"limit":  map[string]any{"type": "integer", "minimum": 1, "maximum": 100},
+			"offset": map[string]any{"type": "integer", "minimum": 0},
+		},
+		"additionalProperties": false,
+	},
+}
+
 // --- memory_search ---
 
 var SearchAgentSpec = tools.AgentToolSpec{
@@ -386,6 +410,7 @@ func NotebookAgentSpecs() []tools.AgentToolSpec {
 
 func MemoryAgentSpecs() []tools.AgentToolSpec {
 	return []tools.AgentToolSpec{
+		ListAgentSpec,
 		SearchAgentSpec,
 		ThreadSearchAgentSpec,
 		ThreadFetchAgentSpec,
@@ -416,6 +441,7 @@ func NotebookLlmSpecs() []llm.ToolSpec {
 
 func MemoryLlmSpecs() []llm.ToolSpec {
 	return []llm.ToolSpec{
+		ListLlmSpec,
 		SearchLlmSpec,
 		ThreadSearchLlmSpec,
 		ThreadFetchLlmSpec,
