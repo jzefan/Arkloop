@@ -75,6 +75,29 @@ func (s *Store) Get(ctx context.Context, runID string) (*TokenState, error) {
 	return &state, nil
 }
 
+// recordUsageScript atomically increments tokens_used and checks budget.
+// KEYS[1] = token key
+// ARGV[1] = tokens to add
+// Returns: {status, tokens_used}
+//   status: 1 = allowed, 0 = budget exceeded, -1 = key not found
+var recordUsageScript = redis.NewScript(`
+local key = KEYS[1]
+local add = tonumber(ARGV[1])
+local raw = redis.call("GET", key)
+if not raw then
+    return {-1, 0}
+end
+local state = cjson.decode(raw)
+local used = tonumber(state["tokens_used"]) + add
+local budget = tonumber(state["budget"])
+if budget > 0 and used > budget then
+    return {0, used}
+end
+state["tokens_used"] = used
+redis.call("SET", key, cjson.encode(state), "KEEPTTL")
+return {1, used}
+`)
+
 // RecordUsage atomically increments the tokens_used counter and checks budget.
 // Returns (allowed, error). If budget exceeded, allowed=false.
 func (s *Store) RecordUsage(ctx context.Context, runID string, tokensUsed int64) (bool, error) {
@@ -83,38 +106,25 @@ func (s *Store) RecordUsage(ctx context.Context, runID string, tokensUsed int64)
 	}
 
 	key := keyPrefix + runID
-	data, err := s.rdb.Get(ctx, key).Bytes()
+	result, err := recordUsageScript.Run(ctx, s.rdb, []string{key}, tokensUsed).Slice()
 	if err != nil {
-		if err == redis.Nil {
-			return false, fmt.Errorf("token not found or expired for run %s", runID)
-		}
-		return false, fmt.Errorf("get token state: %w", err)
+		return false, fmt.Errorf("record usage script: %w", err)
 	}
-
-	var state TokenState
-	if err := json.Unmarshal(data, &state); err != nil {
-		return false, fmt.Errorf("unmarshal token state: %w", err)
+	if len(result) != 2 {
+		return false, fmt.Errorf("unexpected script result length: %d", len(result))
 	}
-
-	state.TokensUsed += tokensUsed
-
-	// Check budget (0 = unlimited)
-	if state.Budget > 0 && state.TokensUsed > state.Budget {
+	status, ok := result[0].(int64)
+	if !ok {
+		return false, fmt.Errorf("unexpected script status type")
+	}
+	switch status {
+	case -1:
+		return false, fmt.Errorf("token not found or expired for run %s", runID)
+	case 0:
 		return false, nil
+	default:
+		return true, nil
 	}
-
-	// Write back updated state
-	updated, err := json.Marshal(state)
-	if err != nil {
-		return false, fmt.Errorf("marshal updated state: %w", err)
-	}
-
-	// Use KEEPTTL to preserve the existing expiration
-	if err := s.rdb.Set(ctx, key, updated, redis.KeepTTL).Err(); err != nil {
-		return false, fmt.Errorf("update token state: %w", err)
-	}
-
-	return true, nil
 }
 
 // Revoke removes the token state, effectively invalidating the token.

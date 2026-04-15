@@ -369,11 +369,11 @@ function getCurrentApiBaseUrl(): string {
 contextBridge.exposeInMainWorld('__ARKLOOP_DESKTOP__', {
   apiBaseUrl: getCurrentApiBaseUrl(),
   bridgeBaseUrl: bridgeBaseUrlSnapshot,
-  accessToken: config.desktopAccessToken ?? 'arkloop-desktop-local-token',
+  accessToken: config.desktopAccessToken ?? '',
   mode: configSnapshot.mode,
   getApiBaseUrl: () => getCurrentApiBaseUrl(),
   getBridgeBaseUrl: () => bridgeBaseUrlSnapshot,
-  getAccessToken: () => config.desktopAccessToken ?? 'arkloop-desktop-local-token',
+  getAccessToken: () => config.desktopAccessToken ?? '',
   getMode: () => configSnapshot.mode,
 })
 

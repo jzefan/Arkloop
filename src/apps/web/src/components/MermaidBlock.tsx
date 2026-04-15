@@ -22,8 +22,8 @@ function ensureMermaidInit() {
       tertiaryColor: 'var(--c-bg-page)',
       fontFamily: "system-ui, -apple-system, 'Segoe UI', sans-serif",
     },
-    flowchart: { htmlLabels: true, curve: 'basis' },
-    securityLevel: 'loose',
+    flowchart: { htmlLabels: false, curve: 'basis' },
+    securityLevel: 'strict',
   })
 }
 

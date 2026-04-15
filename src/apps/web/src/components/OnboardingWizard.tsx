@@ -51,7 +51,7 @@ type ModelImportStatus =
 type Props = { onComplete: () => void };
 
 const LOCAL_ACCESS_TOKEN =
-  getDesktopAccessToken() ?? "arkloop-desktop-local-token";
+  getDesktopAccessToken() ?? "";
 
 const VENDOR_OPTIONS = [
   {

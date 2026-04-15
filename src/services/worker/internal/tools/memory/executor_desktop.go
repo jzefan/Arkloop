@@ -188,6 +188,7 @@ func (e *ToolExecutor) notebookWrite(ctx context.Context, args map[string]any, i
 	if err != nil {
 		return argError(err.Error(), started)
 	}
+	content = memory.SanitizeBlockContent(content)
 	entry := memory.MemoryEntry{Content: buildWritableContent(memory.MemoryScopeUser, category, key, content)}
 	uri, writeErr := w.WriteReturningURI(ctx, ident, memory.MemoryScopeUser, entry)
 	if writeErr != nil {
@@ -212,6 +213,7 @@ func (e *ToolExecutor) notebookEdit(ctx context.Context, args map[string]any, id
 	if err != nil {
 		return argError(err.Error(), started)
 	}
+	content = memory.SanitizeBlockContent(content)
 	entry := memory.MemoryEntry{Content: buildWritableContent(memory.MemoryScopeUser, category, key, content)}
 	if err := editor.UpdateByURI(ctx, ident, strings.TrimSpace(uri), entry); err != nil {
 		return providerError("notebook_edit", err, started)
@@ -911,7 +913,7 @@ func (e *ToolExecutor) write(ctx context.Context, args map[string]any, ident mem
 	}
 
 	scope := parseScope(args)
-	writable := buildWritableContent(scope, category, key, content)
+	writable := buildWritableContent(scope, category, key, memory.SanitizeBlockContent(content))
 	entry := memory.MemoryEntry{Content: writable}
 
 	if w, ok := e.provider.(memory.DesktopLocalMemoryWriteURI); ok {
@@ -989,11 +991,12 @@ func (e *ToolExecutor) edit(ctx context.Context, args map[string]any, ident memo
 	if !ok || strings.TrimSpace(content) == "" {
 		return argError("content must be a non-empty string", started)
 	}
-	if err := editor.UpdateByURI(ctx, ident, strings.TrimSpace(uri), memory.MemoryEntry{Content: strings.TrimSpace(content)}); err != nil {
+	sanitized := memory.SanitizeBlockContent(strings.TrimSpace(content))
+	if err := editor.UpdateByURI(ctx, ident, strings.TrimSpace(uri), memory.MemoryEntry{Content: sanitized}); err != nil {
 		return providerError("edit", err, started)
 	}
 	if e.db != nil && shouldScheduleDesktopSnapshotRefresh(e.provider) {
-		pipeline.EditSnapshotRefresh(e.provider, pipeline.NewDesktopMemorySnapshotStore(e.db), e.db, execCtx.RunID, execCtx.TraceID, ident, strings.TrimSpace(content))
+		pipeline.EditSnapshotRefresh(e.provider, pipeline.NewDesktopMemorySnapshotStore(e.db), e.db, execCtx.RunID, execCtx.TraceID, ident, sanitized)
 	}
 	return tools.ExecutionResult{
 		ResultJSON: map[string]any{"status": "ok", "uri": strings.TrimSpace(uri)},

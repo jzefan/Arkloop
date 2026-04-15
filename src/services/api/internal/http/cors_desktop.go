@@ -28,6 +28,31 @@ func appendDesktopVaryHeader(header nethttp.Header, value string) {
 	header.Add("Vary", value)
 }
 
+// isAllowedDesktopOrigin 检查 origin 是否来自本地环境。
+// 允许: http://localhost[:port], http://127.0.0.1[:port], file://, app://, tauri://
+func isAllowedDesktopOrigin(origin string) bool {
+	lower := strings.ToLower(origin)
+
+	// Electron file:// / app:// / tauri://
+	for _, scheme := range []string{"file://", "app://", "tauri://"} {
+		if strings.HasPrefix(lower, scheme) {
+			return true
+		}
+	}
+
+	// http://localhost 或 http://127.0.0.1 (含可选端口)
+	for _, prefix := range []string{"http://localhost", "http://127.0.0.1"} {
+		if lower == prefix {
+			return true
+		}
+		if strings.HasPrefix(lower, prefix+":") {
+			return true
+		}
+	}
+
+	return false
+}
+
 func desktopCORSMiddleware(next nethttp.Handler) nethttp.Handler {
 	if next == nil {
 		return nethttp.HandlerFunc(func(w nethttp.ResponseWriter, r *nethttp.Request) {})
@@ -35,8 +60,9 @@ func desktopCORSMiddleware(next nethttp.Handler) nethttp.Handler {
 
 	return nethttp.HandlerFunc(func(w nethttp.ResponseWriter, r *nethttp.Request) {
 		origin := strings.TrimSpace(r.Header.Get("Origin"))
-		if origin != "" {
-			appendDesktopVaryHeader(w.Header(), "Origin")
+		appendDesktopVaryHeader(w.Header(), "Origin")
+
+		if origin != "" && isAllowedDesktopOrigin(origin) {
 			w.Header().Set("Access-Control-Allow-Origin", origin)
 			w.Header().Set("Access-Control-Allow-Credentials", "true")
 			w.Header().Set("Access-Control-Allow-Methods", desktopCORSAllowMethods)

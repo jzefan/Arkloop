@@ -388,6 +388,15 @@ export function registerIpcHandlers(
   })
 
   ipcMain.handle('arkloop:app:open-external', async (_event, url: string) => {
+    let parsed: URL
+    try {
+      parsed = new URL(url)
+    } catch {
+      throw new Error(`Invalid URL: ${url}`)
+    }
+    if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') {
+      throw new Error(`Blocked protocol: ${parsed.protocol}`)
+    }
     const { shell } = require('electron') as typeof import('electron')
     await shell.openExternal(url)
   })
