@@ -13,7 +13,6 @@ import (
 	"sort"
 	"strings"
 	"time"
-	"unicode/utf8"
 
 	"arkloop/services/worker/internal/stablejson"
 	"github.com/google/uuid"
@@ -1336,6 +1335,7 @@ type anthropicAssistantBlock struct {
 	Type      string
 	Text      strings.Builder
 	Signature string
+	DeltaSeen bool
 }
 
 type anthropicStreamError struct {
@@ -1453,12 +1453,17 @@ func (g *AnthropicGateway) streamAnthropicSSE(ctx context.Context, body io.Reade
 			switch event.Delta.Type {
 			case "text_delta":
 				if buffer := assistantBlocks[idx]; buffer != nil {
-					newDelta := anthropicUniqueDelta(buffer.Text.String(), event.Delta.Text)
-					if newDelta == "" {
+					if event.Delta.Text == "" {
 						return nil
 					}
-					buffer.Text.WriteString(newDelta)
-					return yield(StreamMessageDelta{ContentDelta: newDelta, Role: "assistant"})
+					// skip if the first delta is an exact repeat of content_block_start text
+					if event.Delta.Text == buffer.Text.String() && !buffer.DeltaSeen {
+						buffer.DeltaSeen = true
+						return nil
+					}
+					buffer.DeltaSeen = true
+					buffer.Text.WriteString(event.Delta.Text)
+					return yield(StreamMessageDelta{ContentDelta: event.Delta.Text, Role: "assistant"})
 				}
 				if event.Delta.Text == "" {
 					return nil
@@ -1466,13 +1471,17 @@ func (g *AnthropicGateway) streamAnthropicSSE(ctx context.Context, body io.Reade
 				return yield(StreamMessageDelta{ContentDelta: event.Delta.Text, Role: "assistant"})
 			case "thinking_delta":
 				if buffer := assistantBlocks[idx]; buffer != nil {
-					newDelta := anthropicUniqueDelta(buffer.Text.String(), event.Delta.Thinking)
-					if newDelta == "" {
+					if event.Delta.Thinking == "" {
 						return nil
 					}
-					buffer.Text.WriteString(newDelta)
+					if event.Delta.Thinking == buffer.Text.String() && !buffer.DeltaSeen {
+						buffer.DeltaSeen = true
+						return nil
+					}
+					buffer.DeltaSeen = true
+					buffer.Text.WriteString(event.Delta.Thinking)
 					channel := "thinking"
-					return yield(StreamMessageDelta{ContentDelta: newDelta, Role: "assistant", Channel: &channel})
+					return yield(StreamMessageDelta{ContentDelta: event.Delta.Thinking, Role: "assistant", Channel: &channel})
 				}
 				if event.Delta.Thinking == "" {
 					return nil
@@ -1624,46 +1633,6 @@ func anthropicAssistantMessageParts(blocks map[int]*anthropicAssistantBlock) []C
 		}
 	}
 	return parts
-}
-
-func anthropicUniqueDelta(existing string, incoming string) string {
-	if incoming == "" {
-		return ""
-	}
-	if existing == "" {
-		return incoming
-	}
-	overlap := longestAnthropicTextOverlap(existing, incoming)
-	if overlap <= 0 {
-		return incoming
-	}
-	return incoming[overlap:]
-}
-
-func longestAnthropicTextOverlap(existing string, incoming string) int {
-	incomingBoundaries := utf8Boundaries(incoming)
-	for i := len(incomingBoundaries) - 1; i >= 0; i-- {
-		overlap := incomingBoundaries[i]
-		if overlap == 0 || overlap > len(existing) {
-			continue
-		}
-		start := len(existing) - overlap
-		if !utf8.RuneStart(existing[start]) {
-			continue
-		}
-		if existing[start:] == incoming[:overlap] {
-			return overlap
-		}
-	}
-	return 0
-}
-
-func utf8Boundaries(value string) []int {
-	boundaries := make([]int, 0, len(value)+1)
-	for idx := range value {
-		boundaries = append(boundaries, idx)
-	}
-	return append(boundaries, len(value))
 }
 
 func parseAnthropicUsageMap(usageObj map[string]any) *Usage {
