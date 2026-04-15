@@ -168,24 +168,23 @@ func (o *legacyMemoryDistillObserver) AfterThreadPersist(ctx context.Context, rc
 		if err != nil {
 			return nil, err
 		}
-		if distill.MemoriesCreated <= 0 {
-			return nil, nil
-		}
 		if o.impStore != nil {
 			addImpressionScore(ctx, o.impStore, ident, impressionScoreForRun(rc), o.configResolver, o.impRefresh)
 		}
-		scheduleSnapshotRefresh(
-			typed,
-			o.snap,
-			o.mdb,
-			rc.Run.ID,
-			rc.TraceID,
-			ident,
-			threadID,
-			buildNowledgeSnapshotQueries(delta),
-			"memory.distill",
-			"distill",
-		)
+		if distill.MemoriesCreated > 0 {
+			scheduleSnapshotRefresh(
+				typed,
+				o.snap,
+				o.mdb,
+				rc.Run.ID,
+				rc.TraceID,
+				ident,
+				threadID,
+				buildNowledgeSnapshotQueries(delta),
+				"memory.distill",
+				"distill",
+			)
+		}
 		return nil, nil
 	}
 
