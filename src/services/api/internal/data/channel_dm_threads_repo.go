@@ -15,6 +15,7 @@ type ChannelDMThread struct {
 	ChannelID         uuid.UUID
 	ChannelIdentityID uuid.UUID
 	PersonaID         uuid.UUID
+	PlatformThreadID  string
 	ThreadID          uuid.UUID
 	CreatedAt         time.Time
 	UpdatedAt         time.Time
@@ -35,7 +36,7 @@ func (r *ChannelDMThreadsRepository) WithTx(tx pgx.Tx) *ChannelDMThreadsReposito
 	return &ChannelDMThreadsRepository{db: tx}
 }
 
-const channelDMThreadColumns = `id, channel_id, channel_identity_id, persona_id, thread_id, created_at, updated_at`
+const channelDMThreadColumns = `id, channel_id, channel_identity_id, persona_id, platform_thread_id, thread_id, created_at, updated_at`
 
 func scanChannelDMThread(row interface{ Scan(dest ...any) error }) (ChannelDMThread, error) {
 	var item ChannelDMThread
@@ -44,6 +45,7 @@ func scanChannelDMThread(row interface{ Scan(dest ...any) error }) (ChannelDMThr
 		&item.ChannelID,
 		&item.ChannelIdentityID,
 		&item.PersonaID,
+		&item.PlatformThreadID,
 		&item.ThreadID,
 		&item.CreatedAt,
 		&item.UpdatedAt,
@@ -56,15 +58,17 @@ func (r *ChannelDMThreadsRepository) GetByBinding(
 	channelID uuid.UUID,
 	channelIdentityID uuid.UUID,
 	personaID uuid.UUID,
+	platformThreadID string,
 ) (*ChannelDMThread, error) {
 	item, err := scanChannelDMThread(r.db.QueryRow(
 		ctx,
 		`SELECT `+channelDMThreadColumns+`
 		 FROM channel_dm_threads
-		 WHERE channel_id = $1 AND channel_identity_id = $2 AND persona_id = $3`,
+		 WHERE channel_id = $1 AND channel_identity_id = $2 AND persona_id = $3 AND platform_thread_id = $4`,
 		channelID,
 		channelIdentityID,
 		personaID,
+		platformThreadID,
 	))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
@@ -110,6 +114,7 @@ func (r *ChannelDMThreadsRepository) Create(
 	channelID uuid.UUID,
 	channelIdentityID uuid.UUID,
 	personaID uuid.UUID,
+	platformThreadID string,
 	threadID uuid.UUID,
 ) (ChannelDMThread, error) {
 	if channelID == uuid.Nil || channelIdentityID == uuid.Nil || personaID == uuid.Nil || threadID == uuid.Nil {
@@ -117,12 +122,13 @@ func (r *ChannelDMThreadsRepository) Create(
 	}
 	item, err := scanChannelDMThread(r.db.QueryRow(
 		ctx,
-		`INSERT INTO channel_dm_threads (channel_id, channel_identity_id, persona_id, thread_id)
-		 VALUES ($1, $2, $3, $4)
+		`INSERT INTO channel_dm_threads (channel_id, channel_identity_id, persona_id, platform_thread_id, thread_id)
+		 VALUES ($1, $2, $3, $4, $5)
 		 RETURNING `+channelDMThreadColumns,
 		channelID,
 		channelIdentityID,
 		personaID,
+		platformThreadID,
 		threadID,
 	))
 	if err != nil {
@@ -136,21 +142,22 @@ func (r *ChannelDMThreadsRepository) GetOrCreate(
 	channelID uuid.UUID,
 	channelIdentityID uuid.UUID,
 	personaID uuid.UUID,
+	platformThreadID string,
 	threadID uuid.UUID,
 ) (ChannelDMThread, error) {
-	existing, err := r.GetByBinding(ctx, channelID, channelIdentityID, personaID)
+	existing, err := r.GetByBinding(ctx, channelID, channelIdentityID, personaID, platformThreadID)
 	if err != nil {
 		return ChannelDMThread{}, err
 	}
 	if existing != nil {
 		return *existing, nil
 	}
-	created, err := r.Create(ctx, channelID, channelIdentityID, personaID, threadID)
+	created, err := r.Create(ctx, channelID, channelIdentityID, personaID, platformThreadID, threadID)
 	if err == nil {
 		return created, nil
 	}
 	if isUniqueViolation(err) {
-		existing, getErr := r.GetByBinding(ctx, channelID, channelIdentityID, personaID)
+		existing, getErr := r.GetByBinding(ctx, channelID, channelIdentityID, personaID, platformThreadID)
 		if getErr != nil {
 			return ChannelDMThread{}, getErr
 		}
@@ -166,6 +173,7 @@ func (r *ChannelDMThreadsRepository) DeleteByBinding(
 	channelID uuid.UUID,
 	channelIdentityID uuid.UUID,
 	personaID uuid.UUID,
+	platformThreadID string,
 ) error {
 	if channelID == uuid.Nil || channelIdentityID == uuid.Nil || personaID == uuid.Nil {
 		return fmt.Errorf("channel_dm_threads: ids must not be empty")
@@ -173,10 +181,11 @@ func (r *ChannelDMThreadsRepository) DeleteByBinding(
 	if _, err := r.db.Exec(
 		ctx,
 		`DELETE FROM channel_dm_threads
-		 WHERE channel_id = $1 AND channel_identity_id = $2 AND persona_id = $3`,
+		 WHERE channel_id = $1 AND channel_identity_id = $2 AND persona_id = $3 AND platform_thread_id = $4`,
 		channelID,
 		channelIdentityID,
 		personaID,
+		platformThreadID,
 	); err != nil {
 		return fmt.Errorf("channel_dm_threads.DeleteByBinding: %w", err)
 	}

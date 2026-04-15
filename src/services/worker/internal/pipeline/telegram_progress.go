@@ -562,7 +562,7 @@ func formatCompletedStepCount(count int) string {
 
 func isHiddenTelegramProgressTool(toolName string) bool {
 	switch canonicalToolName(toolName) {
-	case "timeline_title", "telegram_reply", "telegram_react":
+	case "timeline_title", "telegram_reply", "telegram_react", "end_reply":
 		return true
 	default:
 		return false

@@ -540,7 +540,7 @@ func TestDiscordIngressActiveRunKeepsPendingAndDoesNotInject(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create thread: %v", err)
 	}
-	if _, err := env.channelDMThreadsRepo.Create(context.Background(), channel.ID, identity.ID, env.personaID, thread.ID); err != nil {
+	if _, err := env.channelDMThreadsRepo.Create(context.Background(), channel.ID, identity.ID, env.personaID, "", thread.ID); err != nil {
 		t.Fatalf("create dm thread binding: %v", err)
 	}
 	run, _, err := env.runEventRepo.CreateRunWithStartedEvent(
@@ -580,7 +580,7 @@ func TestDiscordIngressDuplicateActiveRunMessageDoesNotAppendInputTwice(t *testi
 	if err != nil {
 		t.Fatalf("create thread: %v", err)
 	}
-	if _, err := env.channelDMThreadsRepo.Create(context.Background(), channel.ID, identity.ID, env.personaID, thread.ID); err != nil {
+	if _, err := env.channelDMThreadsRepo.Create(context.Background(), channel.ID, identity.ID, env.personaID, "", thread.ID); err != nil {
 		t.Fatalf("create dm thread binding: %v", err)
 	}
 	run, _, err := env.runEventRepo.CreateRunWithStartedEvent(
@@ -751,7 +751,7 @@ func TestDiscordInteractionNewRemovesDMThreadBinding(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create thread: %v", err)
 	}
-	if _, err := env.channelDMThreadsRepo.Create(context.Background(), channel.ID, identity.ID, env.personaID, thread.ID); err != nil {
+	if _, err := env.channelDMThreadsRepo.Create(context.Background(), channel.ID, identity.ID, env.personaID, "", thread.ID); err != nil {
 		t.Fatalf("create dm thread binding: %v", err)
 	}
 
@@ -769,7 +769,7 @@ func TestDiscordInteractionNewRemovesDMThreadBinding(t *testing.T) {
 		t.Fatalf("unexpected new reply: %#v", reply)
 	}
 
-	binding, err := env.channelDMThreadsRepo.GetByBinding(context.Background(), channel.ID, identity.ID, env.personaID)
+	binding, err := env.channelDMThreadsRepo.GetByBinding(context.Background(), channel.ID, identity.ID, env.personaID, "")
 	if err != nil {
 		t.Fatalf("get binding: %v", err)
 	}
