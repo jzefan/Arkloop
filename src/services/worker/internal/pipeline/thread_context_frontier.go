@@ -35,18 +35,7 @@ func buildThreadContextFrontier(
 	if err != nil {
 		return nil, err
 	}
-	sort.SliceStable(replacementCoverage, func(i, j int) bool {
-		if replacementCoverage[i].startContextSeq != replacementCoverage[j].startContextSeq {
-			return replacementCoverage[i].startContextSeq < replacementCoverage[j].startContextSeq
-		}
-		if replacementCoverage[i].endContextSeq != replacementCoverage[j].endContextSeq {
-			return replacementCoverage[i].endContextSeq < replacementCoverage[j].endContextSeq
-		}
-		if replacementCoverage[i].record.Layer != replacementCoverage[j].record.Layer {
-			return replacementCoverage[i].record.Layer > replacementCoverage[j].record.Layer
-		}
-		return replacementCoverage[i].record.CreatedAt.Before(replacementCoverage[j].record.CreatedAt)
-	})
+	replacementCoverage = selectPrefixOnlyReplacementCoverage(replacementCoverage, graph, upperBoundContextSeq)
 
 	nodes := make([]FrontierNode, 0, len(graph.Chunks)+len(replacementCoverage))
 	replacementIndex := 0
@@ -66,8 +55,9 @@ func buildThreadContextFrontier(
 			SourceText:      text,
 			ApproxTokens:    approxTokensFromText(text),
 			AtomSeq:         int(item.record.StartContextSeq),
-			AtomType:        compactAtomUserText,
-			role:            "user",
+			AtomType:        compactAtomAssistantText,
+			role:            "system",
+			Role:            "system",
 		})
 	}
 
@@ -162,6 +152,58 @@ func frontierChunkAtomType(graph *persistedCanonicalThreadGraph, atomKey string)
 	default:
 		return compactAtomAssistantText
 	}
+}
+
+func selectPrefixOnlyReplacementCoverage(
+	items []frontierReplacementCoverage,
+	graph *persistedCanonicalThreadGraph,
+	upperBoundContextSeq *int64,
+) []frontierReplacementCoverage {
+	if len(items) == 0 || graph == nil || len(graph.Chunks) == 0 {
+		return nil
+	}
+	candidates := append([]frontierReplacementCoverage(nil), items...)
+	sort.SliceStable(candidates, func(i, j int) bool {
+		if candidates[i].startContextSeq != candidates[j].startContextSeq {
+			return candidates[i].startContextSeq < candidates[j].startContextSeq
+		}
+		if candidates[i].record.Layer != candidates[j].record.Layer {
+			return candidates[i].record.Layer > candidates[j].record.Layer
+		}
+		if !candidates[i].record.CreatedAt.Equal(candidates[j].record.CreatedAt) {
+			return candidates[i].record.CreatedAt.After(candidates[j].record.CreatedAt)
+		}
+		if candidates[i].endContextSeq != candidates[j].endContextSeq {
+			return candidates[i].endContextSeq < candidates[j].endContextSeq
+		}
+		return candidates[i].record.ID.String() < candidates[j].record.ID.String()
+	})
+
+	firstContextSeq := graph.Chunks[0].ContextSeq
+	selected := make([]frontierReplacementCoverage, 0, len(candidates))
+	expectedStart := firstContextSeq
+	for {
+		bestIndex := -1
+		for idx, candidate := range candidates {
+			if upperBoundContextSeq != nil && candidate.endContextSeq > *upperBoundContextSeq {
+				continue
+			}
+			if candidate.startContextSeq < expectedStart {
+				continue
+			}
+			if candidate.startContextSeq > expectedStart {
+				break
+			}
+			bestIndex = idx
+			break
+		}
+		if bestIndex < 0 {
+			break
+		}
+		selected = append(selected, candidates[bestIndex])
+		expectedStart = candidates[bestIndex].endContextSeq + 1
+	}
+	return selected
 }
 
 func resolveReplacementCoverage(

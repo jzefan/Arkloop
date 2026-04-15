@@ -78,6 +78,17 @@ func (q *PgQueue) EnqueueRun(
 		return uuid.Nil, err
 	}
 
+	if chosenJobType == ContextCompactMaintainJobType {
+		if compactThreadID, ok := contextCompactThreadIDFromPayload(payloadCopy); ok {
+			jobID, err := q.upsertContextCompactJob(ctx, compactThreadID, chosenJobType, string(encoded), availableAt)
+			if err != nil {
+				return uuid.Nil, err
+			}
+			_, _ = q.pool.Exec(ctx, `SELECT pg_notify('arkloop:jobs', '')`)
+			return jobID, nil
+		}
+	}
+
 	if chosenJobType == RunExecuteJobType {
 		existingJobID, err := q.findActiveRunExecuteJob(ctx, runID)
 		if err != nil {
@@ -117,6 +128,99 @@ func (q *PgQueue) EnqueueRun(
 
 	_, _ = q.pool.Exec(ctx, `SELECT pg_notify('arkloop:jobs', '')`)
 
+	return jobID, nil
+}
+
+func (q *PgQueue) upsertContextCompactJob(
+	ctx context.Context,
+	threadID uuid.UUID,
+	jobType string,
+	payloadJSON string,
+	availableAt *time.Time,
+) (uuid.UUID, error) {
+	tx, err := q.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return uuid.Nil, err
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback(ctx)
+		}
+	}()
+
+	lockKey := fmt.Sprintf("%s:%s", jobType, threadID.String())
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, lockKey); err != nil {
+		return uuid.Nil, err
+	}
+
+	var existingJobID uuid.UUID
+	err = tx.QueryRow(
+		ctx,
+		`SELECT id
+		   FROM jobs
+		  WHERE job_type = $1
+		    AND payload_json->'payload'->>'thread_id' = $2
+		    AND status IN ($3, $4)
+		  ORDER BY CASE status WHEN $3 THEN 0 ELSE 1 END, created_at ASC, id ASC
+		  LIMIT 1`,
+		jobType,
+		threadID.String(),
+		JobStatusQueued,
+		JobStatusLeased,
+	).Scan(&existingJobID)
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return uuid.Nil, err
+	}
+	if err == nil && existingJobID != uuid.Nil {
+		result, execErr := tx.Exec(
+			ctx,
+			`UPDATE jobs
+			    SET payload_json = $1::jsonb,
+			        available_at = CASE WHEN status = $2 THEN COALESCE($3, now()) ELSE available_at END,
+			        updated_at = now()
+			  WHERE id = $4`,
+			payloadJSON,
+			JobStatusQueued,
+			availableAt,
+			existingJobID,
+		)
+		if execErr != nil {
+			return uuid.Nil, execErr
+		}
+		if result.RowsAffected() != 1 {
+			return uuid.Nil, fmt.Errorf("context compact job update lost: %s", existingJobID)
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return uuid.Nil, err
+		}
+		committed = true
+		return existingJobID, nil
+	}
+
+	jobID := uuid.New()
+	if _, err := tx.Exec(
+		ctx,
+		`INSERT INTO jobs (
+			id, job_type, payload_json, status, available_at,
+			leased_until, lease_token, attempts, created_at, updated_at
+		) VALUES (
+			$1, $2, $3::jsonb, $4, COALESCE($5, now()),
+			NULL, NULL, 0, now(), now()
+		)`,
+		jobID,
+		jobType,
+		payloadJSON,
+		JobStatusQueued,
+		availableAt,
+	); err != nil {
+		return uuid.Nil, err
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return uuid.Nil, err
+	}
+	committed = true
 	return jobID, nil
 }
 

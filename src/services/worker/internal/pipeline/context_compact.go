@@ -10,9 +10,11 @@ import (
 	"strings"
 
 	"arkloop/services/shared/messagecontent"
+	"arkloop/services/worker/internal/data"
 	"arkloop/services/worker/internal/llm"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/pkoukk/tiktoken-go"
 )
 
@@ -318,33 +320,10 @@ func budgetOK(msgs []llm.Message, start int, cfg ContextCompactSettings, enc *ti
 	return true
 }
 
-// CompactThreadMessages 从头部裁掉消息直到满足预算；保证切口不以孤立的 tool 开头（尽力左扩）。
-// enc 为 nil 时 token 类预算退化为字节/4 近似（仅供测试）；生产路径应传入非 nil。
-// ids 若与 msgs 等长则同步裁切；否则 ids 原样截断或置 nil。
+// CompactThreadMessages 的 delete-based trim 语义已退役。
+// 历史 compact 只允许通过 replacement frontier 表达，因此这里保持 no-op。
 func CompactThreadMessages(msgs []llm.Message, ids []uuid.UUID, cfg ContextCompactSettings, enc *tiktoken.Tiktoken) ([]llm.Message, []uuid.UUID, int) {
-	if len(msgs) == 0 {
-		return msgs, ids, 0
-	}
-	start := 0
-	if cfg.MaxMessages > 0 && len(msgs) > cfg.MaxMessages {
-		start = len(msgs) - cfg.MaxMessages
-	}
-	start = stabilizeCompactStart(msgs, start, cfg.MaxMessages)
-	for start < len(msgs) && !budgetOK(msgs, start, cfg, enc) {
-		start++
-		start = stabilizeCompactStart(msgs, start, cfg.MaxMessages)
-	}
-	if start <= 0 {
-		return msgs, alignIDs(ids, len(msgs)), 0
-	}
-	out := make([]llm.Message, len(msgs)-start)
-	copy(out, msgs[start:])
-	var outIDs []uuid.UUID
-	if len(ids) == len(msgs) {
-		outIDs = make([]uuid.UUID, len(ids)-start)
-		copy(outIDs, ids[start:])
-	}
-	return out, outIDs, start
+	return msgs, alignIDs(ids, len(msgs)), 0
 }
 
 func alignIDs(ids []uuid.UUID, n int) []uuid.UUID {
@@ -513,18 +492,18 @@ func RewriteOversizeRequest(
 		return rewritten, stats, nil
 	}
 
-	forceCompact := llm.RequestPayloadTooLarge(stats.RequestBytesAfterRewrite)
-	compacted, compactStats, changed, compactErr := MaybeInlineCompactMessages(ctx, rc, rewritten.Messages, anchor, forceCompact)
+	emergencyCompact, compactStats, changed, compactErr := rewriteOversizeRequestWithPersistedReplacement(ctx, rc, rewritten, anchor, requestEstimate)
 	if compactErr != nil {
 		return request, stats, compactErr
 	}
 	if changed {
-		rewritten.Messages = compacted
+		rewritten = emergencyCompact
 		stats.RewriteApplied = true
 		stats.CompactApplied = true
 		stats.TargetChunkCount = compactStats.TargetChunkCount
 		stats.PreviousReplacementCount = compactStats.PreviousReplacementCount
 		stats.SingleAtomPartial = compactStats.SingleAtomPartial
+		stats.RequestBytesAfterRewrite = compactStats.ContextEstimateTokens
 	}
 
 	stats.RequestBytesAfterRewrite, err = requestEstimate(rewritten)
@@ -533,6 +512,468 @@ func RewriteOversizeRequest(
 	}
 	stats.RequestTokensAfterRewrite = ComputeContextCompactPressure(EstimateRequestContextTokens(rc, rewritten), anchor).ContextPressureTokens
 	return rewritten, stats, nil
+}
+
+func rewriteOversizeRequestWithPersistedReplacement(
+	ctx context.Context,
+	rc *RunContext,
+	request llm.Request,
+	anchor *ContextCompactPressureAnchor,
+	requestEstimate func(llm.Request) (int, error),
+) (llm.Request, ContextCompactPressureStats, bool, error) {
+	stats := ComputeContextCompactPressure(EstimateRequestContextTokens(rc, request), anchor)
+	if rc == nil || rc.DB == nil || rc.Gateway == nil || rc.SelectedRoute == nil {
+		return request, stats, false, nil
+	}
+	window := ResolveRunContextWindowTokens(rc)
+	if window <= 0 {
+		return request, stats, false, nil
+	}
+	current := request
+	changedAny := false
+	for round := 1; ; round++ {
+		currentBytes, err := requestEstimate(current)
+		if err != nil {
+			return request, stats, changedAny, err
+		}
+		stats = ComputeContextCompactPressure(EstimateRequestContextTokens(rc, current), anchor)
+		if !llm.RequestExceedsLimits(currentBytes, stats.ContextPressureTokens, window) {
+			return current, stats, changedAny, nil
+		}
+		next, roundStats, changed, err := persistEmergencyReplacementRound(ctx, rc, current, anchor, round)
+		if err != nil {
+			return request, stats, changedAny, err
+		}
+		if !changed {
+			return current, stats, changedAny, nil
+		}
+		current = next
+		stats = roundStats
+		changedAny = true
+	}
+}
+
+func persistEmergencyReplacementRound(
+	ctx context.Context,
+	rc *RunContext,
+	request llm.Request,
+	anchor *ContextCompactPressureAnchor,
+	round int,
+) (llm.Request, ContextCompactPressureStats, bool, error) {
+	stats := ComputeContextCompactPressure(EstimateRequestContextTokens(rc, request), anchor)
+	if rc == nil || rc.DB == nil || rc.Gateway == nil || rc.SelectedRoute == nil {
+		return request, stats, false, nil
+	}
+	basePrefixCount := compactRequestBasePrefixCount(request.Messages, rc.Messages)
+	if basePrefixCount <= 0 || len(rc.ThreadContextFrontier) == 0 {
+		return request, stats, false, nil
+	}
+	tx, err := rc.DB.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return request, stats, false, err
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback(ctx)
+		}
+	}()
+	if err := compactThreadCompactionAdvisoryXactLock(ctx, tx, rc.Run.ThreadID); err != nil {
+		return request, stats, false, err
+	}
+	canonical, err := buildCanonicalThreadContext(ctx, tx, rc.Run, data.MessagesRepository{}, nil, nil, 0)
+	if err != nil {
+		return request, stats, false, err
+	}
+	if len(canonical.Frontier) == 0 {
+		return request, stats, false, nil
+	}
+	selection, ok := selectPersistFrontierWindowForPressure(rc, canonical.Frontier, stats.ContextPressureTokens)
+	if !ok {
+		return request, stats, false, nil
+	}
+	progress := newCompactProgressRecorder(rc.DB, data.RunEventsRepository{}, map[string]any{
+		"op":    "persist_emergency",
+		"round": round,
+	})
+	progress.emit(ctx, rc, "round_started", map[string]any{
+		"context_pressure_tokens": stats.ContextPressureTokens,
+	})
+	summary, usedNodes, err := compactNodesWithPersistRetry(ctx, rc, rc.Gateway, rc.SelectedRoute.Route.Model, selection, progress)
+	if err != nil {
+		progress.emit(ctx, rc, "llm_failed", map[string]any{"error": err.Error()})
+		return request, stats, false, err
+	}
+	summary = strings.TrimSpace(summary)
+	if summary == "" || len(usedNodes) == 0 {
+		return request, stats, false, nil
+	}
+	persistNodes := mapSelectedAtomsToPersistFrontierNodes(usedNodes, canonical.Frontier)
+	if len(persistNodes) == 0 {
+		persistNodes = append([]FrontierNode(nil), usedNodes...)
+	}
+	plan, ok, err := resolvePersistReplacementPlan(ctx, tx, rc.Run.AccountID, rc.Run.ThreadID, persistNodes)
+	if err != nil {
+		return request, stats, false, err
+	}
+	if !ok {
+		return request, stats, false, nil
+	}
+	replacementsRepo := data.ThreadContextReplacementsRepository{}
+	replacement, err := replacementsRepo.Insert(ctx, tx, data.ThreadContextReplacementInsertInput{
+		AccountID:       rc.Run.AccountID,
+		ThreadID:        rc.Run.ThreadID,
+		StartThreadSeq:  plan.StartThreadSeq,
+		EndThreadSeq:    plan.EndThreadSeq,
+		StartContextSeq: plan.StartContextSeq,
+		EndContextSeq:   plan.EndContextSeq,
+		SummaryText:     summary,
+		Layer:           plan.Layer,
+		MetadataJSON:    compactReplacementMetadata("context_compact_emergency"),
+	})
+	if err != nil {
+		return request, stats, false, err
+	}
+	if err := writeReplacementSupersessionEdges(ctx, tx, rc.Run.AccountID, rc.Run.ThreadID, replacement.ID, plan); err != nil {
+		return request, stats, false, err
+	}
+	if err := replacementsRepo.SupersedeActiveOverlapsByContextSeq(ctx, tx, rc.Run.AccountID, rc.Run.ThreadID, replacement.StartContextSeq, replacement.EndContextSeq, replacement.ID); err != nil {
+		return request, stats, false, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return request, stats, false, err
+	}
+	committed = true
+
+	rebuilt, err := rebuildCanonicalThreadContextForCompact(ctx, rc)
+	if err != nil {
+		return request, stats, false, err
+	}
+	rc.Messages = append([]llm.Message(nil), rebuilt.Messages...)
+	rc.ThreadMessageIDs = append([]uuid.UUID(nil), rebuilt.ThreadMessageIDs...)
+	rc.ThreadContextFrontier = append([]FrontierNode(nil), rebuilt.Frontier...)
+	rebuiltRequest := request
+	rebuiltRequest.Messages = applyRebuiltHistoryToRequest(rebuilt.Messages, request.Messages, basePrefixCount)
+	rebuiltStats := ComputeContextCompactPressure(EstimateRequestContextTokens(rc, rebuiltRequest), anchor)
+	rebuiltStats.TargetChunkCount = len(usedNodes)
+	rebuiltStats.PreviousReplacementCount = countReplacementFrontierNodes(canonical.Frontier)
+	progress.emit(ctx, rc, "round_completed", map[string]any{
+		"context_pressure_tokens": rebuiltStats.ContextPressureTokens,
+		"target_chunk_count":      rebuiltStats.TargetChunkCount,
+	})
+	return rebuiltRequest, rebuiltStats, true, nil
+}
+
+func rebuildCanonicalThreadContextForCompact(ctx context.Context, rc *RunContext) (*canonicalThreadContext, error) {
+	return rebuildCanonicalThreadContextForCompactUpTo(ctx, rc, nil)
+}
+
+func rebuildCanonicalThreadContextForCompactUpTo(ctx context.Context, rc *RunContext, upperBoundMessageID *uuid.UUID) (*canonicalThreadContext, error) {
+	if rc == nil || rc.DB == nil {
+		return nil, fmt.Errorf("run context db unavailable")
+	}
+	tx, err := rc.DB.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	return buildCanonicalThreadContext(ctx, tx, rc.Run, data.MessagesRepository{}, nil, upperBoundMessageID, 0)
+}
+
+func selectEmergencyPersistFrontierWindow(
+	rc *RunContext,
+	frontier []FrontierNode,
+	pressureTokens int,
+) ([]FrontierNode, ContextCompactPressureStats, bool) {
+	selection, ok := selectPersistFrontierWindowForPressure(rc, frontier, pressureTokens)
+	stats := ContextCompactPressureStats{ContextPressureTokens: pressureTokens, ContextEstimateTokens: pressureTokens}
+	if !ok {
+		return nil, stats, false
+	}
+	return selection, stats, true
+}
+
+func selectPersistFrontierWindowForPressure(
+	rc *RunContext,
+	frontier []FrontierNode,
+	pressureTokens int,
+) ([]FrontierNode, bool) {
+	selectionFrontier := buildCompactFrontierAtomsFromPersistFrontier(frontier)
+	if len(selectionFrontier) == 0 {
+		return nil, false
+	}
+	window := ResolveRunContextWindowTokens(rc)
+	targetTokens := contextCompactTargetTokens(rc.ContextCompact, window)
+	if targetTokens <= 0 {
+		targetTokens = window * 65 / 100
+	}
+	if targetTokens <= 0 {
+		targetTokens = 1
+	}
+	rawBudget := window - targetTokens
+	if pressureTokens <= targetTokens {
+		rawBudget = 0
+	}
+	rawStart := recentRawZoneStartIndex(selectionFrontier, rawBudget)
+	if rawStart <= 0 {
+		return nil, false
+	}
+	selection := selectCompactAtomWindow(selectionFrontier[:rawStart], pressureTokens-targetTokens, contextCompactMaxLLMInputTokens)
+	if len(selection.Nodes) == 0 {
+		return nil, false
+	}
+	return selection.Nodes, true
+}
+
+func recentRawZoneStartIndex(nodes []FrontierNode, rawBudget int) int {
+	if len(nodes) == 0 {
+		return 0
+	}
+	lastAtomSeq := nodes[len(nodes)-1].AtomSeq
+	start := len(nodes) - 1
+	for start > 0 && nodes[start-1].AtomSeq == lastAtomSeq {
+		start--
+	}
+	accum := compactNodesApproxTokens(nodes[start:])
+	if rawBudget < accum {
+		rawBudget = accum
+	}
+	for i := start - 1; i >= 0; {
+		atomSeq := nodes[i].AtomSeq
+		atomStart := i
+		atomTokens := 0
+		for atomStart >= 0 && nodes[atomStart].AtomSeq == atomSeq {
+			atomTokens += nodes[atomStart].ApproxTokens
+			atomStart--
+		}
+		if accum+atomTokens > rawBudget {
+			break
+		}
+		accum += atomTokens
+		start = atomStart + 1
+		i = atomStart
+	}
+	return start
+}
+
+func compactRequestBasePrefixCount(requestMessages []llm.Message, baseMessages []llm.Message) int {
+	if len(requestMessages) == 0 || len(baseMessages) == 0 {
+		return 0
+	}
+	if len(baseMessages) > len(requestMessages) {
+		return len(requestMessages)
+	}
+	for i := 0; i < len(baseMessages); i++ {
+		if !compactMessagesEquivalentForPrefix(baseMessages[i], requestMessages[i]) {
+			return len(baseMessages)
+		}
+	}
+	return len(baseMessages)
+}
+
+func compactMessagesEquivalentForPrefix(left llm.Message, right llm.Message) bool {
+	if strings.TrimSpace(left.Role) != strings.TrimSpace(right.Role) {
+		return false
+	}
+	leftPhase := ""
+	if left.Phase != nil {
+		leftPhase = strings.TrimSpace(*left.Phase)
+	}
+	rightPhase := ""
+	if right.Phase != nil {
+		rightPhase = strings.TrimSpace(*right.Phase)
+	}
+	if leftPhase != rightPhase {
+		return false
+	}
+	return strings.TrimSpace(messageText(left)) == strings.TrimSpace(messageText(right))
+}
+
+func applyRebuiltHistoryToRequest(rebuiltBase []llm.Message, current []llm.Message, basePrefixCount int) []llm.Message {
+	tailCount := 0
+	if basePrefixCount < len(current) {
+		tailCount = len(current) - basePrefixCount
+	}
+	out := make([]llm.Message, 0, len(rebuiltBase)+tailCount)
+	out = append(out, cloneLLMMessages(rebuiltBase)...)
+	if basePrefixCount < len(current) {
+		out = append(out, cloneLLMMessages(current[basePrefixCount:])...)
+	}
+	return out
+}
+
+func cloneLLMMessages(src []llm.Message) []llm.Message {
+	if len(src) == 0 {
+		return nil
+	}
+	out := make([]llm.Message, len(src))
+	copy(out, src)
+	return out
+}
+
+func countReplacementFrontierNodes(frontier []FrontierNode) int {
+	total := 0
+	for _, node := range frontier {
+		if node.Kind == FrontierNodeReplacement {
+			total++
+		}
+	}
+	return total
+}
+
+func ExecuteContextCompactMaintenanceJob(
+	ctx context.Context,
+	rc *RunContext,
+	upperBoundMessageID *uuid.UUID,
+	eventsRepo CompactRunEventAppender,
+) error {
+	if rc == nil || rc.DB == nil || rc.Gateway == nil || rc.SelectedRoute == nil {
+		return nil
+	}
+	if failures := compactConsecutiveFailures(ctx, rc.DB, rc.Run.AccountID, rc.Run.ThreadID); failures >= maxConsecutiveCompactFailures {
+		appendErr := appendContextCompactRunEvent(ctx, rc.DB, eventsRepo, rc, map[string]any{
+			"op":    "persist_background",
+			"phase": "circuit_breaker",
+		})
+		if appendErr != nil {
+			return appendErr
+		}
+		return nil
+	}
+
+	var anchorPtr *ContextCompactPressureAnchor
+	if anchor, ok := resolveContextCompactPressureAnchor(ctx, rc.DB, rc); ok {
+		anchorCopy := anchor
+		anchorPtr = &anchorCopy
+	}
+
+	progress := newCompactProgressRecorder(rc.DB, eventsRepo, map[string]any{
+		"op": "persist_background",
+	})
+	progress.emit(ctx, rc, "evaluating", nil)
+
+	window := ResolveRunContextWindowTokens(rc)
+	targetTokens := contextCompactTargetTokens(rc.ContextCompact, window)
+	if targetTokens <= 0 {
+		targetTokens = window * 65 / 100
+	}
+	if targetTokens <= 0 {
+		targetTokens = 1
+	}
+
+	for round := 1; ; round++ {
+		tx, err := rc.DB.BeginTx(ctx, pgx.TxOptions{})
+		if err != nil {
+			return err
+		}
+		if err := compactThreadCompactionAdvisoryXactLock(ctx, tx, rc.Run.ThreadID); err != nil {
+			_ = tx.Rollback(ctx)
+			return err
+		}
+		canonical, err := buildCanonicalThreadContext(ctx, tx, rc.Run, data.MessagesRepository{}, nil, upperBoundMessageID, 0)
+		if err != nil {
+			_ = tx.Rollback(ctx)
+			return err
+		}
+		stats := ComputeContextCompactPressure(EstimateRequestContextTokens(rc, llm.Request{Messages: canonical.Messages}), anchorPtr)
+		if stats.ContextPressureTokens <= targetTokens {
+			_ = tx.Rollback(ctx)
+			progress.emit(ctx, rc, "completed", map[string]any{
+				"context_pressure_tokens": stats.ContextPressureTokens,
+			})
+			return nil
+		}
+		selection, ok := selectPersistFrontierWindowForPressure(rc, canonical.Frontier, stats.ContextPressureTokens)
+		if !ok {
+			_ = tx.Rollback(ctx)
+			progress.emit(ctx, rc, "completed", map[string]any{
+				"context_pressure_tokens": stats.ContextPressureTokens,
+			})
+			return nil
+		}
+		progress.emit(ctx, rc, "round_started", map[string]any{
+			"round":                   round,
+			"context_pressure_tokens": stats.ContextPressureTokens,
+		})
+		summary, usedNodes, err := compactNodesWithPersistRetry(ctx, rc, rc.Gateway, rc.SelectedRoute.Route.Model, selection, progress)
+		if err != nil {
+			_ = tx.Rollback(ctx)
+			progress.emit(ctx, rc, "llm_failed", map[string]any{
+				"round": round,
+				"error": err.Error(),
+			})
+			return err
+		}
+		summary = strings.TrimSpace(summary)
+		if summary == "" || len(usedNodes) == 0 {
+			_ = tx.Rollback(ctx)
+			progress.emit(ctx, rc, "completed", map[string]any{
+				"round": round,
+			})
+			return nil
+		}
+		persistNodes := mapSelectedAtomsToPersistFrontierNodes(usedNodes, canonical.Frontier)
+		if len(persistNodes) == 0 {
+			persistNodes = append([]FrontierNode(nil), usedNodes...)
+		}
+		plan, ok, err := resolvePersistReplacementPlan(ctx, tx, rc.Run.AccountID, rc.Run.ThreadID, persistNodes)
+		if err != nil {
+			_ = tx.Rollback(ctx)
+			return err
+		}
+		if !ok {
+			_ = tx.Rollback(ctx)
+			return nil
+		}
+		replacementsRepo := data.ThreadContextReplacementsRepository{}
+		replacement, err := replacementsRepo.Insert(ctx, tx, data.ThreadContextReplacementInsertInput{
+			AccountID:       rc.Run.AccountID,
+			ThreadID:        rc.Run.ThreadID,
+			StartThreadSeq:  plan.StartThreadSeq,
+			EndThreadSeq:    plan.EndThreadSeq,
+			StartContextSeq: plan.StartContextSeq,
+			EndContextSeq:   plan.EndContextSeq,
+			SummaryText:     summary,
+			Layer:           plan.Layer,
+			MetadataJSON:    compactReplacementMetadata("context_compact_background"),
+		})
+		if err != nil {
+			_ = tx.Rollback(ctx)
+			return err
+		}
+		if err := writeReplacementSupersessionEdges(ctx, tx, rc.Run.AccountID, rc.Run.ThreadID, replacement.ID, plan); err != nil {
+			_ = tx.Rollback(ctx)
+			return err
+		}
+		if err := replacementsRepo.SupersedeActiveOverlapsByContextSeq(ctx, tx, rc.Run.AccountID, rc.Run.ThreadID, replacement.StartContextSeq, replacement.EndContextSeq, replacement.ID); err != nil {
+			_ = tx.Rollback(ctx)
+			return err
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return err
+		}
+
+		rebuilt, err := rebuildCanonicalThreadContextForCompactUpTo(ctx, rc, upperBoundMessageID)
+		if err != nil {
+			return err
+		}
+		rc.Messages = append([]llm.Message(nil), rebuilt.Messages...)
+		rc.ThreadMessageIDs = append([]uuid.UUID(nil), rebuilt.ThreadMessageIDs...)
+		rc.ThreadContextFrontier = append([]FrontierNode(nil), rebuilt.Frontier...)
+		rebuiltStats := ComputeContextCompactPressure(EstimateRequestContextTokens(rc, llm.Request{Messages: rebuilt.Messages}), anchorPtr)
+		progress.emit(ctx, rc, "round_completed", map[string]any{
+			"round":                   round,
+			"context_pressure_tokens": rebuiltStats.ContextPressureTokens,
+			"target_chunk_count":      len(usedNodes),
+		})
+		if rebuiltStats.ContextPressureTokens <= targetTokens {
+			progress.emit(ctx, rc, "completed", map[string]any{
+				"round":                   round,
+				"context_pressure_tokens": rebuiltStats.ContextPressureTokens,
+			})
+			return nil
+		}
+	}
 }
 
 func ResolveRunContextWindowTokens(rc *RunContext) int {

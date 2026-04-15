@@ -40,7 +40,7 @@ func TestLoadConfigFromEnv_ParsesOverrides(t *testing.T) {
 	t.Setenv(workerPollSecondsEnv, "0.5")
 	t.Setenv(workerLeaseSecondsEnv, "45")
 	t.Setenv(workerHeartbeatSecondsEnv, "9")
-	t.Setenv(workerQueueJobTypesEnv, "run.execute")
+	t.Setenv(workerQueueJobTypesEnv, "run.execute,context_compact_maintain")
 
 	cfg, err := LoadConfigFromEnv()
 	if err != nil {
@@ -59,7 +59,7 @@ func TestLoadConfigFromEnv_ParsesOverrides(t *testing.T) {
 	if cfg.HeartbeatSeconds != 9 {
 		t.Fatalf("unexpected heartbeat seconds: %v", cfg.HeartbeatSeconds)
 	}
-	if !slices.Equal(cfg.QueueJobTypes, []string{"run.execute"}) {
+	if !slices.Equal(cfg.QueueJobTypes, []string{"run.execute", "context_compact_maintain"}) {
 		t.Fatalf("unexpected queue_job_types: %#v", cfg.QueueJobTypes)
 	}
 }

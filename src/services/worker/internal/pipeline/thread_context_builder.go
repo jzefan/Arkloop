@@ -116,7 +116,11 @@ func buildCanonicalThreadContext(
 		lastAtom = &atoms[len(atoms)-1]
 	}
 	mapped := mapReplacementsToContextSpans(replacements, chunks, upperBoundContextSeq)
-	selected := selectRenderableReplacementSpans(mapped, lastAtom)
+	firstContextSeq := int64(0)
+	if len(chunks) > 0 {
+		firstContextSeq = chunks[0].ContextSeq
+	}
+	selected := selectRenderableReplacementSpans(mapped, firstContextSeq, lastAtom)
 	entries, _, err := renderCanonicalThreadMessagesFromGraph(ctx, attachmentStore, atoms, chunks, selected)
 	if err != nil {
 		return nil, err
@@ -277,7 +281,7 @@ func renderCanonicalThreadMessages(
 			EndThreadSeq:    replacement.EndThreadSeq,
 			SourceText:      strings.TrimSpace(replacement.SummaryText),
 			ApproxTokens:    approxTokensFromText(replacement.SummaryText),
-			role:            "user",
+			role:            "system",
 		})
 	}
 	sort.SliceStable(frontier, func(i, j int) bool {
@@ -319,7 +323,7 @@ func renderCanonicalThreadMessagesFromGraph(
 			EndThreadSeq:    replacement.Record.EndThreadSeq,
 			SourceText:      summary,
 			ApproxTokens:    approxTokensFromText(summary),
-			role:            "user",
+			role:            "system",
 		})
 	}
 	for _, chunk := range chunks {
@@ -377,7 +381,11 @@ func renderCanonicalThreadMessagesFromFrontier(
 		}
 		parts, err := BuildMessageParts(ctx, attachmentStore, msg)
 		if err != nil {
-			return err
+			if attachmentStore == nil {
+				parts = fallbackTextParts(msg.Content)
+			} else {
+				return err
+			}
 		}
 		if msg.Role == "tool" {
 			parts = canonicalizeToolMessageParts(parts)
@@ -479,7 +487,7 @@ func renderCanonicalThreadMessagesFromFrontier(
 			if len(entries) > msgStart {
 				frontier[i].MsgStart = msgStart
 				frontier[i].MsgEnd = len(entries) - 1
-				frontier[i].Role = "user"
+				frontier[i].Role = "system"
 			}
 			i++
 			continue
@@ -667,7 +675,7 @@ func isLastRenderedMessage(entries []canonicalThreadContextEntry, messageID uuid
 func makeThreadContextReplacementMessage(summary string) llm.Message {
 	phase := compactSyntheticPhase
 	return llm.Message{
-		Role:    "user",
+		Role:    "system",
 		Phase:   &phase,
 		Content: []llm.TextPart{{Text: strings.TrimSpace(summary)}},
 	}

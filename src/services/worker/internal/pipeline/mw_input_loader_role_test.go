@@ -93,7 +93,7 @@ func TestLoadRunInputsBoundsFreshChannelHistoryAtThreadTail(t *testing.T) {
 	); err != nil {
 		t.Fatalf("insert run event: %v", err)
 	}
-	if _, err := pool.Exec(ctx, `INSERT INTO messages (id, account_id, thread_id, thread_seq, role, content, metadata_json, hidden, compacted) VALUES ($1, $2, $3, 1, 'assistant', 'hidden', '{}'::jsonb, true, true)`, hiddenID, accountID, threadID); err != nil {
+	if _, err := pool.Exec(ctx, `INSERT INTO messages (id, account_id, thread_id, thread_seq, role, content, metadata_json, hidden) VALUES ($1, $2, $3, 1, 'assistant', 'hidden', '{}'::jsonb, true)`, hiddenID, accountID, threadID); err != nil {
 		t.Fatalf("insert hidden message: %v", err)
 	}
 	if _, err := pool.Exec(ctx, `INSERT INTO messages (id, account_id, thread_id, thread_seq, role, content, metadata_json, hidden) VALUES ($1, $2, $3, 2, 'user', 'one', '{}'::jsonb, false)`, msg1ID, accountID, threadID); err != nil {
@@ -424,8 +424,8 @@ func TestLoadRunInputsKeepsBoundedLatestVisibleUserTailAcrossBuilderAndLoader(t 
 
 	if _, err := pool.Exec(
 		ctx,
-		`INSERT INTO messages (id, account_id, thread_id, thread_seq, role, content, metadata_json, hidden, compacted)
-		 VALUES ($1, $2, $3, 1, 'assistant', $4, '{}'::jsonb, true, true)`,
+		`INSERT INTO messages (id, account_id, thread_id, thread_seq, role, content, metadata_json, hidden)
+		 VALUES ($1, $2, $3, 1, 'assistant', $4, '{}'::jsonb, true)`,
 		hiddenPrefixID, accountID, threadID, "[hidden-prefix]",
 	); err != nil {
 		t.Fatalf("insert hidden prefix message: %v", err)

@@ -190,14 +190,6 @@ func (l *Loop) Run(
 		Remaining:     maxInt(runCtx.ToolContinuationBudget, 0),
 		SessionCounts: map[string]int{},
 	}
-	var pressureAnchor *pipeline.ContextCompactPressureAnchor
-	if runCtx.PipelineRC != nil && runCtx.PipelineRC.HasContextCompactAnchor {
-		pressureAnchor = &pipeline.ContextCompactPressureAnchor{
-			LastRealPromptTokens:             runCtx.PipelineRC.LastRealPromptTokens,
-			LastRequestContextEstimateTokens: runCtx.PipelineRC.LastRequestContextEstimateTokens,
-		}
-	}
-
 	// Rollout: 写入 RunMeta
 	if runCtx.RolloutRecorder != nil {
 		appendRollout(ctx, runCtx.RolloutRecorder, MakeRunMeta(runCtx))
@@ -235,36 +227,6 @@ func (l *Loop) Run(
 			recordRuntimeUserMessages(runCtx.PipelineRC, drained)
 		}
 		messages = compactToolResultsWithState(messages, toolResultReplacements)
-		if turnIndex > 1 && runCtx.PipelineRC != nil {
-			beforeCompact := len(messages)
-			compacted, stats, changed, compactErr := pipeline.MaybeInlineCompactMessages(ctx, runCtx.PipelineRC, messages, pressureAnchor, false)
-			if compactErr != nil {
-				ev := emitter.Emit("run.context_compact", map[string]any{
-					"op":              "local",
-					"mode":            "canonical_chunks",
-					"phase":           "llm_failed",
-					"messages_before": beforeCompact,
-					"llm_error":       compactErr.Error(),
-				}, nil, nil)
-				pipeline.ApplyContextCompactPressureFields(ev.DataJSON, stats)
-				if err := yield(ev); err != nil {
-					return err
-				}
-			} else if changed {
-				messages = compacted
-				ev := emitter.Emit("run.context_compact", map[string]any{
-					"op":              "local",
-					"mode":            "canonical_chunks",
-					"phase":           "completed",
-					"messages_before": beforeCompact,
-					"messages_after":  len(messages),
-				}, nil, nil)
-				pipeline.ApplyContextCompactPressureFields(ev.DataJSON, stats)
-				if err := yield(ev); err != nil {
-					return err
-				}
-			}
-		}
 		turnRequest := copyRequest(request, messages)
 		if promptCacheState != nil {
 			prepareTurnRequestPromptCache(&turnRequest, runCtx, promptCacheState)
@@ -365,7 +327,6 @@ func (l *Loop) Run(
 		if turn.CompletedDataJSON != nil {
 			attachContextPressureAnchor(turn.CompletedDataJSON, turnRequestContextEstimateTokens)
 			if anchor := pressureAnchorFromCompleted(turn.CompletedDataJSON); anchor != nil {
-				pressureAnchor = anchor
 				if runCtx.PipelineRC != nil {
 					runCtx.PipelineRC.SetContextCompactPressureAnchor(
 						anchor.LastRealPromptTokens,

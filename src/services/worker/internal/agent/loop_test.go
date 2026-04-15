@@ -967,37 +967,18 @@ func TestAgentLoopCompactsBeforeSecondTurnWhenToolOutputInflatesContext(t *testi
 	if err != nil {
 		t.Fatalf("loop.Run failed: %v", err)
 	}
-	if gateway.calls != 3 {
-		t.Fatalf("expected 3 gateway calls (turn, compact, turn), got %d", gateway.calls)
+	if gateway.calls != 2 {
+		t.Fatalf("expected 2 gateway calls (turn, turn), got %d", gateway.calls)
 	}
-	assertHasEvent(t, got, "run.context_compact")
-	var compactCompleted events.RunEvent
-	found := false
-	for _, ev := range got {
-		if ev.Type == "run.context_compact" && ev.DataJSON["phase"] == "completed" {
-			compactCompleted = ev
-			found = true
-			break
-		}
+	if hasEventType(got, "run.context_compact") {
+		t.Fatalf("expected no normal-turn compact event, got %#v", got)
 	}
-	if !found {
-		t.Fatal("expected completed local compact event")
-	}
-	if compactCompleted.DataJSON["op"] != "local" {
-		t.Fatalf("expected local compact op, got %#v", compactCompleted.DataJSON["op"])
-	}
-	if mustInt64(t, compactCompleted.DataJSON["context_pressure_tokens"]) <= mustInt64(t, compactCompleted.DataJSON["context_estimate_tokens"]) {
-		t.Fatalf("expected anchored pressure to exceed estimate: %#v", compactCompleted.DataJSON)
-	}
-	secondTurn := gateway.requests[2]
+	secondTurn := gateway.requests[1]
 	if len(secondTurn.Messages) < 2 {
-		t.Fatalf("expected compacted second turn messages, got %d", len(secondTurn.Messages))
-	}
-	if secondTurn.Messages[0].Role != "user" {
-		t.Fatalf("expected summary snapshot user message at second turn head, got %q", secondTurn.Messages[0].Role)
+		t.Fatalf("expected second turn messages, got %d", len(secondTurn.Messages))
 	}
 	if text := llm.PartPromptText(secondTurn.Messages[len(secondTurn.Messages)-1].Content[0]); strings.Contains(text, huge) {
-		t.Fatal("expected huge tool output to be compacted before second turn")
+		t.Fatal("expected huge tool output to stay microcompacted before second turn")
 	}
 }
 
@@ -1346,20 +1327,18 @@ func TestAgentLoopPreflightTokenWindowRewritesBeforeFirstProviderRequest(t *test
 	if err != nil {
 		t.Fatalf("loop.Run failed: %v", err)
 	}
-	if compact.calls != 2 {
-		t.Fatalf("expected token-gated preflight compaction to run twice, got %d", compact.calls)
+	if compact.calls != 0 {
+		t.Fatalf("expected token-gated preflight compaction retired, got %d", compact.calls)
 	}
 	if primary.calls != 1 {
-		t.Fatalf("expected provider call after token-gated rewrite, got %d", primary.calls)
-	}
-	if len(compact.requests) < 2 || !strings.Contains(joinTestMessageText(compact.requests[1].Messages[1]), "summary") {
-		t.Fatalf("expected second preflight compaction round to include prior summary, got %#v", compact.requests)
+		t.Fatalf("expected provider call to proceed without preflight compact, got %d", primary.calls)
 	}
 	if !hasEventType(got, "run.context_compact") {
-		t.Fatalf("expected rewrite event, got %#v", got)
+		t.Fatalf("expected rewrite status event, got %#v", got)
 	}
-	if estimate := pipeline.EstimateRequestContextTokens(pipelineRC, primary.requests[0]); estimate > pipelineRC.ContextWindowTokens {
-		t.Fatalf("expected rewritten request to fit token window, got %d > %d", estimate, pipelineRC.ContextWindowTokens)
+	first := firstEventOfType(got, "run.context_compact")
+	if phase, _ := first.DataJSON["phase"].(string); phase != "no_rewrite" {
+		t.Fatalf("expected no_rewrite phase, got %#v", first.DataJSON)
 	}
 }
 
@@ -1423,28 +1402,18 @@ func TestAgentLoopPreflightOversizeRunsMultipleRoundsUntilFits(t *testing.T) {
 	if err != nil {
 		t.Fatalf("loop.Run failed: %v", err)
 	}
-	if primary.calls != 1 {
-		t.Fatalf("expected provider called once after preflight loop converged, got %d", primary.calls)
+	if primary.calls != 0 {
+		t.Fatalf("expected provider call to stay blocked without persisted rewrite substrate, got %d", primary.calls)
 	}
-	if compact.calls < 2 {
-		t.Fatalf("expected at least 2 compact rounds, got %d", compact.calls)
+	if compact.calls != 0 {
+		t.Fatalf("expected preflight compaction retired, got %d", compact.calls)
 	}
-	if countEventType(got, "run.context_compact") < 2 {
-		t.Fatalf("expected at least 2 run.context_compact events, got %#v", got)
+	if countEventType(got, "run.context_compact") != 1 {
+		t.Fatalf("expected exactly one rewrite status event, got %#v", got)
 	}
-	sawStillOversize := false
-	for _, ev := range got {
-		if ev.Type != "run.context_compact" {
-			continue
-		}
-		phase, _ := ev.DataJSON["phase"].(string)
-		if phase == "still_oversize" {
-			sawStillOversize = true
-			break
-		}
-	}
-	if !sawStillOversize {
-		t.Fatalf("expected at least one still_oversize compact event, got %#v", got)
+	first := firstEventOfType(got, "run.context_compact")
+	if phase, _ := first.DataJSON["phase"].(string); phase != "no_rewrite" {
+		t.Fatalf("expected no_rewrite phase, got %#v", first.DataJSON)
 	}
 }
 

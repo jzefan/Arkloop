@@ -73,23 +73,17 @@ func TestMaybeInlineCompactMessagesUsesAnchorPressure(t *testing.T) {
 	if err != nil {
 		t.Fatalf("MaybeInlineCompactMessages: %v", err)
 	}
-	if !changed {
-		t.Fatal("expected inline compaction to trigger from anchored pressure")
+	if changed {
+		t.Fatal("expected normal inline compaction retired")
 	}
 	if stats.ContextPressureTokens <= stats.ContextEstimateTokens {
 		t.Fatalf("expected anchored pressure to exceed estimate, got pressure=%d estimate=%d", stats.ContextPressureTokens, stats.ContextEstimateTokens)
 	}
-	if len(gateway.requests) != 1 {
-		t.Fatalf("expected exactly one summary request, got %d", len(gateway.requests))
+	if len(gateway.requests) != 0 {
+		t.Fatalf("expected no summary request, got %d", len(gateway.requests))
 	}
-	if len(out) != 2 {
-		t.Fatalf("expected summary plus tail, got %d messages", len(out))
-	}
-	if out[0].Role != "user" {
-		t.Fatalf("expected summary snapshot user message, got %q", out[0].Role)
-	}
-	if out[0].Phase == nil || *out[0].Phase != compactSyntheticPhase {
-		t.Fatalf("expected summary snapshot phase %q, got %#v", compactSyntheticPhase, out[0].Phase)
+	if len(out) != len(msgs) {
+		t.Fatalf("expected messages unchanged, got %d", len(out))
 	}
 }
 
@@ -129,14 +123,143 @@ func TestMaybeInlineCompactMessagesUsesTokenWindowWhenProviderBytesEstimatorExis
 	if err != nil {
 		t.Fatalf("MaybeInlineCompactMessages: %v", err)
 	}
-	if !changed {
-		t.Fatal("expected inline compaction to trigger from token window")
+	if changed {
+		t.Fatal("expected normal inline compaction retired")
 	}
-	if len(gateway.requests) < 1 {
-		t.Fatalf("expected at least one summary request, got %d", len(gateway.requests))
+	if len(gateway.requests) != 0 {
+		t.Fatalf("expected no summary request, got %d", len(gateway.requests))
 	}
-	if len(out) >= len(msgs) {
-		t.Fatalf("expected compacted output shorter than input, got %d >= %d", len(out), len(msgs))
+	if len(out) != len(msgs) {
+		t.Fatalf("expected messages unchanged, got %d", len(out))
+	}
+}
+
+func TestRewriteOversizeRequestPersistsReplacementAndRebuildsRealView(t *testing.T) {
+	db := testutil.SetupPostgresDatabase(t, "context_compact_emergency_persist")
+	pool, err := pgxpool.New(context.Background(), db.DSN)
+	if err != nil {
+		t.Fatalf("pgxpool.New: %v", err)
+	}
+	t.Cleanup(pool.Close)
+
+	accountID := uuid.New()
+	projectID := uuid.New()
+	threadID := uuid.New()
+	msgIDs := []uuid.UUID{uuid.New(), uuid.New(), uuid.New()}
+	if _, err := pool.Exec(context.Background(), `INSERT INTO accounts (id, type) VALUES ($1, 'personal')`, accountID); err != nil {
+		t.Fatalf("insert account: %v", err)
+	}
+	if _, err := pool.Exec(context.Background(), `INSERT INTO projects (id, account_id, name) VALUES ($1, $2, 'p')`, projectID, accountID); err != nil {
+		t.Fatalf("insert project: %v", err)
+	}
+	if _, err := pool.Exec(context.Background(), `INSERT INTO threads (id, account_id, project_id, next_message_seq) VALUES ($1, $2, $3, 10)`, threadID, accountID, projectID); err != nil {
+		t.Fatalf("insert thread: %v", err)
+	}
+	payloads := []struct {
+		id        uuid.UUID
+		threadSeq int
+		role      string
+		content   string
+	}{
+		{id: msgIDs[0], threadSeq: 1, role: "user", content: "first persisted message"},
+		{id: msgIDs[1], threadSeq: 2, role: "assistant", content: "second persisted message"},
+		{id: msgIDs[2], threadSeq: 3, role: "user", content: "tail message"},
+	}
+	for _, msg := range payloads {
+		if _, err := pool.Exec(context.Background(),
+			`INSERT INTO messages (id, account_id, thread_id, thread_seq, role, content, metadata_json, hidden)
+			 VALUES ($1, $2, $3, $4, $5, $6, '{}'::jsonb, false)`,
+			msg.id, accountID, threadID, msg.threadSeq, msg.role, msg.content,
+		); err != nil {
+			t.Fatalf("insert message: %v", err)
+		}
+	}
+
+	tx, err := pool.BeginTx(context.Background(), pgx.TxOptions{})
+	if err != nil {
+		t.Fatalf("begin tx: %v", err)
+	}
+	canonical, err := buildCanonicalThreadContext(
+		context.Background(),
+		tx,
+		data.Run{AccountID: accountID, ThreadID: threadID},
+		data.MessagesRepository{},
+		nil,
+		nil,
+		0,
+	)
+	_ = tx.Rollback(context.Background())
+	if err != nil {
+		t.Fatalf("build canonical context: %v", err)
+	}
+
+	gateway := &compactSummaryGateway{summary: "rolled summary"}
+	rc := &RunContext{
+		Run:                   data.Run{AccountID: accountID, ThreadID: threadID},
+		DB:                    pool,
+		Messages:              canonical.Messages,
+		ThreadMessageIDs:      canonical.ThreadMessageIDs,
+		ThreadContextFrontier: canonical.Frontier,
+		ContextCompact: ContextCompactSettings{
+			PersistEnabled:              true,
+			TargetContextPct:            65,
+			FallbackContextWindowTokens: 4096,
+		},
+		ContextWindowTokens: 4096,
+		Gateway:             gateway,
+		SelectedRoute: &routing.SelectedProviderRoute{
+			Route:      routing.ProviderRouteRule{Model: "gpt-4o", ID: "route-1"},
+			Credential: routing.ProviderCredential{ProviderKind: routing.ProviderKindOpenAI},
+		},
+	}
+	request := llm.Request{Model: "stub", Messages: canonical.Messages}
+	requestEstimateCalls := 0
+	requestEstimate := func(req llm.Request) (int, error) {
+		requestEstimateCalls++
+		if len(req.Messages) >= 3 {
+			return llm.RequestPayloadLimitBytes + 1024, nil
+		}
+		return llm.RequestPayloadLimitBytes - 1024, nil
+	}
+
+	rewritten, stats, err := RewriteOversizeRequest(context.Background(), rc, request, nil, requestEstimate)
+	if err != nil {
+		t.Fatalf("RewriteOversizeRequest failed: %v", err)
+	}
+	if !stats.CompactApplied {
+		t.Fatalf("expected emergency persist rewrite, got %#v", stats)
+	}
+	if len(gateway.requests) != 1 {
+		t.Fatalf("expected one compact summary request, got %d", len(gateway.requests))
+	}
+	if len(rewritten.Messages) != 2 {
+		t.Fatalf("expected rebuilt request to shrink to replacement + tail, got %d", len(rewritten.Messages))
+	}
+	if rewritten.Messages[0].Role != "system" {
+		t.Fatalf("expected replacement rendered as system, got %q", rewritten.Messages[0].Role)
+	}
+	if rewritten.Messages[0].Phase == nil || *rewritten.Messages[0].Phase != compactSyntheticPhase {
+		t.Fatalf("expected replacement phase %q, got %#v", compactSyntheticPhase, rewritten.Messages[0].Phase)
+	}
+	if messageText(rewritten.Messages[0]) != "rolled summary" {
+		t.Fatalf("unexpected replacement text: %q", messageText(rewritten.Messages[0]))
+	}
+	if len(rc.ThreadContextFrontier) < 2 || rc.ThreadContextFrontier[0].Kind != FrontierNodeReplacement || rc.ThreadContextFrontier[1].Kind != FrontierNodeChunk {
+		t.Fatalf("expected prefix-only replacement frontier, got %#v", rc.ThreadContextFrontier)
+	}
+	if requestEstimateCalls < 3 {
+		t.Fatalf("expected request estimator used before and after rebuild, got %d calls", requestEstimateCalls)
+	}
+
+	var replacements int
+	if err := pool.QueryRow(context.Background(),
+		`SELECT COUNT(*) FROM thread_context_replacements WHERE account_id = $1 AND thread_id = $2 AND superseded_at IS NULL`,
+		accountID, threadID,
+	).Scan(&replacements); err != nil {
+		t.Fatalf("count replacements: %v", err)
+	}
+	if replacements != 1 {
+		t.Fatalf("expected one active replacement, got %d", replacements)
 	}
 }
 
@@ -521,7 +644,7 @@ func TestContextCompactMiddlewareIgnoresPreviousRunAnchorAfterSyntheticPrefix(t 
 	}
 }
 
-func TestContextCompactPersistFailureDoesNotMarkTrimmedMessages(t *testing.T) {
+func TestContextCompactPersistFailureDoesNotHideMessages(t *testing.T) {
 	ctx := context.Background()
 	db := testutil.SetupPostgresDatabase(t, "context_compact_persist_failure_trim")
 	pool, err := pgxpool.New(ctx, db.DSN)
@@ -563,7 +686,7 @@ func TestContextCompactPersistFailureDoesNotMarkTrimmedMessages(t *testing.T) {
 		{msg4ID, "user", "m4"},
 	} {
 		if _, err := pool.Exec(ctx,
-			`INSERT INTO messages (id, account_id, thread_id, role, content, metadata_json, hidden, compacted) VALUES ($1, $2, $3, $4, $5, '{}'::jsonb, false, false)`,
+			`INSERT INTO messages (id, account_id, thread_id, role, content, metadata_json, hidden) VALUES ($1, $2, $3, $4, $5, '{}'::jsonb, false)`,
 			msg.id, accountID, threadID, msg.role, msg.content,
 		); err != nil {
 			t.Fatalf("insert message: %v", err)
@@ -601,29 +724,29 @@ func TestContextCompactPersistFailureDoesNotMarkTrimmedMessages(t *testing.T) {
 		t.Fatalf("middleware failed: %v", err)
 	}
 
-	var compacted, hidden bool
+	var hidden bool
 	if err := pool.QueryRow(ctx,
-		`SELECT compacted, hidden FROM messages WHERE id = $1`,
+		`SELECT hidden FROM messages WHERE id = $1`,
 		msg3ID,
-	).Scan(&compacted, &hidden); err != nil {
+	).Scan(&hidden); err != nil {
 		t.Fatalf("query message 3: %v", err)
 	}
-	if compacted || hidden {
-		t.Fatalf("expected message 3 to stay visible after persist failure, compacted=%v hidden=%v", compacted, hidden)
+	if hidden {
+		t.Fatalf("expected message 3 to stay visible after persist failure, hidden=%v", hidden)
 	}
 
 	var eventType, phase, op, errText string
 	if err := pool.QueryRow(ctx,
 		`SELECT type, data_json->>'phase', data_json->>'op', data_json->>'error'
 		   FROM run_events
-		  WHERE run_id = $1 AND type = 'run.context_compact' AND data_json->>'phase' = 'mark_compacted'
+		  WHERE run_id = $1 AND type = 'run.context_compact' AND data_json->>'op' = 'persist'
 		  ORDER BY seq DESC
 		  LIMIT 1`,
 		runID,
 	).Scan(&eventType, &phase, &op, &errText); err != nil {
 		t.Fatalf("query failure event: %v", err)
 	}
-	if eventType != "run.context_compact" || phase != "mark_compacted" || op != "persist" {
+	if eventType != "run.context_compact" || strings.TrimSpace(phase) == "" || op != "persist" {
 		t.Fatalf("unexpected failure event: type=%s phase=%s op=%s", eventType, phase, op)
 	}
 	if strings.TrimSpace(errText) == "" {
@@ -675,7 +798,7 @@ func TestContextCompactMiddlewareAfterCompactReceivesPersistOutput(t *testing.T)
 		{msg3ID, "user", "m3"},
 	} {
 		if _, err := pool.Exec(ctx,
-			`INSERT INTO messages (id, account_id, thread_id, role, content, metadata_json, hidden, compacted) VALUES ($1, $2, $3, $4, $5, '{}'::jsonb, false, false)`,
+			`INSERT INTO messages (id, account_id, thread_id, role, content, metadata_json, hidden) VALUES ($1, $2, $3, $4, $5, '{}'::jsonb, false)`,
 			msg.id, accountID, threadID, msg.role, msg.content,
 		); err != nil {
 			t.Fatalf("insert message: %v", err)
@@ -777,8 +900,8 @@ func TestContextCompactMiddlewarePersistsReplacementFromThreadFrontier(t *testin
 	}
 	for _, msg := range msgs {
 		if _, err := pool.Exec(ctx,
-			`INSERT INTO messages (id, account_id, thread_id, thread_seq, role, content, metadata_json, hidden, compacted)
-			 VALUES ($1, $2, $3, $4, $5, $6, '{}'::jsonb, false, false)`,
+			`INSERT INTO messages (id, account_id, thread_id, thread_seq, role, content, metadata_json, hidden)
+			 VALUES ($1, $2, $3, $4, $5, $6, '{}'::jsonb, false)`,
 			msg.id, accountID, threadID, msg.threadSeq, msg.role, msg.content,
 		); err != nil {
 			t.Fatalf("insert message: %v", err)
@@ -898,8 +1021,8 @@ func TestContextCompactMiddlewarePersistsIteratively(t *testing.T) {
 			role = "assistant"
 		}
 		if _, err := pool.Exec(ctx,
-			`INSERT INTO messages (id, account_id, thread_id, thread_seq, role, content, metadata_json, hidden, compacted)
-			 VALUES ($1, $2, $3, $4, $5, $6, '{}'::jsonb, false, false)`,
+			`INSERT INTO messages (id, account_id, thread_id, thread_seq, role, content, metadata_json, hidden)
+			 VALUES ($1, $2, $3, $4, $5, $6, '{}'::jsonb, false)`,
 			uuid.New(), accountID, threadID, i+1, role, huge,
 		); err != nil {
 			t.Fatalf("insert message %d: %v", i+1, err)

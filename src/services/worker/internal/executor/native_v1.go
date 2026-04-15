@@ -4,8 +4,10 @@ package executor
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"arkloop/services/worker/internal/app"
@@ -51,6 +53,10 @@ func NewNativeRunEngineV1Handler(ctx context.Context, pool *pgxpool.Pool, direct
 }
 
 func (h *NativeRunEngineV1Handler) Handle(ctx context.Context, lease queue.JobLease) error {
+	if lease.JobType == queue.ContextCompactMaintainJobType {
+		return h.handleContextCompactMaintain(ctx, lease)
+	}
+
 	payload, err := parseWorkerPayload(lease.PayloadJSON)
 	if err != nil {
 		return err
@@ -158,6 +164,127 @@ func (h *NativeRunEngineV1Handler) Handle(ctx context.Context, lease queue.JobLe
 	return nil
 }
 
+func (h *NativeRunEngineV1Handler) handleContextCompactMaintain(ctx context.Context, lease queue.JobLease) error {
+	payloadJSON, err := h.reloadJobPayloadJSON(ctx, lease)
+	if err != nil {
+		return err
+	}
+	payload, err := parseWorkerPayload(payloadJSON)
+	if err != nil {
+		return err
+	}
+	compactInput, err := parseContextCompactMaintenanceInput(payload.Payload)
+	if err != nil {
+		return err
+	}
+
+	h.logger.Info("worker received compact maintenance job",
+		"job_id", lease.JobID.String(),
+		"trace_id", payload.TraceID,
+		"account_id", payload.AccountID.String(),
+		"run_id", payload.RunID.String(),
+		"thread_id", compactInput.ThreadID.String(),
+		"upper_bound_thread_seq", compactInput.UpperBoundThreadSeq,
+	)
+
+	tx, err := h.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	runsRepo := data.RunsRepository{}
+	eventsRepo := data.RunEventsRepository{}
+	run, err := runsRepo.GetRun(ctx, tx, payload.RunID)
+	if err != nil {
+		return err
+	}
+	if run == nil {
+		h.logger.Info("compact maintenance run not found, skipped",
+			"job_id", lease.JobID.String(),
+			"trace_id", payload.TraceID,
+			"account_id", payload.AccountID.String(),
+			"run_id", payload.RunID.String(),
+		)
+		return nil
+	}
+	if run.AccountID != payload.AccountID {
+		h.logger.Info("compact maintenance account mismatch, skipped",
+			"job_id", lease.JobID.String(),
+			"trace_id", payload.TraceID,
+			"account_id", payload.AccountID.String(),
+			"run_id", payload.RunID.String(),
+			"run_account_id", run.AccountID.String(),
+		)
+		return nil
+	}
+	if run.ThreadID != compactInput.ThreadID {
+		h.logger.Info("compact maintenance thread mismatch, skipped",
+			"job_id", lease.JobID.String(),
+			"trace_id", payload.TraceID,
+			"run_id", payload.RunID.String(),
+			"thread_id", compactInput.ThreadID.String(),
+			"run_thread_id", run.ThreadID.String(),
+		)
+		return nil
+	}
+	if _, err := eventsRepo.AppendEvent(
+		ctx,
+		tx,
+		payload.RunID,
+		"worker.job.received",
+		map[string]any{
+			"trace_id":               payload.TraceID,
+			"job_id":                 payload.JobID.String(),
+			"job_type":               payload.JobType,
+			"account_id":             payload.AccountID.String(),
+			"thread_id":              compactInput.ThreadID.String(),
+			"upper_bound_thread_seq": compactInput.UpperBoundThreadSeq,
+		},
+		nil,
+		nil,
+	); err != nil {
+		return err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return err
+	}
+
+	return h.engine.ExecuteContextCompactMaintenance(ctx, h.pool, *run, payload.TraceID, runengine.ContextCompactMaintenanceInput{
+		RouteID:             compactInput.RouteID,
+		UpperBoundThreadSeq: compactInput.UpperBoundThreadSeq,
+		ContextWindowTokens: compactInput.ContextWindowTokens,
+		TriggerContextPct:   compactInput.TriggerContextPct,
+		TargetContextPct:    compactInput.TargetContextPct,
+		JobPayload:          payload.Payload,
+	})
+}
+
+func (h *NativeRunEngineV1Handler) reloadJobPayloadJSON(ctx context.Context, lease queue.JobLease) (map[string]any, error) {
+	if h == nil || h.pool == nil || lease.JobID == uuid.Nil {
+		return lease.PayloadJSON, nil
+	}
+	var raw []byte
+	err := h.pool.QueryRow(
+		ctx,
+		`SELECT payload_json
+		   FROM jobs
+		  WHERE id = $1`,
+		lease.JobID,
+	).Scan(&raw)
+	if err != nil {
+		return nil, err
+	}
+	var payloadJSON map[string]any
+	if err := json.Unmarshal(raw, &payloadJSON); err != nil {
+		return nil, err
+	}
+	if len(payloadJSON) == 0 {
+		return lease.PayloadJSON, nil
+	}
+	return payloadJSON, nil
+}
+
 // dispatchWebhooks 在 run 终态后为订阅了该事件的端点入队投递 job。
 func (h *NativeRunEngineV1Handler) dispatchWebhooks(ctx context.Context, payload workerPayload, run *data.Run) {
 	status, createdAt, err := getRunStatus(ctx, h.pool, run.ID)
@@ -208,6 +335,15 @@ type workerPayload struct {
 	RunID     uuid.UUID
 }
 
+type contextCompactMaintenanceInput struct {
+	ThreadID            uuid.UUID
+	RouteID             string
+	UpperBoundThreadSeq int64
+	ContextWindowTokens int
+	TriggerContextPct   int
+	TargetContextPct    int
+}
+
 func parseWorkerPayload(payload map[string]any) (workerPayload, error) {
 	jobID, err := requiredUUID(payload, "job_id")
 	if err != nil {
@@ -242,5 +378,45 @@ func parseWorkerPayload(payload map[string]any) (workerPayload, error) {
 		Payload:   payloadMap,
 		AccountID: accountID,
 		RunID:     runID,
+	}, nil
+}
+
+func parseContextCompactMaintenanceInput(payload map[string]any) (contextCompactMaintenanceInput, error) {
+	threadID, err := requiredUUID(payload, "thread_id")
+	if err != nil {
+		return contextCompactMaintenanceInput{}, err
+	}
+	upperBoundThreadSeq, err := requiredInt64(payload, "upper_bound_thread_seq")
+	if err != nil {
+		return contextCompactMaintenanceInput{}, err
+	}
+	if upperBoundThreadSeq <= 0 {
+		return contextCompactMaintenanceInput{}, fmt.Errorf("upper_bound_thread_seq must be positive")
+	}
+	contextWindowTokens, err := optionalInt(payload, "context_window_tokens")
+	if err != nil {
+		return contextCompactMaintenanceInput{}, err
+	}
+	triggerContextPct, err := optionalInt(payload, "trigger_context_pct")
+	if err != nil {
+		return contextCompactMaintenanceInput{}, err
+	}
+	targetContextPct, err := optionalInt(payload, "target_context_pct")
+	if err != nil {
+		return contextCompactMaintenanceInput{}, err
+	}
+
+	routeID := ""
+	if rawRouteID, ok := payload["route_id"].(string); ok {
+		routeID = strings.TrimSpace(rawRouteID)
+	}
+
+	return contextCompactMaintenanceInput{
+		ThreadID:            threadID,
+		RouteID:             routeID,
+		UpperBoundThreadSeq: upperBoundThreadSeq,
+		ContextWindowTokens: contextWindowTokens,
+		TriggerContextPct:   triggerContextPct,
+		TargetContextPct:    targetContextPct,
 	}, nil
 }
