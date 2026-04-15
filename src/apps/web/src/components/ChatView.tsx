@@ -57,7 +57,7 @@ import { useRunLifecycle } from '../contexts/run-lifecycle'
 import { useMessageMeta, type MessageMeta } from '../contexts/message-meta'
 import { useStream } from '../contexts/stream'
 import { usePanels } from '../contexts/panels'
-import { useScrollPin, SCROLL_BOTTOM_PAD } from '../hooks/useScrollPin'
+import { useScrollPin } from '../hooks/useScrollPin'
 import { useDevTools } from '../hooks/useDevTools'
 import { useChatActions } from '../hooks/useChatActions'
 import { useThreadSseEffect } from '../hooks/useThreadSseEffect'
@@ -202,7 +202,7 @@ function FailedRunRetryCard({
 
   return (
     <div
-      className="flex w-full max-w-[756px] items-center justify-between gap-3 rounded-2xl px-4 py-4"
+      className="mt-2 flex w-full max-w-[756px] items-center justify-between gap-3 rounded-2xl px-4 py-4"
       style={{ background: 'var(--c-bg-sub)', border: '0.75px solid var(--c-border)' }}
     >
       <div className="flex min-w-0 items-center gap-2 text-[var(--c-text-secondary)]">
@@ -2080,7 +2080,11 @@ export function ChatView() {
             className="chat-scroll-hidden relative flex-1 min-h-0 overflow-y-auto bg-[var(--c-bg-page)] [scrollbar-gutter:stable]"
           >
         <div
-          style={{ maxWidth: 800, margin: '0 auto', padding: `50px ${isPanelOpen ? chatContentPadding.panelOpen : chatContentPadding.panelClosed} ${SCROLL_BOTTOM_PAD}px` }}
+          style={{
+            maxWidth: 800,
+            margin: '0 auto',
+            padding: `50px ${isPanelOpen ? chatContentPadding.panelOpen : chatContentPadding.panelClosed} var(--chat-input-area-height)`,
+          }}
           className="flex w-full flex-col gap-6"
         >
           {messagesLoading ? (
