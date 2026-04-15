@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react'
 import { canonicalToolName, pickLogicalToolName } from '@arkloop/shared'
+import { setThreadTodos } from '../todoDb'
 import { useAuth } from '../contexts/auth'
 import { useChatSession } from '../contexts/chat-session'
 import { useCredits } from '../contexts/credits'
@@ -283,6 +284,8 @@ export function useSseDispatch(params: {
             return [{ id: item.id, content: item.content, status: item.status }]
           })
           stream.setWorkTodos(items)
+          const tid = threadIdRef.current
+          if (tid) setThreadTodos(tid, items).catch(() => {})
         }
         continue
       }

@@ -38,7 +38,9 @@ import {
   buildMessageSubAgentsFromRunEvents,
   buildMessageFileOpsFromRunEvents,
   buildMessageWebFetchesFromRunEvents,
+  buildTodosFromRunEvents,
 } from '../runEventProcessing'
+import { getThreadTodos, setThreadTodos, clearThreadTodos } from '../todoDb'
 import {
   buildAssistantTurnFromRunEvents,
   copSegmentCalls,
@@ -898,9 +900,10 @@ export function ChatView() {
   useEffect(() => {
     if (activeRunId && activeRunId !== prevActiveRunIdRef.current) {
       setWorkTodos([])
+      if (threadId) clearThreadTodos(threadId).catch(() => {})
     }
     prevActiveRunIdRef.current = activeRunId
-  }, [activeRunId])
+  }, [activeRunId, threadId])
 
   useEffect(() => {
     if (messagesLoading) {
@@ -947,6 +950,9 @@ export function ChatView() {
     const navUserEnterMessageId = locationState?.userEnterMessageId
 
     void (async () => {
+      getThreadTodos(threadId).then((cached) => {
+        if (cached.length > 0 && !disposed) setWorkTodos(cached)
+      })
       let loadedItems: MessageResponse[] | null = null
       try {
         const [initialItems, runs] = await Promise.all([
@@ -1143,6 +1149,11 @@ export function ChatView() {
                 assistantTurnMap.set(lastAssistant.id, replayTurn)
                 writeMessageAssistantTurn(lastAssistant.id, replayTurn)
               }
+            }
+            const replayedTodos = buildTodosFromRunEvents(replayEvents)
+            if (replayedTodos.length > 0) {
+              setWorkTodos(replayedTodos)
+              setThreadTodos(threadId, replayedTodos).catch(() => {})
             }
             if (lastAssistant && (latest.status === 'completed' || latest.status === 'cancelled' || latest.status === 'interrupted')) {
               terminalStatusMap.set(lastAssistant.id, latest.status)

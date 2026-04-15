@@ -567,6 +567,11 @@ func persistEmergencyReplacementRound(
 	if rc == nil || rc.DB == nil || rc.Gateway == nil || rc.SelectedRoute == nil {
 		return request, stats, false, nil
 	}
+	releaseLock, err := CompactThreadCompactionLock(ctx, rc.Run.ThreadID)
+	if err != nil {
+		return request, stats, false, err
+	}
+	defer releaseLock()
 	basePrefixCount := compactRequestBasePrefixCount(request.Messages, rc.Messages)
 	if basePrefixCount <= 0 || len(rc.ThreadContextFrontier) == 0 {
 		return request, stats, false, nil
@@ -595,6 +600,13 @@ func persistEmergencyReplacementRound(
 	if !ok {
 		return request, stats, false, nil
 	}
+	if hostMode == "desktop" {
+		if err := tx.Commit(ctx); err != nil {
+			return request, stats, false, err
+		}
+		committed = true
+		tx = nil
+	}
 	progress := newCompactProgressRecorder(rc.DB, data.RunEventsRepository{}, map[string]any{
 		"op":    "persist_emergency",
 		"round": round,
@@ -614,6 +626,13 @@ func persistEmergencyReplacementRound(
 	persistNodes := mapSelectedAtomsToPersistFrontierNodes(usedNodes, canonical.Frontier)
 	if len(persistNodes) == 0 {
 		persistNodes = append([]FrontierNode(nil), usedNodes...)
+	}
+	if hostMode == "desktop" {
+		tx, err = rc.DB.BeginTx(ctx, pgx.TxOptions{})
+		if err != nil {
+			return request, stats, false, err
+		}
+		committed = false
 	}
 	plan, ok, err := resolvePersistReplacementPlan(ctx, tx, rc.Run.AccountID, rc.Run.ThreadID, persistNodes)
 	if err != nil {
@@ -860,6 +879,11 @@ func ExecuteContextCompactMaintenanceJob(
 	if rc == nil || rc.DB == nil || rc.Gateway == nil || rc.SelectedRoute == nil {
 		return nil
 	}
+	releaseLock, err := CompactThreadCompactionLock(ctx, rc.Run.ThreadID)
+	if err != nil {
+		return err
+	}
+	defer releaseLock()
 	if failures := compactConsecutiveFailures(ctx, rc.DB, rc.Run.AccountID, rc.Run.ThreadID); failures >= maxConsecutiveCompactFailures {
 		appendErr := appendContextCompactRunEvent(ctx, rc.DB, eventsRepo, rc, map[string]any{
 			"op":    "persist_background",
@@ -914,7 +938,9 @@ func ExecuteContextCompactMaintenanceJob(
 		}
 		stats := ComputeContextCompactPressure(EstimateRequestContextTokens(rc, llm.Request{Messages: canonical.Messages}), anchorPtr)
 		if stats.ContextPressureTokens <= targetTokens {
-			_ = tx.Rollback(ctx)
+			if err := tx.Commit(ctx); err != nil {
+				return err
+			}
 			progress.emit(ctx, rc, "completed", map[string]any{
 				"context_pressure_tokens": stats.ContextPressureTokens,
 			})
@@ -922,11 +948,16 @@ func ExecuteContextCompactMaintenanceJob(
 		}
 		selection, ok := selectPersistFrontierWindowForPressure(rc, canonical.Frontier, stats.ContextPressureTokens)
 		if !ok {
-			_ = tx.Rollback(ctx)
+			if err := tx.Commit(ctx); err != nil {
+				return err
+			}
 			progress.emit(ctx, rc, "completed", map[string]any{
 				"context_pressure_tokens": stats.ContextPressureTokens,
 			})
 			return nil
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return err
 		}
 		progress.emit(ctx, rc, "round_started", map[string]any{
 			"round":                   round,
@@ -934,7 +965,6 @@ func ExecuteContextCompactMaintenanceJob(
 		})
 		summary, usedNodes, err := compactNodesWithPersistRetry(ctx, rc, rc.Gateway, rc.SelectedRoute.Route.Model, selection, progress)
 		if err != nil {
-			_ = tx.Rollback(ctx)
 			progress.emit(ctx, rc, "llm_failed", map[string]any{
 				"round": round,
 				"error": err.Error(),
@@ -943,7 +973,6 @@ func ExecuteContextCompactMaintenanceJob(
 		}
 		summary = strings.TrimSpace(summary)
 		if summary == "" || len(usedNodes) == 0 {
-			_ = tx.Rollback(ctx)
 			progress.emit(ctx, rc, "completed", map[string]any{
 				"round": round,
 			})
@@ -952,6 +981,10 @@ func ExecuteContextCompactMaintenanceJob(
 		persistNodes := mapSelectedAtomsToPersistFrontierNodes(usedNodes, canonical.Frontier)
 		if len(persistNodes) == 0 {
 			persistNodes = append([]FrontierNode(nil), usedNodes...)
+		}
+		tx, err = rc.DB.BeginTx(ctx, pgx.TxOptions{})
+		if err != nil {
+			return err
 		}
 		plan, ok, err := resolvePersistReplacementPlan(ctx, tx, rc.Run.AccountID, rc.Run.ThreadID, persistNodes)
 		if err != nil {
