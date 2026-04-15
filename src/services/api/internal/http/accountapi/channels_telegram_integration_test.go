@@ -1002,6 +1002,200 @@ func TestTelegramWebhookNewCommandStartsFreshDMThread(t *testing.T) {
 	}
 }
 
+func TestTelegramWebhookDmTopicsCreateDistinctThreads(t *testing.T) {
+	env := setupTelegramChannelsTestEnv(t, telegrambot.NewClient("https://api.telegram.org", nil))
+	channel := createActiveTelegramChannel(t, env, "bot-token", []string{"10001"}, "")
+	headers := map[string]string{"X-Telegram-Bot-Api-Secret-Token": derefString(t, channel.WebhookSecret)}
+
+	for _, payload := range []map[string]any{
+		{
+			"message": map[string]any{
+				"message_id":        101,
+				"date":              1710000100,
+				"text":              "topic-42 first",
+				"message_thread_id": 42,
+				"chat":              map[string]any{"id": 10001, "type": "private"},
+				"from":              map[string]any{"id": 10001, "is_bot": false, "first_name": "Alice"},
+			},
+		},
+		{
+			"message": map[string]any{
+				"message_id":        102,
+				"date":              1710000101,
+				"text":              "topic-43 first",
+				"message_thread_id": 43,
+				"chat":              map[string]any{"id": 10001, "type": "private"},
+				"from":              map[string]any{"id": 10001, "is_bot": false, "first_name": "Alice"},
+			},
+		},
+		{
+			"message": map[string]any{
+				"message_id":        103,
+				"date":              1710000102,
+				"text":              "topic-42 second",
+				"message_thread_id": 42,
+				"chat":              map[string]any{"id": 10001, "type": "private"},
+				"from":              map[string]any{"id": 10001, "is_bot": false, "first_name": "Alice"},
+			},
+		},
+	} {
+		resp := doJSONAccount(env.handler, nethttp.MethodPost, "/v1/channels/telegram/"+channel.ID.String()+"/webhook", payload, headers)
+		if resp.Code != nethttp.StatusOK {
+			t.Fatalf("webhook status: %d %s", resp.Code, resp.Body.String())
+		}
+	}
+
+	assertCountAccount(t, env.pool, `SELECT COUNT(*) FROM channel_dm_threads`, 2)
+
+	firstTopicThreadID := queryInboundLedgerThreadIDByPlatformMessage(t, env.pool, channel.ID, "101")
+	secondTopicThreadID := queryInboundLedgerThreadIDByPlatformMessage(t, env.pool, channel.ID, "102")
+	thirdTopicThreadID := queryInboundLedgerThreadIDByPlatformMessage(t, env.pool, channel.ID, "103")
+	if firstTopicThreadID == secondTopicThreadID {
+		t.Fatalf("expected topic 42 and topic 43 to map to different threads, got %s", firstTopicThreadID)
+	}
+	if firstTopicThreadID != thirdTopicThreadID {
+		t.Fatalf("expected topic 42 to reuse its thread, first=%s third=%s", firstTopicThreadID, thirdTopicThreadID)
+	}
+
+	assertHasDMThreadBinding(t, env.pool, channel.ID, "10001", env.personaID, "42", firstTopicThreadID)
+	assertHasDMThreadBinding(t, env.pool, channel.ID, "10001", env.personaID, "43", secondTopicThreadID)
+}
+
+func TestTelegramWebhookMainDmAndTopicStaySeparated(t *testing.T) {
+	env := setupTelegramChannelsTestEnv(t, telegrambot.NewClient("https://api.telegram.org", nil))
+	channel := createActiveTelegramChannel(t, env, "bot-token", []string{"10001"}, "")
+	headers := map[string]string{"X-Telegram-Bot-Api-Secret-Token": derefString(t, channel.WebhookSecret)}
+
+	for _, payload := range []map[string]any{
+		{
+			"message": map[string]any{
+				"message_id": 111,
+				"date":       1710000200,
+				"text":       "main first",
+				"chat":       map[string]any{"id": 10001, "type": "private"},
+				"from":       map[string]any{"id": 10001, "is_bot": false, "first_name": "Alice"},
+			},
+		},
+		{
+			"message": map[string]any{
+				"message_id":        112,
+				"date":              1710000201,
+				"text":              "topic first",
+				"message_thread_id": 42,
+				"chat":              map[string]any{"id": 10001, "type": "private"},
+				"from":              map[string]any{"id": 10001, "is_bot": false, "first_name": "Alice"},
+			},
+		},
+		{
+			"message": map[string]any{
+				"message_id": 113,
+				"date":       1710000202,
+				"text":       "main second",
+				"chat":       map[string]any{"id": 10001, "type": "private"},
+				"from":       map[string]any{"id": 10001, "is_bot": false, "first_name": "Alice"},
+			},
+		},
+	} {
+		resp := doJSONAccount(env.handler, nethttp.MethodPost, "/v1/channels/telegram/"+channel.ID.String()+"/webhook", payload, headers)
+		if resp.Code != nethttp.StatusOK {
+			t.Fatalf("webhook status: %d %s", resp.Code, resp.Body.String())
+		}
+	}
+
+	assertCountAccount(t, env.pool, `SELECT COUNT(*) FROM channel_dm_threads`, 2)
+
+	mainFirstThreadID := queryInboundLedgerThreadIDByPlatformMessage(t, env.pool, channel.ID, "111")
+	topicThreadID := queryInboundLedgerThreadIDByPlatformMessage(t, env.pool, channel.ID, "112")
+	mainSecondThreadID := queryInboundLedgerThreadIDByPlatformMessage(t, env.pool, channel.ID, "113")
+	if mainFirstThreadID != mainSecondThreadID {
+		t.Fatalf("expected main dm to reuse its thread, first=%s second=%s", mainFirstThreadID, mainSecondThreadID)
+	}
+	if mainFirstThreadID == topicThreadID {
+		t.Fatalf("expected main dm and topic to stay separated, got %s", mainFirstThreadID)
+	}
+
+	assertHasDMThreadBinding(t, env.pool, channel.ID, "10001", env.personaID, "", mainFirstThreadID)
+	assertHasDMThreadBinding(t, env.pool, channel.ID, "10001", env.personaID, "42", topicThreadID)
+}
+
+func TestTelegramWebhookNewCommandResetsOnlyCurrentDmTopic(t *testing.T) {
+	env := setupTelegramChannelsTestEnv(t, telegrambot.NewClient("https://api.telegram.org", nil))
+	channel := createActiveTelegramChannel(t, env, "bot-token", []string{"10001"}, "")
+	headers := map[string]string{"X-Telegram-Bot-Api-Secret-Token": derefString(t, channel.WebhookSecret)}
+
+	for _, payload := range []map[string]any{
+		{
+			"message": map[string]any{
+				"message_id":        121,
+				"date":              1710000300,
+				"text":              "topic-42 first",
+				"message_thread_id": 42,
+				"chat":              map[string]any{"id": 10001, "type": "private"},
+				"from":              map[string]any{"id": 10001, "is_bot": false, "first_name": "Alice"},
+			},
+		},
+		{
+			"message": map[string]any{
+				"message_id":        122,
+				"date":              1710000301,
+				"text":              "topic-43 first",
+				"message_thread_id": 43,
+				"chat":              map[string]any{"id": 10001, "type": "private"},
+				"from":              map[string]any{"id": 10001, "is_bot": false, "first_name": "Alice"},
+			},
+		},
+		{
+			"message": map[string]any{
+				"message_id":        123,
+				"date":              1710000302,
+				"text":              "/new",
+				"message_thread_id": 42,
+				"chat":              map[string]any{"id": 10001, "type": "private"},
+				"from":              map[string]any{"id": 10001, "is_bot": false, "first_name": "Alice"},
+			},
+		},
+		{
+			"message": map[string]any{
+				"message_id":        124,
+				"date":              1710000303,
+				"text":              "topic-42 second",
+				"message_thread_id": 42,
+				"chat":              map[string]any{"id": 10001, "type": "private"},
+				"from":              map[string]any{"id": 10001, "is_bot": false, "first_name": "Alice"},
+			},
+		},
+		{
+			"message": map[string]any{
+				"message_id":        125,
+				"date":              1710000304,
+				"text":              "topic-43 second",
+				"message_thread_id": 43,
+				"chat":              map[string]any{"id": 10001, "type": "private"},
+				"from":              map[string]any{"id": 10001, "is_bot": false, "first_name": "Alice"},
+			},
+		},
+	} {
+		resp := doJSONAccount(env.handler, nethttp.MethodPost, "/v1/channels/telegram/"+channel.ID.String()+"/webhook", payload, headers)
+		if resp.Code != nethttp.StatusOK {
+			t.Fatalf("webhook status: %d %s", resp.Code, resp.Body.String())
+		}
+	}
+
+	topic42Before := queryInboundLedgerThreadIDByPlatformMessage(t, env.pool, channel.ID, "121")
+	topic43Before := queryInboundLedgerThreadIDByPlatformMessage(t, env.pool, channel.ID, "122")
+	topic42After := queryInboundLedgerThreadIDByPlatformMessage(t, env.pool, channel.ID, "124")
+	topic43After := queryInboundLedgerThreadIDByPlatformMessage(t, env.pool, channel.ID, "125")
+	if topic42Before == topic42After {
+		t.Fatalf("expected /new to rotate topic 42 thread, got %s", topic42Before)
+	}
+	if topic43Before != topic43After {
+		t.Fatalf("expected topic 43 thread to stay unchanged, before=%s after=%s", topic43Before, topic43After)
+	}
+
+	assertHasDMThreadBinding(t, env.pool, channel.ID, "10001", env.personaID, "42", topic42After)
+	assertHasDMThreadBinding(t, env.pool, channel.ID, "10001", env.personaID, "43", topic43After)
+}
+
 func TestTelegramWebhookStoresStructuredInboundMessage(t *testing.T) {
 	env := setupTelegramChannelsTestEnv(t, telegrambot.NewClient("https://api.telegram.org", nil))
 	if _, err := env.pool.Exec(context.Background(), `UPDATE users SET timezone = 'Asia/Shanghai' WHERE id = $1`, env.userID); err != nil {
@@ -2177,7 +2371,7 @@ func TestTelegramPollDuplicateStopCommandCancelsOnce(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create thread: %v", err)
 	}
-	if _, err := channelDMThreadsRepo.Create(context.Background(), channel.ID, identity.ID, env.personaID, thread.ID); err != nil {
+	if _, err := channelDMThreadsRepo.Create(context.Background(), channel.ID, identity.ID, env.personaID, "", thread.ID); err != nil {
 		t.Fatalf("create dm thread binding: %v", err)
 	}
 	run, _, err := runEventRepo.CreateRunWithStartedEvent(
@@ -2219,6 +2413,155 @@ func TestTelegramPollDuplicateStopCommandCancelsOnce(t *testing.T) {
 
 	assertCountAccount(t, env.pool, `SELECT COUNT(*) FROM run_events WHERE run_id = '`+run.ID.String()+`' AND type = 'run.cancel_requested'`, 1)
 	assertCountAccount(t, env.pool, `SELECT COUNT(*) FROM channel_message_ledger WHERE channel_id = '`+channel.ID.String()+`' AND direction = 'inbound' AND metadata_json->>'ingress_state' = '`+inboundStateCommandHandled+`'`, 1)
+}
+
+func TestTelegramPollStopCancelsOnlyCurrentDmTopic(t *testing.T) {
+	env := setupTelegramChannelsTestEnv(t, telegrambot.NewClient("https://api.telegram.org", nil))
+	channel := createActiveTelegramChannel(t, env, "bot-token", []string{"10001"}, "demo-cred^gpt-5-mini")
+
+	channelIdentitiesRepo, err := data.NewChannelIdentitiesRepository(env.pool)
+	if err != nil {
+		t.Fatalf("channel identities repo: %v", err)
+	}
+	channelIdentityLinksRepo, err := data.NewChannelIdentityLinksRepository(env.pool)
+	if err != nil {
+		t.Fatalf("channel identity links repo: %v", err)
+	}
+	channelBindCodesRepo, err := data.NewChannelBindCodesRepository(env.pool)
+	if err != nil {
+		t.Fatalf("channel bind repo: %v", err)
+	}
+	channelDMThreadsRepo, err := data.NewChannelDMThreadsRepository(env.pool)
+	if err != nil {
+		t.Fatalf("channel dm threads repo: %v", err)
+	}
+	channelGroupThreadsRepo, err := data.NewChannelGroupThreadsRepository(env.pool)
+	if err != nil {
+		t.Fatalf("channel group threads repo: %v", err)
+	}
+	channelReceiptsRepo, err := data.NewChannelMessageReceiptsRepository(env.pool)
+	if err != nil {
+		t.Fatalf("channel receipts repo: %v", err)
+	}
+	channelLedgerRepo, err := data.NewChannelMessageLedgerRepository(env.pool)
+	if err != nil {
+		t.Fatalf("channel ledger repo: %v", err)
+	}
+	threadRepo, err := data.NewThreadRepository(env.pool)
+	if err != nil {
+		t.Fatalf("thread repo: %v", err)
+	}
+	messageRepo, err := data.NewMessageRepository(env.pool)
+	if err != nil {
+		t.Fatalf("message repo: %v", err)
+	}
+	runEventRepo, err := data.NewRunEventRepository(env.pool)
+	if err != nil {
+		t.Fatalf("run event repo: %v", err)
+	}
+	jobRepo, err := data.NewJobRepository(env.pool)
+	if err != nil {
+		t.Fatalf("job repo: %v", err)
+	}
+	personasRepo, err := data.NewPersonasRepository(env.pool)
+	if err != nil {
+		t.Fatalf("personas repo: %v", err)
+	}
+
+	connector := telegramConnector{
+		channelsRepo:             env.channelsRepo,
+		channelIdentitiesRepo:    channelIdentitiesRepo,
+		channelIdentityLinksRepo: channelIdentityLinksRepo,
+		channelBindCodesRepo:     channelBindCodesRepo,
+		channelDMThreadsRepo:     channelDMThreadsRepo,
+		channelGroupThreadsRepo:  channelGroupThreadsRepo,
+		channelReceiptsRepo:      channelReceiptsRepo,
+		channelLedgerRepo:        channelLedgerRepo,
+		personasRepo:             personasRepo,
+		threadRepo:               threadRepo,
+		messageRepo:              messageRepo,
+		runEventRepo:             runEventRepo,
+		jobRepo:                  jobRepo,
+		pool:                     env.pool,
+		telegramClient:           telegrambot.NewClient("https://api.telegram.org", nil),
+	}
+
+	firstName := "Alice"
+	identity, err := upsertTelegramIdentity(context.Background(), channelIdentitiesRepo, &telegramUser{
+		ID:        10001,
+		IsBot:     false,
+		FirstName: &firstName,
+	})
+	if err != nil {
+		t.Fatalf("upsert telegram identity: %v", err)
+	}
+	if _, err := channelIdentityLinksRepo.Upsert(context.Background(), channel.ID, identity.ID); err != nil {
+		t.Fatalf("link telegram identity: %v", err)
+	}
+
+	topic42Thread, err := threadRepo.Create(context.Background(), env.accountID, identity.UserID, env.projectID, nil, false)
+	if err != nil {
+		t.Fatalf("create topic 42 thread: %v", err)
+	}
+	topic43Thread, err := threadRepo.Create(context.Background(), env.accountID, identity.UserID, env.projectID, nil, false)
+	if err != nil {
+		t.Fatalf("create topic 43 thread: %v", err)
+	}
+	if _, err := channelDMThreadsRepo.Create(context.Background(), channel.ID, identity.ID, env.personaID, "42", topic42Thread.ID); err != nil {
+		t.Fatalf("create topic 42 binding: %v", err)
+	}
+	if _, err := channelDMThreadsRepo.Create(context.Background(), channel.ID, identity.ID, env.personaID, "43", topic43Thread.ID); err != nil {
+		t.Fatalf("create topic 43 binding: %v", err)
+	}
+
+	run42, _, err := runEventRepo.CreateRunWithStartedEvent(
+		context.Background(),
+		env.accountID,
+		topic42Thread.ID,
+		identity.UserID,
+		"run.started",
+		map[string]any{"persona_id": env.personaID.String(), "topic": "42"},
+	)
+	if err != nil {
+		t.Fatalf("create topic 42 run: %v", err)
+	}
+	run43, _, err := runEventRepo.CreateRunWithStartedEvent(
+		context.Background(),
+		env.accountID,
+		topic43Thread.ID,
+		identity.UserID,
+		"run.started",
+		map[string]any{"persona_id": env.personaID.String(), "topic": "43"},
+	)
+	if err != nil {
+		t.Fatalf("create topic 43 run: %v", err)
+	}
+
+	update := telegramUpdate{
+		UpdateID: 81,
+		Message: &telegramMessage{
+			MessageID:       151,
+			MessageThreadID: int64Ptr(42),
+			Date:            1710000500,
+			Text:            "/stop",
+			Chat: telegramChat{
+				ID:   10001,
+				Type: "private",
+			},
+			From: &telegramUser{
+				ID:        10001,
+				IsBot:     false,
+				FirstName: &firstName,
+			},
+		},
+	}
+
+	if err := connector.HandleUpdateForPoll(context.Background(), uuid.NewString(), channel, "bot-token", update); err != nil {
+		t.Fatalf("stop current topic: %v", err)
+	}
+
+	assertCountAccount(t, env.pool, `SELECT COUNT(*) FROM run_events WHERE run_id = '`+run42.ID.String()+`' AND type = 'run.cancel_requested'`, 1)
+	assertCountAccount(t, env.pool, `SELECT COUNT(*) FROM run_events WHERE run_id = '`+run43.ID.String()+`' AND type = 'run.cancel_requested'`, 0)
 }
 
 func TestTelegramPollThrottleRetryCreatesRunAfterWindowOpens(t *testing.T) {
@@ -2459,7 +2802,7 @@ func TestTelegramPollPendingDispatchInjectsIntoActiveRun(t *testing.T) {
 	if identity == nil {
 		t.Fatal("expected telegram identity")
 	}
-	threadMap, err := channelDMThreadsRepo.GetByBinding(context.Background(), channel.ID, identity.ID, env.personaID)
+	threadMap, err := channelDMThreadsRepo.GetByBinding(context.Background(), channel.ID, identity.ID, env.personaID, "")
 	if err != nil {
 		t.Fatalf("get dm thread binding: %v", err)
 	}
@@ -3226,4 +3569,58 @@ func assertCountAccount(t *testing.T, pool *pgxpool.Pool, query string, want int
 	if got != want {
 		t.Fatalf("unexpected count for %q: got %d want %d", query, got, want)
 	}
+}
+
+func queryInboundLedgerThreadIDByPlatformMessage(t *testing.T, pool *pgxpool.Pool, channelID uuid.UUID, platformMessageID string) uuid.UUID {
+	t.Helper()
+	var threadID uuid.UUID
+	if err := pool.QueryRow(
+		context.Background(),
+		`SELECT thread_id
+		   FROM channel_message_ledger
+		  WHERE channel_id = $1
+		    AND direction = 'inbound'
+		    AND platform_message_id = $2`,
+		channelID,
+		platformMessageID,
+	).Scan(&threadID); err != nil {
+		t.Fatalf("query inbound ledger thread id: %v", err)
+	}
+	return threadID
+}
+
+func assertHasDMThreadBinding(
+	t *testing.T,
+	pool *pgxpool.Pool,
+	channelID uuid.UUID,
+	platformSubjectID string,
+	personaID uuid.UUID,
+	platformThreadID string,
+	wantThreadID uuid.UUID,
+) {
+	t.Helper()
+	var gotThreadID uuid.UUID
+	if err := pool.QueryRow(
+		context.Background(),
+		`SELECT cdt.thread_id
+		   FROM channel_dm_threads cdt
+		   JOIN channel_identities ci ON ci.id = cdt.channel_identity_id
+		  WHERE cdt.channel_id = $1
+		    AND ci.platform_subject_id = $2
+		    AND cdt.persona_id = $3
+		    AND cdt.platform_thread_id = $4`,
+		channelID,
+		platformSubjectID,
+		personaID,
+		platformThreadID,
+	).Scan(&gotThreadID); err != nil {
+		t.Fatalf("query dm thread binding: %v", err)
+	}
+	if gotThreadID != wantThreadID {
+		t.Fatalf("unexpected dm binding thread: got %s want %s", gotThreadID, wantThreadID)
+	}
+}
+
+func int64Ptr(value int64) *int64 {
+	return &value
 }

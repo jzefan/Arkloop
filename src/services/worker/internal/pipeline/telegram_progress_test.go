@@ -124,6 +124,25 @@ func TestProgressTracker_TelegramReplyAndReactStayHidden(t *testing.T) {
 	}
 }
 
+func TestProgressTracker_EndReplyStaysHidden(t *testing.T) {
+	tracker, fake := newTestTelegramProgressTracker(t)
+	ctx := context.Background()
+
+	tracker.OnToolCall(ctx, "call-end", "end_reply", `{}`)
+	tracker.OnToolResult(ctx, "call-end", "end_reply", "")
+
+	sends, edits := fake.stats()
+	if sends != 0 || edits != 0 {
+		t.Fatalf("expected end_reply to skip Telegram progress output, got sends=%d edits=%d", sends, edits)
+	}
+
+	tracker.mu.Lock()
+	defer tracker.mu.Unlock()
+	if len(tracker.segments) != 0 || tracker.current != nil {
+		t.Fatalf("expected end_reply to leave no progress state, got segments=%d current=%#v", len(tracker.segments), tracker.current)
+	}
+}
+
 func TestProgressTracker_MessageDeltaClosesCurrentSegment(t *testing.T) {
 	tracker, fake := newTestTelegramProgressTracker(t)
 	ctx := context.Background()

@@ -15,9 +15,9 @@ import (
 	"arkloop/services/api/internal/http/conversationapi"
 	httpkit "arkloop/services/api/internal/http/httpkit"
 	"arkloop/services/api/internal/observability"
+	"arkloop/services/shared/eventbus"
 	"arkloop/services/shared/messagecontent"
 	"arkloop/services/shared/objectstore"
-	"arkloop/services/shared/eventbus"
 	"arkloop/services/shared/onebotclient"
 	"arkloop/services/shared/pgnotify"
 
@@ -267,6 +267,7 @@ func (c *qqConnector) HandleEvent(ctx context.Context, traceID string, ch data.C
 		// 私聊命令处理（复用 Telegram 的命令处理器）
 		if handled, replyText, err := handleTelegramCommand(
 			ctx, tx, &ch, identity, text,
+			"",
 			c.channelBindCodesRepo,
 			c.channelIdentitiesRepo,
 			c.channelIdentityLinksRepo,
@@ -779,7 +780,7 @@ func (c *qqConnector) resolveQQThreadID(
 
 	if isPrivate {
 		dmRepo := c.channelDMThreadsRepo.WithTx(tx)
-		threadMap, err := dmRepo.GetByBinding(ctx, ch.ID, identity.ID, personaID)
+		threadMap, err := dmRepo.GetByBinding(ctx, ch.ID, identity.ID, personaID, "")
 		if err != nil {
 			return uuid.Nil, err
 		}
@@ -788,14 +789,14 @@ func (c *qqConnector) resolveQQThreadID(
 				return threadMap.ThreadID, nil
 			}
 			slog.InfoContext(ctx, "qq_stale_dm_binding", "thread_id", threadMap.ThreadID, "channel_id", ch.ID)
-			_ = dmRepo.DeleteByBinding(ctx, ch.ID, identity.ID, personaID)
+			_ = dmRepo.DeleteByBinding(ctx, ch.ID, identity.ID, personaID, "")
 		}
 		thread, err := threadRepoTx.Create(ctx, ch.AccountID, identity.UserID, projectID, buildTitle(), false)
 		if err != nil {
 			return uuid.Nil, err
 		}
 		lockTitle(thread.ID)
-		if _, err := dmRepo.Create(ctx, ch.ID, identity.ID, personaID, thread.ID); err != nil {
+		if _, err := dmRepo.Create(ctx, ch.ID, identity.ID, personaID, "", thread.ID); err != nil {
 			return uuid.Nil, err
 		}
 		return thread.ID, nil
