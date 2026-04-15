@@ -1,5 +1,6 @@
 import { useEffect, useRef, useCallback } from 'react'
 import { canonicalToolName, pickLogicalToolName } from '@arkloop/shared'
+import { setThreadTodos } from '../todoDb'
 import { useAuth } from '../contexts/auth'
 import { useChatSession } from '../contexts/chat-session'
 import { useCredits } from '../contexts/credits'
@@ -318,6 +319,7 @@ export function useThreadSseEffect({
             return [{ id: item.id, content: item.content, status: item.status }]
           })
           setWorkTodos(items)
+          if (threadId) setThreadTodos(threadId, items).catch(() => {})
         }
         continue
       }

@@ -1552,3 +1552,26 @@ export function buildMessageWebFetchesFromRunEvents(events: RunEvent[]): WebFetc
   }
   return fetches
 }
+
+export function buildTodosFromRunEvents(
+  events: RunEvent[],
+): Array<{ id: string; content: string; status: string }> {
+  for (let i = events.length - 1; i >= 0; i--) {
+    const event = events[i]
+    if (event.type !== 'todo.updated') continue
+    const obj = event.data as { todos?: unknown }
+    if (!Array.isArray(obj?.todos)) continue
+    return (obj.todos as unknown[]).flatMap((t) => {
+      if (!t || typeof t !== 'object') return []
+      const item = t as { id?: unknown; content?: unknown; status?: unknown }
+      if (
+        typeof item.id !== 'string' ||
+        typeof item.content !== 'string' ||
+        typeof item.status !== 'string'
+      )
+        return []
+      return [{ id: item.id, content: item.content, status: item.status }]
+    })
+  }
+  return []
+}
