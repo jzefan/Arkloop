@@ -49,7 +49,7 @@ const contextCompactInitialPrompt = `Rewrite the content in <target-chunks> into
 
 Output rules:
 - Keep chronological order.
-- Use short bullet points.
+- Keep it as a compact continuous conversation, not a report.
 - Mention the speaker only when it helps disambiguate.
 - Preserve concrete details exactly when they matter.
 - Do not turn the conversation into a project report or task analysis.
@@ -67,10 +67,7 @@ func NewContextCompactMiddleware(
 	emitDebugEvents bool,
 	loaders ...*routing.ConfigLoader,
 ) RunMiddleware {
-	var configLoader *routing.ConfigLoader
-	if len(loaders) > 0 {
-		configLoader = loaders[0]
-	}
+	_ = loaders
 	return func(ctx context.Context, rc *RunContext, next RunHandler) error {
 		beforeMsgs := append([]llm.Message(nil), rc.Messages...)
 		cfg := rc.ContextCompact
@@ -105,287 +102,11 @@ func NewContextCompactMiddleware(
 			rc.Messages = microcompactToolResults(rc.Messages, cfg.MicrocompactKeepRecentTools)
 		}
 
-		beforeN := len(rc.Messages)
-		msgs := rc.Messages
-		ids := rc.ThreadMessageIDs
-		persistSplit := 0
-		pendingPersists := make([]pendingPersistCompaction, 0, 4)
-
-		if cfg.PersistEnabled && pool != nil && rc.Gateway != nil && len(msgs) > 1 {
-			window := 0
-			if rc.SelectedRoute != nil {
-				window = routing.RouteContextWindowTokens(rc.SelectedRoute.Route)
-			}
-			trigger, window := compactPersistTriggerTokens(cfg, window)
-			keep := cfg.PersistKeepLastMessages
-			if keep <= 0 {
-				keep = defaultPersistKeepLastMessages
-			}
-			requestEstimate := HistoryThreadPromptTokens(enc, contextCompactRequestMessages(rc.SystemPrompt, msgs))
-			anchor, anchored := resolveContextCompactPressureAnchor(ctx, pool, rc)
-			if anchored {
-				rc.SetContextCompactPressureAnchor(anchor.LastRealPromptTokens, anchor.LastRequestContextEstimateTokens)
-			}
-			pressure := ComputeContextCompactPressure(requestEstimate, func() *ContextCompactPressureAnchor {
-				if !anchored {
-					return nil
-				}
-				return &anchor
-			}())
-			if pressure.ContextPressureTokens >= trigger && len(ids) == len(msgs) {
-				// 断路器：连续失败过多则跳过 persist
-				if pool != nil && compactConsecutiveFailures(ctx, pool, rc.Run.AccountID, rc.Run.ThreadID) >= maxConsecutiveCompactFailures {
-					slog.WarnContext(ctx, "context_compact", "phase", "circuit_breaker", "run_id", rc.Run.ID.String(), "thread_id", rc.Run.ThreadID.String())
-					circuitBreakerEvent := map[string]any{
-						"op":    "persist",
-						"phase": "circuit_breaker",
-					}
-					ApplyContextCompactPressureFields(circuitBreakerEvent, pressure)
-					if evErr := appendContextCompactRunEvent(ctx, pool, eventsRepo, rc, circuitBreakerEvent); evErr != nil {
-						slog.WarnContext(ctx, "context_compact", "phase", "circuit_breaker_event", "err", evErr.Error(), "run_id", rc.Run.ID.String())
-					}
-				} else {
-					compactBase := msgs
-					compactBaseIDs := ids
-					evaluatingEvent := map[string]any{
-						"op":              "persist",
-						"phase":           "evaluating",
-						"pressure_tokens": pressure.ContextPressureTokens,
-						"trigger_tokens":  trigger,
-						"window_tokens":   window,
-						"message_count":   len(msgs),
-					}
-					if evErr := appendContextCompactRunEvent(ctx, pool, eventsRepo, rc, evaluatingEvent); evErr != nil {
-						slog.WarnContext(ctx, "context_compact", "phase", "evaluating_event", "err", evErr.Error(), "run_id", rc.Run.ID.String())
-					}
-					persistFrontier := append([]FrontierNode(nil), rc.ThreadContextFrontier...)
-					if len(persistFrontier) == 0 {
-						persistFrontier = buildCompactFrontierAtomsFromMessages(enc, compactBase)
-					}
-					targetTokens := contextCompactTargetTokens(cfg, window)
-					if targetTokens <= 0 {
-						targetTokens = trigger
-					}
-					if targetTokens >= pressure.ContextPressureTokens {
-						targetTokens = trigger - 1
-					}
-					if targetTokens < 1 {
-						targetTokens = 1
-					}
-					gw, model := resolveCompactionGateway(ctx, pool, rc, auxGateway, emitDebugEvents, configLoader)
-					if gw == nil {
-						slog.WarnContext(ctx, "context_compact", "phase", "gateway_nil", "run_id", rc.Run.ID.String())
-					} else {
-						var fileLockCleanup func()
-						var fileLockErr error
-						if pool != nil {
-							fileLockCleanup, fileLockErr = CompactThreadCompactionLock(ctx, rc.Run.ThreadID)
-							if fileLockErr != nil {
-								slog.WarnContext(ctx, "context_compact", "phase", "file_lock", "err", fileLockErr.Error(), "run_id", rc.Run.ID.String())
-							}
-							if fileLockCleanup != nil {
-								defer fileLockCleanup()
-							}
-						}
-
-						compactDeadline := time.Now().Add(contextCompactTimeBudget)
-						persistRound := 0
-						for pressure.ContextPressureTokens > targetTokens {
-							if time.Now().After(compactDeadline) {
-								slog.WarnContext(ctx, "context_compact", "phase", "persist_time_budget_exceeded", "run_id", rc.Run.ID.String(), "round", persistRound)
-								break
-							}
-							persistRound++
-
-							selectionFrontier := buildCompactFrontierAtomsFromPersistFrontier(persistFrontier)
-							if len(selectionFrontier) == 0 {
-								selectionFrontier = buildCompactFrontierAtomsFromMessages(enc, compactBase)
-							}
-							selection := selectCompactAtomWindow(selectionFrontier, pressure.ContextPressureTokens-targetTokens, contextCompactMaxLLMInputTokens)
-							if len(selection.Nodes) == 0 {
-								break
-							}
-
-							startedEvent := map[string]any{
-								"op":                    "persist",
-								"mode":                  "canonical_atoms",
-								"phase":                 "round_started",
-								"round":                 persistRound,
-								"atoms_selected":        len(selection.Nodes),
-								"selected_tokens":       selection.SelectedTokens,
-								"persist_split":         selection.EndNodeIndex + 1,
-								"trigger_tokens":        trigger,
-								"context_window_tokens": window,
-								"trigger_context_pct":   cfg.PersistTriggerContextPct,
-								"tail_keep_effective":   keep,
-							}
-							ApplyContextCompactPressureFields(startedEvent, pressure)
-							if evErr := appendContextCompactRunEvent(ctx, pool, eventsRepo, rc, startedEvent); evErr != nil {
-								slog.WarnContext(ctx, "context_compact", "phase", "round_started_event", "err", evErr.Error(), "run_id", rc.Run.ID.String())
-							}
-
-							targetNodes := selection.Nodes
-							targetNodeCount := len(targetNodes)
-							roundMessagesBefore := len(compactBase)
-							beforeRoundEstimate := requestEstimate
-							roundInputMessages := append([]llm.Message(nil), compactBase...)
-							progress := newCompactProgressRecorder(pool, eventsRepo, map[string]any{
-								"op":    "persist",
-								"mode":  "canonical_atoms",
-								"round": persistRound,
-							})
-							summary, usedNodes, sumErr := compactNodesWithPersistRetry(ctx, rc, gw, model, targetNodes, progress)
-							if sumErr != nil {
-								slog.WarnContext(ctx, "context_compact", "phase", "llm", "err", sumErr.Error(), "run_id", rc.Run.ID.String(), "round", persistRound)
-								failedEvent := map[string]any{
-									"op":                 "persist",
-									"mode":               "canonical_atoms",
-									"phase":              "llm_failed",
-									"round":              persistRound,
-									"persist_split":      selection.EndNodeIndex + 1,
-									"llm_error":          sumErr.Error(),
-									"trigger_tokens":     trigger,
-									"target_chunk_count": targetNodeCount,
-								}
-								ApplyContextCompactPressureFields(failedEvent, pressure)
-								if evErr := appendContextCompactRunEvent(ctx, pool, eventsRepo, rc, failedEvent); evErr != nil {
-									slog.WarnContext(ctx, "context_compact", "phase", "llm_failed_event", "err", evErr.Error(), "run_id", rc.Run.ID.String())
-								}
-								break
-							}
-
-							summary = strings.TrimSpace(summary)
-							if summary == "" || len(usedNodes) == 0 {
-								break
-							}
-
-							persistNodes := mapSelectedAtomsToPersistFrontierNodes(usedNodes, persistFrontier)
-							if len(persistNodes) == 0 {
-								persistNodes = append([]FrontierNode(nil), usedNodes...)
-							}
-
-							lastUsed := usedNodes[len(usedNodes)-1]
-							persistSplit = lastUsed.MsgEnd + 1
-							persistPrefixIDs := append([]uuid.UUID(nil), filterNonNilUUIDs(compactBaseIDs[:persistSplit])...)
-							roundCompletedEvent := map[string]any{
-								"op":                    "persist",
-								"mode":                  "canonical_atoms",
-								"phase":                 "round_completed",
-								"round":                 persistRound,
-								"persist_split":         persistSplit,
-								"context_window_tokens": window,
-								"trigger_tokens":        trigger,
-								"trigger_context_pct":   cfg.PersistTriggerContextPct,
-								"tail_keep_effective":   keep,
-								"summary_tokens":        compactTokenCount(enc, summary),
-								"atoms_compacted":       len(usedNodes),
-							}
-							ApplyContextCompactPressureFields(roundCompletedEvent, pressure)
-							if evErr := appendContextCompactRunEvent(ctx, pool, eventsRepo, rc, roundCompletedEvent); evErr != nil {
-								slog.WarnContext(ctx, "context_compact", "phase", "round_completed_event", "err", evErr.Error(), "run_id", rc.Run.ID.String())
-							}
-
-							placeholderReplacementID := compactFrontierNodeID(FrontierNodeReplacement, persistRound, persistSplit, persistSplit, len(pendingPersists))
-							completedEvent := map[string]any{
-								"op":                    "persist",
-								"mode":                  "canonical_atoms",
-								"phase":                 "completed",
-								"round":                 persistRound,
-								"persist_split":         persistSplit,
-								"messages_before":       roundMessagesBefore,
-								"context_window_tokens": window,
-								"trigger_tokens":        trigger,
-								"trigger_context_pct":   cfg.PersistTriggerContextPct,
-								"tail_keep_configured":  keep,
-								"tail_keep_effective":   keep,
-								"target_chunk_count":    targetNodeCount,
-							}
-							ApplyContextCompactPressureFields(completedEvent, pressure)
-							pendingPersists = append(pendingPersists, pendingPersistCompaction{
-								PlaceholderReplacementID: placeholderReplacementID,
-								Summary:                  summary,
-								WindowNodes:              append([]FrontierNode(nil), persistNodes...),
-								PrefixIDs:                persistPrefixIDs,
-								CompletedEvent:           completedEvent,
-							})
-
-							msgs = materializeCompactedPrefixAtoms(compactBase, usedNodes, len(usedNodes)-1, summary)
-							msgs = truncateLargeTailMessages(enc, msgs)
-							ids = materializeCompactedPrefixIDs(compactBaseIDs, usedNodes, len(usedNodes)-1)
-							persistFrontier = materializeCompactedPrefixFrontier(persistFrontier, persistNodes, summary, placeholderReplacementID)
-							compactBase = msgs
-							compactBaseIDs = ids
-							requestEstimate = HistoryThreadPromptTokens(enc, contextCompactRequestMessages(rc.SystemPrompt, compactBase))
-							pressure = ComputeContextCompactPressure(requestEstimate, func() *ContextCompactPressureAnchor {
-								if !anchored {
-									return nil
-								}
-								return &anchor
-							}())
-							rc.Messages = msgs
-							rc.ThreadMessageIDs = ids
-							rc.ThreadContextFrontier = append([]FrontierNode(nil), persistFrontier...)
-							systemPrompt := compactSystemPromptForRun(ctx, rc, contextCompactSystemPrompt, nil)
-							notifyCompactApplied(ctx, rc, CompactInput{
-								SystemPrompt: systemPrompt,
-								Messages:     roundInputMessages,
-							}, CompactOutput{
-								SystemPrompt: systemPrompt,
-								Messages:     append([]llm.Message(nil), rc.Messages...),
-								Summary:      summary,
-								Changed:      true,
-							})
-							if requestEstimate >= beforeRoundEstimate {
-								break
-							}
-						}
-					}
-				}
-			}
-		}
-
-		var trimEvent map[string]any
-		if cfg.Enabled && ContextCompactHasActiveBudget(cfg) {
-			beforeTrim := len(rc.Messages)
-			beforeTrimTok := HistoryThreadPromptTokens(enc, rc.Messages)
-			out, outIDs, dropped := CompactThreadMessages(rc.Messages, rc.ThreadMessageIDs, cfg, enc)
-			rc.Messages = out
-			rc.ThreadMessageIDs = outIDs
-			if dropped > 0 || len(out) != beforeTrim {
-				slog.InfoContext(ctx, "context_compact",
-					"run_id", rc.Run.ID.String(),
-					"thread_id", rc.Run.ThreadID.String(),
-					"phase", "trim",
-					"dropped_prefix", dropped,
-					"after", len(out),
-				)
-				trimEvent = map[string]any{
-					"op":                            "trim",
-					"phase":                         "completed",
-					"dropped_prefix":                dropped,
-					"messages_before":               beforeTrim,
-					"messages_after":                len(out),
-					"thread_tokens_tiktoken_before": beforeTrimTok,
-					"thread_tokens_tiktoken_after":  HistoryThreadPromptTokens(enc, out),
-				}
-			}
-		}
-
-		if persistSplit > 0 {
-			slog.InfoContext(ctx, "context_compact",
-				"run_id", rc.Run.ID.String(),
-				"thread_id", rc.Run.ThreadID.String(),
-				"phase", "persist",
-				"persist_split", persistSplit,
-				"before", beforeN,
-				"after", len(rc.Messages),
-			)
-		}
 		if cfg.PersistEnabled && pool != nil {
 			middlewareCompletedEvent := map[string]any{
-				"op":              "persist",
+				"op":              "persist_background",
 				"phase":           "middleware_completed",
-				"persist_applied": persistSplit > 0,
+				"persist_applied": false,
 				"message_count":   len(rc.Messages),
 			}
 			if evErr := appendContextCompactRunEvent(ctx, pool, eventsRepo, rc, middlewareCompletedEvent); evErr != nil {
@@ -395,111 +116,6 @@ func NewContextCompactMiddleware(
 
 		nextErr := next(ctx, rc)
 
-		postCtx, cancel := context.WithTimeout(context.Background(), contextCompactPostWriteTimeout)
-		defer cancel()
-
-		if pool != nil && len(pendingPersists) > 0 {
-			insertedReplacementIDs := make(map[uuid.UUID]uuid.UUID, len(pendingPersists))
-			for _, pending := range pendingPersists {
-				if strings.TrimSpace(pending.Summary) == "" || len(pending.WindowNodes) == 0 {
-					continue
-				}
-				tx, txErr := pool.BeginTx(postCtx, pgx.TxOptions{})
-				if txErr != nil {
-					slog.WarnContext(ctx, "context_compact", "phase", "tx_begin", "err", txErr.Error(), "run_id", rc.Run.ID.String())
-					continue
-				}
-				if lockErr := compactThreadCompactionAdvisoryXactLock(postCtx, tx, rc.Run.ThreadID); lockErr != nil {
-					_ = tx.Rollback(postCtx)
-					emitContextCompactFailure(ctx, postCtx, pool, eventsRepo, rc, "persist", "advisory_lock", lockErr)
-					slog.WarnContext(ctx, "context_compact", "phase", "advisory_lock", "err", lockErr.Error(), "run_id", rc.Run.ID.String())
-					continue
-				}
-				still, chkErr := compactPrefixMessagesStillAvailable(postCtx, tx, rc.Run.AccountID, rc.Run.ThreadID, pending.PrefixIDs)
-				if chkErr != nil {
-					_ = tx.Rollback(postCtx)
-					emitContextCompactFailure(ctx, postCtx, pool, eventsRepo, rc, "persist", "prefix_precheck", chkErr)
-					slog.WarnContext(ctx, "context_compact", "phase", "prefix_precheck", "err", chkErr.Error(), "run_id", rc.Run.ID.String())
-					continue
-				}
-				if !still {
-					_ = tx.Rollback(postCtx)
-					continue
-				}
-				persistPlan, ok, rangeErr := resolvePersistReplacementPlan(
-					postCtx,
-					tx,
-					rc.Run.AccountID,
-					rc.Run.ThreadID,
-					pending.WindowNodes,
-				)
-				if rangeErr != nil {
-					_ = tx.Rollback(postCtx)
-					emitContextCompactFailure(ctx, postCtx, pool, eventsRepo, rc, "persist", "range_resolve", rangeErr)
-					slog.WarnContext(ctx, "context_compact", "phase", "range_resolve", "err", rangeErr.Error(), "run_id", rc.Run.ID.String())
-					continue
-				}
-				if !ok {
-					_ = tx.Rollback(postCtx)
-					continue
-				}
-				persistPlan = remapPersistReplacementPlan(persistPlan, insertedReplacementIDs)
-
-				replacementsRepo := data.ThreadContextReplacementsRepository{}
-				replacement, insErr := replacementsRepo.Insert(postCtx, tx, data.ThreadContextReplacementInsertInput{
-					AccountID:       rc.Run.AccountID,
-					ThreadID:        rc.Run.ThreadID,
-					StartThreadSeq:  persistPlan.StartThreadSeq,
-					EndThreadSeq:    persistPlan.EndThreadSeq,
-					StartContextSeq: persistPlan.StartContextSeq,
-					EndContextSeq:   persistPlan.EndContextSeq,
-					SummaryText:     pending.Summary,
-					Layer:           persistPlan.Layer,
-					MetadataJSON:    compactReplacementMetadata("context_compact"),
-				})
-				if insErr != nil {
-					_ = tx.Rollback(postCtx)
-					emitContextCompactFailure(ctx, postCtx, pool, eventsRepo, rc, "persist", "insert_replacement", insErr)
-					slog.WarnContext(ctx, "context_compact", "phase", "insert_replacement", "err", insErr.Error(), "run_id", rc.Run.ID.String())
-					continue
-				}
-				if edgeErr := writeReplacementSupersessionEdges(postCtx, tx, rc.Run.AccountID, rc.Run.ThreadID, replacement.ID, persistPlan); edgeErr != nil {
-					_ = tx.Rollback(postCtx)
-					emitContextCompactFailure(ctx, postCtx, pool, eventsRepo, rc, "persist", "write_replacement_edges", edgeErr)
-					slog.WarnContext(ctx, "context_compact", "phase", "write_replacement_edges", "err", edgeErr.Error(), "run_id", rc.Run.ID.String())
-					continue
-				}
-				if supErr := replacementsRepo.SupersedeActiveOverlapsByContextSeq(postCtx, tx, rc.Run.AccountID, rc.Run.ThreadID, replacement.StartContextSeq, replacement.EndContextSeq, replacement.ID); supErr != nil {
-					_ = tx.Rollback(postCtx)
-					emitContextCompactFailure(ctx, postCtx, pool, eventsRepo, rc, "persist", "supersede_replacements", supErr)
-					slog.WarnContext(ctx, "context_compact", "phase", "supersede_replacements", "err", supErr.Error(), "run_id", rc.Run.ID.String())
-					continue
-				}
-				evOk := true
-				if pending.CompletedEvent != nil && eventsRepo != nil {
-					ev := rc.Emitter.Emit("run.context_compact", pending.CompletedEvent, nil, nil)
-					if _, evErr := eventsRepo.AppendRunEvent(postCtx, tx, rc.Run.ID, ev); evErr != nil {
-						_ = tx.Rollback(postCtx)
-						evOk = false
-						slog.WarnContext(ctx, "context_compact", "phase", "run_event", "err", evErr.Error(), "run_id", rc.Run.ID.String())
-					}
-				}
-				if !evOk {
-					continue
-				}
-				if err := tx.Commit(postCtx); err != nil {
-					slog.WarnContext(ctx, "context_compact", "phase", "tx_commit", "err", err.Error(), "run_id", rc.Run.ID.String())
-					continue
-				}
-				insertedReplacementIDs[pending.PlaceholderReplacementID] = replacement.ID
-			}
-		}
-
-		if trimEvent != nil {
-			if err := appendContextCompactRunEvent(postCtx, pool, eventsRepo, rc, trimEvent); err != nil {
-				slog.WarnContext(ctx, "context_compact", "phase", "run_event_trim", "err", err.Error(), "run_id", rc.Run.ID.String())
-			}
-		}
 		afterTokens := traceContextCompactTokens(enc, rc.SystemPrompt, rc.Messages)
 		emitTraceEvent(rc, "context_compact", "context_compact.completed", map[string]any{
 			"compacted":     beforeTokens != afterTokens || len(beforeMsgs) != len(rc.Messages),
@@ -725,7 +341,7 @@ func materializeCompactedPrefixFrontier(
 		EndThreadSeq:    last.EndThreadSeq,
 		SourceText:      strings.TrimSpace(summary),
 		ApproxTokens:    approxTokensFromText(summary),
-		Role:            "user",
+		Role:            "system",
 	}
 	out := make([]FrontierNode, 0, len(frontier)-endIndex)
 	out = append(out, replacement)
@@ -766,7 +382,7 @@ func leadingCompactPrefixMessageCount(msgs []llm.Message, ids []uuid.UUID) int {
 		if ids[i] != uuid.Nil {
 			break
 		}
-		if msgs[i].Role != "user" || len(msgs[i].Content) == 0 {
+		if msgs[i].Phase == nil || strings.TrimSpace(*msgs[i].Phase) != compactSyntheticPhase || len(msgs[i].Content) == 0 {
 			break
 		}
 		count++
@@ -885,207 +501,14 @@ func MaybeInlineCompactMessages(
 	anchor *ContextCompactPressureAnchor,
 	forceCompact bool,
 ) ([]llm.Message, ContextCompactPressureStats, bool, error) {
+	_ = ctx
+	_ = forceCompact
 	if rc == nil {
 		return msgs, ContextCompactPressureStats{}, false, nil
 	}
-	cfg := rc.ContextCompact
-	if !cfg.PersistEnabled || rc.Gateway == nil || rc.SelectedRoute == nil {
-		estimate := HistoryThreadPromptTokensForRoute(rc.SelectedRoute, msgs)
-		stats := ComputeContextCompactPressure(estimate, anchor)
-		return msgs, stats, false, nil
-	}
-	enc, err := ResolveTiktokenForRoute(rc.SelectedRoute)
-	if err != nil || enc == nil {
-		enc, _ = tiktoken.GetEncoding(tiktoken.MODEL_O200K_BASE)
-	}
-	window := routing.RouteContextWindowTokens(rc.SelectedRoute.Route)
-	trigger, window := compactPersistTriggerTokens(cfg, window)
-	working := append([]llm.Message(nil), msgs...)
-	estimate := HistoryThreadPromptTokens(enc, working)
+	estimate := HistoryThreadPromptTokensForRoute(rc.SelectedRoute, msgs)
 	stats := ComputeContextCompactPressure(estimate, anchor)
-	if !forceCompact && stats.ContextPressureTokens < trigger {
-		return msgs, stats, false, nil
-	}
-	if len(working) == 1 {
-		compactedSingle, changed, compactErr := maybeInlineCompactSingleOversizedTextAtom(ctx, rc, working[0], enc)
-		if compactErr != nil {
-			return msgs, stats, false, compactErr
-		}
-		if changed {
-			stats.TargetChunkCount = len(buildCanonicalCompactChunks(enc, working))
-			stats.SingleAtomPartial = true
-			return compactedSingle, stats, true, nil
-		}
-		return msgs, stats, false, nil
-	}
-
-	targetTokens := contextCompactTargetTokens(cfg, window)
-	if targetTokens <= 0 {
-		targetTokens = trigger
-	}
-	if targetTokens >= stats.ContextPressureTokens {
-		if forceCompact {
-			targetTokens = stats.ContextPressureTokens - 1
-		} else {
-			targetTokens = trigger - 1
-		}
-	}
-	if targetTokens < 1 {
-		targetTokens = 1
-	}
-
-	changedAny := false
-	compactDeadline := time.Now().Add(contextCompactTimeBudget)
-	inlineRound := 0
-	forceRound := forceCompact
-	for forceRound || stats.ContextPressureTokens > targetTokens {
-		if time.Now().After(compactDeadline) {
-			slog.WarnContext(ctx, "context_compact", "phase", "inline_time_budget_exceeded", "run_id", rc.Run.ID.String(), "round", inlineRound)
-			break
-		}
-		inlineRound++
-		forceRound = false
-		roundStartEvent := map[string]any{
-			"op":              "inline",
-			"phase":           "round_started",
-			"round":           inlineRound,
-			"atoms_selected":  0,
-			"pressure_tokens": stats.ContextPressureTokens,
-			"target_tokens":   targetTokens,
-		}
-		if err := appendContextCompactRunEvent(ctx, nil, nil, rc, roundStartEvent); err != nil {
-			slog.WarnContext(ctx, "context_compact", "phase", "inline_round_started_event", "err", err.Error(), "run_id", rc.Run.ID.String())
-		}
-		slog.InfoContext(ctx, "context_compact",
-			"op", "inline",
-			"phase", "round_started",
-			"run_id", rc.Run.ID.String(),
-			"round", inlineRound,
-		)
-		beforeEstimate := estimate
-		nodes := buildCompactFrontierAtomsFromMessagesWithOptions(enc, working, false)
-		selection := selectCompactAtomWindow(nodes, stats.ContextPressureTokens-targetTokens, contextCompactMaxLLMInputTokens)
-		if len(selection.Nodes) == 0 {
-			break
-		}
-		progress := newCompactProgressRecorder(nil, nil, map[string]any{
-			"op":    "inline",
-			"mode":  "canonical_atoms",
-			"round": inlineRound,
-		})
-		summary, usedNodes, compactErr := compactNodesWithShrinkRetry(ctx, rc, rc.Gateway, rc.SelectedRoute.Route.Model, selection.Nodes, progress)
-		if compactErr != nil {
-			return msgs, stats, changedAny, compactErr
-		}
-		summary = strings.TrimSpace(summary)
-		if summary == "" || len(usedNodes) == 0 {
-			break
-		}
-		working = materializeCompactedPrefixAtoms(working, nodes, len(usedNodes)-1, summary)
-		working = truncateLargeTailMessages(enc, working)
-		stats.TargetChunkCount = len(usedNodes)
-		stats.PreviousReplacementCount = 0
-		stats.SingleAtomPartial = false
-		estimate = HistoryThreadPromptTokens(enc, working)
-		stats = ComputeContextCompactPressure(estimate, anchor)
-		changedAny = true
-		forceRound = false
-		roundCompletedEvent := map[string]any{
-			"op":              "inline",
-			"phase":           "round_completed",
-			"round":           inlineRound,
-			"atoms_compacted": len(usedNodes),
-			"pressure_tokens": stats.ContextPressureTokens,
-			"target_tokens":   targetTokens,
-		}
-		if err := appendContextCompactRunEvent(ctx, nil, nil, rc, roundCompletedEvent); err != nil {
-			slog.WarnContext(ctx, "context_compact", "phase", "inline_round_completed_event", "err", err.Error(), "run_id", rc.Run.ID.String())
-		}
-		systemPrompt := compactSystemPromptForRun(ctx, rc, contextCompactSystemPrompt, nil)
-		notifyCompactApplied(ctx, rc, CompactInput{
-			SystemPrompt: systemPrompt,
-			Messages:     append([]llm.Message(nil), msgs...),
-		}, CompactOutput{
-			SystemPrompt: systemPrompt,
-			Messages:     append([]llm.Message(nil), working...),
-			Summary:      summary,
-			Changed:      true,
-		})
-		if estimate >= beforeEstimate {
-			break
-		}
-		if cfg.PersistTriggerContextPct <= 0 {
-			break
-		}
-	}
-	return working, stats, changedAny, nil
-}
-
-func maybeInlineCompactSingleOversizedTextAtom(
-	ctx context.Context,
-	rc *RunContext,
-	msg llm.Message,
-	enc *tiktoken.Tiktoken,
-) ([]llm.Message, bool, error) {
-	role := strings.TrimSpace(msg.Role)
-	if role != "user" && role != "assistant" {
-		return nil, false, nil
-	}
-	if role == "assistant" && len(msg.ToolCalls) > 0 {
-		return nil, false, nil
-	}
-	text := strings.TrimSpace(messageText(msg))
-	if text == "" {
-		text = compactFallbackContentText(msg)
-	}
-	if text == "" {
-		return nil, false, nil
-	}
-	pieces := splitCompactPayload(enc, text)
-	if len(pieces) < 2 {
-		return nil, false, nil
-	}
-	keepTail := len(pieces) * 30 / 100
-	if keepTail < 1 {
-		keepTail = 1
-	}
-	headParts := pieces[:len(pieces)-keepTail]
-	tailParts := pieces[len(pieces)-keepTail:]
-	if len(headParts) == 0 || len(tailParts) == 0 {
-		return nil, false, nil
-	}
-	summary, err := runContextCompactLLM(ctx, rc, rc.Gateway, rc.SelectedRoute.Route.Model, []llm.Message{{
-		Role:    role,
-		Content: []llm.TextPart{{Text: strings.Join(headParts, "\n\n")}},
-	}}, enc, "")
-	if err != nil {
-		return nil, false, err
-	}
-	if strings.TrimSpace(summary) == "" {
-		return nil, false, nil
-	}
-	tailMsg := llm.Message{
-		Role:    role,
-		Phase:   msg.Phase,
-		Content: []llm.TextPart{{Text: strings.TrimSpace(strings.Join(tailParts, "\n\n"))}},
-	}
-	out := []llm.Message{makeThreadContextReplacementMessage(summary), tailMsg}
-	systemPrompt := compactSystemPromptForRun(ctx, rc, contextCompactSystemPrompt, []llm.Message{msg})
-	notifyCompactApplied(ctx, rc, CompactInput{
-		SystemPrompt: systemPrompt,
-		Messages:     []llm.Message{msg},
-	}, CompactOutput{
-		SystemPrompt: systemPrompt,
-		Messages:     append([]llm.Message(nil), out...),
-		Summary:      strings.TrimSpace(summary),
-		Changed:      true,
-	})
-	return out, true, nil
-}
-
-func runContextCompactLLM(ctx context.Context, rc *RunContext, gateway llm.Gateway, model string, prefix []llm.Message, enc *tiktoken.Tiktoken, previousSummary string) (string, error) {
-	_ = previousSummary
-	return runContextCompactLLMForNodes(ctx, rc, gateway, model, buildCompactFrontierNodesFromMessages(enc, prefix), compactProgressRecorder{}, 1)
+	return msgs, stats, false, nil
 }
 
 func trimLeadingCompactSnapshotMessages(msgs []llm.Message) []llm.Message {
@@ -1203,9 +626,4 @@ func serializeMessagesForCompact(msgs []llm.Message) string {
 		}
 	}
 	return strings.Join(parts, "\n\n")
-}
-
-// runGroupCompactLLM 群聊专用的 compact LLM 调用，使用群聊 prompt 模板。
-func runGroupCompactLLM(ctx context.Context, gateway llm.Gateway, model string, prefix []llm.Message, enc *tiktoken.Tiktoken, previousSummary string) (string, error) {
-	return runContextCompactLLM(ctx, nil, gateway, model, prefix, enc, previousSummary)
 }

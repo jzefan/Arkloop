@@ -97,12 +97,11 @@ func TestCompactThreadMessages_trimCount(t *testing.T) {
 	ids := []uuid.UUID{uuid.New(), uuid.New(), uuid.New()}
 	cfg := ContextCompactSettings{Enabled: true, MaxMessages: 2}
 	out, outIDs, dropped := CompactThreadMessages(msgs, ids, cfg, nil)
-	// stabilizeCompactStart skips past assistant to land on user
-	if dropped != 2 || len(out) != 1 {
-		t.Fatalf("expected drop 2, len 1, got dropped=%d len=%d", dropped, len(out))
+	if dropped != 0 || len(out) != len(msgs) {
+		t.Fatalf("expected delete-based trim retired, got dropped=%d len=%d", dropped, len(out))
 	}
-	if out[0].Role != "user" || outIDs[0] != ids[2] {
-		t.Fatalf("expected user start, got %q", out[0].Role)
+	if out[0].Role != "user" || outIDs[0] != ids[0] {
+		t.Fatalf("expected no-op compact result, got role=%q ids=%#v", out[0].Role, outIDs)
 	}
 }
 
@@ -115,8 +114,8 @@ func TestCompactThreadMessages_userTokenBudget(t *testing.T) {
 	}
 	cfg := ContextCompactSettings{Enabled: true, MaxUserMessageTokens: 120}
 	out, _, dropped := CompactThreadMessages(msgs, nil, cfg, nil)
-	if dropped == 0 || len(out) == len(msgs) {
-		t.Fatalf("expected head dropped, dropped=%d len=%d", dropped, len(out))
+	if dropped != 0 || len(out) != len(msgs) {
+		t.Fatalf("expected delete-based trim retired, dropped=%d len=%d", dropped, len(out))
 	}
 	if out[len(out)-1].Role != "user" {
 		t.Fatal("expected tail preserved")
@@ -297,14 +296,14 @@ func TestSelectCompactAtomWindow_TokenCap(t *testing.T) {
 	}
 
 	selection := selectCompactAtomWindow(nodes, 1, contextCompactMaxLLMInputTokens)
-	if len(selection.Nodes) != 3 {
-		t.Fatalf("expected 3 atoms under half-window token cap, got %d", len(selection.Nodes))
+	if len(selection.Nodes) != 1 {
+		t.Fatalf("expected minimal deficit-driven selection, got %d", len(selection.Nodes))
 	}
-	if selection.SelectedTokens != 60000 {
-		t.Fatalf("expected 60000 selected tokens, got %d", selection.SelectedTokens)
+	if selection.SelectedTokens != 20000 {
+		t.Fatalf("expected 20000 selected tokens, got %d", selection.SelectedTokens)
 	}
-	if selection.TargetTokens != contextCompactMaxLLMInputTokens/2 {
-		t.Fatalf("expected target %d, got %d", contextCompactMaxLLMInputTokens/2, selection.TargetTokens)
+	if selection.TargetTokens != 1024 {
+		t.Fatalf("expected minimum target 1024, got %d", selection.TargetTokens)
 	}
 }
 
@@ -357,6 +356,9 @@ func TestMaterializeCompactedPrefixAtoms_NoPartialTail(t *testing.T) {
 	out := materializeCompactedPrefixAtoms(msgs, nodes, 1, "summary")
 	if len(out) != 2 {
 		t.Fatalf("expected replacement plus untouched tail, got %d messages", len(out))
+	}
+	if out[0].Role != "system" {
+		t.Fatalf("expected compact replacement rendered as system, got %q", out[0].Role)
 	}
 	if out[0].Phase == nil || *out[0].Phase != compactSyntheticPhase {
 		t.Fatalf("expected compact synthetic replacement, got %#v", out[0].Phase)
@@ -644,7 +646,7 @@ func TestSelectRenderableReplacementSpansKeepsLastChunkOfLastAtomRaw(t *testing.
 		},
 	}
 
-	out := selectRenderableReplacementSpans(spans, lastAtom)
+	out := selectRenderableReplacementSpans(spans, 1, lastAtom)
 	if len(out) != 2 {
 		t.Fatalf("expected two replacements after keeping last chunk raw, got %d", len(out))
 	}
@@ -743,33 +745,6 @@ func TestCompactNodesWithShrinkRetryDropsWholeChunkedToolEpisode(t *testing.T) {
 	}
 }
 
-func TestMaybeInlineCompactSingleOversizedTextAtomRejectsToolCalls(t *testing.T) {
-	rc := &RunContext{
-		Gateway: &stubCompactGateway{summary: "summary"},
-		SelectedRoute: &routing.SelectedProviderRoute{
-			Route: routing.ProviderRouteRule{Model: "stub"},
-		},
-	}
-	msg := llm.Message{
-		Role: "assistant",
-		Content: []llm.TextPart{{
-			Text: strings.Repeat("tool payload ", 400),
-		}},
-		ToolCalls: []llm.ToolCall{{
-			ToolCallID: "call_1",
-			ToolName:   "search",
-		}},
-	}
-
-	out, changed, err := maybeInlineCompactSingleOversizedTextAtom(context.Background(), rc, msg, nil)
-	if err != nil {
-		t.Fatalf("maybeInlineCompactSingleOversizedTextAtom returned error: %v", err)
-	}
-	if changed {
-		t.Fatalf("expected tool episode message to stay intact, got %#v", out)
-	}
-}
-
 func TestMaybeInlineCompactMessagesAfterCompactReceivesRealOutput(t *testing.T) {
 	advisor := &captureCompactionAdvisor{}
 	registry := NewHookRegistry()
@@ -801,27 +776,17 @@ func TestMaybeInlineCompactMessagesAfterCompactReceivesRealOutput(t *testing.T) 
 	if err != nil {
 		t.Fatalf("MaybeInlineCompactMessages: %v", err)
 	}
-	if !changed {
-		t.Fatal("expected inline compact change")
+	if changed {
+		t.Fatal("expected normal inline compact retired")
 	}
-	if len(advisor.outputs) != 1 {
-		t.Fatalf("expected one after compact callback, got %d", len(advisor.outputs))
+	if len(advisor.outputs) != 0 {
+		t.Fatalf("expected no compact callback, got %d", len(advisor.outputs))
 	}
-	got := advisor.outputs[0]
-	if !got.Changed {
-		t.Fatal("expected compact output Changed=true")
+	if len(out) != len(msgs) {
+		t.Fatalf("expected messages unchanged, got %d", len(out))
 	}
-	if strings.TrimSpace(got.Summary) != "summary" {
-		t.Fatalf("unexpected summary: %q", got.Summary)
-	}
-	if len(got.Messages) != len(out) {
-		t.Fatalf("expected %d output messages, got %d", len(out), len(got.Messages))
-	}
-	body := messageText(gateway.lastReq.Messages[1])
-	for _, want := range []string{"[user]\nfirst", "[assistant]\nsecond"} {
-		if !strings.Contains(body, want) {
-			t.Fatalf("expected atom-formatted input %q in %q", want, body)
-		}
+	if gateway.calls != 0 {
+		t.Fatalf("expected no compact gateway call, got %d", gateway.calls)
 	}
 }
 
@@ -908,7 +873,7 @@ func TestSelectRenderableReplacementSpansKeepsWholeRichLastAtomRaw(t *testing.T)
 		},
 	}
 
-	out := selectRenderableReplacementSpans(spans, lastAtom)
+	out := selectRenderableReplacementSpans(spans, 1, lastAtom)
 	if len(out) != 1 {
 		t.Fatalf("expected only non-overlapping older replacement, got %#v", out)
 	}
@@ -1084,7 +1049,7 @@ func TestComputeTailKeepByTokenBudget_ZeroBudget(t *testing.T) {
 	}
 }
 
-func TestMaybeInlineCompactMessages_SingleOversizedTextAtom(t *testing.T) {
+func TestMaybeInlineCompactMessages_SingleOversizedTextAtomRetired(t *testing.T) {
 	gateway := &stubCompactGateway{summary: "compacted head"}
 	huge := strings.Repeat("alpha beta gamma delta\n\n", 240)
 	rc := &RunContext{
@@ -1109,30 +1074,23 @@ func TestMaybeInlineCompactMessages_SingleOversizedTextAtom(t *testing.T) {
 	if err != nil {
 		t.Fatalf("MaybeInlineCompactMessages: %v", err)
 	}
-	if !changed {
-		t.Fatal("expected single oversized atom to be compacted")
+	if changed {
+		t.Fatal("expected inline compact path retired")
 	}
-	if len(out) != 2 {
-		t.Fatalf("expected replacement + tail message, got %d", len(out))
+	if len(out) != 1 {
+		t.Fatalf("expected message unchanged, got %d", len(out))
 	}
-	if strings.TrimSpace(messageText(out[0])) == "" {
-		t.Fatalf("expected leading replacement summary, got %q", messageText(out[0]))
+	if strings.TrimSpace(messageText(out[0])) != strings.TrimSpace(huge) {
+		t.Fatalf("expected original message preserved")
 	}
-	if strings.TrimSpace(messageText(out[1])) == "" {
-		t.Fatal("expected tail message kept")
+	if stats.SingleAtomPartial {
+		t.Fatalf("expected no single atom partial flag, got %#v", stats)
 	}
-	if !stats.SingleAtomPartial {
-		t.Fatalf("expected single atom partial flag in stats, got %#v", stats)
+	if stats.TargetChunkCount != 0 {
+		t.Fatalf("expected no chunk-driven compact stats, got %#v", stats)
 	}
-	if stats.TargetChunkCount < 2 {
-		t.Fatalf("expected chunk-driven compact stats, got %#v", stats)
-	}
-	if gateway.calls != 1 {
-		t.Fatalf("expected compact gateway called once, got %d", gateway.calls)
-	}
-	body := messageText(gateway.lastReq.Messages[1])
-	if !strings.Contains(body, "<target-chunks>") {
-		t.Fatalf("expected chunk contract block, got %q", body)
+	if gateway.calls != 0 {
+		t.Fatalf("expected no compact gateway call, got %d", gateway.calls)
 	}
 }
 
@@ -1525,17 +1483,17 @@ func TestRewriteOversizeRequest_ForceCompactsWhenOnlyBytesOversize(t *testing.T)
 	if err != nil {
 		t.Fatalf("RewriteOversizeRequest failed: %v", err)
 	}
-	if !stats.CompactApplied {
-		t.Fatalf("expected compact rewrite for bytes-only oversize, got %#v", stats)
+	if stats.CompactApplied {
+		t.Fatalf("expected no emergency persist without DB context, got %#v", stats)
 	}
-	if len(gateway.requests) != 1 {
-		t.Fatalf("expected compact gateway called once, got %d", len(gateway.requests))
+	if len(gateway.requests) != 0 {
+		t.Fatalf("expected compact gateway idle without DB context, got %d", len(gateway.requests))
 	}
-	if requestEstimateCalls < 3 {
-		t.Fatalf("expected request estimator used across rewrite rounds, got %d calls", requestEstimateCalls)
+	if requestEstimateCalls < 2 {
+		t.Fatalf("expected estimator used during rewrite checks, got %d calls", requestEstimateCalls)
 	}
-	if len(rewritten.Messages) >= len(request.Messages) {
-		t.Fatalf("expected rewritten history to shrink, got %d >= %d", len(rewritten.Messages), len(request.Messages))
+	if len(rewritten.Messages) != len(request.Messages) {
+		t.Fatalf("expected request unchanged without persistence substrate, got %d != %d", len(rewritten.Messages), len(request.Messages))
 	}
 }
 
@@ -1637,11 +1595,11 @@ func TestCompactConsecutiveFailures_NilPool(t *testing.T) {
 }
 
 func TestCompactConsecutiveFailures_NilIDs(t *testing.T) {
-	got := compactConsecutiveFailures(t.Context(), noopCompactPersistDB{}, uuid.Nil, uuid.New())
+	got := compactConsecutiveFailures(t.Context(), nil, uuid.Nil, uuid.New())
 	if got != 0 {
 		t.Fatalf("expected 0 for nil accountID, got %d", got)
 	}
-	got = compactConsecutiveFailures(t.Context(), noopCompactPersistDB{}, uuid.New(), uuid.Nil)
+	got = compactConsecutiveFailures(t.Context(), nil, uuid.New(), uuid.Nil)
 	if got != 0 {
 		t.Fatalf("expected 0 for nil threadID, got %d", got)
 	}

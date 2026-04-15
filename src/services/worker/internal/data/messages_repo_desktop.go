@@ -648,38 +648,6 @@ func currentTimestampText() string {
 	return time.Now().UTC().Format("2006-01-02 15:04:05.000000000 -0700")
 }
 
-func (MessagesRepository) MarkThreadMessagesCompacted(
-	ctx context.Context,
-	tx pgx.Tx,
-	accountID uuid.UUID,
-	threadID uuid.UUID,
-	messageIDs []uuid.UUID,
-) error {
-	if tx == nil {
-		return fmt.Errorf("tx must not be nil")
-	}
-	if accountID == uuid.Nil || threadID == uuid.Nil {
-		return fmt.Errorf("account_id and thread_id must not be empty")
-	}
-	if len(messageIDs) == 0 {
-		return nil
-	}
-	_, err := tx.Exec(
-		ctx,
-		`UPDATE messages
-		    SET compacted = true,
-		        hidden = true
-		  WHERE account_id = $1
-		    AND thread_id = $2
-		    AND id = ANY($3::uuid[])
-		    AND deleted_at IS NULL`,
-		accountID,
-		threadID,
-		messageIDs,
-	)
-	return err
-}
-
 func (MessagesRepository) GetThreadSeqByMessageID(
 	ctx context.Context,
 	tx pgx.Tx,

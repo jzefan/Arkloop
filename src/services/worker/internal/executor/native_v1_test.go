@@ -5,6 +5,7 @@ package executor
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -233,6 +234,78 @@ func TestNativeRunEngineV1HandlerCompletesWithTinyDirectPool(t *testing.T) {
 	}
 }
 
+func TestNativeRunEngineV1HandlerConsumesContextCompactMaintenanceJob(t *testing.T) {
+	db := testutil.SetupPostgresDatabase(t, "arkloop_wg07_context_compact")
+
+	ctx, cancel := context.WithCancel(context.Background())
+	pool, err := pgxpool.New(ctx, db.DSN)
+	if err != nil {
+		cancel()
+		t.Fatalf("pgxpool.New failed: %v", err)
+	}
+	t.Cleanup(pool.Close)
+	t.Cleanup(cancel)
+
+	accountID := uuid.New()
+	threadID := uuid.New()
+	runID := uuid.New()
+
+	if err := seedRunStarted(t, pool, accountID, threadID, runID, map[string]any{"route_id": "default"}); err != nil {
+		t.Fatalf("seed run failed: %v", err)
+	}
+	if err := seedThreadMessages(t, pool, accountID, threadID); err != nil {
+		t.Fatalf("seed thread messages failed: %v", err)
+	}
+
+	cfg := app.DefaultConfig()
+	handler, err := NewNativeRunEngineV1Handler(ctx, pool, nil, nil, nil, nil, cfg)
+	if err != nil {
+		t.Fatalf("NewNativeRunEngineV1Handler failed: %v", err)
+	}
+
+	jobQueue, err := queue.NewPgQueue(pool, 25, []string{})
+	if err != nil {
+		t.Fatalf("NewPgQueue failed: %v", err)
+	}
+	_, err = jobQueue.EnqueueRun(
+		ctx,
+		accountID,
+		runID,
+		"0123456789abcdef0123456789abcdef",
+		queue.ContextCompactMaintainJobType,
+		map[string]any{
+			"thread_id":              threadID.String(),
+			"upper_bound_thread_seq": 3,
+			"route_id":               "default",
+			"context_window_tokens":  64,
+			"trigger_context_pct":    10,
+			"target_context_pct":     5,
+		},
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("enqueue compact job failed: %v", err)
+	}
+	lease, err := jobQueue.Lease(ctx, 60, []string{queue.ContextCompactMaintainJobType})
+	if err != nil {
+		t.Fatalf("lease compact job failed: %v", err)
+	}
+	if lease == nil {
+		t.Fatal("expected compact maintenance lease but got nil")
+	}
+
+	if err := handler.Handle(ctx, *lease); err != nil {
+		t.Fatalf("handler.Handle failed: %v", err)
+	}
+
+	if count := countRunEventsByType(t, pool, runID, "worker.job.received"); count == 0 {
+		t.Fatal("expected worker.job.received event for compact job")
+	}
+	if count := countRunEventsByType(t, pool, runID, "run.context_compact"); count == 0 {
+		t.Fatal("expected run.context_compact event for compact maintenance job")
+	}
+}
+
 type seqType struct {
 	Seq  int64
 	Type string
@@ -297,14 +370,35 @@ func seedRunCancelRequested(t *testing.T, pool *pgxpool.Pool, runID uuid.UUID) e
 
 func workerPayloadJSON(jobID uuid.UUID, accountID uuid.UUID, runID uuid.UUID, traceID string) map[string]any {
 	return map[string]any{
-		"v":        float64(queue.JobPayloadVersionV1),
-		"job_id":   jobID.String(),
-		"type":     queue.RunExecuteJobType,
-		"trace_id": traceID,
-		"account_id":   accountID.String(),
-		"run_id":   runID.String(),
-		"payload":  map[string]any{"source": "test"},
+		"v":          float64(queue.JobPayloadVersionV1),
+		"job_id":     jobID.String(),
+		"type":       queue.RunExecuteJobType,
+		"trace_id":   traceID,
+		"account_id": accountID.String(),
+		"run_id":     runID.String(),
+		"payload":    map[string]any{"source": "test"},
 	}
+}
+
+func seedThreadMessages(t *testing.T, pool *pgxpool.Pool, accountID uuid.UUID, threadID uuid.UUID) error {
+	t.Helper()
+	_, err := pool.Exec(
+		context.Background(),
+		`INSERT INTO messages (id, account_id, thread_id, thread_seq, role, content, metadata_json, hidden)
+		 VALUES
+		  ($1, $4, $5, 1, 'user', $6, '{}'::jsonb, false),
+		  ($2, $4, $5, 2, 'assistant', $7, '{}'::jsonb, false),
+		  ($3, $4, $5, 3, 'user', $8, '{}'::jsonb, false)`,
+		uuid.New(),
+		uuid.New(),
+		uuid.New(),
+		accountID,
+		threadID,
+		strings.Repeat("alpha ", 80),
+		strings.Repeat("beta ", 80),
+		strings.Repeat("gamma ", 80),
+	)
+	return err
 }
 
 func readSeqTypes(t *testing.T, pool *pgxpool.Pool, runID uuid.UUID) []seqType {
@@ -362,6 +456,24 @@ func readEventData(t *testing.T, pool *pgxpool.Pool, runID uuid.UUID, eventType 
 		t.Fatalf("event data is not object")
 	}
 	return obj
+}
+
+func countRunEventsByType(t *testing.T, pool *pgxpool.Pool, runID uuid.UUID, eventType string) int {
+	t.Helper()
+
+	var count int
+	if err := pool.QueryRow(
+		context.Background(),
+		`SELECT COUNT(*)
+		 FROM run_events
+		 WHERE run_id = $1
+		   AND type = $2`,
+		runID,
+		eventType,
+	).Scan(&count); err != nil {
+		t.Fatalf("count run_events failed: %v", err)
+	}
+	return count
 }
 
 func readAssistantMessage(t *testing.T, pool *pgxpool.Pool, threadID uuid.UUID) string {

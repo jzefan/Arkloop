@@ -276,7 +276,7 @@ func buildCompactFrontierAtomsFromMessagesWithOptions(enc *tiktoken.Tiktoken, ms
 					MsgStart:        i,
 					MsgEnd:          i,
 					AtomSeq:         nextAtomSeq,
-					Role:            msg.Role,
+					Role:            "system",
 				})
 				nextContextSeq++
 				nextAtomSeq++
@@ -381,7 +381,7 @@ func buildCompactFrontierAtomsFromPersistFrontier(frontier []FrontierNode) []Fro
 					current.ApproxTokens = approxTokensFromText(text)
 				}
 				if strings.TrimSpace(current.Role) == "" {
-					current.Role = "user"
+					current.Role = "system"
 				}
 				if current.AtomSeq <= 0 {
 					current.AtomSeq = nextMsgIndex + 1
@@ -546,7 +546,6 @@ func selectCompactFrontierWindow(nodes []FrontierNode, deficitTokens int, maxInp
 }
 
 func selectCompactAtomWindow(nodes []FrontierNode, deficitTokens int, maxInputTokens int) compactFrontierSelection {
-	_ = deficitTokens
 	if len(nodes) == 0 {
 		return compactFrontierSelection{}
 	}
@@ -562,7 +561,16 @@ func selectCompactAtomWindow(nodes []FrontierNode, deficitTokens int, maxInputTo
 		return compactFrontierSelection{}
 	}
 
-	targetTokens := maxInputTokens / 2
+	targetTokens := deficitTokens
+	if targetTokens < 1024 {
+		targetTokens = 1024
+	}
+	if maxTargetTokens := maxInputTokens / 2; maxTargetTokens > 0 && targetTokens > maxTargetTokens {
+		targetTokens = maxTargetTokens
+	}
+	if maxInputTokens > 0 && targetTokens > maxInputTokens {
+		targetTokens = maxInputTokens
+	}
 	selection := compactFrontierSelection{
 		EndNodeIndex: -1,
 		TargetTokens: targetTokens,

@@ -313,7 +313,7 @@ func TestMessagesRepository_ListByThreadDesktopSkipsRolledBackIntermediateHistor
 	}
 }
 
-func TestMessagesRepository_ListRawByThreadDesktopIncludesHiddenAndCompacted(t *testing.T) {
+func TestMessagesRepository_ListRawByThreadDesktopIncludesHiddenMessages(t *testing.T) {
 	ctx := context.Background()
 	sqlitePool, err := sqliteadapter.AutoMigrate(ctx, filepath.Join(t.TempDir(), "raw.db"))
 	if err != nil {
@@ -336,11 +336,8 @@ func TestMessagesRepository_ListRawByThreadDesktopIncludesHiddenAndCompacted(t *
 	if err := insertDesktopRepoMessage(ctx, pool, accountID, threadID, uuid.New(), 2, "assistant", "hidden", `{}`, true, ""); err != nil {
 		t.Fatalf("insert hidden: %v", err)
 	}
-	if err := insertDesktopRepoMessage(ctx, pool, accountID, threadID, uuid.New(), 3, "assistant", "compacted", `{}`, true, ""); err != nil {
-		t.Fatalf("insert compacted: %v", err)
-	}
-	if _, err := pool.Exec(ctx, `UPDATE messages SET compacted = TRUE WHERE content = 'compacted'`); err != nil {
-		t.Fatalf("mark compacted: %v", err)
+	if err := insertDesktopRepoMessage(ctx, pool, accountID, threadID, uuid.New(), 3, "assistant", "replacement-hidden", `{}`, true, ""); err != nil {
+		t.Fatalf("insert replacement hidden: %v", err)
 	}
 
 	tx, err := pool.BeginTx(ctx, pgx.TxOptions{})
@@ -356,7 +353,7 @@ func TestMessagesRepository_ListRawByThreadDesktopIncludesHiddenAndCompacted(t *
 	if len(msgs) != 3 {
 		t.Fatalf("expected 3 raw messages, got %#v", msgs)
 	}
-	if msgs[1].Content != "hidden" || msgs[2].Content != "compacted" {
+	if msgs[1].Content != "hidden" || msgs[2].Content != "replacement-hidden" {
 		t.Fatalf("unexpected raw ordering: %#v", msgs)
 	}
 }

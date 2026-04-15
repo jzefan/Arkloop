@@ -346,7 +346,7 @@ func compactHeadTailChunks(chunks []compactChunk, keepTail int) (head []compactC
 func compactLeadingReplacementSummaries(msgs []llm.Message) []string {
 	summaries := make([]string, 0, 2)
 	for _, msg := range msgs {
-		if strings.TrimSpace(msg.Role) != "user" || len(msg.Content) == 0 {
+		if msg.Phase == nil || strings.TrimSpace(*msg.Phase) != compactSyntheticPhase || len(msg.Content) == 0 {
 			break
 		}
 		raw := strings.TrimSpace(msg.Content[0].Text)
