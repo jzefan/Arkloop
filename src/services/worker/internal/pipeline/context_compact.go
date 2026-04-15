@@ -33,11 +33,12 @@ type ContextCompactSettings struct {
 	MaxUserTextBytes     int
 	MaxTotalTextBytes    int
 
-	PersistEnabled             bool
+	PersistEnabled bool
+	// PersistTriggerApproxTokens 绝对 token 数触发阈值（soft trigger 备选）；优先级低于 PersistTriggerContextPct。
 	PersistTriggerApproxTokens int
-	// PersistTriggerContextPct 1–100：按「上下文窗口」比例计算触发阈值；0 表示仅用 PersistTriggerApproxTokens。
+	// PersistTriggerContextPct 1-100: soft trigger，后台维护 compact 的百分比触发阈值；0 表示仅用 PersistTriggerApproxTokens。
 	PersistTriggerContextPct int
-	// TargetContextPct 1-100：compact 后尝试压回到上下文窗口的百分比；0 默认 75。
+	// TargetContextPct 1-100: compact 目标线，compact loop 压回到此百分比后退出；0 默认 65。
 	TargetContextPct int
 	// FallbackContextWindowTokens 路由无 available_catalog.context_length 时用于比例换算。
 	FallbackContextWindowTokens int
@@ -789,6 +790,18 @@ func selectPersistFrontierWindowForPressure(
 		// 11.1: 禁止单独 compact 一个 replacement，至少要 2 个
 		if len(replacementsOnly) > 1 {
 			eligible = replacementsOnly
+		} else {
+			// zone 满但只有 1 个 replacement：退化选 raw chunk 先扩大覆盖，下轮再 compact-of-compact
+			rawOnly := make([]FrontierNode, 0, len(eligible))
+			for _, node := range eligible {
+				if node.Kind != FrontierNodeReplacement {
+					rawOnly = append(rawOnly, node)
+				}
+			}
+			if len(rawOnly) > 0 {
+				eligible = rawOnly
+			}
+			// rawOnly 也为空时 eligible 保持原混合集
 		}
 	} else {
 		// 10.1: compact zone 没满，只选 raw chunk，让覆盖范围向右推进
@@ -951,11 +964,15 @@ func ExecuteContextCompactMaintenanceJob(
 		targetTokens = 1
 	}
 
+	var lastPressureTokens int
 	const maxCompactRounds = 10
 	for round := 1; ; round++ {
 		if round > maxCompactRounds {
 			progress.emit(ctx, rc, "max_rounds_reached", map[string]any{
-				"max_rounds": maxCompactRounds,
+				"max_rounds":           maxCompactRounds,
+				"last_pressure_tokens": lastPressureTokens,
+				"target_tokens":        targetTokens,
+				"gap_tokens":           lastPressureTokens - targetTokens,
 			})
 			return nil
 		}
@@ -973,6 +990,7 @@ func ExecuteContextCompactMaintenanceJob(
 			return err
 		}
 		stats := ComputeContextCompactPressure(EstimateRequestContextTokens(rc, llm.Request{Messages: canonical.Messages}), anchorPtr)
+		lastPressureTokens = stats.ContextPressureTokens
 		if stats.ContextPressureTokens <= targetTokens {
 			if err := tx.Commit(ctx); err != nil {
 				return err
