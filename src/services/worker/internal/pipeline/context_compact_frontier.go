@@ -142,7 +142,7 @@ func compactNodesApproxTokens(nodes []FrontierNode) int {
 func contextCompactTargetTokens(cfg ContextCompactSettings, window int) int {
 	targetPct := cfg.TargetContextPct
 	if targetPct <= 0 {
-		targetPct = 75
+		targetPct = 65
 	}
 	if targetPct > 100 {
 		targetPct = 100
@@ -614,6 +614,24 @@ func selectCompactAtomWindow(nodes []FrontierNode, deficitTokens int, maxInputTo
 	}
 	if len(selection.Nodes) == 0 {
 		return compactFrontierSelection{}
+	}
+	// Guard: prevent single-replacement re-compaction (no rightward progress).
+	// A lone replacement being re-compressed produces a slightly shorter replacement
+	// covering the same time range — the frontier shape never improves.
+	if len(selection.Nodes) == 1 && selection.Nodes[0].Kind == FrontierNodeReplacement {
+		nextIdx := selection.EndNodeIndex + 1
+		if nextIdx < eligibleEnd {
+			next := nodes[nextIdx]
+			if maxInputTokens <= 0 || selection.SelectedTokens+next.ApproxTokens <= maxInputTokens {
+				selection.Nodes = append(selection.Nodes, next)
+				selection.EndNodeIndex = nextIdx
+				selection.SelectedTokens += next.ApproxTokens
+			} else {
+				return compactFrontierSelection{}
+			}
+		} else {
+			return compactFrontierSelection{}
+		}
 	}
 	return selection
 }

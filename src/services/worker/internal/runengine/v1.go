@@ -395,12 +395,12 @@ func (e *EngineV1) Execute(ctx context.Context, pool *pgxpool.Pool, run data.Run
 	if persistPct > 100 {
 		persistPct = 100
 	}
-	targetPct := resolveNonNegativeInt(ctx, e.configResolver, registry, "context.compact.target_context_pct", platformScope, 75)
+	targetPct := resolveNonNegativeInt(ctx, e.configResolver, registry, "context.compact.target_context_pct", platformScope, 65)
 	if targetPct > 100 {
 		targetPct = 100
 	}
 	if targetPct <= 0 {
-		targetPct = 75
+		targetPct = 65
 	}
 	compactEnabled := resolveBool(ctx, e.configResolver, registry, "context.compact.enabled", platformScope, false)
 	rc.ContextCompact = pipeline.ContextCompactSettings{
@@ -417,6 +417,7 @@ func (e *EngineV1) Execute(ctx context.Context, pool *pgxpool.Pool, run data.Run
 		TargetContextPct:            targetPct,
 		PersistKeepLastMessages:     defaultPersistKeepLastMessagesWorker,
 		PersistKeepTailPct:          0,
+		CompactZoneBudgetPct:        resolveNonNegativeInt(ctx, e.configResolver, registry, "context.compact.compact_zone_budget_pct", platformScope, 0),
 		MicrocompactKeepRecentTools: 0,
 	}
 	rc.AgentReasoningIterationsLimit = resolveNonNegativeInt(ctx, e.configResolver, registry, "limit.agent_reasoning_iterations", platformScope, 0)
@@ -622,6 +623,7 @@ func (e *EngineV1) ExecuteContextCompactMaintenance(
 		TargetContextPct:            targetPct,
 		PersistKeepLastMessages:     defaultPersistKeepLastMessagesWorker,
 		PersistKeepTailPct:          0,
+		CompactZoneBudgetPct:        resolveNonNegativeInt(ctx, e.configResolver, registry, "context.compact.compact_zone_budget_pct", platformScope, 0),
 		MicrocompactKeepRecentTools: 0,
 	}
 

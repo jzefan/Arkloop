@@ -45,6 +45,9 @@ type ContextCompactSettings struct {
 	// PersistKeepTailPct 1–100：persist 时保留 context window 的百分比作为尾部 token 预算；0 = 用旧的条数逻辑。
 	PersistKeepTailPct int
 
+	// CompactZoneBudgetPct 1–100：compact zone 最多占上下文窗口的百分比；超过时仅合并旧 replacement；0 默认 25。
+	CompactZoneBudgetPct int
+
 	// MicrocompactKeepRecentTools 保留最近 N 个 tool result 原文；0 = 不做 microcompact。
 	MicrocompactKeepRecentTools int
 }
@@ -718,7 +721,34 @@ func selectPersistFrontierWindowForPressure(
 	if rawStart <= 0 {
 		return nil, false
 	}
-	selection := selectCompactAtomWindow(selectionFrontier[:rawStart], pressureTokens-targetTokens, contextCompactMaxLLMInputTokens)
+	eligible := selectionFrontier[:rawStart]
+
+	// compact zone budget: when replacement nodes exceed the budget,
+	// restrict selection to replacements only (compact-of-compact).
+	compactZoneBudgetPct := rc.ContextCompact.CompactZoneBudgetPct
+	if compactZoneBudgetPct <= 0 {
+		compactZoneBudgetPct = 25
+	}
+	compactZoneBudget := window * compactZoneBudgetPct / 100
+	compactZoneTokens := 0
+	for _, node := range eligible {
+		if node.Kind == FrontierNodeReplacement {
+			compactZoneTokens += node.ApproxTokens
+		}
+	}
+	if compactZoneTokens >= compactZoneBudget {
+		replacementsOnly := make([]FrontierNode, 0, len(eligible))
+		for _, node := range eligible {
+			if node.Kind == FrontierNodeReplacement {
+				replacementsOnly = append(replacementsOnly, node)
+			}
+		}
+		if len(replacementsOnly) > 1 {
+			eligible = replacementsOnly
+		}
+	}
+
+	selection := selectCompactAtomWindow(eligible, pressureTokens-targetTokens, contextCompactMaxLLMInputTokens)
 	if len(selection.Nodes) == 0 {
 		return nil, false
 	}
@@ -861,7 +891,14 @@ func ExecuteContextCompactMaintenanceJob(
 		targetTokens = 1
 	}
 
+	const maxCompactRounds = 10
 	for round := 1; ; round++ {
+		if round > maxCompactRounds {
+			progress.emit(ctx, rc, "max_rounds_reached", map[string]any{
+				"max_rounds": maxCompactRounds,
+			})
+			return nil
+		}
 		tx, err := rc.DB.BeginTx(ctx, pgx.TxOptions{})
 		if err != nil {
 			return err
