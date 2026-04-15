@@ -152,8 +152,7 @@ func latestContextCompactPressureAnchor(
 	if pool == nil || accountID == uuid.Nil || threadID == uuid.Nil {
 		return nil
 	}
-	var raw []byte
-	err := pool.QueryRow(ctx,
+	rows, err := pool.Query(ctx,
 		`SELECT re.data_json
 		   FROM run_events re
 		   JOIN runs r ON r.id = re.run_id
@@ -161,33 +160,44 @@ func latestContextCompactPressureAnchor(
 		    AND r.thread_id = $2
 		    AND re.type = 'llm.turn.completed'
 		  ORDER BY re.ts DESC, re.seq DESC
-		  LIMIT 1`,
+		  LIMIT 10`,
 		accountID,
 		threadID,
-	).Scan(&raw)
-	if err != nil || len(raw) == 0 {
+	)
+	if err != nil || rows == nil {
 		return nil
 	}
-	var payload map[string]any
-	if err := json.Unmarshal(raw, &payload); err != nil {
-		return nil
+	defer rows.Close()
+	for rows.Next() {
+		var raw []byte
+		if err := rows.Scan(&raw); err != nil || len(raw) == 0 {
+			return nil
+		}
+		var payload map[string]any
+		if err := json.Unmarshal(raw, &payload); err != nil {
+			return nil
+		}
+		if scope, _ := payload["event_scope"].(string); scope == "context_compact" {
+			continue
+		}
+		lastRealPromptTokens, ok := contextCompactAnyToInt64(payload["last_real_prompt_tokens"])
+		if !ok || lastRealPromptTokens <= 0 {
+			return nil
+		}
+		lastRequestEstimateTokens, ok := contextCompactAnyToInt64(payload["last_request_context_estimate_tokens"])
+		if !ok || lastRequestEstimateTokens <= 0 {
+			return nil
+		}
+		anchor := &ContextCompactPressureAnchor{
+			LastRealPromptTokens:             int(lastRealPromptTokens),
+			LastRequestContextEstimateTokens: int(lastRequestEstimateTokens),
+		}
+		if !anchor.Valid() {
+			return nil
+		}
+		return anchor
 	}
-	lastRealPromptTokens, ok := contextCompactAnyToInt64(payload["last_real_prompt_tokens"])
-	if !ok || lastRealPromptTokens <= 0 {
-		return nil
-	}
-	lastRequestEstimateTokens, ok := contextCompactAnyToInt64(payload["last_request_context_estimate_tokens"])
-	if !ok || lastRequestEstimateTokens <= 0 {
-		return nil
-	}
-	anchor := &ContextCompactPressureAnchor{
-		LastRealPromptTokens:             int(lastRealPromptTokens),
-		LastRequestContextEstimateTokens: int(lastRequestEstimateTokens),
-	}
-	if !anchor.Valid() {
-		return nil
-	}
-	return anchor
+	return nil
 }
 
 func contextCompactAnyToInt64(v any) (int64, bool) {

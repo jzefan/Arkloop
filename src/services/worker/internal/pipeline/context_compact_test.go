@@ -10,10 +10,12 @@ import (
 
 	"arkloop/services/shared/messagecontent"
 	"arkloop/services/worker/internal/data"
+	"arkloop/services/worker/internal/events"
 	"arkloop/services/worker/internal/llm"
 	"arkloop/services/worker/internal/routing"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/pkoukk/tiktoken-go"
 )
 
@@ -34,10 +36,27 @@ type stubCompactGateway struct {
 func (g *stubCompactGateway) Stream(_ context.Context, request llm.Request, yield func(llm.StreamEvent) error) error {
 	g.calls++
 	g.lastReq = request
+	if err := yield(llm.StreamLlmRequest{
+		LlmCallID:    "compact-call-1",
+		ProviderKind: "stub",
+		APIMode:      "responses",
+		InputJSON: map[string]any{
+			"messages": request.Messages,
+		},
+		PayloadJSON: request.ToJSON(),
+	}); err != nil {
+		return err
+	}
 	if err := yield(llm.StreamMessageDelta{ContentDelta: g.summary, Role: "assistant"}); err != nil {
 		return err
 	}
-	return yield(llm.StreamRunCompleted{})
+	return yield(llm.StreamRunCompleted{
+		LlmCallID: "compact-call-1",
+		Usage: &llm.Usage{
+			InputTokens:  ptrInt(12),
+			OutputTokens: ptrInt(4),
+		},
+	})
 }
 
 type flakyCompactGateway struct {
@@ -67,11 +86,33 @@ func (g *shrinkRetryGateway) Stream(_ context.Context, request llm.Request, yiel
 			return errors.New("sse stream interrupted")
 		}
 	}
+	if err := yield(llm.StreamLlmRequest{
+		LlmCallID:    "compact-call-retry",
+		ProviderKind: "stub",
+		APIMode:      "responses",
+		InputJSON: map[string]any{
+			"messages": request.Messages,
+		},
+		PayloadJSON: request.ToJSON(),
+	}); err != nil {
+		return err
+	}
 	if err := yield(llm.StreamMessageDelta{ContentDelta: g.summary, Role: "assistant"}); err != nil {
 		return err
 	}
-	return yield(llm.StreamRunCompleted{})
+	return yield(llm.StreamRunCompleted{LlmCallID: "compact-call-retry"})
 }
+
+type captureCompactEventAppender struct {
+	events []events.RunEvent
+}
+
+func (c *captureCompactEventAppender) AppendRunEvent(_ context.Context, _ pgx.Tx, _ uuid.UUID, ev events.RunEvent) (int64, error) {
+	c.events = append(c.events, ev)
+	return int64(len(c.events)), nil
+}
+
+func ptrInt(v int) *int { return &v }
 
 type captureCompactionAdvisor struct {
 	outputs []CompactOutput
@@ -723,6 +764,45 @@ func TestCompactNodesWithShrinkRetryEmitsAttemptProgress(t *testing.T) {
 	}
 	if got := payloads[3]["attempt"]; got != 2 {
 		t.Fatalf("expected completion on attempt 2, got %#v", got)
+	}
+}
+
+func TestCompactNodesWithShrinkRetryEmitsStandardLLMEvents(t *testing.T) {
+	nodes := []FrontierNode{
+		{SourceText: "first", AtomSeq: 1, AtomType: compactAtomUserText, ApproxTokens: 10},
+	}
+	rc := &RunContext{
+		Run: data.Run{ID: uuid.New()},
+	}
+	appender := &captureCompactEventAppender{}
+	progress := compactProgressRecorder{
+		base: map[string]any{
+			"op": "persist",
+		},
+		appendStandardFn: func(_ context.Context, _ *RunContext, ev events.RunEvent) error {
+			_, err := appender.AppendRunEvent(context.Background(), nil, uuid.Nil, ev)
+			return err
+		},
+	}
+
+	_, _, err := compactNodesWithShrinkRetry(context.Background(), rc, &stubCompactGateway{summary: "shrunk"}, "stub", nodes, progress)
+	if err != nil {
+		t.Fatalf("compactNodesWithShrinkRetry: %v", err)
+	}
+	if len(appender.events) != 2 {
+		t.Fatalf("expected 2 standard compact llm events, got %d", len(appender.events))
+	}
+	if appender.events[0].Type != "llm.request" {
+		t.Fatalf("expected first event llm.request, got %q", appender.events[0].Type)
+	}
+	if got := appender.events[0].DataJSON["event_scope"]; got != "context_compact" {
+		t.Fatalf("expected llm.request event_scope=context_compact, got %#v", got)
+	}
+	if appender.events[1].Type != "llm.turn.completed" {
+		t.Fatalf("expected second event llm.turn.completed, got %q", appender.events[1].Type)
+	}
+	if got := appender.events[1].DataJSON["llm_call_id"]; got != "compact-call-1" {
+		t.Fatalf("expected llm_call_id to be propagated, got %#v", got)
 	}
 }
 

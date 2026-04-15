@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"arkloop/services/shared/messagecontent"
+	"arkloop/services/worker/internal/events"
 	"arkloop/services/worker/internal/llm"
 
 	"github.com/google/uuid"
@@ -60,8 +61,9 @@ type compactFrontierSelection struct {
 const compactMaxAtomsPerRound = 20
 
 type compactProgressRecorder struct {
-	base   map[string]any
-	emitFn func(context.Context, *RunContext, map[string]any) error
+	base             map[string]any
+	emitFn           func(context.Context, *RunContext, map[string]any) error
+	appendStandardFn func(context.Context, *RunContext, events.RunEvent) error
 }
 
 func newCompactProgressRecorder(
@@ -73,6 +75,9 @@ func newCompactProgressRecorder(
 		base: cloneContextCompactEventData(base),
 		emitFn: func(ctx context.Context, rc *RunContext, data map[string]any) error {
 			return appendContextCompactRunEvent(ctx, pool, eventsRepo, rc, data)
+		},
+		appendStandardFn: func(ctx context.Context, rc *RunContext, ev events.RunEvent) error {
+			return appendScopedCompactStandardEvent(ctx, pool, eventsRepo, rc, ev)
 		},
 	}
 }
@@ -92,6 +97,22 @@ func (r compactProgressRecorder) emit(ctx context.Context, rc *RunContext, phase
 			runID = rc.Run.ID
 		}
 		slog.WarnContext(ctx, "context_compact", "phase", phase, "err", err.Error(), "run_id", runID.String())
+	}
+}
+
+func (r compactProgressRecorder) emitStandard(ctx context.Context, rc *RunContext, eventType string, data map[string]any) {
+	if rc == nil || r.appendStandardFn == nil {
+		return
+	}
+	payload := cloneContextCompactEventData(r.base)
+	payload["event_scope"] = "context_compact"
+	payload["compact_event_type"] = eventType
+	for key, value := range data {
+		payload[key] = value
+	}
+	ev := rc.Emitter.Emit(eventType, payload, nil, nil)
+	if err := r.appendStandardFn(ctx, rc, ev); err != nil {
+		slog.WarnContext(ctx, "context_compact_standard_event", "event_type", eventType, "err", err.Error(), "run_id", rc.Run.ID.String())
 	}
 }
 
@@ -689,6 +710,10 @@ func runContextCompactLLMForNodes(
 	startedAt := time.Now()
 	err := gateway.Stream(streamCtx, req, func(ev llm.StreamEvent) error {
 		switch typed := ev.(type) {
+		case llm.StreamLlmRequest:
+			progress.emitStandard(ctx, rc, "llm.request", typed.ToDataJSON())
+		case llm.StreamLlmResponseChunk:
+			progress.emitStandard(ctx, rc, "llm.response.chunk", typed.ToDataJSON())
 		case llm.StreamMessageDelta:
 			if typed.Channel != nil && *typed.Channel == "thinking" {
 				return nil
@@ -697,6 +722,7 @@ func runContextCompactLLMForNodes(
 				chunks = append(chunks, typed.ContentDelta)
 			}
 		case llm.StreamRunCompleted:
+			progress.emitStandard(ctx, rc, "llm.turn.completed", typed.ToDataJSON())
 			return errContextCompactStreamDone
 		case llm.StreamRunFailed:
 			return fmt.Errorf("stream failed: %s", typed.Error.Message)
