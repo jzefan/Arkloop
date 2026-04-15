@@ -16,6 +16,7 @@ import (
 	"arkloop/services/worker/internal/llm"
 	"arkloop/services/worker/internal/testutil"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -92,7 +93,7 @@ func TestLoadRunInputsBoundsFreshChannelHistoryAtThreadTail(t *testing.T) {
 	); err != nil {
 		t.Fatalf("insert run event: %v", err)
 	}
-	if _, err := pool.Exec(ctx, `INSERT INTO messages (id, account_id, thread_id, thread_seq, role, content, metadata_json, hidden, compacted) VALUES ($1, $2, $3, 1, 'assistant', 'hidden', '{}'::jsonb, true, true)`, hiddenID, accountID, threadID); err != nil {
+	if _, err := pool.Exec(ctx, `INSERT INTO messages (id, account_id, thread_id, thread_seq, role, content, metadata_json, hidden) VALUES ($1, $2, $3, 1, 'assistant', 'hidden', '{}'::jsonb, true)`, hiddenID, accountID, threadID); err != nil {
 		t.Fatalf("insert hidden message: %v", err)
 	}
 	if _, err := pool.Exec(ctx, `INSERT INTO messages (id, account_id, thread_id, thread_seq, role, content, metadata_json, hidden) VALUES ($1, $2, $3, 2, 'user', 'one', '{}'::jsonb, false)`, msg1ID, accountID, threadID); err != nil {
@@ -124,17 +125,123 @@ func TestLoadRunInputsBoundsFreshChannelHistoryAtThreadTail(t *testing.T) {
 	if len(loaded.Messages) != 2 {
 		t.Fatalf("expected 2 prompt messages, got %d", len(loaded.Messages))
 	}
-	if !loaded.HasActiveCompactSnapshot || loaded.ActiveCompactSnapshotText != "future summary" {
-		t.Fatalf("expected replacement prefix, got has=%v text=%q", loaded.HasActiveCompactSnapshot, loaded.ActiveCompactSnapshotText)
+	if len(loaded.ThreadContextFrontier) == 0 || loaded.ThreadContextFrontier[0].SourceText != "future summary" {
+		t.Fatalf("expected replacement prefix, got frontier=%#v", loaded.ThreadContextFrontier)
 	}
-	if loaded.Messages[0].Role != "user" || loaded.Messages[0].Content[0].Text != formatCompactSnapshotText("future summary") {
+	if loaded.Messages[0].Role != "user" || loaded.Messages[0].Content[0].Text != "future summary" {
 		t.Fatalf("unexpected replacement message: %#v", loaded.Messages[0])
+	}
+	if loaded.Messages[0].Phase == nil || *loaded.Messages[0].Phase != compactSyntheticPhase {
+		t.Fatalf("unexpected replacement phase: %#v", loaded.Messages[0].Phase)
 	}
 	if loaded.Messages[1].Role != "user" || loaded.Messages[1].Content[0].Text != "two" {
 		t.Fatalf("unexpected bounded tail message: %#v", loaded.Messages[1])
 	}
 	if len(loaded.ThreadMessageIDs) != 2 || loaded.ThreadMessageIDs[0] != uuid.Nil || loaded.ThreadMessageIDs[1] != msg2ID {
 		t.Fatalf("unexpected bounded thread ids: %#v", loaded.ThreadMessageIDs)
+	}
+}
+
+func TestLoadRunInputsPersistsRenderableGraphAndKeepsLatestBoundedTail(t *testing.T) {
+	ctx := context.Background()
+	db := testutil.SetupPostgresDatabase(t, "pipeline_input_loader_renderable_graph_persist")
+	pool, err := pgxpool.New(ctx, db.DSN)
+	if err != nil {
+		t.Fatalf("pgxpool.New: %v", err)
+	}
+	t.Cleanup(pool.Close)
+
+	accountID := uuid.New()
+	projectID := uuid.New()
+	threadID := uuid.New()
+	runID := uuid.New()
+	msg1ID := uuid.New()
+	msg2ID := uuid.New()
+	msg3ID := uuid.New()
+	channelID := uuid.New()
+
+	if _, err := pool.Exec(ctx, `INSERT INTO accounts (id, type) VALUES ($1, 'personal')`, accountID); err != nil {
+		t.Fatalf("insert account: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO projects (id, account_id, name) VALUES ($1, $2, 'p')`, projectID, accountID); err != nil {
+		t.Fatalf("insert project: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO threads (id, account_id, project_id) VALUES ($1, $2, $3)`, threadID, accountID, projectID); err != nil {
+		t.Fatalf("insert thread: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO runs (id, account_id, thread_id, status) VALUES ($1, $2, $3, 'running')`, runID, accountID, threadID); err != nil {
+		t.Fatalf("insert run: %v", err)
+	}
+	if _, err := pool.Exec(
+		ctx,
+		`INSERT INTO run_events (run_id, seq, type, data_json) VALUES ($1, 1, 'run.started', $2::jsonb)`,
+		runID,
+		fmt.Sprintf(`{"thread_tail_message_id":"%s","channel_delivery":{"channel_id":"%s"}}`, msg3ID, channelID),
+	); err != nil {
+		t.Fatalf("insert run event: %v", err)
+	}
+
+	if _, err := pool.Exec(ctx, `INSERT INTO messages (id, account_id, thread_id, thread_seq, role, content, metadata_json, hidden) VALUES ($1, $2, $3, 1, 'user', 'older', '{}'::jsonb, false)`, msg1ID, accountID, threadID); err != nil {
+		t.Fatalf("insert message 1: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO messages (id, account_id, thread_id, thread_seq, role, content, metadata_json, hidden) VALUES ($1, $2, $3, 2, 'assistant', 'excluded-middle', '{"exclude_from_prompt":true}'::jsonb, false)`, msg2ID, accountID, threadID); err != nil {
+		t.Fatalf("insert excluded message: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO messages (id, account_id, thread_id, thread_seq, role, content, metadata_json, hidden) VALUES ($1, $2, $3, 3, 'user', 'latest-tail', '{}'::jsonb, false)`, msg3ID, accountID, threadID); err != nil {
+		t.Fatalf("insert message 3: %v", err)
+	}
+
+	loaded, err := loadRunInputs(ctx, pool, data.Run{
+		ID:        runID,
+		AccountID: accountID,
+		ThreadID:  threadID,
+	}, nil, data.RunsRepository{}, data.RunEventsRepository{}, data.MessagesRepository{}, nil, nil, 20)
+	if err != nil {
+		t.Fatalf("loadRunInputs failed: %v", err)
+	}
+	if len(loaded.Messages) != 2 {
+		t.Fatalf("expected 2 renderable prompt messages, got %d", len(loaded.Messages))
+	}
+	if loaded.Messages[0].Role != "user" || loaded.Messages[0].Content[0].Text != "older" {
+		t.Fatalf("unexpected first prompt message: %#v", loaded.Messages[0])
+	}
+	if loaded.Messages[1].Role != "user" || loaded.Messages[1].Content[0].Text != "latest-tail" {
+		t.Fatalf("unexpected bounded tail prompt message: %#v", loaded.Messages[1])
+	}
+	if len(loaded.ThreadMessageIDs) != 2 || loaded.ThreadMessageIDs[0] != msg1ID || loaded.ThreadMessageIDs[1] != msg3ID {
+		t.Fatalf("unexpected thread message ids: %#v", loaded.ThreadMessageIDs)
+	}
+
+	rows, err := pool.Query(ctx, `SELECT atom_seq, source_message_start_seq, source_message_end_seq FROM thread_context_atoms WHERE account_id = $1 AND thread_id = $2 ORDER BY atom_seq ASC`, accountID, threadID)
+	if err != nil {
+		t.Fatalf("query persisted atoms: %v", err)
+	}
+	defer rows.Close()
+
+	type atomRange struct {
+		atomSeq  int64
+		startSeq int64
+		endSeq   int64
+	}
+	var ranges []atomRange
+	for rows.Next() {
+		var item atomRange
+		if err := rows.Scan(&item.atomSeq, &item.startSeq, &item.endSeq); err != nil {
+			t.Fatalf("scan atom row: %v", err)
+		}
+		ranges = append(ranges, item)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("iterate atom rows: %v", err)
+	}
+	if len(ranges) != 2 {
+		t.Fatalf("expected 2 persisted atoms after commit, got %d", len(ranges))
+	}
+	if ranges[0].startSeq != 1 || ranges[0].endSeq != 1 {
+		t.Fatalf("unexpected first persisted atom range: %#v", ranges[0])
+	}
+	if ranges[1].startSeq != 3 || ranges[1].endSeq != 3 {
+		t.Fatalf("expected excluded seq=2 to be absent from persisted graph, got %#v", ranges[1])
 	}
 }
 
@@ -190,16 +297,13 @@ func TestLoadRunInputsBoundsChannelHistoryWithReplacementPrefix(t *testing.T) {
 	if err != nil {
 		t.Fatalf("loadRunInputs failed: %v", err)
 	}
-	if !loaded.HasActiveCompactSnapshot {
-		t.Fatal("expected bounded channel run to include replacement prefix")
-	}
-	if loaded.ActiveCompactSnapshotText != "rolled summary" {
-		t.Fatalf("unexpected summary text: %q", loaded.ActiveCompactSnapshotText)
+	if len(loaded.ThreadContextFrontier) == 0 || loaded.ThreadContextFrontier[0].SourceText != "rolled summary" {
+		t.Fatalf("unexpected frontier prefix: %#v", loaded.ThreadContextFrontier)
 	}
 	if len(loaded.Messages) != 2 {
 		t.Fatalf("expected 2 prompt messages, got %d", len(loaded.Messages))
 	}
-	if loaded.Messages[0].Role != "user" || loaded.Messages[0].Content[0].Text != formatCompactSnapshotText("rolled summary") {
+	if loaded.Messages[0].Role != "user" || loaded.Messages[0].Content[0].Text != "rolled summary" {
 		t.Fatalf("unexpected replacement prompt message: %#v", loaded.Messages[0])
 	}
 	if loaded.Messages[1].Role != "user" || loaded.Messages[1].Content[0].Text != "two" {
@@ -263,8 +367,8 @@ func TestLoadRunInputsRejectsReplacementCrossingBoundedUpperSeq(t *testing.T) {
 	if err != nil {
 		t.Fatalf("loadRunInputs failed: %v", err)
 	}
-	if loaded.HasActiveCompactSnapshot {
-		t.Fatalf("expected crossing replacement rejected, got active summary=%q", loaded.ActiveCompactSnapshotText)
+	if len(loaded.ThreadContextFrontier) > 0 && loaded.ThreadContextFrontier[0].Kind == FrontierNodeReplacement {
+		t.Fatalf("expected crossing replacement rejected, got frontier=%#v", loaded.ThreadContextFrontier)
 	}
 	if len(loaded.Messages) != 2 {
 		t.Fatalf("expected bounded raw messages only, got %d", len(loaded.Messages))
@@ -274,6 +378,184 @@ func TestLoadRunInputsRejectsReplacementCrossingBoundedUpperSeq(t *testing.T) {
 	}
 	if loaded.Messages[1].Role != "user" || loaded.Messages[1].Content[0].Text != "two" {
 		t.Fatalf("unexpected bounded raw message two: %#v", loaded.Messages[1])
+	}
+}
+
+func TestLoadRunInputsKeepsBoundedLatestVisibleUserTailAcrossBuilderAndLoader(t *testing.T) {
+	ctx := context.Background()
+	db := testutil.SetupPostgresDatabase(t, "pipeline_input_loader_bounded_latest_visible_tail")
+	pool, err := pgxpool.New(ctx, db.DSN)
+	if err != nil {
+		t.Fatalf("pgxpool.New: %v", err)
+	}
+	t.Cleanup(pool.Close)
+
+	accountID := uuid.New()
+	projectID := uuid.New()
+	threadID := uuid.New()
+	runID := uuid.New()
+	hiddenPrefixID := uuid.New()
+	oldTailID := uuid.New()
+	oldAssistantID := uuid.New()
+	latestTailID := uuid.New()
+	futureAssistantID := uuid.New()
+	channelID := uuid.New()
+
+	if _, err := pool.Exec(ctx, `INSERT INTO accounts (id, type) VALUES ($1, 'personal')`, accountID); err != nil {
+		t.Fatalf("insert account: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO projects (id, account_id, name) VALUES ($1, $2, 'p')`, projectID, accountID); err != nil {
+		t.Fatalf("insert project: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO threads (id, account_id, project_id) VALUES ($1, $2, $3)`, threadID, accountID, projectID); err != nil {
+		t.Fatalf("insert thread: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO runs (id, account_id, thread_id, status) VALUES ($1, $2, $3, 'running')`, runID, accountID, threadID); err != nil {
+		t.Fatalf("insert run: %v", err)
+	}
+	if _, err := pool.Exec(
+		ctx,
+		`INSERT INTO run_events (run_id, seq, type, data_json) VALUES ($1, 1, 'run.started', $2::jsonb)`,
+		runID,
+		fmt.Sprintf(`{"thread_tail_message_id":"%s","channel_delivery":{"channel_id":"%s"}}`, latestTailID, channelID),
+	); err != nil {
+		t.Fatalf("insert run started event: %v", err)
+	}
+
+	if _, err := pool.Exec(
+		ctx,
+		`INSERT INTO messages (id, account_id, thread_id, thread_seq, role, content, metadata_json, hidden)
+		 VALUES ($1, $2, $3, 1, 'assistant', $4, '{}'::jsonb, true)`,
+		hiddenPrefixID, accountID, threadID, "[hidden-prefix]",
+	); err != nil {
+		t.Fatalf("insert hidden prefix message: %v", err)
+	}
+	if _, err := pool.Exec(
+		ctx,
+		`INSERT INTO messages (id, account_id, thread_id, thread_seq, role, content, metadata_json, hidden)
+		 VALUES ($1, $2, $3, 2, 'user', $4, '{}'::jsonb, false)`,
+		oldTailID, accountID, threadID, "Telegram #10152 old visible user tail",
+	); err != nil {
+		t.Fatalf("insert old visible user tail: %v", err)
+	}
+	if _, err := pool.Exec(
+		ctx,
+		`INSERT INTO messages (id, account_id, thread_id, thread_seq, role, content, metadata_json, hidden)
+		 VALUES ($1, $2, $3, 3, 'assistant', $4, '{}'::jsonb, false)`,
+		oldAssistantID, accountID, threadID, "assistant ack for #10152",
+	); err != nil {
+		t.Fatalf("insert old assistant message: %v", err)
+	}
+	if _, err := pool.Exec(
+		ctx,
+		`INSERT INTO messages (id, account_id, thread_id, thread_seq, role, content, metadata_json, hidden)
+		 VALUES ($1, $2, $3, 4, 'user', $4, '{}'::jsonb, false)`,
+		latestTailID, accountID, threadID, "Telegram #10785 latest visible user tail",
+	); err != nil {
+		t.Fatalf("insert latest visible user tail: %v", err)
+	}
+	if _, err := pool.Exec(
+		ctx,
+		`INSERT INTO messages (id, account_id, thread_id, thread_seq, role, content, metadata_json, hidden)
+		 VALUES ($1, $2, $3, 5, 'assistant', $4, '{}'::jsonb, false)`,
+		futureAssistantID, accountID, threadID, "future assistant outside bound",
+	); err != nil {
+		t.Fatalf("insert future assistant message: %v", err)
+	}
+
+	readPromptText := func(msg llm.Message) string {
+		parts := make([]string, 0, len(msg.Content))
+		for _, part := range msg.Content {
+			text := strings.TrimSpace(llm.PartPromptText(part))
+			if text == "" {
+				continue
+			}
+			parts = append(parts, text)
+		}
+		return strings.TrimSpace(strings.Join(parts, "\n"))
+	}
+	lastVisibleUserText := func(messages []llm.Message) string {
+		for i := len(messages) - 1; i >= 0; i-- {
+			if messages[i].Role != "user" {
+				continue
+			}
+			text := readPromptText(messages[i])
+			if text != "" {
+				return text
+			}
+		}
+		return ""
+	}
+
+	tx, err := pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		t.Fatalf("begin builder tx: %v", err)
+	}
+	canonical, err := buildCanonicalThreadContext(
+		ctx,
+		tx,
+		data.Run{ID: runID, AccountID: accountID, ThreadID: threadID},
+		data.MessagesRepository{},
+		nil,
+		&latestTailID,
+		20,
+	)
+	if err != nil {
+		_ = tx.Rollback(ctx)
+		t.Fatalf("buildCanonicalThreadContext failed: %v", err)
+	}
+	if err := tx.Rollback(ctx); err != nil {
+		t.Fatalf("rollback builder tx: %v", err)
+	}
+
+	if len(canonical.VisibleMessages) == 0 {
+		t.Fatal("expected visible messages in canonical context")
+	}
+	lastVisibleRecord := canonical.VisibleMessages[len(canonical.VisibleMessages)-1]
+	if lastVisibleRecord.ID != latestTailID {
+		t.Fatalf("canonical visible tail id mismatch: got=%s want=%s", lastVisibleRecord.ID, latestTailID)
+	}
+	if !strings.Contains(lastVisibleRecord.Content, "#10785") {
+		t.Fatalf("canonical visible tail content mismatch: %#v", lastVisibleRecord)
+	}
+	if len(canonical.ThreadMessageIDs) == 0 || canonical.ThreadMessageIDs[len(canonical.ThreadMessageIDs)-1] != latestTailID {
+		t.Fatalf("canonical rendered tail id mismatch: %#v", canonical.ThreadMessageIDs)
+	}
+	if got := lastVisibleUserText(canonical.Messages); !strings.Contains(got, "#10785") {
+		t.Fatalf("canonical rendered latest visible user tail missing, got %q", got)
+	}
+
+	loaded, err := loadRunInputs(
+		ctx,
+		pool,
+		data.Run{ID: runID, AccountID: accountID, ThreadID: threadID},
+		nil,
+		data.RunsRepository{},
+		data.RunEventsRepository{},
+		data.MessagesRepository{},
+		nil,
+		nil,
+		20,
+	)
+	if err != nil {
+		t.Fatalf("loadRunInputs failed: %v", err)
+	}
+	if got, _ := loaded.InputJSON[runStartedThreadTailMessageIDKey].(string); got != latestTailID.String() {
+		t.Fatalf("unexpected bounded upper id in input: got=%q want=%q", got, latestTailID)
+	}
+	if got := lastVisibleUserText(loaded.Messages); !strings.Contains(got, "#10785") {
+		t.Fatalf("loadRunInputs latest visible user tail missing, got %q", got)
+	}
+	if len(loaded.ThreadMessageIDs) == 0 || loaded.ThreadMessageIDs[len(loaded.ThreadMessageIDs)-1] != latestTailID {
+		t.Fatalf("loadRunInputs rendered tail id mismatch: %#v", loaded.ThreadMessageIDs)
+	}
+	if got, _ := loaded.InputJSON["last_user_message"].(string); !strings.Contains(got, "#10785") {
+		t.Fatalf("last_user_message mismatch: %q", got)
+	}
+	for i, msg := range loaded.Messages {
+		if strings.Contains(readPromptText(msg), "future assistant outside bound") {
+			t.Fatalf("bounded history leaked future message at index=%d: %#v", i, msg)
+		}
 	}
 }
 
@@ -334,17 +616,16 @@ func TestLoadRunInputsMergesLeadingReplacementSummaryBlocks(t *testing.T) {
 		t.Fatalf("loadRunInputs failed: %v", err)
 	}
 
-	expectedSummary := "summary one\n\nsummary two"
-	if !loaded.HasActiveCompactSnapshot || loaded.ActiveCompactSnapshotText != expectedSummary {
-		t.Fatalf("unexpected merged leading summary, has=%v text=%q", loaded.HasActiveCompactSnapshot, loaded.ActiveCompactSnapshotText)
+	if len(loaded.ThreadContextFrontier) < 2 || loaded.ThreadContextFrontier[0].SourceText != "summary one" || loaded.ThreadContextFrontier[1].SourceText != "summary two" {
+		t.Fatalf("unexpected merged leading frontier: %#v", loaded.ThreadContextFrontier)
 	}
 	if len(loaded.Messages) != 3 {
 		t.Fatalf("expected two leading replacements plus tail, got %d", len(loaded.Messages))
 	}
-	if loaded.Messages[0].Content[0].Text != formatCompactSnapshotText("summary one") {
+	if loaded.Messages[0].Content[0].Text != "summary one" {
 		t.Fatalf("unexpected first replacement message: %#v", loaded.Messages[0])
 	}
-	if loaded.Messages[1].Content[0].Text != formatCompactSnapshotText("summary two") {
+	if loaded.Messages[1].Content[0].Text != "summary two" {
 		t.Fatalf("unexpected second replacement message: %#v", loaded.Messages[1])
 	}
 	if loaded.Messages[2].Role != "user" || loaded.Messages[2].Content[0].Text != "tail" {
@@ -776,16 +1057,13 @@ func TestLoadRunInputsPrependsActiveCompactSnapshotBeforeResumeReplay(t *testing
 	if err != nil {
 		t.Fatalf("loadRunInputs failed: %v", err)
 	}
-	if !loaded.HasActiveCompactSnapshot {
-		t.Fatal("expected active compact snapshot")
-	}
-	if loaded.ActiveCompactSnapshotText != "existing summary" {
-		t.Fatalf("unexpected active snapshot text: %#v", loaded.ActiveCompactSnapshotText)
+	if len(loaded.ThreadContextFrontier) == 0 || loaded.ThreadContextFrontier[0].SourceText != "existing summary" {
+		t.Fatalf("unexpected frontier prefix: %#v", loaded.ThreadContextFrontier)
 	}
 	if len(loaded.Messages) != 3 {
 		t.Fatalf("expected 3 prompt messages, got %d", len(loaded.Messages))
 	}
-	if loaded.Messages[0].Role != "user" || loaded.Messages[0].Content[0].Text != formatCompactSnapshotText("existing summary") {
+	if loaded.Messages[0].Role != "user" || loaded.Messages[0].Content[0].Text != "existing summary" {
 		t.Fatalf("unexpected replacement prompt message: %#v", loaded.Messages[0])
 	}
 	if loaded.Messages[1].Role != "assistant" || loaded.Messages[1].Content[0].Text != "I am checking" {
@@ -888,7 +1166,7 @@ func TestLoadRunInputsReplaysAfterSnapshotWhenAnchorMessageWasCompacted(t *testi
 	if len(loaded.Messages) != 3 {
 		t.Fatalf("expected 3 prompt messages, got %d", len(loaded.Messages))
 	}
-	if loaded.Messages[0].Role != "user" || loaded.Messages[0].Content[0].Text != formatCompactSnapshotText("existing summary") {
+	if loaded.Messages[0].Role != "user" || loaded.Messages[0].Content[0].Text != "existing summary" {
 		t.Fatalf("unexpected replacement prompt message: %#v", loaded.Messages[0])
 	}
 	if loaded.Messages[1].Role != "assistant" || loaded.Messages[1].Content[0].Text != "I am checking" {
@@ -990,7 +1268,7 @@ func TestLoadRunInputsReplaysResumeAfterCompactedAnchorUsingSnapshotPrefix(t *te
 	if len(loaded.Messages) != 3 {
 		t.Fatalf("expected snapshot + replay + visible tail, got %d", len(loaded.Messages))
 	}
-	if loaded.Messages[0].Role != "user" || loaded.Messages[0].Content[0].Text != formatCompactSnapshotText("rolled summary") {
+	if loaded.Messages[0].Role != "user" || loaded.Messages[0].Content[0].Text != "rolled summary" {
 		t.Fatalf("unexpected replacement message: %#v", loaded.Messages[0])
 	}
 	if loaded.Messages[1].Role != "assistant" || loaded.Messages[1].Content[0].Text != "assistant replay after hidden anchor" {

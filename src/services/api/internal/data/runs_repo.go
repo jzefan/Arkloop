@@ -371,7 +371,6 @@ func (r *RunEventRepository) getLatestThreadMessage(ctx context.Context, threadI
 		 WHERE thread_id = $1
 		   AND hidden = FALSE
 		   AND deleted_at IS NULL
-		   AND COALESCE(compacted, false) = false
 		 ORDER BY thread_seq DESC
 		 LIMIT 1`,
 		threadID,

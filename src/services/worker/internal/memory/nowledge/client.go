@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -23,6 +24,18 @@ const (
 	threadURIPrefix = "nowledge://thread/"
 	defaultSource   = "arkloop"
 )
+
+// httpError is a structured HTTP error from Nowledge API.
+type httpError struct {
+	StatusCode int
+	Body       string
+	Method     string
+	Path       string
+}
+
+func (e *httpError) Error() string {
+	return fmt.Sprintf("nowledge %s %s: status=%d body=%s", e.Method, e.Path, e.StatusCode, e.Body)
+}
 
 type WorkingMemory struct {
 	Content   string
@@ -936,6 +949,10 @@ func (c *Client) DistillThread(ctx context.Context, ident memory.MemoryIdentity,
 		"distillation_type": "simple_llm",
 		"extraction_level":  "swift",
 	}, &response); err != nil {
+		var he *httpError
+		if errors.As(err, &he) && he.StatusCode == 400 && strings.Contains(strings.ToLower(he.Body), "no memories") {
+			return DistillResult{MemoriesCreated: 0}, nil
+		}
 		return DistillResult{}, err
 	}
 	count := response.MemoriesCreated
@@ -991,7 +1008,7 @@ func (c *Client) doJSON(ctx context.Context, ident memory.MemoryIdentity, method
 	defer resp.Body.Close()
 	if resp.StatusCode >= 400 {
 		raw, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return fmt.Errorf("nowledge %s %s: status=%d body=%s", method, path, resp.StatusCode, strings.TrimSpace(string(raw)))
+		return &httpError{StatusCode: resp.StatusCode, Body: strings.TrimSpace(string(raw)), Method: method, Path: path}
 	}
 	if out == nil {
 		_, _ = io.Copy(io.Discard, resp.Body)

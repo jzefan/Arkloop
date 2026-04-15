@@ -92,7 +92,7 @@ func TestMessagesRepository_SearchVisibleByOwner(t *testing.T) {
 	}
 }
 
-func TestMessagesRepository_ListRawByThreadIncludesHiddenAndCompacted(t *testing.T) {
+func TestMessagesRepository_ListRawByThreadIncludesHiddenMessages(t *testing.T) {
 	db := testutil.SetupPostgresDatabase(t, "worker_messages_list_raw")
 	ctx := context.Background()
 	pool, err := pgxpool.New(ctx, db.DSN)
@@ -116,20 +116,19 @@ func TestMessagesRepository_ListRawByThreadIncludesHiddenAndCompacted(t *testing
 	}
 
 	for _, row := range []struct {
-		seq       int
-		role      string
-		content   string
-		hidden    bool
-		compacted bool
+		seq     int
+		role    string
+		content string
+		hidden  bool
 	}{
-		{1, "user", "visible", false, false},
-		{2, "assistant", "hidden", true, false},
-		{3, "assistant", "compacted", true, true},
+		{1, "user", "visible", false},
+		{2, "assistant", "hidden", true},
+		{3, "assistant", "replacement-hidden", true},
 	} {
 		if _, err := pool.Exec(ctx, `
-			INSERT INTO messages (id, account_id, thread_id, thread_seq, role, content, metadata_json, hidden, compacted, created_at)
-			VALUES ($1, $2, $3, $4, $5, $6, '{}'::jsonb, $7, $8, now())`,
-			uuid.New(), accountID, threadID, row.seq, row.role, row.content, row.hidden, row.compacted,
+			INSERT INTO messages (id, account_id, thread_id, thread_seq, role, content, metadata_json, hidden, created_at)
+			VALUES ($1, $2, $3, $4, $5, $6, '{}'::jsonb, $7, now())`,
+			uuid.New(), accountID, threadID, row.seq, row.role, row.content, row.hidden,
 		); err != nil {
 			t.Fatalf("insert message: %v", err)
 		}
@@ -148,12 +147,12 @@ func TestMessagesRepository_ListRawByThreadIncludesHiddenAndCompacted(t *testing
 	if len(msgs) != 3 {
 		t.Fatalf("expected 3 raw messages, got %#v", msgs)
 	}
-	if msgs[1].Content != "hidden" || msgs[2].Content != "compacted" {
+	if msgs[1].Content != "hidden" || msgs[2].Content != "replacement-hidden" {
 		t.Fatalf("unexpected raw ordering: %#v", msgs)
 	}
 }
 
-func TestMessagesRepository_ListRawByThreadUpToIDIncludesHiddenAndCompacted(t *testing.T) {
+func TestMessagesRepository_ListRawByThreadUpToIDIncludesHiddenMessages(t *testing.T) {
 	db := testutil.SetupPostgresDatabase(t, "worker_messages_list_raw_upto")
 	ctx := context.Background()
 	pool, err := pgxpool.New(ctx, db.DSN)
@@ -177,15 +176,14 @@ func TestMessagesRepository_ListRawByThreadUpToIDIncludesHiddenAndCompacted(t *t
 	}
 	var upToID uuid.UUID
 	for _, row := range []struct {
-		seq       int
-		role      string
-		content   string
-		hidden    bool
-		compacted bool
+		seq     int
+		role    string
+		content string
+		hidden  bool
 	}{
-		{1, "user", "visible", false, false},
-		{2, "assistant", "hidden", true, false},
-		{3, "assistant", "compacted", true, true},
+		{1, "user", "visible", false},
+		{2, "assistant", "hidden", true},
+		{3, "assistant", "replacement-hidden", true},
 	} {
 		id := uuid.New()
 		if row.seq == 2 {
@@ -193,9 +191,9 @@ func TestMessagesRepository_ListRawByThreadUpToIDIncludesHiddenAndCompacted(t *t
 		}
 		contentJSON, _ := json.Marshal(map[string]any{})
 		if _, err := pool.Exec(ctx, `
-			INSERT INTO messages (id, account_id, thread_id, thread_seq, role, content, content_json, metadata_json, hidden, compacted, created_at)
-			VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, '{}'::jsonb, $8, $9, now())`,
-			id, accountID, threadID, row.seq, row.role, row.content, string(contentJSON), row.hidden, row.compacted,
+			INSERT INTO messages (id, account_id, thread_id, thread_seq, role, content, content_json, metadata_json, hidden, created_at)
+			VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, '{}'::jsonb, $8, now())`,
+			id, accountID, threadID, row.seq, row.role, row.content, string(contentJSON), row.hidden,
 		); err != nil {
 			t.Fatalf("insert message: %v", err)
 		}
@@ -244,8 +242,8 @@ func TestMessagesRepository_ListByThreadWithoutLimitLoadsFullVisibleHistory(t *t
 
 	for seq := 1; seq <= 205; seq++ {
 		if _, err := pool.Exec(ctx, `
-			INSERT INTO messages (id, account_id, thread_id, thread_seq, role, content, metadata_json, hidden, compacted, created_at)
-			VALUES ($1, $2, $3, $4, 'user', $5, '{}'::jsonb, FALSE, FALSE, now())`,
+			INSERT INTO messages (id, account_id, thread_id, thread_seq, role, content, metadata_json, hidden, created_at)
+			VALUES ($1, $2, $3, $4, 'user', $5, '{}'::jsonb, FALSE, now())`,
 			uuid.New(), accountID, threadID, seq, fmt.Sprintf("msg-%03d", seq),
 		); err != nil {
 			t.Fatalf("insert message %d: %v", seq, err)

@@ -192,6 +192,65 @@ func TestChannelQueuePayloadIsCompatible(t *testing.T) {
 	}
 }
 
+func TestChannelQueueContextCompactJobDedupsByThreadAndOverwritesUpperBound(t *testing.T) {
+	q := newChannelQueue(t, 25)
+	ctx := context.Background()
+
+	accountID := uuid.New()
+	runID := uuid.New()
+	threadID := uuid.New()
+
+	jobID1, err := q.EnqueueRun(
+		ctx,
+		accountID,
+		runID,
+		"0123456789abcdef0123456789abcdef",
+		ContextCompactMaintainJobType,
+		map[string]any{
+			"thread_id":              threadID.String(),
+			"upper_bound_thread_seq": 12,
+		},
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("first compact enqueue failed: %v", err)
+	}
+
+	jobID2, err := q.EnqueueRun(
+		ctx,
+		accountID,
+		runID,
+		"fedcba9876543210fedcba9876543210",
+		ContextCompactMaintainJobType,
+		map[string]any{
+			"thread_id":              threadID.String(),
+			"upper_bound_thread_seq": 34,
+		},
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("second compact enqueue failed: %v", err)
+	}
+	if jobID2 != jobID1 {
+		t.Fatalf("expected compact job dedup to reuse job id %s, got %s", jobID1, jobID2)
+	}
+
+	lease, err := q.Lease(ctx, 60, []string{ContextCompactMaintainJobType})
+	if err != nil {
+		t.Fatalf("lease compact job failed: %v", err)
+	}
+	if lease == nil {
+		t.Fatal("expected compact lease but got nil")
+	}
+	payload, ok := lease.PayloadJSON["payload"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected nested payload map, got %T", lease.PayloadJSON["payload"])
+	}
+	if got := payload["upper_bound_thread_seq"]; got != float64(34) {
+		t.Fatalf("expected overwritten upper bound 34, got %#v", got)
+	}
+}
+
 func TestChannelQueueDeadLettersAfterMaxAttempts(t *testing.T) {
 	q := newChannelQueue(t, 2)
 	ctx := context.Background()

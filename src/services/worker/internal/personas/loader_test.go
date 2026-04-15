@@ -77,8 +77,8 @@ func TestLoadRegistryLoadsImpressionBuilderMaxOutputTokens(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected impression-builder persona loaded")
 	}
-	if def.Budgets.MaxOutputTokens == nil || *def.Budgets.MaxOutputTokens != 20480 {
-		t.Fatalf("expected impression-builder max_output_tokens 20480, got %#v", def.Budgets.MaxOutputTokens)
+	if def.Budgets.MaxOutputTokens == nil || *def.Budgets.MaxOutputTokens != 32768 {
+		t.Fatalf("expected impression-builder max_output_tokens 32768, got %#v", def.Budgets.MaxOutputTokens)
 	}
 }
 

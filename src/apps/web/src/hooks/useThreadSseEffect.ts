@@ -1,5 +1,6 @@
 import { useEffect, useRef, useCallback } from 'react'
 import { canonicalToolName, pickLogicalToolName } from '@arkloop/shared'
+import { setThreadTodos } from '../todoDb'
 import { useAuth } from '../contexts/auth'
 import { useChatSession } from '../contexts/chat-session'
 import { useCredits } from '../contexts/credits'
@@ -318,6 +319,7 @@ export function useThreadSseEffect({
             return [{ id: item.id, content: item.content, status: item.status }]
           })
           setWorkTodos(items)
+          if (threadId) setThreadTodos(threadId, items).catch(() => {})
         }
         continue
       }
@@ -755,6 +757,10 @@ export function useThreadSseEffect({
         const runId = event.run_id
         setTerminalRunDisplayId(runId)
         setTerminalRunHandoffStatus('cancelled')
+        const runSearchSteps = finalizeSearchSteps(searchStepsRef.current)
+        if (runSearchSteps.length > 0) {
+          pendingSearchStepsRef.current = runSearchSteps
+        }
         const runEventsForMessage = runId
           ? (sse.events as MsgRunEvent[]).filter((e) => {
             if (e.run_id !== runId || typeof e.seq !== 'number') {

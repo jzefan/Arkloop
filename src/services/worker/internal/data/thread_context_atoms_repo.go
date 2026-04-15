@@ -318,3 +318,34 @@ func (ThreadContextAtomsRepository) ListByThreadUpToAtomSeq(
 	}
 	return out, nil
 }
+
+func (ThreadContextAtomsRepository) DeleteByThreadAtomSeq(
+	ctx context.Context,
+	tx pgx.Tx,
+	accountID uuid.UUID,
+	threadID uuid.UUID,
+	atomSeq int64,
+) error {
+	if tx == nil {
+		return fmt.Errorf("tx must not be nil")
+	}
+	if accountID == uuid.Nil || threadID == uuid.Nil {
+		return fmt.Errorf("account_id and thread_id must not be empty")
+	}
+	if atomSeq <= 0 {
+		return fmt.Errorf("atom_seq must be positive")
+	}
+	if _, err := tx.Exec(
+		ctx,
+		`DELETE FROM thread_context_atoms
+		  WHERE account_id = $1
+		    AND thread_id = $2
+		    AND atom_seq = $3`,
+		accountID,
+		threadID,
+		atomSeq,
+	); err != nil {
+		return err
+	}
+	return nil
+}

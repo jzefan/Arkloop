@@ -63,8 +63,8 @@ func DefaultConfig() Config {
 		PollSeconds:                 5,
 		LeaseSeconds:                30,
 		HeartbeatSeconds:            10,
-		QueueJobTypes:               []string{queue.RunExecuteJobType, queue.WebhookDeliverJobType, queue.EmailSendJobType},
-		Capabilities:                []string{queue.RunExecuteJobType, queue.WebhookDeliverJobType, queue.EmailSendJobType},
+		QueueJobTypes:               []string{queue.RunExecuteJobType, queue.WebhookDeliverJobType, queue.EmailSendJobType, queue.ContextCompactMaintainJobType},
+		Capabilities:                []string{queue.RunExecuteJobType, queue.WebhookDeliverJobType, queue.EmailSendJobType, queue.ContextCompactMaintainJobType},
 		Version:                     "unknown",
 		MCPCacheTTLSeconds:          60,
 		ToolProviderCacheTTLSeconds: 60,
@@ -227,9 +227,10 @@ func (c Config) Validate() error {
 		return fmt.Errorf("queue_job_types must not be empty")
 	}
 	supported := map[string]struct{}{
-		queue.RunExecuteJobType:     {},
-		queue.WebhookDeliverJobType: {},
-		queue.EmailSendJobType:      {},
+		queue.RunExecuteJobType:             {},
+		queue.WebhookDeliverJobType:         {},
+		queue.EmailSendJobType:              {},
+		queue.ContextCompactMaintainJobType: {},
 	}
 	for _, jobType := range c.QueueJobTypes {
 		if _, ok := supported[jobType]; !ok {

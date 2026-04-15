@@ -122,6 +122,8 @@ type promptCacheTurnState struct {
 	PreviousToolHash     string
 	KnownToolResultRefs  map[string]struct{}
 	PinnedCacheEdits     []llm.PromptCacheEditsBlock
+	StableMarkerIndex    int  // -1 = not yet set; pinned after first turn
+	StableMarkerPinned   bool // true after first turn sets the stable marker
 }
 
 type toolResultReplacementState struct {
@@ -188,14 +190,6 @@ func (l *Loop) Run(
 		Remaining:     maxInt(runCtx.ToolContinuationBudget, 0),
 		SessionCounts: map[string]int{},
 	}
-	var pressureAnchor *pipeline.ContextCompactPressureAnchor
-	if runCtx.PipelineRC != nil && runCtx.PipelineRC.HasContextCompactAnchor {
-		pressureAnchor = &pipeline.ContextCompactPressureAnchor{
-			LastRealPromptTokens:             runCtx.PipelineRC.LastRealPromptTokens,
-			LastRequestContextEstimateTokens: runCtx.PipelineRC.LastRequestContextEstimateTokens,
-		}
-	}
-
 	// Rollout: 写入 RunMeta
 	if runCtx.RolloutRecorder != nil {
 		appendRollout(ctx, runCtx.RolloutRecorder, MakeRunMeta(runCtx))
@@ -233,36 +227,6 @@ func (l *Loop) Run(
 			recordRuntimeUserMessages(runCtx.PipelineRC, drained)
 		}
 		messages = compactToolResultsWithState(messages, toolResultReplacements)
-		if turnIndex > 1 && runCtx.PipelineRC != nil {
-			beforeCompact := len(messages)
-			compacted, stats, changed, compactErr := pipeline.MaybeInlineCompactMessages(ctx, runCtx.PipelineRC, messages, pressureAnchor)
-			if compactErr != nil {
-				ev := emitter.Emit("run.context_compact", map[string]any{
-					"op":              "local",
-					"mode":            "canonical_chunks",
-					"phase":           "llm_failed",
-					"messages_before": beforeCompact,
-					"llm_error":       compactErr.Error(),
-				}, nil, nil)
-				pipeline.ApplyContextCompactPressureFields(ev.DataJSON, stats)
-				if err := yield(ev); err != nil {
-					return err
-				}
-			} else if changed {
-				messages = compacted
-				ev := emitter.Emit("run.context_compact", map[string]any{
-					"op":              "local",
-					"mode":            "canonical_chunks",
-					"phase":           "completed",
-					"messages_before": beforeCompact,
-					"messages_after":  len(messages),
-				}, nil, nil)
-				pipeline.ApplyContextCompactPressureFields(ev.DataJSON, stats)
-				if err := yield(ev); err != nil {
-					return err
-				}
-			}
-		}
 		turnRequest := copyRequest(request, messages)
 		if promptCacheState != nil {
 			prepareTurnRequestPromptCache(&turnRequest, runCtx, promptCacheState)
@@ -271,7 +235,7 @@ func (l *Loop) Run(
 			}
 		}
 		refreshCacheSafeSnapshot(&runCtx, messages, turnRequest)
-		turnRequestContextEstimateTokens := estimateTurnRequestContextTokens(runCtx, turnRequest.Messages)
+		turnRequestContextEstimateTokens := estimateTurnRequestContextTokens(runCtx, turnRequest)
 		if runCtx.PipelineRC != nil && runCtx.PipelineRC.HookRuntime != nil && runCtx.PipelineRC.HookRegistry != nil {
 			runCtx.PipelineRC.HookRuntime.BeforeModelCall(ctx, runCtx.PipelineRC, turnRequest)
 		}
@@ -363,7 +327,6 @@ func (l *Loop) Run(
 		if turn.CompletedDataJSON != nil {
 			attachContextPressureAnchor(turn.CompletedDataJSON, turnRequestContextEstimateTokens)
 			if anchor := pressureAnchorFromCompleted(turn.CompletedDataJSON); anchor != nil {
-				pressureAnchor = anchor
 				if runCtx.PipelineRC != nil {
 					runCtx.PipelineRC.SetContextCompactPressureAnchor(
 						anchor.LastRealPromptTokens,
@@ -1374,18 +1337,68 @@ func (l *Loop) runTurnWithRetry(
 		baseDelayMs = 1000
 	}
 	currentRequest := turnRequest
-	oversizeRecovered := false
+	sizeEstimator := newRequestSizeEstimator(runCtx)
+	if !sizeEstimator.Available {
+		return requestEstimatorFailureTurnResult(emitter, sizeEstimator.Err), nil
+	}
+	providerRecoveryUsed := false
 
 	for attempt := 1; attempt <= maxAttempts; {
-		if !oversizeRecovered && llm.RequestPayloadTooLarge(llm.EstimateRequestJSONBytes(currentRequest)) {
-			rewritten, recovered, err := maybeRecoverOversizeRequest(ctx, runCtx, currentRequest, nil, emitter, yield, turnIndex, "preflight")
+		preflightRecovered := false
+		for preflightRound := 0; ; preflightRound++ {
+			payloadBytes, err := sizeEstimator.Estimate(currentRequest)
+			if err != nil {
+				return requestEstimatorFailureTurnResult(emitter, err), nil
+			}
+			contextWindowTokens := 0
+			if runCtx.PipelineRC != nil {
+				contextWindowTokens = pipeline.ResolveRunContextWindowTokens(runCtx.PipelineRC)
+			}
+			estimatedTokens := estimateTurnRequestLimitTokens(runCtx, currentRequest)
+			if !llm.RequestExceedsLimits(payloadBytes, estimatedTokens, contextWindowTokens) {
+				break
+			}
+			rewritten, recovered, currentInputErr, err := maybeRecoverOversizeRequest(
+				ctx,
+				runCtx,
+				currentRequest,
+				nil,
+				emitter,
+				yield,
+				turnIndex,
+				"preflight",
+				sizeEstimator.Estimate,
+			)
 			if err != nil {
 				return turnResult{}, err
 			}
-			if recovered {
-				currentRequest = rewritten
-				oversizeRecovered = true
-				continue
+			if currentInputErr != nil {
+				return currentInputOversizeTurnResult(emitter, currentInputErr), nil
+			}
+			if !recovered {
+				if llm.RequestPayloadTooLarge(payloadBytes) {
+					return preflightOversizeTurnResult(emitter, payloadBytes, estimatedTokens, contextWindowTokens), nil
+				}
+				break
+			}
+			rewrittenBytes, err := sizeEstimator.Estimate(rewritten)
+			if err != nil {
+				return requestEstimatorFailureTurnResult(emitter, err), nil
+			}
+			rewrittenTokens := estimateTurnRequestLimitTokens(runCtx, rewritten)
+			if rewrittenBytes >= payloadBytes && rewrittenTokens >= estimatedTokens {
+				if llm.RequestPayloadTooLarge(rewrittenBytes) {
+					return preflightOversizeTurnResult(emitter, rewrittenBytes, rewrittenTokens, contextWindowTokens), nil
+				}
+				break
+			}
+			currentRequest = rewritten
+			preflightRecovered = true
+			if preflightRound >= 8 {
+				if llm.RequestPayloadTooLarge(rewrittenBytes) {
+					return preflightOversizeTurnResult(emitter, rewrittenBytes, rewrittenTokens, contextWindowTokens), nil
+				}
+				break
 			}
 		}
 
@@ -1393,15 +1406,59 @@ func (l *Loop) runTurnWithRetry(
 		if err != nil {
 			return turnResult{}, err
 		}
-		if !oversizeRecovered && isOversizeTurn(turn) {
-			rewritten, recovered, err := maybeRecoverOversizeRequest(ctx, runCtx, currentRequest, &turn, emitter, yield, turnIndex, "provider")
+		if isOversizeTurn(turn) {
+			contextWindowTokens := 0
+			if runCtx.PipelineRC != nil {
+				contextWindowTokens = pipeline.ResolveRunContextWindowTokens(runCtx.PipelineRC)
+			}
+			if providerRecoveryUsed {
+				return turn, nil
+			}
+			rewritten, recovered, currentInputErr, err := maybeRecoverOversizeRequest(
+				ctx,
+				runCtx,
+				currentRequest,
+				&turn,
+				emitter,
+				yield,
+				turnIndex,
+				"provider",
+				sizeEstimator.Estimate,
+			)
 			if err != nil {
 				return turnResult{}, err
 			}
+			if currentInputErr != nil {
+				return currentInputOversizeTurnResult(emitter, currentInputErr), nil
+			}
 			if recovered {
+				rewrittenBytes, estimateErr := sizeEstimator.Estimate(rewritten)
+				if estimateErr != nil {
+					return requestEstimatorFailureTurnResult(emitter, estimateErr), nil
+				}
+				rewrittenTokens := estimateTurnRequestLimitTokens(runCtx, rewritten)
+				if llm.RequestExceedsLimits(rewrittenBytes, rewrittenTokens, contextWindowTokens) {
+					return preflightOversizeTurnResult(emitter, rewrittenBytes, rewrittenTokens, contextWindowTokens), nil
+				}
 				currentRequest = rewritten
-				oversizeRecovered = true
+				providerRecoveryUsed = true
 				continue
+			}
+			if preflightRecovered {
+				payloadBytes, err := sizeEstimator.Estimate(currentRequest)
+				if err != nil {
+					return requestEstimatorFailureTurnResult(emitter, err), nil
+				}
+				contextWindowTokens := 0
+				if runCtx.PipelineRC != nil {
+					contextWindowTokens = pipeline.ResolveRunContextWindowTokens(runCtx.PipelineRC)
+				}
+				return preflightOversizeTurnResult(
+					emitter,
+					payloadBytes,
+					estimateTurnRequestLimitTokens(runCtx, currentRequest),
+					contextWindowTokens,
+				), nil
 			}
 		}
 
@@ -1449,23 +1506,37 @@ func maybeRecoverOversizeRequest(
 	yield func(events.RunEvent) error,
 	turnIndex int,
 	triggerPhase string,
-) (llm.Request, bool, error) {
+	requestEstimate func(llm.Request) (int, error),
+) (llm.Request, bool, *pipeline.CurrentInputOversizeError, error) {
 	if runCtx.PipelineRC == nil {
-		return request, false, nil
+		return request, false, nil, nil
 	}
 	rewritten, stats, rewriteErr := pipeline.RewriteOversizeRequest(
 		ctx,
 		runCtx.PipelineRC,
 		request,
 		currentContextCompactAnchor(runCtx),
-		llm.EstimateRequestJSONBytes,
+		requestEstimate,
 	)
-	if !stats.RewriteApplied {
-		return request, false, nil
-	}
+	currentInputErr, currentInputTooLarge := pipeline.IsCurrentInputOversizeError(rewriteErr)
 	phase := "completed"
-	if rewriteErr != nil {
+	stillOversize := false
+	if rewriteErr == nil && stats.RewriteApplied {
+		stillOversize = llm.RequestExceedsLimits(
+			stats.RequestBytesAfterRewrite,
+			pipeline.EstimateRequestContextTokens(runCtx.PipelineRC, rewritten),
+			pipeline.ResolveRunContextWindowTokens(runCtx.PipelineRC),
+		)
+	}
+	switch {
+	case currentInputTooLarge:
+		phase = "current_input_too_large"
+	case rewriteErr != nil:
 		phase = "llm_failed"
+	case stillOversize:
+		phase = "still_oversize"
+	case !stats.RewriteApplied:
+		phase = "no_rewrite"
 	}
 	ev := emitter.Emit("run.context_compact", map[string]any{
 		"op":                           "rewrite",
@@ -1482,6 +1553,9 @@ func maybeRecoverOversizeRequest(
 		"single_atom_partial":          stats.SingleAtomPartial,
 		"request_bytes_before_rewrite": stats.RequestBytesBeforeRewrite,
 		"request_bytes_after_rewrite":  stats.RequestBytesAfterRewrite,
+		"minimal_request_bytes":        stats.MinimalRequestBytes,
+		"current_input_too_large":      stats.CurrentInputTooLarge,
+		"request_still_oversize":       stillOversize,
 	}, nil, nil)
 	if turn != nil && len(turn.Events) > 0 {
 		last := turn.Events[len(turn.Events)-1]
@@ -1498,9 +1572,86 @@ func maybeRecoverOversizeRequest(
 		ev.DataJSON["llm_error"] = rewriteErr.Error()
 	}
 	if err := yield(ev); err != nil {
-		return request, false, err
+		return request, false, nil, err
 	}
-	return rewritten, true, nil
+	if currentInputTooLarge {
+		return request, false, currentInputErr, nil
+	}
+	if rewriteErr != nil {
+		return request, false, nil, rewriteErr
+	}
+	return rewritten, stats.RewriteApplied, nil, nil
+}
+
+func preflightOversizeTurnResult(emitter events.Emitter, payloadBytes int, estimatedTokens int, contextWindowTokens int) turnResult {
+	details := llm.OversizeFailureDetails(payloadBytes, llm.OversizePhasePreflight, map[string]any{
+		"network_attempted": false,
+	})
+	if estimatedTokens > 0 {
+		details["estimated_tokens"] = estimatedTokens
+	}
+	if contextWindowTokens > 0 {
+		details["context_window_tokens"] = contextWindowTokens
+	}
+	ev := emitter.Emit("run.failed", llm.GatewayError{
+		ErrorClass: llm.ErrorClassProviderNonRetryable,
+		Message:    "request exceeds limits",
+		Details:    details,
+	}.ToJSON(), nil, stringPtr(llm.ErrorClassProviderNonRetryable))
+	return turnResult{
+		Events:   []events.RunEvent{ev},
+		Terminal: true,
+	}
+}
+
+func currentInputOversizeTurnResult(emitter events.Emitter, inputErr *pipeline.CurrentInputOversizeError) turnResult {
+	currentEstimate := 0
+	minimalEstimate := 0
+	if inputErr != nil {
+		currentEstimate = inputErr.CurrentRequestEstimate
+		minimalEstimate = inputErr.MinimalRequestEstimate
+	}
+	details := llm.OversizeFailureDetails(currentEstimate, llm.OversizePhasePreflight, map[string]any{
+		"network_attempted":      false,
+		"current_input_oversize": true,
+		"minimal_payload_bytes":  minimalEstimate,
+	})
+	if inputErr != nil {
+		if inputErr.CurrentRequestTokens > 0 {
+			details["estimated_tokens"] = inputErr.CurrentRequestTokens
+		}
+		if inputErr.MinimalRequestTokens > 0 {
+			details["minimal_estimated_tokens"] = inputErr.MinimalRequestTokens
+		}
+		if inputErr.ContextWindowTokens > 0 {
+			details["context_window_tokens"] = inputErr.ContextWindowTokens
+		}
+	}
+	ev := emitter.Emit("run.failed", llm.GatewayError{
+		ErrorClass: llm.ErrorClassProviderNonRetryable,
+		Message:    "current input node exceeds request limit",
+		Details:    details,
+	}.ToJSON(), nil, stringPtr(llm.ErrorClassProviderNonRetryable))
+	return turnResult{
+		Events:   []events.RunEvent{ev},
+		Terminal: true,
+	}
+}
+
+func requestEstimatorFailureTurnResult(emitter events.Emitter, err error) turnResult {
+	reason := "provider request estimator unavailable"
+	if err != nil && strings.TrimSpace(err.Error()) != "" {
+		reason = strings.TrimSpace(err.Error())
+	}
+	ev := emitter.Emit("run.failed", llm.GatewayError{
+		ErrorClass: llm.ErrorClassInternalError,
+		Message:    "provider request estimator unavailable",
+		Details:    map[string]any{"reason": reason},
+	}.ToJSON(), nil, stringPtr(llm.ErrorClassInternalError))
+	return turnResult{
+		Events:   []events.RunEvent{ev},
+		Terminal: true,
+	}
 }
 
 func isRetryableTurn(turn turnResult) bool {
@@ -1869,6 +2020,17 @@ func prepareTurnRequestPromptCache(request *llm.Request, runCtx RunContext, stat
 	request.PromptPlan.MessageCache.PinnedCacheEdits = clonePromptCacheEditBlocks(state.PinnedCacheEdits)
 	request.PromptPlan.MessageCache.NewCacheEdits = nil
 
+	// Pin stable marker: first turn computes it, subsequent turns reuse the same position.
+	if state.StableMarkerPinned && state.StableMarkerIndex >= 0 && state.StableMarkerIndex < lastIdx {
+		request.PromptPlan.MessageCache.StableMarkerEnabled = true
+		request.PromptPlan.MessageCache.StableMarkerMessageIndex = state.StableMarkerIndex
+	} else if !state.StableMarkerPinned {
+		if request.PromptPlan.MessageCache.StableMarkerEnabled {
+			state.StableMarkerIndex = request.PromptPlan.MessageCache.StableMarkerMessageIndex
+			state.StableMarkerPinned = true
+		}
+	}
+
 	currentRefs := collectToolResultReferences(request.Messages, lastIdx)
 	if len(state.KnownToolResultRefs) > 0 {
 		deletions := missingToolResultReferences(state.KnownToolResultRefs, currentRefs)
@@ -2124,11 +2286,79 @@ func cloneFloatPtr(src *float64) *float64 {
 	return &value
 }
 
-func estimateTurnRequestContextTokens(runCtx RunContext, messages []llm.Message) int {
-	if runCtx.PipelineRC != nil {
-		return pipeline.HistoryThreadPromptTokensForRoute(runCtx.PipelineRC.SelectedRoute, messages)
+type requestSizeEstimator struct {
+	ProviderBased bool
+	Available     bool
+	Err           error
+	Estimate      func(llm.Request) (int, error)
+}
+
+func newRequestSizeEstimator(runCtx RunContext) requestSizeEstimator {
+	fallback := requestSizeEstimator{
+		ProviderBased: false,
+		Available:     true,
+		Estimate: func(req llm.Request) (int, error) {
+			return llm.EstimateRequestJSONBytes(req), nil
+		},
 	}
-	return pipeline.HistoryThreadPromptTokensForRoute(nil, messages)
+	if runCtx.PipelineRC == nil {
+		return fallback
+	}
+	estimate := runCtx.PipelineRC.EstimateProviderRequestBytes
+	if estimate == nil {
+		return fallback
+	}
+	requestProbe := llm.Request{
+		Model:    strings.TrimSpace(runCtx.Model),
+		Messages: []llm.Message{{Role: "user", Content: []llm.TextPart{{Text: "probe"}}}},
+	}
+	if size, err := estimate(requestProbe); err != nil || size <= 0 {
+		return fallback
+	}
+	return requestSizeEstimator{
+		ProviderBased: true,
+		Available:     true,
+		Estimate: func(req llm.Request) (int, error) {
+			size, err := estimate(req)
+			if err != nil || size <= 0 {
+				return llm.EstimateRequestJSONBytes(req), nil
+			}
+			return size, nil
+		},
+	}
+}
+
+func estimateTurnRequestContextTokens(runCtx RunContext, request llm.Request) int {
+	if runCtx.PipelineRC != nil {
+		if estimate := pipeline.EstimateRequestContextTokens(runCtx.PipelineRC, request); estimate > 0 {
+			return estimate
+		}
+	}
+	sizeEstimator := newRequestSizeEstimator(runCtx)
+	estimatedBytes, err := sizeEstimator.Estimate(request)
+	if err != nil || estimatedBytes <= 0 {
+		estimatedBytes = llm.EstimateRequestJSONBytes(request)
+	}
+	estimatedTokens := estimatedBytes / 4
+	if estimatedTokens < 1 {
+		return 1
+	}
+	return estimatedTokens
+}
+
+func estimateTurnRequestLimitTokens(runCtx RunContext, request llm.Request) int {
+	raw := 0
+	if runCtx.PipelineRC != nil {
+		raw = pipeline.EstimateRequestContextTokens(runCtx.PipelineRC, request)
+	}
+	if raw <= 0 {
+		raw = estimateTurnRequestContextTokens(runCtx, request)
+	}
+	// 用 anchor 校准粗估值
+	if anchor := currentContextCompactAnchor(runCtx); anchor != nil {
+		return pipeline.ApplyContextCompactPressure(*anchor, raw)
+	}
+	return raw
 }
 
 func attachContextPressureAnchor(data map[string]any, requestEstimateTokens int) {

@@ -57,6 +57,7 @@ type persistedCanonicalThreadGraph struct {
 	Chunks                   []canonicalChunk
 	AtomRecordsByKey         map[string]*data.ProtocolAtomRecord
 	ChunkRecordsByContextSeq map[int64]*data.ContextChunkRecord
+	ChunkRecordsByID         map[uuid.UUID]*data.ContextChunkRecord
 }
 
 func buildCanonicalAtomGraph(messages []data.ThreadMessage) ([]canonicalAtom, []canonicalChunk) {
@@ -433,7 +434,7 @@ func resolveContextSeqRangeForThreadSeqRange(chunks []canonicalChunk, startThrea
 	return startContextSeq, endContextSeq, true
 }
 
-func selectRenderableReplacementSpans(items []canonicalReplacementSpan, lastAtom *canonicalAtom) []canonicalReplacementSpan {
+func selectRenderableReplacementSpans(items []canonicalReplacementSpan, firstContextSeq int64, lastAtom *canonicalAtom) []canonicalReplacementSpan {
 	if len(items) == 0 {
 		return nil
 	}
@@ -455,43 +456,50 @@ func selectRenderableReplacementSpans(items []canonicalReplacementSpan, lastAtom
 	if len(filtered) == 0 {
 		return nil
 	}
-	sort.SliceStable(filtered, func(i, j int) bool {
-		if filtered[i].Record.Layer != filtered[j].Record.Layer {
-			return filtered[i].Record.Layer > filtered[j].Record.Layer
+	return selectPrefixOnlyReplacementSpans(filtered, firstContextSeq)
+}
+
+func selectPrefixOnlyReplacementSpans(items []canonicalReplacementSpan, firstContextSeq int64) []canonicalReplacementSpan {
+	if len(items) == 0 || firstContextSeq <= 0 {
+		return nil
+	}
+	candidates := append([]canonicalReplacementSpan(nil), items...)
+	sort.SliceStable(candidates, func(i, j int) bool {
+		if candidates[i].StartContextSeq != candidates[j].StartContextSeq {
+			return candidates[i].StartContextSeq < candidates[j].StartContextSeq
 		}
-		if !filtered[i].Record.CreatedAt.Equal(filtered[j].Record.CreatedAt) {
-			return filtered[i].Record.CreatedAt.After(filtered[j].Record.CreatedAt)
+		if candidates[i].Record.Layer != candidates[j].Record.Layer {
+			return candidates[i].Record.Layer > candidates[j].Record.Layer
 		}
-		return filtered[i].StartContextSeq < filtered[j].StartContextSeq
+		if !candidates[i].Record.CreatedAt.Equal(candidates[j].Record.CreatedAt) {
+			return candidates[i].Record.CreatedAt.After(candidates[j].Record.CreatedAt)
+		}
+		if candidates[i].EndContextSeq != candidates[j].EndContextSeq {
+			return candidates[i].EndContextSeq < candidates[j].EndContextSeq
+		}
+		return candidates[i].Record.ID.String() < candidates[j].Record.ID.String()
 	})
 
-	selected := make([]canonicalReplacementSpan, 0, len(filtered))
-	for _, candidate := range filtered {
-		overlaps := false
-		for _, existing := range selected {
-			if rangesOverlap(candidate.StartContextSeq, candidate.EndContextSeq, existing.StartContextSeq, existing.EndContextSeq) {
-				overlaps = true
+	selected := make([]canonicalReplacementSpan, 0, len(candidates))
+	expectedStart := firstContextSeq
+	for {
+		bestIndex := -1
+		for idx, candidate := range candidates {
+			if candidate.StartContextSeq < expectedStart {
+				continue
+			}
+			if candidate.StartContextSeq > expectedStart {
 				break
 			}
+			bestIndex = idx
+			break
 		}
-		if overlaps {
-			continue
+		if bestIndex < 0 {
+			break
 		}
-		selected = append(selected, candidate)
+		selected = append(selected, candidates[bestIndex])
+		expectedStart = candidates[bestIndex].EndContextSeq + 1
 	}
-
-	sort.SliceStable(selected, func(i, j int) bool {
-		if selected[i].StartContextSeq != selected[j].StartContextSeq {
-			return selected[i].StartContextSeq < selected[j].StartContextSeq
-		}
-		if selected[i].EndContextSeq != selected[j].EndContextSeq {
-			return selected[i].EndContextSeq < selected[j].EndContextSeq
-		}
-		if selected[i].Record.Layer != selected[j].Record.Layer {
-			return selected[i].Record.Layer > selected[j].Record.Layer
-		}
-		return selected[i].Record.CreatedAt.Before(selected[j].Record.CreatedAt)
-	})
 	return selected
 }
 
@@ -519,12 +527,29 @@ func ensureCanonicalThreadGraphPersisted(
 	if err != nil {
 		return nil, err
 	}
+	return ensureCanonicalThreadGraphPersistedFromMessages(ctx, tx, accountID, threadID, messages)
+}
+
+func ensureCanonicalThreadGraphPersistedFromMessages(
+	ctx context.Context,
+	tx pgx.Tx,
+	accountID uuid.UUID,
+	threadID uuid.UUID,
+	messages []data.ThreadMessage,
+) (*persistedCanonicalThreadGraph, error) {
+	if tx == nil {
+		return nil, fmt.Errorf("tx must not be nil")
+	}
+	if accountID == uuid.Nil || threadID == uuid.Nil {
+		return nil, fmt.Errorf("account_id and thread_id must not be empty")
+	}
 	atoms, chunks := buildCanonicalAtomGraph(messages)
 
 	atomsRepo := data.ThreadContextAtomsRepository{}
 	chunksRepo := data.ThreadContextChunksRepository{}
 	atomRecords := make(map[string]*data.ProtocolAtomRecord, len(atoms))
 	chunkRecords := make(map[int64]*data.ContextChunkRecord, len(chunks))
+	chunkRecordsByID := make(map[uuid.UUID]*data.ContextChunkRecord, len(chunks))
 
 	for i := range atoms {
 		role := ""
@@ -547,7 +572,67 @@ func ensureCanonicalThreadGraphPersisted(
 		atomRecords[atoms[i].Key] = record
 	}
 
+	type targetChunkKey struct {
+		AtomID   uuid.UUID
+		ChunkSeq int64
+	}
+	desiredChunkByContextSeq := make(map[int64]targetChunkKey, len(chunks))
 	chunkSeqByAtomKey := make(map[string]int64, len(atoms))
+	for i := range chunks {
+		atomRecord := atomRecords[chunks[i].AtomKey]
+		if atomRecord == nil {
+			return nil, fmt.Errorf("atom record missing for %s", chunks[i].AtomKey)
+		}
+		chunkSeqByAtomKey[chunks[i].AtomKey]++
+		desiredChunkByContextSeq[chunks[i].ContextSeq] = targetChunkKey{
+			AtomID:   atomRecord.ID,
+			ChunkSeq: chunkSeqByAtomKey[chunks[i].AtomKey],
+		}
+	}
+	existingChunks, err := chunksRepo.ListByThreadUpToContextSeq(ctx, tx, accountID, threadID, nil)
+	if err != nil {
+		return nil, err
+	}
+	staleChunkIDs := make([]uuid.UUID, 0)
+	staleChunkContextSeq := make([]int64, 0)
+	for _, chunk := range existingChunks {
+		target, ok := desiredChunkByContextSeq[chunk.ContextSeq]
+		if ok && chunk.AtomID == target.AtomID && chunk.ChunkSeq == target.ChunkSeq {
+			continue
+		}
+		staleChunkIDs = append(staleChunkIDs, chunk.ID)
+		staleChunkContextSeq = append(staleChunkContextSeq, chunk.ContextSeq)
+	}
+	supersessionEdgesRepo := data.ThreadContextSupersessionEdgesRepository{}
+	if len(staleChunkIDs) > 0 {
+		if err := supersessionEdgesRepo.DeleteBySupersededChunkIDs(ctx, tx, accountID, threadID, staleChunkIDs); err != nil {
+			return nil, err
+		}
+	}
+	for _, contextSeq := range staleChunkContextSeq {
+		if err := chunksRepo.DeleteByThreadContextSeq(ctx, tx, accountID, threadID, contextSeq); err != nil {
+			return nil, err
+		}
+	}
+
+	desiredAtomSeq := make(map[int64]struct{}, len(atoms))
+	for i := range atoms {
+		desiredAtomSeq[int64(i+1)] = struct{}{}
+	}
+	existingAtoms, err := atomsRepo.ListByThreadUpToAtomSeq(ctx, tx, accountID, threadID, nil)
+	if err != nil {
+		return nil, err
+	}
+	for _, atom := range existingAtoms {
+		if _, ok := desiredAtomSeq[atom.AtomSeq]; ok {
+			continue
+		}
+		if err := atomsRepo.DeleteByThreadAtomSeq(ctx, tx, accountID, threadID, atom.AtomSeq); err != nil {
+			return nil, err
+		}
+	}
+
+	chunkSeqByAtomKey = make(map[string]int64, len(atoms))
 	for i := range chunks {
 		atomRecord := atomRecords[chunks[i].AtomKey]
 		if atomRecord == nil {
@@ -567,6 +652,7 @@ func ensureCanonicalThreadGraphPersisted(
 			return nil, err
 		}
 		chunkRecords[chunks[i].ContextSeq] = record
+		chunkRecordsByID[record.ID] = record
 	}
 
 	return &persistedCanonicalThreadGraph{
@@ -574,6 +660,7 @@ func ensureCanonicalThreadGraphPersisted(
 		Chunks:                   chunks,
 		AtomRecordsByKey:         atomRecords,
 		ChunkRecordsByContextSeq: chunkRecords,
+		ChunkRecordsByID:         chunkRecordsByID,
 	}, nil
 }
 

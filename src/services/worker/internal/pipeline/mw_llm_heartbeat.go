@@ -3,30 +3,16 @@ package pipeline
 import (
 	"context"
 	"fmt"
-	"log/slog"
 	"strings"
 	"time"
 
 	"arkloop/services/shared/runkind"
-	"arkloop/services/worker/internal/events"
 	"arkloop/services/worker/internal/llm"
-	"arkloop/services/worker/internal/memory"
 	"arkloop/services/worker/internal/tools"
 	heartbeattool "arkloop/services/worker/internal/tools/builtin/heartbeat_decision"
 
 	"github.com/google/uuid"
 )
-
-const (
-	eventTypeMemoryHeartbeatStarted      = "memory.heartbeat.started"
-	eventTypeMemoryHeartbeatAppendFailed = "memory.heartbeat.append_failed"
-	eventTypeMemoryHeartbeatCommitFailed = "memory.heartbeat.commit_failed"
-	eventTypeMemoryHeartbeatCommitted    = "memory.heartbeat.committed"
-)
-
-type heartbeatFragmentDirectWriter interface {
-	WriteReturningURI(ctx context.Context, ident memory.MemoryIdentity, scope memory.MemoryScope, entry memory.MemoryEntry) (string, error)
-}
 
 // isHeartbeatRun checks whether run_kind=heartbeat is set in InputJSON or JobPayload.
 func isHeartbeatRun(input, job map[string]any) bool {
@@ -93,8 +79,7 @@ func IsHeartbeatDecisionToolName(toolName string) bool {
 }
 
 // NewHeartbeatPrepareMiddleware 为心跳 run 构建尾部 user message（包含完整 heartbeat 指令），
-// 注册 heartbeat_decision 工具并设置 tool_choice=specific，
-// 在 next 返回后将 memory_fragments 提交到 MemoryProvider。
+// 注册 heartbeat_decision 工具并设置 tool_choice=specific。
 // 非心跳 run 直接透传。
 func NewHeartbeatPrepareMiddleware() RunMiddleware {
 	return func(ctx context.Context, rc *RunContext, next RunHandler) error {
@@ -126,8 +111,7 @@ func NewHeartbeatPrepareMiddleware() RunMiddleware {
 			}
 		}
 
-		// 构建尾部 user message：元数据 + heartbeat.md 合并为一条，
-		// 放在消息尾部的注意力焦点位置，用结构化标记避免模型误认为人类发言。
+		// 构建 runtime tail：保持控制面提示独立，避免污染会话历史与 prompt-cache snapshot。
 		var sb strings.Builder
 		sb.WriteString("[SYSTEM_HEARTBEAT_CHECK]\n")
 		sb.WriteString(fmt.Sprintf("time_utc: %s\n", time.Now().UTC().Format(time.RFC3339)))
@@ -140,11 +124,14 @@ func NewHeartbeatPrepareMiddleware() RunMiddleware {
 		}
 		sb.WriteString("[/SYSTEM_HEARTBEAT_CHECK]")
 
-		rc.Messages = append(rc.Messages, llm.Message{
-			Role:    "user",
-			Content: []llm.ContentPart{{Type: "text", Text: sb.String()}},
+		rc.UpsertPromptSegment(PromptSegment{
+			Name:          "heartbeat.check",
+			Target:        PromptTargetRuntimeTail,
+			Role:          "user",
+			Text:          sb.String(),
+			Stability:     PromptStabilityVolatileTail,
+			CacheEligible: false,
 		})
-		rc.ThreadMessageIDs = append(rc.ThreadMessageIDs, uuid.Nil)
 
 		// SystemProtocolSnippet 保留在 system prefix：机制约束放 system 层
 		rc.UpsertPromptSegment(PromptSegment{
@@ -187,19 +174,7 @@ func NewHeartbeatPrepareMiddleware() RunMiddleware {
 			ToolName: heartbeattool.ToolName,
 		}
 
-		err := next(ctx, rc)
-
-		// memory_fragments 持久化（post-next）
-		if err == nil &&
-			rc.HeartbeatToolOutcome != nil &&
-			len(rc.HeartbeatToolOutcome.Fragments) > 0 &&
-			rc.MemoryProvider != nil &&
-			rc.UserID != nil &&
-			rc.Run.AccountID != uuid.Nil {
-			commitHeartbeatFragments(ctx, rc)
-		}
-
-		return err
+		return next(ctx, rc)
 	}
 }
 
@@ -219,98 +194,4 @@ func containsToolSpecName(specs []llm.ToolSpec, target string) bool {
 		}
 	}
 	return false
-}
-
-func commitHeartbeatFragments(ctx context.Context, rc *RunContext) {
-	ident := memory.MemoryIdentity{
-		AccountID: rc.Run.AccountID,
-		UserID:    *rc.UserID,
-		AgentID:   StableAgentID(rc),
-	}
-	fragments := append([]string(nil), rc.HeartbeatToolOutcome.Fragments...)
-	body := strings.Join(fragments, "\n\n")
-	msgs := []memory.MemoryMessage{
-		{Role: "user", Content: body},
-		{Role: "assistant", Content: "Noted."},
-	}
-	sessionID := rc.Run.ThreadID.String()
-	mdb := rc.MemoryServiceDB
-	if mdb == nil {
-		mdb = rc.Pool
-	}
-	appendAsyncRunEvent(context.Background(), mdb, rc.Run.ID, events.NewEmitter(rc.TraceID).Emit(eventTypeMemoryHeartbeatStarted, map[string]any{
-		"kind":           "heartbeat",
-		"session_id":     sessionID,
-		"message_count":  1,
-		"fragment_count": len(fragments),
-	}, nil, nil))
-	go func() {
-		runCtx, cancel := context.WithTimeout(context.Background(), memoryFlushTimeout)
-		defer cancel()
-
-		if writer, ok := rc.MemoryProvider.(heartbeatFragmentDirectWriter); ok {
-			for _, fragment := range fragments {
-				entry := memory.MemoryEntry{Content: strings.TrimSpace(fragment)}
-				if _, err := writer.WriteReturningURI(runCtx, ident, memory.MemoryScopeUser, entry); err != nil {
-					slog.Warn("memory: heartbeat write failed",
-						"account_id", rc.Run.AccountID.String(),
-						"session_id", sessionID,
-						"err", err.Error(),
-					)
-					appendAsyncRunEvent(context.Background(), mdb, rc.Run.ID, events.NewEmitter(rc.TraceID).Emit(eventTypeMemoryHeartbeatCommitFailed, map[string]any{
-						"kind":       "heartbeat",
-						"session_id": sessionID,
-						"message":    err.Error(),
-					}, nil, nil))
-					return
-				}
-			}
-			appendAsyncRunEvent(context.Background(), mdb, rc.Run.ID, events.NewEmitter(rc.TraceID).Emit(eventTypeMemoryHeartbeatCommitted, map[string]any{
-				"kind":       "heartbeat",
-				"session_id": sessionID,
-			}, nil, nil))
-			if rc.MemorySnapshotStore != nil && mdb != nil && len(fragments) > 0 {
-				scheduleSnapshotRefresh(rc.MemoryProvider, rc.MemorySnapshotStore, mdb, rc.Run.ID, rc.TraceID, ident, sessionID, map[string][]string{
-					string(memory.MemoryScopeUser): append([]string(nil), fragments...),
-				}, "memory.heartbeat", "heartbeat")
-			}
-			return
-		}
-
-		if err := rc.MemoryProvider.AppendSessionMessages(runCtx, ident, sessionID, msgs); err != nil {
-			slog.Warn("memory: heartbeat append failed",
-				"account_id", rc.Run.AccountID.String(),
-				"session_id", sessionID,
-				"err", err.Error(),
-			)
-			appendAsyncRunEvent(context.Background(), mdb, rc.Run.ID, events.NewEmitter(rc.TraceID).Emit(eventTypeMemoryHeartbeatAppendFailed, map[string]any{
-				"kind":       "heartbeat",
-				"session_id": sessionID,
-				"message":    err.Error(),
-			}, nil, nil))
-			return
-		}
-		if err := rc.MemoryProvider.CommitSession(runCtx, ident, sessionID); err != nil {
-			slog.Warn("memory: heartbeat commit failed",
-				"account_id", rc.Run.AccountID.String(),
-				"session_id", sessionID,
-				"err", err.Error(),
-			)
-			appendAsyncRunEvent(context.Background(), mdb, rc.Run.ID, events.NewEmitter(rc.TraceID).Emit(eventTypeMemoryHeartbeatCommitFailed, map[string]any{
-				"kind":       "heartbeat",
-				"session_id": sessionID,
-				"message":    err.Error(),
-			}, nil, nil))
-			return
-		}
-		appendAsyncRunEvent(context.Background(), mdb, rc.Run.ID, events.NewEmitter(rc.TraceID).Emit(eventTypeMemoryHeartbeatCommitted, map[string]any{
-			"kind":       "heartbeat",
-			"session_id": sessionID,
-		}, nil, nil))
-		if rc.MemorySnapshotStore != nil && mdb != nil && strings.TrimSpace(body) != "" {
-			scheduleSnapshotRefresh(rc.MemoryProvider, rc.MemorySnapshotStore, mdb, rc.Run.ID, rc.TraceID, ident, sessionID, map[string][]string{
-				string(memory.MemoryScopeUser): {body},
-			}, "memory.heartbeat", "heartbeat")
-		}
-	}()
 }

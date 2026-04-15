@@ -1,8 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { AssistantTurnUi } from '../assistantTurnSegments'
 
-// bottom padding on the content wrapper — clears the input area overlay
-// spacer calculation subtracts this so total fill = viewportH - turnH
+// fallback reserved space before the input area is measured
 export const SCROLL_BOTTOM_PAD = 160
 
 // top offset when pinning user prompt — clears the top gradient overlay (h-10 = 40px)
@@ -81,6 +80,17 @@ export function useScrollPin(options: UseScrollPinOptions = {}): ScrollPinResult
   const anchorActivationPendingRef = useRef(false)
   const viewportAnchorRef = useRef<ViewportAnchor | null>(null)
 
+  const inputAreaHeight = useCallback(() => {
+    const inputArea = inputAreaRef.current
+    if (!inputArea) return SCROLL_BOTTOM_PAD
+    const height = inputArea.getBoundingClientRect().height
+    return Number.isFinite(height) && height > 0 ? height : SCROLL_BOTTOM_PAD
+  }, [])
+
+  const maxScrollTop = useCallback((container: HTMLDivElement) => {
+    return Math.max(0, container.scrollHeight - container.clientHeight)
+  }, [])
+
   const rememberScrollTop = useCallback((container: HTMLDivElement | null) => {
     if (!container) return
     lastObservedScrollTopRef.current = container.scrollTop
@@ -106,7 +116,7 @@ export function useScrollPin(options: UseScrollPinOptions = {}): ScrollPinResult
   const scrollViewportToBottom = useCallback((behavior: ScrollBehavior) => {
     const container = scrollContainerRef.current
     const bottom = bottomRef.current
-    if (!container || !bottom) return
+    if (!container) return
 
     if (anchorScrollMonitorFrameRef.current !== null) {
       cancelAnimationFrame(anchorScrollMonitorFrameRef.current)
@@ -114,12 +124,12 @@ export function useScrollPin(options: UseScrollPinOptions = {}): ScrollPinResult
       programmaticScrollDepthRef.current = Math.max(0, programmaticScrollDepthRef.current - 1)
     }
 
-    const targetScroll = Math.max(0, bottom.offsetTop - container.clientHeight)
+    const targetScroll = maxScrollTop(container)
     programmaticScrollDepthRef.current++
 
     if (behavior === 'instant') {
       container.scrollTop = targetScroll
-      bottom.scrollIntoView({ behavior: 'instant' })
+      bottom?.scrollIntoView({ behavior: 'instant' })
     } else {
       container.scrollTo({ top: targetScroll, behavior })
     }
@@ -130,7 +140,7 @@ export function useScrollPin(options: UseScrollPinOptions = {}): ScrollPinResult
       rememberScrollTop(container)
       syncBottomState(container)
     })
-  }, [rememberScrollTop, syncBottomState])
+  }, [maxScrollTop, rememberScrollTop, syncBottomState])
 
   const prefersReducedMotion = useCallback(() => {
     return typeof window !== 'undefined'
@@ -417,7 +427,7 @@ export function useScrollPin(options: UseScrollPinOptions = {}): ScrollPinResult
 
     const viewportH = container.clientHeight
     const turnH = turn.getBoundingClientRect().height
-    let needed = Math.max(0, viewportH - turnH - SCROLL_BOTTOM_PAD - SCROLL_TOP_OFFSET)
+    let needed = Math.max(0, viewportH - turnH - inputAreaHeight() - SCROLL_TOP_OFFSET)
 
     if (userScrolledUpRef.current) {
       // ratchet: only allow decrease
@@ -428,7 +438,7 @@ export function useScrollPin(options: UseScrollPinOptions = {}): ScrollPinResult
 
     spacer.style.height = needed + 'px'
     spacerRatchetRef.current = needed
-  }, [])
+  }, [inputAreaHeight])
 
   // scroll so that the anchor turn top aligns below the top gradient overlay
   // during streaming, follow the bottom of tall turns to show latest output
@@ -879,16 +889,39 @@ export function useScrollPin(options: UseScrollPinOptions = {}): ScrollPinResult
   useEffect(() => {
     const el = inputAreaRef.current
     if (!el) return
+    const syncInputAreaHeight = () => {
+      document.documentElement.style.setProperty('--chat-input-area-height', `${Math.ceil(inputAreaHeight())}px`)
+    }
     if (typeof ResizeObserver === 'undefined') {
-      document.documentElement.style.setProperty('--chat-input-area-height', `${el.getBoundingClientRect().height}px`)
+      syncInputAreaHeight()
       return
     }
-    const ro = new ResizeObserver(([entry]) => {
-      document.documentElement.style.setProperty('--chat-input-area-height', `${entry.contentRect.height}px`)
+    syncInputAreaHeight()
+    const ro = new ResizeObserver(() => {
+      syncInputAreaHeight()
+      if (anchorActivationPendingRef.current || isAnchorAnimating()) return
+      if (isAnchoredRef.current) {
+        recalcSpacer()
+        if (userScrolledUpRef.current) {
+          preserveViewportAnchor()
+        } else {
+          scrollToAnchor()
+        }
+        syncBottomStateFromContainer()
+        return
+      }
+
+      if (followLiveOutputRef.current || isAtBottomRef.current) {
+        scrollViewportToBottom('instant')
+        return
+      }
+      if (shouldPreserveViewport()) {
+        preserveViewportAnchor()
+      }
     })
     ro.observe(el)
     return () => ro.disconnect()
-  }, [])
+  }, [inputAreaHeight, isAnchorAnimating, preserveViewportAnchor, recalcSpacer, scrollToAnchor, scrollViewportToBottom, shouldPreserveViewport, syncBottomStateFromContainer])
 
   // window resize: recalc spacer
   useEffect(() => {

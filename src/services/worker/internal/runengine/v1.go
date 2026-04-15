@@ -42,6 +42,7 @@ import (
 	conversationtool "arkloop/services/worker/internal/tools/conversation"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
 )
@@ -52,6 +53,8 @@ type EngineV1 struct {
 	middlewares           []pipeline.RunMiddleware
 	terminal              pipeline.RunHandler
 	router                *routing.ProviderRouter
+	routingConfigLoader   *routing.ConfigLoader
+	auxGateway            llm.Gateway
 	hookRuntime           *pipeline.HookRuntime
 	hookRegistry          *pipeline.HookRegistry
 	directPool            *pgxpool.Pool
@@ -209,7 +212,6 @@ func NewEngineV1(deps EngineV1Deps) (*EngineV1, error) {
 	if nowledgeProvider := resolveNowledgeProvider(context.Background(), deps.ConfigResolver); nowledgeProvider != nil {
 		linkRepo := data.ExternalThreadLinksRepository{}
 		hookRegistry.RegisterContextContributor(pipeline.NewNowledgeContextContributor(nowledgeProvider))
-		hookRegistry.RegisterCompactionAdvisor(pipeline.NewNowledgeCompactionAdvisor(nowledgeProvider))
 		_ = hookRegistry.SetThreadPersistenceProvider(pipeline.NewNowledgeThreadPersistenceProvider(
 			nowledgeProvider,
 			pgxExternalThreadLinks{repo: linkRepo, pool: deps.DBPool},
@@ -222,6 +224,7 @@ func NewEngineV1(deps EngineV1Deps) (*EngineV1, error) {
 		pipeline.NewPgxImpressionStore(deps.DBPool),
 		newPgxImpressionRefresh(deps),
 	))
+	hookRegistry.RegisterAfterThreadPersistHook(pipeline.NewContextCompactMaintenanceObserver(deps.JobQueue))
 
 	// 中间件执行顺序有隐含的前置条件依赖，不可随意调整：
 	//   CancelGuard     — 必须最先：建立取消监听和 WaitForInput，后续中间件依赖
@@ -245,6 +248,8 @@ func NewEngineV1(deps EngineV1Deps) (*EngineV1, error) {
 		middlewares:           middlewares,
 		terminal:              terminal,
 		router:                deps.Router,
+		routingConfigLoader:   deps.RoutingConfigLoader,
+		auxGateway:            deps.AuxGateway,
 		hookRuntime:           pipeline.NewHookRuntime(hookRegistry, pipeline.NewDefaultHookResultApplier()),
 		hookRegistry:          hookRegistry,
 		directPool:            deps.DirectDBPool,
@@ -389,24 +394,30 @@ func (e *EngineV1) Execute(ctx context.Context, pool *pgxpool.Pool, run data.Run
 	if persistPct > 100 {
 		persistPct = 100
 	}
-	persistKeepTailPct := resolveNonNegativeInt(ctx, e.configResolver, registry, "context.compact.persist_keep_tail_pct", platformScope, 0)
-	if persistKeepTailPct > 100 {
-		persistKeepTailPct = 100
+	targetPct := resolveNonNegativeInt(ctx, e.configResolver, registry, "context.compact.target_context_pct", platformScope, 65)
+	if targetPct > 100 {
+		targetPct = 100
 	}
+	if targetPct <= 0 {
+		targetPct = 65
+	}
+	compactEnabled := resolveBool(ctx, e.configResolver, registry, "context.compact.enabled", platformScope, false)
 	rc.ContextCompact = pipeline.ContextCompactSettings{
-		Enabled:                     resolveBool(ctx, e.configResolver, registry, "context.compact.enabled", platformScope, false),
+		Enabled:                     compactEnabled,
 		MaxMessages:                 resolveNonNegativeInt(ctx, e.configResolver, registry, "context.compact.max_messages", platformScope, 0),
 		MaxUserMessageTokens:        resolveNonNegativeInt(ctx, e.configResolver, registry, "context.compact.max_user_message_tokens", platformScope, 0),
 		MaxTotalTextTokens:          resolveNonNegativeInt(ctx, e.configResolver, registry, "context.compact.max_total_text_tokens", platformScope, 0),
 		MaxUserTextBytes:            resolveNonNegativeInt(ctx, e.configResolver, registry, "context.compact.max_user_text_bytes", platformScope, 0),
 		MaxTotalTextBytes:           resolveNonNegativeInt(ctx, e.configResolver, registry, "context.compact.max_total_text_bytes", platformScope, 0),
-		PersistEnabled:              resolveBool(ctx, e.configResolver, registry, "context.compact.persist_enabled", platformScope, false),
-		PersistTriggerApproxTokens:  resolvePositiveInt(ctx, e.configResolver, registry, "context.compact.persist_trigger_approx_tokens", platformScope, 0),
+		PersistEnabled:              compactEnabled,
+		PersistTriggerApproxTokens:  0,
 		PersistTriggerContextPct:    persistPct,
 		FallbackContextWindowTokens: resolvePositiveInt(ctx, e.configResolver, registry, "context.compact.fallback_context_window_tokens", platformScope, 128000),
-		PersistKeepLastMessages:     resolvePositiveInt(ctx, e.configResolver, registry, "context.compact.persist_keep_last_messages", platformScope, defaultPersistKeepLastMessagesWorker),
-		PersistKeepTailPct:          persistKeepTailPct,
-		MicrocompactKeepRecentTools: resolveNonNegativeInt(ctx, e.configResolver, registry, "context.compact.microcompact_keep_recent_tools", platformScope, 0),
+		TargetContextPct:            targetPct,
+		PersistKeepLastMessages:     defaultPersistKeepLastMessagesWorker,
+		PersistKeepTailPct:          0,
+		CompactZoneBudgetPct:        resolveNonNegativeInt(ctx, e.configResolver, registry, "context.compact.compact_zone_budget_pct", platformScope, 0),
+		MicrocompactKeepRecentTools: 0,
 	}
 	rc.AgentReasoningIterationsLimit = resolveNonNegativeInt(ctx, e.configResolver, registry, "limit.agent_reasoning_iterations", platformScope, 0)
 	rc.ToolContinuationBudgetLimit = resolvePositiveInt(ctx, e.configResolver, registry, "limit.tool_continuation_budget", platformScope, 32)
@@ -493,6 +504,221 @@ func (e *EngineV1) Execute(ctx context.Context, pool *pgxpool.Pool, run data.Run
 	}
 
 	return err
+}
+
+type ContextCompactMaintenanceInput struct {
+	RouteID             string
+	UpperBoundThreadSeq int64
+	ContextWindowTokens int
+	TriggerContextPct   int
+	TargetContextPct    int
+	JobPayload          map[string]any
+}
+
+func (e *EngineV1) ExecuteContextCompactMaintenance(
+	ctx context.Context,
+	pool *pgxpool.Pool,
+	run data.Run,
+	traceID string,
+	input ContextCompactMaintenanceInput,
+) error {
+	if pool == nil {
+		return fmt.Errorf("pool must not be nil")
+	}
+	if run.AccountID == uuid.Nil || run.ThreadID == uuid.Nil || run.ID == uuid.Nil {
+		return fmt.Errorf("run identity must not be empty")
+	}
+	if input.UpperBoundThreadSeq <= 0 {
+		return nil
+	}
+
+	upperBoundMessageID, ok, err := lookupThreadMessageIDBySeq(ctx, pool, run.AccountID, run.ThreadID, input.UpperBoundThreadSeq)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return nil
+	}
+
+	runsRepo := data.RunsRepository{}
+	eventsRepo := data.RunEventsRepository{}
+	messagesRepo := data.MessagesRepository{}
+	loadPayload := map[string]any{
+		"channel_delivery":       map[string]any{"source": "context_compact_maintain"},
+		"thread_tail_message_id": upperBoundMessageID.String(),
+	}
+	loaded, err := pipeline.LoadRunInputs(ctx, pool, run, loadPayload, runsRepo, eventsRepo, messagesRepo, nil, nil, 0)
+	if err != nil {
+		return err
+	}
+	if loaded == nil {
+		return nil
+	}
+	if loaded.InputJSON == nil {
+		loaded.InputJSON = map[string]any{}
+	}
+	if cleanedRouteID := strings.TrimSpace(input.RouteID); cleanedRouteID != "" {
+		loaded.InputJSON["route_id"] = cleanedRouteID
+	}
+
+	registry := sharedconfig.DefaultRegistry()
+	platformScope := sharedconfig.Scope{}
+	llmMaxResponseBytes := resolvePositiveInt(ctx, e.configResolver, registry, "llm.max_response_bytes", sharedconfig.Scope{}, 16384)
+	selectedRoute, gateway, contextWindowTokens, err := e.resolveCompactMaintenanceRoute(ctx, run.AccountID, loaded.InputJSON, input.ContextWindowTokens, llmMaxResponseBytes)
+	if err != nil {
+		return err
+	}
+
+	triggerPct := input.TriggerContextPct
+	if triggerPct <= 0 {
+		triggerPct = resolveNonNegativeInt(ctx, e.configResolver, registry, "context.compact.persist_trigger_context_pct", platformScope, 85)
+	}
+	if triggerPct > 100 {
+		triggerPct = 100
+	}
+	targetPct := input.TargetContextPct
+	if targetPct <= 0 {
+		targetPct = resolveNonNegativeInt(ctx, e.configResolver, registry, "context.compact.target_context_pct", platformScope, 65)
+	}
+	if targetPct > 100 {
+		targetPct = 100
+	}
+	if targetPct <= 0 {
+		targetPct = 65
+	}
+	fallbackWindowTokens := input.ContextWindowTokens
+	if fallbackWindowTokens <= 0 {
+		fallbackWindowTokens = resolvePositiveInt(ctx, e.configResolver, registry, "context.compact.fallback_context_window_tokens", platformScope, 128000)
+	}
+
+	rc := &pipeline.RunContext{
+		Run:                   run,
+		DB:                    pool,
+		RunStatusDB:           data.RunsRepository{},
+		Pool:                  pool,
+		MemoryServiceDB:       pool,
+		MemorySnapshotStore:   pipeline.NewPgxMemorySnapshotStore(pool),
+		DirectPool:            chooseDirectPool(e.directPool, pool),
+		BroadcastRDB:          e.broadcastRDB,
+		TraceID:               strings.TrimSpace(traceID),
+		Emitter:               events.NewEmitter(traceID),
+		Router:                e.router,
+		JobPayload:            cloneMap(input.JobPayload),
+		InputJSON:             loaded.InputJSON,
+		Messages:              loaded.Messages,
+		ThreadMessageIDs:      loaded.ThreadMessageIDs,
+		ThreadContextFrontier: append([]pipeline.FrontierNode(nil), loaded.ThreadContextFrontier...),
+		Gateway:               gateway,
+		SelectedRoute:         selectedRoute,
+		ContextWindowTokens:   contextWindowTokens,
+		LlmMaxResponseBytes:   llmMaxResponseBytes,
+	}
+	rc.ContextCompact = pipeline.ContextCompactSettings{
+		Enabled:                     false,
+		PersistEnabled:              true,
+		PersistTriggerApproxTokens:  0,
+		PersistTriggerContextPct:    triggerPct,
+		FallbackContextWindowTokens: fallbackWindowTokens,
+		TargetContextPct:            targetPct,
+		PersistKeepLastMessages:     defaultPersistKeepLastMessagesWorker,
+		PersistKeepTailPct:          0,
+		CompactZoneBudgetPct:        resolveNonNegativeInt(ctx, e.configResolver, registry, "context.compact.compact_zone_budget_pct", platformScope, 0),
+		MicrocompactKeepRecentTools: 0,
+	}
+
+	return pipeline.ExecuteContextCompactMaintenanceJob(ctx, rc, &upperBoundMessageID, eventsRepo)
+}
+
+func (e *EngineV1) resolveCompactMaintenanceRoute(
+	ctx context.Context,
+	accountID uuid.UUID,
+	inputJSON map[string]any,
+	contextWindowTokens int,
+	llmMaxResponseBytes int,
+) (*routing.SelectedProviderRoute, llm.Gateway, int, error) {
+	activeRouter := e.router
+	if activeRouter == nil {
+		return nil, nil, 0, fmt.Errorf("router must not be nil")
+	}
+	if e.routingConfigLoader != nil {
+		if loaded, err := e.routingConfigLoader.Load(ctx, &accountID); err == nil && len(loaded.Routes) > 0 {
+			activeRouter = routing.NewProviderRouter(loaded)
+		}
+	}
+
+	decision := activeRouter.Decide(inputJSON, false, false)
+	if decision.Denied != nil {
+		return nil, nil, 0, fmt.Errorf("%s: %s", decision.Denied.Code, decision.Denied.Message)
+	}
+	if decision.Selected == nil {
+		return nil, nil, 0, fmt.Errorf("route decision is empty")
+	}
+	selected := *decision.Selected
+	if contextWindowTokens > 0 {
+		advanced := cloneMap(selected.Route.AdvancedJSON)
+		if advanced == nil {
+			advanced = map[string]any{}
+		}
+		advanced["context_window_tokens"] = float64(contextWindowTokens)
+		selected.Route.AdvancedJSON = advanced
+	}
+
+	windowTokens := routing.RouteContextWindowTokens(selected.Route)
+	if selected.Credential.ProviderKind == routing.ProviderKindStub {
+		if e.auxGateway == nil {
+			return nil, nil, 0, fmt.Errorf("aux gateway must not be nil for stub route")
+		}
+		return &selected, e.auxGateway, windowTokens, nil
+	}
+	resolved, err := pipeline.ResolveGatewayConfigFromSelectedRoute(selected, false, llmMaxResponseBytes)
+	if err != nil {
+		return nil, nil, 0, err
+	}
+	gateway, err := llm.NewGatewayFromResolvedConfig(resolved)
+	if err != nil {
+		return nil, nil, 0, err
+	}
+	return &selected, gateway, windowTokens, nil
+}
+
+func chooseDirectPool(directPool *pgxpool.Pool, fallback *pgxpool.Pool) *pgxpool.Pool {
+	if directPool != nil {
+		return directPool
+	}
+	return fallback
+}
+
+func lookupThreadMessageIDBySeq(
+	ctx context.Context,
+	pool *pgxpool.Pool,
+	accountID uuid.UUID,
+	threadID uuid.UUID,
+	threadSeq int64,
+) (uuid.UUID, bool, error) {
+	if pool == nil || accountID == uuid.Nil || threadID == uuid.Nil || threadSeq <= 0 {
+		return uuid.Nil, false, nil
+	}
+	var messageID uuid.UUID
+	err := pool.QueryRow(
+		ctx,
+		`SELECT id
+		   FROM messages
+		  WHERE account_id = $1
+		    AND thread_id = $2
+		    AND thread_seq = $3
+		    AND deleted_at IS NULL
+		  LIMIT 1`,
+		accountID,
+		threadID,
+		threadSeq,
+	).Scan(&messageID)
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			return uuid.Nil, false, nil
+		}
+		return uuid.Nil, false, err
+	}
+	return messageID, messageID != uuid.Nil, nil
 }
 
 // 以下辅助函数共享三层回退优先级：

@@ -244,6 +244,7 @@ func (c telegramConnector) processTelegramMediaGroupMerged(
 			&ch,
 			identity,
 			trimmedCommandText,
+			telegramDMPlatformThreadID(incoming),
 			c.channelBindCodesRepo,
 			c.channelIdentitiesRepo,
 			c.channelIdentityLinksRepo,

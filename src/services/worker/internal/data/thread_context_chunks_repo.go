@@ -321,6 +321,37 @@ func (ThreadContextChunksRepository) GetContextSeqRangeForChunkIDs(
 	return startContextSeq, endContextSeq, nil
 }
 
+func (ThreadContextChunksRepository) DeleteByThreadContextSeq(
+	ctx context.Context,
+	tx pgx.Tx,
+	accountID uuid.UUID,
+	threadID uuid.UUID,
+	contextSeq int64,
+) error {
+	if tx == nil {
+		return fmt.Errorf("tx must not be nil")
+	}
+	if accountID == uuid.Nil || threadID == uuid.Nil {
+		return fmt.Errorf("account_id and thread_id must not be empty")
+	}
+	if contextSeq <= 0 {
+		return fmt.Errorf("context_seq must be positive")
+	}
+	if _, err := tx.Exec(
+		ctx,
+		`DELETE FROM thread_context_chunks
+		  WHERE account_id = $1
+		    AND thread_id = $2
+		    AND context_seq = $3`,
+		accountID,
+		threadID,
+		contextSeq,
+	); err != nil {
+		return err
+	}
+	return nil
+}
+
 func ensureChunkAtomOwnership(
 	ctx context.Context,
 	tx pgx.Tx,

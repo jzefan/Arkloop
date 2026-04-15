@@ -177,6 +177,15 @@ describe('buildAssistantTurnFromRunEvents', () => {
     expect(turn.segments).toEqual([{ type: 'text', content: 'host' }])
   })
 
+  it('忽略 end_reply，不让它进入 cop 段', () => {
+    const turn = buildAssistantTurnFromRunEvents([
+      ev('r1', 1, 'tool.call', { tool_name: 'end_reply', tool_call_id: 'end_1', arguments: {} }),
+      ev('r1', 2, 'tool.result', { tool_name: 'end_reply', tool_call_id: 'end_1', result: { status: 'reply_ended' } }),
+      ev('r1', 3, 'message.delta', { role: 'assistant', content_delta: '可见正文' }),
+    ])
+    expect(turn.segments).toEqual([{ type: 'text', content: '可见正文' }])
+  })
+
   it('tool 之间的正文拆成独立 text，且位于两个 cop 之间（规范 §6 结构）', () => {
     const events: RunEvent[] = [
       ev('r1', 1, 'message.delta', { role: 'assistant', content_delta: '我来帮你读取 skills...' }),

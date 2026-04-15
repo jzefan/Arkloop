@@ -201,10 +201,6 @@ CREATE INDEX ix_messages_account_id_thread_id_thread_seq ON messages(account_id,
 
 CREATE INDEX ix_messages_org_id_thread_id_created_at ON messages(account_id, thread_id, created_at);
 
-CREATE INDEX ix_messages_thread_compacted
-    ON messages (thread_id, compacted)
-    WHERE deleted_at IS NULL AND compacted = 1;
-
 CREATE INDEX ix_messages_thread_id ON messages(thread_id);
 
 CREATE INDEX ix_messages_thread_id_thread_seq ON messages(thread_id, thread_seq);
@@ -220,9 +216,6 @@ CREATE INDEX ix_run_events_type ON run_events(type);
 CREATE INDEX ix_runs_org_id ON runs(account_id);
 
 CREATE INDEX ix_runs_thread_id ON runs(thread_id);
-
-CREATE INDEX ix_thread_compaction_snapshots_thread_created_at
-    ON thread_compaction_snapshots(thread_id, created_at DESC);
 
 CREATE INDEX ix_threads_created_by_user_id ON threads(created_by_user_id);
 
@@ -279,10 +272,6 @@ CREATE UNIQUE INDEX uq_messages_thread_id_thread_seq ON messages(thread_id, thre
 CREATE UNIQUE INDEX uq_platform_skills
     ON skill_packages (skill_key, version)
     WHERE account_id IS NULL;
-
-CREATE UNIQUE INDEX uq_thread_compaction_snapshots_active_thread
-    ON thread_compaction_snapshots(thread_id)
-    WHERE is_active = 1;
 
 CREATE UNIQUE INDEX uq_thread_context_replacements_account_thread_id
     ON thread_context_replacements (account_id, thread_id, id);
@@ -421,10 +410,11 @@ CREATE TABLE channel_dm_threads (
     channel_id          TEXT NOT NULL REFERENCES channels(id) ON DELETE CASCADE,
     channel_identity_id TEXT NOT NULL REFERENCES channel_identities(id) ON DELETE CASCADE,
     persona_id          TEXT NOT NULL REFERENCES personas(id) ON DELETE CASCADE,
+    platform_thread_id  TEXT NOT NULL DEFAULT '',
     thread_id           TEXT NOT NULL REFERENCES threads(id) ON DELETE CASCADE,
     created_at          TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at          TEXT NOT NULL DEFAULT (datetime('now')),
-    UNIQUE (channel_id, channel_identity_id, persona_id),
+    UNIQUE (channel_id, channel_identity_id, persona_id, platform_thread_id),
     UNIQUE (thread_id)
 );
 
@@ -703,8 +693,7 @@ CREATE TABLE messages (
     hidden             INTEGER NOT NULL DEFAULT 0,
     deleted_at         TEXT,
     token_count        INTEGER,
-    created_at         TEXT NOT NULL DEFAULT (datetime('now')),
-    compacted          INTEGER NOT NULL DEFAULT 0
+    created_at         TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
 CREATE TABLE notification_broadcasts (
@@ -1140,17 +1129,6 @@ CREATE TABLE teams (
     org_id     TEXT NOT NULL REFERENCES "accounts"(id) ON DELETE CASCADE,
     name       TEXT NOT NULL,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
-);
-
-CREATE TABLE thread_compaction_snapshots (
-    id                     TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(4))) || '-' || lower(hex(randomblob(2))) || '-4' || substr(lower(hex(randomblob(2))),2) || '-' || substr('89ab',abs(random()) % 4 + 1, 1) || substr(lower(hex(randomblob(2))),2) || '-' || lower(hex(randomblob(6)))),
-    account_id             TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
-    thread_id              TEXT NOT NULL REFERENCES threads(id) ON DELETE CASCADE,
-    summary_text           TEXT NOT NULL,
-    metadata_json          TEXT NOT NULL DEFAULT '{}',
-    supersedes_snapshot_id TEXT REFERENCES thread_compaction_snapshots(id) ON DELETE SET NULL,
-    is_active              INTEGER NOT NULL DEFAULT 1 CHECK (is_active IN (0, 1)),
-    created_at             TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
 CREATE TABLE thread_context_atoms (

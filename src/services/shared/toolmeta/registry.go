@@ -224,6 +224,18 @@ var registry = []ToolMeta{
 	},
 	// ── memory ──
 	{
+		Name:      "memory_list",
+		Group:     GroupMemory,
+		Label:     "Memory list",
+		ShortDesc: "list memory entries or directory contents",
+		LLMDescription: "list memory entries to browse what is stored in long-term memory. " +
+			"Call without uri to list top-level entries or recent memories. " +
+			"Call with a directory uri to list its contents. " +
+			"Use limit to control how many entries to return (default 50, max 100). " +
+			"Use offset to skip entries for pagination; call repeatedly with increasing offset to browse all memories. " +
+			"Each result includes a uri that can be passed to memory_read for full content.",
+	},
+	{
 		Name:      "notebook_read",
 		Group:     GroupMemory,
 		Label:     "Notebook read",
@@ -436,7 +448,8 @@ var registry = []ToolMeta{
 		ShortDesc: "write a Markdown document as a downloadable artifact",
 		LLMDescription: "write a Markdown document and save it as a downloadable artifact. " +
 			"Use when the user requests a report, summary, plan, article, or any long-form document. " +
-			"Reference the result as [label](artifact:<key>).",
+			"IMPORTANT: after calling this tool, you MUST reference the artifact in your response using [title](artifact:<key>) where <key> is from the tool result. " +
+			"The document will NOT be visible to the user unless you include this reference.",
 	},
 	// ── orchestration ──
 	{

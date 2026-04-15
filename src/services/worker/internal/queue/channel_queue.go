@@ -138,6 +138,18 @@ func (q *ChannelJobQueue) enqueueRunWithID(
 	}
 
 	q.mu.Lock()
+	if chosenJobType == ContextCompactMaintainJobType {
+		if compactThreadID, ok := contextCompactThreadIDFromPayload(payloadCopy); ok {
+			if existing := q.findActiveCompactJobLocked(compactThreadID); existing != nil {
+				replaceMapContents(existing.payloadJSON, roundTripped)
+				if existing.status == JobStatusQueued {
+					existing.availableAt = chosenAvailableAt
+				}
+				q.mu.Unlock()
+				return existing.id, nil
+			}
+		}
+	}
 	if chosenJobType == RunExecuteJobType {
 		if existingJobID, dup := q.activeRuns[runID]; dup {
 			if existing, ok := q.jobs[existingJobID]; ok && existing.status != JobStatusDone && existing.status != JobStatusDead {
@@ -160,6 +172,43 @@ func (q *ChannelJobQueue) enqueueRunWithID(
 	}
 
 	return jobID, nil
+}
+
+func (q *ChannelJobQueue) findActiveCompactJobLocked(threadID uuid.UUID) *channelJob {
+	if threadID == uuid.Nil {
+		return nil
+	}
+	for _, id := range q.order {
+		job := q.jobs[id]
+		if job == nil || job.jobType != ContextCompactMaintainJobType {
+			continue
+		}
+		if job.status == JobStatusDone || job.status == JobStatusDead {
+			continue
+		}
+		payload, ok := job.payloadJSON["payload"].(map[string]any)
+		if !ok {
+			continue
+		}
+		jobThreadID, ok := contextCompactThreadIDFromPayload(payload)
+		if !ok || jobThreadID != threadID {
+			continue
+		}
+		return job
+	}
+	return nil
+}
+
+func replaceMapContents(dst map[string]any, src map[string]any) {
+	if dst == nil {
+		return
+	}
+	for key := range dst {
+		delete(dst, key)
+	}
+	for key, value := range src {
+		dst[key] = value
+	}
 }
 
 func (q *ChannelJobQueue) HasActiveRun(_ context.Context, runID uuid.UUID, queueJobType string) (bool, error) {
