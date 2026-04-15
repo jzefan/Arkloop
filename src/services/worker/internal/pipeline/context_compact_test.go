@@ -366,6 +366,64 @@ func TestSelectCompactAtomWindow_ProtectsLastAtom(t *testing.T) {
 	}
 }
 
+func TestSelectCompactAtomWindow_SingleReplacementExtended(t *testing.T) {
+	nodes := []FrontierNode{
+		{Kind: FrontierNodeReplacement, ApproxTokens: 5000, AtomSeq: 1, SourceText: "old summary"},
+		{Kind: FrontierNodeChunk, ApproxTokens: 100, AtomSeq: 2, AtomType: compactAtomUserText, Role: "user", SourceText: "chunk1"},
+		{Kind: FrontierNodeChunk, ApproxTokens: 100, AtomSeq: 3, AtomType: compactAtomUserText, Role: "user", SourceText: "tail"},
+	}
+	// deficit small enough that selector would normally pick only R1
+	selection := selectCompactAtomWindow(nodes, 1, contextCompactMaxLLMInputTokens)
+	if len(selection.Nodes) < 2 {
+		t.Fatalf("expected guard to extend single replacement, got %d nodes", len(selection.Nodes))
+	}
+	if selection.Nodes[0].Kind != FrontierNodeReplacement {
+		t.Fatal("expected replacement as first node")
+	}
+	if selection.Nodes[1].Kind != FrontierNodeChunk {
+		t.Fatal("expected chunk as second node (rightward progress)")
+	}
+}
+
+func TestSelectCompactAtomWindow_SingleReplacementAloneReturnsEmpty(t *testing.T) {
+	nodes := []FrontierNode{
+		{Kind: FrontierNodeReplacement, ApproxTokens: 5000, AtomSeq: 1, SourceText: "old summary"},
+		{Kind: FrontierNodeChunk, ApproxTokens: 100, AtomSeq: 2, AtomType: compactAtomUserText, Role: "user", SourceText: "tail"},
+	}
+	// Only 2 nodes: replacement + protected tail. Eligible = [R] only.
+	selection := selectCompactAtomWindow(nodes, 1, contextCompactMaxLLMInputTokens)
+	if len(selection.Nodes) != 0 {
+		t.Fatalf("expected empty selection for lone replacement, got %d nodes", len(selection.Nodes))
+	}
+}
+
+func TestSelectCompactAtomWindow_MultipleReplacementsAllowed(t *testing.T) {
+	nodes := []FrontierNode{
+		{Kind: FrontierNodeReplacement, ApproxTokens: 3000, AtomSeq: 1, SourceText: "summary1"},
+		{Kind: FrontierNodeReplacement, ApproxTokens: 3000, AtomSeq: 2, SourceText: "summary2"},
+		{Kind: FrontierNodeChunk, ApproxTokens: 100, AtomSeq: 3, AtomType: compactAtomUserText, Role: "user", SourceText: "chunk"},
+		{Kind: FrontierNodeChunk, ApproxTokens: 100, AtomSeq: 4, AtomType: compactAtomUserText, Role: "user", SourceText: "tail"},
+	}
+	selection := selectCompactAtomWindow(nodes, 999999, contextCompactMaxLLMInputTokens)
+	if len(selection.Nodes) < 2 {
+		t.Fatalf("expected at least 2 nodes for multi-replacement selection, got %d", len(selection.Nodes))
+	}
+	// Guard should NOT trigger since we have 2+ nodes
+}
+
+func TestSelectCompactAtomWindow_SingleReplacementNextNodeTooBig(t *testing.T) {
+	nodes := []FrontierNode{
+		{Kind: FrontierNodeReplacement, ApproxTokens: 100000, AtomSeq: 1, SourceText: "huge summary"},
+		{Kind: FrontierNodeChunk, ApproxTokens: 30000, AtomSeq: 2, AtomType: compactAtomUserText, Role: "user", SourceText: "big chunk"},
+		{Kind: FrontierNodeChunk, ApproxTokens: 100, AtomSeq: 3, AtomType: compactAtomUserText, Role: "user", SourceText: "tail"},
+	}
+	// R(100k) + next(30k) = 130k > maxInputTokens(120k)
+	selection := selectCompactAtomWindow(nodes, 1, contextCompactMaxLLMInputTokens)
+	if len(selection.Nodes) != 0 {
+		t.Fatalf("expected empty when single replacement + next exceeds maxInputTokens, got %d", len(selection.Nodes))
+	}
+}
+
 func TestBuildCompactSummaryInputFromAtoms_StructuredFormat(t *testing.T) {
 	nodes := []FrontierNode{
 		{Kind: FrontierNodeChunk, AtomType: compactAtomUserText, Role: "user", SourceText: "user text"},
@@ -1970,5 +2028,85 @@ func TestSanitizeToolPairs_EmptyAssistantToolCallsKeepsVisibleText(t *testing.T)
 	}
 	if out[1].Role != "assistant" || len(out[1].ToolCalls) != 0 {
 		t.Fatalf("expected visible assistant text without orphan tool calls, got %#v", out[1])
+	}
+}
+
+func TestSelectPersistFrontierWindowForPressure_CompactZoneUnderBudget(t *testing.T) {
+	// compact zone under budget → selection includes both replacements and chunks
+	frontier := []FrontierNode{
+		{Kind: FrontierNodeReplacement, StartContextSeq: 1, EndContextSeq: 5, StartThreadSeq: 1, EndThreadSeq: 5, SourceText: "small R", ApproxTokens: 100, AtomSeq: 1},
+	}
+	for seq := int64(6); seq <= 30; seq++ {
+		frontier = append(frontier, FrontierNode{
+			Kind: FrontierNodeChunk, StartContextSeq: seq, EndContextSeq: seq, StartThreadSeq: seq, EndThreadSeq: seq,
+			SourceText: fmt.Sprintf("c%d", seq), ApproxTokens: 2000, AtomSeq: int(seq), AtomType: compactAtomUserText, Role: "user",
+			atomKey: fmt.Sprintf("a:%d", seq),
+		})
+	}
+	rc := &RunContext{
+		ContextCompact: ContextCompactSettings{
+			PersistEnabled:              true,
+			TargetContextPct:            65,
+			CompactZoneBudgetPct:        25,
+			FallbackContextWindowTokens: 128000,
+		},
+		ContextWindowTokens: 128000,
+	}
+	selected, ok := selectPersistFrontierWindowForPressure(rc, frontier, 100000)
+	if !ok || len(selected) == 0 {
+		t.Fatal("expected non-empty selection when compact zone under budget")
+	}
+	hasChunk := false
+	for _, n := range selected {
+		if n.Kind == FrontierNodeChunk {
+			hasChunk = true
+			break
+		}
+	}
+	if !hasChunk {
+		t.Fatal("expected selection to include chunks when compact zone is under budget")
+	}
+}
+
+func TestSelectPersistFrontierWindowForPressure_CompactZoneOverBudget(t *testing.T) {
+	// compact zone over budget → selection restricted to replacements only (compact-of-compact).
+	// Need 4+ replacements so that after raw zone trimming and selectCompactAtomWindow's
+	// protected-tail logic, at least 2 eligible replacements remain for selection.
+	frontier := []FrontierNode{
+		{Kind: FrontierNodeReplacement, StartContextSeq: 1, EndContextSeq: 5, StartThreadSeq: 1, EndThreadSeq: 5, SourceText: "big R1", ApproxTokens: 12000, AtomSeq: 1},
+		{Kind: FrontierNodeReplacement, StartContextSeq: 6, EndContextSeq: 10, StartThreadSeq: 6, EndThreadSeq: 10, SourceText: "big R2", ApproxTokens: 12000, AtomSeq: 2},
+		{Kind: FrontierNodeReplacement, StartContextSeq: 11, EndContextSeq: 15, StartThreadSeq: 11, EndThreadSeq: 15, SourceText: "big R3", ApproxTokens: 12000, AtomSeq: 3},
+		{Kind: FrontierNodeReplacement, StartContextSeq: 16, EndContextSeq: 20, StartThreadSeq: 16, EndThreadSeq: 20, SourceText: "big R4", ApproxTokens: 12000, AtomSeq: 4},
+	}
+	for seq := int64(21); seq <= 35; seq++ {
+		frontier = append(frontier, FrontierNode{
+			Kind: FrontierNodeChunk, StartContextSeq: seq, EndContextSeq: seq, StartThreadSeq: seq, EndThreadSeq: seq,
+			SourceText: fmt.Sprintf("c%d", seq), ApproxTokens: 2000, AtomSeq: int(seq), AtomType: compactAtomUserText, Role: "user",
+			atomKey: fmt.Sprintf("a:%d", seq),
+		})
+	}
+	// window=128000, targetTokens=65%=83200, rawBudget=44800
+	// raw zone: R4(12000) + 15 chunks(30000) = 42000 < 44800, but R3+R4+chunks = 54000 > 44800
+	// → rawStart = index of R3 (=2), eligible = [R1, R2, R3]
+	// compact zone budget = 25% of 128000 = 32000, replacement tokens in eligible = 36000 > 32000
+	// → filter to replacements only: [R1, R2, R3]
+	// selectCompactAtomWindow protects R3(last AtomSeq=3), selects R1+R2
+	rc := &RunContext{
+		ContextCompact: ContextCompactSettings{
+			PersistEnabled:              true,
+			TargetContextPct:            65,
+			CompactZoneBudgetPct:        25,
+			FallbackContextWindowTokens: 128000,
+		},
+		ContextWindowTokens: 128000,
+	}
+	selected, ok := selectPersistFrontierWindowForPressure(rc, frontier, 100000)
+	if !ok || len(selected) == 0 {
+		t.Fatal("expected non-empty selection for compact-of-compact")
+	}
+	for _, n := range selected {
+		if n.Kind == FrontierNodeChunk {
+			t.Fatalf("expected only replacement nodes when compact zone over budget, got chunk: %+v", n)
+		}
 	}
 }
