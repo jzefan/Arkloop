@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -25,6 +26,46 @@ func TestPersistLargeResult_UnderThreshold(t *testing.T) {
 	out := PersistLargeResult(context.Background(), execCtx, "tc1", raw, result)
 	if out.ResultJSON["persisted"] != nil {
 		t.Fatalf("expected no persistence for small result")
+	}
+}
+
+func TestPersistLargeResult_ExactThreshold(t *testing.T) {
+	dir := t.TempDir()
+	runID := uuid.MustParse("66666666-6666-6666-6666-666666666666")
+	execCtx := ExecutionContext{
+		RunID:   runID,
+		WorkDir: dir,
+	}
+
+	// Build a payload that is exactly PersistThreshold bytes after marshal.
+	var exact int
+	for n := 0; n < PersistThreshold; n++ {
+		large := map[string]any{"output": strings.Repeat("a", n)}
+		raw, _ := json.Marshal(large)
+		if len(raw) == PersistThreshold {
+			exact = n
+			break
+		}
+	}
+	if exact == 0 {
+		t.Fatalf("could not find exact payload size for threshold %d", PersistThreshold)
+	}
+
+	large := map[string]any{"output": strings.Repeat("a", exact)}
+	result := ExecutionResult{ResultJSON: large}
+	raw, _ := json.Marshal(result.ResultJSON)
+	out := PersistLargeResult(context.Background(), execCtx, "tc6", raw, result)
+	if out.ResultJSON["persisted"] != nil {
+		t.Fatalf("expected no persistence at exact threshold")
+	}
+
+	// PersistThreshold + 1 should trigger persistence.
+	large["output"] = strings.Repeat("a", exact+1)
+	result = ExecutionResult{ResultJSON: large}
+	raw, _ = json.Marshal(result.ResultJSON)
+	out = PersistLargeResult(context.Background(), execCtx, "tc6b", raw, result)
+	if out.ResultJSON["persisted"] != true {
+		t.Fatalf("expected persistence at threshold+1")
 	}
 }
 
