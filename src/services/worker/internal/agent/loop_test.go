@@ -1153,11 +1153,11 @@ func TestAgentLoopRetryableFailureEndsAsInterrupted(t *testing.T) {
 		t.Fatalf("loop.Run failed: %v", err)
 	}
 
-	retryCount := 0
+	var retryEvents []events.RunEvent
 	interruptedCount := 0
 	for _, ev := range got {
 		if ev.Type == "run.llm.retry" {
-			retryCount++
+			retryEvents = append(retryEvents, ev)
 		}
 		if ev.Type == "run.interrupted" {
 			interruptedCount++
@@ -1169,8 +1169,17 @@ func TestAgentLoopRetryableFailureEndsAsInterrupted(t *testing.T) {
 			t.Fatalf("unexpected run.failed event: %#v", ev)
 		}
 	}
-	if retryCount != 1 {
-		t.Fatalf("expected 1 run.llm.retry, got %d", retryCount)
+	if len(retryEvents) != 1 {
+		t.Fatalf("expected 1 run.llm.retry, got %d", len(retryEvents))
+	}
+	retryEv := retryEvents[0]
+	if msg, _ := retryEv.DataJSON["message"].(string); msg != "provider overloaded" {
+		t.Fatalf("expected retry message 'provider overloaded', got %q", msg)
+	}
+	if details, ok := retryEv.DataJSON["details"]; !ok {
+		t.Fatal("expected retry details missing")
+	} else if d, _ := details.(map[string]any); d["reason"] != "cpu throttled" {
+		t.Fatalf("expected retry details reason 'cpu throttled', got %v", d)
 	}
 	if interruptedCount != 1 {
 		t.Fatalf("expected 1 run.interrupted, got %d", interruptedCount)
@@ -2634,6 +2643,7 @@ func (g *retryableFailureGateway) Stream(ctx context.Context, request llm.Reques
 		Error: llm.GatewayError{
 			ErrorClass: llm.ErrorClassProviderRetryable,
 			Message:    "provider overloaded",
+			Details:    map[string]any{"reason": "cpu throttled"},
 		},
 	})
 }
