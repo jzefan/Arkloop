@@ -342,6 +342,13 @@ func (e *DispatchingExecutor) Execute(
 		}
 	}()
 
+	// Layer 0.5: persist very large outputs to disk for later retrieval.
+	if result.ResultJSON != nil && result.Error == nil && !ShouldBypassResultCompression(logicalName) {
+		if raw, _ := json.Marshal(result.ResultJSON); len(raw) > PersistThreshold {
+			result = PersistLargeResult(ctx, execContext, decision.ToolCallID, resolvedName, result)
+		}
+	}
+
 	// Layer 1: smart truncation — use CompressTargetBytes as the LLM-facing budget,
 	// independent from the executor-level MaxOutputBytes truncation.
 	if result.ResultJSON != nil && result.Error == nil && !ShouldBypassResultCompression(logicalName) {
