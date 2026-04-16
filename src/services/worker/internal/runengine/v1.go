@@ -502,6 +502,7 @@ func (e *EngineV1) Execute(ctx context.Context, pool *pgxpool.Pool, run data.Run
 		accountID := run.AccountID.String()
 		go sandbox.CleanupSession(runtimeSnapshot.SandboxBaseURL, runtimeSnapshot.SandboxAuthToken, run.ID.String(), accountID)
 	}
+	go tools.CleanupPersistedToolOutputs(rc.WorkDir, run.ID.String())
 
 	return err
 }

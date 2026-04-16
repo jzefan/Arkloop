@@ -75,7 +75,7 @@ func PersistLargeResult(
 	newResult["filepath"] = filePath
 	newResult["original_bytes"] = originalBytes
 	newResult["preview"] = preview
-	newResult["hint"] = "Full output saved. Use read_file to read specific sections with offset/limit."
+	newResult["hint"] = "Full output saved. Read the file at the given path to access the complete content."
 
 	return ExecutionResult{
 		ResultJSON:   newResult,
