@@ -1481,6 +1481,12 @@ func (l *Loop) runTurnWithRetry(
 		if last.ErrorClass != nil {
 			retryData["error_class"] = *last.ErrorClass
 		}
+		if msg, _ := last.DataJSON["message"].(string); msg != "" {
+			retryData["message"] = msg
+		}
+		if details, ok := last.DataJSON["details"]; ok && details != nil {
+			retryData["details"] = details
+		}
 
 		if err := yield(emitter.Emit("run.llm.retry", retryData, nil, nil)); err != nil {
 			return turnResult{}, err
