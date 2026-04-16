@@ -343,20 +343,22 @@ func (e *DispatchingExecutor) Execute(
 	}()
 
 	// Layer 0.5: persist very large outputs to disk for later retrieval.
+	var rawResultJSON []byte
 	if result.ResultJSON != nil && result.Error == nil && !ShouldBypassResultCompression(logicalName) {
-		if raw, _ := json.Marshal(result.ResultJSON); len(raw) > PersistThreshold {
-			result = PersistLargeResult(ctx, execContext, decision.ToolCallID, resolvedName, result)
+		rawResultJSON, _ = json.Marshal(result.ResultJSON)
+		if len(rawResultJSON) > PersistThreshold {
+			result = PersistLargeResult(ctx, execContext, decision.ToolCallID, rawResultJSON, result)
 		}
 	}
 
 	// Layer 1: smart truncation — use CompressTargetBytes as the LLM-facing budget,
 	// independent from the executor-level MaxOutputBytes truncation.
-	if result.ResultJSON != nil && result.Error == nil && !ShouldBypassResultCompression(logicalName) {
+	if result.ResultJSON != nil && result.Error == nil && !ShouldBypassResultCompression(logicalName) && result.ResultJSON["persisted"] != true {
 		result = CompressResult(logicalName, result, CompressTargetBytes)
 	}
 
 	// Layer 2: LLM summarization
-	if e.summarizer != nil && result.ResultJSON != nil && result.Error == nil && !ShouldBypassResultSummarization(logicalName) {
+	if e.summarizer != nil && result.ResultJSON != nil && result.Error == nil && !ShouldBypassResultSummarization(logicalName) && result.ResultJSON["persisted"] != true {
 		if raw, _ := json.Marshal(result.ResultJSON); len(raw) > e.summarizer.threshold {
 			result = e.summarizer.Summarize(ctx, logicalName, result)
 		}
