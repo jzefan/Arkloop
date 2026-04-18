@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useMemo } from 'react'
 import { Plus, Trash2, Link2 } from 'lucide-react'
 import {
   type ChannelResponse,
@@ -18,6 +18,7 @@ import { useLocale } from '../contexts/LocaleContext'
 import { AutoResizeTextarea } from '@arkloop/shared'
 import { QQLoginFlow } from './QQLoginFlow'
 import { CopyIconButton } from './CopyIconButton'
+import { ModelDropdown } from './settings/DesktopChannelSettingsShared'
 
 type Props = {
   accessToken: string
@@ -50,6 +51,11 @@ export function ChannelsSettingsContent({ accessToken }: Props) {
   const [formAllowedUsers, setFormAllowedUsers] = useState('')
   const [saving, setSaving] = useState(false)
   const [tokenDrafts, setTokenDrafts] = useState<Record<string, string>>({})
+
+  const personaOptions = useMemo(
+    () => personas.map((p) => ({ value: p.id, label: p.display_name || p.id })),
+    [personas]
+  )
 
   const [bindCode, setBindCode] = useState<string | null>(null)
   const [generating, setGenerating] = useState(false)
@@ -246,17 +252,13 @@ export function ChannelsSettingsContent({ accessToken }: Props) {
           {personas.length > 0 && (
             <div className="flex flex-col gap-1">
               <label className="text-xs font-medium text-[var(--c-text-secondary)]">{ct.persona}</label>
-              <select
+              <ModelDropdown
                 value={formPersonaId}
-                onChange={(e) => setFormPersonaId(e.target.value)}
-                className="h-9 rounded-lg bg-[var(--c-bg-input)] px-3 text-sm text-[var(--c-text-primary)] outline-none"
-                style={{ border: '0.5px solid var(--c-border-subtle)' }}
-              >
-                <option value="">{ct.personaDefault}</option>
-                {personas.map((p) => (
-                  <option key={p.id} value={p.id}>{p.display_name || p.id}</option>
-                ))}
-              </select>
+                options={personaOptions}
+                placeholder={ct.personaDefault}
+                disabled={saving}
+                onChange={(value) => setFormPersonaId(value)}
+              />
             </div>
           )}
 
