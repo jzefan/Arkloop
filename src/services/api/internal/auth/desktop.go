@@ -16,8 +16,6 @@ var (
 	DesktopRole      = RolePlatformAdmin
 )
 
-const desktopTokenDefault = "arkloop-desktop-local-token"
-
 func DesktopPreferredUsername() string {
 	if v := strings.TrimSpace(os.Getenv("ARKLOOP_DESKTOP_OS_USERNAME")); v != "" {
 		return v
@@ -25,13 +23,14 @@ func DesktopPreferredUsername() string {
 	return "desktop"
 }
 
-// DesktopToken 返回桌面模式使用的固定 Bearer token。
-// 优先读取 ARKLOOP_DESKTOP_TOKEN 环境变量，未设置时使用默认值。
+// DesktopToken 返回桌面模式使用的 Bearer token。
+// 必须通过 ARKLOOP_DESKTOP_TOKEN 环境变量提供，未设置时 panic。
 func DesktopToken() string {
-	if v := strings.TrimSpace(os.Getenv("ARKLOOP_DESKTOP_TOKEN")); v != "" {
-		return v
+	v := strings.TrimSpace(os.Getenv("ARKLOOP_DESKTOP_TOKEN"))
+	if v == "" {
+		panic("ARKLOOP_DESKTOP_TOKEN is required for desktop build")
 	}
-	return desktopTokenDefault
+	return v
 }
 
 // DesktopVerifiedAccessToken 返回桌面模式的固定验证结果。
