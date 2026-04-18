@@ -9,6 +9,7 @@ func TestLoadConfigFromEnv_AppendsCustomCORSOrigins(t *testing.T) {
 	t.Setenv(bridgeCORSOriginsEnv, "http://localhost:5173")
 	t.Setenv(bridgeProjectDirEnv, t.TempDir())
 	t.Setenv(bridgeModulesFileEnv, t.TempDir())
+	t.Setenv(bridgeAuthTokenEnv, "test-token")
 
 	cfg, err := LoadConfigFromEnv()
 	if err != nil {
@@ -34,10 +35,22 @@ func TestLoadConfigFromEnv_AppendsCustomCORSOrigins(t *testing.T) {
 	}
 }
 
+func TestLoadConfigFromEnv_RequiresAuthToken(t *testing.T) {
+	t.Setenv(bridgeAuthTokenEnv, "")
+	t.Setenv(bridgeProjectDirEnv, t.TempDir())
+	t.Setenv(bridgeModulesFileEnv, t.TempDir())
+
+	_, err := LoadConfigFromEnv()
+	if err == nil {
+		t.Fatal("expected error when auth token is empty")
+	}
+}
+
 func TestLoadConfigFromEnv_AllowsLoopbackAddrWithoutRepoDetection(t *testing.T) {
 	t.Setenv(bridgeAddrEnv, "127.0.0.1:19007")
 	t.Setenv(bridgeProjectDirEnv, "")
 	t.Setenv(bridgeModulesFileEnv, "")
+	t.Setenv(bridgeAuthTokenEnv, "test-token")
 
 	wd, err := os.Getwd()
 	if err != nil {

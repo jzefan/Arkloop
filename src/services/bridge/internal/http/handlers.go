@@ -21,6 +21,7 @@ import (
 	"arkloop/services/bridge/internal/platform"
 
 	"github.com/google/uuid"
+	"gopkg.in/yaml.v3"
 )
 
 // AppLogger is a minimal logging interface compatible with the bridge's
@@ -324,14 +325,27 @@ func (h *Handler) moduleUpgrade(w http.ResponseWriter, r *http.Request) {
 		// 使用 docker-compose override 文件来指定新镜像，避免修改 compose.yaml
 		op.AppendLog(fmt.Sprintf("Starting service %s with new image...", def.ComposeService))
 		projectDir := h.compose.ProjectDir()
-		overrideContent := fmt.Sprintf("services:\n  %s:\n    image: %s\n", def.ComposeService, req.Image)
+
+		override := map[string]any{
+			"services": map[string]any{
+				def.ComposeService: map[string]any{
+					"image": req.Image,
+				},
+			},
+		}
+		overrideBytes, err := yaml.Marshal(override)
+		if err != nil {
+			op.AppendLog("ERROR: failed to marshal override YAML: " + err.Error())
+			opErr = err
+			return
+		}
 		overrideFile := filepath.Join(projectDir, "compose.override.yaml")
-		if err := os.WriteFile(overrideFile, []byte(overrideContent), 0644); err != nil {
+		if err := os.WriteFile(overrideFile, overrideBytes, 0644); err != nil {
 			op.AppendLog("ERROR: failed to write override file: " + err.Error())
 			opErr = err
 			return
 		}
-		defer func() { _ = os.Remove(overrideFile) }()
+		defer os.Remove(overrideFile)
 
 		args := []string{"compose", "-f", "compose.yaml", "-f", "compose.override.yaml", "up", "-d"}
 		if def.ComposeProfile != "" {
@@ -604,7 +618,7 @@ func (h *Handler) streamOperation(w http.ResponseWriter, r *http.Request) {
 		// Drain any new log lines.
 		lines := op.Lines(offset)
 		for _, line := range lines {
-			_, _ = fmt.Fprintf(w, "event: %s\ndata: %s\n\n", sseEventLog, line)
+			fmt.Fprintf(w, "event: %s\ndata: %s\n\n", sseEventLog, line)
 		}
 		offset += len(lines)
 
@@ -619,11 +633,11 @@ func (h *Handler) streamOperation(w http.ResponseWriter, r *http.Request) {
 			// Drain final lines after completion.
 			final := op.Lines(offset)
 			for _, line := range final {
-				_, _ = fmt.Fprintf(w, "event: %s\ndata: %s\n\n", sseEventLog, line)
+				fmt.Fprintf(w, "event: %s\ndata: %s\n\n", sseEventLog, line)
 			}
 
 			statusPayload := statusJSON(op)
-			_, _ = fmt.Fprintf(w, "event: %s\ndata: %s\n\n", sseEventStatus, statusPayload)
+			fmt.Fprintf(w, "event: %s\ndata: %s\n\n", sseEventStatus, statusPayload)
 			flusher.Flush()
 			return
 		case <-ticker.C:
@@ -874,7 +888,7 @@ func waitForHTTP(ctx context.Context, url string, timeout time.Duration) error {
 		}
 		resp, err := client.Do(req)
 		if err == nil {
-			_ = resp.Body.Close()
+			resp.Body.Close()
 			if resp.StatusCode == http.StatusOK {
 				return nil
 			}
