@@ -17,6 +17,7 @@ const (
 	bridgeModulesFileEnv = "ARKLOOP_BRIDGE_MODULES_FILE"
 	bridgeAuditLogEnv    = "ARKLOOP_BRIDGE_AUDIT_LOG"
 	bridgeCORSOriginsEnv = "ARKLOOP_BRIDGE_CORS_ORIGINS"
+	bridgeAuthTokenEnv   = "ARKLOOP_BRIDGE_AUTH_TOKEN"
 
 	defaultBridgeAddr        = "127.0.0.1:19003"
 	defaultModulesFileRel    = "install/modules.yaml"
@@ -38,11 +39,12 @@ var defaultBridgeCORSOrigins = []string{
 }
 
 type Config struct {
-	Addr            string
-	ProjectDir      string
-	ModulesFile     string
-	AuditLog        string
+	Addr               string
+	ProjectDir         string
+	ModulesFile        string
+	AuditLog           string
 	CORSAllowedOrigins []string
+	AuthToken          string
 }
 
 func DefaultConfig() Config {
@@ -72,6 +74,8 @@ func LoadConfigFromEnv() (Config, error) {
 	}
 
 	cfg.AuditLog = strings.TrimSpace(os.Getenv(bridgeAuditLogEnv))
+
+	cfg.AuthToken = strings.TrimSpace(os.Getenv(bridgeAuthTokenEnv))
 
 	if raw := strings.TrimSpace(os.Getenv(bridgeCORSOriginsEnv)); raw != "" {
 		cfg.CORSAllowedOrigins = append(cfg.CORSAllowedOrigins, stringutil.SplitCSV(raw)...)
@@ -129,6 +133,10 @@ func (c Config) Validate() error {
 	// In containers, port mapping provides the security boundary.
 	if !isLoopbackAddr(tcpAddr.IP) && os.Getenv("ARKLOOP_BRIDGE_CONTAINERIZED") != "true" {
 		return fmt.Errorf("addr must be a loopback address (127.0.0.1, ::1, or localhost) for security, got: %s", c.Addr)
+	}
+
+	if strings.TrimSpace(c.AuthToken) == "" {
+		return fmt.Errorf("%s is required", bridgeAuthTokenEnv)
 	}
 
 	for _, origin := range c.CORSAllowedOrigins {

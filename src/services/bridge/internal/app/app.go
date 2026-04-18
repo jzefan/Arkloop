@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"crypto/subtle"
 	"errors"
 	"fmt"
 	"io"
@@ -95,7 +96,9 @@ func (a *Application) Run(ctx context.Context) error {
 	apiHandler := bridgehttp.NewHandler(registry, compose, operations, auditLog, adapter, modelDL, bridgeVersion)
 	apiHandler.RegisterRoutes(mux)
 
-	handler := corsMiddleware(a.config.CORSAllowedOrigins, mux)
+	handler := authMiddleware(a.config.AuthToken,
+		corsMiddleware(a.config.CORSAllowedOrigins, mux),
+	)
 
 	// Parse host and port from configured address.
 	hostStr, portStr, err := net.SplitHostPort(a.config.Addr)
@@ -194,7 +197,7 @@ func corsMiddleware(allowedOrigins []string, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		origin := r.Header.Get("Origin")
 		if origin != "" {
-			allowed := origin == "null" || strings.HasPrefix(origin, "file://")
+			allowed := strings.HasPrefix(origin, "file://")
 			if !allowed {
 				normalized := strings.TrimRight(origin, "/")
 				_, allowed = originSet[normalized]
@@ -209,6 +212,35 @@ func corsMiddleware(allowedOrigins []string, next http.Handler) http.Handler {
 
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+
+		next.ServeHTTP(w, r)
+	})
+}
+
+// authMiddleware enforces Bearer token authentication on all routes except /healthz.
+func authMiddleware(token string, next http.Handler) http.Handler {
+	tokenBytes := []byte(token)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/healthz" {
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		auth := r.Header.Get("Authorization")
+		if !strings.HasPrefix(auth, "Bearer ") {
+			w.Header().Set("Content-Type", "application/json; charset=utf-8")
+			w.WriteHeader(http.StatusUnauthorized)
+			_, _ = w.Write([]byte(`{"code":"auth.required","message":"Bearer token required"}`))
+			return
+		}
+
+		provided := []byte(strings.TrimPrefix(auth, "Bearer "))
+		if subtle.ConstantTimeCompare(provided, tokenBytes) != 1 {
+			w.Header().Set("Content-Type", "application/json; charset=utf-8")
+			w.WriteHeader(http.StatusUnauthorized)
+			_, _ = w.Write([]byte(`{"code":"auth.invalid","message":"invalid token"}`))
 			return
 		}
 
