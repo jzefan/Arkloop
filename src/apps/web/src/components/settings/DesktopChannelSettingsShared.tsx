@@ -30,6 +30,7 @@ export function ModelDropdown({
   onChange: (v: string) => void
 }) {
   const [open, setOpen] = useState(false)
+  const [hovered, setHovered] = useState(false)
   const menuRef = useRef<HTMLDivElement>(null)
   const btnRef = useRef<HTMLButtonElement>(null)
 
@@ -52,8 +53,15 @@ export function ModelDropdown({
         type="button"
         disabled={disabled}
         onClick={() => setOpen((current) => !current)}
-        className="flex h-9 w-full items-center justify-between rounded-lg px-3 text-sm transition-colors hover:bg-[var(--c-bg-deep)]"
-        style={{ border: '0.5px solid var(--c-border-subtle)', background: 'var(--c-bg-page)', color: 'var(--c-text-secondary)' }}
+        onMouseEnter={() => setHovered(true)}
+        onMouseLeave={() => setHovered(false)}
+        className="flex h-9 w-full items-center justify-between rounded-lg px-3 text-sm transition-colors disabled:cursor-not-allowed disabled:opacity-50"
+        style={{
+          border: '0.5px solid var(--c-border-subtle)',
+          background: hovered && !disabled ? 'var(--c-bg-deep)' : 'var(--c-bg-page)',
+          color: 'var(--c-text-secondary)',
+          transition: 'border-color 0.15s, background-color 0.15s',
+        }}
       >
         <span className="truncate">{currentLabel}</span>
         <ChevronDown size={13} className="ml-2 shrink-0" />
