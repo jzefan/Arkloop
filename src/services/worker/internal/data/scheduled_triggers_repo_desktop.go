@@ -221,9 +221,9 @@ func (ScheduledTriggersRepository) DeleteHeartbeat(
 	return err
 }
 
-// ClaimDueHeartbeats 获取 next_fire_at 不晚于当前时间的记录（最多 limit 条），
+// ClaimDueTriggers 获取 next_fire_at 不晚于当前时间的记录（最多 limit 条），
 // 并将 next_fire_at 延后 interval_min 分钟后返回（AT MOST ONCE 投递）。
-func (ScheduledTriggersRepository) ClaimDueHeartbeats(
+func (ScheduledTriggersRepository) ClaimDueTriggers(
 	ctx context.Context,
 	db DesktopDB,
 	limit int,
@@ -301,8 +301,8 @@ func (ScheduledTriggersRepository) ClaimDueHeartbeats(
 	return out, nil
 }
 
-// GetEarliestHeartbeatDue returns the earliest scheduled next_fire_at.
-func (ScheduledTriggersRepository) GetEarliestHeartbeatDue(
+// GetEarliestDue returns the earliest scheduled next_fire_at.
+func (ScheduledTriggersRepository) GetEarliestDue(
 	ctx context.Context,
 	db DesktopDB,
 ) (*time.Time, error) {

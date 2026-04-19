@@ -13,7 +13,7 @@ import (
 	"github.com/google/uuid"
 )
 
-func TestLLMHeartbeatFireOneEnqueuesChannelDeliveryPayloadForDiscordDM(t *testing.T) {
+func TestTriggerSchedulerFireOneEnqueuesChannelDeliveryPayloadForDiscordDM(t *testing.T) {
 	db := testutil.SetupPostgresDatabase(t, "scheduler_heartbeat_channel_delivery")
 	ctx := context.Background()
 
@@ -101,7 +101,7 @@ func TestLLMHeartbeatFireOneEnqueuesChannelDeliveryPayloadForDiscordDM(t *testin
 		t.Fatalf("seed heartbeat scheduler data: %v", err)
 	}
 
-	s := &LLMHeartbeat{
+	s := &TriggerScheduler{
 		pool:     pool,
 		jobs:     jobsRepo,
 		runs:     runRepo,

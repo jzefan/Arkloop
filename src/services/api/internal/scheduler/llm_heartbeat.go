@@ -18,9 +18,9 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-const heartbeatSchedulerReconnectDelay = 2 * time.Second
+const schedulerReconnectDelay = 2 * time.Second
 
-type LLMHeartbeat struct {
+type TriggerScheduler struct {
 	pool          *pgxpool.Pool
 	notifyPool    *pgxpool.Pool
 	jobs          *data.JobRepository
@@ -32,7 +32,7 @@ type LLMHeartbeat struct {
 	triggers      data.ScheduledTriggersRepository
 }
 
-func NewLLMHeartbeat(
+func NewTriggerScheduler(
 	pool *pgxpool.Pool,
 	notifyPool *pgxpool.Pool,
 	jobs *data.JobRepository,
@@ -41,11 +41,11 @@ func NewLLMHeartbeat(
 	messages *data.MessageRepository,
 	scheduledJobs *data.ScheduledJobsRepository,
 	runLimiter *data.RunLimiter,
-) *LLMHeartbeat {
+) *TriggerScheduler {
 	if notifyPool == nil {
 		notifyPool = pool
 	}
-	return &LLMHeartbeat{
+	return &TriggerScheduler{
 		pool:          pool,
 		notifyPool:    notifyPool,
 		jobs:          jobs,
@@ -57,7 +57,7 @@ func NewLLMHeartbeat(
 	}
 }
 
-func (s *LLMHeartbeat) Run(ctx context.Context) {
+func (s *TriggerScheduler) Run(ctx context.Context) {
 	if s.pool == nil || s.jobs == nil || s.runs == nil || s.threads == nil {
 		return
 	}
@@ -69,19 +69,19 @@ func (s *LLMHeartbeat) Run(ctx context.Context) {
 	}
 
 	for {
-		dueAt, err := s.triggers.GetEarliestHeartbeatDue(ctx, s.pool)
+		dueAt, err := s.triggers.GetEarliestDue(ctx, s.pool)
 		if err != nil {
-			slog.ErrorContext(ctx, "llm_heartbeat_due_lookup_failed", "error", err)
-			if !waitForWake(ctx, wakeCh, heartbeatSchedulerReconnectDelay) {
+			slog.ErrorContext(ctx, "trigger_scheduler_due_lookup_failed", "error", err)
+			if !waitForWake(ctx, wakeCh, schedulerReconnectDelay) {
 				return
 			}
 			continue
 		}
 		hasSchedule := dueAt != nil
-		slog.DebugContext(ctx, "llm_heartbeat_next_scheduled", "next_fire_at", formatNextFire(dueAt), "has_schedule", hasSchedule)
+		slog.DebugContext(ctx, "trigger_scheduler_next_scheduled", "next_fire_at", formatNextFire(dueAt), "has_schedule", hasSchedule)
 
 		if dueAt == nil {
-			slog.DebugContext(ctx, "llm_heartbeat_waiting", "state", "idle")
+			slog.DebugContext(ctx, "trigger_scheduler_waiting", "state", "idle")
 			select {
 			case <-ctx.Done():
 				return
@@ -94,7 +94,7 @@ func (s *LLMHeartbeat) Run(ctx context.Context) {
 		if delay < 0 {
 			delay = 0
 		}
-		slog.DebugContext(ctx, "llm_heartbeat_timer_armed", "next_fire_at", dueAt.UTC(), "delay", delay)
+		slog.DebugContext(ctx, "trigger_scheduler_timer_armed", "next_fire_at", dueAt.UTC(), "delay", delay)
 		timer := time.NewTimer(delay)
 		select {
 		case <-ctx.Done():
@@ -110,13 +110,13 @@ func (s *LLMHeartbeat) Run(ctx context.Context) {
 		case <-timer.C:
 		}
 
-		rows, err := s.triggers.ClaimDueHeartbeats(ctx, s.pool, 8)
+		rows, err := s.triggers.ClaimDueTriggers(ctx, s.pool, 8)
 		if err != nil {
-			slog.ErrorContext(ctx, "llm_heartbeat_claim_failed", "error", err)
+			slog.ErrorContext(ctx, "trigger_scheduler_claim_failed", "error", err)
 			continue
 		}
 		if len(rows) > 0 {
-			slog.InfoContext(ctx, "llm_heartbeat_due_claimed", "count", len(rows))
+			slog.InfoContext(ctx, "trigger_scheduler_due_claimed", "count", len(rows))
 		}
 		for _, row := range rows {
 			s.fireOne(ctx, row)
@@ -124,24 +124,24 @@ func (s *LLMHeartbeat) Run(ctx context.Context) {
 	}
 }
 
-func (s *LLMHeartbeat) listenForWake(ctx context.Context, wakeCh chan<- struct{}) {
+func (s *TriggerScheduler) listenForWake(ctx context.Context, wakeCh chan<- struct{}) {
 	for {
 		if ctx.Err() != nil {
 			return
 		}
 		if err := s.listenOnce(ctx, wakeCh); err != nil && ctx.Err() == nil {
-			slog.WarnContext(ctx, "llm_heartbeat_notify_lost", "error", err)
+			slog.WarnContext(ctx, "trigger_scheduler_notify_lost", "error", err)
 		}
 		s.signalWake(wakeCh)
 		select {
 		case <-ctx.Done():
 			return
-		case <-time.After(heartbeatSchedulerReconnectDelay):
+		case <-time.After(schedulerReconnectDelay):
 		}
 	}
 }
 
-func (s *LLMHeartbeat) listenOnce(ctx context.Context, wakeCh chan<- struct{}) error {
+func (s *TriggerScheduler) listenOnce(ctx context.Context, wakeCh chan<- struct{}) error {
 	conn, err := s.notifyPool.Acquire(ctx)
 	if err != nil {
 		return err
@@ -162,7 +162,7 @@ func (s *LLMHeartbeat) listenOnce(ctx context.Context, wakeCh chan<- struct{}) e
 	}
 }
 
-func (s *LLMHeartbeat) signalWake(wakeCh chan<- struct{}) {
+func (s *TriggerScheduler) signalWake(wakeCh chan<- struct{}) {
 	select {
 	case wakeCh <- struct{}{}:
 	default:
@@ -189,7 +189,7 @@ func formatNextFire(next *time.Time) any {
 	return next.UTC()
 }
 
-func (s *LLMHeartbeat) fireOne(ctx context.Context, row data.ScheduledTriggerRow) {
+func (s *TriggerScheduler) fireOne(ctx context.Context, row data.ScheduledTriggerRow) {
 	if row.TriggerKind == "job" {
 		s.fireJob(ctx, row)
 		return
@@ -197,7 +197,7 @@ func (s *LLMHeartbeat) fireOne(ctx context.Context, row data.ScheduledTriggerRow
 	s.fireHeartbeat(ctx, row)
 }
 
-func (s *LLMHeartbeat) fireHeartbeat(ctx context.Context, row data.ScheduledTriggerRow) {
+func (s *TriggerScheduler) fireHeartbeat(ctx context.Context, row data.ScheduledTriggerRow) {
 	ctxData, err := s.triggers.ResolveHeartbeatThread(ctx, s.pool, row)
 	if err != nil {
 		_ = s.triggers.PostponeTrigger(ctx, s.pool, row.ID, 2*time.Minute)
@@ -210,7 +210,7 @@ func (s *LLMHeartbeat) fireHeartbeat(ctx context.Context, row data.ScheduledTrig
 
 	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
-		slog.ErrorContext(ctx, "llm_heartbeat_tx_begin_failed", "error", err)
+		slog.ErrorContext(ctx, "trigger_scheduler_tx_begin_failed", "error", err)
 		_ = s.triggers.PostponeTrigger(ctx, s.pool, row.ID, 2*time.Minute)
 		return
 	}
@@ -249,7 +249,7 @@ func (s *LLMHeartbeat) fireHeartbeat(ctx context.Context, row data.ScheduledTrig
 			_ = s.triggers.PostponeTrigger(ctx, s.pool, row.ID, time.Duration(delayMin)*time.Minute)
 			return
 		}
-		slog.ErrorContext(ctx, "llm_heartbeat_create_run_failed", "error", err)
+		slog.ErrorContext(ctx, "trigger_scheduler_create_run_failed", "error", err)
 		_ = s.triggers.PostponeTrigger(ctx, s.pool, row.ID, 90*time.Second)
 		return
 	}
@@ -264,7 +264,7 @@ func (s *LLMHeartbeat) fireHeartbeat(ctx context.Context, row data.ScheduledTrig
 
 	traceID := observability.NewTraceID()
 	payload := map[string]any{
-		"source":                     "llm_heartbeat_scheduler",
+		"source":                     "trigger_scheduler",
 		"run_kind":                   runkind.Heartbeat,
 		"heartbeat_interval_minutes": row.IntervalMin,
 		"heartbeat_reason":           "interval",
@@ -289,19 +289,19 @@ func (s *LLMHeartbeat) fireHeartbeat(ctx context.Context, row data.ScheduledTrig
 		payload,
 		nil,
 	); err != nil {
-		slog.ErrorContext(ctx, "llm_heartbeat_enqueue_failed", "error", err)
+		slog.ErrorContext(ctx, "trigger_scheduler_enqueue_failed", "error", err)
 		_ = s.triggers.PostponeTrigger(ctx, s.pool, row.ID, 90*time.Second)
 		return
 	}
 
 	if err := tx.Commit(ctx); err != nil {
-		slog.ErrorContext(ctx, "llm_heartbeat_commit_failed", "error", err)
+		slog.ErrorContext(ctx, "trigger_scheduler_commit_failed", "error", err)
 		_ = s.triggers.PostponeTrigger(ctx, s.pool, row.ID, 90*time.Second)
 		return
 	}
 }
 
-func (s *LLMHeartbeat) fireJob(ctx context.Context, row data.ScheduledTriggerRow) {
+func (s *TriggerScheduler) fireJob(ctx context.Context, row data.ScheduledTriggerRow) {
 	job, err := s.scheduledJobs.GetJobByID(ctx, s.pool, row.JobID)
 	if err != nil {
 		slog.ErrorContext(ctx, "scheduled_job_fetch_failed", "error", err, "job_id", row.JobID)

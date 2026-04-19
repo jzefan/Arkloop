@@ -441,7 +441,7 @@ func TestScheduledTriggersRepositoryUpsertHeartbeatPreservesNextFireAtOnConflict
 	}
 }
 
-func TestScheduledTriggersRepositoryClaimDueHeartbeatsAdvancesFromOriginalSchedule(t *testing.T) {
+func TestScheduledTriggersRepositoryClaimDueTriggersAdvancesFromOriginalSchedule(t *testing.T) {
 	ctx := context.Background()
 
 	sqlitePool, err := sqliteadapter.AutoMigrate(ctx, filepath.Join(t.TempDir(), "desktop.db"))
@@ -476,12 +476,12 @@ func TestScheduledTriggersRepositoryClaimDueHeartbeatsAdvancesFromOriginalSchedu
 		t.Fatalf("insert scheduled trigger: %v", err)
 	}
 
-	rows, err := (ScheduledTriggersRepository{}).ClaimDueHeartbeats(ctx, db, 8)
+	rows, err := (ScheduledTriggersRepository{}).ClaimDueTriggers(ctx, db, 8)
 	if err != nil {
-		t.Fatalf("claim due heartbeats: %v", err)
+		t.Fatalf("claim due triggers: %v", err)
 	}
 	if len(rows) != 1 {
-		t.Fatalf("expected one claimed heartbeat, got %d", len(rows))
+		t.Fatalf("expected one claimed trigger, got %d", len(rows))
 	}
 
 	updatedNextFire := mustReadDesktopNextFireAt(t, ctx, db, channelID, identityID)
@@ -565,7 +565,7 @@ func TestScheduledTriggersRepositoryRescheduleHeartbeatNextFireAt(t *testing.T) 
 	}
 }
 
-func TestScheduledTriggersRepositoryGetEarliestHeartbeatDue(t *testing.T) {
+func TestScheduledTriggersRepositoryGetEarliestDue(t *testing.T) {
 	ctx := context.Background()
 
 	sqlitePool, err := sqliteadapter.AutoMigrate(ctx, filepath.Join(t.TempDir(), "desktop.db"))
@@ -591,9 +591,9 @@ func TestScheduledTriggersRepositoryGetEarliestHeartbeatDue(t *testing.T) {
 		t.Fatalf("insert triggers: %v", err)
 	}
 
-	got, err := (ScheduledTriggersRepository{}).GetEarliestHeartbeatDue(ctx, db)
+	got, err := (ScheduledTriggersRepository{}).GetEarliestDue(ctx, db)
 	if err != nil {
-		t.Fatalf("get earliest heartbeat due: %v", err)
+		t.Fatalf("get earliest due: %v", err)
 	}
 	if got == nil {
 		t.Fatal("expected earliest next_fire_at")
@@ -654,23 +654,23 @@ func TestScheduledTriggersRepositoryReadsSQLiteDriverTimeString(t *testing.T) {
 		t.Fatalf("unexpected heartbeat next_fire_at: got=%s want=%s", row.NextFireAt, nextFireAt)
 	}
 
-	earliest, err := repo.GetEarliestHeartbeatDue(ctx, db)
+	earliest, err := repo.GetEarliestDue(ctx, db)
 	if err != nil {
-		t.Fatalf("get earliest heartbeat due: %v", err)
+		t.Fatalf("get earliest due: %v", err)
 	}
 	if earliest == nil {
-		t.Fatal("expected earliest heartbeat due")
+		t.Fatal("expected earliest due")
 	}
 	if !earliest.Equal(nextFireAt) {
 		t.Fatalf("unexpected earliest next_fire_at: got=%s want=%s", *earliest, nextFireAt)
 	}
 
-	rows, err := repo.ClaimDueHeartbeats(ctx, db, 8)
+	rows, err := repo.ClaimDueTriggers(ctx, db, 8)
 	if err != nil {
-		t.Fatalf("claim due heartbeats: %v", err)
+		t.Fatalf("claim due triggers: %v", err)
 	}
 	if len(rows) != 1 {
-		t.Fatalf("expected one due heartbeat, got %d", len(rows))
+		t.Fatalf("expected one due trigger, got %d", len(rows))
 	}
 	if rows[0].ID != triggerID {
 		t.Fatalf("unexpected claimed trigger id: got %s want %s", rows[0].ID, triggerID)

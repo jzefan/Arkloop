@@ -106,7 +106,7 @@ func TestScheduledTriggersRepositoryRescheduleHeartbeatNextFireAt(t *testing.T) 
 	}
 }
 
-func TestScheduledTriggersRepositoryClaimDueHeartbeatsAdvancesFromOriginalSchedule(t *testing.T) {
+func TestScheduledTriggersRepositoryClaimDueTriggersAdvancesFromOriginalSchedule(t *testing.T) {
 	repo, pool, ctx := setupScheduledTriggersRepo(t)
 	triggerID := uuid.New()
 	channelID := uuid.New()
@@ -119,7 +119,7 @@ func TestScheduledTriggersRepositoryClaimDueHeartbeatsAdvancesFromOriginalSchedu
 	insertScheduledTrigger(t, ctx, pool, triggerID, channelID, identity, "persona", account, "model", intervalMin, originalNextFire)
 
 	callNow := time.Now().UTC()
-	rows, err := repo.ClaimDueHeartbeats(ctx, pool, 1)
+	rows, err := repo.ClaimDueTriggers(ctx, pool, 1)
 	if err != nil {
 		t.Fatalf("claim due heartbeats: %v", err)
 	}
@@ -138,7 +138,7 @@ func TestScheduledTriggersRepositoryClaimDueHeartbeatsAdvancesFromOriginalSchedu
 	}
 }
 
-func TestScheduledTriggersRepositoryGetEarliestHeartbeatDue(t *testing.T) {
+func TestScheduledTriggersRepositoryGetEarliestDue(t *testing.T) {
 	repo, pool, ctx := setupScheduledTriggersRepo(t)
 	channelA := uuid.New()
 	channelB := uuid.New()
@@ -152,7 +152,7 @@ func TestScheduledTriggersRepositoryGetEarliestHeartbeatDue(t *testing.T) {
 	insertScheduledTrigger(t, ctx, pool, uuid.New(), channelA, identityA, "persona-a", account, "model", 1, earliest)
 	insertScheduledTrigger(t, ctx, pool, uuid.New(), channelB, identityB, "persona-b", account, "model", 1, later)
 
-	got, err := repo.GetEarliestHeartbeatDue(ctx, pool)
+	got, err := repo.GetEarliestDue(ctx, pool)
 	if err != nil {
 		t.Fatalf("get earliest heartbeat due: %v", err)
 	}

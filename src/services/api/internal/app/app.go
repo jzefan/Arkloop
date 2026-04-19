@@ -528,7 +528,7 @@ func (a *Application) Run(ctx context.Context) error {
 
 		scheduledJobsRepo = &data.ScheduledJobsRepository{}
 
-		hbSched := scheduler.NewLLMHeartbeat(pool, directPool, jobRepo, runEventRepo, threadRepo, messageRepo, scheduledJobsRepo, runLimiter)
+		hbSched := scheduler.NewTriggerScheduler(pool, directPool, jobRepo, runEventRepo, threadRepo, messageRepo, scheduledJobsRepo, runLimiter)
 		go hbSched.Run(ctx)
 
 		emailVerifyTokenRepo, err = data.NewEmailVerificationTokenRepository(pool)
