@@ -3,12 +3,12 @@ go 1.26.0
 use (
 	./src/services/api
 	./src/services/bridge
+	./src/services/cli
 	./src/services/desktop
 	./src/services/gateway
 	./src/services/sandbox
 	./src/services/shared
 	./src/services/worker
-	./src/services/cli
 	./tests/bench
 	./tests/smoke
 )
