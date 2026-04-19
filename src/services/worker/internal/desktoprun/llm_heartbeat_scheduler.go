@@ -20,36 +20,36 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-const desktopHeartbeatReconnectDelay = 2 * time.Second
+const desktopSchedulerReconnectDelay = 2 * time.Second
 
-func startDesktopLLMHeartbeatScheduler(
+func startDesktopTriggerScheduler(
 	ctx context.Context,
 	db data.DesktopDB,
 	q queue.JobQueue,
 	bus eventbus.EventBus,
 ) {
 	if db == nil || q == nil {
-		slog.WarnContext(ctx, "desktop_heartbeat_scheduler: db or queue is nil, skipping")
+		slog.WarnContext(ctx, "desktop_trigger_scheduler: db or queue is nil, skipping")
 		return
 	}
 
 	wakeCh := make(chan struct{}, 1)
 	if bus != nil {
-		go listenDesktopHeartbeatWake(ctx, bus, wakeCh)
-		go listenDesktopScheduledJobsWake(ctx, bus, wakeCh)
+		go listenDesktopSchedulerWake(ctx, bus, wakeCh)
+		go listenDesktopSchedulerJobsWake(ctx, bus, wakeCh)
 	}
 
 	for {
-		dueAt, err := data.ScheduledTriggersRepository{}.GetEarliestHeartbeatDue(ctx, db)
+		dueAt, err := data.ScheduledTriggersRepository{}.GetEarliestDue(ctx, db)
 		if err != nil {
-			slog.ErrorContext(ctx, "desktop_heartbeat_due_lookup_failed", "error", err)
-			if !waitForDesktopHeartbeatWake(ctx, wakeCh, desktopHeartbeatReconnectDelay) {
+			slog.ErrorContext(ctx, "desktop_trigger_due_lookup_failed", "error", err)
+			if !waitForDesktopWake(ctx, wakeCh, desktopSchedulerReconnectDelay) {
 				return
 			}
 			continue
 		}
 		if dueAt == nil {
-			slog.DebugContext(ctx, "desktop_heartbeat_waiting", "state", "idle")
+			slog.DebugContext(ctx, "desktop_trigger_waiting", "state", "idle")
 			select {
 			case <-ctx.Done():
 				return
@@ -62,7 +62,7 @@ func startDesktopLLMHeartbeatScheduler(
 		if delay < 0 {
 			delay = 0
 		}
-		slog.DebugContext(ctx, "desktop_heartbeat_timer_armed", "next_fire_at", dueAt.UTC(), "delay", delay)
+		slog.DebugContext(ctx, "desktop_trigger_timer_armed", "next_fire_at", dueAt.UTC(), "delay", delay)
 		timer := time.NewTimer(delay)
 		select {
 		case <-ctx.Done():
@@ -78,15 +78,15 @@ func startDesktopLLMHeartbeatScheduler(
 		case <-timer.C:
 		}
 
-		desktopHeartbeatTick(ctx, db, q)
+		desktopTriggerTick(ctx, db, q)
 	}
 }
 
-func listenDesktopHeartbeatWake(ctx context.Context, bus eventbus.EventBus, wakeCh chan struct{}) {
+func listenDesktopSchedulerWake(ctx context.Context, bus eventbus.EventBus, wakeCh chan struct{}) {
 	listenDesktopWake(ctx, bus, pgnotify.ChannelHeartbeat, wakeCh)
 }
 
-func listenDesktopScheduledJobsWake(ctx context.Context, bus eventbus.EventBus, wakeCh chan struct{}) {
+func listenDesktopSchedulerJobsWake(ctx context.Context, bus eventbus.EventBus, wakeCh chan struct{}) {
 	listenDesktopWake(ctx, bus, pgnotify.ChannelScheduledJobs, wakeCh)
 }
 
@@ -94,7 +94,7 @@ func listenDesktopWake(ctx context.Context, bus eventbus.EventBus, topic string,
 	for {
 		sub, err := bus.Subscribe(ctx, topic)
 		if err != nil {
-			if !waitForDesktopHeartbeatWake(ctx, wakeCh, desktopHeartbeatReconnectDelay) {
+			if !waitForDesktopWake(ctx, wakeCh, desktopSchedulerReconnectDelay) {
 				return
 			}
 			continue
@@ -107,26 +107,26 @@ func listenDesktopWake(ctx context.Context, bus eventbus.EventBus, topic string,
 			case _, ok := <-sub.Channel():
 				if !ok {
 					_ = sub.Close()
-					if !waitForDesktopHeartbeatWake(ctx, wakeCh, desktopHeartbeatReconnectDelay) {
+					if !waitForDesktopWake(ctx, wakeCh, desktopSchedulerReconnectDelay) {
 						return
 					}
 					goto retry
 				}
-				signalDesktopHeartbeatWake(wakeCh)
+				signalDesktopWake(wakeCh)
 			}
 		}
 	retry:
 	}
 }
 
-func signalDesktopHeartbeatWake(wakeCh chan<- struct{}) {
+func signalDesktopWake(wakeCh chan<- struct{}) {
 	select {
 	case wakeCh <- struct{}{}:
 	default:
 	}
 }
 
-func waitForDesktopHeartbeatWake(ctx context.Context, wakeCh <-chan struct{}, delay time.Duration) bool {
+func waitForDesktopWake(ctx context.Context, wakeCh <-chan struct{}, delay time.Duration) bool {
 	timer := time.NewTimer(delay)
 	defer timer.Stop()
 	select {
@@ -139,24 +139,24 @@ func waitForDesktopHeartbeatWake(ctx context.Context, wakeCh <-chan struct{}, de
 	}
 }
 
-func desktopHeartbeatTick(
+func desktopTriggerTick(
 	ctx context.Context,
 	db data.DesktopDB,
 	q queue.JobQueue,
 ) {
 	repo := data.ScheduledTriggersRepository{}
-	rows, err := repo.ClaimDueHeartbeats(ctx, db, 8)
+	rows, err := repo.ClaimDueTriggers(ctx, db, 8)
 	if err != nil {
-		slog.ErrorContext(ctx, "desktop_heartbeat_claim_failed", "error", err)
+		slog.ErrorContext(ctx, "desktop_trigger_claim_failed", "error", err)
 		return
 	}
 	if len(rows) > 0 {
-		slog.InfoContext(ctx, "desktop_heartbeat_due_claimed", "count", len(rows))
+		slog.InfoContext(ctx, "desktop_trigger_due_claimed", "count", len(rows))
 	}
 	for _, row := range rows {
 		switch row.TriggerKind {
 		case "heartbeat", "":
-			desktopFireHeartbeat(ctx, db, q, row)
+			desktopFireTrigger(ctx, db, q, row)
 		case "job":
 			desktopFireJob(ctx, db, q, row)
 		default:
@@ -169,7 +169,7 @@ func desktopHeartbeatTick(
 	}
 }
 
-func desktopFireHeartbeat(
+func desktopFireTrigger(
 	ctx context.Context,
 	db data.DesktopDB,
 	q queue.JobQueue,
@@ -179,12 +179,12 @@ func desktopFireHeartbeat(
 	ctxData, err := repo.ResolveHeartbeatThread(ctx, db, row)
 	if err != nil {
 		if errors.Is(err, data.ErrHeartbeatIdentityGone) {
-			slog.WarnContext(ctx, "desktop_heartbeat_stale_trigger_removed",
+			slog.WarnContext(ctx, "desktop_trigger_stale_trigger_removed",
 				"channel_identity_id", row.ChannelIdentityID.String(),
 			)
 			_ = repo.DeleteHeartbeat(ctx, db, row.ChannelID, row.ChannelIdentityID)
 		} else {
-			slog.ErrorContext(ctx, "desktop_heartbeat_thread_resolution_failed",
+			slog.ErrorContext(ctx, "desktop_trigger_thread_resolution_failed",
 				"channel_identity_id", row.ChannelIdentityID.String(),
 				"error", err,
 			)
@@ -195,7 +195,7 @@ func desktopFireHeartbeat(
 
 	tx, err := db.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
-		slog.ErrorContext(ctx, "desktop_heartbeat_tx_begin_failed", "error", err)
+		slog.ErrorContext(ctx, "desktop_trigger_tx_begin_failed", "error", err)
 		_ = repo.PostponeTrigger(ctx, db, row.ID, 2*time.Minute)
 		return
 	}
@@ -212,13 +212,13 @@ func desktopFireHeartbeat(
 			return
 		}
 		if errors.Is(err, data.ErrHeartbeatIdentityGone) {
-			slog.WarnContext(ctx, "desktop_heartbeat_stale_trigger_removed",
+			slog.WarnContext(ctx, "desktop_trigger_stale_trigger_removed",
 				"channel_identity_id", row.ChannelIdentityID.String(),
 			)
 			_ = repo.DeleteHeartbeat(ctx, db, row.ChannelID, row.ChannelIdentityID)
 			return
 		}
-		slog.ErrorContext(ctx, "desktop_heartbeat_create_run_failed",
+		slog.ErrorContext(ctx, "desktop_trigger_create_run_failed",
 			"channel_identity_id", row.ChannelIdentityID.String(),
 			"error", err,
 		)
@@ -227,16 +227,16 @@ func desktopFireHeartbeat(
 	}
 
 	if err := tx.Commit(ctx); err != nil {
-		slog.ErrorContext(ctx, "desktop_heartbeat_commit_failed", "error", err)
+		slog.ErrorContext(ctx, "desktop_trigger_commit_failed", "error", err)
 		_ = repo.PostponeTrigger(ctx, db, row.ID, 2*time.Minute)
 		return
 	}
 
 	payload := map[string]any{
-		"source":                     "llm_heartbeat_scheduler",
+		"source":                     "desktop_trigger_scheduler",
 		"run_kind":                   runkind.Heartbeat,
-		"heartbeat_interval_minutes": row.IntervalMin,
-		"heartbeat_reason":           "interval",
+		"trigger_interval_minutes":   row.IntervalMin,
+		"trigger_reason":             "interval",
 		"persona_key":                row.PersonaKey,
 		"model":                      row.Model,
 		"channel_delivery": map[string]any{
@@ -251,7 +251,7 @@ func desktopFireHeartbeat(
 	}
 	traceID := uuid.NewString()
 	if _, err := q.EnqueueRun(ctx, row.AccountID, result.RunID, traceID, queue.RunExecuteJobType, payload, nil); err != nil {
-		slog.ErrorContext(ctx, "desktop_heartbeat_enqueue_failed",
+		slog.ErrorContext(ctx, "desktop_trigger_enqueue_failed",
 			"run_id", result.RunID.String(),
 			"error", err,
 		)
@@ -437,7 +437,7 @@ func desktopFireJob(
 	}
 
 	payload := map[string]any{
-		"source":               "llm_heartbeat_scheduler",
+		"source":               "desktop_trigger_scheduler",
 		"run_kind":             runkind.ScheduledJob,
 		"scheduled_job_id":     job.ID.String(),
 		"scheduled_job_name":   job.Name,

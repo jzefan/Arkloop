@@ -246,8 +246,8 @@ func (ScheduledTriggersRepository) SyncHeartbeatConfig(
 	return err
 }
 
-// GetEarliestHeartbeatDue returns the earliest scheduled next_fire_at.
-func (ScheduledTriggersRepository) GetEarliestHeartbeatDue(
+// GetEarliestDue returns the earliest scheduled next_fire_at.
+func (ScheduledTriggersRepository) GetEarliestDue(
 	ctx context.Context,
 	pool *pgxpool.Pool,
 ) (*time.Time, error) {
@@ -267,9 +267,9 @@ func (ScheduledTriggersRepository) GetEarliestHeartbeatDue(
 	return &next, nil
 }
 
-// ClaimDueHeartbeats fetches up to limit rows whose next_fire_at is due,
+// ClaimDueTriggers fetches up to limit rows whose next_fire_at is due,
 // advances next_fire_at based on the original schedule, and returns the claimed rows.
-func (ScheduledTriggersRepository) ClaimDueHeartbeats(
+func (ScheduledTriggersRepository) ClaimDueTriggers(
 	ctx context.Context,
 	pool *pgxpool.Pool,
 	limit int,
