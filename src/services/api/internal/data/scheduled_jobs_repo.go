@@ -8,68 +8,21 @@ import (
 	"time"
 
 	"arkloop/services/shared/schedulekind"
+	"arkloop/services/shared/scheduledjobs"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 )
-
-type ScheduledJob struct {
-	ID              uuid.UUID
-	AccountID       uuid.UUID
-	Name            string
-	Description     string
-	PersonaKey      string
-	Prompt          string
-	Model           string
-	WorkspaceRef    string
-	WorkDir         string
-	ThreadID        *uuid.UUID
-	ScheduleKind    string
-	IntervalMin     *int
-	DailyTime       string
-	MonthlyDay      *int
-	MonthlyTime     string
-	WeeklyDay       *int
-	Timezone        string
-	Enabled         bool
-	CreatedByUserID *uuid.UUID
-	CreatedAt       time.Time
-	UpdatedAt       time.Time
-}
-
-type ScheduledJobWithTrigger struct {
-	ScheduledJob
-	NextFireAt *time.Time
-}
-
-type UpdateJobParams struct {
-	Name         *string
-	Description  *string
-	PersonaKey   *string
-	Prompt       *string
-	Model        *string
-	WorkspaceRef *string
-	WorkDir      *string
-	ThreadID     **uuid.UUID
-	ScheduleKind *string
-	IntervalMin  **int
-	DailyTime    *string
-	MonthlyDay   **int
-	MonthlyTime  *string
-	WeeklyDay    **int
-	Timezone     *string
-	Enabled      *bool
-}
 
 type ScheduledJobsRepository struct{}
 
 func (ScheduledJobsRepository) CreateJob(
 	ctx context.Context,
 	db Querier,
-	job ScheduledJob,
-) (ScheduledJob, error) {
+	job scheduledjobs.ScheduledJob,
+) (scheduledjobs.ScheduledJob, error) {
 	if job.AccountID == uuid.Nil {
-		return ScheduledJob{}, errors.New("account_id must not be empty")
+		return scheduledjobs.ScheduledJob{}, errors.New("account_id must not be empty")
 	}
 
 	err := db.QueryRow(ctx, `
@@ -86,12 +39,12 @@ func (ScheduledJobsRepository) CreateJob(
 		job.Timezone, job.Enabled, job.CreatedByUserID,
 	).Scan(&job.ID, &job.CreatedAt, &job.UpdatedAt)
 	if err != nil {
-		return ScheduledJob{}, fmt.Errorf("insert scheduled_jobs: %w", err)
+		return scheduledjobs.ScheduledJob{}, fmt.Errorf("insert scheduled_jobs: %w", err)
 	}
 
 	if job.Enabled {
 		if err := insertJobTrigger(ctx, db, job); err != nil {
-			return ScheduledJob{}, err
+			return scheduledjobs.ScheduledJob{}, err
 		}
 	}
 
@@ -102,7 +55,7 @@ func (ScheduledJobsRepository) ListByAccount(
 	ctx context.Context,
 	db Querier,
 	accountID uuid.UUID,
-) ([]ScheduledJobWithTrigger, error) {
+) ([]scheduledjobs.ScheduledJobWithTrigger, error) {
 	rows, err := db.Query(ctx, `
 		SELECT j.id, j.account_id, j.name, j.description, j.persona_key, j.prompt,
 		       j.model, j.workspace_ref, j.work_dir, j.thread_id, j.schedule_kind,
@@ -118,9 +71,9 @@ func (ScheduledJobsRepository) ListByAccount(
 	}
 	defer rows.Close()
 
-	var out []ScheduledJobWithTrigger
+	var out []scheduledjobs.ScheduledJobWithTrigger
 	for rows.Next() {
-		var r ScheduledJobWithTrigger
+		var r scheduledjobs.ScheduledJobWithTrigger
 		if err := rows.Scan(
 			&r.ID, &r.AccountID, &r.Name, &r.Description, &r.PersonaKey, &r.Prompt,
 			&r.Model, &r.WorkspaceRef, &r.WorkDir, &r.ThreadID, &r.ScheduleKind,
@@ -139,8 +92,8 @@ func (ScheduledJobsRepository) GetByID(
 	ctx context.Context,
 	db Querier,
 	id, accountID uuid.UUID,
-) (*ScheduledJobWithTrigger, error) {
-	var r ScheduledJobWithTrigger
+) (*scheduledjobs.ScheduledJobWithTrigger, error) {
+	var r scheduledjobs.ScheduledJobWithTrigger
 	err := db.QueryRow(ctx, `
 		SELECT j.id, j.account_id, j.name, j.description, j.persona_key, j.prompt,
 		       j.model, j.workspace_ref, j.work_dir, j.thread_id, j.schedule_kind,
@@ -170,8 +123,8 @@ func (ScheduledJobsRepository) GetJobByID(
 	ctx context.Context,
 	db Querier,
 	id uuid.UUID,
-) (*ScheduledJob, error) {
-	var r ScheduledJob
+) (*scheduledjobs.ScheduledJob, error) {
+	var r scheduledjobs.ScheduledJob
 	err := db.QueryRow(ctx, `
 		SELECT id, account_id, name, description, persona_key, prompt,
 		       model, workspace_ref, work_dir, thread_id, schedule_kind,
@@ -198,7 +151,7 @@ func (ScheduledJobsRepository) UpdateJob(
 	ctx context.Context,
 	db Querier,
 	id, accountID uuid.UUID,
-	upd UpdateJobParams,
+	upd scheduledjobs.UpdateJobParams,
 ) error {
 	setClauses := []string{}
 	args := []any{}
@@ -372,7 +325,7 @@ func (ScheduledJobsRepository) SetJobEnabled(
 }
 
 // insertJobTrigger 为 job 计算 next_fire_at 并插入 trigger（ON CONFLICT 忽略）。
-func insertJobTrigger(ctx context.Context, db Querier, job ScheduledJob) error {
+func insertJobTrigger(ctx context.Context, db Querier, job scheduledjobs.ScheduledJob) error {
 	nextFire, err := calcJobNextFire(job)
 	if err != nil {
 		return fmt.Errorf("calc next fire: %w", err)
@@ -399,7 +352,7 @@ func insertJobTrigger(ctx context.Context, db Querier, job ScheduledJob) error {
 	return nil
 }
 
-func calcJobNextFire(job ScheduledJob) (time.Time, error) {
+func calcJobNextFire(job scheduledjobs.ScheduledJob) (time.Time, error) {
 	return schedulekind.CalcNextFire(
 		job.ScheduleKind,
 		derefIntOr(job.IntervalMin, 0),

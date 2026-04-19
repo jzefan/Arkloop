@@ -365,8 +365,8 @@ func (ScheduledTriggersRepository) DeleteTriggerByJobID(
 	return err
 }
 
-// PostponeHeartbeat delays the next fire time by duration (used on error).
-func (ScheduledTriggersRepository) PostponeHeartbeat(
+// PostponeTrigger delays the next fire time by duration (used on error).
+func (ScheduledTriggersRepository) PostponeTrigger(
 	ctx context.Context,
 	db Querier,
 	id uuid.UUID,
@@ -540,7 +540,7 @@ func (ScheduledTriggersRepository) DeleteInactiveHeartbeats(
 	}
 	tag, err := db.Exec(ctx, `
 		DELETE FROM scheduled_triggers st
-		WHERE (st.trigger_kind = 'heartbeat' OR st.trigger_kind = '')
+		WHERE st.trigger_kind = 'heartbeat'
 		  AND NOT EXISTS (
 			SELECT 1
 			  FROM channel_message_ledger cml

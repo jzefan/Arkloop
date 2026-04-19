@@ -322,8 +322,8 @@ func (ScheduledTriggersRepository) GetEarliestHeartbeatDue(
 	return &next, nil
 }
 
-// PostponeHeartbeat 将指定 ID 的 next_fire_at 延后 delay（出错时用于退避重试）。
-func (ScheduledTriggersRepository) PostponeHeartbeat(
+// PostponeTrigger 将指定 ID 的 next_fire_at 延后 delay（出错时用于退避重试）。
+func (ScheduledTriggersRepository) PostponeTrigger(
 	ctx context.Context,
 	db DesktopDB,
 	id uuid.UUID,

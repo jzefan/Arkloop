@@ -19,7 +19,7 @@ type DesktopScheduledJobsRepository struct{}
 // GetJobByID 按 ID 加载 job 定义。
 func (DesktopScheduledJobsRepository) GetJobByID(
 	ctx context.Context,
-	db DesktopDB,
+	db DB,
 	id uuid.UUID,
 ) (*ScheduledJob, error) {
 	return desktopGetJobByID(ctx, db, id)
@@ -28,7 +28,7 @@ func (DesktopScheduledJobsRepository) GetJobByID(
 // ListByAccount 列出 account 下所有 job，附带 trigger 的 next_fire_at。
 func (DesktopScheduledJobsRepository) ListByAccount(
 	ctx context.Context,
-	db DesktopDB,
+	db DB,
 	accountID uuid.UUID,
 ) ([]ScheduledJobWithTrigger, error) {
 	rows, err := db.Query(ctx, `
@@ -80,7 +80,7 @@ func (DesktopScheduledJobsRepository) ListByAccount(
 // GetByID 按 ID + accountID 获取 job，附带 trigger。
 func (DesktopScheduledJobsRepository) GetByID(
 	ctx context.Context,
-	db DesktopDB,
+	db DB,
 	id, accountID uuid.UUID,
 ) (*ScheduledJobWithTrigger, error) {
 	var r ScheduledJobWithTrigger
@@ -126,7 +126,7 @@ func (DesktopScheduledJobsRepository) GetByID(
 // CreateJob 创建 scheduled_job 并插入对应 trigger。
 func (DesktopScheduledJobsRepository) CreateJob(
 	ctx context.Context,
-	db DesktopDB,
+	db DB,
 	job ScheduledJob,
 ) (ScheduledJob, error) {
 	if job.AccountID == uuid.Nil {
@@ -176,7 +176,7 @@ func (DesktopScheduledJobsRepository) CreateJob(
 // UpdateJob 部分更新 scheduled_job。
 func (DesktopScheduledJobsRepository) UpdateJob(
 	ctx context.Context,
-	db DesktopDB,
+	db DB,
 	id, accountID uuid.UUID,
 	upd UpdateJobParams,
 ) error {
@@ -306,7 +306,7 @@ func (DesktopScheduledJobsRepository) UpdateJob(
 // DeleteJob 删除 scheduled_job（trigger 由 ON DELETE CASCADE 或手动删除）。
 func (DesktopScheduledJobsRepository) DeleteJob(
 	ctx context.Context,
-	db DesktopDB,
+	db DB,
 	id, accountID uuid.UUID,
 ) error {
 	// 先删 trigger
@@ -327,7 +327,7 @@ func (DesktopScheduledJobsRepository) DeleteJob(
 
 // -- internal helpers --
 
-func desktopGetJobByID(ctx context.Context, db DesktopDB, id uuid.UUID) (*ScheduledJob, error) {
+func desktopGetJobByID(ctx context.Context, db DB, id uuid.UUID) (*ScheduledJob, error) {
 	var r ScheduledJob
 	var idStr, accountStr string
 	var threadIDStr, createdByStr *string
@@ -363,7 +363,7 @@ func desktopGetJobByID(ctx context.Context, db DesktopDB, id uuid.UUID) (*Schedu
 	return &r, nil
 }
 
-func desktopInsertJobTrigger(ctx context.Context, db DesktopDB, job ScheduledJob) error {
+func desktopInsertJobTrigger(ctx context.Context, db DB, job ScheduledJob) error {
 	nextFire, err := desktopCalcJobNextFire(job)
 	if err != nil {
 		return fmt.Errorf("calc next fire: %w", err)

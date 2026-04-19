@@ -36,6 +36,7 @@ func startDesktopLLMHeartbeatScheduler(
 	wakeCh := make(chan struct{}, 1)
 	if bus != nil {
 		go listenDesktopHeartbeatWake(ctx, bus, wakeCh)
+		go listenDesktopScheduledJobsWake(ctx, bus, wakeCh)
 	}
 
 	for {
@@ -82,8 +83,16 @@ func startDesktopLLMHeartbeatScheduler(
 }
 
 func listenDesktopHeartbeatWake(ctx context.Context, bus eventbus.EventBus, wakeCh chan struct{}) {
+	listenDesktopWake(ctx, bus, pgnotify.ChannelHeartbeat, wakeCh)
+}
+
+func listenDesktopScheduledJobsWake(ctx context.Context, bus eventbus.EventBus, wakeCh chan struct{}) {
+	listenDesktopWake(ctx, bus, pgnotify.ChannelScheduledJobs, wakeCh)
+}
+
+func listenDesktopWake(ctx context.Context, bus eventbus.EventBus, topic string, wakeCh chan struct{}) {
 	for {
-		sub, err := bus.Subscribe(ctx, pgnotify.ChannelHeartbeat)
+		sub, err := bus.Subscribe(ctx, topic)
 		if err != nil {
 			if !waitForDesktopHeartbeatWake(ctx, wakeCh, desktopHeartbeatReconnectDelay) {
 				return
@@ -155,7 +164,7 @@ func desktopHeartbeatTick(
 				"trigger_kind", row.TriggerKind,
 				"trigger_id", row.ID.String(),
 			)
-			_ = repo.PostponeHeartbeat(ctx, db, row.ID, 2*time.Minute)
+			_ = repo.PostponeTrigger(ctx, db, row.ID, 2*time.Minute)
 		}
 	}
 }
@@ -179,7 +188,7 @@ func desktopFireHeartbeat(
 				"channel_identity_id", row.ChannelIdentityID.String(),
 				"error", err,
 			)
-			_ = repo.PostponeHeartbeat(ctx, db, row.ID, 2*time.Minute)
+			_ = repo.PostponeTrigger(ctx, db, row.ID, 2*time.Minute)
 		}
 		return
 	}
@@ -187,7 +196,7 @@ func desktopFireHeartbeat(
 	tx, err := db.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		slog.ErrorContext(ctx, "desktop_heartbeat_tx_begin_failed", "error", err)
-		_ = repo.PostponeHeartbeat(ctx, db, row.ID, 2*time.Minute)
+		_ = repo.PostponeTrigger(ctx, db, row.ID, 2*time.Minute)
 		return
 	}
 
@@ -199,7 +208,7 @@ func desktopFireHeartbeat(
 			if delayMin <= 0 {
 				delayMin = runkind.DefaultHeartbeatIntervalMinutes
 			}
-			_ = repo.PostponeHeartbeat(ctx, db, row.ID, time.Duration(delayMin)*time.Minute)
+			_ = repo.PostponeTrigger(ctx, db, row.ID, time.Duration(delayMin)*time.Minute)
 			return
 		}
 		if errors.Is(err, data.ErrHeartbeatIdentityGone) {
@@ -213,13 +222,13 @@ func desktopFireHeartbeat(
 			"channel_identity_id", row.ChannelIdentityID.String(),
 			"error", err,
 		)
-		_ = repo.PostponeHeartbeat(ctx, db, row.ID, 2*time.Minute)
+		_ = repo.PostponeTrigger(ctx, db, row.ID, 2*time.Minute)
 		return
 	}
 
 	if err := tx.Commit(ctx); err != nil {
 		slog.ErrorContext(ctx, "desktop_heartbeat_commit_failed", "error", err)
-		_ = repo.PostponeHeartbeat(ctx, db, row.ID, 2*time.Minute)
+		_ = repo.PostponeTrigger(ctx, db, row.ID, 2*time.Minute)
 		return
 	}
 
@@ -246,7 +255,7 @@ func desktopFireHeartbeat(
 			"run_id", result.RunID.String(),
 			"error", err,
 		)
-		_ = repo.PostponeHeartbeat(ctx, db, row.ID, 2*time.Minute)
+		_ = repo.PostponeTrigger(ctx, db, row.ID, 2*time.Minute)
 	}
 }
 
@@ -265,7 +274,7 @@ func desktopFireJob(
 			"job_id", row.JobID.String(),
 			"error", err,
 		)
-		_ = repo.PostponeHeartbeat(ctx, db, row.ID, 2*time.Minute)
+		_ = repo.PostponeTrigger(ctx, db, row.ID, 2*time.Minute)
 		return
 	}
 	if job == nil || !job.Enabled {
@@ -288,7 +297,7 @@ func desktopFireJob(
 					"account_id", job.AccountID.String(),
 				)
 			}
-			_ = repo.PostponeHeartbeat(ctx, db, row.ID, 2*time.Minute)
+			_ = repo.PostponeTrigger(ctx, db, row.ID, 2*time.Minute)
 			return
 		}
 		threadID = uuid.New()
@@ -300,7 +309,7 @@ func desktopFireJob(
 			slog.ErrorContext(ctx, "desktop_job_create_thread_failed",
 				"error", err,
 			)
-			_ = repo.PostponeHeartbeat(ctx, db, row.ID, 2*time.Minute)
+			_ = repo.PostponeTrigger(ctx, db, row.ID, 2*time.Minute)
 			return
 		}
 	}
@@ -340,7 +349,7 @@ func desktopFireJob(
 			"thread_id", threadID.String(),
 			"error", err,
 		)
-		_ = repo.PostponeHeartbeat(ctx, db, row.ID, 2*time.Minute)
+		_ = repo.PostponeTrigger(ctx, db, row.ID, 2*time.Minute)
 		return
 	}
 	if busy == 1 {
@@ -348,14 +357,14 @@ func desktopFireJob(
 		if job.IntervalMin != nil && *job.IntervalMin > 0 {
 			delayMin = *job.IntervalMin
 		}
-		_ = repo.PostponeHeartbeat(ctx, db, row.ID, time.Duration(delayMin)*time.Minute)
+		_ = repo.PostponeTrigger(ctx, db, row.ID, time.Duration(delayMin)*time.Minute)
 		return
 	}
 
 	tx, err := db.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		slog.ErrorContext(ctx, "desktop_job_tx_begin_failed", "error", err)
-		_ = repo.PostponeHeartbeat(ctx, db, row.ID, 2*time.Minute)
+		_ = repo.PostponeTrigger(ctx, db, row.ID, 2*time.Minute)
 		return
 	}
 	defer func() { _ = tx.Rollback(ctx) }() //nolint:errcheck
@@ -370,7 +379,7 @@ func desktopFireJob(
 			ctx, tx, job.AccountID, threadID, "user", job.Prompt, nil, createdByUserID,
 		); err != nil {
 			slog.ErrorContext(ctx, "desktop_job_insert_user_message_failed", "error", err)
-			_ = repo.PostponeHeartbeat(ctx, db, row.ID, 2*time.Minute)
+			_ = repo.PostponeTrigger(ctx, db, row.ID, 2*time.Minute)
 			return
 		}
 	}
@@ -379,7 +388,7 @@ func desktopFireJob(
 		runID.String(), job.AccountID.String(), threadID.String(), createdByUserID,
 	); err != nil {
 		slog.ErrorContext(ctx, "desktop_job_insert_run_failed", "error", err)
-		_ = repo.PostponeHeartbeat(ctx, db, row.ID, 2*time.Minute)
+		_ = repo.PostponeTrigger(ctx, db, row.ID, 2*time.Minute)
 		return
 	}
 
@@ -396,13 +405,13 @@ func desktopFireJob(
 	}
 	if _, err := eventsRepo.AppendEvent(ctx, tx, runID, "run.started", startedData, nil, nil); err != nil {
 		slog.ErrorContext(ctx, "desktop_job_append_started_failed", "error", err)
-		_ = repo.PostponeHeartbeat(ctx, db, row.ID, 2*time.Minute)
+		_ = repo.PostponeTrigger(ctx, db, row.ID, 2*time.Minute)
 		return
 	}
 
 	if err := tx.Commit(ctx); err != nil {
 		slog.ErrorContext(ctx, "desktop_job_commit_failed", "error", err)
-		_ = repo.PostponeHeartbeat(ctx, db, row.ID, 2*time.Minute)
+		_ = repo.PostponeTrigger(ctx, db, row.ID, 2*time.Minute)
 		return
 	}
 
@@ -418,12 +427,12 @@ func desktopFireJob(
 	)
 	if err != nil {
 		slog.ErrorContext(ctx, "desktop_job_calc_next_fire_failed", "error", err)
-		_ = repo.PostponeHeartbeat(ctx, db, row.ID, 2*time.Minute)
+		_ = repo.PostponeTrigger(ctx, db, row.ID, 2*time.Minute)
 		return
 	}
 	if err := repo.UpdateTriggerNextFire(ctx, db, row.ID, nextFire); err != nil {
 		slog.ErrorContext(ctx, "desktop_job_update_next_fire_failed", "error", err)
-		_ = repo.PostponeHeartbeat(ctx, db, row.ID, 2*time.Minute)
+		_ = repo.PostponeTrigger(ctx, db, row.ID, 2*time.Minute)
 		return
 	}
 
@@ -444,7 +453,7 @@ func desktopFireJob(
 			"run_id", runID.String(),
 			"error", err,
 		)
-		_ = repo.PostponeHeartbeat(ctx, db, row.ID, 2*time.Minute)
+		_ = repo.PostponeTrigger(ctx, db, row.ID, 2*time.Minute)
 	}
 }
 

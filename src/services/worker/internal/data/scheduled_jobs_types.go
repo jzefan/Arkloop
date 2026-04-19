@@ -1,54 +1,14 @@
 package data
 
 import (
-	"time"
-
-	"github.com/google/uuid"
+	"arkloop/services/shared/scheduledjobs"
 )
 
 // ScheduledJob 是 scheduled_jobs 表的行。
-type ScheduledJob struct {
-	ID              uuid.UUID
-	AccountID       uuid.UUID
-	Name            string
-	Description     string
-	PersonaKey      string
-	Prompt          string
-	Model           string
-	WorkspaceRef    string
-	WorkDir         string
-	ThreadID        *uuid.UUID
-	ScheduleKind    string
-	IntervalMin     *int
-	DailyTime       string
-	MonthlyDay      *int
-	MonthlyTime     string
-	WeeklyDay       *int
-	Timezone        string
-	Enabled         bool
-	CreatedByUserID *uuid.UUID
-	CreatedAt       time.Time
-	UpdatedAt       time.Time
-}
+type ScheduledJob = scheduledjobs.ScheduledJob
 
 // ScheduledJobWithTrigger 附带 trigger 的 next_fire_at。
-type ScheduledJobWithTrigger struct {
-	ScheduledJob
-	NextFireAt *time.Time
-}
+type ScheduledJobWithTrigger = scheduledjobs.ScheduledJobWithTrigger
 
 // UpdateJobParams 是 UpdateJob 的部分更新参数。
-type UpdateJobParams struct {
-	Name         *string
-	Description  *string
-	Prompt       *string
-	ScheduleKind *string
-	IntervalMin  **int
-	DailyTime    *string
-	MonthlyDay   **int
-	MonthlyTime  *string
-	WeeklyDay    **int
-	Timezone     *string
-	Enabled      *bool
-	ThreadID     **uuid.UUID
-}
+type UpdateJobParams = scheduledjobs.UpdateJobParams
