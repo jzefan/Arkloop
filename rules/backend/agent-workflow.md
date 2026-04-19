@@ -6,20 +6,20 @@
 
 ## 模型选择
 
-- 逻辑推导、架构分析、设计决策 → Sonnet 或 Opus
-- 简单 explore、文件读取、搜索 → Haiku
-- Agent team 中的 worker agent → Haiku（除非涉及复杂逻辑）
+- 逻辑推导、架构分析、设计决策 →  Opus
+- 简单 explore、文件读取、搜索 → Opus
+- Agent team 中的 worker agent → Opus
 同理，gpt 系列尽量使用 gpt5.4等高级模型
 ## 标准工作流
 
 ### 后端任务（功能开发 / Bug 修复）
 
 ```
-1. [Explore Agent - Haiku]   理解现有代码结构、定位相关文件
-2. [Planner Agent - Sonnet]  设计方案，end-to-end 逻辑验证
-3. [Execute Agent - Sonnet]  实现代码变更
-4. [E2E Verify Agent - Sonnet] 脑内走全链路：入参 → middleware → repo → 响应
-5. [Review Agent - Sonnet]   代码审查，确认无遗漏
+1. [Explore Agent - Opus]   理解现有代码结构、定位相关文件
+2. [Planner Agent - Opus]  设计方案，end-to-end 逻辑验证
+3. [Execute Agent - Opus]  实现代码变更
+4. [E2E Verify Agent - Opus] 脑内走全链路：入参 → middleware → repo → 响应
+5. [Review Agent - Opus]   代码审查，确认无遗漏
 ```
 
 不允许跳过第 4 步直接提交答案。
@@ -27,7 +27,7 @@
 ### 架构 / 设计决策
 
 ```
-1. [Explore Agent - Haiku]   收集现有实现细节
+1. [Explore Agent - Opus]   收集现有实现细节
 2. [Architect Agent - Opus]  多方案评估，选最短路径
 3. 向用户汇报方案，等待确认
 ```
@@ -35,10 +35,10 @@
 ### Bug 调试
 
 ```
-1. [Explore Agent - Haiku]   定位错误现场，收集上下文
+1. [Explore Agent - Opus]   定位错误现场，收集上下文
 2. 先加 debug log，输出实际错误，不猜根因
-3. [Execute Agent - Sonnet]  根据日志证据修复
-4. [Verify Agent - Sonnet]   验证修复不引入新问题
+3. [Execute Agent - Opus]  根据日志证据修复
+4. [Verify Agent - Opus]   验证修复不引入新问题
 ```
 
 ## Agent Team 使用
