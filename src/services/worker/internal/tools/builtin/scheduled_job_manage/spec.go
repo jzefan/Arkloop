@@ -77,6 +77,18 @@ var Spec = llm.ToolSpec{
 				"type":        "string",
 				"description": "IANA timezone, e.g. Asia/Shanghai",
 			},
+			"model": map[string]any{
+				"type":        "string",
+				"description": "Model override (provider^model)",
+			},
+			"persona_key": map[string]any{
+				"type":        "string",
+				"description": "Persona key for this job",
+			},
+			"work_dir": map[string]any{
+				"type":        "string",
+				"description": "Working directory",
+			},
 			"enabled": map[string]any{
 				"type":        "boolean",
 				"description": "Enable or disable the job",

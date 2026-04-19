@@ -291,6 +291,38 @@ function readRTKVersion(): { version: string; updated_at: string } | null {
   }
 }
 
+function readSandboxVersions(): { kernel?: { version: string; updated_at: string }; rootfs?: { version: string; updated_at: string } } | null {
+  if (!fs.existsSync(VM_DIR)) return null
+  const candidates: {
+    kernel?: { version: string; updated_at: string }
+    rootfs?: { version: string; updated_at: string }
+  } = {}
+  try {
+    const files = fs.readdirSync(VM_DIR)
+    for (const file of files) {
+      const filePath = path.join(VM_DIR, file)
+      const stat = fs.statSync(filePath)
+      if (!stat.isFile()) continue
+      const version = extractVersionToken(file)
+      if (!version) continue
+      const lower = file.toLowerCase()
+      const entry = { version, updated_at: stat.mtime.toISOString() }
+      if (lower.includes('kernel')) {
+        if (!candidates.kernel || stat.mtime > new Date(candidates.kernel.updated_at)) {
+          candidates.kernel = entry
+        }
+      } else if (lower.includes('rootfs')) {
+        if (!candidates.rootfs || stat.mtime > new Date(candidates.rootfs.updated_at)) {
+          candidates.rootfs = entry
+        }
+      }
+    }
+  } catch {
+    return null
+  }
+  return candidates.kernel || candidates.rootfs ? candidates : null
+}
+
 export async function syncLocalVersions(includeBridge = false): Promise<LocalVersions> {
   const next = { ...loadLocalVersions() }
 
@@ -314,9 +346,23 @@ export async function syncLocalVersions(includeBridge = false): Promise<LocalVer
     next.sandbox = (cleanedSandbox.kernel || cleanedSandbox.rootfs) ? cleanedSandbox : undefined
   }
 
+  const detectedSandbox = readSandboxVersions()
+  if (detectedSandbox) {
+    if (detectedSandbox.kernel && !next.sandbox?.kernel) {
+      next.sandbox = { ...next.sandbox, kernel: detectedSandbox.kernel }
+    }
+    if (detectedSandbox.rootfs && !next.sandbox?.rootfs) {
+      next.sandbox = { ...next.sandbox, rootfs: detectedSandbox.rootfs }
+    }
+  }
+
   if (includeBridge) {
     const { bridgeListModules } = await import('./sidecar')
-    const modules = await bridgeListModules()
+    let modules = await bridgeListModules()
+    if (!modules) {
+      await new Promise((resolve) => setTimeout(resolve, 2000))
+      modules = await bridgeListModules()
+    }
     const openviking = modules?.find((module) => module.id === 'openviking')
     const openvikingVersion = normalizeComponentVersion(openviking?.version)
     if (openvikingVersion) {

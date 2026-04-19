@@ -1208,6 +1208,7 @@ export const zh: LocaleStrings = {
     appUpdateDownload: "下载",
     appUpdateInstall: "安装",
     componentUpdateTitle: "组件",
+    componentNotInstalled: "未安装",
   },
 
 
