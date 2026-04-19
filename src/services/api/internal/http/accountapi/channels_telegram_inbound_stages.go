@@ -274,6 +274,10 @@ func (c telegramConnector) persistTelegramInboundStageA(
 			}
 			return &telegramInboundStageAResult{finalState: inboundStateCommandHandled, replyText: replyText}, nil
 		}
+		// keyword / @mention / reply-to-bot: fall through to run creation path
+		if incoming.ShouldCreateRun() {
+			goto createRun
+		}
 		_, finalState, err := c.persistTelegramGroupPassiveMessageTx(ctx, tx, ch, token, incoming, identity, persona, baseMetadata)
 		if err != nil {
 			return nil, err
@@ -300,6 +304,7 @@ func (c telegramConnector) persistTelegramInboundStageA(
 		return &telegramInboundStageAResult{finalState: finalState}, nil
 	}
 
+createRun:
 	threadProjectID := derefUUID(persona.ProjectID)
 	threadID, err := c.resolveTelegramThreadID(ctx, tx, ch, persona.ID, threadProjectID, identity, incoming)
 	if err != nil {
