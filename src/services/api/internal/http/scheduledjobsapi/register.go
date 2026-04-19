@@ -15,6 +15,7 @@ import (
 	httpkit "arkloop/services/api/internal/http/httpkit"
 	"arkloop/services/api/internal/observability"
 	"arkloop/services/shared/pgnotify"
+	"arkloop/services/shared/scheduledjobs"
 
 	"github.com/google/uuid"
 )
@@ -158,7 +159,7 @@ type listJobsResponse struct {
 	Jobs []jobResponse `json:"jobs"`
 }
 
-func toJobResponse(j data.ScheduledJobWithTrigger) jobResponse {
+func toJobResponse(j scheduledjobs.ScheduledJobWithTrigger) jobResponse {
 	return jobResponse{
 		ID:           j.ID,
 		AccountID:    j.AccountID,
@@ -261,7 +262,7 @@ func createJob(w nethttp.ResponseWriter, r *nethttp.Request, traceID string, dep
 		tz = "UTC"
 	}
 
-	job := data.ScheduledJob{
+	job := scheduledjobs.ScheduledJob{
 		ID:              uuid.New(),
 		AccountID:       actor.AccountID,
 		Name:            req.Name,
@@ -296,7 +297,7 @@ func createJob(w nethttp.ResponseWriter, r *nethttp.Request, traceID string, dep
 	full, err := deps.ScheduledJobsRepo.GetByID(r.Context(), deps.Pool, created.ID, actor.AccountID)
 	if err != nil || full == nil {
 		// fallback: 返回无 trigger 的响应
-		httpkit.WriteJSON(w, traceID, nethttp.StatusCreated, toJobResponse(data.ScheduledJobWithTrigger{ScheduledJob: created}))
+		httpkit.WriteJSON(w, traceID, nethttp.StatusCreated, toJobResponse(scheduledjobs.ScheduledJobWithTrigger{ScheduledJob: created}))
 		return
 	}
 	httpkit.WriteJSON(w, traceID, nethttp.StatusCreated, toJobResponse(*full))
@@ -551,8 +552,8 @@ func validateCreate(req createJobRequest) []string {
 	return errs
 }
 
-func buildUpdateParams(raw map[string]json.RawMessage) (data.UpdateJobParams, []string) {
-	var p data.UpdateJobParams
+func buildUpdateParams(raw map[string]json.RawMessage) (scheduledjobs.UpdateJobParams, []string) {
+	var p scheduledjobs.UpdateJobParams
 	var errs []string
 
 	if v, ok := raw["name"]; ok {

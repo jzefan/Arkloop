@@ -151,6 +151,9 @@ func (s *LLMHeartbeat) listenOnce(ctx context.Context, wakeCh chan<- struct{}) e
 	if _, err := conn.Exec(ctx, `LISTEN "`+pgnotify.ChannelHeartbeat+`"`); err != nil {
 		return err
 	}
+	if _, err := conn.Exec(ctx, `LISTEN "`+pgnotify.ChannelScheduledJobs+`"`); err != nil {
+		return err
+	}
 	for {
 		if _, err := conn.Conn().WaitForNotification(ctx); err != nil {
 			return err
@@ -197,18 +200,18 @@ func (s *LLMHeartbeat) fireOne(ctx context.Context, row data.ScheduledTriggerRow
 func (s *LLMHeartbeat) fireHeartbeat(ctx context.Context, row data.ScheduledTriggerRow) {
 	ctxData, err := s.triggers.ResolveHeartbeatThread(ctx, s.pool, row)
 	if err != nil {
-		_ = s.triggers.PostponeHeartbeat(ctx, s.pool, row.ID, 2*time.Minute)
+		_ = s.triggers.PostponeTrigger(ctx, s.pool, row.ID, 2*time.Minute)
 		return
 	}
 	if ctxData == nil {
-		_ = s.triggers.PostponeHeartbeat(ctx, s.pool, row.ID, 2*time.Minute)
+		_ = s.triggers.PostponeTrigger(ctx, s.pool, row.ID, 2*time.Minute)
 		return
 	}
 
 	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		slog.ErrorContext(ctx, "llm_heartbeat_tx_begin_failed", "error", err)
-		_ = s.triggers.PostponeHeartbeat(ctx, s.pool, row.ID, 2*time.Minute)
+		_ = s.triggers.PostponeTrigger(ctx, s.pool, row.ID, 2*time.Minute)
 		return
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck
@@ -243,17 +246,17 @@ func (s *LLMHeartbeat) fireHeartbeat(ctx context.Context, row data.ScheduledTrig
 			if delayMin <= 0 {
 				delayMin = runkind.DefaultHeartbeatIntervalMinutes
 			}
-			_ = s.triggers.PostponeHeartbeat(ctx, s.pool, row.ID, time.Duration(delayMin)*time.Minute)
+			_ = s.triggers.PostponeTrigger(ctx, s.pool, row.ID, time.Duration(delayMin)*time.Minute)
 			return
 		}
 		slog.ErrorContext(ctx, "llm_heartbeat_create_run_failed", "error", err)
-		_ = s.triggers.PostponeHeartbeat(ctx, s.pool, row.ID, 90*time.Second)
+		_ = s.triggers.PostponeTrigger(ctx, s.pool, row.ID, 90*time.Second)
 		return
 	}
 
 	if s.runLimiter != nil {
 		if !s.runLimiter.TryAcquire(ctx, ctxData.AccountID) {
-			_ = s.triggers.PostponeHeartbeat(ctx, s.pool, row.ID, 45*time.Second)
+			_ = s.triggers.PostponeTrigger(ctx, s.pool, row.ID, 45*time.Second)
 			return
 		}
 		defer s.runLimiter.Release(context.Background(), ctxData.AccountID)
@@ -287,13 +290,13 @@ func (s *LLMHeartbeat) fireHeartbeat(ctx context.Context, row data.ScheduledTrig
 		nil,
 	); err != nil {
 		slog.ErrorContext(ctx, "llm_heartbeat_enqueue_failed", "error", err)
-		_ = s.triggers.PostponeHeartbeat(ctx, s.pool, row.ID, 90*time.Second)
+		_ = s.triggers.PostponeTrigger(ctx, s.pool, row.ID, 90*time.Second)
 		return
 	}
 
 	if err := tx.Commit(ctx); err != nil {
 		slog.ErrorContext(ctx, "llm_heartbeat_commit_failed", "error", err)
-		_ = s.triggers.PostponeHeartbeat(ctx, s.pool, row.ID, 90*time.Second)
+		_ = s.triggers.PostponeTrigger(ctx, s.pool, row.ID, 90*time.Second)
 		return
 	}
 }
@@ -302,7 +305,7 @@ func (s *LLMHeartbeat) fireJob(ctx context.Context, row data.ScheduledTriggerRow
 	job, err := s.scheduledJobs.GetJobByID(ctx, s.pool, row.JobID)
 	if err != nil {
 		slog.ErrorContext(ctx, "scheduled_job_fetch_failed", "error", err, "job_id", row.JobID)
-		_ = s.triggers.PostponeHeartbeat(ctx, s.pool, row.ID, 2*time.Minute)
+		_ = s.triggers.PostponeTrigger(ctx, s.pool, row.ID, 2*time.Minute)
 		return
 	}
 	if job == nil || !job.Enabled {
@@ -327,13 +330,13 @@ func (s *LLMHeartbeat) fireJob(ctx context.Context, row data.ScheduledTriggerRow
 			} else {
 				slog.ErrorContext(ctx, "scheduled_job_project_lookup_failed", "error", err, "account_id", job.AccountID)
 			}
-			_ = s.triggers.PostponeHeartbeat(ctx, s.pool, row.ID, 2*time.Minute)
+			_ = s.triggers.PostponeTrigger(ctx, s.pool, row.ID, 2*time.Minute)
 			return
 		}
 		thread, err := s.threads.Create(ctx, job.AccountID, job.CreatedByUserID, projectID, nil, false)
 		if err != nil {
 			slog.ErrorContext(ctx, "scheduled_job_create_thread_failed", "error", err, "account_id", job.AccountID)
-			_ = s.triggers.PostponeHeartbeat(ctx, s.pool, row.ID, 2*time.Minute)
+			_ = s.triggers.PostponeTrigger(ctx, s.pool, row.ID, 2*time.Minute)
 			return
 		}
 		threadID = thread.ID
@@ -368,7 +371,7 @@ func (s *LLMHeartbeat) fireJob(ctx context.Context, row data.ScheduledTriggerRow
 	active, err := s.runs.GetActiveRootRunForThread(ctx, threadID)
 	if err != nil {
 		slog.ErrorContext(ctx, "scheduled_job_active_run_check_failed", "error", err, "thread_id", threadID)
-		_ = s.triggers.PostponeHeartbeat(ctx, s.pool, row.ID, 2*time.Minute)
+		_ = s.triggers.PostponeTrigger(ctx, s.pool, row.ID, 2*time.Minute)
 		return
 	}
 	if active != nil {
@@ -376,14 +379,14 @@ func (s *LLMHeartbeat) fireJob(ctx context.Context, row data.ScheduledTriggerRow
 		if delayMin <= 0 {
 			delayMin = runkind.DefaultHeartbeatIntervalMinutes
 		}
-		_ = s.triggers.PostponeHeartbeat(ctx, s.pool, row.ID, time.Duration(delayMin)*time.Minute)
+		_ = s.triggers.PostponeTrigger(ctx, s.pool, row.ID, time.Duration(delayMin)*time.Minute)
 		return
 	}
 
 	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		slog.ErrorContext(ctx, "scheduled_job_tx_begin_failed", "error", err)
-		_ = s.triggers.PostponeHeartbeat(ctx, s.pool, row.ID, 2*time.Minute)
+		_ = s.triggers.PostponeTrigger(ctx, s.pool, row.ID, 2*time.Minute)
 		return
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck
@@ -395,7 +398,7 @@ func (s *LLMHeartbeat) fireJob(ctx context.Context, row data.ScheduledTriggerRow
 		messagesTx := s.messages.WithTx(tx)
 		if _, err := messagesTx.Create(ctx, job.AccountID, threadID, "user", job.Prompt, job.CreatedByUserID); err != nil {
 			slog.ErrorContext(ctx, "scheduled_job_insert_user_message_failed", "error", err)
-			_ = s.triggers.PostponeHeartbeat(ctx, s.pool, row.ID, 90*time.Second)
+			_ = s.triggers.PostponeTrigger(ctx, s.pool, row.ID, 90*time.Second)
 			return
 		}
 	}
@@ -424,17 +427,17 @@ func (s *LLMHeartbeat) fireJob(ctx context.Context, row data.ScheduledTriggerRow
 			if delayMin <= 0 {
 				delayMin = runkind.DefaultHeartbeatIntervalMinutes
 			}
-			_ = s.triggers.PostponeHeartbeat(ctx, s.pool, row.ID, time.Duration(delayMin)*time.Minute)
+			_ = s.triggers.PostponeTrigger(ctx, s.pool, row.ID, time.Duration(delayMin)*time.Minute)
 			return
 		}
 		slog.ErrorContext(ctx, "scheduled_job_create_run_failed", "error", err)
-		_ = s.triggers.PostponeHeartbeat(ctx, s.pool, row.ID, 90*time.Second)
+		_ = s.triggers.PostponeTrigger(ctx, s.pool, row.ID, 90*time.Second)
 		return
 	}
 
 	if s.runLimiter != nil {
 		if !s.runLimiter.TryAcquire(ctx, job.AccountID) {
-			_ = s.triggers.PostponeHeartbeat(ctx, s.pool, row.ID, 45*time.Second)
+			_ = s.triggers.PostponeTrigger(ctx, s.pool, row.ID, 45*time.Second)
 			return
 		}
 		defer s.runLimiter.Release(context.Background(), job.AccountID)
@@ -462,13 +465,13 @@ func (s *LLMHeartbeat) fireJob(ctx context.Context, row data.ScheduledTriggerRow
 		nil,
 	); err != nil {
 		slog.ErrorContext(ctx, "scheduled_job_enqueue_failed", "error", err)
-		_ = s.triggers.PostponeHeartbeat(ctx, s.pool, row.ID, 90*time.Second)
+		_ = s.triggers.PostponeTrigger(ctx, s.pool, row.ID, 90*time.Second)
 		return
 	}
 
 	if err := tx.Commit(ctx); err != nil {
 		slog.ErrorContext(ctx, "scheduled_job_commit_failed", "error", err)
-		_ = s.triggers.PostponeHeartbeat(ctx, s.pool, row.ID, 90*time.Second)
+		_ = s.triggers.PostponeTrigger(ctx, s.pool, row.ID, 90*time.Second)
 		return
 	}
 
@@ -484,7 +487,7 @@ func (s *LLMHeartbeat) fireJob(ctx context.Context, row data.ScheduledTriggerRow
 	)
 	if err != nil {
 		slog.ErrorContext(ctx, "scheduled_job_calc_next_fire_failed", "error", err)
-		_ = s.triggers.PostponeHeartbeat(ctx, s.pool, row.ID, 2*time.Minute)
+		_ = s.triggers.PostponeTrigger(ctx, s.pool, row.ID, 2*time.Minute)
 		return
 	}
 	if err := s.triggers.UpdateTriggerNextFire(ctx, s.pool, row.ID, nextFire); err != nil {
