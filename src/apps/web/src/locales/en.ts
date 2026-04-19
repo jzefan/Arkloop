@@ -1224,6 +1224,7 @@ export const en: LocaleStrings = {
     appUpdateDownload: "Download",
     appUpdateInstall: "Install",
     componentUpdateTitle: "Components",
+    componentNotInstalled: "Not installed",
   },
 
   adminProviders: {

@@ -1168,6 +1168,7 @@ export interface LocaleStrings {
     appUpdateDownload: string;
     appUpdateInstall: string;
     componentUpdateTitle: string;
+    componentNotInstalled: string;
   };
 
   // admin providers/models settings (ported from console-lite)

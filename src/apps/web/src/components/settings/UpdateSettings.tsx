@@ -351,7 +351,11 @@ export function UpdateSettingsContent() {
                 </span>
 
                 <div className="flex flex-1 items-center gap-2 text-sm text-[var(--c-text-secondary)]">
-                  {row.status.current && <span>{row.status.current}</span>}
+                  {row.status.current ? (
+                    <span>{row.status.current}</span>
+                  ) : (
+                    <span style={{ color: 'var(--c-text-muted)' }}>{t.desktopSettings.componentNotInstalled}</span>
+                  )}
                   {row.status.available && row.status.latest && (
                     <>
                       <span style={{ color: 'var(--c-text-muted)' }}>→</span>

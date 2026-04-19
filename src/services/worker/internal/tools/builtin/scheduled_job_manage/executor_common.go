@@ -116,7 +116,6 @@ func (e *executorCommon) doCreate(
 		AccountID:    accountID,
 		Name:         strVal(args, "name"),
 		Description:  strVal(args, "description"),
-		PersonaKey:   execCtx.PersonaID,
 		Prompt:       strVal(args, "prompt"),
 		ScheduleKind: strVal(args, "schedule_kind"),
 		DailyTime:    strVal(args, "daily_time"),
@@ -124,6 +123,15 @@ func (e *executorCommon) doCreate(
 		Timezone:     strVal(args, "timezone"),
 		Enabled:      true,
 	}
+
+	// persona_key 优先从 args 读取，否则继承当前 Agent 的 persona
+	if v, ok := args["persona_key"].(string); ok && v != "" {
+		job.PersonaKey = v
+	} else {
+		job.PersonaKey = execCtx.PersonaID
+	}
+	job.Model = strVal(args, "model")
+	job.WorkDir = strVal(args, "work_dir")
 
 	if execCtx.UserID != nil {
 		job.CreatedByUserID = execCtx.UserID
@@ -181,6 +189,15 @@ func (e *executorCommon) doUpdate(
 	}
 	if v, ok := args["prompt"].(string); ok {
 		upd.Prompt = &v
+	}
+	if v, ok := args["persona_key"].(string); ok {
+		upd.PersonaKey = &v
+	}
+	if v, ok := args["model"].(string); ok {
+		upd.Model = &v
+	}
+	if v, ok := args["work_dir"].(string); ok {
+		upd.WorkDir = &v
 	}
 	if v, ok := args["schedule_kind"].(string); ok {
 		upd.ScheduleKind = &v
@@ -289,6 +306,8 @@ func jobToMap(j data.ScheduledJobWithTrigger) map[string]any {
 		"description":   j.Description,
 		"persona_key":   j.PersonaKey,
 		"prompt":        j.Prompt,
+		"model":         j.Model,
+		"work_dir":      j.WorkDir,
 		"schedule_kind": j.ScheduleKind,
 		"timezone":      j.Timezone,
 		"enabled":       j.Enabled,
