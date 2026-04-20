@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"arkloop/services/shared/messagecontent"
+	"arkloop/services/shared/objectstore"
 	"arkloop/services/shared/rollout"
 	"arkloop/services/shared/skillstore"
 	sharedtoolruntime "arkloop/services/shared/toolruntime"
@@ -67,6 +68,7 @@ type RunContext struct {
 	MaxTotalOutputTokens             *int64
 	ToolExecutor                     *tools.DispatchingExecutor
 	ToolSpecs                        []llm.ToolSpec
+	ToolOutputStore                  objectstore.Store
 	PendingMemoryWrites              *memory.PendingWriteBuffer
 	Runtime                          *sharedtoolruntime.RuntimeSnapshot
 	CancelSignal                     func() bool
@@ -966,6 +968,7 @@ func (l *Loop) executeToolCall(
 		Budget:                           copyMap(runCtx.ToolBudget),
 		PerToolSoftLimits:                tools.CopyPerToolSoftLimits(runCtx.PerToolSoftLimits),
 		Emitter:                          emitter,
+		ToolOutputStore:                  runCtx.ToolOutputStore,
 		PendingMemoryWrites:              runCtx.PendingMemoryWrites,
 		RuntimeSnapshot:                  runCtx.Runtime,
 		PromptCacheSnapshot:              promptCacheSnapshotFromLoopContext(runCtx),
