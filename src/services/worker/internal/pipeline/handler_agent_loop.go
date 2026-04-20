@@ -19,7 +19,6 @@ import (
 	"arkloop/services/worker/internal/llm"
 	"arkloop/services/worker/internal/queue"
 	"arkloop/services/worker/internal/subagentctl"
-	"arkloop/services/worker/internal/tools"
 	"arkloop/services/worker/internal/tools/builtin/acptool"
 	"arkloop/services/worker/internal/tools/builtin/read"
 
@@ -106,7 +105,6 @@ func NewAgentLoopHandler(
 			if err := acptool.CleanupRunFromExecutors(cleanupCtx, rc.ToolExecutors, rc.Run.ID.String(), writer.terminalRunStatus); err != nil {
 				slog.Warn("acp cleanup failed", "run_id", rc.Run.ID.String(), "error", err.Error())
 			}
-			tools.CleanupPersistedToolOutputs(rc.WorkDir, rc.Run.ID.String())
 		}()
 		if isStaleSubAgentCallbackRun(rc.InputJSON) {
 			completed := rc.Emitter.Emit("run.completed", map[string]any{}, nil, nil)

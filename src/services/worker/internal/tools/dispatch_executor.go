@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"arkloop/services/shared/objectstore"
 	"arkloop/services/shared/skillstore"
 	sharedtoolruntime "arkloop/services/shared/toolruntime"
 	"arkloop/services/worker/internal/events"
@@ -53,6 +54,7 @@ type ExecutionContext struct {
 	Budget                           map[string]any
 	PerToolSoftLimits                PerToolSoftLimits
 	Emitter                          events.Emitter
+	ToolOutputStore                  objectstore.Store
 	PendingMemoryWrites              *memory.PendingWriteBuffer
 	RuntimeSnapshot                  *sharedtoolruntime.RuntimeSnapshot
 	PromptCacheSnapshot              *subagentctl.PromptCacheSnapshot
