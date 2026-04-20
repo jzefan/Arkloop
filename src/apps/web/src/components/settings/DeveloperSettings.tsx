@@ -5,7 +5,7 @@ import { getDesktopApi } from '@arkloop/shared/desktop'
 import { useToast } from '@arkloop/shared'
 import { useLocale } from '../../contexts/LocaleContext'
 import { getAccountSettings, updateAccountSettings } from '../../api'
-import { readDeveloperShowRunEvents, writeDeveloperShowRunEvents, readDeveloperShowDebugPanel, writeDeveloperShowDebugPanel, readDeveloperPipelineTraceEnabled, writeDeveloperPipelineTraceEnabled } from '../../storage'
+import { readDeveloperShowRunEvents, writeDeveloperShowRunEvents, readDeveloperShowDebugPanel, writeDeveloperShowDebugPanel, readDeveloperPipelineTraceEnabled, writeDeveloperPipelineTraceEnabled, readDeveloperPromptCacheDebugEnabled, writeDeveloperPromptCacheDebugEnabled } from '../../storage'
 import { RunsSettings } from './RunsSettings'
 import { PillToggle } from '@arkloop/shared'
 import type { DesktopSettingsKey } from '../DesktopSettings'
@@ -47,6 +47,9 @@ export function DeveloperSettings({ accessToken, onNavigate }: Props) {
   const [pipelineTraceEnabled, setPipelineTraceEnabled] = useState(() => readDeveloperPipelineTraceEnabled())
   const [pipelineTraceLoading, setPipelineTraceLoading] = useState(() => !!accessToken)
   const [pipelineTraceSaving, setPipelineTraceSaving] = useState(false)
+  const [promptCacheDebugEnabled, setPromptCacheDebugEnabled] = useState(() => readDeveloperPromptCacheDebugEnabled())
+  const [promptCacheDebugLoading, setPromptCacheDebugLoading] = useState(() => !!accessToken)
+  const [promptCacheDebugSaving, setPromptCacheDebugSaving] = useState(false)
   const [runsOpen, setRunsOpen] = useState(false)
 
   useEffect(() => {
@@ -60,23 +63,31 @@ export function DeveloperSettings({ accessToken, onNavigate }: Props) {
     if (!accessToken) {
       setPipelineTraceEnabled(false)
       setPipelineTraceLoading(false)
+      setPromptCacheDebugEnabled(false)
+      setPromptCacheDebugLoading(false)
       return
     }
 
     let cancelled = false
     setPipelineTraceLoading(true)
+    setPromptCacheDebugLoading(true)
     void getAccountSettings(accessToken)
       .then((settings) => {
         if (cancelled) return
         setPipelineTraceEnabled(settings.pipeline_trace_enabled)
         writeDeveloperPipelineTraceEnabled(settings.pipeline_trace_enabled)
+        setPromptCacheDebugEnabled(settings.prompt_cache_debug_enabled)
+        writeDeveloperPromptCacheDebugEnabled(settings.prompt_cache_debug_enabled)
       })
       .catch((error) => {
         if (cancelled) return
         addToast(error instanceof Error ? error.message : t.requestFailed, 'error')
       })
       .finally(() => {
-        if (!cancelled) setPipelineTraceLoading(false)
+        if (!cancelled) {
+          setPipelineTraceLoading(false)
+          setPromptCacheDebugLoading(false)
+        }
       })
 
     return () => {
@@ -114,6 +125,26 @@ export function DeveloperSettings({ accessToken, onNavigate }: Props) {
       addToast(error instanceof Error ? error.message : t.requestFailed, 'error')
     } finally {
       setPipelineTraceSaving(false)
+    }
+  }
+
+  const handlePromptCacheDebugChange = async (next: boolean) => {
+    if (!accessToken || promptCacheDebugSaving) return
+
+    const previous = promptCacheDebugEnabled
+    setPromptCacheDebugEnabled(next)
+    setPromptCacheDebugSaving(true)
+    try {
+      const settings = await updateAccountSettings(accessToken, {
+        prompt_cache_debug_enabled: next,
+      })
+      setPromptCacheDebugEnabled(settings.prompt_cache_debug_enabled)
+      writeDeveloperPromptCacheDebugEnabled(settings.prompt_cache_debug_enabled)
+    } catch (error) {
+      setPromptCacheDebugEnabled(previous)
+      addToast(error instanceof Error ? error.message : t.requestFailed, 'error')
+    } finally {
+      setPromptCacheDebugSaving(false)
     }
   }
 
@@ -161,6 +192,27 @@ export function DeveloperSettings({ accessToken, onNavigate }: Props) {
             disabled={!accessToken || pipelineTraceLoading || pipelineTraceSaving}
             onChange={(next) => {
               void handlePipelineTraceChange(next)
+            }}
+          />
+        </div>
+
+        <div
+          className="flex items-center justify-between rounded-xl bg-[var(--c-bg-menu)] px-4 py-3"
+          style={{ border: '0.5px solid var(--c-border-subtle)' }}
+        >
+          <div>
+            <div className="text-sm font-medium text-[var(--c-text-primary)]">
+              {ds.promptCacheDebug}
+            </div>
+            <div className="text-xs text-[var(--c-text-muted)]">
+              {ds.promptCacheDebugDesc}
+            </div>
+          </div>
+          <PillToggle
+            checked={promptCacheDebugEnabled}
+            disabled={!accessToken || promptCacheDebugLoading || promptCacheDebugSaving}
+            onChange={(next) => {
+              void handlePromptCacheDebugChange(next)
             }}
           />
         </div>

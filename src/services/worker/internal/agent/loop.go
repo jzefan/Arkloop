@@ -120,6 +120,7 @@ type promptCacheTurnState struct {
 	PreviousSessionHash  string
 	PreviousVolatileHash string
 	PreviousToolHash     string
+	PreviousStableBytes  int
 	KnownToolResultRefs  map[string]struct{}
 	PinnedCacheEdits     []llm.PromptCacheEditsBlock
 	StableMarkerIndex    int  // -1 = not yet set; pinned after first turn
@@ -190,6 +191,7 @@ func (l *Loop) Run(
 		Remaining:     maxInt(runCtx.ToolContinuationBudget, 0),
 		SessionCounts: map[string]int{},
 	}
+	var prevTurnUsage map[string]any
 	// Rollout: 写入 RunMeta
 	if runCtx.RolloutRecorder != nil {
 		appendRollout(ctx, runCtx.RolloutRecorder, MakeRunMeta(runCtx))
@@ -228,12 +230,36 @@ func (l *Loop) Run(
 		}
 		messages = compactToolResultsWithState(messages, toolResultReplacements)
 		turnRequest := copyRequest(request, messages)
+		debugEnabled := runCtx.PipelineRC != nil && runCtx.PipelineRC.PromptCacheDebugEnabled
+
 		if promptCacheState != nil {
 			prepareTurnRequestPromptCache(&turnRequest, runCtx, promptCacheState)
-			if err := emitPromptCacheBreakEvent(turnRequest, promptCacheState, emitter, yield); err != nil {
+		}
+		// computePromptCacheBreak 纯计算：得出 break info 与 stats，并将 state 推进到当前轮
+		var breakInfo promptCacheBreakInfo
+		var requestStats llm.RequestStats
+		if promptCacheState != nil {
+			breakInfo, requestStats = computePromptCacheBreak(turnRequest, promptCacheState)
+		} else {
+			requestStats = llm.ComputeRequestStats(turnRequest)
+		}
+		// emit 调试事件：在 LLM 调用之前。markers 从 plan 计算，与 stream 成败解耦。
+		if debugEnabled {
+			markers := computePlanMarkers(turnRequest)
+			payload := buildPromptCacheDebugPayload(
+				runCtx.PipelineRC,
+				turnIndex,
+				promptCacheEnabled(runCtx),
+				requestStats,
+				markers,
+				breakInfo,
+				prevTurnUsage,
+			)
+			if err := yield(emitter.Emit("run.prompt_cache_debug", payload, nil, nil)); err != nil {
 				return err
 			}
 		}
+
 		refreshCacheSafeSnapshot(&runCtx, messages, turnRequest)
 		turnRequestContextEstimateTokens := estimateTurnRequestContextTokens(runCtx, turnRequest)
 		if runCtx.PipelineRC != nil && runCtx.PipelineRC.HookRuntime != nil && runCtx.PipelineRC.HookRegistry != nil {
@@ -337,6 +363,7 @@ func (l *Loop) Run(
 			if err := yield(emitter.Emit("llm.turn.completed", turn.CompletedDataJSON, nil, nil)); err != nil {
 				return err
 			}
+			prevTurnUsage = copyMap(turn.CompletedDataJSON)
 		}
 
 		if msg, exceeded := costBudgetExceeded(completionTotals, runCtx.MaxCostMicros, runCtx.MaxTotalOutputTokens); exceeded {
@@ -2058,55 +2085,131 @@ func prepareTurnRequestPromptCache(request *llm.Request, runCtx RunContext, stat
 	state.KnownToolResultRefs = currentRefs
 }
 
-func emitPromptCacheBreakEvent(
+// computePlanMarkers 从 plan 计算 plan-time markers 概览，反映本轮请求"打算"如何放 cache marker。
+// 严格基于 plan 数据，不依赖 anthropic 渲染结果。
+func computePlanMarkers(request llm.Request) llm.PromptCachePlanMarkers {
+	markers := llm.PromptCachePlanMarkers{
+		MessageCacheControlIndex: -1,
+		CacheReferenceToolUseIDs: []string{},
+	}
+	// system 段：plan.SystemBlocks 中 CacheEligible=true 的连续段会成为带 cache_control 的 block
+	if request.PromptPlan != nil {
+		var lastCacheType string
+		var lastCacheScope string
+		for _, block := range request.PromptPlan.SystemBlocks {
+			text := strings.TrimSpace(block.Text)
+			if text == "" {
+				continue
+			}
+			cacheType := ""
+			cacheScope := ""
+			if block.CacheEligible {
+				cacheType = "ephemeral"
+				cacheScope = cacheScopeForStability(block.Stability)
+			}
+			// 模拟 anthropicSystemBlocksFromPlan 的合并逻辑：cacheType/cacheScope 切换时新起一段
+			if cacheType != "" && (cacheType != lastCacheType || cacheScope != lastCacheScope) {
+				markers.SystemBlocksWithCacheControl++
+			}
+			lastCacheType = cacheType
+			lastCacheScope = cacheScope
+		}
+
+		mc := request.PromptPlan.MessageCache
+		if mc.Enabled {
+			markers.MessageCacheControlIndex = mc.MarkerMessageIndex
+			if mc.StableMarkerEnabled && mc.StableMarkerMessageIndex >= 0 && mc.StableMarkerMessageIndex < mc.MarkerMessageIndex {
+				markers.StableMarkerApplied = true
+			}
+			if mc.NewCacheEdits != nil {
+				markers.CacheEditsCount += len(mc.NewCacheEdits.Edits)
+			}
+			for _, pinned := range mc.PinnedCacheEdits {
+				markers.CacheEditsCount += len(pinned.Edits)
+			}
+
+			// cache_reference: 当 ToolResultCacheReferences=true 时，[0..ToolResultCacheCutIndex] 范围内的
+			// tool 消息会被替换为 cache_reference
+			if mc.ToolResultCacheReferences {
+				cut := mc.ToolResultCacheCutIndex
+				if cut < 0 || cut >= len(request.Messages) {
+					cut = len(request.Messages) - 1
+				}
+				for i := 0; i <= cut && i < len(request.Messages); i++ {
+					msg := request.Messages[i]
+					if msg.Role != "tool" {
+						continue
+					}
+					ref := extractToolCallID(msg)
+					if ref == "" {
+						continue
+					}
+					markers.CacheReferenceCount++
+					markers.CacheReferenceToolUseIDs = append(markers.CacheReferenceToolUseIDs, ref)
+				}
+			}
+		}
+	}
+	return markers
+}
+
+// cacheScopeForStability 返回 stability 对应的 cache scope 字符串，与 anthropic 实现保持一致。
+func cacheScopeForStability(stability string) string {
+	switch strings.ToLower(strings.TrimSpace(stability)) {
+	case llm.CacheStabilitySessionPrefix:
+		return "session"
+	case llm.CacheStabilityVolatileTail:
+		return "volatile"
+	default:
+		return ""
+	}
+}
+
+// promptCacheBreakInfo 记录本轮与上一轮 cache prefix/tool 变化。用于 debug payload 的 break 子字段。
+type promptCacheBreakInfo struct {
+	ChangedBuckets  []string
+	PrevStableHash  string
+	CurrStableHash  string
+	PrevStableBytes int
+	CurrStableBytes int
+}
+
+// computePromptCacheBreak 计算本轮 break 信息并用当前状态更新 state 以便下一轮比较。
+func computePromptCacheBreak(
 	request llm.Request,
 	state *promptCacheTurnState,
-	emitter events.Emitter,
-	yield func(events.RunEvent) error,
-) error {
-	if state == nil {
-		return nil
-	}
+) (promptCacheBreakInfo, llm.RequestStats) {
+	var info promptCacheBreakInfo
 	stats := llm.ComputeRequestStats(request)
+	if state == nil {
+		return info, stats
+	}
 	if state.PreviousStableHash != "" {
-		changed := make([]string, 0, 4)
 		if state.PreviousStableHash != stats.StablePrefixHash {
-			changed = append(changed, "stable_prefix")
+			info.ChangedBuckets = append(info.ChangedBuckets, "stable_prefix")
 		}
 		if state.PreviousSessionHash != stats.SessionPrefixHash {
-			changed = append(changed, "session_prefix")
+			info.ChangedBuckets = append(info.ChangedBuckets, "session_prefix")
 		}
 		if state.PreviousVolatileHash != stats.VolatileTailHash {
-			changed = append(changed, "volatile_tail")
+			info.ChangedBuckets = append(info.ChangedBuckets, "volatile_tail")
 		}
 		if state.PreviousToolHash != stats.ToolSchemaHash {
-			changed = append(changed, "tool_schema")
-		}
-		if len(changed) > 0 {
-			payload := map[string]any{
-				"changed":                changed,
-				"previous_stable_hash":   state.PreviousStableHash,
-				"current_stable_hash":    stats.StablePrefixHash,
-				"previous_session_hash":  state.PreviousSessionHash,
-				"current_session_hash":   stats.SessionPrefixHash,
-				"previous_volatile_hash": state.PreviousVolatileHash,
-				"current_volatile_hash":  stats.VolatileTailHash,
-				"previous_tool_hash":     state.PreviousToolHash,
-				"current_tool_hash":      stats.ToolSchemaHash,
-			}
-			if request.PromptPlan != nil && request.PromptPlan.MessageCache.NewCacheEdits != nil {
-				payload["new_cache_edits"] = request.PromptPlan.MessageCache.NewCacheEdits.ToJSON()
-			}
-			if err := yield(emitter.Emit("run.prompt_cache_break", payload, nil, nil)); err != nil {
-				return err
-			}
+			info.ChangedBuckets = append(info.ChangedBuckets, "tool_schema")
 		}
 	}
+	info.PrevStableHash = state.PreviousStableHash
+	info.CurrStableHash = stats.StablePrefixHash
+	info.PrevStableBytes = state.PreviousStableBytes
+	info.CurrStableBytes = stats.StablePrefixBytes
+
+	// 覆盖为当前轮值，供下一轮比较
 	state.PreviousStableHash = stats.StablePrefixHash
 	state.PreviousSessionHash = stats.SessionPrefixHash
 	state.PreviousVolatileHash = stats.VolatileTailHash
 	state.PreviousToolHash = stats.ToolSchemaHash
-	return nil
+	state.PreviousStableBytes = stats.StablePrefixBytes
+	return info, stats
 }
 
 func promptCacheEnabled(runCtx RunContext) bool {

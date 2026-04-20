@@ -1788,6 +1788,7 @@ export type ResolveOpenVikingConfigResponse = {
 
 export type AccountSettingsResponse = {
   pipeline_trace_enabled: boolean
+  prompt_cache_debug_enabled: boolean
 }
 
 export async function listSpawnProfiles(accessToken: string): Promise<SpawnProfile[]> {
@@ -1829,7 +1830,7 @@ export async function getAccountSettings(accessToken: string): Promise<AccountSe
 
 export async function updateAccountSettings(
   accessToken: string,
-  settings: AccountSettingsResponse,
+  settings: Partial<AccountSettingsResponse>,
 ): Promise<AccountSettingsResponse> {
   return apiFetch<AccountSettingsResponse>('/v1/account/settings', {
     method: 'PATCH',

@@ -346,10 +346,17 @@ func (e *EngineV1) Execute(ctx context.Context, pool *pgxpool.Pool, run data.Run
 		directPool = pool
 	}
 	var tracer pipeline.Tracer
-	if enabled, traceErr := data.NewAccountSettingsRepository(pool).PipelineTraceEnabled(ctx, run.AccountID); traceErr != nil {
+	accountSettingsRepo := data.NewAccountSettingsRepository(pool)
+	if enabled, traceErr := accountSettingsRepo.PipelineTraceEnabled(ctx, run.AccountID); traceErr != nil {
 		slog.WarnContext(ctx, "pipeline trace setting load failed", "account_id", run.AccountID.String(), "err", traceErr.Error())
 	} else if enabled {
 		tracer = pipeline.NewBufTracer(run.ID, run.AccountID, data.NewRunPipelineEventsRepository(pool))
+	}
+	var promptCacheDebugEnabled bool
+	if debugEnabled, debugErr := accountSettingsRepo.PromptCacheDebugEnabled(ctx, run.AccountID); debugErr != nil {
+		slog.WarnContext(ctx, "prompt cache debug setting load failed", "account_id", run.AccountID.String(), "err", debugErr.Error())
+	} else {
+		promptCacheDebugEnabled = debugEnabled
 	}
 	rc := &pipeline.RunContext{
 		Run:                 run,
@@ -370,14 +377,15 @@ func (e *EngineV1) Execute(ctx context.Context, pool *pgxpool.Pool, run data.Run
 		UserID:              run.CreatedByUserID,
 		JobPayload:          cloneMap(input.JobPayload),
 		ProfileRef:          derefString(run.ProfileRef),
-		WorkspaceRef:        derefString(run.WorkspaceRef),
-		ExecutorBuilder:     e.executorRegistry,
-		MemoryProvider:      nil,
-		PendingMemoryWrites: memory.NewPendingWriteBuffer(),
-		ToolBudget:          map[string]any{},
-		PerToolSoftLimits:   tools.DefaultPerToolSoftLimits(),
-		LlmRetryMaxAttempts: e.llmRetryMaxAttempts,
-		LlmRetryBaseDelayMs: e.llmRetryBaseDelayMs,
+		WorkspaceRef:            derefString(run.WorkspaceRef),
+		ExecutorBuilder:         e.executorRegistry,
+		MemoryProvider:          nil,
+		PendingMemoryWrites:     memory.NewPendingWriteBuffer(),
+		ToolBudget:              map[string]any{},
+		PerToolSoftLimits:       tools.DefaultPerToolSoftLimits(),
+		LlmRetryMaxAttempts:     e.llmRetryMaxAttempts,
+		LlmRetryBaseDelayMs:     e.llmRetryBaseDelayMs,
+		PromptCacheDebugEnabled: promptCacheDebugEnabled,
 	}
 	if e.rolloutBlobStore != nil {
 		recorder := rollout.NewRecorder(e.rolloutBlobStore, run.ID)

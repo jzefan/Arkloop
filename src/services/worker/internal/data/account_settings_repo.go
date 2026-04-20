@@ -25,6 +25,14 @@ func NewAccountSettingsRepository(db AccountSettingsQueryer) *AccountSettingsRep
 }
 
 func (r *AccountSettingsRepository) PipelineTraceEnabled(ctx context.Context, accountID uuid.UUID) (bool, error) {
+	return r.boolSetting(ctx, accountID, "pipeline_trace_enabled")
+}
+
+func (r *AccountSettingsRepository) PromptCacheDebugEnabled(ctx context.Context, accountID uuid.UUID) (bool, error) {
+	return r.boolSetting(ctx, accountID, "prompt_cache_debug_enabled")
+}
+
+func (r *AccountSettingsRepository) boolSetting(ctx context.Context, accountID uuid.UUID, key string) (bool, error) {
 	if r == nil || r.db == nil || accountID == uuid.Nil {
 		return false, nil
 	}
@@ -49,7 +57,7 @@ func (r *AccountSettingsRepository) PipelineTraceEnabled(ctx context.Context, ac
 	if err := json.Unmarshal(normalized, &parsed); err != nil {
 		return false, nil
 	}
-	value, ok := parsed["pipeline_trace_enabled"].(bool)
+	value, ok := parsed[key].(bool)
 	return ok && value, nil
 }
 

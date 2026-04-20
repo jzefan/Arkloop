@@ -57,7 +57,14 @@ func inheritedPromptCacheRequest(
 	tools []llm.ToolSpec,
 ) (llm.Request, *agent.CacheSafeSnapshot, bool) {
 	snapshot := inheritedPromptCacheSnapshot(rc)
-	if !canReuseInheritedPromptCache(rc, input, baseMessages, tools, snapshot) {
+	// 仅当确实存在 inherited 上下文（snapshot 非空且 mode=full）时写 LastInheritedReuseResult，
+	// 这样 nil 表达"无 inherited 上下文"，非 nil 表达"有但复用成功/失败"
+	hasContext := snapshot != nil && snapshot.PromptPlan != nil && input.PromptMode == promptPlanModeFull
+	ok, reason := canReuseInheritedPromptCache(rc, input, baseMessages, tools, snapshot)
+	if rc != nil && hasContext {
+		rc.LastInheritedReuseResult = &pipeline.InheritedReuseResult{Reused: ok, FailureReason: reason}
+	}
+	if !ok {
 		return llm.Request{}, nil, false
 	}
 
@@ -102,40 +109,40 @@ func canReuseInheritedPromptCache(
 	baseMessages []llm.Message,
 	tools []llm.ToolSpec,
 	snapshot *subagentctl.PromptCacheSnapshot,
-) bool {
+) (bool, string) {
 	if input.PromptMode != promptPlanModeFull || snapshot == nil || snapshot.PromptPlan == nil {
-		return false
+		return false, "mode_or_snapshot_invalid"
 	}
 	if strings.TrimSpace(snapshot.PersonaID) == "" || strings.TrimSpace(snapshot.PersonaID) != personaIDFromRunContext(rc) {
-		return false
+		return false, "persona_mismatch"
 	}
 	if strings.TrimSpace(snapshot.Model) == "" || strings.TrimSpace(snapshot.Model) != strings.TrimSpace(input.Model) {
-		return false
+		return false, "model_mismatch"
 	}
 	if strings.TrimSpace(snapshot.ReasoningMode) != strings.TrimSpace(input.ReasoningMode) {
-		return false
+		return false, "reasoning_mismatch"
 	}
 	if !intPtrEqual(snapshot.MaxOutputTokens, input.MaxOutputTokens) {
-		return false
+		return false, "max_tokens_mismatch"
 	}
 	if !floatPtrEqual(snapshot.Temperature, input.Temperature) {
-		return false
+		return false, "temperature_mismatch"
 	}
 	if !reflect.DeepEqual(snapshot.ToolChoice, input.ToolChoice) {
-		return false
+		return false, "tool_choice_mismatch"
 	}
 	if !reflect.DeepEqual(snapshot.Tools, tools) {
-		return false
+		return false, "tools_mismatch"
 	}
 	if len(baseMessages) < len(snapshot.BaseMessages) {
-		return false
+		return false, "messages_too_short"
 	}
 	for i := range snapshot.BaseMessages {
 		if !reflect.DeepEqual(snapshot.BaseMessages[i].ToJSON(), baseMessages[i].ToJSON()) {
-			return false
+			return false, "messages_mismatch"
 		}
 	}
-	return true
+	return true, ""
 }
 
 func buildInheritedPromptPlan(

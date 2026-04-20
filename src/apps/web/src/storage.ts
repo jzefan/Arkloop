@@ -1593,6 +1593,22 @@ export function writeDeveloperPipelineTraceEnabled(value: boolean): void {
   } catch { /* ignore */ }
 }
 
+const DEVELOPER_PROMPT_CACHE_DEBUG_KEY = 'arkloop:web:developer_prompt_cache_debug_enabled'
+
+export function readDeveloperPromptCacheDebugEnabled(): boolean {
+  if (!canUseLocalStorage()) return false
+  try {
+    return localStorage.getItem(DEVELOPER_PROMPT_CACHE_DEBUG_KEY) === 'true'
+  } catch { return false }
+}
+
+export function writeDeveloperPromptCacheDebugEnabled(value: boolean): void {
+  if (!canUseLocalStorage()) return
+  try {
+    localStorage.setItem(DEVELOPER_PROMPT_CACHE_DEBUG_KEY, value ? 'true' : 'false')
+  } catch { /* ignore */ }
+}
+
 // -- Per-message run events (for inline debug display) --
 
 export type MsgRunEvent = {

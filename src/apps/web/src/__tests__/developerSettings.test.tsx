@@ -50,7 +50,7 @@ function toggleButtonForLabel(text: string): HTMLButtonElement {
 
 describe('DeveloperSettings', () => {
   it('初次加载读取 Pipeline Trace 状态', async () => {
-    const getAccountSettings = vi.fn().mockResolvedValue({ pipeline_trace_enabled: true })
+    const getAccountSettings = vi.fn().mockResolvedValue({ pipeline_trace_enabled: true, prompt_cache_debug_enabled: false })
 
     vi.doMock('../api', async () => {
       const actual = await vi.importActual<typeof import('../api')>('../api')
@@ -111,7 +111,7 @@ describe('DeveloperSettings', () => {
   })
 
   it('切换失败时回滚并提示错误', async () => {
-    const getAccountSettings = vi.fn().mockResolvedValue({ pipeline_trace_enabled: false })
+    const getAccountSettings = vi.fn().mockResolvedValue({ pipeline_trace_enabled: false, prompt_cache_debug_enabled: false })
     const updateAccountSettings = vi.fn().mockRejectedValue(new Error('save failed'))
 
     vi.doMock('../api', async () => {
@@ -179,5 +179,81 @@ describe('DeveloperSettings', () => {
     expect(updateAccountSettings).toHaveBeenCalledWith('token', { pipeline_trace_enabled: true })
     expect(toggleButtonForLabel('Pipeline Trace').textContent).toContain('OFF')
     expect(addToast).toHaveBeenCalledWith('save failed', 'error')
+  })
+
+  it('点击 Prompt Cache 调试开关触发 PATCH 请求', async () => {
+    const getAccountSettings = vi.fn().mockResolvedValue({ pipeline_trace_enabled: false, prompt_cache_debug_enabled: false })
+    const updateAccountSettings = vi.fn().mockResolvedValue({ pipeline_trace_enabled: false, prompt_cache_debug_enabled: true })
+
+    vi.doMock('../api', async () => {
+      const actual = await vi.importActual<typeof import('../api')>('../api')
+      return {
+        ...actual,
+        getAccountSettings,
+        updateAccountSettings,
+      }
+    })
+    vi.doMock('../storage', async () => {
+      const actual = await vi.importActual<typeof import('../storage')>('../storage')
+      return {
+        ...actual,
+        readLocaleFromStorage: vi.fn(() => 'zh'),
+        writeLocaleToStorage: vi.fn(),
+      }
+    })
+    vi.doMock('@arkloop/shared/desktop', () => ({
+      getDesktopApi: () => ({
+        app: { getVersion: vi.fn().mockResolvedValue('1.0.0') },
+      }),
+    }))
+    vi.doMock('@arkloop/shared', async () => {
+      const actual = await vi.importActual<typeof import('@arkloop/shared')>('@arkloop/shared')
+      return {
+        ...actual,
+        useToast: () => ({ addToast }),
+        PillToggle: ({
+          checked,
+          disabled,
+          onChange,
+        }: {
+          checked: boolean
+          disabled?: boolean
+          onChange: (next: boolean) => void
+        }) => (
+          <button type="button" disabled={disabled} onClick={() => onChange(!checked)}>
+            {checked ? 'ON' : 'OFF'}
+          </button>
+        ),
+      }
+    })
+
+    const { DeveloperSettings } = await import('../components/settings/DeveloperSettings')
+    const { LocaleProvider } = await import('../contexts/LocaleContext')
+
+    await act(async () => {
+      root!.render(
+        <LocaleProvider>
+          <DeveloperSettings accessToken="token" />
+        </LocaleProvider>,
+      )
+    })
+    await flushEffects()
+
+    const cacheLabel = Array.from(container.querySelectorAll('div.text-sm')).find((item) => item.textContent === 'Prompt Cache 调试')
+    if (!cacheLabel) throw new Error('Prompt Cache 调试 label not found')
+    const cacheRow = cacheLabel.closest('div[class*="justify-between"]') as HTMLElement | null
+    const cacheButton = cacheRow?.querySelector('button') as HTMLButtonElement | null
+    if (!cacheButton) throw new Error('cache button not found')
+    expect(cacheButton.textContent).toContain('OFF')
+
+    await act(async () => {
+      cacheButton.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+    await flushEffects()
+
+    expect(updateAccountSettings).toHaveBeenCalledWith('token', { prompt_cache_debug_enabled: true })
+    const cacheLabelAfter = Array.from(container.querySelectorAll('div.text-sm')).find((item) => item.textContent === 'Prompt Cache 调试')
+    const cacheRowAfter = cacheLabelAfter?.closest('div[class*="justify-between"]') as HTMLElement | null
+    expect(cacheRowAfter?.querySelector('button')?.textContent).toContain('ON')
   })
 })
