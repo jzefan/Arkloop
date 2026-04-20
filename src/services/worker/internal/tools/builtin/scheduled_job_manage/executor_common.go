@@ -3,6 +3,7 @@ package scheduled_job_manage
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"arkloop/services/shared/schedulekind"
@@ -184,17 +185,15 @@ func (e *executorCommon) doCreate(
 	if v, ok := args["delete_after_run"].(bool); ok {
 		job.DeleteAfterRun = v
 	}
-	if v, ok := args["thinking"].(bool); ok {
-		job.Thinking = v
+	if v, ok := args["reasoning_mode"].(string); ok {
+		normalized := normalizeReasoningMode(v)
+		if v != "" && normalized == "" {
+			return errResult(fmt.Sprintf("invalid reasoning_mode: %s", v), started)
+		}
+		job.ReasoningMode = normalized
 	}
 	if v, ok := args["timeout"].(float64); ok {
 		job.Timeout = int(v)
-	}
-	if v, ok := args["light_context"].(bool); ok {
-		job.LightContext = v
-	}
-	if v, ok := args["tools_allow"].(string); ok {
-		job.ToolsAllow = v
 	}
 
 	// validate schedule-kind specific fields
@@ -305,18 +304,16 @@ func (e *executorCommon) doUpdate(
 	if v, ok := args["delete_after_run"].(bool); ok {
 		upd.DeleteAfterRun = &v
 	}
-	if v, ok := args["thinking"].(bool); ok {
-		upd.Thinking = &v
+	if v, ok := args["reasoning_mode"].(string); ok {
+		normalized := normalizeReasoningMode(v)
+		if v != "" && normalized == "" {
+			return errResult(fmt.Sprintf("invalid reasoning_mode: %s", v), started)
+		}
+		upd.ReasoningMode = &normalized
 	}
 	if v, ok := args["timeout"].(float64); ok {
 		iv := int(v)
 		upd.Timeout = &iv
-	}
-	if v, ok := args["light_context"].(bool); ok {
-		upd.LightContext = &v
-	}
-	if v, ok := args["tools_allow"].(string); ok {
-		upd.ToolsAllow = &v
 	}
 
 	if err := e.repo.UpdateJob(ctx, e.db, jobID, accountID, upd); err != nil {
@@ -492,6 +489,35 @@ func cronParser() cron.Parser {
 	return cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow)
 }
 
+// normalizeReasoningMode 与 conversationapi.normalizeRunReasoningMode 保持一致；
+// 空串表示沿用 persona 默认值，不视为错误。
+func normalizeReasoningMode(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "":
+		return ""
+	case "auto":
+		return "auto"
+	case "enabled":
+		return "enabled"
+	case "disabled":
+		return "disabled"
+	case "none", "off":
+		return "none"
+	case "minimal":
+		return "minimal"
+	case "low":
+		return "low"
+	case "medium":
+		return "medium"
+	case "high":
+		return "high"
+	case "max", "xhigh", "extra_high", "extra-high", "extra high":
+		return "xhigh"
+	default:
+		return ""
+	}
+}
+
 func jobToMap(j data.ScheduledJobWithTrigger) map[string]any {
 	m := map[string]any{
 		"id":            j.ID.String(),
@@ -533,9 +559,7 @@ func jobToMap(j data.ScheduledJobWithTrigger) map[string]any {
 	}
 	m["cron_expr"] = j.CronExpr
 	m["delete_after_run"] = j.DeleteAfterRun
-	m["thinking"] = j.Thinking
+	m["reasoning_mode"] = j.ReasoningMode
 	m["timeout"] = j.Timeout
-	m["light_context"] = j.LightContext
-	m["tools_allow"] = j.ToolsAllow
 	return m
 }

@@ -1369,6 +1369,12 @@ export interface LocaleStrings {
   scheduledJobsModel: string;
   scheduledJobsSelectModel: string;
   scheduledJobsDefaultModel: string;
+  scheduledJobsThinking: string;
+  scheduledJobsEffortMinimal: string;
+  scheduledJobsEffortLow: string;
+  scheduledJobsEffortMedium: string;
+  scheduledJobsEffortHigh: string;
+  scheduledJobsEffortMax: string;
   scheduledJobsInferredFromThread: string;
   scheduledJobsThreadId: string;
   scheduledJobsNewThread: string;
@@ -1401,6 +1407,12 @@ export interface LocaleStrings {
   scheduledJobsNextRun: string;
   scheduledJobsStatus: string;
   scheduledJobsDeleteConfirm: (name: string) => string;
+  scheduledJobsAt: string;
+  scheduledJobsCron: string;
+  scheduledJobsFireAt: string;
+  scheduledJobsCronExpr: string;
+  scheduledJobsDeleteAfterRun: string;
+  scheduledJobsTimeout: string;
 
   // onboarding wizard (desktop)
   onboarding: {

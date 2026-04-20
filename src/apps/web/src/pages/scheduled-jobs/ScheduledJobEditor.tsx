@@ -1,7 +1,8 @@
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { Folder, FolderOpen, X, Check } from 'lucide-react'
 import { createPortal } from 'react-dom'
-import { Modal, FormField, useToast } from '@arkloop/shared'
+import { Modal, FormField, PillToggle, useToast } from '@arkloop/shared'
+import { getAvailableCatalogFromAdvancedJson } from '@arkloop/shared/llm/available-catalog-advanced-json'
 import { getDesktopApi, isDesktop } from '@arkloop/shared/desktop'
 import { useLocale } from '../../contexts/LocaleContext'
 import { SettingsSelect } from '../../components/settings/_SettingsSelect'
@@ -12,6 +13,7 @@ import {
   type Persona,
   type ThreadResponse,
   type LlmProvider,
+  type RunReasoningMode,
 } from '../../api'
 import {
   writeWorkFolder,
@@ -52,7 +54,7 @@ export default function ScheduledJobEditor({
   const [prompt, setPrompt] = useState('')
   const [model, setModel] = useState<string>('')
   const [threadId, setThreadId] = useState('')
-  const [scheduleKind, setScheduleKind] = useState<'interval' | 'daily' | 'weekdays' | 'weekly' | 'monthly'>('interval')
+  const [scheduleKind, setScheduleKind] = useState<'interval' | 'daily' | 'weekdays' | 'weekly' | 'monthly' | 'at' | 'cron'>('interval')
   const [intervalMin, setIntervalMin] = useState(60)
   const [dailyTime, setDailyTime] = useState('09:00')
   const [monthlyDay, setMonthlyDay] = useState(1)
@@ -60,6 +62,11 @@ export default function ScheduledJobEditor({
   const [weeklyDay, setWeeklyDay] = useState(1)
   const [timezone, setTimezone] = useState(Intl.DateTimeFormat().resolvedOptions().timeZone)
   const [workDir, setWorkDir] = useState('')
+  const [fireAt, setFireAt] = useState('')
+  const [cronExpr, setCronExpr] = useState('')
+  const [deleteAfterRun, setDeleteAfterRun] = useState(false)
+  const [reasoningMode, setReasoningMode] = useState<RunReasoningMode | ''>('')
+  const [timeout, setTimeout_] = useState(0)
   const [showAdvanced, setShowAdvanced] = useState(false)
   const [saving, setSaving] = useState(false)
 
@@ -105,7 +112,12 @@ export default function ScheduledJobEditor({
       setWeeklyDay(job.weekly_day ?? 1)
       setTimezone(job.timezone)
       setWorkDir(job.work_dir)
-      setShowAdvanced(!!job.work_dir)
+      setFireAt(job.fire_at ?? '')
+      setCronExpr(job.cron_expr ?? '')
+      setDeleteAfterRun(job.delete_after_run ?? false)
+      setReasoningMode(job.reasoning_mode ?? '')
+      setTimeout_(job.timeout ?? 0)
+      setShowAdvanced(!!job.work_dir || !!job.timeout)
     } else {
       setName('')
       setDescription('')
@@ -121,6 +133,11 @@ export default function ScheduledJobEditor({
       setWeeklyDay(1)
       setTimezone(Intl.DateTimeFormat().resolvedOptions().timeZone)
       setWorkDir('')
+      setFireAt('')
+      setCronExpr('')
+      setDeleteAfterRun(false)
+      setReasoningMode('')
+      setTimeout_(0)
       setShowAdvanced(false)
     }
     hasInitializedThreadRef.current = false
@@ -212,6 +229,10 @@ export default function ScheduledJobEditor({
         ? { monthly_day: monthlyDay, monthly_time: monthlyTime }
         : {}),
       ...(scheduleKind === 'weekly' ? { weekly_day: weeklyDay } : {}),
+      ...(scheduleKind === 'at' ? { fire_at: fireAt, delete_after_run: deleteAfterRun } : {}),
+      ...(scheduleKind === 'cron' ? { cron_expr: cronExpr } : {}),
+      ...(reasoningMode ? { reasoning_mode: reasoningMode } : {}),
+      ...(timeout > 0 ? { timeout } : {}),
     }
 
     setSaving(true)
@@ -231,7 +252,8 @@ export default function ScheduledJobEditor({
     accessToken, addToast, dailyTime, description, intervalMin,
     isEdit, job, model, monthlyDay, monthlyTime, name, onSaved,
     personaKey, prompt, scheduleKind, t.scheduledJobsSaveFailed,
-    threadId, timezone, weeklyDay, workDir,
+    threadId, timezone, weeklyDay, workDir, fireAt, cronExpr,
+    deleteAfterRun, reasoningMode, timeout,
   ])
 
   const personaOptions = [
@@ -256,6 +278,8 @@ export default function ScheduledJobEditor({
     { value: 'weekdays', label: t.scheduledJobsWeekdays },
     { value: 'weekly', label: t.scheduledJobsWeekly },
     { value: 'monthly', label: t.scheduledJobsMonthly },
+    { value: 'at', label: t.scheduledJobsAt },
+    { value: 'cron', label: t.scheduledJobsCron },
   ]
 
   const weekDayOptions = [
@@ -275,6 +299,34 @@ export default function ScheduledJobEditor({
         .filter((m) => m.show_in_picker && !m.tags.includes('embedding'))
         .map((m) => ({ value: `${p.name}^${m.model}`, label: `${p.name} · ${m.model}` })),
     ),
+  ]
+
+  // 根据当前选中模型的 advanced_json 判定是否支持 reasoning
+  const selectedCatalog = useMemo(() => {
+    if (!model) return null
+    const idx = model.indexOf('^')
+    if (idx < 0) return null
+    const providerName = model.slice(0, idx)
+    const modelId = model.slice(idx + 1)
+    const provider = providers.find((p) => p.name === providerName)
+    const m = provider?.models.find((x) => x.model === modelId)
+    return m ? getAvailableCatalogFromAdvancedJson(m.advanced_json) : null
+  }, [model, providers])
+  const supportsReasoning = selectedCatalog?.reasoning === true
+
+  // 模型切换到不支持 reasoning 时，清空已存的 reasoningMode
+  useEffect(() => {
+    if (!supportsReasoning && reasoningMode) {
+      setReasoningMode('')
+    }
+  }, [supportsReasoning, reasoningMode])
+
+  const effortOptions = [
+    { value: 'minimal', label: t.scheduledJobsEffortMinimal },
+    { value: 'low', label: t.scheduledJobsEffortLow },
+    { value: 'medium', label: t.scheduledJobsEffortMedium },
+    { value: 'high', label: t.scheduledJobsEffortHigh },
+    { value: 'max', label: t.scheduledJobsEffortMax },
   ]
 
   const folderMenu = folderMenuOpen ? (
@@ -406,6 +458,35 @@ export default function ScheduledJobEditor({
             placeholder={t.scheduledJobsSelectModel}
           />
         </FormField>
+
+        {supportsReasoning && (
+          <FormField label={t.scheduledJobsThinking}>
+            <div className="flex flex-col gap-2">
+              <div
+                className="flex items-center justify-between rounded-lg px-3 py-2"
+                style={{
+                  border: '0.5px solid var(--c-border-subtle)',
+                  background: 'var(--c-bg-input)',
+                }}
+              >
+                <span className="text-sm" style={{ color: 'var(--c-text-secondary)' }}>
+                  {t.scheduledJobsThinking}
+                </span>
+                <PillToggle
+                  checked={!!reasoningMode}
+                  onChange={(v) => setReasoningMode(v ? 'medium' : '')}
+                />
+              </div>
+              {reasoningMode && (
+                <SettingsSelect
+                  value={reasoningMode}
+                  onChange={(v) => setReasoningMode(v as RunReasoningMode)}
+                  options={effortOptions}
+                />
+              )}
+            </div>
+          </FormField>
+        )}
 
         <FormField label={t.scheduledJobsThreadId}>
           <SettingsSelect
@@ -553,6 +634,77 @@ export default function ScheduledJobEditor({
           </>
         )}
 
+        {scheduleKind === 'at' && (
+          <>
+            <FormField label={t.scheduledJobsFireAt}>
+              <input
+                type="datetime-local"
+                value={fireAt}
+                onChange={(e) => setFireAt(e.target.value)}
+                className="h-9 w-full rounded-lg px-3 text-sm outline-none"
+                style={{
+                  border: '0.5px solid var(--c-border-subtle)',
+                  background: 'var(--c-bg-input)',
+                  color: 'var(--c-text-primary)',
+                }}
+              />
+            </FormField>
+            <FormField label={t.scheduledJobsTimezone}>
+              <input
+                value={timezone}
+                onChange={(e) => setTimezone(e.target.value)}
+                className="h-9 w-full rounded-lg px-3 text-sm outline-none"
+                style={{
+                  border: '0.5px solid var(--c-border-subtle)',
+                  background: 'var(--c-bg-input)',
+                  color: 'var(--c-text-primary)',
+                }}
+              />
+            </FormField>
+            <label
+              className="flex items-center gap-2 text-sm"
+              style={{ color: 'var(--c-text-secondary)' }}
+            >
+              <input
+                type="checkbox"
+                checked={deleteAfterRun}
+                onChange={(e) => setDeleteAfterRun(e.target.checked)}
+              />
+              {t.scheduledJobsDeleteAfterRun}
+            </label>
+          </>
+        )}
+
+        {scheduleKind === 'cron' && (
+          <>
+            <FormField label={t.scheduledJobsCronExpr}>
+              <input
+                value={cronExpr}
+                onChange={(e) => setCronExpr(e.target.value)}
+                placeholder="0 9 * * *"
+                className="h-9 w-full rounded-lg px-3 text-sm outline-none"
+                style={{
+                  border: '0.5px solid var(--c-border-subtle)',
+                  background: 'var(--c-bg-input)',
+                  color: 'var(--c-text-primary)',
+                }}
+              />
+            </FormField>
+            <FormField label={t.scheduledJobsTimezone}>
+              <input
+                value={timezone}
+                onChange={(e) => setTimezone(e.target.value)}
+                className="h-9 w-full rounded-lg px-3 text-sm outline-none"
+                style={{
+                  border: '0.5px solid var(--c-border-subtle)',
+                  background: 'var(--c-bg-input)',
+                  color: 'var(--c-text-primary)',
+                }}
+              />
+            </FormField>
+          </>
+        )}
+
         <button
           type="button"
           onClick={() => setShowAdvanced((v) => !v)}
@@ -618,6 +770,22 @@ export default function ScheduledJobEditor({
                 />
               </FormField>
             )}
+
+            <FormField label={t.scheduledJobsTimeout}>
+              <input
+                type="number"
+                min={0}
+                value={timeout}
+                onChange={(e) => setTimeout_(Number(e.target.value))}
+                placeholder="0"
+                className="h-9 w-full rounded-lg px-3 text-sm outline-none"
+                style={{
+                  border: '0.5px solid var(--c-border-subtle)',
+                  background: 'var(--c-bg-input)',
+                  color: 'var(--c-text-primary)',
+                }}
+              />
+            </FormField>
           </>
         )}
 

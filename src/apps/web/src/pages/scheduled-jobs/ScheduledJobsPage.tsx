@@ -36,6 +36,10 @@ function scheduleLabel(job: ScheduledJob, t: ReturnType<typeof useLocale>['t']):
     }
     case 'monthly':
       return `${t.scheduledJobsMonthly} ${job.monthly_day ?? ''}${t.scheduledJobsDailyTime ? ' ' : ''}${job.monthly_time ?? ''} (${job.timezone})`
+    case 'at':
+      return `${t.scheduledJobsAt} ${job.fire_at ?? ''} (${job.timezone})`
+    case 'cron':
+      return `${t.scheduledJobsCron} ${job.cron_expr ?? ''} (${job.timezone})`
     default:
       return job.schedule_kind
   }

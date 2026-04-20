@@ -402,10 +402,10 @@ func desktopFireJob(
 		"model":                model,
 		"workspace_ref":        job.WorkspaceRef,
 		"work_dir":             job.WorkDir,
-		"thinking":             job.Thinking,
 		"timeout_seconds":      job.Timeout,
-		"light_context":        job.LightContext,
-		"tools_allow":          job.ToolsAllow,
+	}
+	if strings.TrimSpace(job.ReasoningMode) != "" {
+		startedData["reasoning_mode"] = job.ReasoningMode
 	}
 	if _, err := eventsRepo.AppendEvent(ctx, tx, runID, "run.started", startedData, nil, nil); err != nil {
 		slog.ErrorContext(ctx, "desktop_job_append_started_failed", "error", err)
@@ -413,12 +413,32 @@ func desktopFireJob(
 		return
 	}
 
+	// At 类型: 在事务内 disable job + delete trigger，然后提交并返回
 	if job.ScheduleKind == schedulekind.At {
 		if _, err := tx.Exec(ctx,
 			`UPDATE scheduled_jobs SET enabled = 0, updated_at = datetime('now') WHERE id = $1`,
 			job.ID.String(),
 		); err != nil {
 			slog.ErrorContext(ctx, "desktop_job_disable_at_failed", "error", err)
+			_ = repo.PostponeTrigger(ctx, db, row.ID, 2*time.Minute)
+			return
+		}
+		if _, err := tx.Exec(ctx, `DELETE FROM scheduled_triggers WHERE job_id = $1`, row.JobID.String()); err != nil {
+			slog.ErrorContext(ctx, "desktop_job_delete_at_trigger_failed", "error", err)
+			_ = repo.PostponeTrigger(ctx, db, row.ID, 2*time.Minute)
+			return
+		}
+		if err := tx.Commit(ctx); err != nil {
+			slog.ErrorContext(ctx, "desktop_job_commit_failed", "error", err)
+			_ = repo.PostponeTrigger(ctx, db, row.ID, 2*time.Minute)
+		}
+		return
+	}
+
+	// deleteAfterRun: 在事务内删除 job，保证与 run 创建原子提交
+	if job.DeleteAfterRun {
+		if _, err := tx.Exec(ctx, `DELETE FROM scheduled_jobs WHERE id = $1`, job.ID.String()); err != nil {
+			slog.ErrorContext(ctx, "desktop_job_delete_after_run_failed", "error", err, "job_id", job.ID)
 			_ = repo.PostponeTrigger(ctx, db, row.ID, 2*time.Minute)
 			return
 		}
@@ -451,15 +471,8 @@ func desktopFireJob(
 		return
 	}
 
+	// deleteAfterRun 已在事务内处理完毕
 	if job.DeleteAfterRun {
-		if _, err := db.Exec(ctx, `DELETE FROM scheduled_jobs WHERE id = $1`, job.ID.String()); err != nil {
-			slog.ErrorContext(ctx, "desktop_job_delete_after_run_failed", "error", err, "job_id", job.ID)
-		}
-		return
-	}
-
-	if job.ScheduleKind == schedulekind.At {
-		_ = repo.DeleteTriggerByJobID(ctx, db, row.JobID)
 		return
 	}
 
