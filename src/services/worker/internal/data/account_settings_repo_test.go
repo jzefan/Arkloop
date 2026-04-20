@@ -63,3 +63,29 @@ func TestAccountSettingsRepositoryHandlesMissingRows(t *testing.T) {
 		t.Fatal("expected pipeline trace to be disabled")
 	}
 }
+
+func TestAccountSettingsRepositoryPromptCacheDebugEnabled(t *testing.T) {
+	repo := NewAccountSettingsRepository(stubAccountSettingsQueryer{
+		row: stubAccountSettingsRow{value: `{"prompt_cache_debug_enabled":true}`},
+	})
+	enabled, err := repo.PromptCacheDebugEnabled(context.Background(), uuid.New())
+	if err != nil {
+		t.Fatalf("PromptCacheDebugEnabled returned error: %v", err)
+	}
+	if !enabled {
+		t.Fatal("expected prompt cache debug to be enabled")
+	}
+}
+
+func TestAccountSettingsRepositoryPromptCacheDebugDisabledByDefault(t *testing.T) {
+	repo := NewAccountSettingsRepository(stubAccountSettingsQueryer{
+		row: stubAccountSettingsRow{value: `{}`},
+	})
+	enabled, err := repo.PromptCacheDebugEnabled(context.Background(), uuid.New())
+	if err != nil {
+		t.Fatalf("PromptCacheDebugEnabled returned error: %v", err)
+	}
+	if enabled {
+		t.Fatal("expected prompt cache debug to be disabled by default")
+	}
+}

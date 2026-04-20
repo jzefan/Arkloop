@@ -458,6 +458,17 @@ type Request struct {
 	ReasoningMode    string // "auto" | "enabled" | "disabled" | "none" | "minimal" | "low" | "medium" | "high" | "xhigh" (accepts aliases like "off"/"max")
 }
 
+// PromptCachePlanMarkers 是 plan-time marker 布局概览，由 agent 层基于 MessageCachePlan 计算。
+// 供 prompt cache 调试事件读取，描述本轮请求"打算"如何落点 cache_control / cache_reference / cache_edits。
+type PromptCachePlanMarkers struct {
+	SystemBlocksWithCacheControl int
+	MessageCacheControlIndex     int // -1 表示未落点
+	StableMarkerApplied          bool
+	CacheReferenceCount          int
+	CacheReferenceToolUseIDs     []string
+	CacheEditsCount              int
+}
+
 func (r Request) ToJSON() map[string]any {
 	payload := map[string]any{
 		"model":    r.Model,

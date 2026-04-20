@@ -117,9 +117,13 @@ func TestAccountSettingsGetAndPatchPipelineTraceEnabled(t *testing.T) {
 	if initial.PipelineTraceEnabled {
 		t.Fatal("expected pipeline trace to be disabled by default")
 	}
+	if initial.PromptCacheDebugEnabled {
+		t.Fatal("expected prompt cache debug to be disabled by default")
+	}
 
 	patchResp := doJSONAccount(env.handler, nethttp.MethodPatch, "/v1/account/settings", map[string]any{
-		"pipeline_trace_enabled": true,
+		"pipeline_trace_enabled":    true,
+		"prompt_cache_debug_enabled": true,
 	}, authHeader(env.accessToken))
 	if patchResp.Code != nethttp.StatusOK {
 		t.Fatalf("patch status = %d body=%s", patchResp.Code, patchResp.Body.String())
@@ -133,6 +137,9 @@ func TestAccountSettingsGetAndPatchPipelineTraceEnabled(t *testing.T) {
 	if account == nil || !pipelineTraceEnabledFromJSON(account.SettingsJSON) {
 		t.Fatalf("expected pipeline trace to be stored in settings_json")
 	}
+	if !promptCacheDebugEnabledFromJSON(account.SettingsJSON) {
+		t.Fatalf("expected prompt cache debug to be stored in settings_json")
+	}
 }
 
 func TestAccountSettingsPatchPreservesOtherKeys(t *testing.T) {
@@ -144,7 +151,8 @@ func TestAccountSettingsPatchPreservesOtherKeys(t *testing.T) {
 	}
 
 	resp := doJSONAccount(env.handler, nethttp.MethodPatch, "/v1/account/settings", map[string]any{
-		"pipeline_trace_enabled": true,
+		"pipeline_trace_enabled":    true,
+		"prompt_cache_debug_enabled": true,
 	}, authHeader(env.accessToken))
 	if resp.Code != nethttp.StatusOK {
 		t.Fatalf("patch status = %d body=%s", resp.Code, resp.Body.String())

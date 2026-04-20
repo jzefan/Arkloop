@@ -274,6 +274,18 @@ type RunContext struct {
 	RolloutRecorder *rollout.Recorder
 	// ResponseDraftStore 用于保存未完成正文草稿
 	ResponseDraftStore objectstore.BlobStore
+
+	// -- Prompt cache 调试开关（账号级，默认 false） --
+	PromptCacheDebugEnabled bool
+	// LastInheritedReuseResult 由 inherited prompt cache 复用判定写入，供 debug 事件读取。
+	// nil 表示无 inherited 上下文（非 subagent 路径或 mode=incremental）。
+	LastInheritedReuseResult *InheritedReuseResult
+}
+
+// InheritedReuseResult 描述子代理 prompt cache 快照复用判定结果。
+type InheritedReuseResult struct {
+	Reused        bool
+	FailureReason string
 }
 
 // HeartbeatDecisionOutcome 保存 heartbeat_decision 工具的调用结果。

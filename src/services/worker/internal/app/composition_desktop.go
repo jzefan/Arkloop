@@ -561,10 +561,17 @@ func (e *DesktopEngine) Execute(ctx context.Context, run data.Run, traceID strin
 	runsRepo := data.DesktopRunsRepository{}
 	eventsRepo := data.DesktopRunEventsRepository{}
 	var tracer pipeline.Tracer
-	if enabled, traceErr := data.NewAccountSettingsRepository(e.db).PipelineTraceEnabled(ctx, run.AccountID); traceErr != nil {
+	accountSettingsRepo := data.NewAccountSettingsRepository(e.db)
+	if enabled, traceErr := accountSettingsRepo.PipelineTraceEnabled(ctx, run.AccountID); traceErr != nil {
 		slog.WarnContext(ctx, "desktop pipeline trace setting load failed", "account_id", run.AccountID.String(), "err", traceErr.Error())
 	} else if enabled {
 		tracer = pipeline.NewBufTracer(run.ID, run.AccountID, data.NewRunPipelineEventsRepository(e.db))
+	}
+	var promptCacheDebugEnabled bool
+	if debugEnabled, debugErr := accountSettingsRepo.PromptCacheDebugEnabled(ctx, run.AccountID); debugErr != nil {
+		slog.WarnContext(ctx, "desktop prompt cache debug setting load failed", "account_id", run.AccountID.String(), "err", debugErr.Error())
+	} else {
+		promptCacheDebugEnabled = debugEnabled
 	}
 
 	runRuntime := *e.runtimeSnapshot
@@ -593,6 +600,8 @@ func (e *DesktopEngine) Execute(ctx context.Context, run data.Run, traceID strin
 
 		LlmRetryMaxAttempts: 10,
 		LlmRetryBaseDelayMs: 1000,
+
+		PromptCacheDebugEnabled: promptCacheDebugEnabled,
 
 		ThreadMessageHistoryLimit:     0,
 		AgentReasoningIterationsLimit: 0,

@@ -857,6 +857,8 @@ export interface LocaleStrings {
     logLevelError: string;
     pipelineTrace: string;
     pipelineTraceDesc: string;
+    promptCacheDebug: string;
+    promptCacheDebugDesc: string;
     showRunEvents: string;
     showRunEventsDesc: string;
     showDebugPanel: string;

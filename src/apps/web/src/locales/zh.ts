@@ -898,6 +898,8 @@ export const zh: LocaleStrings = {
     logLevelError: "错误",
     pipelineTrace: "Pipeline Trace",
     pipelineTraceDesc: "记录运行时各阶段的摘要，便于排查问题。",
+    promptCacheDebug: "Prompt Cache 调试",
+    promptCacheDebugDesc: "每轮请求记录 cache 调试事件。",
     showRunEvents: "显示运行详情按钮",
     showRunEventsDesc: "在 AI 回复的菜单中显示「查看运行详情」按钮，用于深度调试。",
     showDebugPanel: "调试面板",

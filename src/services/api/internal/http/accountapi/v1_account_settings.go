@@ -10,14 +10,19 @@ import (
 	"arkloop/services/api/internal/observability"
 )
 
-const pipelineTraceEnabledSettingKey = "pipeline_trace_enabled"
+const (
+	pipelineTraceEnabledSettingKey    = "pipeline_trace_enabled"
+	promptCacheDebugEnabledSettingKey = "prompt_cache_debug_enabled"
+)
 
 type accountSettingsResponse struct {
-	PipelineTraceEnabled bool `json:"pipeline_trace_enabled"`
+	PipelineTraceEnabled    bool `json:"pipeline_trace_enabled"`
+	PromptCacheDebugEnabled bool `json:"prompt_cache_debug_enabled"`
 }
 
 type patchAccountSettingsRequest struct {
-	PipelineTraceEnabled *bool `json:"pipeline_trace_enabled"`
+	PipelineTraceEnabled    *bool `json:"pipeline_trace_enabled"`
+	PromptCacheDebugEnabled *bool `json:"prompt_cache_debug_enabled"`
 }
 
 func accountSettingsEntry(
@@ -50,7 +55,8 @@ func accountSettingsEntry(
 				return
 			}
 			httpkit.WriteJSON(w, traceID, nethttp.StatusOK, accountSettingsResponse{
-				PipelineTraceEnabled: pipelineTraceEnabledFromJSON(account.SettingsJSON),
+				PipelineTraceEnabled:    pipelineTraceEnabledFromJSON(account.SettingsJSON),
+				PromptCacheDebugEnabled: promptCacheDebugEnabledFromJSON(account.SettingsJSON),
 			})
 		case nethttp.MethodPatch:
 			var body patchAccountSettingsRequest
@@ -58,16 +64,30 @@ func accountSettingsEntry(
 				httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "invalid request body", traceID, nil)
 				return
 			}
-			if body.PipelineTraceEnabled == nil {
-				httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "pipeline_trace_enabled is required", traceID, nil)
+			if body.PipelineTraceEnabled == nil && body.PromptCacheDebugEnabled == nil {
+				httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "at least one setting is required", traceID, nil)
 				return
 			}
-			if err := accountRepo.UpdateSettings(r.Context(), actor.AccountID, pipelineTraceEnabledSettingKey, *body.PipelineTraceEnabled); err != nil {
+			if body.PipelineTraceEnabled != nil {
+				if err := accountRepo.UpdateSettings(r.Context(), actor.AccountID, pipelineTraceEnabledSettingKey, *body.PipelineTraceEnabled); err != nil {
+					httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
+					return
+				}
+			}
+			if body.PromptCacheDebugEnabled != nil {
+				if err := accountRepo.UpdateSettings(r.Context(), actor.AccountID, promptCacheDebugEnabledSettingKey, *body.PromptCacheDebugEnabled); err != nil {
+					httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
+					return
+				}
+			}
+			account, err := accountRepo.GetByID(r.Context(), actor.AccountID)
+			if err != nil || account == nil {
 				httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 				return
 			}
 			httpkit.WriteJSON(w, traceID, nethttp.StatusOK, accountSettingsResponse{
-				PipelineTraceEnabled: *body.PipelineTraceEnabled,
+				PipelineTraceEnabled:    boolFromJSON(account.SettingsJSON, pipelineTraceEnabledSettingKey),
+				PromptCacheDebugEnabled: boolFromJSON(account.SettingsJSON, promptCacheDebugEnabledSettingKey),
 			})
 		default:
 			httpkit.WriteMethodNotAllowed(w, r)
@@ -76,6 +96,14 @@ func accountSettingsEntry(
 }
 
 func pipelineTraceEnabledFromJSON(raw json.RawMessage) bool {
+	return boolFromJSON(raw, pipelineTraceEnabledSettingKey)
+}
+
+func promptCacheDebugEnabledFromJSON(raw json.RawMessage) bool {
+	return boolFromJSON(raw, promptCacheDebugEnabledSettingKey)
+}
+
+func boolFromJSON(raw json.RawMessage, key string) bool {
 	if len(raw) == 0 {
 		return false
 	}
@@ -83,6 +111,6 @@ func pipelineTraceEnabledFromJSON(raw json.RawMessage) bool {
 	if err := json.Unmarshal(raw, &payload); err != nil {
 		return false
 	}
-	enabled, _ := payload[pipelineTraceEnabledSettingKey].(bool)
-	return enabled
+	value, _ := payload[key].(bool)
+	return value
 }
