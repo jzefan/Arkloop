@@ -367,7 +367,9 @@ func (s *TriggerScheduler) fireJob(ctx context.Context, row data.ScheduledTrigge
 		personaKey = runkind.DefaultPersonaKey
 	}
 
-	// 复用 RunEventRepository 的 busy 检查逻辑
+	// 提前短路: 若 thread 已有活跃 run 则跳过后续开销较大的事务流程。
+	// 真正的并发安全由 CreateRootRunWithClaim 内部的 LockThreadRow 行级锁保证，
+	// 此处检查仅为优化，不构成互斥屏障。
 	active, err := s.runs.GetActiveRootRunForThread(ctx, threadID)
 	if err != nil {
 		slog.ErrorContext(ctx, "scheduled_job_active_run_check_failed", "error", err, "thread_id", threadID)
@@ -412,10 +414,10 @@ func (s *TriggerScheduler) fireJob(ctx context.Context, row data.ScheduledTrigge
 		"scheduled_job_prompt": job.Prompt,
 		"workspace_ref":        job.WorkspaceRef,
 		"work_dir":             job.WorkDir,
-		"thinking":             job.Thinking,
 		"timeout_seconds":      job.Timeout,
-		"light_context":        job.LightContext,
-		"tools_allow":          job.ToolsAllow,
+	}
+	if strings.TrimSpace(job.ReasoningMode) != "" {
+		startedData["reasoning_mode"] = job.ReasoningMode
 	}
 	run, _, err := runRepoTx.CreateRootRunWithClaim(
 		ctx,
@@ -473,9 +475,29 @@ func (s *TriggerScheduler) fireJob(ctx context.Context, row data.ScheduledTrigge
 		return
 	}
 
+	// At 类型: 在事务内 disable job + delete trigger，然后提交并返回
 	if job.ScheduleKind == schedulekind.At {
 		if _, err := tx.Exec(ctx, `UPDATE scheduled_jobs SET enabled = false, updated_at = now() WHERE id = $1`, job.ID); err != nil {
 			slog.ErrorContext(ctx, "scheduled_job_disable_at_failed", "error", err)
+			_ = s.triggers.PostponeTrigger(ctx, s.pool, row.ID, 90*time.Second)
+			return
+		}
+		if err := s.triggers.DeleteTriggerByJobID(ctx, tx, row.JobID); err != nil {
+			slog.ErrorContext(ctx, "scheduled_job_delete_at_trigger_failed", "error", err)
+			_ = s.triggers.PostponeTrigger(ctx, s.pool, row.ID, 90*time.Second)
+			return
+		}
+		if err := tx.Commit(ctx); err != nil {
+			slog.ErrorContext(ctx, "scheduled_job_commit_failed", "error", err)
+			_ = s.triggers.PostponeTrigger(ctx, s.pool, row.ID, 90*time.Second)
+		}
+		return
+	}
+
+	// deleteAfterRun: 在事务内删除 job，保证与 run 创建原子提交
+	if job.DeleteAfterRun {
+		if _, err := tx.Exec(ctx, `DELETE FROM scheduled_jobs WHERE id = $1`, job.ID); err != nil {
+			slog.ErrorContext(ctx, "scheduled_job_delete_after_run_failed", "error", err, "job_id", job.ID)
 			_ = s.triggers.PostponeTrigger(ctx, s.pool, row.ID, 90*time.Second)
 			return
 		}
@@ -487,10 +509,8 @@ func (s *TriggerScheduler) fireJob(ctx context.Context, row data.ScheduledTrigge
 		return
 	}
 
+	// deleteAfterRun 已在事务内处理完毕
 	if job.DeleteAfterRun {
-		if _, err := s.pool.Exec(ctx, `DELETE FROM scheduled_jobs WHERE id = $1`, job.ID); err != nil {
-			slog.ErrorContext(ctx, "scheduled_job_delete_after_run_failed", "error", err, "job_id", job.ID)
-		}
 		return
 	}
 
@@ -509,10 +529,6 @@ func (s *TriggerScheduler) fireJob(ctx context.Context, row data.ScheduledTrigge
 	if err != nil {
 		slog.ErrorContext(ctx, "scheduled_job_calc_next_fire_failed", "error", err)
 		_ = s.triggers.PostponeTrigger(ctx, s.pool, row.ID, 2*time.Minute)
-		return
-	}
-	if job.ScheduleKind == schedulekind.At {
-		_ = s.triggers.DeleteTriggerByJobID(ctx, s.pool, row.JobID)
 		return
 	}
 	if err := s.triggers.UpdateTriggerNextFire(ctx, s.pool, row.ID, nextFire); err != nil {

@@ -29,10 +29,8 @@ type ScheduledJob struct {
 	Timezone        string
 	Enabled         bool
 	DeleteAfterRun  bool
-	Thinking        bool
+	ReasoningMode   string
 	Timeout         int
-	LightContext    bool
-	ToolsAllow      string
 	CreatedByUserID *uuid.UUID
 	CreatedAt       time.Time
 	UpdatedAt       time.Time
@@ -65,8 +63,6 @@ type UpdateJobParams struct {
 	Timezone       *string
 	Enabled        *bool
 	DeleteAfterRun *bool
-	Thinking       *bool
+	ReasoningMode  *string
 	Timeout        *int
-	LightContext   *bool
-	ToolsAllow     *string
 }

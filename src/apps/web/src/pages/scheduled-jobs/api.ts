@@ -1,5 +1,5 @@
 import { apiFetch } from '@arkloop/shared/api'
-import { listThreadRuns, getRunDetail } from '../../api'
+import { listThreadRuns, getRunDetail, type RunReasoningMode } from '../../api'
 
 export interface ScheduledJob {
   id: string
@@ -11,15 +11,20 @@ export interface ScheduledJob {
   model: string
   work_dir: string
   thread_id: string | null
-  schedule_kind: 'interval' | 'daily' | 'weekdays' | 'weekly' | 'monthly'
+  schedule_kind: 'interval' | 'daily' | 'weekdays' | 'weekly' | 'monthly' | 'at' | 'cron'
   interval_min?: number
   daily_time?: string
   monthly_day?: number
   monthly_time?: string
   weekly_day?: number
+  fire_at?: string
+  cron_expr?: string
+  delete_after_run?: boolean
   timezone: string
   enabled: boolean
   next_fire_at: string | null
+  reasoning_mode?: RunReasoningMode
+  timeout?: number
   created_at: string
   updated_at: string
 }
@@ -38,7 +43,12 @@ export interface CreateJobRequest {
   monthly_day?: number
   monthly_time?: string
   weekly_day?: number
+  fire_at?: string
+  cron_expr?: string
+  delete_after_run?: boolean
   timezone: string
+  reasoning_mode?: RunReasoningMode
+  timeout?: number
 }
 
 export type UpdateJobRequest = Partial<CreateJobRequest>

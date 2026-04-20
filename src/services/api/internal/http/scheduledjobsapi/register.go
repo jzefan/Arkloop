@@ -96,63 +96,78 @@ func scheduledJobEntry(deps Deps) func(nethttp.ResponseWriter, *nethttp.Request)
 // --- request/response ---
 
 type createJobRequest struct {
-	Name         string  `json:"name"`
-	Description  string  `json:"description"`
-	PersonaKey   string  `json:"persona_key"`
-	Prompt       string  `json:"prompt"`
-	Model        string  `json:"model"`
-	WorkspaceRef string  `json:"workspace_ref"`
-	WorkDir      string  `json:"work_dir"`
-	ThreadID     *string `json:"thread_id"`
-	ScheduleKind string  `json:"schedule_kind"`
-	IntervalMin  *int    `json:"interval_min"`
-	DailyTime    string  `json:"daily_time"`
-	MonthlyDay   *int    `json:"monthly_day"`
-	MonthlyTime  string  `json:"monthly_time"`
-	WeeklyDay    *int    `json:"weekly_day"`
-	Timezone     string  `json:"timezone"`
+	Name           string  `json:"name"`
+	Description    string  `json:"description"`
+	PersonaKey     string  `json:"persona_key"`
+	Prompt         string  `json:"prompt"`
+	Model          string  `json:"model"`
+	WorkspaceRef   string  `json:"workspace_ref"`
+	WorkDir        string  `json:"work_dir"`
+	ThreadID       *string `json:"thread_id"`
+	ScheduleKind   string  `json:"schedule_kind"`
+	IntervalMin    *int    `json:"interval_min"`
+	DailyTime      string  `json:"daily_time"`
+	MonthlyDay     *int    `json:"monthly_day"`
+	MonthlyTime    string  `json:"monthly_time"`
+	WeeklyDay      *int    `json:"weekly_day"`
+	FireAt         *string `json:"fire_at"`
+	CronExpr       string  `json:"cron_expr"`
+	Timezone       string  `json:"timezone"`
+	DeleteAfterRun bool    `json:"delete_after_run"`
+	ReasoningMode  string  `json:"reasoning_mode"`
+	Timeout        int     `json:"timeout"`
 }
 
 type updateJobRequest struct {
-	Name         *string  `json:"name"`
-	Description  *string  `json:"description"`
-	PersonaKey   *string  `json:"persona_key"`
-	Prompt       *string  `json:"prompt"`
-	Model        *string  `json:"model"`
-	WorkspaceRef *string  `json:"workspace_ref"`
-	WorkDir      *string  `json:"work_dir"`
-	ThreadID     **string `json:"thread_id"`
-	ScheduleKind *string  `json:"schedule_kind"`
-	IntervalMin  **int    `json:"interval_min"`
-	DailyTime    *string  `json:"daily_time"`
-	MonthlyDay   **int    `json:"monthly_day"`
-	MonthlyTime  *string  `json:"monthly_time"`
-	WeeklyDay    **int    `json:"weekly_day"`
-	Timezone     *string  `json:"timezone"`
+	Name           *string  `json:"name"`
+	Description    *string  `json:"description"`
+	PersonaKey     *string  `json:"persona_key"`
+	Prompt         *string  `json:"prompt"`
+	Model          *string  `json:"model"`
+	WorkspaceRef   *string  `json:"workspace_ref"`
+	WorkDir        *string  `json:"work_dir"`
+	ThreadID       **string `json:"thread_id"`
+	ScheduleKind   *string  `json:"schedule_kind"`
+	IntervalMin    **int    `json:"interval_min"`
+	DailyTime      *string  `json:"daily_time"`
+	MonthlyDay     **int    `json:"monthly_day"`
+	MonthlyTime    *string  `json:"monthly_time"`
+	WeeklyDay      **int    `json:"weekly_day"`
+	FireAt         *string  `json:"fire_at"`
+	CronExpr       *string  `json:"cron_expr"`
+	Timezone       *string  `json:"timezone"`
+	DeleteAfterRun *bool    `json:"delete_after_run"`
+	ReasoningMode  *string  `json:"reasoning_mode"`
+	Timeout        *int     `json:"timeout"`
 }
 
 type jobResponse struct {
-	ID           uuid.UUID  `json:"id"`
-	AccountID    uuid.UUID  `json:"account_id"`
-	Name         string     `json:"name"`
-	Description  string     `json:"description"`
-	PersonaKey   string     `json:"persona_key"`
-	Prompt       string     `json:"prompt"`
-	Model        string     `json:"model"`
-	WorkspaceRef string     `json:"workspace_ref"`
-	WorkDir      string     `json:"work_dir"`
-	ThreadID     *uuid.UUID `json:"thread_id"`
-	ScheduleKind string     `json:"schedule_kind"`
-	IntervalMin  *int       `json:"interval_min,omitempty"`
-	DailyTime    string     `json:"daily_time,omitempty"`
-	MonthlyDay   *int       `json:"monthly_day,omitempty"`
-	MonthlyTime  string     `json:"monthly_time,omitempty"`
-	WeeklyDay    *int       `json:"weekly_day,omitempty"`
-	Timezone     string     `json:"timezone"`
-	Enabled      bool       `json:"enabled"`
-	NextFireAt   *time.Time `json:"next_fire_at"`
-	CreatedAt    time.Time  `json:"created_at"`
-	UpdatedAt    time.Time  `json:"updated_at"`
+	ID             uuid.UUID  `json:"id"`
+	AccountID      uuid.UUID  `json:"account_id"`
+	Name           string     `json:"name"`
+	Description    string     `json:"description"`
+	PersonaKey     string     `json:"persona_key"`
+	Prompt         string     `json:"prompt"`
+	Model          string     `json:"model"`
+	WorkspaceRef   string     `json:"workspace_ref"`
+	WorkDir        string     `json:"work_dir"`
+	ThreadID       *uuid.UUID `json:"thread_id"`
+	ScheduleKind   string     `json:"schedule_kind"`
+	IntervalMin    *int       `json:"interval_min,omitempty"`
+	DailyTime      string     `json:"daily_time,omitempty"`
+	MonthlyDay     *int       `json:"monthly_day,omitempty"`
+	MonthlyTime    string     `json:"monthly_time,omitempty"`
+	WeeklyDay      *int       `json:"weekly_day,omitempty"`
+	FireAt         *time.Time `json:"fire_at,omitempty"`
+	CronExpr       string     `json:"cron_expr,omitempty"`
+	Timezone       string     `json:"timezone"`
+	DeleteAfterRun bool       `json:"delete_after_run"`
+	ReasoningMode  string     `json:"reasoning_mode,omitempty"`
+	Timeout        int        `json:"timeout"`
+	Enabled        bool       `json:"enabled"`
+	NextFireAt     *time.Time `json:"next_fire_at"`
+	CreatedAt      time.Time  `json:"created_at"`
+	UpdatedAt      time.Time  `json:"updated_at"`
 }
 
 type listJobsResponse struct {
@@ -161,27 +176,32 @@ type listJobsResponse struct {
 
 func toJobResponse(j scheduledjobs.ScheduledJobWithTrigger) jobResponse {
 	return jobResponse{
-		ID:           j.ID,
-		AccountID:    j.AccountID,
-		Name:         j.Name,
-		Description:  j.Description,
-		PersonaKey:   j.PersonaKey,
-		Prompt:       j.Prompt,
-		Model:        j.Model,
-		WorkspaceRef: j.WorkspaceRef,
-		WorkDir:      j.WorkDir,
-		ThreadID:     j.ThreadID,
-		ScheduleKind: j.ScheduleKind,
-		IntervalMin:  j.IntervalMin,
-		DailyTime:    j.DailyTime,
-		MonthlyDay:   j.MonthlyDay,
-		MonthlyTime:  j.MonthlyTime,
-		WeeklyDay:    j.WeeklyDay,
-		Timezone:     j.Timezone,
-		Enabled:      j.Enabled,
-		NextFireAt:   j.NextFireAt,
-		CreatedAt:    j.CreatedAt,
-		UpdatedAt:    j.UpdatedAt,
+		ID:             j.ID,
+		AccountID:      j.AccountID,
+		Name:           j.Name,
+		Description:    j.Description,
+		PersonaKey:     j.PersonaKey,
+		Prompt:         j.Prompt,
+		Model:          j.Model,
+		WorkspaceRef:   j.WorkspaceRef,
+		WorkDir:        j.WorkDir,
+		ThreadID:       j.ThreadID,
+		ScheduleKind:   j.ScheduleKind,
+		IntervalMin:    j.IntervalMin,
+		DailyTime:      j.DailyTime,
+		MonthlyDay:     j.MonthlyDay,
+		MonthlyTime:    j.MonthlyTime,
+		WeeklyDay:      j.WeeklyDay,
+		FireAt:         j.FireAt,
+		CronExpr:       j.CronExpr,
+		Timezone:       j.Timezone,
+		DeleteAfterRun: j.DeleteAfterRun,
+		ReasoningMode:  j.ReasoningMode,
+		Timeout:        j.Timeout,
+		Enabled:        j.Enabled,
+		NextFireAt:     j.NextFireAt,
+		CreatedAt:      j.CreatedAt,
+		UpdatedAt:      j.UpdatedAt,
 	}
 }
 
@@ -279,9 +299,23 @@ func createJob(w nethttp.ResponseWriter, r *nethttp.Request, traceID string, dep
 		MonthlyDay:      req.MonthlyDay,
 		MonthlyTime:     req.MonthlyTime,
 		WeeklyDay:       req.WeeklyDay,
+		CronExpr:        req.CronExpr,
 		Timezone:        tz,
 		Enabled:         true,
+		DeleteAfterRun:  req.DeleteAfterRun,
+		ReasoningMode:   normalizeScheduledJobReasoningMode(req.ReasoningMode),
+		Timeout:         req.Timeout,
 		CreatedByUserID: &actor.UserID,
+	}
+
+	// 解析 fire_at
+	if req.FireAt != nil && *req.FireAt != "" {
+		t, err := time.Parse(time.RFC3339, *req.FireAt)
+		if err != nil {
+			httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "invalid fire_at format, expected RFC3339", traceID, nil)
+			return
+		}
+		job.FireAt = &t
 	}
 
 	created, err := deps.ScheduledJobsRepo.CreateJob(r.Context(), deps.Pool, job)
@@ -495,6 +529,11 @@ func nilUUIDPtr() **uuid.UUID {
 	return &p
 }
 
+func nilTimePtr() **time.Time {
+	var p *time.Time
+	return &p
+}
+
 var timeHHMMRe = regexp.MustCompile(`^([01]\d|2[0-3]):[0-5]\d$`)
 
 func validateCreate(req createJobRequest) []string {
@@ -539,8 +578,16 @@ func validateCreate(req createJobRequest) []string {
 		if !timeHHMMRe.MatchString(req.DailyTime) {
 			errs = append(errs, "daily_time must be HH:MM format")
 		}
+	case "at":
+		if req.FireAt == nil || strings.TrimSpace(*req.FireAt) == "" {
+			errs = append(errs, "fire_at is required for at schedule")
+		}
+	case "cron":
+		if strings.TrimSpace(req.CronExpr) == "" {
+			errs = append(errs, "cron_expr is required for cron schedule")
+		}
 	default:
-		errs = append(errs, "schedule_kind must be interval, daily, monthly, weekdays, or weekly")
+		errs = append(errs, "schedule_kind must be interval, daily, monthly, weekdays, weekly, at, or cron")
 	}
 
 	if req.Timezone != "" {
@@ -549,7 +596,40 @@ func validateCreate(req createJobRequest) []string {
 		}
 	}
 
+	if req.ReasoningMode != "" && normalizeScheduledJobReasoningMode(req.ReasoningMode) == "" {
+		errs = append(errs, "invalid reasoning_mode")
+	}
+
 	return errs
+}
+
+// normalizeScheduledJobReasoningMode 与 conversationapi.normalizeRunReasoningMode 保持一致，
+// 把多种别名归并到稳定枚举值；空串表示沿用 persona 默认值。
+func normalizeScheduledJobReasoningMode(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "":
+		return ""
+	case "auto":
+		return "auto"
+	case "enabled":
+		return "enabled"
+	case "disabled":
+		return "disabled"
+	case "none", "off":
+		return "none"
+	case "minimal":
+		return "minimal"
+	case "low":
+		return "low"
+	case "medium":
+		return "medium"
+	case "high":
+		return "high"
+	case "max", "xhigh", "extra_high", "extra-high", "extra high":
+		return "xhigh"
+	default:
+		return ""
+	}
 }
 
 func buildUpdateParams(raw map[string]json.RawMessage) (scheduledjobs.UpdateJobParams, []string) {
@@ -627,10 +707,10 @@ func buildUpdateParams(raw map[string]json.RawMessage) (scheduledjobs.UpdateJobP
 		var s string
 		if json.Unmarshal(v, &s) == nil {
 			switch s {
-			case "interval", "daily", "monthly", "weekdays", "weekly":
+			case "interval", "daily", "monthly", "weekdays", "weekly", "at", "cron":
 				p.ScheduleKind = &s
 			default:
-				errs = append(errs, "schedule_kind must be interval, daily, monthly, weekdays, or weekly")
+				errs = append(errs, "schedule_kind must be interval, daily, monthly, weekdays, weekly, at, or cron")
 			}
 		}
 	}
@@ -708,6 +788,51 @@ func buildUpdateParams(raw map[string]json.RawMessage) (scheduledjobs.UpdateJobP
 			} else {
 				p.Timezone = &s
 			}
+		}
+	}
+	if v, ok := raw["fire_at"]; ok {
+		if string(v) == "null" {
+			p.FireAt = nilTimePtr()
+		} else {
+			var s string
+			if json.Unmarshal(v, &s) == nil {
+				parsed, err := time.Parse(time.RFC3339, s)
+				if err != nil {
+					errs = append(errs, "fire_at must be RFC3339 format")
+				} else {
+					tp := &parsed
+					p.FireAt = &tp
+				}
+			}
+		}
+	}
+	if v, ok := raw["cron_expr"]; ok {
+		var s string
+		if json.Unmarshal(v, &s) == nil {
+			p.CronExpr = &s
+		}
+	}
+	if v, ok := raw["delete_after_run"]; ok {
+		var b bool
+		if json.Unmarshal(v, &b) == nil {
+			p.DeleteAfterRun = &b
+		}
+	}
+	if v, ok := raw["reasoning_mode"]; ok {
+		var s string
+		if json.Unmarshal(v, &s) == nil {
+			normalized := normalizeScheduledJobReasoningMode(s)
+			if s != "" && normalized == "" {
+				errs = append(errs, "invalid reasoning_mode")
+			} else {
+				p.ReasoningMode = &normalized
+			}
+		}
+	}
+	if v, ok := raw["timeout"]; ok {
+		var n int
+		if json.Unmarshal(v, &n) == nil {
+			p.Timeout = &n
 		}
 	}
 
