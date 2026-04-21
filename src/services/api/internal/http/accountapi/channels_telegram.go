@@ -1096,7 +1096,7 @@ func (c telegramConnector) persistTelegramGroupPassiveMessageTx(
 		return uuid.Nil, "", err
 	}
 	timeCtx := c.resolveInboundTimeContext(ctx, ch, identity, incoming)
-	content, contentJSON, metadataJSON, err := buildTelegramStructuredMessageWithMedia(
+	content, contentJSON, metadataJSON, stickers, err := buildTelegramStructuredMessageWithMediaAndStickers(
 		ctx,
 		c.telegramClient,
 		c.attachmentStore,
@@ -1123,6 +1123,14 @@ func (c telegramConnector) persistTelegramGroupPassiveMessageTx(
 	)
 	if err != nil {
 		return uuid.Nil, "", err
+	}
+	if err := c.maybeCollectTelegramStickersTx(ctx, tx, ch, &identity.ID, stickers); err != nil {
+		slog.WarnContext(ctx, "telegram_sticker_collect_failed",
+			"channel_id", ch.ID,
+			"thread_id", threadID,
+			"message_id", incoming.PlatformMsgID,
+			"err", err,
+		)
 	}
 	if c.channelLedgerRepo != nil {
 		ledgerRepoTx := c.channelLedgerRepo.WithTx(tx)

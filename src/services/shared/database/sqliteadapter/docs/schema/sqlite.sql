@@ -23,6 +23,14 @@ CREATE UNIQUE INDEX asr_credentials_user_name_idx
 CREATE INDEX idx_account_entitlement_overrides_account_id
     ON account_entitlement_overrides(account_id);
 
+CREATE INDEX idx_account_stickers_hot
+    ON account_stickers(account_id, usage_count DESC, last_used_at DESC)
+    WHERE is_registered = 1;
+
+CREATE INDEX idx_account_stickers_pending
+    ON account_stickers(account_id, updated_at DESC)
+    WHERE is_registered = 0;
+
 CREATE INDEX idx_browser_state_registries_org_id ON browser_state_registries(account_id);
 
 CREATE INDEX idx_channel_dm_threads_channel_id ON channel_dm_threads(channel_id);
@@ -73,6 +81,15 @@ CREATE INDEX idx_desktop_memory_entries_user
 CREATE INDEX idx_external_thread_links_provider_external
     ON external_thread_links (provider, external_thread_id);
 
+CREATE INDEX idx_outbox_cleanup ON channel_delivery_outbox (status, updated_at)
+    WHERE status IN ('sent', 'dead');
+
+CREATE INDEX idx_outbox_drain ON channel_delivery_outbox (status, next_retry_at)
+    WHERE status = 'pending';
+
+CREATE UNIQUE INDEX idx_outbox_run ON channel_delivery_outbox (run_id, kind)
+    WHERE status != 'dead';
+
 CREATE INDEX idx_plan_entitlements_plan_id ON plan_entitlements(plan_id);
 
 CREATE INDEX idx_platform_skill_overrides_profile
@@ -107,6 +124,9 @@ CREATE INDEX idx_shell_sessions_org_run_type ON shell_sessions(account_id, run_i
 CREATE INDEX idx_shell_sessions_org_thread ON shell_sessions(account_id, thread_id);
 
 CREATE INDEX idx_shell_sessions_org_workspace ON shell_sessions(account_id, workspace_ref);
+
+CREATE INDEX idx_sticker_description_cache_timestamp
+    ON sticker_description_cache(timestamp DESC);
 
 CREATE INDEX idx_sub_agent_context_snapshots_updated_at
     ON sub_agent_context_snapshots(updated_at);
@@ -245,6 +265,10 @@ CREATE INDEX run_pipeline_events_created_at_idx ON run_pipeline_events(created_a
 
 CREATE INDEX run_pipeline_events_run_id_idx ON run_pipeline_events(run_id);
 
+CREATE INDEX scheduled_jobs_account_id_idx ON scheduled_jobs (account_id);
+
+CREATE UNIQUE INDEX scheduled_triggers_job_id_uniq ON scheduled_triggers (job_id) WHERE job_id IS NOT NULL;
+
 CREATE INDEX scheduled_triggers_next_fire_at_idx
     ON scheduled_triggers (next_fire_at);
 
@@ -327,6 +351,25 @@ CREATE TABLE "account_memberships" (
     UNIQUE (account_id, user_id)
 );
 
+CREATE TABLE account_stickers (
+    id TEXT PRIMARY KEY,
+    account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+    content_hash TEXT NOT NULL,
+    storage_key TEXT NOT NULL,
+    preview_storage_key TEXT NOT NULL DEFAULT '',
+    file_size INTEGER NOT NULL DEFAULT 0,
+    mime_type TEXT NOT NULL DEFAULT 'application/octet-stream',
+    is_animated INTEGER NOT NULL DEFAULT 0,
+    short_tags TEXT NOT NULL DEFAULT '',
+    long_desc TEXT NOT NULL DEFAULT '',
+    usage_count INTEGER NOT NULL DEFAULT 0,
+    last_used_at TEXT,
+    is_registered INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE (account_id, content_hash)
+);
+
 CREATE TABLE "accounts" (
     id         TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(4))) || '-' || lower(hex(randomblob(2))) || '-4' || substr(lower(hex(randomblob(2))),2) || '-' || substr('89ab',abs(random()) % 4 + 1, 1) || substr(lower(hex(randomblob(2))),2) || '-' || lower(hex(randomblob(6)))),
     slug       TEXT NOT NULL UNIQUE,
@@ -405,6 +448,23 @@ CREATE TABLE browser_state_registries (
     CHECK ((lease_holder_id IS NULL AND lease_until IS NULL) OR (lease_holder_id IS NOT NULL AND lease_until IS NOT NULL))
 );
 
+CREATE TABLE channel_delivery_outbox (
+    id              TEXT PRIMARY KEY,
+    run_id          TEXT NOT NULL,
+    thread_id       TEXT,
+    channel_id      TEXT NOT NULL,
+    channel_type    TEXT NOT NULL,
+    kind            TEXT NOT NULL DEFAULT 'message',
+    status          TEXT NOT NULL DEFAULT 'pending',
+    payload_json    TEXT NOT NULL DEFAULT '{}',
+    segments_sent   INTEGER NOT NULL DEFAULT 0,
+    attempts        INTEGER NOT NULL DEFAULT 0,
+    last_error      TEXT,
+    next_retry_at   TEXT NOT NULL,
+    created_at      TEXT NOT NULL,
+    updated_at      TEXT NOT NULL
+);
+
 CREATE TABLE channel_dm_threads (
     id                  TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(4))) || '-' || lower(hex(randomblob(2))) || '-4' || substr(lower(hex(randomblob(2))),2) || '-' || substr('89ab',abs(random()) % 4 + 1, 1) || substr(lower(hex(randomblob(2))),2) || '-' || lower(hex(randomblob(6)))),
     channel_id          TEXT NOT NULL REFERENCES channels(id) ON DELETE CASCADE,
@@ -439,7 +499,7 @@ CREATE TABLE channel_identities (
     avatar_url          TEXT,
     metadata            TEXT NOT NULL DEFAULT '{}',
     created_at          TEXT NOT NULL DEFAULT (datetime('now')),
-    updated_at          TEXT NOT NULL DEFAULT (datetime('now')), heartbeat_enabled INTEGER NOT NULL DEFAULT 0, heartbeat_interval_minutes INTEGER NOT NULL DEFAULT 30, heartbeat_model TEXT NOT NULL DEFAULT '',
+    updated_at          TEXT NOT NULL DEFAULT (datetime('now')), heartbeat_enabled INTEGER NOT NULL DEFAULT 0, heartbeat_interval_minutes INTEGER NOT NULL DEFAULT 30, heartbeat_model TEXT NOT NULL DEFAULT '', preferred_model TEXT NOT NULL DEFAULT '', reasoning_mode TEXT NOT NULL DEFAULT '',
     UNIQUE (channel_type, platform_subject_id)
 );
 
@@ -944,6 +1004,29 @@ CREATE TABLE runs (
     created_at          TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+CREATE TABLE scheduled_jobs (
+    id                  TEXT PRIMARY KEY,
+    account_id          TEXT NOT NULL,
+    name                TEXT NOT NULL DEFAULT '',
+    description         TEXT NOT NULL DEFAULT '',
+    persona_key         TEXT NOT NULL DEFAULT '',
+    prompt              TEXT NOT NULL DEFAULT '',
+    model               TEXT NOT NULL DEFAULT '',
+    workspace_ref       TEXT NOT NULL DEFAULT '',
+    work_dir            TEXT NOT NULL DEFAULT '',
+    thread_id           TEXT,
+    schedule_kind       TEXT NOT NULL DEFAULT 'interval',
+    interval_min        INTEGER,
+    daily_time          TEXT NOT NULL DEFAULT '',
+    monthly_day         INTEGER,
+    monthly_time        TEXT NOT NULL DEFAULT '',
+    timezone            TEXT NOT NULL DEFAULT 'UTC',
+    enabled             INTEGER NOT NULL DEFAULT 1,
+    created_by_user_id  TEXT,
+    created_at          TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at          TEXT NOT NULL DEFAULT (datetime('now'))
+, weekly_day INTEGER, fire_at DATETIME, cron_expr TEXT NOT NULL DEFAULT '', delete_after_run INTEGER NOT NULL DEFAULT 0, thinking INTEGER NOT NULL DEFAULT 0, timeout_seconds INTEGER NOT NULL DEFAULT 0, light_context INTEGER NOT NULL DEFAULT 0, tools_allow TEXT NOT NULL DEFAULT '');
+
 CREATE TABLE "scheduled_triggers" (
     id                    TEXT PRIMARY KEY,
     channel_id            TEXT NOT NULL,
@@ -954,7 +1037,7 @@ CREATE TABLE "scheduled_triggers" (
     interval_min          INTEGER NOT NULL DEFAULT 30,
     next_fire_at          TEXT NOT NULL,
     created_at            TEXT NOT NULL,
-    updated_at            TEXT NOT NULL,
+    updated_at            TEXT NOT NULL, trigger_kind TEXT NOT NULL DEFAULT 'heartbeat', job_id TEXT,
     UNIQUE (channel_id, channel_identity_id)
 );
 
@@ -1039,6 +1122,13 @@ CREATE TABLE smtp_providers (
     from_name  TEXT,
     active     INTEGER NOT NULL DEFAULT 1,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE sticker_description_cache (
+    content_hash TEXT PRIMARY KEY,
+    description TEXT NOT NULL DEFAULT '',
+    emotion_tags TEXT NOT NULL DEFAULT '',
+    timestamp TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
 CREATE TABLE sub_agent_context_snapshots (

@@ -440,6 +440,76 @@ func (c *Client) SendAnimation(ctx context.Context, token string, chatID, animat
 	return &result, nil
 }
 
+// SendStickerBytes uploads a sticker payload directly as multipart/form-data.
+func (c *Client) SendStickerBytes(ctx context.Context, token string, chatID string, data []byte, filename, messageThreadID, replyToMessageID string) (*SentMessage, error) {
+	if strings.TrimSpace(token) == "" {
+		return nil, fmt.Errorf("telegrambot: token must not be empty")
+	}
+	if strings.TrimSpace(chatID) == "" {
+		return nil, fmt.Errorf("telegrambot: chat_id must not be empty")
+	}
+	if len(data) == 0 {
+		return nil, fmt.Errorf("telegrambot: sticker data must not be empty")
+	}
+	if strings.TrimSpace(filename) == "" {
+		filename = "sticker.bin"
+	}
+
+	body := &bytes.Buffer{}
+	writer := multipart.NewWriter(body)
+	part, err := writer.CreateFormFile("sticker", filename)
+	if err != nil {
+		return nil, fmt.Errorf("telegrambot: create sticker form file: %w", err)
+	}
+	if _, err := part.Write(data); err != nil {
+		return nil, fmt.Errorf("telegrambot: write sticker data: %w", err)
+	}
+	if err := writer.WriteField("chat_id", chatID); err != nil {
+		return nil, fmt.Errorf("telegrambot: write chat_id: %w", err)
+	}
+	if strings.TrimSpace(messageThreadID) != "" {
+		if err := writer.WriteField("message_thread_id", messageThreadID); err != nil {
+			return nil, fmt.Errorf("telegrambot: write message_thread_id: %w", err)
+		}
+	}
+	if strings.TrimSpace(replyToMessageID) != "" {
+		if err := writer.WriteField("reply_to_message_id", replyToMessageID); err != nil {
+			return nil, fmt.Errorf("telegrambot: write reply_to_message_id: %w", err)
+		}
+	}
+	if err := writer.Close(); err != nil {
+		return nil, fmt.Errorf("telegrambot: close multipart writer: %w", err)
+	}
+
+	endpoint := fmt.Sprintf("%s/bot%s/%s", c.baseURL, url.PathEscape(token), "sendSticker")
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, body)
+	if err != nil {
+		return nil, fmt.Errorf("telegrambot: new request sendSticker: %s", redactToken(err.Error(), token))
+	}
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("telegrambot: sendSticker request failed: %s", redactToken(err.Error(), token))
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		payload, _ := io.ReadAll(io.LimitReader(resp.Body, 8192))
+		return nil, fmt.Errorf("telegrambot: sendSticker returned %d: %s", resp.StatusCode, redactToken(string(payload), token))
+	}
+	var envelope apiEnvelope
+	if err := json.NewDecoder(resp.Body).Decode(&envelope); err != nil {
+		return nil, fmt.Errorf("telegrambot: decode sendSticker response: %w", err)
+	}
+	if !envelope.OK {
+		return nil, fmt.Errorf("telegrambot: sendSticker failed: %s", envelope.Description)
+	}
+	var result SentMessage
+	if err := json.Unmarshal(envelope.Result, &result); err != nil {
+		return nil, fmt.Errorf("telegrambot: unmarshal sendSticker result: %w", err)
+	}
+	return &result, nil
+}
+
 func (c *Client) callJSON(ctx context.Context, token string, method string, body any, out any) error {
 	if strings.TrimSpace(token) == "" {
 		return fmt.Errorf("telegrambot: token must not be empty")

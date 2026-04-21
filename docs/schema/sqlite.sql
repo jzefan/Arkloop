@@ -23,6 +23,14 @@ CREATE UNIQUE INDEX asr_credentials_user_name_idx
 CREATE INDEX idx_account_entitlement_overrides_account_id
     ON account_entitlement_overrides(account_id);
 
+CREATE INDEX idx_account_stickers_hot
+    ON account_stickers(account_id, usage_count DESC, last_used_at DESC)
+    WHERE is_registered = 1;
+
+CREATE INDEX idx_account_stickers_pending
+    ON account_stickers(account_id, updated_at DESC)
+    WHERE is_registered = 0;
+
 CREATE INDEX idx_browser_state_registries_org_id ON browser_state_registries(account_id);
 
 CREATE INDEX idx_channel_dm_threads_channel_id ON channel_dm_threads(channel_id);
@@ -70,6 +78,18 @@ CREATE INDEX idx_desktop_memory_entries_scope
 CREATE INDEX idx_desktop_memory_entries_user
     ON desktop_memory_entries (account_id, user_id, agent_id);
 
+CREATE INDEX idx_external_thread_links_provider_external
+    ON external_thread_links (provider, external_thread_id);
+
+CREATE INDEX idx_outbox_cleanup ON channel_delivery_outbox (status, updated_at)
+    WHERE status IN ('sent', 'dead');
+
+CREATE INDEX idx_outbox_drain ON channel_delivery_outbox (status, next_retry_at)
+    WHERE status = 'pending';
+
+CREATE UNIQUE INDEX idx_outbox_run ON channel_delivery_outbox (run_id, kind)
+    WHERE status != 'dead';
+
 CREATE INDEX idx_plan_entitlements_plan_id ON plan_entitlements(plan_id);
 
 CREATE INDEX idx_platform_skill_overrides_profile
@@ -87,6 +107,12 @@ CREATE INDEX idx_projects_org_id ON projects(account_id);
 
 CREATE INDEX idx_projects_team_id ON projects(team_id) WHERE team_id IS NOT NULL;
 
+CREATE INDEX idx_replacement_supersession_edges_replacement
+    ON replacement_supersession_edges (replacement_id, created_at DESC);
+
+CREATE INDEX idx_replacement_supersession_edges_thread
+    ON replacement_supersession_edges (thread_id, created_at DESC);
+
 CREATE UNIQUE INDEX idx_shell_sessions_org_profile_binding_type_unique
     ON shell_sessions (account_id, profile_ref, session_type, default_binding_key)
     WHERE default_binding_key IS NOT NULL AND state <> 'closed';
@@ -98,6 +124,9 @@ CREATE INDEX idx_shell_sessions_org_run_type ON shell_sessions(account_id, run_i
 CREATE INDEX idx_shell_sessions_org_thread ON shell_sessions(account_id, thread_id);
 
 CREATE INDEX idx_shell_sessions_org_workspace ON shell_sessions(account_id, workspace_ref);
+
+CREATE INDEX idx_sticker_description_cache_timestamp
+    ON sticker_description_cache(timestamp DESC);
 
 CREATE INDEX idx_sub_agent_context_snapshots_updated_at
     ON sub_agent_context_snapshots(updated_at);
@@ -115,15 +144,44 @@ CREATE INDEX idx_sub_agents_account_id ON sub_agents(account_id);
 
 CREATE INDEX idx_sub_agents_current_run_id ON sub_agents(current_run_id) WHERE current_run_id IS NOT NULL;
 
-CREATE INDEX idx_sub_agents_parent_run_id ON sub_agents(parent_run_id);
+CREATE INDEX idx_sub_agents_owner_thread_id ON sub_agents(owner_thread_id);
 
-CREATE INDEX idx_sub_agents_root_run_id ON sub_agents(root_run_id);
+CREATE INDEX idx_sub_agents_parent_sub_agent_id ON sub_agents(parent_sub_agent_id) WHERE parent_sub_agent_id IS NOT NULL;
 
 CREATE INDEX idx_sub_agents_status ON sub_agents(status);
 
 CREATE INDEX idx_team_memberships_user_id ON team_memberships(user_id);
 
 CREATE INDEX idx_teams_org_id ON teams(org_id);
+
+CREATE INDEX idx_thread_context_atoms_thread_atom_seq
+    ON thread_context_atoms (thread_id, atom_seq);
+
+CREATE INDEX idx_thread_context_chunks_thread_atom_chunk
+    ON thread_context_chunks (thread_id, atom_id, chunk_seq);
+
+CREATE INDEX idx_thread_context_chunks_thread_context_seq
+    ON thread_context_chunks (thread_id, context_seq);
+
+CREATE INDEX idx_thread_context_replacements_thread_active
+    ON thread_context_replacements(thread_id, start_thread_seq, end_thread_seq, layer DESC, created_at DESC)
+    WHERE superseded_at IS NULL;
+
+CREATE INDEX idx_thread_context_replacements_thread_active_context
+    ON thread_context_replacements (
+        thread_id,
+        start_context_seq,
+        end_context_seq,
+        layer DESC,
+        created_at DESC
+    )
+    WHERE superseded_at IS NULL;
+
+CREATE INDEX idx_thread_context_replacements_thread_created
+    ON thread_context_replacements(thread_id, created_at DESC);
+
+CREATE INDEX idx_thread_subagent_callbacks_thread_pending
+    ON thread_subagent_callbacks(thread_id, created_at);
 
 CREATE INDEX idx_threads_parent_thread_id ON threads(parent_thread_id) WHERE parent_thread_id IS NOT NULL;
 
@@ -149,8 +207,6 @@ CREATE INDEX ix_jobs_status_available_at ON jobs(status, available_at);
 
 CREATE INDEX ix_jobs_status_leased_until ON jobs(status, leased_until);
 
-CREATE UNIQUE INDEX ux_jobs_run_execute_active_run ON jobs (json_extract(payload_json, '$.run_id')) WHERE job_type = 'run.execute' AND status IN ('queued', 'leased');
-
 CREATE INDEX ix_llm_credentials_account_id ON llm_credentials(account_id);
 
 CREATE INDEX ix_llm_routes_account_id ON llm_routes(account_id);
@@ -161,13 +217,13 @@ CREATE INDEX ix_llm_routes_project_id
     ON llm_routes(project_id)
     WHERE project_id IS NOT NULL;
 
+CREATE INDEX ix_messages_account_id_thread_id_thread_seq ON messages(account_id, thread_id, thread_seq);
+
 CREATE INDEX ix_messages_org_id_thread_id_created_at ON messages(account_id, thread_id, created_at);
 
-CREATE INDEX ix_messages_thread_compacted
-    ON messages (thread_id, compacted)
-    WHERE deleted_at IS NULL AND compacted = 1;
-
 CREATE INDEX ix_messages_thread_id ON messages(thread_id);
+
+CREATE INDEX ix_messages_thread_id_thread_seq ON messages(thread_id, thread_seq);
 
 CREATE INDEX ix_org_memberships_org_id ON "account_memberships"(account_id);
 
@@ -180,9 +236,6 @@ CREATE INDEX ix_run_events_type ON run_events(type);
 CREATE INDEX ix_runs_org_id ON runs(account_id);
 
 CREATE INDEX ix_runs_thread_id ON runs(thread_id);
-
-CREATE INDEX ix_thread_compaction_snapshots_thread_created_at
-    ON thread_compaction_snapshots(thread_id, created_at DESC);
 
 CREATE INDEX ix_threads_created_by_user_id ON threads(created_by_user_id);
 
@@ -208,6 +261,14 @@ CREATE UNIQUE INDEX llm_credentials_user_name_idx
 
 CREATE INDEX refresh_tokens_user_id_idx ON refresh_tokens(user_id);
 
+CREATE INDEX run_pipeline_events_created_at_idx ON run_pipeline_events(created_at);
+
+CREATE INDEX run_pipeline_events_run_id_idx ON run_pipeline_events(run_id);
+
+CREATE INDEX scheduled_jobs_account_id_idx ON scheduled_jobs (account_id);
+
+CREATE UNIQUE INDEX scheduled_triggers_job_id_uniq ON scheduled_triggers (job_id) WHERE job_id IS NOT NULL;
+
 CREATE INDEX scheduled_triggers_next_fire_at_idx
     ON scheduled_triggers (next_fire_at);
 
@@ -230,13 +291,14 @@ CREATE UNIQUE INDEX tool_provider_configs_user_provider_idx
     ON tool_provider_configs (owner_user_id, provider_name)
     WHERE owner_kind = 'user' AND owner_user_id IS NOT NULL;
 
+CREATE UNIQUE INDEX uq_messages_thread_id_thread_seq ON messages(thread_id, thread_seq);
+
 CREATE UNIQUE INDEX uq_platform_skills
     ON skill_packages (skill_key, version)
     WHERE account_id IS NULL;
 
-CREATE UNIQUE INDEX uq_thread_compaction_snapshots_active_thread
-    ON thread_compaction_snapshots(thread_id)
-    WHERE is_active = 1;
+CREATE UNIQUE INDEX uq_thread_context_replacements_account_thread_id
+    ON thread_context_replacements (account_id, thread_id, id);
 
 CREATE UNIQUE INDEX uq_user_credentials_login ON user_credentials(login);
 
@@ -248,6 +310,10 @@ CREATE UNIQUE INDEX uq_users_email ON users (email) WHERE deleted_at IS NULL;
 
 CREATE UNIQUE INDEX usage_records_run_id_usage_type_uidx
   ON usage_records (run_id, usage_type);
+
+CREATE UNIQUE INDEX ux_jobs_run_execute_active_run
+    ON jobs (json_extract(payload_json, '$.run_id'))
+    WHERE job_type = 'run.execute' AND status IN ('queued', 'leased');
 
 CREATE UNIQUE INDEX ux_llm_routes_credential_default
     ON llm_routes (credential_id)
@@ -283,6 +349,25 @@ CREATE TABLE "account_memberships" (
     role       TEXT NOT NULL DEFAULT 'member',
     created_at TEXT NOT NULL DEFAULT (datetime('now')), role_id TEXT,
     UNIQUE (account_id, user_id)
+);
+
+CREATE TABLE account_stickers (
+    id TEXT PRIMARY KEY,
+    account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+    content_hash TEXT NOT NULL,
+    storage_key TEXT NOT NULL,
+    preview_storage_key TEXT NOT NULL DEFAULT '',
+    file_size INTEGER NOT NULL DEFAULT 0,
+    mime_type TEXT NOT NULL DEFAULT 'application/octet-stream',
+    is_animated INTEGER NOT NULL DEFAULT 0,
+    short_tags TEXT NOT NULL DEFAULT '',
+    long_desc TEXT NOT NULL DEFAULT '',
+    usage_count INTEGER NOT NULL DEFAULT 0,
+    last_used_at TEXT,
+    is_registered INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE (account_id, content_hash)
 );
 
 CREATE TABLE "accounts" (
@@ -363,15 +448,33 @@ CREATE TABLE browser_state_registries (
     CHECK ((lease_holder_id IS NULL AND lease_until IS NULL) OR (lease_holder_id IS NOT NULL AND lease_until IS NOT NULL))
 );
 
+CREATE TABLE channel_delivery_outbox (
+    id              TEXT PRIMARY KEY,
+    run_id          TEXT NOT NULL,
+    thread_id       TEXT,
+    channel_id      TEXT NOT NULL,
+    channel_type    TEXT NOT NULL,
+    kind            TEXT NOT NULL DEFAULT 'message',
+    status          TEXT NOT NULL DEFAULT 'pending',
+    payload_json    TEXT NOT NULL DEFAULT '{}',
+    segments_sent   INTEGER NOT NULL DEFAULT 0,
+    attempts        INTEGER NOT NULL DEFAULT 0,
+    last_error      TEXT,
+    next_retry_at   TEXT NOT NULL,
+    created_at      TEXT NOT NULL,
+    updated_at      TEXT NOT NULL
+);
+
 CREATE TABLE channel_dm_threads (
     id                  TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(4))) || '-' || lower(hex(randomblob(2))) || '-4' || substr(lower(hex(randomblob(2))),2) || '-' || substr('89ab',abs(random()) % 4 + 1, 1) || substr(lower(hex(randomblob(2))),2) || '-' || lower(hex(randomblob(6)))),
     channel_id          TEXT NOT NULL REFERENCES channels(id) ON DELETE CASCADE,
     channel_identity_id TEXT NOT NULL REFERENCES channel_identities(id) ON DELETE CASCADE,
     persona_id          TEXT NOT NULL REFERENCES personas(id) ON DELETE CASCADE,
+    platform_thread_id  TEXT NOT NULL DEFAULT '',
     thread_id           TEXT NOT NULL REFERENCES threads(id) ON DELETE CASCADE,
     created_at          TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at          TEXT NOT NULL DEFAULT (datetime('now')),
-    UNIQUE (channel_id, channel_identity_id, persona_id),
+    UNIQUE (channel_id, channel_identity_id, persona_id, platform_thread_id),
     UNIQUE (thread_id)
 );
 
@@ -396,7 +499,7 @@ CREATE TABLE channel_identities (
     avatar_url          TEXT,
     metadata            TEXT NOT NULL DEFAULT '{}',
     created_at          TEXT NOT NULL DEFAULT (datetime('now')),
-    updated_at          TEXT NOT NULL DEFAULT (datetime('now')), heartbeat_enabled INTEGER NOT NULL DEFAULT 0, heartbeat_interval_minutes INTEGER NOT NULL DEFAULT 30, heartbeat_model TEXT NOT NULL DEFAULT '',
+    updated_at          TEXT NOT NULL DEFAULT (datetime('now')), heartbeat_enabled INTEGER NOT NULL DEFAULT 0, heartbeat_interval_minutes INTEGER NOT NULL DEFAULT 30, heartbeat_model TEXT NOT NULL DEFAULT '', preferred_model TEXT NOT NULL DEFAULT '', reasoning_mode TEXT NOT NULL DEFAULT '',
     UNIQUE (channel_type, platform_subject_id)
 );
 
@@ -530,6 +633,16 @@ CREATE TABLE entitlements (
     created_at      TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+CREATE TABLE external_thread_links (
+    account_id TEXT NOT NULL,
+    thread_id TEXT NOT NULL REFERENCES threads(id) ON DELETE CASCADE,
+    provider TEXT NOT NULL,
+    external_thread_id TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (account_id, thread_id, provider)
+);
+
 CREATE TABLE feature_flags (
     id            TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(4))) || '-' || lower(hex(randomblob(2))) || '-4' || substr(lower(hex(randomblob(2))),2) || '-' || substr('89ab',abs(random()) % 4 + 1, 1) || substr(lower(hex(randomblob(2))),2) || '-' || lower(hex(randomblob(6)))),
     key           TEXT NOT NULL UNIQUE,
@@ -631,6 +744,7 @@ CREATE TABLE messages (
     id                 TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(4))) || '-' || lower(hex(randomblob(2))) || '-4' || substr(lower(hex(randomblob(2))),2) || '-' || substr('89ab',abs(random()) % 4 + 1, 1) || substr(lower(hex(randomblob(2))),2) || '-' || lower(hex(randomblob(6)))),
     thread_id          TEXT NOT NULL REFERENCES threads(id) ON DELETE CASCADE,
     account_id         TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+    thread_seq         INTEGER NOT NULL,
     created_by_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
     role               TEXT NOT NULL,
     content            TEXT NOT NULL,
@@ -639,8 +753,7 @@ CREATE TABLE messages (
     hidden             INTEGER NOT NULL DEFAULT 0,
     deleted_at         TEXT,
     token_count        INTEGER,
-    created_at         TEXT NOT NULL DEFAULT (datetime('now')),
-    compacted          INTEGER NOT NULL DEFAULT 0
+    created_at         TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
 CREATE TABLE notification_broadcasts (
@@ -818,6 +931,32 @@ CREATE TABLE refresh_tokens (
     last_used_at TEXT
 );
 
+CREATE TABLE replacement_supersession_edges (
+    id                        TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(4))) || '-' || lower(hex(randomblob(2))) || '-4' || substr(lower(hex(randomblob(2))),2) || '-' || substr('89ab',abs(random()) % 4 + 1, 1) || substr(lower(hex(randomblob(2))),2) || '-' || lower(hex(randomblob(6)))),
+    account_id                TEXT NOT NULL,
+    thread_id                 TEXT NOT NULL,
+    replacement_id            TEXT NOT NULL,
+    superseded_replacement_id TEXT NULL,
+    superseded_chunk_id       TEXT NULL,
+    created_at                TEXT NOT NULL DEFAULT (datetime('now')),
+    CHECK (
+        (superseded_replacement_id IS NOT NULL AND superseded_chunk_id IS NULL) OR
+        (superseded_replacement_id IS NULL AND superseded_chunk_id IS NOT NULL)
+    ),
+    CHECK (superseded_replacement_id IS NULL OR superseded_replacement_id <> replacement_id),
+    FOREIGN KEY (account_id) REFERENCES accounts(id) ON DELETE CASCADE,
+    FOREIGN KEY (thread_id) REFERENCES threads(id) ON DELETE CASCADE,
+    FOREIGN KEY (account_id, thread_id, replacement_id)
+        REFERENCES thread_context_replacements(account_id, thread_id, id)
+        ON DELETE CASCADE,
+    FOREIGN KEY (account_id, thread_id, superseded_replacement_id)
+        REFERENCES thread_context_replacements(account_id, thread_id, id)
+        ON DELETE CASCADE,
+    FOREIGN KEY (account_id, thread_id, superseded_chunk_id)
+        REFERENCES thread_context_chunks(account_id, thread_id, id)
+        ON DELETE CASCADE
+);
+
 CREATE TABLE run_events (
     event_id    TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(4))) || '-' || lower(hex(randomblob(2))) || '-4' || substr(lower(hex(randomblob(2))),2) || '-' || substr('89ab',abs(random()) % 4 + 1, 1) || substr(lower(hex(randomblob(2))),2) || '-' || lower(hex(randomblob(6)))),
     run_id      TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
@@ -828,6 +967,17 @@ CREATE TABLE run_events (
     tool_name   TEXT,
     error_class TEXT,
     UNIQUE (run_id, seq)
+);
+
+CREATE TABLE run_pipeline_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
+    account_id TEXT NOT NULL,
+    middleware TEXT NOT NULL,
+    event_name TEXT NOT NULL,
+    seq INTEGER NOT NULL,
+    fields_json TEXT NOT NULL DEFAULT '{}',
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 );
 
 CREATE TABLE runs (
@@ -854,6 +1004,29 @@ CREATE TABLE runs (
     created_at          TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+CREATE TABLE scheduled_jobs (
+    id                  TEXT PRIMARY KEY,
+    account_id          TEXT NOT NULL,
+    name                TEXT NOT NULL DEFAULT '',
+    description         TEXT NOT NULL DEFAULT '',
+    persona_key         TEXT NOT NULL DEFAULT '',
+    prompt              TEXT NOT NULL DEFAULT '',
+    model               TEXT NOT NULL DEFAULT '',
+    workspace_ref       TEXT NOT NULL DEFAULT '',
+    work_dir            TEXT NOT NULL DEFAULT '',
+    thread_id           TEXT,
+    schedule_kind       TEXT NOT NULL DEFAULT 'interval',
+    interval_min        INTEGER,
+    daily_time          TEXT NOT NULL DEFAULT '',
+    monthly_day         INTEGER,
+    monthly_time        TEXT NOT NULL DEFAULT '',
+    timezone            TEXT NOT NULL DEFAULT 'UTC',
+    enabled             INTEGER NOT NULL DEFAULT 1,
+    created_by_user_id  TEXT,
+    created_at          TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at          TEXT NOT NULL DEFAULT (datetime('now'))
+, weekly_day INTEGER, fire_at DATETIME, cron_expr TEXT NOT NULL DEFAULT '', delete_after_run INTEGER NOT NULL DEFAULT 0, thinking INTEGER NOT NULL DEFAULT 0, timeout_seconds INTEGER NOT NULL DEFAULT 0, light_context INTEGER NOT NULL DEFAULT 0, tools_allow TEXT NOT NULL DEFAULT '');
+
 CREATE TABLE "scheduled_triggers" (
     id                    TEXT PRIMARY KEY,
     channel_id            TEXT NOT NULL,
@@ -864,7 +1037,7 @@ CREATE TABLE "scheduled_triggers" (
     interval_min          INTEGER NOT NULL DEFAULT 30,
     next_fire_at          TEXT NOT NULL,
     created_at            TEXT NOT NULL,
-    updated_at            TEXT NOT NULL,
+    updated_at            TEXT NOT NULL, trigger_kind TEXT NOT NULL DEFAULT 'heartbeat', job_id TEXT,
     UNIQUE (channel_id, channel_identity_id)
 );
 
@@ -951,6 +1124,13 @@ CREATE TABLE smtp_providers (
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+CREATE TABLE sticker_description_cache (
+    content_hash TEXT PRIMARY KEY,
+    description TEXT NOT NULL DEFAULT '',
+    emotion_tags TEXT NOT NULL DEFAULT '',
+    timestamp TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 CREATE TABLE sub_agent_context_snapshots (
     sub_agent_id  TEXT PRIMARY KEY REFERENCES sub_agents(id) ON DELETE CASCADE,
     snapshot_json TEXT NOT NULL,
@@ -983,10 +1163,10 @@ CREATE TABLE sub_agent_pending_inputs (
 CREATE TABLE sub_agents (
     id                    TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(4))) || '-' || lower(hex(randomblob(2))) || '-4' || substr(lower(hex(randomblob(2))),2) || '-' || substr('89ab',abs(random()) % 4 + 1, 1) || substr(lower(hex(randomblob(2))),2) || '-' || lower(hex(randomblob(6)))),
     account_id            TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
-    parent_run_id         TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
-    parent_thread_id      TEXT NOT NULL REFERENCES threads(id) ON DELETE CASCADE,
-    root_run_id           TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
-    root_thread_id        TEXT NOT NULL REFERENCES threads(id) ON DELETE CASCADE,
+    owner_thread_id       TEXT NOT NULL REFERENCES threads(id) ON DELETE CASCADE,
+    agent_thread_id       TEXT NOT NULL REFERENCES threads(id) ON DELETE CASCADE,
+    origin_run_id         TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
+    parent_sub_agent_id   TEXT REFERENCES sub_agents(id) ON DELETE SET NULL,
     depth                 INTEGER NOT NULL CHECK (depth >= 0),
     role                  TEXT,
     persona_id            TEXT,
@@ -1041,15 +1221,58 @@ CREATE TABLE teams (
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
-CREATE TABLE thread_compaction_snapshots (
-    id                     TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(4))) || '-' || lower(hex(randomblob(2))) || '-4' || substr(lower(hex(randomblob(2))),2) || '-' || substr('89ab',abs(random()) % 4 + 1, 1) || substr(lower(hex(randomblob(2))),2) || '-' || lower(hex(randomblob(6)))),
-    account_id             TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
-    thread_id              TEXT NOT NULL REFERENCES threads(id) ON DELETE CASCADE,
-    summary_text           TEXT NOT NULL,
-    metadata_json          TEXT NOT NULL DEFAULT '{}',
-    supersedes_snapshot_id TEXT REFERENCES thread_compaction_snapshots(id) ON DELETE SET NULL,
-    is_active              INTEGER NOT NULL DEFAULT 1 CHECK (is_active IN (0, 1)),
-    created_at             TEXT NOT NULL DEFAULT (datetime('now'))
+CREATE TABLE thread_context_atoms (
+    id                       TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(4))) || '-' || lower(hex(randomblob(2))) || '-4' || substr(lower(hex(randomblob(2))),2) || '-' || substr('89ab',abs(random()) % 4 + 1, 1) || substr(lower(hex(randomblob(2))),2) || '-' || lower(hex(randomblob(6)))),
+    account_id               TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+    thread_id                TEXT NOT NULL REFERENCES threads(id) ON DELETE CASCADE,
+    atom_seq                 INTEGER NOT NULL,
+    atom_kind                TEXT NOT NULL,
+    role                     TEXT NOT NULL,
+    source_message_start_seq INTEGER NOT NULL,
+    source_message_end_seq   INTEGER NOT NULL,
+    payload_text             TEXT NOT NULL DEFAULT '',
+    payload_json             TEXT NOT NULL DEFAULT '{}',
+    metadata_json            TEXT NOT NULL DEFAULT '{}',
+    created_at               TEXT NOT NULL DEFAULT (datetime('now')),
+    CHECK (source_message_start_seq <= source_message_end_seq),
+    CHECK (atom_kind IN ('user_text_atom', 'assistant_text_atom', 'tool_episode_atom')),
+    UNIQUE (thread_id, atom_seq),
+    UNIQUE (account_id, thread_id, id)
+);
+
+CREATE TABLE thread_context_chunks (
+    id            TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(4))) || '-' || lower(hex(randomblob(2))) || '-4' || substr(lower(hex(randomblob(2))),2) || '-' || substr('89ab',abs(random()) % 4 + 1, 1) || substr(lower(hex(randomblob(2))),2) || '-' || lower(hex(randomblob(6)))),
+    account_id    TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+    thread_id     TEXT NOT NULL REFERENCES threads(id) ON DELETE CASCADE,
+    atom_id       TEXT NOT NULL,
+    chunk_seq     INTEGER NOT NULL,
+    context_seq   INTEGER NOT NULL,
+    chunk_kind    TEXT NOT NULL DEFAULT 'payload',
+    payload_text  TEXT NOT NULL DEFAULT '',
+    payload_json  TEXT NOT NULL DEFAULT '{}',
+    metadata_json TEXT NOT NULL DEFAULT '{}',
+    created_at    TEXT NOT NULL DEFAULT (datetime('now')),
+    CHECK (chunk_seq > 0 AND context_seq > 0),
+    UNIQUE (thread_id, context_seq),
+    UNIQUE (atom_id, chunk_seq),
+    UNIQUE (account_id, thread_id, id),
+    FOREIGN KEY (account_id, thread_id, atom_id)
+        REFERENCES thread_context_atoms(account_id, thread_id, id)
+        ON DELETE CASCADE
+);
+
+CREATE TABLE thread_context_replacements (
+    id               TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(4))) || '-' || lower(hex(randomblob(2))) || '-4' || substr(lower(hex(randomblob(2))),2) || '-' || substr('89ab',abs(random()) % 4 + 1, 1) || substr(lower(hex(randomblob(2))),2) || '-' || lower(hex(randomblob(6)))),
+    account_id       TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+    thread_id        TEXT NOT NULL REFERENCES threads(id) ON DELETE CASCADE,
+    start_thread_seq INTEGER NOT NULL,
+    end_thread_seq   INTEGER NOT NULL,
+    summary_text     TEXT NOT NULL,
+    layer            INTEGER NOT NULL DEFAULT 1,
+    metadata_json    TEXT NOT NULL DEFAULT '{}',
+    superseded_at    TEXT NULL,
+    created_at       TEXT NOT NULL DEFAULT (datetime('now')), start_context_seq INTEGER, end_context_seq INTEGER,
+    CHECK (start_thread_seq <= end_thread_seq)
 );
 
 CREATE TABLE thread_reports (
@@ -1076,6 +1299,19 @@ CREATE TABLE thread_stars (
     UNIQUE(thread_id, user_id)
 );
 
+CREATE TABLE thread_subagent_callbacks (
+    id                 TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(4))) || '-' || lower(hex(randomblob(2))) || '-4' || substr(lower(hex(randomblob(2))),2) || '-' || substr('89ab',abs(random()) % 4 + 1, 1) || substr(lower(hex(randomblob(2))),2) || '-' || lower(hex(randomblob(6)))),
+    account_id         TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+    thread_id          TEXT NOT NULL REFERENCES threads(id) ON DELETE CASCADE,
+    sub_agent_id       TEXT NOT NULL REFERENCES sub_agents(id) ON DELETE CASCADE,
+    source_run_id      TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
+    status             TEXT NOT NULL,
+    payload_json       TEXT NOT NULL DEFAULT '{}',
+    created_at         TEXT NOT NULL DEFAULT (datetime('now')),
+    consumed_at        TEXT,
+    consumed_by_run_id TEXT REFERENCES runs(id) ON DELETE SET NULL
+);
+
 CREATE TABLE "threads" (
     id                       TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(4))) || '-' || lower(hex(randomblob(2))) || '-4' || substr(lower(hex(randomblob(2))),2) || '-' || substr('89ab',abs(random()) % 4 + 1, 1) || substr(lower(hex(randomblob(2))),2) || '-' || lower(hex(randomblob(6)))),
     account_id               TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
@@ -1089,7 +1325,7 @@ CREATE TABLE "threads" (
     branched_from_message_id TEXT,
     title_locked             INTEGER NOT NULL DEFAULT 0,
     mode                     TEXT NOT NULL DEFAULT 'chat' CHECK (mode IN ('chat', 'work')),
-    created_at               TEXT NOT NULL DEFAULT (datetime('now')),
+    created_at               TEXT NOT NULL DEFAULT (datetime('now')), next_message_seq INTEGER NOT NULL DEFAULT 1,
     UNIQUE (id, account_id)
 );
 
@@ -1137,6 +1373,16 @@ CREATE TABLE user_credentials (
     created_at      TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+CREATE TABLE user_impression_snapshots (
+    account_id       TEXT NOT NULL,
+    user_id          TEXT NOT NULL,
+    agent_id         TEXT NOT NULL DEFAULT 'default',
+    impression       TEXT NOT NULL DEFAULT '',
+    impression_score INTEGER NOT NULL DEFAULT 0,
+    updated_at       TEXT NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (account_id, user_id, agent_id)
+);
+
 CREATE TABLE user_memory_snapshots (
     account_id       TEXT NOT NULL,
     user_id      TEXT NOT NULL,
@@ -1155,19 +1401,6 @@ CREATE TABLE user_notebook_snapshots (
     updated_at     TEXT NOT NULL DEFAULT (datetime('now')),
     PRIMARY KEY (account_id, user_id, agent_id)
 );
-
-CREATE TABLE external_thread_links (
-    account_id TEXT NOT NULL,
-    thread_id TEXT NOT NULL REFERENCES threads(id) ON DELETE CASCADE,
-    provider TEXT NOT NULL,
-    external_thread_id TEXT NOT NULL,
-    created_at TEXT NOT NULL DEFAULT (datetime('now')),
-    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
-    PRIMARY KEY (account_id, thread_id, provider)
-);
-
-CREATE INDEX idx_external_thread_links_provider_external
-    ON external_thread_links (provider, external_thread_id);
 
 CREATE TABLE users (
     id                TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(4))) || '-' || lower(hex(randomblob(2))) || '-4' || substr(lower(hex(randomblob(2))),2) || '-' || substr('89ab',abs(random()) % 4 + 1, 1) || substr(lower(hex(randomblob(2))),2) || '-' || lower(hex(randomblob(6)))),
@@ -1250,3 +1483,4 @@ CREATE TABLE workspace_skill_enablements (
     updated_at         TEXT NOT NULL DEFAULT (datetime('now')),
     PRIMARY KEY (workspace_ref, skill_key)
 );
+

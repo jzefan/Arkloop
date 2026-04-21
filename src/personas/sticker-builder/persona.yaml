@@ -1,0 +1,15 @@
+id: sticker-builder
+version: "1"
+title: Sticker Builder
+description: 系统级 Telegram sticker 描述生成器，读取贴纸预览并产出描述与短标签。
+user_selectable: false
+is_system: true
+is_builtin: true
+soul_file: prompt.md
+budgets:
+    reasoning_iterations: 12
+    max_output_tokens: 512
+    temperature: 0.2
+reasoning_mode: auto
+prompt_cache_control: system_prompt
+executor_type: agent.simple

@@ -104,7 +104,7 @@ func ingestTelegramMediaAttachments(
 	accountID, threadID uuid.UUID,
 	userID *uuid.UUID,
 	items []telegramInboundAttachment,
-) (ingested []messagecontent.Part, remaining []telegramInboundAttachment, err error) {
+) (ingested []messagecontent.Part, remaining []telegramInboundAttachment, stickers []telegramCollectedSticker, err error) {
 	for _, att := range items {
 		if !shouldIngestTelegramAttachment(att) {
 			remaining = append(remaining, att)
@@ -117,13 +117,18 @@ func ingestTelegramMediaAttachments(
 		}
 		tf, gerr := client.GetFile(ctx, token, fileID)
 		if gerr != nil {
-			return nil, nil, gerr
+			return nil, nil, nil, gerr
 		}
 		data, sniffed, derr := client.DownloadBotFile(ctx, token, tf.FilePath, conversationapi.MaxImageAttachmentBytes)
 		if derr != nil {
-			return nil, nil, derr
+			return nil, nil, nil, derr
 		}
-		declared := telegramAttachmentDeclaredMime(att, sniffed)
+		originalData := append([]byte(nil), data...)
+		originalMime := telegramAttachmentDeclaredMime(att, sniffed)
+		if strings.TrimSpace(att.Type) == "sticker" {
+			originalMime = stickerMimeFromPath(tf.FilePath, originalMime)
+		}
+		declared := originalMime
 		if strings.TrimSpace(att.Type) == "animation" || strings.TrimSpace(att.Type) == "sticker" {
 			// thumbnail 总是 JPEG
 			declared = sniffed
@@ -140,23 +145,23 @@ func ingestTelegramMediaAttachments(
 				// sticker 原始文件 MIME 不被支持 -> 回退 thumbnail
 				thumbTF, tgerr := client.GetFile(ctx, token, strings.TrimSpace(att.ThumbnailFileID))
 				if tgerr != nil {
-					return nil, nil, tgerr
+					return nil, nil, nil, tgerr
 				}
 				data, sniffed, derr = client.DownloadBotFile(ctx, token, thumbTF.FilePath, conversationapi.MaxImageAttachmentBytes)
 				if derr != nil {
-					return nil, nil, derr
+					return nil, nil, nil, derr
 				}
 				declared = sniffed
 				displayFilename = defaultFilenameForTelegramAttachment(att, declared)
 				payload, perr = conversationapi.BuildAttachmentUploadPayload(displayFilename, declared, data)
 				if perr != nil {
-					return nil, nil, perr
+					return nil, nil, nil, perr
 				}
 			} else if strings.TrimSpace(att.Type) == "sticker" || strings.TrimSpace(att.Type) == "animation" {
 				remaining = append(remaining, att)
 				continue
 			} else {
-				return nil, nil, perr
+				return nil, nil, nil, perr
 			}
 		}
 		keySuffix := conversationapi.SanitizeAttachmentKeyName(displayFilename)
@@ -173,7 +178,7 @@ func ingestTelegramMediaAttachments(
 			&threadIDText,
 		)
 		if perr := store.PutObject(ctx, key, payload.Bytes, objectstore.PutOptions{ContentType: payload.MimeType, Metadata: meta}); perr != nil {
-			return nil, nil, perr
+			return nil, nil, nil, perr
 		}
 		ref := &messagecontent.AttachmentRef{
 			Key:      key,
@@ -191,10 +196,15 @@ func ingestTelegramMediaAttachments(
 				ExtractedText: payload.ExtractedText,
 			})
 		default:
-			return nil, nil, fmt.Errorf("telegram inbound: unexpected attachment kind %q", payload.Kind)
+			return nil, nil, nil, fmt.Errorf("telegram inbound: unexpected attachment kind %q", payload.Kind)
+		}
+		if strings.TrimSpace(att.Type) == "sticker" {
+			if sticker, ok := collectTelegramSticker(ctx, client, store, token, accountID, threadID, userID, att, tf.FilePath, originalData, originalMime); ok {
+				stickers = append(stickers, sticker)
+			}
 		}
 	}
-	return ingested, remaining, nil
+	return ingested, remaining, stickers, nil
 }
 
 func extForImageMIME(mime string) string {
@@ -222,14 +232,41 @@ func buildTelegramStructuredMessageWithMedia(
 	incoming telegramIncomingMessage,
 	timeCtx inboundTimeContext,
 ) (string, json.RawMessage, json.RawMessage, error) {
+	projection, raw, metadataJSON, _, err := buildTelegramStructuredMessageWithMediaAndStickers(
+		ctx,
+		client,
+		store,
+		token,
+		accountID,
+		threadID,
+		userID,
+		identity,
+		incoming,
+		timeCtx,
+	)
+	return projection, raw, metadataJSON, err
+}
+
+func buildTelegramStructuredMessageWithMediaAndStickers(
+	ctx context.Context,
+	client *telegrambot.Client,
+	store MessageAttachmentPutStore,
+	token string,
+	accountID, threadID uuid.UUID,
+	userID *uuid.UUID,
+	identity data.ChannelIdentity,
+	incoming telegramIncomingMessage,
+	timeCtx inboundTimeContext,
+) (string, json.RawMessage, json.RawMessage, []telegramCollectedSticker, error) {
 	displayName := telegramInboundDisplayName(identity, incoming)
 	if store == nil || client == nil || strings.TrimSpace(token) == "" {
-		return buildTelegramStructuredMessage(identity, incoming, timeCtx)
+		projection, raw, metadataJSON, err := buildTelegramStructuredMessage(identity, incoming, timeCtx)
+		return projection, raw, metadataJSON, nil, err
 	}
 
-	mediaParts, remaining, err := ingestTelegramMediaAttachments(ctx, client, store, token, accountID, threadID, userID, incoming.MediaAttachments)
+	mediaParts, remaining, stickers, err := ingestTelegramMediaAttachments(ctx, client, store, token, accountID, threadID, userID, incoming.MediaAttachments)
 	if err != nil {
-		return "", nil, nil, err
+		return "", nil, nil, nil, err
 	}
 
 	userPrefix := "[Telegram]"
@@ -247,7 +284,7 @@ func buildTelegramStructuredMessageWithMedia(
 	}
 	userBody = strings.TrimSpace(userBody)
 	if userBody == "" && len(mediaParts) == 0 {
-		return "", nil, nil, fmt.Errorf("telegram inbound message content is empty")
+		return "", nil, nil, nil, fmt.Errorf("telegram inbound message content is empty")
 	}
 
 	envelope := buildTelegramEnvelopeText(identity.ID, incoming, displayName, userBody, timeCtx)
@@ -256,16 +293,16 @@ func buildTelegramStructuredMessageWithMedia(
 
 	content, err := messagecontent.Normalize(parts)
 	if err != nil {
-		return "", nil, nil, err
+		return "", nil, nil, nil, err
 	}
 
 	_, projection, raw, err := conversationapi.FinalizeMessageContent(content)
 	if err != nil {
-		return "", nil, nil, err
+		return "", nil, nil, nil, err
 	}
 	metadataJSON, err := telegramInboundMetadataJSON(identity, incoming, displayName, timeCtx)
 	if err != nil {
-		return "", nil, nil, err
+		return "", nil, nil, nil, err
 	}
-	return projection, raw, metadataJSON, nil
+	return projection, raw, metadataJSON, stickers, nil
 }
