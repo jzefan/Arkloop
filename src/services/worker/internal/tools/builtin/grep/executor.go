@@ -145,7 +145,7 @@ func searchFilesStructured(ctx context.Context, backend fileops.Backend, pattern
 }
 
 func searchWithRipgrep(ctx context.Context, backend fileops.Backend, pattern, searchPath, include string) ([]grepMatch, error) {
-	cmd := fmt.Sprintf("rg -H -n --max-count 1000 %s", shellQuote(pattern))
+	cmd := fmt.Sprintf("rg -H -n -a --max-count 1000 %s", shellQuote(pattern))
 	if include != "" {
 		cmd += fmt.Sprintf(" -g %s", shellQuote(include))
 	}
@@ -179,7 +179,7 @@ func searchWithRipgrep(ctx context.Context, backend fileops.Backend, pattern, se
 }
 
 func searchWithRipgrepRaw(ctx context.Context, backend fileops.Backend, pattern, searchPath, include string, contextLines int) (string, error) {
-	cmd := fmt.Sprintf("rg -H -n --max-count 1000 -C %d %s", contextLines, shellQuote(pattern))
+	cmd := fmt.Sprintf("rg -H -n -a --max-count 1000 -C %d %s", contextLines, shellQuote(pattern))
 	if include != "" {
 		cmd += fmt.Sprintf(" -g %s", shellQuote(include))
 	}
@@ -228,9 +228,6 @@ func searchWithContextFallback(root, pattern, include string, contextLines int) 
 			if _, skip := skipDirs[base]; skip {
 				return filepath.SkipDir
 			}
-			return nil
-		}
-		if info.Size() > 1024*1024 {
 			return nil
 		}
 		rel, relErr := filepath.Rel(root, path)
@@ -387,9 +384,6 @@ func searchWithRegex(root, pattern, include string) ([]grepMatch, bool, error) {
 			if _, skip := skipDirs[base]; skip {
 				return filepath.SkipDir
 			}
-			return nil
-		}
-		if info.Size() > 1024*1024 {
 			return nil
 		}
 		rel, relErr := filepath.Rel(root, path)
