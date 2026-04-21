@@ -12,6 +12,8 @@ export const en: LocaleStrings = {
   recentsEmpty: "No recent chats",
   untitled: "Untitled",
   loading: "Loading...",
+  connectionFailed: "Unable to connect to local server",
+  retryConnection: "Reconnect",
   enterprisePlan: "Early Access",
   nav: {
     account: "Account",

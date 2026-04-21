@@ -12,6 +12,8 @@ export const zh: LocaleStrings = {
   recentsEmpty: "暂无会话记录",
   untitled: "未命名会话",
   loading: "加载中...",
+  connectionFailed: "无法连接到本地服务器",
+  retryConnection: "重新连接",
   enterprisePlan: "Early Access",
   nav: {
     account: "账户",

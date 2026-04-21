@@ -39,6 +39,7 @@ function App() {
   const [accessToken, setAccessToken] = useState<string | null>(null)
   const [authChecked, setAuthChecked] = useState(false)
   const [onboardingDone, setOnboardingDone] = useState<boolean | null>(null)
+  const [sidecarError, setSidecarError] = useState<{ title: string; message: string } | null>(null)
 
   // Desktop: 检查 onboarding 状态
   useEffect(() => {
@@ -56,6 +57,21 @@ function App() {
       .then((s) => setOnboardingDone(s.completed))
       .catch(() => setOnboardingDone(true))
   }, [])
+
+  // Desktop: 检查 sidecar 启动错误
+  useEffect(() => {
+    if (!isDesktop()) return
+    const api = getDesktopApi()
+    if (!api) return
+    api.sidecar.getRuntime().then((runtime) => {
+      if (runtime.lastError) {
+        setSidecarError({
+          title: t.connectionFailed,
+          message: runtime.lastError,
+        })
+      }
+    }).catch(() => {})
+  }, [t.connectionFailed])
 
   useEffect(() => {
     const controller = new AbortController()
@@ -101,7 +117,6 @@ function App() {
       .catch((err) => {
         if (isApiError(err) && (err.status === 401 || err.status === 403)) return
         if (err instanceof Error && err.name === 'AbortError') return
-        console.error('session restore failed', err)
       })
       .finally(() => {
         if (controller.signal.aborted) return
@@ -137,6 +152,34 @@ function App() {
     // config.mode 在 onboarding 中可能已变更，需要 reload 使 preload 重新注入 __ARKLOOP_DESKTOP__
     window.location.reload()
   }, [])
+
+  const handleRetrySidecar = useCallback(async () => {
+    setSidecarError(null)
+    const api = getDesktopApi()
+    if (!api) return
+    try {
+      await api.sidecar.restart()
+      setTimeout(() => {
+        api.sidecar.getRuntime().then((runtime) => {
+          if (runtime.lastError) {
+            setSidecarError({
+              title: t.connectionFailed,
+              message: runtime.lastError,
+            })
+          }
+        }).catch(() => {})
+      }, 2000)
+    } catch (err) {
+      setSidecarError({
+        title: t.connectionFailed,
+        message: err instanceof Error ? err.message : String(err),
+      })
+    }
+  }, [t.connectionFailed])
+
+  if (sidecarError) {
+    return <LoadingPage label={t.loading} error={sidecarError} onRetry={handleRetrySidecar} retryLabel={t.retryConnection} />
+  }
 
   if (onboardingDone === null) {
     if (isDesktop()) return <LoadingPage label={t.loading} />

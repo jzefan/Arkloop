@@ -17,6 +17,8 @@ export interface LocaleStrings {
   recentsEmpty: string;
   untitled: string;
   loading: string;
+  connectionFailed: string;
+  retryConnection: string;
   enterprisePlan: string;
   // settings nav
   nav: {
