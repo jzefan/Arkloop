@@ -12,6 +12,14 @@ from harbor.models.agent.context import AgentContext
 
 
 class ArkloopCliAgent(BaseAgent):
+    def __init__(self, *args, extra_env: dict[str, str] | None = None, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._extra_env = {
+            str(key): str(value)
+            for key, value in (extra_env or {}).items()
+            if value is not None
+        }
+
     @staticmethod
     def name() -> str:
         return "arkloop-cli"
@@ -67,6 +75,7 @@ class ArkloopCliAgent(BaseAgent):
 
         # Host/token 由 CLI 自行从 ~/.arkloop（及 Desktop 写入的 desktop.token 等）解析，不在此注入。
         env = os.environ.copy()
+        env.update(self._extra_env)
         for key in ("ARKLOOP_HOST", "ARKLOOP_TOKEN"):
             env.pop(key, None)
 
@@ -135,7 +144,7 @@ class ArkloopCliAgent(BaseAgent):
         context.metadata = metadata
 
     def _required_env(self, name: str, must_be_file: bool = False) -> str:
-        value = os.environ.get(name, "").strip()
+        value = self._extra_env.get(name, "").strip() or os.environ.get(name, "").strip()
         if not value:
             raise ValueError(f"missing required env var: {name}")
         if must_be_file and not Path(value).is_file():
@@ -145,7 +154,7 @@ class ArkloopCliAgent(BaseAgent):
     def _resolve_model(self) -> str:
         if self.model_name:
             return self.model_name
-        value = os.environ.get("ARKLOOP_MODEL", "").strip()
+        value = self._extra_env.get("ARKLOOP_MODEL", "").strip() or os.environ.get("ARKLOOP_MODEL", "").strip()
         if value:
             return value
         raise ValueError("missing required model: pass --model or set ARKLOOP_MODEL")
