@@ -1,7 +1,9 @@
 package fileops
 
 import (
+	"bufio"
 	"fmt"
+	"os"
 	"strings"
 )
 
@@ -54,6 +56,43 @@ func ReadLines(data []byte, offset, limit int) (content string, totalLines int, 
 		selected[i] = TruncateLine(strings.TrimSuffix(line, "\r"), MaxLineLength)
 	}
 	return strings.Join(selected, "\n"), totalLines, end < totalLines
+}
+
+// ReadLinesFromFile streams a file and extracts only the requested line range.
+// offset is 0-based line index, limit is max lines to return.
+// Returns content, totalLines, truncated, error.
+func ReadLinesFromFile(path string, offset, limit int) (string, int, bool, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return "", 0, false, err
+	}
+	defer f.Close()
+
+	scanner := bufio.NewScanner(f)
+	var contentLines []string
+	totalLines := 0
+	end := offset + limit
+
+	for scanner.Scan() {
+		line := scanner.Text()
+		if totalLines >= offset && totalLines < end {
+			contentLines = append(contentLines, TruncateLine(line, MaxLineLength))
+		}
+		totalLines++
+		if totalLines >= end {
+			// Continue scanning only to count total lines
+			for scanner.Scan() {
+				totalLines++
+			}
+			break
+		}
+	}
+
+	if err := scanner.Err(); err != nil {
+		return "", totalLines, false, err
+	}
+
+	return strings.Join(contentLines, "\n"), totalLines, totalLines > end, nil
 }
 
 // CountDiffLines counts lines added and removed between old and new content.

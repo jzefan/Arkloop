@@ -799,10 +799,6 @@ func (l *Loop) executePendingToolCalls(
 			call := pending[idx]
 			result := l.executeToolCall(ctx, runCtx, call, emitter, yield)
 			results[idx] = pendingToolExecution{Call: call, Result: result}
-			if result.Error != nil {
-				markSkippedToolCalls(results, pending, regularIndexes, idx+1)
-				break
-			}
 		}
 		for _, idx := range regularIndexes {
 			updateContinuationTracking(continuation, results[idx].Call, results[idx].Result)

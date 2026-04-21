@@ -48,17 +48,35 @@ func (e *Executor) Execute(
 	if info.IsDir {
 		return errResult(fmt.Sprintf("path is a directory: %s", filePath), started)
 	}
+
+	var content string
+	var totalLines int
+	var truncated bool
+
 	if info.Size > int64(fileops.MaxReadSize) {
-		return errResult(fmt.Sprintf("file too large (%d bytes, max %d)", info.Size, fileops.MaxReadSize), started)
+		if local, ok := backend.(*fileops.LocalBackend); ok {
+			resolved, err := local.ResolvePath(filePath)
+			if err != nil {
+				return errResult(fmt.Sprintf("resolve path failed: %s", err.Error()), started)
+			}
+			content, totalLines, truncated, err = fileops.ReadLinesFromFile(resolved, offset-1, limit)
+			if err != nil {
+				return errResult(fmt.Sprintf("read failed: %s", err.Error()), started)
+			}
+		} else {
+			data, err := backend.ReadFile(ctx, filePath)
+			if err != nil {
+				return errResult(fmt.Sprintf("read failed: %s", err.Error()), started)
+			}
+			content, totalLines, truncated = fileops.ReadLines(data, offset-1, limit)
+		}
+	} else {
+		data, err := backend.ReadFile(ctx, filePath)
+		if err != nil {
+			return errResult(fmt.Sprintf("read failed: %s", err.Error()), started)
+		}
+		content, totalLines, truncated = fileops.ReadLines(data, offset-1, limit)
 	}
-
-	data, err := backend.ReadFile(ctx, filePath)
-	if err != nil {
-		return errResult(fmt.Sprintf("read failed: %s", err.Error()), started)
-	}
-
-	// offset is 1-based for the user, convert to 0-based index
-	content, totalLines, truncated := fileops.ReadLines(data, offset-1, limit)
 	numbered := fileops.FormatWithLineNumbers(content, offset)
 
 	if e.Tracker != nil {
