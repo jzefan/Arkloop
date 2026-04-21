@@ -18,7 +18,7 @@ func (ChannelDeliveryOutboxRepository) ListPendingForDrain(ctx context.Context, 
 		limit = 10
 	}
 	now := time.Now().UTC()
-	leaseUntil := now.Add(30 * time.Second)
+	leaseUntil := now.Add(OutboxLeaseDuration)
 	rows, err := db.Query(ctx, `
 		UPDATE channel_delivery_outbox
 		   SET next_retry_at = $1,

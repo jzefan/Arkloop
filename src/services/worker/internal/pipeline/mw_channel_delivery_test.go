@@ -17,6 +17,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"arkloop/services/shared/telegrambot"
 	"arkloop/services/worker/internal/data"
@@ -1978,6 +1979,14 @@ func TestChannelDeliveryMiddlewareWritesOutboxAndInlineTrySucceeds(t *testing.T)
 	}
 	if outboxStatus != "sent" {
 		t.Fatalf("expected outbox status sent, got %q", outboxStatus)
+	}
+
+	var createdAt, nextRetryAt time.Time
+	if err := pool.QueryRow(ctx, `SELECT created_at, next_retry_at FROM channel_delivery_outbox WHERE run_id = $1`, runID).Scan(&createdAt, &nextRetryAt); err != nil {
+		t.Fatalf("query outbox lease: %v", err)
+	}
+	if !nextRetryAt.After(createdAt) {
+		t.Fatalf("expected fresh outbox lease to push next_retry_at after created_at, got created_at=%s next_retry_at=%s", createdAt, nextRetryAt)
 	}
 }
 
