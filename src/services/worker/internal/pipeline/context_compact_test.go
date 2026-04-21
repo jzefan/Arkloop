@@ -1685,6 +1685,42 @@ func TestRewriteOversizeRequest_CurrentInputTokenWindowTooLarge(t *testing.T) {
 	}
 }
 
+func TestRewriteOversizeRequest_DoesNotUseAnchoredPressureForCurrentInputCheck(t *testing.T) {
+	rc := &RunContext{
+		ContextCompact: ContextCompactSettings{
+			PersistEnabled:              true,
+			FallbackContextWindowTokens: 30000,
+		},
+		ContextWindowTokens: 30000,
+	}
+	request := llm.Request{
+		Model: "stub",
+		Messages: []llm.Message{
+			{Role: "system", Content: []llm.TextPart{{Text: "sys"}}},
+			{Role: "user", Content: []llm.TextPart{{Text: strings.Repeat("a", 120000)}}},
+			{Role: "user", Content: []llm.TextPart{{Text: strings.Repeat("b", 1000)}}},
+		},
+	}
+	anchor := &ContextCompactPressureAnchor{
+		LastRealPromptTokens:             200000,
+		LastRequestContextEstimateTokens: EstimateRequestContextTokens(rc, request),
+	}
+
+	rewritten, stats, err := RewriteOversizeRequest(context.Background(), rc, request, anchor, testProviderRequestEstimate)
+	if err != nil {
+		t.Fatalf("expected no current-input oversize error, got %v", err)
+	}
+	if stats.CurrentInputTooLarge {
+		t.Fatal("expected CurrentInputTooLarge=false")
+	}
+	if stats.MinimalRequestTokens >= rc.ContextWindowTokens {
+		t.Fatalf("expected minimal raw request tokens to stay below context window, got %d >= %d", stats.MinimalRequestTokens, rc.ContextWindowTokens)
+	}
+	if rewritten.Messages[len(rewritten.Messages)-1].Role != "user" {
+		t.Fatalf("expected rewrite to preserve current input tail, got %#v", rewritten.Messages)
+	}
+}
+
 func TestRewriteOversizeRequest_ForceCompactsWhenOnlyBytesOversize(t *testing.T) {
 	gateway := &compactSummaryGateway{summary: "summary"}
 	rc := &RunContext{

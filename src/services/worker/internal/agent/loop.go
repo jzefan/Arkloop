@@ -2463,10 +2463,6 @@ func estimateTurnRequestLimitTokens(runCtx RunContext, request llm.Request) int 
 	if raw <= 0 {
 		raw = estimateTurnRequestContextTokens(runCtx, request)
 	}
-	// 用 anchor 校准粗估值
-	if anchor := currentContextCompactAnchor(runCtx); anchor != nil {
-		return pipeline.ApplyContextCompactPressure(*anchor, raw)
-	}
 	return raw
 }
 
@@ -2479,9 +2475,23 @@ func attachContextPressureAnchor(data map[string]any, requestEstimateTokens int)
 	if usage == nil {
 		return
 	}
-	if inputTokens, ok := anyToInt64(usage["input_tokens"]); ok && inputTokens > 0 {
-		data["last_real_prompt_tokens"] = inputTokens
+	if promptTokens := contextPressureAnchorPromptTokens(usage); promptTokens > 0 {
+		data["last_real_prompt_tokens"] = promptTokens
 	}
+}
+
+func contextPressureAnchorPromptTokens(usage map[string]any) int64 {
+	if usage == nil {
+		return 0
+	}
+	inputTokens, ok := anyToInt64(usage["input_tokens"])
+	if !ok || inputTokens <= 0 {
+		return 0
+	}
+	if cacheReadTokens, ok := anyToInt64(usage["cache_read_input_tokens"]); ok && cacheReadTokens > 0 {
+		inputTokens += cacheReadTokens
+	}
+	return inputTokens
 }
 
 func traceUsageToken(completed map[string]any, key string) int64 {
