@@ -27,6 +27,9 @@ type ChannelDeliveryDrainOptions struct {
 	Telegram       *telegrambot.Client
 	Discord        DiscordHTTPDoer
 	DiscordAPIBase string
+	StickerStore   interface {
+		Get(ctx context.Context, key string) ([]byte, error)
+	}
 }
 
 // ChannelDeliveryDrainer drains pending channel_delivery_outbox rows in the background.
@@ -154,6 +157,67 @@ func (d *ChannelDeliveryDrainer) drainTelegram(ctx context.Context, row data.Cha
 	sender := NewTelegramChannelSenderWithClient(client, channel.Token, resolveSegmentDelay())
 
 	replyTo := d.replyRefFromPayload(payload)
+	if len(payload.Segments) > 0 {
+		for i := row.SegmentsSent; i < len(payload.Segments); i++ {
+			segment := payload.Segments[i]
+			ref := replyTo
+			if i > 0 {
+				ref = nil
+			}
+			var (
+				messageIDs []string
+				sendErr    error
+				textBody   string
+			)
+			switch segment.Kind {
+			case "sticker":
+				messageIDs, sendErr = SendTelegramStickerByID(ctx, d.pool, d.opts.StickerStore, client, channel.Token, ChannelDeliveryTarget{
+					ChannelType: row.ChannelType,
+					Conversation: ChannelConversationRef{
+						Target:   payload.PlatformChatID,
+						ThreadID: payload.PlatformThreadID,
+					},
+					ReplyTo: ref,
+				}, payload.AccountID, segment.StickerID)
+			default:
+				textBody = strings.TrimSpace(segment.Text)
+				if textBody == "" {
+					if err := outboxRepo.UpdateProgress(ctx, d.pool, row.ID, i+1); err != nil {
+						return fmt.Errorf("update progress failed: %w", err)
+					}
+					continue
+				}
+				messageIDs, sendErr = sender.SendText(ctx, ChannelDeliveryTarget{
+					ChannelType:  row.ChannelType,
+					Conversation: ChannelConversationRef{Target: payload.PlatformChatID, ThreadID: payload.PlatformThreadID},
+					ReplyTo:      ref,
+				}, textBody)
+			}
+			if sendErr != nil {
+				return d.handleFailure(ctx, row, sendErr, outboxRepo)
+			}
+			if len(messageIDs) > 0 {
+				if payload.IsTerminalNotice {
+					if _, err := d.recordTerminalNoticeSuccess(ctx, payload, row.ChannelID, row.ChannelType, ref, messageIDs, textBody); err != nil {
+						return d.handleFailure(ctx, row, err, outboxRepo)
+					}
+				} else {
+					if err := d.recordDeliverySuccess(ctx, payload, row.ChannelID, row.ChannelType, ref, messageIDs); err != nil {
+						return d.handleFailure(ctx, row, err, outboxRepo)
+					}
+				}
+			}
+			if err := outboxRepo.UpdateProgress(ctx, d.pool, row.ID, i+1); err != nil {
+				return fmt.Errorf("update progress failed: %w", err)
+			}
+			row.SegmentsSent = i + 1
+		}
+		if err := outboxRepo.UpdateSent(ctx, d.pool, row.ID); err != nil {
+			return fmt.Errorf("update sent failed: %w", err)
+		}
+		return nil
+	}
+
 	for i := row.SegmentsSent; i < len(payload.Outputs); i++ {
 		trimmed := strings.TrimSpace(payload.Outputs[i])
 		if trimmed == "" {
@@ -448,4 +512,3 @@ func (d *ChannelDeliveryDrainer) recordTerminalNoticeSuccess(ctx context.Context
 	}
 	return threadMessageID, nil
 }
-

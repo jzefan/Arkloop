@@ -47,21 +47,28 @@ func OutboxBackoffDelay(attempts int) time.Duration {
 }
 
 type OutboxPayload struct {
-	AccountID              uuid.UUID      `json:"account_id"`
-	RunID                  uuid.UUID      `json:"run_id"`
-	ThreadID               *uuid.UUID     `json:"thread_id,omitempty"`
-	Outputs                []string       `json:"outputs"`
-	Text                   string         `json:"text,omitempty"`
-	IsTerminalNotice       bool           `json:"is_terminal_notice,omitempty"`
-	PlatformChatID         string         `json:"platform_chat_id"`
-	ReplyToMessageID       string         `json:"reply_to_message_id,omitempty"`
-	PlatformThreadID       *string        `json:"platform_thread_id,omitempty"`
-	ConversationType       string         `json:"conversation_type,omitempty"`
-	HeartbeatRun           bool           `json:"heartbeat_run,omitempty"`
-	InboundMessageID       string         `json:"inbound_message_id,omitempty"`
-	TriggerMessageID       string         `json:"trigger_message_id,omitempty"`
-	ChannelReplyOverrideID string         `json:"channel_reply_override_id,omitempty"`
-	Metadata               map[string]any `json:"metadata,omitempty"`
+	AccountID              uuid.UUID       `json:"account_id"`
+	RunID                  uuid.UUID       `json:"run_id"`
+	ThreadID               *uuid.UUID      `json:"thread_id,omitempty"`
+	Outputs                []string        `json:"outputs"`
+	Segments               []OutboxSegment `json:"segments,omitempty"`
+	Text                   string          `json:"text,omitempty"`
+	IsTerminalNotice       bool            `json:"is_terminal_notice,omitempty"`
+	PlatformChatID         string          `json:"platform_chat_id"`
+	ReplyToMessageID       string          `json:"reply_to_message_id,omitempty"`
+	PlatformThreadID       *string         `json:"platform_thread_id,omitempty"`
+	ConversationType       string          `json:"conversation_type,omitempty"`
+	HeartbeatRun           bool            `json:"heartbeat_run,omitempty"`
+	InboundMessageID       string          `json:"inbound_message_id,omitempty"`
+	TriggerMessageID       string          `json:"trigger_message_id,omitempty"`
+	ChannelReplyOverrideID string          `json:"channel_reply_override_id,omitempty"`
+	Metadata               map[string]any  `json:"metadata,omitempty"`
+}
+
+type OutboxSegment struct {
+	Kind      string `json:"kind"`
+	Text      string `json:"text,omitempty"`
+	StickerID string `json:"sticker_id,omitempty"`
 }
 
 type ChannelDeliveryOutboxRecord struct {

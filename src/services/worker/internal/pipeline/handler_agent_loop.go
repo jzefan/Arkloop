@@ -187,28 +187,54 @@ func NewAgentLoopHandler(
 		}
 		if writer.Completed() {
 			if !ShouldSuppressHeartbeatOutput(rc, writer.AssistantOutput()) {
+				fullCleanOutput := stripStickerPlaceholders(writer.AssistantOutput())
+				stickerSourceOutputs := writer.AssistantOutputs()
+				remainderCleanOutput := fullCleanOutput
+				if writer.hasStreamedChunks() {
+					stickerSourceOutputs = writer.telegramUnsentOutputs()
+					remainderCleanOutput = stripStickerPlaceholders(writer.telegramStreamRemainder())
+				}
+				cleanOutputs, deliverySegments := prepareStickerDeliveryOutputs(stickerSourceOutputs)
 				if writer.terminalRunStatus == "completed" && len(writer.intermediateMessages) > 0 {
 					if err := writer.batchInsertIntermediateMessages(ctx, messagesRepo, rc.Run.AccountID, rc.Run.ThreadID, rc.Run.ID); err != nil {
 						return err
 					}
 				}
-				if writer.hasStreamedChunks() {
-					remainder := writer.telegramStreamRemainder()
-					if strings.TrimSpace(remainder) != "" {
-						if err := writer.insertStreamRemainder(ctx, messagesRepo, rc.Run.AccountID, rc.Run.ThreadID, remainder); err != nil {
+				if len(deliverySegments) > 0 {
+					if strings.TrimSpace(remainderCleanOutput) != "" {
+						if writer.hasStreamedChunks() {
+							if err := writer.insertStreamRemainder(ctx, messagesRepo, rc.Run.AccountID, rc.Run.ThreadID, remainderCleanOutput); err != nil {
+								return err
+							}
+						} else {
+							if _, err := writer.InsertAssistantMessageText(ctx, messagesRepo, rc.Run.AccountID, rc.Run.ThreadID, fullCleanOutput, false); err != nil {
+								return err
+							}
+						}
+					}
+					rc.ChannelDeliverySegments = deliverySegments
+					rc.FinalAssistantOutput = fullCleanOutput
+					rc.FinalAssistantOutputs = cleanOutputs
+					rc.TelegramStreamDeliveryRemainder = remainderCleanOutput
+				} else {
+					if writer.hasStreamedChunks() {
+						remainder := writer.telegramStreamRemainder()
+						if strings.TrimSpace(remainder) != "" {
+							if err := writer.insertStreamRemainder(ctx, messagesRepo, rc.Run.AccountID, rc.Run.ThreadID, remainder); err != nil {
+								return err
+							}
+						}
+					} else {
+						if _, err := writer.InsertAssistantMessage(ctx, messagesRepo, rc.Run.AccountID, rc.Run.ThreadID, false); err != nil {
 							return err
 						}
 					}
-				} else {
-					if _, err := writer.InsertAssistantMessage(ctx, messagesRepo, rc.Run.AccountID, rc.Run.ThreadID, false); err != nil {
-						return err
+					rc.FinalAssistantOutput = writer.AssistantOutput()
+					rc.FinalAssistantOutputs = writer.AssistantOutputs()
+					rc.TelegramStreamDeliveryRemainder = writer.telegramStreamRemainder()
+					if writer.hasStreamedChunks() {
+						rc.FinalAssistantOutputs = writer.telegramUnsentOutputs()
 					}
-				}
-				rc.FinalAssistantOutput = writer.AssistantOutput()
-				rc.FinalAssistantOutputs = writer.AssistantOutputs()
-				rc.TelegramStreamDeliveryRemainder = writer.telegramStreamRemainder()
-				if writer.hasStreamedChunks() {
-					rc.FinalAssistantOutputs = writer.telegramUnsentOutputs()
 				}
 			}
 		}
@@ -891,6 +917,38 @@ func (w *eventWriter) InsertAssistantMessage(
 		return uuid.Nil, err
 	}
 	messageID, err := repo.InsertAssistantMessage(ctx, w.tx, accountID, threadID, w.run.ID, content, contentJSON, hidden)
+	if err != nil {
+		return uuid.Nil, err
+	}
+	if messageID != uuid.Nil {
+		if err := (data.SubAgentRepository{}).SetLastOutputRefByLastCompletedRunID(ctx, w.tx, w.run.ID, "message:"+messageID.String()); err != nil {
+			return uuid.Nil, err
+		}
+	}
+	return messageID, nil
+}
+
+func (w *eventWriter) InsertAssistantMessageText(
+	ctx context.Context,
+	repo data.MessagesRepository,
+	accountID uuid.UUID,
+	threadID uuid.UUID,
+	text string,
+	hidden bool,
+) (uuid.UUID, error) {
+	if err := w.ensureTx(ctx); err != nil {
+		return uuid.Nil, err
+	}
+	text = strings.TrimSpace(text)
+	message := llm.Message{
+		Role:    "assistant",
+		Content: []llm.TextPart{{Text: text}},
+	}
+	contentJSON, err := llm.BuildAssistantThreadContentJSON(message)
+	if err != nil {
+		return uuid.Nil, err
+	}
+	messageID, err := repo.InsertAssistantMessage(ctx, w.tx, accountID, threadID, w.run.ID, text, contentJSON, hidden)
 	if err != nil {
 		return uuid.Nil, err
 	}

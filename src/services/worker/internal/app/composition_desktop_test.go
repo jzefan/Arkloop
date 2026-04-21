@@ -2600,7 +2600,7 @@ func TestDesktopChannelDeliveryRecordsFailureWhenChannelMissing(t *testing.T) {
 		},
 	}
 
-	mw := desktopChannelDelivery(db)
+	mw := desktopChannelDelivery(db, nil)
 	if err := mw(ctx, rc, func(_ context.Context, rc *pipeline.RunContext) error {
 		if rc.TelegramToolBoundaryFlush != nil {
 			t.Fatal("expected silent heartbeat to disable telegram boundary flush")
@@ -2774,7 +2774,7 @@ func TestDesktopChannelDeliveryPersistsLedgerRefs(t *testing.T) {
 		},
 	}
 
-	mw := desktopChannelDelivery(db)
+	mw := desktopChannelDelivery(db, nil)
 	if err := mw(ctx, rc, func(_ context.Context, _ *pipeline.RunContext) error { return nil }); err != nil {
 		t.Fatalf("desktop channel delivery middleware failed: %v", err)
 	}
@@ -2943,7 +2943,7 @@ func TestDesktopChannelDeliverySkipsReplyReferenceInPrivateTelegram(t *testing.T
 		},
 	}
 
-	mw := desktopChannelDelivery(db)
+	mw := desktopChannelDelivery(db, nil)
 	if err := mw(ctx, rc, func(_ context.Context, _ *pipeline.RunContext) error { return nil }); err != nil {
 		t.Fatalf("desktop channel delivery middleware failed: %v", err)
 	}
@@ -3084,7 +3084,7 @@ func TestDesktopChannelDeliveryPreservesFinalOutputsWhenNoStreamFlush(t *testing
 		}
 	}
 
-	mw := desktopChannelDelivery(db)
+	mw := desktopChannelDelivery(db, nil)
 	if err := mw(ctx, &pipeline.RunContext{
 		Run: data.Run{ID: runID, ThreadID: threadID},
 		ChannelContext: &pipeline.ChannelContext{
@@ -3183,7 +3183,7 @@ func TestDesktopChannelDeliveryDisablesTelegramProgressTrackerInGroups(t *testin
 		}
 	}
 
-	mw := desktopChannelDelivery(db)
+	mw := desktopChannelDelivery(db, nil)
 	if err := mw(ctx, &pipeline.RunContext{
 		Run: data.Run{ID: runID, ThreadID: threadID},
 		ChannelContext: &pipeline.ChannelContext{
@@ -3343,7 +3343,7 @@ func TestDesktopChannelDeliveryPersistsDiscordDeliveryAndReplyReference(t *testi
 		},
 	}
 
-	mw := desktopChannelDelivery(db)
+	mw := desktopChannelDelivery(db, nil)
 	if err := mw(ctx, rc, func(_ context.Context, _ *pipeline.RunContext) error { return nil }); err != nil {
 		t.Fatalf("desktop channel delivery middleware failed: %v", err)
 	}
@@ -3505,7 +3505,7 @@ func TestDesktopChannelDeliverySuppressesSilentHeartbeat(t *testing.T) {
 		},
 	}
 
-	mw := desktopChannelDelivery(db)
+	mw := desktopChannelDelivery(db, nil)
 	if err := mw(ctx, rc, func(_ context.Context, _ *pipeline.RunContext) error { return nil }); err != nil {
 		t.Fatalf("desktop channel delivery middleware failed: %v", err)
 	}
@@ -3651,7 +3651,7 @@ func TestDesktopChannelDeliverySkipsWhenToolAlreadyDeliveredOutput(t *testing.T)
 		},
 	}
 
-	mw := desktopChannelDelivery(db)
+	mw := desktopChannelDelivery(db, nil)
 	if err := mw(ctx, rc, func(_ context.Context, _ *pipeline.RunContext) error { return nil }); err != nil {
 		t.Fatalf("desktop channel delivery middleware failed: %v", err)
 	}
