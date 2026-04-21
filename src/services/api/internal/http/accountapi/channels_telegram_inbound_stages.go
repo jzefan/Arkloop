@@ -347,7 +347,12 @@ createRun:
 		return nil, err
 	}
 	if err := c.maybeCollectTelegramStickersTx(ctx, tx, ch, &identity.ID, stickers); err != nil {
-		return nil, err
+		slog.WarnContext(ctx, "telegram_sticker_collect_failed",
+			"channel_id", ch.ID,
+			"thread_id", threadID,
+			"message_id", incoming.PlatformMsgID,
+			"err", err,
+		)
 	}
 	if _, err := c.channelLedgerRepo.WithTx(tx).UpdateInboundEntry(
 		ctx,

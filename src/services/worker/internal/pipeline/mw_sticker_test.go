@@ -2,14 +2,19 @@ package pipeline
 
 import (
 	"context"
+	"errors"
+	"strings"
 	"testing"
+	"time"
 
 	"arkloop/services/worker/internal/data"
 	"arkloop/services/worker/internal/personas"
+	"arkloop/services/worker/internal/routing"
 	"arkloop/services/worker/internal/tools"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 func TestPrepareStickerDeliveryOutputs_OnlySplitsWhenPlaceholderExists(t *testing.T) {
@@ -114,6 +119,123 @@ func TestStickerToolMiddleware_RespectsPersonaAllowlist(t *testing.T) {
 	}
 }
 
+func TestRenderHotStickerPrompt_EscapesXMLAttributes(t *testing.T) {
+	got := renderHotStickerPrompt([]data.AccountSticker{{
+		ContentHash: `hash"&<>`,
+		ShortTags:   `doge" & <meme>`,
+	}})
+	if !strings.Contains(got, `id="hash&#34;&amp;&lt;&gt;"`) {
+		t.Fatalf("expected escaped id, got %q", got)
+	}
+	if !strings.Contains(got, `short="doge&#34; &amp; &lt;meme&gt;"`) {
+		t.Fatalf("expected escaped short tags, got %q", got)
+	}
+}
+
+func TestStickerPrepareMiddleware_SkipsLLMWithoutPreview(t *testing.T) {
+	mw := NewStickerPrepareMiddleware(
+		fakeStickerPrepareDB{
+			row: fakeStickerPrepareRow{
+				sticker: &data.AccountSticker{
+					AccountID:    uuid.New(),
+					ContentHash:  "hash",
+					StorageKey:   "raw.webp",
+					IsRegistered: false,
+				},
+			},
+		},
+		fakeStickerAttachmentStore{},
+	)
+	nextCalled := false
+	err := mw(context.Background(), &RunContext{
+		Run:       data.Run{AccountID: uuid.New()},
+		InputJSON: map[string]any{"run_kind": "sticker_register", "sticker_id": "hash"},
+	}, func(ctx context.Context, rc *RunContext) error {
+		nextCalled = true
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("middleware returned error: %v", err)
+	}
+	if nextCalled {
+		t.Fatal("expected middleware to short-circuit builder run")
+	}
+}
+
+func TestStickerPrepareMiddleware_SkipsLLMWithoutVisionRoute(t *testing.T) {
+	mw := NewStickerPrepareMiddleware(
+		fakeStickerPrepareDB{
+			row: fakeStickerPrepareRow{
+				sticker: &data.AccountSticker{
+					AccountID:         uuid.New(),
+					ContentHash:       "hash",
+					StorageKey:        "raw.webp",
+					PreviewStorageKey: "preview.jpg",
+				},
+			},
+		},
+		fakeStickerAttachmentStore{},
+	)
+	nextCalled := false
+	err := mw(context.Background(), &RunContext{
+		Run:       data.Run{AccountID: uuid.New()},
+		InputJSON: map[string]any{"run_kind": "sticker_register", "sticker_id": "hash"},
+		SelectedRoute: &routing.SelectedProviderRoute{
+			Route: routing.ProviderRouteRule{Model: "gpt-3.5-turbo"},
+		},
+	}, func(ctx context.Context, rc *RunContext) error {
+		nextCalled = true
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("middleware returned error: %v", err)
+	}
+	if nextCalled {
+		t.Fatal("expected middleware to skip builder LLM path")
+	}
+}
+
+func TestStickerPrepareMiddleware_PropagatesPersistenceErrors(t *testing.T) {
+	dbErr := errors.New("write failed")
+	mw := NewStickerPrepareMiddleware(
+		fakeStickerPrepareDB{
+			row: fakeStickerPrepareRow{
+				sticker: &data.AccountSticker{
+					AccountID:         uuid.New(),
+					ContentHash:       "hash",
+					StorageKey:        "raw.webp",
+					PreviewStorageKey: "preview.jpg",
+				},
+			},
+			execErr: dbErr,
+		},
+		fakeStickerAttachmentStore{
+			bytes: []byte("image"),
+			mime:  "image/jpeg",
+		},
+	)
+	err := mw(context.Background(), &RunContext{
+		Run:       data.Run{AccountID: uuid.New()},
+		InputJSON: map[string]any{"run_kind": "sticker_register", "sticker_id": "hash"},
+		SelectedRoute: &routing.SelectedProviderRoute{
+			Route: routing.ProviderRouteRule{
+				Model: "gpt-4o",
+				AdvancedJSON: map[string]any{
+					"available_catalog": map[string]any{
+						"input_modalities": []any{"text", "image"},
+					},
+				},
+			},
+		},
+	}, func(ctx context.Context, rc *RunContext) error {
+		rc.FinalAssistantOutput = "描述: 开心到发疯\n标签: 开心, 激动"
+		return nil
+	})
+	if !errors.Is(err, dbErr) {
+		t.Fatalf("expected exec error, got %v", err)
+	}
+}
+
 type fakeStickerQueryDB struct{}
 
 func (fakeStickerQueryDB) Query(context.Context, string, ...any) (pgx.Rows, error) { return nil, nil }
@@ -125,3 +247,90 @@ func (fakeStickerQueryDB) QueryRow(context.Context, string, ...any) pgx.Row {
 type fakeStickerRow struct{}
 
 func (fakeStickerRow) Scan(...any) error { return nil }
+
+type fakeStickerPrepareDB struct {
+	row     fakeStickerPrepareRow
+	execErr error
+}
+
+func (db fakeStickerPrepareDB) Exec(context.Context, string, ...any) (pgconn.CommandTag, error) {
+	return pgconn.CommandTag{}, db.execErr
+}
+
+func (db fakeStickerPrepareDB) Query(context.Context, string, ...any) (pgx.Rows, error) {
+	return nil, nil
+}
+
+func (db fakeStickerPrepareDB) QueryRow(context.Context, string, ...any) pgx.Row {
+	return db.row
+}
+
+func (db fakeStickerPrepareDB) BeginTx(context.Context, pgx.TxOptions) (pgx.Tx, error) {
+	return nil, errors.New("not implemented")
+}
+
+type fakeStickerPrepareRow struct {
+	sticker *data.AccountSticker
+	err     error
+}
+
+func (r fakeStickerPrepareRow) Scan(dest ...any) error {
+	if r.err != nil {
+		return r.err
+	}
+	if r.sticker == nil {
+		return pgx.ErrNoRows
+	}
+	values := []any{
+		r.sticker.ID,
+		r.sticker.AccountID,
+		r.sticker.ContentHash,
+		r.sticker.StorageKey,
+		r.sticker.PreviewStorageKey,
+		r.sticker.FileSize,
+		r.sticker.MimeType,
+		r.sticker.IsAnimated,
+		r.sticker.ShortTags,
+		r.sticker.LongDesc,
+		r.sticker.UsageCount,
+		r.sticker.LastUsedAt,
+		r.sticker.IsRegistered,
+		r.sticker.CreatedAt,
+		r.sticker.UpdatedAt,
+	}
+	for i := range dest {
+		switch d := dest[i].(type) {
+		case *uuid.UUID:
+			*d = values[i].(uuid.UUID)
+		case *string:
+			*d = values[i].(string)
+		case *int64:
+			*d = values[i].(int64)
+		case *bool:
+			*d = values[i].(bool)
+		case *int:
+			*d = values[i].(int)
+		case **time.Time:
+			*d = values[i].(*time.Time)
+		case *time.Time:
+			*d = values[i].(time.Time)
+		default:
+			return errors.New("unexpected scan target")
+		}
+	}
+	return nil
+}
+
+type fakeStickerAttachmentStore struct {
+	bytes []byte
+	mime  string
+	err   error
+}
+
+func (s fakeStickerAttachmentStore) Get(context.Context, string) ([]byte, error) {
+	return s.bytes, s.err
+}
+
+func (s fakeStickerAttachmentStore) GetWithContentType(context.Context, string) ([]byte, string, error) {
+	return s.bytes, s.mime, s.err
+}

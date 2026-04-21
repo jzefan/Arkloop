@@ -2,6 +2,7 @@ package pipeline
 
 import (
 	"context"
+	"fmt"
 	"path/filepath"
 	"strings"
 
@@ -24,22 +25,25 @@ func NewStickerPrepareMiddleware(db data.DB, store MessageAttachmentStore) RunMi
 
 		stickerID := strings.TrimSpace(stringValue(rc.InputJSON["sticker_id"]))
 		if stickerID == "" || db == nil || store == nil {
-			return next(ctx, rc)
+			return nil
 		}
 		sticker, err := repo.GetByHash(ctx, db, rc.Run.AccountID, stickerID)
-		if err != nil || sticker == nil {
-			return next(ctx, rc)
+		if err != nil {
+			return err
 		}
-		if sticker.IsRegistered {
-			return next(ctx, rc)
+		if sticker == nil || sticker.IsRegistered {
+			return nil
 		}
 		if strings.TrimSpace(sticker.PreviewStorageKey) == "" || !supportsImageInput(rc.SelectedRoute) {
-			return next(ctx, rc)
+			return nil
 		}
 
 		imageBytes, contentType, err := store.GetWithContentType(ctx, sticker.PreviewStorageKey)
-		if err != nil || len(imageBytes) == 0 {
-			return next(ctx, rc)
+		if err != nil {
+			return fmt.Errorf("load sticker preview %s: %w", stickerID, err)
+		}
+		if len(imageBytes) == 0 {
+			return nil
 		}
 
 		rc.Messages = append(rc.Messages, llm.Message{
@@ -72,8 +76,12 @@ func NewStickerPrepareMiddleware(db data.DB, store MessageAttachmentStore) RunMi
 		if !ok {
 			return nil
 		}
-		_ = cacheRepo.Upsert(ctx, db, stickerID, description, tags)
-		_ = repo.MarkRegistered(ctx, db, rc.Run.AccountID, stickerID, description, tags)
+		if err := cacheRepo.Upsert(ctx, db, stickerID, description, tags); err != nil {
+			return fmt.Errorf("cache sticker description %s: %w", stickerID, err)
+		}
+		if err := repo.MarkRegistered(ctx, db, rc.Run.AccountID, stickerID, description, tags); err != nil {
+			return fmt.Errorf("mark sticker registered %s: %w", stickerID, err)
+		}
 		return nil
 	}
 }

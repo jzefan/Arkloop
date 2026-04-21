@@ -1125,7 +1125,12 @@ func (c telegramConnector) persistTelegramGroupPassiveMessageTx(
 		return uuid.Nil, "", err
 	}
 	if err := c.maybeCollectTelegramStickersTx(ctx, tx, ch, &identity.ID, stickers); err != nil {
-		return uuid.Nil, "", err
+		slog.WarnContext(ctx, "telegram_sticker_collect_failed",
+			"channel_id", ch.ID,
+			"thread_id", threadID,
+			"message_id", incoming.PlatformMsgID,
+			"err", err,
+		)
 	}
 	if c.channelLedgerRepo != nil {
 		ledgerRepoTx := c.channelLedgerRepo.WithTx(tx)

@@ -2,6 +2,7 @@ package pipeline
 
 import (
 	"context"
+	"encoding/xml"
 	"fmt"
 	"strings"
 	"time"
@@ -49,18 +50,12 @@ func NewStickerInjectMiddleware(db data.QueryDB) RunMiddleware {
 		if err != nil || len(items) == 0 {
 			return next(ctx, rc)
 		}
-		var sb strings.Builder
-		sb.WriteString("<stickers>\n")
-		for _, item := range items {
-			sb.WriteString(fmt.Sprintf("  <sticker id=\"%s\" short=\"%s\" />\n", item.ContentHash, strings.TrimSpace(item.ShortTags)))
-		}
-		sb.WriteString("</stickers>")
 		rc.UpsertPromptSegment(PromptSegment{
 			Name:      "telegram.stickers",
 			Target:    PromptTargetSystemPrefix,
 			Role:      "system",
 			Stability: PromptStabilityStablePrefix,
-			Text:      sb.String(),
+			Text:      renderHotStickerPrompt(items),
 		})
 		rc.UpsertPromptSegment(PromptSegment{
 			Name:      "telegram.sticker_instruction",
@@ -71,6 +66,31 @@ func NewStickerInjectMiddleware(db data.QueryDB) RunMiddleware {
 		})
 		return next(ctx, rc)
 	}
+}
+
+func renderHotStickerPrompt(items []data.AccountSticker) string {
+	var sb strings.Builder
+	sb.WriteString("<stickers>\n")
+	for _, item := range items {
+		sb.WriteString(fmt.Sprintf(
+			"  <sticker id=\"%s\" short=\"%s\" />\n",
+			xmlEscapeAttr(strings.TrimSpace(item.ContentHash)),
+			xmlEscapeAttr(strings.TrimSpace(item.ShortTags)),
+		))
+	}
+	sb.WriteString("</stickers>")
+	return sb.String()
+}
+
+func xmlEscapeAttr(value string) string {
+	var sb strings.Builder
+	if err := xml.EscapeText(&sb, []byte(value)); err != nil {
+		return value
+	}
+	escaped := sb.String()
+	escaped = strings.ReplaceAll(escaped, `"`, "&quot;")
+	escaped = strings.ReplaceAll(escaped, `'`, "&apos;")
+	return escaped
 }
 
 func NewStickerToolMiddleware(db data.QueryDB) RunMiddleware {

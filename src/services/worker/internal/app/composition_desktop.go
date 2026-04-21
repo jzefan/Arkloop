@@ -699,6 +699,7 @@ func (e *DesktopEngine) Execute(ctx context.Context, run data.Run, traceID strin
 			GroupSearchExec:    e.groupSearchExec,
 			GroupSearchLlmSpec: conversationtool.GroupSearchLlmSpec,
 		})),
+		desktopObservedStage("sticker_tool", eventsRepo, pipeline.NewStickerToolMiddleware(e.db)),
 		desktopObservedStage("sticker_inject", eventsRepo, pipeline.NewStickerInjectMiddleware(e.db)),
 		desktopObservedStage("channel_qq_tools", eventsRepo, pipeline.NewChannelQQToolsMiddleware(pipeline.ChannelQQToolsDeps{
 			ConfigLoader:    &desktopQQOneBotConfigLoader{db: e.db},
@@ -730,7 +731,6 @@ func (e *DesktopEngine) Execute(ctx context.Context, run data.Run, traceID strin
 		pipeline.NewStickerPrepareMiddleware(e.db, e.messageAttachmentStore),
 		pipeline.NewHeartbeatPrepareMiddleware(),
 		pipeline.NewConditionalToolsMiddleware(),
-		pipeline.NewStickerToolMiddleware(e.db),
 		pipeline.NewToolBuildMiddleware(),
 		pipeline.NewResultSummarizerMiddleware(nil, e.auxGateway, e.emitDebugEvents, 0, e.routingLoader),
 		pipeline.NewThreadPersistHookMiddleware(),
@@ -2082,7 +2082,7 @@ func tryDeliverDesktopTelegramOutbox(
 			); err != nil {
 				return handleDesktopInlineOutboxFailure(ctx, db, outboxRec, err, outboxRepo)
 			}
-			if err := outboxRepo.UpdateProgress(ctx, db, outboxRec.ID, i+1); err != nil {
+			if err := pipeline.AdvanceOutboxProgress(ctx, db, outboxRepo, outboxRec.ID, i+1, payload.AccountID, segment.StickerID); err != nil {
 				return err
 			}
 			outboxRec.SegmentsSent = i + 1
@@ -2946,7 +2946,19 @@ func (w *desktopEventWriter) pendingTelegramFlushChunk() string {
 	if len(unsent) == 0 {
 		return ""
 	}
+	if pipelineContainsStickerPlaceholderOutputs(unsent) {
+		return ""
+	}
 	return strings.TrimSpace(strings.Join(unsent, "\n"))
+}
+
+func pipelineContainsStickerPlaceholderOutputs(outputs []string) bool {
+	for _, output := range outputs {
+		if strings.Contains(output, "[sticker:") {
+			return true
+		}
+	}
+	return false
 }
 
 func (w *desktopEventWriter) telegramUnsentOutputs() []string {
@@ -3560,6 +3572,14 @@ func desktopPersistFinalAssistantOutput(
 	if !shouldPersistAssistantOutput || pipeline.ShouldSuppressHeartbeatOutput(rc, content) {
 		return nil
 	}
+	fullCleanOutput := pipeline.StripStickerPlaceholders(content)
+	stickerSourceOutputs := w.visibleAssistantOutputs()
+	remainderCleanOutput := fullCleanOutput
+	if hasStreamedChunks {
+		stickerSourceOutputs = w.telegramUnsentOutputs()
+		remainderCleanOutput = pipeline.StripStickerPlaceholders(w.telegramStreamRemainder())
+	}
+	cleanOutputs, deliverySegments := pipeline.PrepareStickerDeliveryOutputs(stickerSourceOutputs)
 
 	if w.completed && w.terminalStatus == "completed" && len(w.intermediateMessages) > 0 {
 		if err := w.batchInsertIntermediateMessages(ctx, db, rc.Run.AccountID, rc.Run.ThreadID, rc.Run.ID); err != nil {
@@ -3577,7 +3597,19 @@ func desktopPersistFinalAssistantOutput(
 	}
 
 	var persistErr error
-	if hasStreamedChunks {
+	if len(deliverySegments) > 0 {
+		if hasStreamedChunks {
+			if strings.TrimSpace(remainderCleanOutput) != "" {
+				metadata["stream_chunk"] = true
+				persistErr = persistDesktopStreamChunkMessageWithMetadata(ctx, db, rc.Run, remainderCleanOutput, metadata)
+			}
+		} else if strings.TrimSpace(fullCleanOutput) != "" {
+			persistErr = desktopInsertAssistantMessage(ctx, db, rc.Run, llm.Message{
+				Role:    "assistant",
+				Content: []llm.TextPart{{Text: fullCleanOutput}},
+			}, metadata)
+		}
+	} else if hasStreamedChunks {
 		remainder := w.telegramStreamRemainder()
 		if strings.TrimSpace(remainder) != "" {
 			metadata["stream_chunk"] = true
@@ -3609,11 +3641,18 @@ func desktopPersistFinalAssistantOutput(
 		slog.WarnContext(ctx, "desktop: delete response draft failed", "err", err)
 	}
 	if w.completed {
-		rc.FinalAssistantOutput = content
-		rc.FinalAssistantOutputs = w.visibleAssistantOutputs()
-		rc.TelegramStreamDeliveryRemainder = w.telegramStreamRemainder()
-		if hasStreamedChunks {
-			rc.FinalAssistantOutputs = w.telegramUnsentOutputs()
+		if len(deliverySegments) > 0 {
+			rc.ChannelDeliverySegments = deliverySegments
+			rc.FinalAssistantOutput = fullCleanOutput
+			rc.FinalAssistantOutputs = cleanOutputs
+			rc.TelegramStreamDeliveryRemainder = remainderCleanOutput
+		} else {
+			rc.FinalAssistantOutput = content
+			rc.FinalAssistantOutputs = w.visibleAssistantOutputs()
+			rc.TelegramStreamDeliveryRemainder = w.telegramStreamRemainder()
+			if hasStreamedChunks {
+				rc.FinalAssistantOutputs = w.telegramUnsentOutputs()
+			}
 		}
 		if w.pendingReplyOverride != "" {
 			rc.ChannelReplyOverride = &pipeline.ChannelMessageRef{

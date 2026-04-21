@@ -21,10 +21,21 @@ import (
 )
 
 func StartDesktopChannelDeliveryDrain(ctx context.Context, db data.DesktopDB) {
-	go desktopChannelDeliveryDrainLoop(ctx, db)
+	var stickerStore interface {
+		Get(ctx context.Context, key string) ([]byte, error)
+	}
+	store, err := openDesktopMessageAttachmentStore(ctx)
+	if err != nil {
+		slog.WarnContext(ctx, "desktop channel delivery open sticker store failed", "err", err.Error())
+	} else {
+		stickerStore = store
+	}
+	go desktopChannelDeliveryDrainLoop(ctx, db, stickerStore)
 }
 
-func desktopChannelDeliveryDrainLoop(ctx context.Context, db data.DesktopDB) {
+func desktopChannelDeliveryDrainLoop(ctx context.Context, db data.DesktopDB, stickerStore interface {
+	Get(ctx context.Context, key string) ([]byte, error)
+}) {
 	ticker := time.NewTicker(10 * time.Second)
 	defer ticker.Stop()
 	cleanupCount := 0
@@ -33,7 +44,7 @@ func desktopChannelDeliveryDrainLoop(ctx context.Context, db data.DesktopDB) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			drainDesktopPending(ctx, db)
+			drainDesktopPendingWithStore(ctx, db, stickerStore)
 			cleanupCount++
 			if cleanupCount >= outboxCleanupEveryRounds {
 				cleanupCount = 0
@@ -46,6 +57,12 @@ func desktopChannelDeliveryDrainLoop(ctx context.Context, db data.DesktopDB) {
 // drainDesktopPending 不再跨 HTTP 持有全局写锁；SQLite 写入由 pool 的 per-call
 // write guard 管理，HTTP 发送阶段释放所有写入资源。
 func drainDesktopPending(ctx context.Context, db data.DesktopDB) {
+	drainDesktopPendingWithStore(ctx, db, nil)
+}
+
+func drainDesktopPendingWithStore(ctx context.Context, db data.DesktopDB, stickerStore interface {
+	Get(ctx context.Context, key string) ([]byte, error)
+}) {
 	outboxRepo := data.ChannelDeliveryOutboxRepository{}
 	rows, err := outboxRepo.ListPendingForDrain(ctx, db, 10)
 	if err != nil {
@@ -62,7 +79,7 @@ func drainDesktopPending(ctx context.Context, db data.DesktopDB) {
 			slog.WarnContext(ctx, "desktop channel delivery drain parse payload failed", "run_id", row.RunID, "err", parseErr.Error())
 			continue
 		}
-		drainErr := drainDesktopOutboxRecord(ctx, db, row, payload, outboxRepo)
+		drainErr := drainDesktopOutboxRecord(ctx, db, row, payload, outboxRepo, stickerStore)
 		if drainErr != nil {
 			slog.WarnContext(ctx, "desktop channel delivery drain failed", "run_id", row.RunID, "err", drainErr.Error())
 		}
@@ -90,10 +107,13 @@ func drainDesktopOutboxRecord(
 	row data.ChannelDeliveryOutboxRecord,
 	payload data.OutboxPayload,
 	outboxRepo data.ChannelDeliveryOutboxRepository,
+	stickerStore interface {
+		Get(ctx context.Context, key string) ([]byte, error)
+	},
 ) error {
 	switch strings.ToLower(strings.TrimSpace(row.ChannelType)) {
 	case "telegram":
-		return drainDesktopTelegramOutbox(ctx, db, row, payload, outboxRepo)
+		return drainDesktopTelegramOutbox(ctx, db, row, payload, outboxRepo, stickerStore)
 	case "discord":
 		return drainDesktopDiscordOutbox(ctx, db, row, payload, outboxRepo)
 	case "qq":
@@ -109,6 +129,9 @@ func drainDesktopTelegramOutbox(
 	row data.ChannelDeliveryOutboxRecord,
 	payload data.OutboxPayload,
 	outboxRepo data.ChannelDeliveryOutboxRepository,
+	stickerStore interface {
+		Get(ctx context.Context, key string) ([]byte, error)
+	},
 ) error {
 	channel, err := loadDesktopDeliveryChannel(ctx, db, row.ChannelID)
 	if err != nil || channel == nil {
@@ -122,6 +145,58 @@ func drainDesktopTelegramOutbox(
 	client := telegrambot.NewClient(os.Getenv("ARKLOOP_TELEGRAM_BOT_API_BASE_URL"), nil)
 	sender := pipeline.NewTelegramChannelSenderWithClient(client, channel.Token, 50*time.Millisecond)
 	replyTo := telegramReplyReferenceFromPayload(payload)
+
+	if len(payload.Segments) > 0 {
+		for i := row.SegmentsSent; i < len(payload.Segments); i++ {
+			segment := payload.Segments[i]
+			ref := replyTo
+			if i > 0 {
+				ref = nil
+			}
+			var (
+				messageIDs []string
+				sendErr    error
+			)
+			switch segment.Kind {
+			case "sticker":
+				messageIDs, sendErr = pipeline.SendTelegramStickerByID(ctx, db, stickerStore, client, channel.Token, pipeline.ChannelDeliveryTarget{
+					ChannelType: row.ChannelType,
+					Conversation: pipeline.ChannelConversationRef{
+						Target:   payload.PlatformChatID,
+						ThreadID: payload.PlatformThreadID,
+					},
+					ReplyTo: ref,
+				}, payload.AccountID, segment.StickerID)
+			default:
+				trimmed := strings.TrimSpace(segment.Text)
+				if trimmed == "" {
+					if err := outboxRepo.UpdateProgress(ctx, db, row.ID, i+1); err != nil {
+						return err
+					}
+					continue
+				}
+				messageIDs, sendErr = sender.SendText(ctx, pipeline.ChannelDeliveryTarget{
+					ChannelType:  row.ChannelType,
+					Conversation: pipeline.ChannelConversationRef{Target: payload.PlatformChatID, ThreadID: payload.PlatformThreadID},
+					ReplyTo:      ref,
+				}, trimmed)
+			}
+			if sendErr != nil {
+				return handleDesktopDrainFailure(ctx, db, row, sendErr, outboxRepo)
+			}
+			if err := recordDesktopChannelDelivery(
+				ctx, db, row.RunID, derefOutboxThreadID(row.ThreadID), row.ChannelID, row.ChannelType,
+				payload.PlatformChatID, ref, payload.PlatformThreadID, messageIDs,
+			); err != nil {
+				return handleDesktopDrainFailure(ctx, db, row, err, outboxRepo)
+			}
+			if err := pipeline.AdvanceOutboxProgress(ctx, db, outboxRepo, row.ID, i+1, payload.AccountID, segment.StickerID); err != nil {
+				return err
+			}
+			row.SegmentsSent = i + 1
+		}
+		return outboxRepo.UpdateSent(ctx, db, row.ID)
+	}
 
 	for i := row.SegmentsSent; i < len(payload.Outputs); i++ {
 		trimmed := strings.TrimSpace(payload.Outputs[i])

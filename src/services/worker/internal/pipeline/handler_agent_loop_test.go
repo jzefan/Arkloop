@@ -157,6 +157,18 @@ func TestEventWriterPendingTelegramFlushChunkFromAssistantMessage(t *testing.T) 
 	}
 }
 
+func TestEventWriterPendingTelegramFlushChunkSkipsStickerPlaceholder(t *testing.T) {
+	w := &eventWriter{
+		assistantOutputs:          []string{"先发一段", "[sticker:hash]"},
+		telegramSentOutputCount:   0,
+		telegramToolBoundaryFlush: func(_ context.Context, _ string) error { return nil },
+	}
+
+	if got := w.pendingTelegramFlushChunk(); got != "" {
+		t.Fatalf("expected flush chunk suppressed for sticker placeholder, got %q", got)
+	}
+}
+
 func TestEventWriterTelegramUnsentOutputsMixedScenario(t *testing.T) {
 	// Turn 1：有 delta，已通过 mid-stream flush 发出（telegramSentOutputCount=1）
 	// Turn 2：LLM 直接给完整 assistantMessage，无 delta

@@ -384,7 +384,7 @@ func inlineDeliverTelegramOutbox(
 					return handleInlineOutboxFailure(ctx, pool, outboxRec, err, outboxRepo)
 				}
 			}
-			if err := outboxRepo.UpdateProgress(ctx, pool, outboxRec.ID, i+1); err != nil {
+			if err := AdvanceOutboxProgress(ctx, pool, outboxRepo, outboxRec.ID, i+1, payload.AccountID, segment.StickerID); err != nil {
 				return err
 			}
 			outboxRec.SegmentsSent = i + 1

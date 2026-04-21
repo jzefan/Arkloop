@@ -10,6 +10,27 @@ import (
 
 var stickerPlaceholderPattern = regexp.MustCompile(`\[sticker:([^\]]+)\]`)
 
+func containsStickerPlaceholderText(text string) bool {
+	return stickerPlaceholderPattern.MatchString(text)
+}
+
+func containsStickerPlaceholderOutputs(outputs []string) bool {
+	for _, output := range outputs {
+		if containsStickerPlaceholderText(output) {
+			return true
+		}
+	}
+	return false
+}
+
+func PrepareStickerDeliveryOutputs(outputs []string) ([]string, []data.OutboxSegment) {
+	return prepareStickerDeliveryOutputs(outputs)
+}
+
+func StripStickerPlaceholders(text string) string {
+	return stripStickerPlaceholders(text)
+}
+
 func isStickerRegisterRun(rc *RunContext) bool {
 	if rc == nil {
 		return false
