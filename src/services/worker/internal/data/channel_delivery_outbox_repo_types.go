@@ -25,6 +25,9 @@ const (
 	OutboxKindInjectionBlockNotice = "injection_block_notice"
 )
 
+// OutboxLeaseDuration 是 inline 首发与后台 drainer 共用的租约时长。
+const OutboxLeaseDuration = 30 * time.Second
+
 // OutboxMaxAttempts 最大重试次数，超过则转 dead。
 const OutboxMaxAttempts = 5
 
@@ -104,6 +107,7 @@ func (ChannelDeliveryOutboxRepository) InsertPending(ctx context.Context, db Cha
 		return nil, fmt.Errorf("marshal payload: %w", err)
 	}
 	now := time.Now().UTC()
+	leaseUntil := now.Add(OutboxLeaseDuration)
 	id := uuid.New()
 	var record ChannelDeliveryOutboxRecord
 	err = db.QueryRow(ctx, `
@@ -114,7 +118,7 @@ func (ChannelDeliveryOutboxRepository) InsertPending(ctx context.Context, db Cha
 		)
 		ON CONFLICT (run_id, kind) WHERE status <> 'dead' DO NOTHING
 		RETURNING id, run_id, thread_id, channel_id, channel_type, kind, status, payload_json, segments_sent, attempts, last_error, next_retry_at, created_at, updated_at`,
-		id, runID, threadID, channelID, channelType, kind, payloadJSON, now, now,
+		id, runID, threadID, channelID, channelType, kind, payloadJSON, leaseUntil, now,
 	).Scan(
 		&record.ID,
 		&record.RunID,
