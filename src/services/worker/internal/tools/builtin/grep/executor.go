@@ -110,6 +110,9 @@ func searchFiles(ctx context.Context, backend fileops.Backend, pattern, searchPa
 		if !ok {
 			return nil, "", false, rErr
 		}
+		if _, resolveErr := localBackend.ResolvePath(searchPath); resolveErr != nil {
+			return nil, "", false, resolveErr
+		}
 		raw, rErr = searchWithContextFallback(localBackend.NormalizePath(searchPath), pattern, include, contextLines)
 		if rErr != nil {
 			return nil, "", false, rErr
@@ -134,6 +137,9 @@ func searchFilesStructured(ctx context.Context, backend fileops.Backend, pattern
 	localBackend, ok := backend.(*fileops.LocalBackend)
 	if !ok {
 		return nil, false, err
+	}
+	if _, resolveErr := localBackend.ResolvePath(searchPath); resolveErr != nil {
+		return nil, false, resolveErr
 	}
 	return searchWithRegex(localBackend.NormalizePath(searchPath), pattern, include)
 }

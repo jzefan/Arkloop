@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 
+	"arkloop/services/worker/internal/tools/builtin/fileops"
+
 	"github.com/google/uuid"
 )
 
@@ -71,10 +73,12 @@ func TestPersistLargeResult_ExactThreshold(t *testing.T) {
 
 func TestPersistLargeResult_OverThreshold(t *testing.T) {
 	dir := t.TempDir()
+	t.Setenv("ARKLOOP_TOOL_OUTPUT_DIR", dir)
+
 	runID := uuid.MustParse("22222222-2222-2222-2222-222222222222")
 	execCtx := ExecutionContext{
 		RunID:   runID,
-		WorkDir: dir,
+		WorkDir: "/tmp/workspace", // workDir no longer affects persistence location
 	}
 	large := map[string]any{
 		"output": string(make([]byte, PersistThreshold+1)),
@@ -88,7 +92,7 @@ func TestPersistLargeResult_OverThreshold(t *testing.T) {
 		t.Fatalf("expected persistence for large result")
 	}
 	filePath, _ := out.ResultJSON["filepath"].(string)
-	expectedPath := filepath.Join(".tool-outputs", runID.String(), "tc2.txt")
+	expectedPath := filepath.Join(fileops.ToolOutputRoot(), runID.String(), "tc2.txt")
 	if filePath != expectedPath {
 		t.Fatalf("unexpected filepath: %s, want %s", filePath, expectedPath)
 	}
@@ -97,7 +101,8 @@ func TestPersistLargeResult_OverThreshold(t *testing.T) {
 		t.Fatalf("expected original_bytes > threshold, got %d", ob)
 	}
 
-	data, err := os.ReadFile(filepath.Join(dir, filePath))
+	// File should be under ToolOutputRoot, not workDir
+	data, err := os.ReadFile(filePath)
 	if err != nil {
 		t.Fatalf("read persisted file failed: %v", err)
 	}
@@ -109,10 +114,12 @@ func TestPersistLargeResult_OverThreshold(t *testing.T) {
 
 func TestPersistLargeResult_KeepsMetadata(t *testing.T) {
 	dir := t.TempDir()
+	t.Setenv("ARKLOOP_TOOL_OUTPUT_DIR", dir)
+
 	runID := uuid.MustParse("33333333-3333-3333-3333-333333333333")
 	execCtx := ExecutionContext{
 		RunID:   runID,
-		WorkDir: dir,
+		WorkDir: "/tmp/workspace",
 	}
 	large := map[string]any{
 		"output":    string(make([]byte, PersistThreshold+1)),
@@ -134,10 +141,12 @@ func TestPersistLargeResult_KeepsMetadata(t *testing.T) {
 
 func TestPersistLargeResult_InvalidToolCallID(t *testing.T) {
 	dir := t.TempDir()
+	t.Setenv("ARKLOOP_TOOL_OUTPUT_DIR", dir)
+
 	runID := uuid.MustParse("44444444-4444-4444-4444-444444444444")
 	execCtx := ExecutionContext{
 		RunID:   runID,
-		WorkDir: dir,
+		WorkDir: "/tmp/workspace",
 	}
 	large := map[string]any{
 		"output": string(make([]byte, PersistThreshold+1)),
@@ -166,10 +175,12 @@ func TestPersistLargeResult_FallbackOnWriteFailure(t *testing.T) {
 	}
 	defer os.Chmod(dir, 0o755)
 
+	t.Setenv("ARKLOOP_TOOL_OUTPUT_DIR", dir)
+
 	runID := uuid.MustParse("55555555-5555-5555-5555-555555555555")
 	execCtx := ExecutionContext{
 		RunID:   runID,
-		WorkDir: dir,
+		WorkDir: "/tmp/workspace",
 	}
 	large := map[string]any{
 		"output": string(make([]byte, PersistThreshold+1)),

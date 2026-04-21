@@ -21,11 +21,26 @@ func (b *LocalBackend) resolvePath(path string) (string, error) {
 		path = filepath.Join(b.WorkDir, path)
 	}
 	cleaned := filepath.Clean(path)
+
+	// Allow access to persisted tool outputs
+	if toolRoot := ToolOutputRoot(); toolRoot != "" {
+		toolRootClean := filepath.Clean(toolRoot)
+		if strings.HasPrefix(cleaned, toolRootClean+string(filepath.Separator)) || cleaned == toolRootClean {
+			return cleaned, nil
+		}
+	}
+
 	wsClean := filepath.Clean(b.WorkDir)
 	if !strings.HasPrefix(cleaned, wsClean+string(filepath.Separator)) && cleaned != wsClean {
 		return "", fmt.Errorf("path %q is outside the workspace (path traversal blocked)", path)
 	}
 	return cleaned, nil
+}
+
+// ResolvePath validates and resolves a path, returning the cleaned absolute path.
+// It allows access to ToolOutputRoot() paths and workspace-relative paths.
+func (b *LocalBackend) ResolvePath(path string) (string, error) {
+	return b.resolvePath(path)
 }
 
 func (b *LocalBackend) ReadFile(_ context.Context, path string) ([]byte, error) {

@@ -106,7 +106,7 @@ func NewAgentLoopHandler(
 			if err := acptool.CleanupRunFromExecutors(cleanupCtx, rc.ToolExecutors, rc.Run.ID.String(), writer.terminalRunStatus); err != nil {
 				slog.Warn("acp cleanup failed", "run_id", rc.Run.ID.String(), "error", err.Error())
 			}
-			tools.CleanupPersistedToolOutputs(rc.WorkDir, rc.Run.ID.String())
+			tools.CleanupPersistedToolOutputs(rc.Run.ThreadID.String())
 		}()
 		if isStaleSubAgentCallbackRun(rc.InputJSON) {
 			completed := rc.Emitter.Emit("run.completed", map[string]any{}, nil, nil)

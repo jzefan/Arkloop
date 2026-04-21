@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"log/slog"
+	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -37,20 +38,6 @@ func PersistLargeResult(
 		return result
 	}
 
-	accountID := ""
-	if execCtx.AccountID != nil {
-		accountID = execCtx.AccountID.String()
-	}
-
-	backend := fileops.ResolveBackend(
-		execCtx.RuntimeSnapshot,
-		execCtx.WorkDir,
-		execCtx.RunID.String(),
-		accountID,
-		execCtx.ProfileRef,
-		execCtx.WorkspaceRef,
-	)
-
 	// extract raw output text; try "output" then "stdout", fall back to full JSON
 	content := raw
 	for _, key := range []string{"output", "stdout"} {
@@ -68,8 +55,18 @@ func PersistLargeResult(
 	} else {
 		threadID = execCtx.RunID.String()
 	}
-	filePath := filepath.Join(".tool-outputs", threadID, toolCallID+".txt")
-	if writeErr := backend.WriteFile(ctx, filePath, content); writeErr != nil {
+	filePath := filepath.Join(fileops.ToolOutputRoot(), threadID, toolCallID+".txt")
+
+	if err := os.MkdirAll(filepath.Dir(filePath), 0o755); err != nil {
+		slog.Warn("persist_large_result: mkdir failed, falling back to compression",
+			"run_id", execCtx.RunID.String(),
+			"tool_call_id", toolCallID,
+			"filepath", filePath,
+			"error", err.Error(),
+		)
+		return result
+	}
+	if writeErr := os.WriteFile(filePath, content, 0o644); writeErr != nil {
 		slog.Warn("persist_large_result: write failed, falling back to compression",
 			"run_id", execCtx.RunID.String(),
 			"tool_call_id", toolCallID,

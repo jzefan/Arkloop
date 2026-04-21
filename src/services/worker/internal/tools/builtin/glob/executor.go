@@ -79,6 +79,9 @@ func globFiles(ctx context.Context, backend fileops.Backend, pattern, searchPath
 	if !ok {
 		return nil, false, err
 	}
+	if _, resolveErr := localBackend.ResolvePath(searchPath); resolveErr != nil {
+		return nil, false, resolveErr
+	}
 
 	// fallback: pure Go walk only when the backend itself is local.
 	return globWalk(localBackend.NormalizePath(searchPath), pattern)
