@@ -454,6 +454,9 @@ func (w *eventWriter) pendingTelegramFlushChunk() string {
 	if len(unsent) == 0 {
 		return ""
 	}
+	if containsStickerPlaceholderOutputs(unsent) {
+		return ""
+	}
 	return strings.TrimSpace(strings.Join(unsent, "\n"))
 }
 

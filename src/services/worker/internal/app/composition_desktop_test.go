@@ -3669,6 +3669,221 @@ func TestDesktopChannelDeliverySkipsWhenToolAlreadyDeliveredOutput(t *testing.T)
 	}
 }
 
+func TestDesktopDrainPendingWithStoreDeliversStickerSegments(t *testing.T) {
+	ctx := context.Background()
+
+	sqlitePool, err := sqliteadapter.AutoMigrate(ctx, filepath.Join(t.TempDir(), "desktop.db"))
+	if err != nil {
+		t.Fatalf("auto migrate sqlite: %v", err)
+	}
+	defer sqlitePool.Close()
+
+	db := sqlitepgx.New(sqlitePool.Unwrap())
+
+	for _, stmt := range []string{
+		`CREATE TABLE IF NOT EXISTS channels (
+			id TEXT PRIMARY KEY,
+			account_id TEXT,
+			channel_type TEXT NOT NULL,
+			credentials_id TEXT NULL,
+			is_active INTEGER NOT NULL DEFAULT 0,
+			config_json TEXT NOT NULL DEFAULT '{}'
+		)`,
+		`CREATE TABLE IF NOT EXISTS secrets (
+			id TEXT PRIMARY KEY,
+			account_id TEXT,
+			name TEXT,
+			encrypted_value TEXT NULL,
+			key_version INTEGER NULL
+		)`,
+		`CREATE TABLE IF NOT EXISTS channel_message_deliveries (
+			run_id TEXT NULL,
+			thread_id TEXT NULL,
+			channel_id TEXT NOT NULL,
+			platform_chat_id TEXT NOT NULL,
+			platform_message_id TEXT NOT NULL,
+			UNIQUE (channel_id, platform_chat_id, platform_message_id)
+		)`,
+		`CREATE TABLE IF NOT EXISTS channel_message_ledger (
+			channel_id TEXT NOT NULL,
+			channel_type TEXT NOT NULL,
+			direction TEXT NOT NULL,
+			thread_id TEXT NULL,
+			run_id TEXT NULL,
+			platform_conversation_id TEXT NOT NULL,
+			platform_message_id TEXT NOT NULL,
+			platform_parent_message_id TEXT NULL,
+			platform_thread_id TEXT NULL,
+			sender_channel_identity_id TEXT NULL,
+			metadata_json TEXT NOT NULL DEFAULT '{}',
+			UNIQUE (channel_id, direction, platform_conversation_id, platform_message_id)
+		)`,
+		`CREATE TABLE IF NOT EXISTS channel_delivery_outbox (
+			id TEXT PRIMARY KEY,
+			run_id TEXT NOT NULL,
+			thread_id TEXT,
+			channel_id TEXT NOT NULL,
+			channel_type TEXT NOT NULL,
+			kind TEXT NOT NULL DEFAULT 'message',
+			status TEXT NOT NULL DEFAULT 'pending',
+			payload_json TEXT NOT NULL DEFAULT '{}',
+			segments_sent INTEGER NOT NULL DEFAULT 0,
+			attempts INTEGER NOT NULL DEFAULT 0,
+			last_error TEXT,
+			next_retry_at TEXT NOT NULL,
+			created_at TEXT NOT NULL,
+			updated_at TEXT NOT NULL
+		)`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_outbox_run ON channel_delivery_outbox (run_id, kind)
+			WHERE status != 'dead'`,
+	} {
+		if _, err := db.Exec(ctx, stmt); err != nil {
+			t.Fatalf("create desktop drain tables: %v", err)
+		}
+	}
+
+	keyBytes := [32]byte{}
+	for i := range keyBytes {
+		keyBytes[i] = byte(i + 41)
+	}
+	dataDir := t.TempDir()
+	t.Setenv("ARKLOOP_DATA_DIR", dataDir)
+	if err := os.WriteFile(filepath.Join(dataDir, "encryption.key"), []byte(hex.EncodeToString(keyBytes[:])), 0o600); err != nil {
+		t.Fatalf("write encryption key: %v", err)
+	}
+
+	accountID := uuid.New()
+	projectID := uuid.New()
+	threadID := uuid.New()
+	runID := uuid.New()
+	channelID := uuid.New()
+	secretID := uuid.New()
+	outboxID := uuid.New()
+
+	store := newMapStore()
+	storeKey := "account/stickers/ab/hash.webp"
+	if err := store.Put(ctx, storeKey, []byte("sticker-binary")); err != nil {
+		t.Fatalf("seed sticker store: %v", err)
+	}
+
+	for _, stmt := range []struct {
+		sql  string
+		args []any
+	}{
+		{
+			sql:  `INSERT INTO accounts (id, slug, name, type, status) VALUES ($1, $2, $3, 'personal', 'active')`,
+			args: []any{accountID, "desktop-drain-sticker-" + accountID.String(), "Desktop Drain Sticker"},
+		},
+		{
+			sql:  `INSERT INTO projects (id, account_id, name, visibility) VALUES ($1, $2, $3, 'private')`,
+			args: []any{projectID, accountID, "Channel Project"},
+		},
+		{
+			sql:  `INSERT INTO threads (id, account_id, project_id, is_private) VALUES ($1, $2, $3, TRUE)`,
+			args: []any{threadID, accountID, projectID},
+		},
+		{
+			sql:  `INSERT INTO runs (id, account_id, thread_id, status) VALUES ($1, $2, $3, 'running')`,
+			args: []any{runID, accountID, threadID},
+		},
+		{
+			sql:  `INSERT INTO secrets (id, account_id, name, encrypted_value, key_version) VALUES ($1, $2, $3, $4, 1)`,
+			args: []any{secretID, accountID, "desktop-channel-token-" + channelID.String(), encryptDesktopChannelToken(t, keyBytes, "desktop-token")},
+		},
+		{
+			sql:  `INSERT INTO channels (id, account_id, channel_type, credentials_id, config_json, is_active) VALUES ($1, $2, 'telegram', $3, '{}', 1)`,
+			args: []any{channelID, accountID, secretID},
+		},
+		{
+			sql: `INSERT INTO account_stickers (
+				id, account_id, content_hash, storage_key, preview_storage_key, file_size, mime_type,
+				is_animated, short_tags, long_desc, usage_count, is_registered, created_at, updated_at
+			) VALUES ($1, $2, $3, $4, '', 12, 'image/webp', 0, 'doge', 'doge sticker', 0, 1, $5, $5)`,
+			args: []any{uuid.New(), accountID, "hash", storeKey, time.Now().UTC()},
+		},
+	} {
+		if _, err := db.Exec(ctx, stmt.sql, stmt.args...); err != nil {
+			t.Fatalf("seed data: %v", err)
+		}
+	}
+
+	payload := data.OutboxPayload{
+		AccountID:      accountID,
+		RunID:          runID,
+		ThreadID:       &threadID,
+		Outputs:        []string{"first after clean"},
+		PlatformChatID: "10001",
+		Segments: []data.OutboxSegment{
+			{Kind: "text", Text: "already sent"},
+			{Kind: "sticker", StickerID: "hash"},
+			{Kind: "text", Text: "tail text"},
+		},
+	}
+	payloadJSON, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatalf("marshal payload: %v", err)
+	}
+	now := time.Now().UTC()
+	if _, err := db.Exec(ctx, `
+		INSERT INTO channel_delivery_outbox (
+			id, run_id, thread_id, channel_id, channel_type, kind, status, payload_json, segments_sent, attempts, next_retry_at, created_at, updated_at
+		) VALUES ($1, $2, $3, $4, 'telegram', 'message', 'pending', $5, 1, 0, $6, $6, $6)
+	`, outboxID, runID, threadID, channelID, payloadJSON, now.Add(-time.Minute)); err != nil {
+		t.Fatalf("insert outbox: %v", err)
+	}
+
+	var sendMessageCount int
+	var sendStickerCount int
+	server := httptest.NewServer(nethttp.HandlerFunc(func(w nethttp.ResponseWriter, r *nethttp.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/sendMessage"):
+			sendMessageCount++
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(fmt.Sprintf(`{"ok":true,"result":{"message_id":%d,"chat":{"id":10001}}}`, 920+sendMessageCount)))
+		case strings.HasSuffix(r.URL.Path, "/sendSticker"):
+			sendStickerCount++
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(fmt.Sprintf(`{"ok":true,"result":{"message_id":%d,"chat":{"id":10001}}}`, 930+sendStickerCount)))
+		default:
+			t.Fatalf("unexpected telegram path: %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+	t.Setenv("ARKLOOP_TELEGRAM_BOT_API_BASE_URL", server.URL)
+
+	drainDesktopPendingWithStore(ctx, db, store)
+
+	if sendStickerCount != 1 {
+		t.Fatalf("expected 1 sticker retry send, got %d", sendStickerCount)
+	}
+	if sendMessageCount != 1 {
+		t.Fatalf("expected 1 text retry send, got %d", sendMessageCount)
+	}
+
+	var (
+		status       string
+		segmentsSent int
+		usageCount   int
+	)
+	if err := db.QueryRow(ctx, `
+		SELECT
+			(SELECT status FROM channel_delivery_outbox WHERE id = $1),
+			(SELECT segments_sent FROM channel_delivery_outbox WHERE id = $1),
+			(SELECT usage_count FROM account_stickers WHERE account_id = $2 AND content_hash = 'hash')
+	`, outboxID, accountID).Scan(&status, &segmentsSent, &usageCount); err != nil {
+		t.Fatalf("load post-drain state: %v", err)
+	}
+	if status != "sent" {
+		t.Fatalf("expected outbox sent, got %q", status)
+	}
+	if segmentsSent != 3 {
+		t.Fatalf("expected segments_sent=3, got %d", segmentsSent)
+	}
+	if usageCount != 1 {
+		t.Fatalf("expected usage_count=1, got %d", usageCount)
+	}
+}
+
 // mapStore 是一个简单的内存 objectstore.Store 实现，用于测试。
 type mapStore struct {
 	data map[string][]byte

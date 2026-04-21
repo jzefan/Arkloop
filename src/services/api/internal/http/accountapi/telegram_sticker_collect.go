@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"mime"
 	"path/filepath"
@@ -51,43 +52,36 @@ func (c telegramConnector) maybeCollectTelegramStickersTx(
 
 	seen := make(map[string]struct{}, len(items))
 	for _, item := range items {
-		if strings.TrimSpace(item.ContentHash) == "" {
+		contentHash := strings.TrimSpace(item.ContentHash)
+		if contentHash == "" {
 			continue
 		}
-		if _, ok := seen[item.ContentHash]; ok {
+		if _, ok := seen[contentHash]; ok {
 			continue
 		}
-		seen[item.ContentHash] = struct{}{}
+		seen[contentHash] = struct{}{}
 
-		existing, err := repo.GetByHash(ctx, ch.AccountID, item.ContentHash)
+		sticker, shouldRegister, err := upsertTelegramStickerPendingTx(ctx, tx, ch.AccountID, item)
 		if err != nil {
 			return err
 		}
-		if err := repo.UpsertPending(ctx, data.AccountStickerUpsert{
-			AccountID:         ch.AccountID,
-			ContentHash:       item.ContentHash,
-			StorageKey:        item.StorageKey,
-			PreviewStorageKey: item.PreviewStorageKey,
-			FileSize:          item.FileSize,
-			MimeType:          item.MimeType,
-			IsAnimated:        item.IsAnimated,
-		}); err != nil {
-			return err
-		}
-		cache, err := cacheRepo.Get(ctx, item.ContentHash)
+		cache, err := cacheRepo.Get(ctx, contentHash)
 		if err != nil {
 			return err
 		}
 		if cache != nil && strings.TrimSpace(cache.Description) != "" {
-			if err := repo.MarkRegistered(ctx, ch.AccountID, item.ContentHash, cache.Description, cache.EmotionTags); err != nil {
+			if err := repo.MarkRegistered(ctx, ch.AccountID, contentHash, cache.Description, cache.EmotionTags); err != nil {
 				return err
 			}
 			continue
 		}
-		if !shouldTriggerStickerRegister(existing) {
+		if sticker == nil || sticker.IsRegistered {
 			continue
 		}
-		if err := c.enqueueTelegramStickerRegisterRunTx(ctx, tx, ch, identityID, item.ContentHash); err != nil {
+		if strings.TrimSpace(sticker.PreviewStorageKey) == "" || !shouldRegister {
+			continue
+		}
+		if err := c.enqueueTelegramStickerRegisterRunTx(ctx, tx, ch, identityID, contentHash); err != nil {
 			return err
 		}
 	}
@@ -102,6 +96,165 @@ func shouldTriggerStickerRegister(existing *data.AccountSticker) bool {
 		return false
 	}
 	return time.Since(existing.UpdatedAt) >= time.Hour
+}
+
+func upsertTelegramStickerPendingTx(
+	ctx context.Context,
+	tx pgx.Tx,
+	accountID uuid.UUID,
+	item telegramCollectedSticker,
+) (*data.AccountSticker, bool, error) {
+	contentHash := strings.TrimSpace(item.ContentHash)
+	if tx == nil || accountID == uuid.Nil || contentHash == "" {
+		return nil, false, nil
+	}
+
+	existing, err := loadTelegramStickerForUpdateTx(ctx, tx, accountID, contentHash)
+	if err != nil {
+		return nil, false, err
+	}
+	if existing == nil {
+		createdAt := time.Now().UTC()
+		sticker := &data.AccountSticker{
+			ID:                uuid.New(),
+			AccountID:         accountID,
+			ContentHash:       contentHash,
+			StorageKey:        strings.TrimSpace(item.StorageKey),
+			PreviewStorageKey: strings.TrimSpace(item.PreviewStorageKey),
+			FileSize:          item.FileSize,
+			MimeType:          strings.TrimSpace(item.MimeType),
+			IsAnimated:        item.IsAnimated,
+			CreatedAt:         createdAt,
+			UpdatedAt:         createdAt,
+		}
+		if err := insertTelegramStickerPendingTx(ctx, tx, *sticker); err != nil {
+			return nil, false, err
+		}
+		return sticker, true, nil
+	}
+
+	shouldRegister := shouldTriggerStickerRegister(existing)
+	hadPreview := strings.TrimSpace(existing.PreviewStorageKey) != ""
+	incomingHasPreview := strings.TrimSpace(item.PreviewStorageKey) != ""
+	if !shouldRegister && !existing.IsRegistered && !hadPreview && incomingHasPreview {
+		shouldRegister = true
+	}
+	existing.StorageKey = strings.TrimSpace(item.StorageKey)
+	existing.PreviewStorageKey = strings.TrimSpace(item.PreviewStorageKey)
+	existing.FileSize = item.FileSize
+	existing.MimeType = strings.TrimSpace(item.MimeType)
+	existing.IsAnimated = item.IsAnimated
+	if shouldRegister && !existing.IsRegistered {
+		existing.UpdatedAt = time.Now().UTC()
+	}
+	if err := updateTelegramStickerPendingTx(ctx, tx, *existing, shouldRegister && !existing.IsRegistered); err != nil {
+		return nil, false, err
+	}
+	return existing, shouldRegister, nil
+}
+
+func loadTelegramStickerForUpdateTx(
+	ctx context.Context,
+	tx pgx.Tx,
+	accountID uuid.UUID,
+	contentHash string,
+) (*data.AccountSticker, error) {
+	var item data.AccountSticker
+	err := tx.QueryRow(ctx, `
+		SELECT id, account_id, content_hash, storage_key, preview_storage_key, file_size, mime_type,
+		       is_animated, short_tags, long_desc, usage_count, last_used_at, is_registered, created_at, updated_at
+		  FROM account_stickers
+		 WHERE account_id = $1
+		   AND content_hash = $2
+		 FOR UPDATE`,
+		accountID, strings.TrimSpace(contentHash),
+	).Scan(
+		&item.ID,
+		&item.AccountID,
+		&item.ContentHash,
+		&item.StorageKey,
+		&item.PreviewStorageKey,
+		&item.FileSize,
+		&item.MimeType,
+		&item.IsAnimated,
+		&item.ShortTags,
+		&item.LongDesc,
+		&item.UsageCount,
+		&item.LastUsedAt,
+		&item.IsRegistered,
+		&item.CreatedAt,
+		&item.UpdatedAt,
+	)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &item, nil
+}
+
+func insertTelegramStickerPendingTx(ctx context.Context, tx pgx.Tx, item data.AccountSticker) error {
+	_, err := tx.Exec(ctx, `
+		INSERT INTO account_stickers (
+			id, account_id, content_hash, storage_key, preview_storage_key, file_size, mime_type,
+			is_animated, created_at, updated_at
+		) VALUES (
+			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10
+		)`,
+		item.ID,
+		item.AccountID,
+		strings.TrimSpace(item.ContentHash),
+		strings.TrimSpace(item.StorageKey),
+		strings.TrimSpace(item.PreviewStorageKey),
+		item.FileSize,
+		strings.TrimSpace(item.MimeType),
+		item.IsAnimated,
+		item.CreatedAt.UTC(),
+		item.UpdatedAt.UTC(),
+	)
+	return err
+}
+
+func updateTelegramStickerPendingTx(
+	ctx context.Context,
+	tx pgx.Tx,
+	item data.AccountSticker,
+	touchUpdatedAt bool,
+) error {
+	query := `
+		UPDATE account_stickers
+		   SET storage_key = $3,
+		       preview_storage_key = $4,
+		       file_size = $5,
+		       mime_type = $6,
+		       is_animated = $7
+		 WHERE account_id = $1
+		   AND content_hash = $2`
+	args := []any{
+		item.AccountID,
+		strings.TrimSpace(item.ContentHash),
+		strings.TrimSpace(item.StorageKey),
+		strings.TrimSpace(item.PreviewStorageKey),
+		item.FileSize,
+		strings.TrimSpace(item.MimeType),
+		item.IsAnimated,
+	}
+	if touchUpdatedAt {
+		query = `
+			UPDATE account_stickers
+			   SET storage_key = $3,
+			       preview_storage_key = $4,
+			       file_size = $5,
+			       mime_type = $6,
+			       is_animated = $7,
+			       updated_at = $8
+			 WHERE account_id = $1
+			   AND content_hash = $2`
+		args = append(args, item.UpdatedAt.UTC())
+	}
+	_, err := tx.Exec(ctx, query, args...)
+	return err
 }
 
 func (c telegramConnector) enqueueTelegramStickerRegisterRunTx(

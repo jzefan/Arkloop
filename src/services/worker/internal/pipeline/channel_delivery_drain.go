@@ -207,7 +207,7 @@ func (d *ChannelDeliveryDrainer) drainTelegram(ctx context.Context, row data.Cha
 					}
 				}
 			}
-			if err := outboxRepo.UpdateProgress(ctx, d.pool, row.ID, i+1); err != nil {
+			if err := AdvanceOutboxProgress(ctx, d.pool, outboxRepo, row.ID, i+1, payload.AccountID, segment.StickerID); err != nil {
 				return fmt.Errorf("update progress failed: %w", err)
 			}
 			row.SegmentsSent = i + 1
