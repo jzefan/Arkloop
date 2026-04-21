@@ -311,7 +311,7 @@ createRun:
 		return nil, err
 	}
 	timeCtx := c.resolveInboundTimeContext(ctx, ch, identity, incoming)
-	content, contentJSON, metadataJSON, err := buildTelegramStructuredMessageWithMedia(
+	content, contentJSON, metadataJSON, stickers, err := buildTelegramStructuredMessageWithMediaAndStickers(
 		ctx,
 		c.telegramClient,
 		c.attachmentStore,
@@ -344,6 +344,9 @@ createRun:
 		identity.UserID,
 	)
 	if err != nil {
+		return nil, err
+	}
+	if err := c.maybeCollectTelegramStickersTx(ctx, tx, ch, &identity.ID, stickers); err != nil {
 		return nil, err
 	}
 	if _, err := c.channelLedgerRepo.WithTx(tx).UpdateInboundEntry(

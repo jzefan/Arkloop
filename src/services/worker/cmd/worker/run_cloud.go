@@ -15,6 +15,7 @@ import (
 	sharedconfig "arkloop/services/shared/config"
 	"arkloop/services/shared/eventbus"
 	sharedlog "arkloop/services/shared/log"
+	"arkloop/services/shared/objectstore"
 	"arkloop/services/worker/internal/app"
 	"arkloop/services/worker/internal/consumer"
 	"arkloop/services/worker/internal/email"
@@ -194,7 +195,13 @@ func run() error {
 		return err
 	}
 
-	drainer := pipeline.NewChannelDeliveryDrainer(pool, pipeline.ChannelDeliveryDrainOptions{})
+	stickerStore, err := openWorkerStickerStore(runCtx)
+	if err != nil {
+		return fmt.Errorf("open worker sticker store: %w", err)
+	}
+	drainer := pipeline.NewChannelDeliveryDrainer(pool, pipeline.ChannelDeliveryDrainOptions{
+		StickerStore: stickerStore,
+	})
 	drainer.Start(runCtx)
 	defer drainer.Stop()
 
@@ -213,6 +220,24 @@ func run() error {
 	}
 
 	return runErr
+}
+
+func openWorkerStickerStore(ctx context.Context) (interface {
+	Get(ctx context.Context, key string) ([]byte, error)
+}, error) {
+	runtimeCfg, err := objectstore.LoadRuntimeConfigFromEnv()
+	if err != nil || !runtimeCfg.Enabled() {
+		return nil, err
+	}
+	opener, err := runtimeCfg.BucketOpener()
+	if err != nil || opener == nil {
+		return nil, err
+	}
+	bucket := strings.TrimSpace(os.Getenv("ARKLOOP_S3_BUCKET"))
+	if bucket == "" {
+		return nil, nil
+	}
+	return opener.Open(ctx, bucket)
 }
 
 func newRedisClient(ctx context.Context, redisURL string) (*redis.Client, error) {

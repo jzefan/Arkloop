@@ -877,6 +877,8 @@ func buildChannelLayer(deps EngineV1Deps, messagesRepo data.MessagesRepository, 
 			GroupSearchExec:    deps.GroupSearchExecutor,
 			GroupSearchLlmSpec: conversationtool.GroupSearchLlmSpec,
 		}),
+		pipeline.NewStickerToolMiddleware(deps.DBPool),
+		pipeline.NewStickerInjectMiddleware(deps.DBPool),
 		pipeline.NewChannelQQToolsMiddleware(pipeline.ChannelQQToolsDeps{
 			ConfigLoader:    deps.ChannelQQLoader,
 			GroupSearchExec: deps.GroupSearchExecutor,
@@ -965,6 +967,7 @@ func buildRoutingLayer(
 func buildToolFinalizeLayer(deps EngineV1Deps) []pipeline.RunMiddleware {
 	return []pipeline.RunMiddleware{
 		pipeline.NewImpressionPrepareMiddleware(pipeline.NewPgxImpressionStore(deps.DBPool), deps.DBPool, deps.AuxGateway, deps.EmitDebugEvents, deps.RoutingConfigLoader),
+		pipeline.NewStickerPrepareMiddleware(deps.DBPool, deps.MessageAttachmentStore),
 		pipeline.NewHeartbeatPrepareMiddleware(),
 		pipeline.NewConditionalToolsMiddleware(),
 		pipeline.NewToolDescriptionOverrideMiddleware(deps.ToolDescriptionOverridesRepo),
@@ -977,7 +980,9 @@ func buildToolFinalizeLayer(deps EngineV1Deps) []pipeline.RunMiddleware {
 func buildDeliveryLayer(deps EngineV1Deps) []pipeline.RunMiddleware {
 	return []pipeline.RunMiddleware{
 		pipeline.NewThreadPersistHookMiddleware(),
-		pipeline.NewChannelDeliveryMiddleware(deps.DBPool),
+		pipeline.NewChannelDeliveryMiddlewareWithOptions(deps.DBPool, pipeline.ChannelDeliveryMiddlewareOptions{
+			StickerStore: deps.MessageAttachmentStore,
+		}),
 	}
 }
 

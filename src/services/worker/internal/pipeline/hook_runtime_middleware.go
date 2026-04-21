@@ -10,7 +10,7 @@ import (
 
 func NewPromptHookMiddleware() RunMiddleware {
 	return func(ctx context.Context, rc *RunContext, next RunHandler) error {
-		if rc == nil || rc.ImpressionRun || isImpressionRun(rc) {
+		if rc == nil || rc.ImpressionRun || isImpressionRun(rc) || rc.StickerRegisterRun || isStickerRegisterRun(rc) {
 			return next(ctx, rc)
 		}
 		rc.SetBaseUserMessages(collectTrailingRealUserMessages(rc.Messages, rc.ThreadMessageIDs))
@@ -32,7 +32,7 @@ func NewThreadPersistHookMiddleware() RunMiddleware {
 		if rc == nil || rc.HookRuntime == nil || !rc.ThreadPersistReady {
 			return err
 		}
-		if rc.ImpressionRun || isImpressionRun(rc) {
+		if rc.ImpressionRun || isImpressionRun(rc) || rc.StickerRegisterRun || isStickerRegisterRun(rc) {
 			return err
 		}
 		delta := BuildThreadDelta(rc)

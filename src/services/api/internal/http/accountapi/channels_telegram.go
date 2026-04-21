@@ -1096,7 +1096,7 @@ func (c telegramConnector) persistTelegramGroupPassiveMessageTx(
 		return uuid.Nil, "", err
 	}
 	timeCtx := c.resolveInboundTimeContext(ctx, ch, identity, incoming)
-	content, contentJSON, metadataJSON, err := buildTelegramStructuredMessageWithMedia(
+	content, contentJSON, metadataJSON, stickers, err := buildTelegramStructuredMessageWithMediaAndStickers(
 		ctx,
 		c.telegramClient,
 		c.attachmentStore,
@@ -1122,6 +1122,9 @@ func (c telegramConnector) persistTelegramGroupPassiveMessageTx(
 		identity.UserID,
 	)
 	if err != nil {
+		return uuid.Nil, "", err
+	}
+	if err := c.maybeCollectTelegramStickersTx(ctx, tx, ch, &identity.ID, stickers); err != nil {
 		return uuid.Nil, "", err
 	}
 	if c.channelLedgerRepo != nil {

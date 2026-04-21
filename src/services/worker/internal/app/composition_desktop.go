@@ -699,6 +699,7 @@ func (e *DesktopEngine) Execute(ctx context.Context, run data.Run, traceID strin
 			GroupSearchExec:    e.groupSearchExec,
 			GroupSearchLlmSpec: conversationtool.GroupSearchLlmSpec,
 		})),
+		desktopObservedStage("sticker_inject", eventsRepo, pipeline.NewStickerInjectMiddleware(e.db)),
 		desktopObservedStage("channel_qq_tools", eventsRepo, pipeline.NewChannelQQToolsMiddleware(pipeline.ChannelQQToolsDeps{
 			ConfigLoader:    &desktopQQOneBotConfigLoader{db: e.db},
 			GroupSearchExec: e.groupSearchExec,
@@ -726,12 +727,14 @@ func (e *DesktopEngine) Execute(ctx context.Context, run data.Run, traceID strin
 		pipeline.NewTitleSummarizerMiddleware(e.db, nil, e.auxGateway, e.emitDebugEvents, e.routingLoader),
 		pipeline.NewContextCompactMiddleware(e.db, data.MessagesRepository{}, data.DesktopRunEventsRepository{}, e.auxGateway, e.emitDebugEvents, e.routingLoader),
 		pipeline.NewImpressionPrepareMiddleware(impStore, e.db, e.auxGateway, e.emitDebugEvents, e.routingLoader),
+		pipeline.NewStickerPrepareMiddleware(e.db, e.messageAttachmentStore),
 		pipeline.NewHeartbeatPrepareMiddleware(),
 		pipeline.NewConditionalToolsMiddleware(),
+		pipeline.NewStickerToolMiddleware(e.db),
 		pipeline.NewToolBuildMiddleware(),
 		pipeline.NewResultSummarizerMiddleware(nil, e.auxGateway, e.emitDebugEvents, 0, e.routingLoader),
 		pipeline.NewThreadPersistHookMiddleware(),
-		desktopChannelDelivery(e.db),
+		desktopChannelDelivery(e.db, e.messageAttachmentStore),
 	)
 	terminal := desktopAgentLoop(e.db, e.bus, e.jobQueue, runsRepo, eventsRepo, e.shellExecutor, e.runtimeSnapshot)
 	handler := pipeline.Build(middlewares, terminal)
@@ -1260,7 +1263,9 @@ func desktopOutboxThreadPtr(id uuid.UUID) *uuid.UUID {
 	return &id
 }
 
-func desktopChannelDelivery(db data.DesktopDB) pipeline.RunMiddleware {
+func desktopChannelDelivery(db data.DesktopDB, stickerStore interface {
+	Get(ctx context.Context, key string) ([]byte, error)
+}) pipeline.RunMiddleware {
 	client := telegrambot.NewClient(os.Getenv("ARKLOOP_TELEGRAM_BOT_API_BASE_URL"), nil)
 	discordClient := &http.Client{Timeout: 10 * time.Second}
 
@@ -1371,7 +1376,7 @@ func desktopChannelDelivery(db data.DesktopDB) pipeline.RunMiddleware {
 		fullOut := finalOutput
 		remainder := strings.TrimSpace(rc.TelegramStreamDeliveryRemainder)
 		notice := strings.TrimSpace(rc.ChannelTerminalNotice)
-		if fullOut == "" && remainder == "" && streamMidCount == 0 && notice == "" {
+		if fullOut == "" && remainder == "" && streamMidCount == 0 && notice == "" && len(rc.ChannelDeliverySegments) == 0 {
 			return err
 		}
 
@@ -1412,6 +1417,8 @@ func desktopChannelDelivery(db data.DesktopDB) pipeline.RunMiddleware {
 			uxSend := pipeline.ParseTelegramChannelUX(channel.ConfigJSON)
 			payload := data.OutboxPayload{
 				Outputs:          finalOutputs,
+				Segments:         append([]data.OutboxSegment(nil), rc.ChannelDeliverySegments...),
+				AccountID:        rc.Run.AccountID,
 				PlatformChatID:   rc.ChannelContext.Conversation.Target,
 				ReplyToMessageID: desktopTelegramReplyReferenceMessageID(rc),
 				PlatformThreadID: rc.ChannelContext.Conversation.ThreadID,
@@ -1435,7 +1442,7 @@ func desktopChannelDelivery(db data.DesktopDB) pipeline.RunMiddleware {
 				slog.WarnContext(ctx, "desktop telegram outbox tx commit failed", "run_id", rc.Run.ID, "err", cmtErr.Error())
 				return err
 			}
-			if tryErr := tryDeliverDesktopTelegramOutbox(ctx, db, rc, client, channel, outboxRec, payload, outboxRepo); tryErr != nil {
+			if tryErr := tryDeliverDesktopTelegramOutbox(ctx, db, rc, client, channel, outboxRec, payload, outboxRepo, stickerStore); tryErr != nil {
 				return err
 			}
 			if strings.TrimSpace(uxSend.ReactionEmoji) != "" {
@@ -2024,9 +2031,64 @@ func tryDeliverDesktopTelegramOutbox(
 	outboxRec *data.ChannelDeliveryOutboxRecord,
 	payload data.OutboxPayload,
 	outboxRepo data.ChannelDeliveryOutboxRepository,
+	stickerStore interface {
+		Get(ctx context.Context, key string) ([]byte, error)
+	},
 ) error {
 	sender := pipeline.NewTelegramChannelSenderWithClient(client, channel.Token, 50*time.Millisecond)
 	replyTo := desktopTelegramReplyReference(rc)
+	if len(payload.Segments) > 0 {
+		for i := outboxRec.SegmentsSent; i < len(payload.Segments); i++ {
+			segment := payload.Segments[i]
+			ref := replyTo
+			if i > 0 {
+				ref = nil
+			}
+			var (
+				messageIDs []string
+				err        error
+			)
+			switch segment.Kind {
+			case "sticker":
+				messageIDs, err = pipelineSendDesktopTelegramSticker(ctx, db, stickerStore, client, channel, rc, ref, payload.AccountID, segment.StickerID)
+			default:
+				trimmed := strings.TrimSpace(segment.Text)
+				if trimmed == "" {
+					if err := outboxRepo.UpdateProgress(ctx, db, outboxRec.ID, i+1); err != nil {
+						return err
+					}
+					continue
+				}
+				messageIDs, err = sender.SendText(ctx, pipeline.ChannelDeliveryTarget{
+					ChannelType:  rc.ChannelContext.ChannelType,
+					Conversation: rc.ChannelContext.Conversation,
+					ReplyTo:      ref,
+				}, trimmed)
+			}
+			if err != nil {
+				return handleDesktopInlineOutboxFailure(ctx, db, outboxRec, err, outboxRepo)
+			}
+			if err := recordDesktopChannelDelivery(
+				ctx,
+				db,
+				rc.Run.ID,
+				rc.Run.ThreadID,
+				rc.ChannelContext.ChannelID,
+				rc.ChannelContext.ChannelType,
+				rc.ChannelContext.Conversation.Target,
+				ref,
+				rc.ChannelContext.Conversation.ThreadID,
+				messageIDs,
+			); err != nil {
+				return handleDesktopInlineOutboxFailure(ctx, db, outboxRec, err, outboxRepo)
+			}
+			if err := outboxRepo.UpdateProgress(ctx, db, outboxRec.ID, i+1); err != nil {
+				return err
+			}
+			outboxRec.SegmentsSent = i + 1
+		}
+		return outboxRepo.UpdateSent(ctx, db, outboxRec.ID)
+	}
 	for i := outboxRec.SegmentsSent; i < len(payload.Outputs); i++ {
 		trimmed := strings.TrimSpace(payload.Outputs[i])
 		if trimmed == "" {
@@ -2067,6 +2129,26 @@ func tryDeliverDesktopTelegramOutbox(
 		outboxRec.SegmentsSent = i + 1
 	}
 	return outboxRepo.UpdateSent(ctx, db, outboxRec.ID)
+}
+
+func pipelineSendDesktopTelegramSticker(
+	ctx context.Context,
+	db data.DesktopDB,
+	stickerStore interface {
+		Get(ctx context.Context, key string) ([]byte, error)
+	},
+	client *telegrambot.Client,
+	channel *desktopDeliveryChannelRecord,
+	rc *pipeline.RunContext,
+	replyTo *pipeline.ChannelMessageRef,
+	accountID uuid.UUID,
+	stickerID string,
+) ([]string, error) {
+	return pipeline.SendTelegramStickerByID(ctx, db, stickerStore, client, channel.Token, pipeline.ChannelDeliveryTarget{
+		ChannelType:  rc.ChannelContext.ChannelType,
+		Conversation: rc.ChannelContext.Conversation,
+		ReplyTo:      replyTo,
+	}, accountID, stickerID)
 }
 
 func tryDeliverDesktopDiscordOutbox(
