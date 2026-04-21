@@ -315,25 +315,29 @@ func ParseThreadCursor(
 	traceID string,
 	values url.Values,
 ) (*time.Time, *uuid.UUID, bool) {
-	beforeCreatedAtRaw := strings.TrimSpace(First(values, "before_created_at"))
+	beforeUpdatedAtRaw := strings.TrimSpace(First(values, "before_updated_at"))
 	beforeIDRaw := strings.TrimSpace(First(values, "before_id"))
 
-	if (beforeCreatedAtRaw == "") != (beforeIDRaw == "") {
+	if beforeUpdatedAtRaw == "" {
+		beforeUpdatedAtRaw = strings.TrimSpace(First(values, "before_created_at"))
+	}
+
+	if (beforeUpdatedAtRaw == "") != (beforeIDRaw == "") {
 		WriteError(
 			w,
 			nethttp.StatusUnprocessableEntity,
 			"validation.error",
 			"request validation failed",
 			traceID,
-			map[string]any{"reason": "cursor_incomplete", "required": []string{"before_created_at", "before_id"}},
+			map[string]any{"reason": "cursor_incomplete", "required": []string{"before_updated_at", "before_id"}},
 		)
 		return nil, nil, false
 	}
-	if beforeCreatedAtRaw == "" {
+	if beforeUpdatedAtRaw == "" {
 		return nil, nil, true
 	}
 
-	parsedTime, err := time.Parse(time.RFC3339Nano, beforeCreatedAtRaw)
+	parsedTime, err := time.Parse(time.RFC3339Nano, beforeUpdatedAtRaw)
 	if err != nil {
 		WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "request validation failed", traceID, nil)
 		return nil, nil, false
