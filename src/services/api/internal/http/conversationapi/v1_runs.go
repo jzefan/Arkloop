@@ -354,6 +354,12 @@ func createThreadRun(
 			return
 		}
 
+		// Touch thread to update activity timestamp
+		txThreadRepo, err := data.NewThreadRepository(tx)
+		if err == nil {
+			_ = txThreadRepo.Touch(r.Context(), threadID)
+		}
+
 		if err := tx.Commit(r.Context()); err != nil {
 			writeInternalError(w, traceID, err)
 			return

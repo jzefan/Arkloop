@@ -39,6 +39,7 @@ type threadResponse struct {
 	Title           *string `json:"title"`
 	ProjectID       *string `json:"project_id,omitempty"`
 	CreatedAt       string  `json:"created_at"`
+	UpdatedAt       string  `json:"updated_at"`
 	ActiveRunID     *string `json:"active_run_id"`
 	IsPrivate       bool    `json:"is_private"`
 	ParentThreadID  *string `json:"parent_thread_id,omitempty"`
@@ -233,7 +234,7 @@ func listThreads(
 			return
 		}
 
-		beforeCreatedAt, beforeID, ok := httpkit.ParseThreadCursor(w, traceID, r.URL.Query())
+		beforeUpdatedAt, beforeID, ok := httpkit.ParseThreadCursor(w, traceID, r.URL.Query())
 		if !ok {
 			return
 		}
@@ -243,7 +244,7 @@ func listThreads(
 			actor.AccountID,
 			actor.UserID,
 			limit,
-			beforeCreatedAt,
+			beforeUpdatedAt,
 			beforeID,
 		)
 		if err != nil {
@@ -988,6 +989,7 @@ func toThreadResponse(thread data.Thread) threadResponse {
 		Title:           thread.Title,
 		ProjectID:       projectID,
 		CreatedAt:       thread.CreatedAt.UTC().Format(time.RFC3339Nano),
+		UpdatedAt:       thread.UpdatedAt.UTC().Format(time.RFC3339Nano),
 		ActiveRunID:     nil,
 		IsPrivate:       thread.IsPrivate,
 		ParentThreadID:  parentThreadID,

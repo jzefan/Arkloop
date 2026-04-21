@@ -115,6 +115,10 @@ func createThreadMessage(
 		}
 		slog.Debug("createThreadMessage: success", "message_id", message.ID)
 
+		if err := threadRepo.Touch(r.Context(), threadID); err != nil {
+			slog.Warn("createThreadMessage: Touch failed", "thread_id", threadID, "error", err)
+		}
+
 		httpkit.WriteJSON(w, traceID, nethttp.StatusCreated, toMessageResponse(message))
 	}
 }

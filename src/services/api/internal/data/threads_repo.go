@@ -17,6 +17,7 @@ type Thread struct {
 	CreatedByUserID *uuid.UUID
 	Title           *string
 	CreatedAt       time.Time
+	UpdatedAt       time.Time
 	// R15: 软删除 + Phase 5 project 预留
 	DeletedAt *time.Time
 	ProjectID *uuid.UUID
@@ -79,15 +80,15 @@ func (r *ThreadRepository) Create(
 	var thread Thread
 	err := r.db.QueryRow(
 		ctx,
-		`INSERT INTO threads (account_id, created_by_user_id, project_id, title, is_private, expires_at)
-		 VALUES ($1, $2, $3, $4, $5, CASE WHEN $5 THEN now() + INTERVAL '24 hours' ELSE NULL END)
-		 RETURNING id, account_id, created_by_user_id, title, created_at, deleted_at, project_id, is_private, expires_at, parent_thread_id, branched_from_message_id, title_locked`,
+		`INSERT INTO threads (account_id, created_by_user_id, project_id, title, is_private, expires_at, updated_at)
+		 VALUES ($1, $2, $3, $4, $5, CASE WHEN $5 THEN now() + INTERVAL '24 hours' ELSE NULL END, now())
+		 RETURNING id, account_id, created_by_user_id, title, created_at, updated_at, deleted_at, project_id, is_private, expires_at, parent_thread_id, branched_from_message_id, title_locked`,
 		accountID,
 		createdByUserID,
 		projectID,
 		title,
 		isPrivate,
-	).Scan(&thread.ID, &thread.AccountID, &thread.CreatedByUserID, &thread.Title, &thread.CreatedAt,
+	).Scan(&thread.ID, &thread.AccountID, &thread.CreatedByUserID, &thread.Title, &thread.CreatedAt, &thread.UpdatedAt,
 		&thread.DeletedAt, &thread.ProjectID, &thread.IsPrivate, &thread.ExpiresAt,
 		&thread.ParentThreadID, &thread.BranchedFromMessageID, &thread.TitleLocked)
 	if err != nil {
@@ -104,13 +105,13 @@ func (r *ThreadRepository) GetByID(ctx context.Context, threadID uuid.UUID) (*Th
 	var thread Thread
 	err := r.db.QueryRow(
 		ctx,
-		`SELECT id, account_id, created_by_user_id, title, created_at, deleted_at, project_id, is_private, expires_at, parent_thread_id, branched_from_message_id, title_locked
+		`SELECT id, account_id, created_by_user_id, title, created_at, updated_at, deleted_at, project_id, is_private, expires_at, parent_thread_id, branched_from_message_id, title_locked
 		 FROM threads
 		 WHERE id = $1
 		   AND deleted_at IS NULL
 		 LIMIT 1`,
 		threadID,
-	).Scan(&thread.ID, &thread.AccountID, &thread.CreatedByUserID, &thread.Title, &thread.CreatedAt,
+	).Scan(&thread.ID, &thread.AccountID, &thread.CreatedByUserID, &thread.Title, &thread.CreatedAt, &thread.UpdatedAt,
 		&thread.DeletedAt, &thread.ProjectID, &thread.IsPrivate, &thread.ExpiresAt,
 		&thread.ParentThreadID, &thread.BranchedFromMessageID, &thread.TitleLocked)
 	if err != nil {
@@ -127,7 +128,7 @@ func (r *ThreadRepository) ListByOwner(
 	accountID uuid.UUID,
 	ownerUserID uuid.UUID,
 	limit int,
-	beforeCreatedAt *time.Time,
+	beforeUpdatedAt *time.Time,
 	beforeID *uuid.UUID,
 ) ([]ThreadWithActiveRun, error) {
 	if ctx == nil {
@@ -142,11 +143,11 @@ func (r *ThreadRepository) ListByOwner(
 	if limit <= 0 {
 		return nil, fmt.Errorf("limit must be positive")
 	}
-	if (beforeCreatedAt == nil) != (beforeID == nil) {
-		return nil, fmt.Errorf("before_created_at and before_id must be provided together")
+	if (beforeUpdatedAt == nil) != (beforeID == nil) {
+		return nil, fmt.Errorf("before_updated_at and before_id must be provided together")
 	}
 
-	sql := `SELECT t.id, t.account_id, t.created_by_user_id, t.title, t.created_at,
+	sql := `SELECT t.id, t.account_id, t.created_by_user_id, t.title, t.created_at, t.updated_at,
 		       t.deleted_at, t.project_id, t.is_private, t.expires_at,
 		       t.parent_thread_id, t.branched_from_message_id, t.title_locked, r.id AS active_run_id
 		FROM threads t
@@ -162,16 +163,16 @@ func (r *ThreadRepository) ListByOwner(
 		  AND t.is_private = false`
 	args := []any{accountID, ownerUserID}
 
-	if beforeCreatedAt != nil && beforeID != nil {
+	if beforeUpdatedAt != nil && beforeID != nil {
 		sql += `
 		  AND (
-		    t.created_at < $3 OR (t.created_at = $3 AND t.id < $4)
+		    (t.updated_at, t.id) < ($3, $4)
 		  )`
-		args = append(args, beforeCreatedAt.UTC(), *beforeID)
+		args = append(args, beforeUpdatedAt.UTC(), *beforeID)
 	}
 
 	sql += `
-		ORDER BY t.created_at DESC, t.id DESC
+		ORDER BY t.updated_at DESC, t.id DESC
 		LIMIT $` + fmt.Sprintf("%d", len(args)+1)
 	args = append(args, limit)
 
@@ -185,7 +186,7 @@ func (r *ThreadRepository) ListByOwner(
 	for rows.Next() {
 		var item ThreadWithActiveRun
 		if err := rows.Scan(
-			&item.ID, &item.AccountID, &item.CreatedByUserID, &item.Title, &item.CreatedAt,
+			&item.ID, &item.AccountID, &item.CreatedByUserID, &item.Title, &item.CreatedAt, &item.UpdatedAt,
 			&item.DeletedAt, &item.ProjectID, &item.IsPrivate, &item.ExpiresAt,
 			&item.ParentThreadID, &item.BranchedFromMessageID, &item.TitleLocked, &item.ActiveRunID,
 		); err != nil {
@@ -197,6 +198,14 @@ func (r *ThreadRepository) ListByOwner(
 		return nil, err
 	}
 	return threads, nil
+}
+
+func (r *ThreadRepository) Touch(ctx context.Context, threadID uuid.UUID) error {
+	_, err := r.db.Exec(ctx,
+		`UPDATE threads SET updated_at = now() WHERE id = $1 AND deleted_at IS NULL`,
+		threadID,
+	)
+	return err
 }
 
 func (r *ThreadRepository) UpdateTitle(ctx context.Context, threadID uuid.UUID, title *string) (*Thread, error) {
@@ -211,13 +220,14 @@ func (r *ThreadRepository) UpdateTitle(ctx context.Context, threadID uuid.UUID, 
 	err := r.db.QueryRow(
 		ctx,
 		`UPDATE threads
-		 SET title = $1
+		 SET title = $1,
+		     updated_at = now()
 		 WHERE id = $2
 		   AND deleted_at IS NULL
-		 RETURNING id, account_id, created_by_user_id, title, created_at, deleted_at, project_id, is_private, expires_at, parent_thread_id, branched_from_message_id, title_locked`,
+		 RETURNING id, account_id, created_by_user_id, title, created_at, updated_at, deleted_at, project_id, is_private, expires_at, parent_thread_id, branched_from_message_id, title_locked`,
 		title,
 		threadID,
-	).Scan(&thread.ID, &thread.AccountID, &thread.CreatedByUserID, &thread.Title, &thread.CreatedAt,
+	).Scan(&thread.ID, &thread.AccountID, &thread.CreatedByUserID, &thread.Title, &thread.CreatedAt, &thread.UpdatedAt,
 		&thread.DeletedAt, &thread.ProjectID, &thread.IsPrivate, &thread.ExpiresAt,
 		&thread.ParentThreadID, &thread.BranchedFromMessageID, &thread.TitleLocked)
 	if err != nil {
@@ -244,10 +254,10 @@ func (r *ThreadRepository) UpdateOwner(ctx context.Context, threadID uuid.UUID, 
 		 SET created_by_user_id = $2
 		 WHERE id = $1
 		   AND deleted_at IS NULL
-		 RETURNING id, account_id, created_by_user_id, title, created_at, deleted_at, project_id, is_private, expires_at, parent_thread_id, branched_from_message_id, title_locked`,
+		 RETURNING id, account_id, created_by_user_id, title, created_at, updated_at, deleted_at, project_id, is_private, expires_at, parent_thread_id, branched_from_message_id, title_locked`,
 		threadID,
 		ownerUserID,
-	).Scan(&thread.ID, &thread.AccountID, &thread.CreatedByUserID, &thread.Title, &thread.CreatedAt,
+	).Scan(&thread.ID, &thread.AccountID, &thread.CreatedByUserID, &thread.Title, &thread.CreatedAt, &thread.UpdatedAt,
 		&thread.DeletedAt, &thread.ProjectID, &thread.IsPrivate, &thread.ExpiresAt,
 		&thread.ParentThreadID, &thread.BranchedFromMessageID, &thread.TitleLocked)
 	if err != nil {
@@ -289,15 +299,16 @@ func (r *ThreadRepository) UpdateFields(ctx context.Context, threadID uuid.UUID,
 		`UPDATE threads
 		 SET title           = CASE WHEN $2 THEN $3 ELSE title END,
 		     project_id      = CASE WHEN $4 THEN $5 ELSE project_id END,
-		     title_locked    = CASE WHEN $6 THEN $7 ELSE title_locked END
+		     title_locked    = CASE WHEN $6 THEN $7 ELSE title_locked END,
+		     updated_at      = CASE WHEN $2 THEN now() ELSE updated_at END
 		 WHERE id = $1
 		   AND deleted_at IS NULL
-		 RETURNING id, account_id, created_by_user_id, title, created_at, deleted_at, project_id, is_private, expires_at, parent_thread_id, branched_from_message_id, title_locked`,
+		 RETURNING id, account_id, created_by_user_id, title, created_at, updated_at, deleted_at, project_id, is_private, expires_at, parent_thread_id, branched_from_message_id, title_locked`,
 		threadID,
 		params.SetTitle, params.Title,
 		params.SetProjectID, params.ProjectID,
 		params.SetTitleLocked, params.TitleLocked,
-	).Scan(&thread.ID, &thread.AccountID, &thread.CreatedByUserID, &thread.Title, &thread.CreatedAt,
+	).Scan(&thread.ID, &thread.AccountID, &thread.CreatedByUserID, &thread.Title, &thread.CreatedAt, &thread.UpdatedAt,
 		&thread.DeletedAt, &thread.ProjectID, &thread.IsPrivate, &thread.ExpiresAt,
 		&thread.ParentThreadID, &thread.BranchedFromMessageID, &thread.TitleLocked)
 	if err != nil {
@@ -340,19 +351,20 @@ func (r *ThreadRepository) UpdateFieldsOwned(
 		`UPDATE threads
 		 SET title           = CASE WHEN $4 THEN $5 ELSE title END,
 		     project_id      = CASE WHEN $6 THEN $7 ELSE project_id END,
-		     title_locked    = CASE WHEN $8 THEN $9 ELSE title_locked END
+		     title_locked    = CASE WHEN $8 THEN $9 ELSE title_locked END,
+		     updated_at      = CASE WHEN $4 THEN now() ELSE updated_at END
 		 WHERE id = $1
 		   AND account_id = $2
 		   AND created_by_user_id = $3
 		   AND deleted_at IS NULL
-		 RETURNING id, account_id, created_by_user_id, title, created_at, deleted_at, project_id, is_private, expires_at, parent_thread_id, branched_from_message_id, title_locked`,
+		 RETURNING id, account_id, created_by_user_id, title, created_at, updated_at, deleted_at, project_id, is_private, expires_at, parent_thread_id, branched_from_message_id, title_locked`,
 		threadID,
 		accountID,
 		ownerUserID,
 		params.SetTitle, params.Title,
 		params.SetProjectID, params.ProjectID,
 		params.SetTitleLocked, params.TitleLocked,
-	).Scan(&thread.ID, &thread.AccountID, &thread.CreatedByUserID, &thread.Title, &thread.CreatedAt,
+	).Scan(&thread.ID, &thread.AccountID, &thread.CreatedByUserID, &thread.Title, &thread.CreatedAt, &thread.UpdatedAt,
 		&thread.DeletedAt, &thread.ProjectID, &thread.IsPrivate, &thread.ExpiresAt,
 		&thread.ParentThreadID, &thread.BranchedFromMessageID, &thread.TitleLocked)
 	if err != nil {
@@ -414,11 +426,11 @@ func (r *ThreadRepository) DeleteOwnedReturning(
 		   AND account_id = $2
 		   AND created_by_user_id = $3
 		   AND deleted_at IS NULL
-		 RETURNING id, account_id, created_by_user_id, title, created_at, deleted_at, project_id, is_private, expires_at, parent_thread_id, branched_from_message_id, title_locked`,
+		 RETURNING id, account_id, created_by_user_id, title, created_at, updated_at, deleted_at, project_id, is_private, expires_at, parent_thread_id, branched_from_message_id, title_locked`,
 		threadID,
 		accountID,
 		ownerUserID,
-	).Scan(&thread.ID, &thread.AccountID, &thread.CreatedByUserID, &thread.Title, &thread.CreatedAt,
+	).Scan(&thread.ID, &thread.AccountID, &thread.CreatedByUserID, &thread.Title, &thread.CreatedAt, &thread.UpdatedAt,
 		&thread.DeletedAt, &thread.ProjectID, &thread.IsPrivate, &thread.ExpiresAt,
 		&thread.ParentThreadID, &thread.BranchedFromMessageID, &thread.TitleLocked)
 	if err != nil {
@@ -458,8 +470,8 @@ func (r *ThreadRepository) SearchByQuery(
 
 	rows, err := r.db.Query(
 		ctx,
-		`SELECT DISTINCT ON (t.created_at, t.id)
-		        t.id, t.account_id, t.created_by_user_id, t.title, t.created_at,
+		`SELECT DISTINCT ON (t.updated_at, t.id)
+		        t.id, t.account_id, t.created_by_user_id, t.title, t.created_at, t.updated_at,
 		        t.deleted_at, t.project_id, t.is_private, t.expires_at,
 		        t.parent_thread_id, t.branched_from_message_id, t.title_locked, r.id AS active_run_id
 		 FROM threads t
@@ -481,7 +493,7 @@ func (r *ThreadRepository) SearchByQuery(
 		     t.title ILIKE $3 ESCAPE '!'
 		     OR m.content ILIKE $3 ESCAPE '!'
 		   )
-		 ORDER BY t.created_at DESC, t.id DESC
+		 ORDER BY t.updated_at DESC, t.id DESC
 		 LIMIT $4`,
 		accountID, ownerUserID, like, limit,
 	)
@@ -494,7 +506,7 @@ func (r *ThreadRepository) SearchByQuery(
 	for rows.Next() {
 		var item ThreadWithActiveRun
 		if err := rows.Scan(
-			&item.ID, &item.AccountID, &item.CreatedByUserID, &item.Title, &item.CreatedAt,
+			&item.ID, &item.AccountID, &item.CreatedByUserID, &item.Title, &item.CreatedAt, &item.UpdatedAt,
 			&item.DeletedAt, &item.ProjectID, &item.IsPrivate, &item.ExpiresAt,
 			&item.ParentThreadID, &item.BranchedFromMessageID, &item.TitleLocked, &item.ActiveRunID,
 		); err != nil {
@@ -550,16 +562,16 @@ func (r *ThreadRepository) Fork(
 	var thread Thread
 	err := r.db.QueryRow(
 		ctx,
-		`INSERT INTO threads (account_id, created_by_user_id, project_id, title, is_private, expires_at, parent_thread_id, branched_from_message_id)
-		 SELECT $1, $2, project_id, title, $3, CASE WHEN $3 THEN now() + INTERVAL '24 hours' ELSE NULL END, $4, $5
+		`INSERT INTO threads (account_id, created_by_user_id, project_id, title, is_private, expires_at, updated_at, parent_thread_id, branched_from_message_id)
+		 SELECT $1, $2, project_id, title, $3, CASE WHEN $3 THEN now() + INTERVAL '24 hours' ELSE NULL END, now(), $4, $5
 		 FROM threads WHERE id = $4 AND deleted_at IS NULL
-		 RETURNING id, account_id, created_by_user_id, title, created_at, deleted_at, project_id, is_private, expires_at, parent_thread_id, branched_from_message_id, title_locked`,
+		 RETURNING id, account_id, created_by_user_id, title, created_at, updated_at, deleted_at, project_id, is_private, expires_at, parent_thread_id, branched_from_message_id, title_locked`,
 		accountID,
 		createdByUserID,
 		isPrivate,
 		parentThreadID,
 		branchFromMessageID,
-	).Scan(&thread.ID, &thread.AccountID, &thread.CreatedByUserID, &thread.Title, &thread.CreatedAt,
+	).Scan(&thread.ID, &thread.AccountID, &thread.CreatedByUserID, &thread.Title, &thread.CreatedAt, &thread.UpdatedAt,
 		&thread.DeletedAt, &thread.ProjectID, &thread.IsPrivate, &thread.ExpiresAt,
 		&thread.ParentThreadID, &thread.BranchedFromMessageID, &thread.TitleLocked)
 	if err != nil {

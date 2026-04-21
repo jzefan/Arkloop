@@ -199,6 +199,11 @@ func editThreadMessage(
 			return
 		}
 
+		txThreadRepo, err := data.NewThreadRepository(tx)
+		if err == nil {
+			_ = txThreadRepo.Touch(r.Context(), threadID)
+		}
+
 		if err := tx.Commit(r.Context()); err != nil {
 			httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 			return
@@ -342,6 +347,11 @@ func retryThread(
 			return
 		}
 
+		txThreadRepo, err := data.NewThreadRepository(tx)
+		if err == nil {
+			_ = txThreadRepo.Touch(r.Context(), threadID)
+		}
+
 		if err := tx.Commit(r.Context()); err != nil {
 			httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 			return
@@ -479,6 +489,11 @@ func continueThread(
 		if err != nil {
 			httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 			return
+		}
+
+		txThreadRepo, err := data.NewThreadRepository(tx)
+		if err == nil {
+			_ = txThreadRepo.Touch(r.Context(), threadID)
 		}
 
 		if err := tx.Commit(r.Context()); err != nil {
