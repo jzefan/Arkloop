@@ -920,6 +920,53 @@ func TestAgentLoopEmitsContextPressureAnchorOnTurnCompleted(t *testing.T) {
 	}
 }
 
+func TestAgentLoopEmitsContextPressureAnchorIncludingCacheReadTokens(t *testing.T) {
+	gateway := &cacheReadAnchorGateway{}
+	loop := NewLoop(gateway, buildEchoDispatcher(t))
+	emitter := events.NewEmitter("trace")
+	requestMessages := []llm.Message{
+		{Role: "user", Content: []llm.TextPart{{Text: "hello compact"}}},
+	}
+
+	var got []events.RunEvent
+	err := loop.Run(
+		context.Background(),
+		RunContext{
+			RunID:               uuid.New(),
+			TraceID:             "trace",
+			InputJSON:           map[string]any{},
+			ReasoningIterations: 3,
+			ToolExecutor:        buildEchoDispatcher(t),
+			CancelSignal:        func() bool { return false },
+		},
+		llm.Request{Model: "stub", Messages: requestMessages},
+		emitter,
+		func(ev events.RunEvent) error {
+			got = append(got, ev)
+			return nil
+		},
+	)
+	if err != nil {
+		t.Fatalf("loop.Run failed: %v", err)
+	}
+
+	var completed events.RunEvent
+	found := false
+	for _, ev := range got {
+		if ev.Type == "llm.turn.completed" {
+			completed = ev
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatal("expected llm.turn.completed")
+	}
+	if value := mustInt64(t, completed.DataJSON["last_real_prompt_tokens"]); value != 120 {
+		t.Fatalf("expected last_real_prompt_tokens=120, got %d", value)
+	}
+}
+
 func TestAgentLoopCompactsBeforeSecondTurnWhenToolOutputInflatesContext(t *testing.T) {
 	huge := strings.Repeat("x", 20_000)
 	gateway := &compactingGateway{toolText: huge}
@@ -1476,6 +1523,55 @@ func TestAgentLoopPreflightCurrentInputOversizeFailsWithoutProviderCall(t *testi
 	minimalBytes, _ := anyToInt64(details["minimal_payload_bytes"])
 	if minimalBytes <= int64(llm.RequestPayloadLimitBytes) {
 		t.Fatalf("expected minimal payload bytes to exceed limit, got %d", minimalBytes)
+	}
+}
+
+func TestAgentLoopPreflightUsesRawEstimateInsteadOfAnchoredPressure(t *testing.T) {
+	primary := &oversizeSuccessGateway{phase: llm.OversizePhasePreflight}
+	compact := &compactSummaryGateway{}
+	loop := NewLoop(primary, nil)
+	emitter := events.NewEmitter("trace")
+
+	pipelineRC := newCompactPipelineRC(compact, 1, 1)
+	pipelineRC.ContextWindowTokens = 1000
+	request := llm.Request{
+		Model: "stub",
+		Messages: []llm.Message{
+			{Role: "system", Content: []llm.TextPart{{Text: "sys"}}},
+			{Role: "user", Content: []llm.TextPart{{Text: strings.Repeat("x", 1000)}}},
+		},
+	}
+	pipelineRC.SetContextCompactPressureAnchor(200000, pipeline.EstimateRequestContextTokens(pipelineRC, request))
+
+	var got []events.RunEvent
+	err := loop.Run(
+		context.Background(),
+		RunContext{
+			RunID:               uuid.New(),
+			TraceID:             "trace",
+			InputJSON:           map[string]any{},
+			ReasoningIterations: 1,
+			CancelSignal:        func() bool { return false },
+			PipelineRC:          pipelineRC,
+		},
+		request,
+		emitter,
+		func(ev events.RunEvent) error {
+			got = append(got, ev)
+			return nil
+		},
+	)
+	if err != nil {
+		t.Fatalf("loop.Run failed: %v", err)
+	}
+	if primary.calls != 1 {
+		t.Fatalf("expected provider to be called once when raw estimate fits, got %d", primary.calls)
+	}
+	if compact.calls != 0 {
+		t.Fatalf("expected compact gateway not to be called, got %d", compact.calls)
+	}
+	if got[len(got)-1].Type != "run.completed" {
+		t.Fatalf("expected final run.completed, got %s", got[len(got)-1].Type)
 	}
 }
 
@@ -2604,6 +2700,8 @@ type usageScriptedGateway struct {
 	calls int
 }
 
+type cacheReadAnchorGateway struct{}
+
 type oversizeSuccessGateway struct {
 	calls    int
 	phase    string
@@ -2745,6 +2843,21 @@ func (g *usageScriptedGateway) Stream(ctx context.Context, request llm.Request, 
 			InputTokens:  intPtr(20),
 			OutputTokens: intPtr(5),
 			CachedTokens: intPtr(6),
+		},
+	})
+}
+
+func (g *cacheReadAnchorGateway) Stream(ctx context.Context, request llm.Request, yield func(llm.StreamEvent) error) error {
+	_ = ctx
+	_ = request
+	if err := yield(llm.StreamMessageDelta{ContentDelta: "done", Role: "assistant"}); err != nil {
+		return err
+	}
+	return yield(llm.StreamRunCompleted{
+		Usage: &llm.Usage{
+			InputTokens:          intPtr(100),
+			OutputTokens:         intPtr(5),
+			CacheReadInputTokens: intPtr(20),
 		},
 	})
 }

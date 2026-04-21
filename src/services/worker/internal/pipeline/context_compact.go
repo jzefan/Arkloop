@@ -470,15 +470,16 @@ func RewriteOversizeRequest(
 		return request, stats, err
 	}
 	contextWindowTokens := ResolveRunContextWindowTokens(rc)
+	currentEstimateTokens := EstimateRequestContextTokens(rc, request)
 	stats.RequestBytesBeforeRewrite = currentEstimate
 	stats.ContextWindowTokens = contextWindowTokens
-	stats.RequestTokensBeforeRewrite = ComputeContextCompactPressure(EstimateRequestContextTokens(rc, request), anchor).ContextPressureTokens
+	stats.RequestTokensBeforeRewrite = currentEstimateTokens
 	minimalRequest := minimalCurrentInputRequest(request)
 	stats.MinimalRequestBytes, err = requestEstimate(minimalRequest)
 	if err != nil {
 		return request, stats, err
 	}
-	stats.MinimalRequestTokens = ComputeContextCompactPressure(EstimateRequestContextTokens(rc, minimalRequest), anchor).ContextPressureTokens
+	stats.MinimalRequestTokens = EstimateRequestContextTokens(rc, minimalRequest)
 	if llm.RequestExceedsLimits(stats.MinimalRequestBytes, stats.MinimalRequestTokens, contextWindowTokens) {
 		stats.CurrentInputTooLarge = true
 		stats.RequestBytesAfterRewrite = stats.RequestBytesBeforeRewrite
@@ -511,7 +512,7 @@ func RewriteOversizeRequest(
 	if err != nil {
 		return request, stats, err
 	}
-	stats.RequestTokensAfterRewrite = ComputeContextCompactPressure(EstimateRequestContextTokens(rc, rewritten), anchor).ContextPressureTokens
+	stats.RequestTokensAfterRewrite = EstimateRequestContextTokens(rc, rewritten)
 	if !llm.RequestExceedsLimits(
 		stats.RequestBytesAfterRewrite,
 		stats.RequestTokensAfterRewrite,
@@ -538,7 +539,7 @@ func RewriteOversizeRequest(
 	if err != nil {
 		return request, stats, err
 	}
-	stats.RequestTokensAfterRewrite = ComputeContextCompactPressure(EstimateRequestContextTokens(rc, rewritten), anchor).ContextPressureTokens
+	stats.RequestTokensAfterRewrite = EstimateRequestContextTokens(rc, rewritten)
 	return rewritten, stats, nil
 }
 
@@ -564,8 +565,9 @@ func rewriteOversizeRequestWithPersistedReplacement(
 		if err != nil {
 			return request, stats, changedAny, err
 		}
-		stats = ComputeContextCompactPressure(EstimateRequestContextTokens(rc, current), anchor)
-		if !llm.RequestExceedsLimits(currentBytes, stats.ContextPressureTokens, window) {
+		currentEstimateTokens := EstimateRequestContextTokens(rc, current)
+		stats = ComputeContextCompactPressure(currentEstimateTokens, anchor)
+		if !llm.RequestExceedsLimits(currentBytes, currentEstimateTokens, window) {
 			return current, stats, changedAny, nil
 		}
 		next, roundStats, changed, err := persistEmergencyReplacementRound(ctx, rc, current, anchor, round)
