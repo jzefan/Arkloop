@@ -206,7 +206,7 @@ func updateHeartbeatCooldown(ctx context.Context, db data.DB, rc *RunContext, re
 	var nextFire time.Time
 
 	if rc.HeartbeatToolOutcome != nil && rc.HeartbeatToolOutcome.Reply {
-		newLevel = existing.CooldownLevel
+		newLevel = 0
 		nextFire = now.Add(1 * time.Minute)
 	} else {
 		newLevel = existing.CooldownLevel + 1

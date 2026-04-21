@@ -114,7 +114,7 @@ func (c telegramConnector) persistTelegramInboundStageA(
 			delaySec = 3
 		}
 		nextFire := now.Add(time.Duration(delaySec) * time.Second)
-		if existing != nil && existing.NextFireAt.After(nextFire) {
+		if existing != nil && existing.NextFireAt.Before(nextFire) {
 			nextFire = existing.NextFireAt
 		}
 
