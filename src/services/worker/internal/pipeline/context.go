@@ -90,6 +90,8 @@ type RunContext struct {
 	FinalAssistantOutput string
 	// -- AgentLoopHandler 写入：按 turn 保留的 assistant 输出，供 Channel 逐条投递 --
 	FinalAssistantOutputs []string
+	// -- Sticker delivery 预处理后写入：按原始输出顺序保留 text/sticker 片段 --
+	ChannelDeliverySegments []data.OutboxSegment
 	// -- AgentLoopHandler / desktop agent loop 写入：Arkloop 自身线程写入完成，可执行 thread persist hooks --
 	ThreadPersistReady bool
 	// -- Channel tool / desktop writer 写入：正文已由具副作用的渠道工具直接送达，middleware 不应再次外发 --
@@ -268,6 +270,8 @@ type RunContext struct {
 
 	// -- Impression --
 	ImpressionRun bool
+	// -- Sticker register --
+	StickerRegisterRun bool
 
 	// -- Rollout --
 	// RolloutRecorder 用于写入 rollout 日志，为 nil 时不记录

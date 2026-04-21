@@ -26,6 +26,9 @@ type ChannelDeliveryMiddlewareOptions struct {
 	Telegram       *telegrambot.Client
 	Discord        DiscordHTTPDoer
 	DiscordAPIBase string
+	StickerStore   interface {
+		Get(ctx context.Context, key string) ([]byte, error)
+	}
 }
 
 // NewChannelDeliveryMiddleware posts assistant output to Telegram and records deliveries.
@@ -180,7 +183,7 @@ func NewChannelDeliveryMiddlewareWithOptions(pool *pgxpool.Pool, opts ChannelDel
 		fullOut := finalOutput
 		remainder := strings.TrimSpace(rc.TelegramStreamDeliveryRemainder)
 		notice := strings.TrimSpace(rc.ChannelTerminalNotice)
-		if fullOut == "" && remainder == "" && streamMidCount == 0 && notice == "" {
+		if fullOut == "" && remainder == "" && streamMidCount == 0 && notice == "" && len(rc.ChannelDeliverySegments) == 0 {
 			return err
 		}
 
@@ -238,7 +241,7 @@ func NewChannelDeliveryMiddlewareWithOptions(pool *pgxpool.Pool, opts ChannelDel
 		switch channelType {
 		case "telegram":
 			uxSend := ParseTelegramChannelUX(channel.ConfigJSON)
-			deliverErr = inlineDeliverTelegramOutbox(ctx, pool, rc, tgClient, channel, outboxRecord, payload, outboxRepo, repo, ledgerRepo, messagesRepo)
+			deliverErr = inlineDeliverTelegramOutbox(ctx, pool, rc, tgClient, channel, outboxRecord, payload, outboxRepo, repo, ledgerRepo, messagesRepo, opts.StickerStore)
 			if deliverErr == nil && strings.TrimSpace(uxSend.ReactionEmoji) != "" && tgClient != nil {
 				MaybeTelegramInboundReaction(ctx, tgClient, channel.Token, rc, uxSend.ReactionEmoji)
 			}
@@ -301,6 +304,9 @@ func buildOutboxPayload(rc *RunContext, channelType, output string, outputs []st
 	} else {
 		payload.Outputs = outputs
 	}
+	if len(rc.ChannelDeliverySegments) > 0 {
+		payload.Segments = append([]data.OutboxSegment(nil), rc.ChannelDeliverySegments...)
+	}
 
 	if channelType == "qq" {
 		metadata := map[string]any{}
@@ -325,9 +331,66 @@ func inlineDeliverTelegramOutbox(
 	deliveryRepo data.ChannelDeliveryRepository,
 	ledgerRepo data.ChannelMessageLedgerRepository,
 	messagesRepo data.MessagesRepository,
+	stickerStore interface {
+		Get(ctx context.Context, key string) ([]byte, error)
+	},
 ) error {
 	sender := NewTelegramChannelSenderWithClient(client, channel.Token, resolveSegmentDelay())
 	replyTo := telegramReplyReference(ctx, pool, rc)
+
+	if len(payload.Segments) > 0 {
+		for i := outboxRec.SegmentsSent; i < len(payload.Segments); i++ {
+			segment := payload.Segments[i]
+			ref := replyTo
+			if i > 0 {
+				ref = nil
+			}
+			var (
+				messageIDs []string
+				sendErr    error
+				textBody   string
+			)
+			switch segment.Kind {
+			case "sticker":
+				messageIDs, sendErr = SendTelegramStickerByID(ctx, pool, stickerStore, client, channel.Token, ChannelDeliveryTarget{
+					ChannelType:  rc.ChannelContext.ChannelType,
+					Conversation: rc.ChannelContext.Conversation,
+					ReplyTo:      ref,
+				}, payload.AccountID, segment.StickerID)
+			default:
+				textBody = strings.TrimSpace(segment.Text)
+				if textBody == "" {
+					if err := outboxRepo.UpdateProgress(ctx, pool, outboxRec.ID, i+1); err != nil {
+						return err
+					}
+					continue
+				}
+				messageIDs, sendErr = sender.SendText(ctx, ChannelDeliveryTarget{
+					ChannelType:  rc.ChannelContext.ChannelType,
+					Conversation: rc.ChannelContext.Conversation,
+					ReplyTo:      ref,
+				}, textBody)
+			}
+			if sendErr != nil {
+				return handleInlineOutboxFailure(ctx, pool, outboxRec, sendErr, outboxRepo)
+			}
+			if payload.IsTerminalNotice {
+				_, err := recordChannelTerminalNoticeSuccess(ctx, pool, messagesRepo, deliveryRepo, ledgerRepo, rc, ref, messageIDs, textBody)
+				if err != nil {
+					return handleInlineOutboxFailure(ctx, pool, outboxRec, err, outboxRepo)
+				}
+			} else {
+				if err := recordChannelDeliverySuccess(ctx, pool, deliveryRepo, ledgerRepo, rc, ref, messageIDs, nil); err != nil {
+					return handleInlineOutboxFailure(ctx, pool, outboxRec, err, outboxRepo)
+				}
+			}
+			if err := AdvanceOutboxProgress(ctx, pool, outboxRepo, outboxRec.ID, i+1, payload.AccountID, segment.StickerID); err != nil {
+				return err
+			}
+			outboxRec.SegmentsSent = i + 1
+		}
+		return outboxRepo.UpdateSent(ctx, pool, outboxRec.ID)
+	}
 
 	for i := outboxRec.SegmentsSent; i < len(payload.Outputs); i++ {
 		trimmed := strings.TrimSpace(payload.Outputs[i])

@@ -21,6 +21,7 @@ import (
 )
 
 type MessageAttachmentStore interface {
+	Get(ctx context.Context, key string) ([]byte, error)
 	GetWithContentType(ctx context.Context, key string) ([]byte, string, error)
 }
 
@@ -198,6 +199,9 @@ func loadRunInputs(
 		}
 		if rawRunKind, ok := dataJSON["run_kind"].(string); ok && strings.TrimSpace(rawRunKind) != "" {
 			inputJSON["run_kind"] = strings.TrimSpace(rawRunKind)
+		}
+		if rawStickerID, ok := dataJSON["sticker_id"].(string); ok && strings.TrimSpace(rawStickerID) != "" {
+			inputJSON["sticker_id"] = strings.TrimSpace(rawStickerID)
 		}
 		if rawThreadTailID, ok := dataJSON[runStartedThreadTailMessageIDKey].(string); ok && strings.TrimSpace(rawThreadTailID) != "" {
 			inputJSON[runStartedThreadTailMessageIDKey] = strings.TrimSpace(rawThreadTailID)
