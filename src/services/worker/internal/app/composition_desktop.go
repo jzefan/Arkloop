@@ -2869,7 +2869,7 @@ func cleanupDesktopRunTools(rc *pipeline.RunContext, writer *desktopEventWriter)
 	if rc.Runtime != nil && rc.Runtime.SandboxBaseURL != "" {
 		go sandboxbuiltin.CleanupSession(rc.Runtime.SandboxBaseURL, rc.Runtime.SandboxAuthToken, rc.Run.ID.String(), rc.Run.AccountID.String())
 	}
-	tools.CleanupPersistedToolOutputs(rc.WorkDir, rc.Run.ID.String())
+	tools.CleanupPersistedToolOutputs(rc.Run.ThreadID.String())
 }
 
 var errDesktopStopProcessing = errors.New("desktop_stop_processing")
