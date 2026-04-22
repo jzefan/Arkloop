@@ -33,7 +33,7 @@ export function createRunHandler(client: ApiClient) {
 
       const run = await client.createRun(threadId, {
         ...(currentModel() ? { model: currentModel() } : {}),
-        ...(currentPersona() ? { persona_id: currentPersona() } : {}),
+        persona_id: currentPersona() || "work",
         ...(currentEffort() ? { reasoning_mode: currentEffort() } : {}),
       })
       setDebugInfo(`run:created id=${run.run_id.slice(0, 8)}`)
@@ -94,11 +94,11 @@ function updateUsage(event: SSEEvent) {
   if (!usage) return
   const input = usage.input_tokens ?? 0
   const cacheRead = usage.cache_read_input_tokens ?? 0
-  const cacheCreation = usage.cache_creation_input_tokens ?? 0
+  const realPrompt = event.data.last_real_prompt_tokens as number | undefined
   setTokenUsage({
     input,
     output: usage.output_tokens ?? 0,
-    context: input + cacheRead + cacheCreation,
+    context: realPrompt ?? (input + cacheRead),
   })
 }
 
