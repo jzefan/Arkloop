@@ -585,6 +585,8 @@ const LiveRunPane = memo(function LiveRunPane({
           error={terminalRunHandoffStatus === 'failed' ? failedRunError : undefined}
         />
       )}
+      {/* reserve action bar height to prevent text from touching input area during streaming */}
+      <div style={{ height: '36px' }} />
       <div ref={bottomRef} />
     </div>
   )
