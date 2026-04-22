@@ -1293,6 +1293,14 @@ func (g *OpenAIGateway) streamResponsesSSE(
 					return err
 				}
 			}
+			// 某些 proxy 返回的 response.completed 中 output 不含 function_call，
+			// 此时 fallback 到流式累积的 toolBuffers
+			if len(toolCalls) == 0 && len(toolBuffers) > 0 {
+				toolCalls, err = openAIResponsesBufferedToolCalls(toolBuffers)
+				if err != nil {
+					return yield(openAIParseFailure(err, "OpenAI responses response parse failed", "OpenAI responses tool_call arguments parse failed", llmCallID))
+				}
+			}
 			for _, call := range toolCalls {
 				if err := yield(call); err != nil {
 					return err
