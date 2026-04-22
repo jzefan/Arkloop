@@ -573,7 +573,7 @@ func applyOpenAIChatReasoningMode(payload map[string]any, mode string) {
 		return
 	}
 	if openAIReasoningDisabled(mode) {
-		delete(payload, "reasoning_effort")
+		payload["reasoning_effort"] = "none"
 	}
 }
 

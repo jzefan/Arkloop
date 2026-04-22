@@ -77,6 +77,9 @@ func NewTitleSummarizerMiddleware(db TitleSummarizerDB, rdb *redis.Client, auxGa
 				slog.Bool("db_nil", db == nil),
 				slog.String("run_id", rc.Run.ID.String()),
 			)
+			if db != nil {
+				writeTitleGenerationEvent(ctx, db, rc.Run.ID, "title.generation.skipped", map[string]any{"reason": "not_configured"})
+			}
 			return next(ctx, rc)
 		}
 
@@ -93,6 +96,7 @@ func NewTitleSummarizerMiddleware(db TitleSummarizerDB, rdb *redis.Client, auxGa
 				slog.String("thread_id", threadID.String()),
 				slog.String("run_id", rc.Run.ID.String()),
 			)
+			writeTitleGenerationEvent(ctx, db, rc.Run.ID, "title.generation.skipped", map[string]any{"reason": "not_first_run"})
 			return next(ctx, rc)
 		}
 		titleDone, err := hasThreadTitleUpdateEvent(ctx, db, rc.Run.ID)
@@ -106,6 +110,7 @@ func NewTitleSummarizerMiddleware(db TitleSummarizerDB, rdb *redis.Client, auxGa
 				slog.String("thread_id", threadID.String()),
 				slog.String("run_id", rc.Run.ID.String()),
 			)
+			writeTitleGenerationEvent(ctx, db, rc.Run.ID, "title.generation.skipped", map[string]any{"reason": "already_generated"})
 			return next(ctx, rc)
 		}
 
@@ -144,7 +149,21 @@ func NewTitleSummarizerMiddleware(db TitleSummarizerDB, rdb *redis.Client, auxGa
 					slog.String("thread_id", threadID.String()),
 					slog.String("resolved_model", model),
 				)
+				{
+					writeCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+					writeTitleGenerationEvent(writeCtx, db, runID, "title.generation.failed", map[string]any{"reason": "gateway_unavailable", "model": model})
+					cancel()
+				}
 				return
+			}
+			{
+				writeCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				writeTitleGenerationEvent(writeCtx, db, runID, "title.generation.started", map[string]any{
+					"model":      model,
+					"msg_count":  len(messages),
+					"max_tokens": maxTokens,
+				})
+				cancel()
 			}
 			logTitleSummarizerDebug(ctx, "async_title_llm",
 				slog.String("run_id", runID.String()),
@@ -291,14 +310,20 @@ func generateTitle(
 	prompt string,
 	maxTokens int,
 ) {
+	var writeCtx context.Context
+	var cancel context.CancelFunc
 
 	titleInput := buildTitleInput(messages)
 	if titleInput == "" {
+		slog.WarnContext(ctx, "title_summarizer: empty input", "run_id", runID.String())
 		logTitleSummarizerDebug(ctx, "generate_skip",
 			slog.String("reason", "empty_title_input"),
 			slog.String("run_id", runID.String()),
 			slog.String("thread_id", threadID.String()),
 		)
+		writeCtx, cancel = context.WithTimeout(context.Background(), 5*time.Second)
+		writeTitleGenerationEvent(writeCtx, pool, runID, "title.generation.failed", map[string]any{"reason": "empty_input"})
+		cancel()
 		return
 	}
 	logTitleSummarizerDebug(ctx, "generate_title_input",
@@ -347,29 +372,52 @@ func generateTitle(
 			slog.String("run_id", runID.String()),
 			slog.Bool("deadline", ctx.Err() == context.DeadlineExceeded),
 		)
+		writeCtx, cancel = context.WithTimeout(context.Background(), 5*time.Second)
+		writeTitleGenerationEvent(writeCtx, pool, runID, "title.generation.failed", map[string]any{
+			"reason":   "llm_error",
+			"error":    err.Error(),
+			"deadline": ctx.Err() == context.DeadlineExceeded,
+		})
+		cancel()
 		return
 	}
 
 	title := normalizeGeneratedTitle(strings.Join(chunks, ""))
 	if title == "" {
+		slog.WarnContext(ctx, "title_summarizer: empty output", "run_id", runID.String(), "chunks", len(chunks))
 		logTitleSummarizerDebug(ctx, "generate_skip",
 			slog.String("reason", "empty_model_title"),
 			slog.String("run_id", runID.String()),
 			slog.Int("chunks", len(chunks)),
 			slog.Int("thinking_parts", thinkingParts),
 		)
+		writeCtx, cancel = context.WithTimeout(context.Background(), 5*time.Second)
+		writeTitleGenerationEvent(writeCtx, pool, runID, "title.generation.failed", map[string]any{
+			"reason":         "empty_output",
+			"chunks":         len(chunks),
+			"thinking_parts": thinkingParts,
+		})
+		cancel()
 		return
 	}
 	if len([]rune(title)) > 50 {
 		title = string([]rune(title)[:50])
 	}
-	seq, emitted, err := writeThreadTitleAndEventOnce(ctx, pool, runID, threadID, title)
+	writeCtx, cancel = context.WithTimeout(context.Background(), 5*time.Second)
+	seq, emitted, err := writeThreadTitleAndEventOnce(writeCtx, pool, runID, threadID, title)
+	cancel()
 	if err != nil {
 		slog.Warn("title_summarizer: db write failed", "err", err.Error())
 		logTitleSummarizerDebug(ctx, "thread_title_write_err",
 			slog.String("run_id", runID.String()),
 			slog.String("thread_id", threadID.String()),
 		)
+		writeCtx, cancel = context.WithTimeout(context.Background(), 5*time.Second)
+		writeTitleGenerationEvent(writeCtx, pool, runID, "title.generation.failed", map[string]any{
+			"reason": "db_write_failed",
+			"error":  err.Error(),
+		})
+		cancel()
 		return
 	}
 	if !emitted {
@@ -378,6 +426,9 @@ func generateTitle(
 			slog.String("run_id", runID.String()),
 			slog.String("thread_id", threadID.String()),
 		)
+		writeCtx, cancel = context.WithTimeout(context.Background(), 5*time.Second)
+		writeTitleGenerationEvent(writeCtx, pool, runID, "title.generation.skipped", map[string]any{"reason": "already_emitted"})
+		cancel()
 		return
 	}
 	logTitleSummarizerDebug(ctx, "thread_title_set",
@@ -385,6 +436,12 @@ func generateTitle(
 		slog.String("thread_id", threadID.String()),
 		slog.Int("title_runes", len([]rune(title))),
 	)
+	writeCtx, cancel = context.WithTimeout(context.Background(), 5*time.Second)
+	writeTitleGenerationEvent(writeCtx, pool, runID, "title.generation.completed", map[string]any{
+		"title": title,
+		"seq":   seq,
+	})
+	cancel()
 
 	notifyTitleEvent(ctx, pool, rdb, bus, runID, seq)
 }
@@ -500,6 +557,48 @@ func writeThreadTitleAndEventOnce(
 		slog.Int64("seq", seq),
 	)
 	return seq, true, nil
+}
+
+// writeTitleGenerationEvent writes a diagnostic event for title generation observability.
+func writeTitleGenerationEvent(ctx context.Context, pool TitleSummarizerDB, runID uuid.UUID, eventType string, data map[string]any) {
+	encoded, err := json.Marshal(data)
+	if err != nil {
+		slog.WarnContext(ctx, "title_generation_event: marshal failed", "err", err.Error())
+		return
+	}
+
+	tx, err := pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		slog.WarnContext(ctx, "title_generation_event: begin tx failed", "err", err.Error())
+		return
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	if _, err = tx.Exec(ctx, `SELECT 1 FROM runs WHERE id = $1 FOR UPDATE`, runID); err != nil {
+		slog.WarnContext(ctx, "title_generation_event: lock run failed", "err", err.Error())
+		return
+	}
+
+	var seq int64
+	if err = tx.QueryRow(ctx,
+		`SELECT COALESCE(MAX(seq), 0) + 1 FROM run_events WHERE run_id = $1`,
+		runID,
+	).Scan(&seq); err != nil {
+		slog.WarnContext(ctx, "title_generation_event: next seq failed", "err", err.Error())
+		return
+	}
+
+	if _, err = tx.Exec(ctx,
+		`INSERT INTO run_events (run_id, seq, type, data_json) VALUES ($1, $2, $3, $4::jsonb)`,
+		runID, seq, eventType, string(encoded),
+	); err != nil {
+		slog.WarnContext(ctx, "title_generation_event: insert failed", "err", err.Error())
+		return
+	}
+
+	if err = tx.Commit(ctx); err != nil {
+		slog.WarnContext(ctx, "title_generation_event: commit failed", "err", err.Error())
+	}
 }
 
 func notifyTitleEvent(
