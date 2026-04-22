@@ -122,7 +122,12 @@ var registry = []ToolMeta{
 			"Use follow for long-running output-only processes, stdin for non-PTY processes that need later input, and pty only for real terminal-style interaction. " +
 			"The backend returns a process_ref only for follow/stdin/pty modes. Continue those processes with continue_process, terminate them with terminate_process, and resize only pty processes with resize_process. " +
 			"When you only need to change directories, prefer the cwd parameter instead of prefixing the command with cd &&. " +
-			"Do not use for file operations — use read/write_file/edit/grep instead. " +
+			"Do not use this tool for file operations or code search. Specifically:\n" +
+				"- Do NOT use cat, head, tail, less, or more — use the read tool instead.\n" +
+				"- Do NOT use sed, awk, or echo to modify files — use edit or write_file instead.\n" +
+				"- Do NOT use grep, rg, or ag to search code — use the grep tool instead.\n" +
+				"- Do NOT use find or fd to locate files — use the glob tool instead.\n" +
+				"Using dedicated tools ensures consistent output formatting, proper file tracking, and token efficiency. " +
 			"Working files go to /workspace/; final user-visible files go to /tmp/output/ (auto-uploaded as artifacts). " +
 			"Two distinct reference formats — use the correct one:\n" +
 			"  • /tmp/output/ files appear in result.artifacts → reference as artifact:<key>\n" +
@@ -189,6 +194,7 @@ var registry = []ToolMeta{
 		ShortDesc: "create or overwrite a file",
 		LLMDescription: "create a new file or overwrite an existing file with the provided content. " +
 			"Parent directories are created automatically. " +
+			"When overwriting an existing file, you must read it first with source.kind=file_path; omitting it will return an error. " +
 			"Prefer edit over write_file when making targeted changes to existing files.",
 	},
 	{

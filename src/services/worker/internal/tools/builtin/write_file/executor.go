@@ -34,7 +34,33 @@ func (e *Executor) Execute(
 		return errResult(fmt.Sprintf("content too large (%d bytes, max %d)", len(content), maxWriteSize), started)
 	}
 
+	if err := fileops.DetectOmissionInContent(content); err != nil {
+		return errResult(err.Error(), started)
+	}
+
 	backend := fileops.ResolveBackend(execCtx.RuntimeSnapshot, execCtx.WorkDir, execCtx.RunID.String(), resolveAccountID(execCtx), execCtx.ProfileRef, execCtx.WorkspaceRef)
+
+	// read-before-overwrite check: only applies when file already exists
+	runID := execCtx.RunID.String()
+	trackingKey := backend.NormalizePath(filePath)
+	info, statErr := backend.Stat(ctx, filePath)
+	if statErr == nil {
+		// file exists — must have been read first
+		if e.Tracker == nil || !e.Tracker.HasBeenReadForRun(runID, trackingKey) {
+			return errResult(
+				fmt.Sprintf("file already exists but has not been read in this run: %s. Call read with source.kind=file_path before overwriting an existing file.", filePath),
+				started,
+			)
+		}
+		// staleness check
+		lastRead := e.Tracker.LastReadTimeForRun(runID, trackingKey)
+		if !lastRead.IsZero() && info.ModTime.After(lastRead) {
+			return errResult(
+				fmt.Sprintf("file modified since last read: %s. Re-read the file to get the latest content, then retry.", filePath),
+				started,
+			)
+		}
+	}
 
 	if err := backend.WriteFile(ctx, filePath, []byte(content)); err != nil {
 		return errResult(fmt.Sprintf("write failed: %s", err.Error()), started)
