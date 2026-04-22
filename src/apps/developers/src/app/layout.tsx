@@ -2,6 +2,10 @@ import './global.css';
 import type { Metadata } from 'next';
 
 export const metadata: Metadata = {
+  title: {
+    default: 'Arkloop Developers',
+    template: '%s | Arkloop Developers',
+  },
   icons: { icon: '/favicon.svg' },
 };
 

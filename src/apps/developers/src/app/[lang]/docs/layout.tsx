@@ -1,5 +1,10 @@
+import type { Metadata } from 'next';
 import { DocsLayout } from 'fumadocs-ui/layouts/docs';
 import { docsZhSource, docsEnSource } from '@/lib/source';
+
+export const metadata: Metadata = {
+  title: 'Docs',
+};
 
 export default async function DocsLayoutRoute({
   children,

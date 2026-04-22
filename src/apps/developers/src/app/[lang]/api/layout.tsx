@@ -1,5 +1,10 @@
+import type { Metadata } from 'next';
 import { DocsLayout } from 'fumadocs-ui/layouts/docs';
 import { apiZhSource, apiEnSource } from '@/lib/source';
+
+export const metadata: Metadata = {
+  title: 'API Reference',
+};
 
 export default async function ApiLayoutRoute({
   children,
