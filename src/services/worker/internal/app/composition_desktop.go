@@ -47,6 +47,7 @@ import (
 	"arkloop/services/worker/internal/toolprovider"
 	"arkloop/services/worker/internal/tools"
 	"arkloop/services/worker/internal/tools/builtin"
+	"arkloop/services/worker/internal/lsp"
 	"arkloop/services/worker/internal/tools/builtin/acptool"
 	"arkloop/services/worker/internal/tools/builtin/read"
 	sandboxbuiltin "arkloop/services/worker/internal/tools/builtin/sandbox"
@@ -125,6 +126,7 @@ type DesktopEngine struct {
 	shellExecutor          *runtime.DynamicShellExecutor
 	hookRuntime            *pipeline.HookRuntime
 	hookRegistry           *pipeline.HookRegistry
+	lspManager             *lsp.Manager
 }
 
 const defaultDesktopStageEventMs = 250
@@ -196,6 +198,29 @@ func ComposeDesktopEngine(ctx context.Context, db data.DesktopDB, bus eventbus.E
 	}
 
 	sandboxAddr := desktop.GetSandboxAddr()
+
+	// LSP
+	var lspManager *lsp.Manager
+	if lspCfg, lspErr := lsp.LoadConfig(); lspErr != nil {
+		slog.WarnContext(ctx, "desktop: lsp config load failed", "err", lspErr.Error())
+	} else if lspCfg != nil && len(lspCfg.Servers) > 0 {
+		lspManager = lsp.NewManager(lspCfg, "", slog.Default())
+		if err := lspManager.Start(ctx); err != nil {
+			slog.WarnContext(ctx, "desktop: lsp manager start failed", "err", err.Error())
+		}
+		if err := toolRegistry.Register(lsp.LSPToolAgentSpec); err != nil {
+			slog.WarnContext(ctx, "desktop: skip lsp tool registration", "err", err)
+		}
+		lspTool := lsp.NewLSPTool(lspManager, slog.Default())
+		executors[lsp.LSPToolAgentSpec.Name] = lspTool
+		// wrap file-write tools with LSP notifications
+		for _, name := range []string{"edit", "write_file"} {
+			if inner, ok := executors[name]; ok {
+				executors[name] = lsp.NewLSPAwareExecutor(inner, lspManager, slog.Default())
+			}
+		}
+		slog.InfoContext(ctx, "desktop: lsp enabled", "servers", len(lspCfg.Servers))
+	}
 	authToken := strings.TrimSpace(os.Getenv("ARKLOOP_DESKTOP_TOKEN"))
 	slog.Debug("composition_desktop", "sandboxAddr", sandboxAddr, "authToken", authToken)
 	shellExec := runtime.NewDynamicShellExecutor(sandboxAddr, authToken, fileTracker)
@@ -391,6 +416,9 @@ func ComposeDesktopEngine(ctx context.Context, db data.DesktopDB, bus eventbus.E
 	if artifactToolsRegistered {
 		slog.InfoContext(ctx, "desktop: stored artifact tools registered", "tools", []string{"create_artifact", "document_write", "image_generate"})
 	}
+	if lspManager != nil {
+		allLlmSpecs = append(allLlmSpecs, lsp.LSPToolLLMSpec)
+	}
 
 	envSnap, err := sharedtoolruntime.BuildRuntimeSnapshot(ctx, sharedtoolruntime.SnapshotInput{
 		HasConversationSearch:  true,
@@ -477,6 +505,7 @@ func ComposeDesktopEngine(ctx context.Context, db data.DesktopDB, bus eventbus.E
 		shellExecutor:          shellExec,
 		hookRuntime:            pipeline.NewHookRuntime(hookRegistry, pipeline.NewDefaultHookResultApplier()),
 		hookRegistry:           hookRegistry,
+		lspManager:             lspManager,
 	}, nil
 }
 
@@ -539,6 +568,15 @@ func loadPersonaRegistryFromFS() func() *personas.Registry {
 		cached = reg
 		cachedAt = time.Now()
 		return cached
+	}
+}
+
+// Shutdown releases resources held by the engine (LSP servers, etc.).
+func (e *DesktopEngine) Shutdown(ctx context.Context) {
+	if e.lspManager != nil {
+		if err := e.lspManager.Stop(ctx); err != nil {
+			slog.WarnContext(ctx, "desktop: lsp manager stop failed", "err", err.Error())
+		}
 	}
 }
 
@@ -729,6 +767,9 @@ func (e *DesktopEngine) Execute(ctx context.Context, run data.Run, traceID strin
 		})),
 	}
 	middlewares = append(middlewares, desktopCapabilityMiddlewares(memMiddleware, e.promptInjection, eventsRepo)...)
+	if e.lspManager != nil {
+		middlewares = append(middlewares, lsp.NewDiagnosticMiddleware(e.lspManager))
+	}
 	middlewares = append(middlewares,
 		desktopRouting(e.auxRouter, e.auxGateway, e.emitDebugEvents, e.db, runsRepo, eventsRepo),
 		desktopObservedStage("channel_group_context_trim", eventsRepo, pipeline.NewChannelGroupContextTrimMiddleware(pipeline.GroupContextTrimDeps{
