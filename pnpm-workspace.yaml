@@ -5,3 +5,4 @@ packages:
   - src/apps/console-lite
   - src/apps/developers
   - src/apps/desktop
+  - src/apps/tui
