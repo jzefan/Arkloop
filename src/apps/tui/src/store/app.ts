@@ -16,6 +16,7 @@ export const [workingDirectory, setWorkingDirectory] = createSignal("")
 export const [overlay, setOverlay] = createSignal<"model" | "session" | "effort" | null>(null)
 export const [tokenUsage, setTokenUsage] = createSignal({ input: 0, output: 0, context: 0 })
 export const [currentThreadId, setCurrentThreadId] = createSignal<string | null>(null)
+export const [exitConfirmPending, setExitConfirmPending] = createSignal(false)
 let focusInputHandler: (() => void) | null = null
 
 export function applyCurrentModel(model: string, label?: string, supportsReasoning = false, contextLength: number | null = null) {

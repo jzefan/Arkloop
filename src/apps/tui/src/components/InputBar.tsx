@@ -285,7 +285,7 @@ export function InputBar(props: Props) {
           paddingLeft={CHAT_CONTENT_GUTTER}
           paddingRight={1}
         >
-          <box width={CHAT_PREFIX_WIDTH} justifyContent="center">
+          <box width={CHAT_PREFIX_WIDTH}>
             <text content="❯" fg={streaming() ? tuiTheme.primary : tuiTheme.text} />
           </box>
           <box flexGrow={1}>
