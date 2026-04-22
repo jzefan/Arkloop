@@ -30,6 +30,8 @@ export function MessageList() {
                   toolSummary={current.tool.summary}
                   toolStatus={current.tool.status}
                   toolError={current.tool.errorSummary}
+                  toolResultContent={current.tool.resultContent}
+                  toolResultLineCount={current.tool.resultLineCount}
                 />
               )
             }
@@ -54,6 +56,8 @@ export function MessageList() {
         toolSummary={tool.summary}
         toolStatus={tool.status}
         toolError={tool.errorSummary}
+        toolResultContent={tool.resultContent}
+        toolResultLineCount={tool.resultLineCount}
       />
     )
   }

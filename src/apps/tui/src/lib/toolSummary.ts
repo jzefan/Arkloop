@@ -8,6 +8,8 @@ export type ToolRenderItem = {
   status: "pending" | "success" | "error"
   errorSummary?: string
   resultSummary?: string
+  resultContent?: string
+  resultLineCount?: number
 }
 
 export type MessageRenderSegment =
@@ -138,7 +140,7 @@ function summarizeCall(toolName: string, args: Record<string, unknown>): string 
     if (canonical.includes("edit")) return "Edit notebook"
   }
   if (canonical.includes("exec") || canonical.includes("bash") || canonical.includes("shell") || canonical.includes("command")) {
-    return `Run ${cleanInline(command, 72) ?? canonical}`
+    return `Bash(${cleanInline(command, 72) ?? canonical})`
   }
   if (canonical.includes("read") || canonical.includes("open")) {
     return `Read ${formatPathLike(pathLike ?? urlLike) ?? "resource"}`
@@ -173,14 +175,14 @@ function summarizeCall(toolName: string, args: Record<string, unknown>): string 
 function summarizeCount(record: Record<string, unknown>): string | undefined {
   for (const key of COUNT_KEYS) {
     const value = record[key]
-    if (typeof value === "number" && Number.isFinite(value)) {
+    if (typeof value === "number" && Number.isFinite(value) && value > 0) {
       const label = key.includes("file") ? "files" : key.includes("line") ? "lines" : key.includes("match") ? "matches" : "results"
       return `${value} ${label}`
     }
   }
   for (const key of ARRAY_COUNT_KEYS) {
     const value = record[key]
-    if (Array.isArray(value)) {
+    if (Array.isArray(value) && value.length > 0) {
       const label = key === "files" || key === "paths" ? "files" : key === "matches" ? "matches" : "results"
       return `${value.length} ${label}`
     }
@@ -190,7 +192,7 @@ function summarizeCount(record: Record<string, unknown>): string | undefined {
 
 function summarizeSuccessResult(result: unknown): string | undefined {
   if (result == null) return undefined
-  if (Array.isArray(result)) return `${result.length} results`
+  if (Array.isArray(result)) return result.length > 0 ? `${result.length} results` : undefined
   if (typeof result === "string") return undefined
   const record = asRecord(result)
   if (!record) return undefined
@@ -221,6 +223,48 @@ function summarizeError(result: unknown, errorClass?: string): string | undefine
   return detail ?? errorClass
 }
 
+function extractResultContent(result: unknown): { content: string; lineCount: number } | undefined {
+  if (result == null) return undefined
+  if (typeof result === "string") {
+    if (!result.trim()) return undefined
+    const lines = result.split("\n")
+    return { content: result, lineCount: lines.length }
+  }
+  // handle arrays of content blocks: [{type: "text", text: "..."}, ...]
+  if (Array.isArray(result)) {
+    const texts: string[] = []
+    for (const item of result) {
+      const r = asRecord(item)
+      if (r && typeof r["text"] === "string") texts.push(r["text"])
+    }
+    const joined = texts.join("\n")
+    if (joined.trim()) {
+      const lines = joined.split("\n")
+      return { content: joined, lineCount: lines.length }
+    }
+    return undefined
+  }
+  const record = asRecord(result)
+  if (!record) return undefined
+  // unwrap nested result key (one level only)
+  if (record["result"] != null && typeof record["result"] === "object" && !Array.isArray(record["result"])) {
+    const inner = extractResultContent(record["result"])
+    if (inner) return inner
+  }
+  const text =
+    record["stdout"] ?? record["output"] ?? record["content"] ?? record["text"] ?? record["message"]
+  if (typeof text === "string" && text.trim()) {
+    const lines = text.split("\n")
+    return { content: text, lineCount: lines.length }
+  }
+  // fallback: stderr when stdout is absent
+  if (typeof record["stderr"] === "string" && record["stderr"].trim() && record["stdout"] == null) {
+    const lines = record["stderr"].split("\n")
+    return { content: record["stderr"], lineCount: lines.length }
+  }
+  return undefined
+}
+
 export function summarizeToolRenderItem(input: {
   toolName: string
   args?: Record<string, unknown>
@@ -232,20 +276,24 @@ export function summarizeToolRenderItem(input: {
   const summary = summarizeCall(toolName, args)
 
   if (input.errorClass) {
+    const extracted = extractResultContent(input.result)
     return {
       toolName,
       summary,
       status: "error",
       errorSummary: summarizeError(input.result, input.errorClass),
+      resultContent: extracted?.content,
+      resultLineCount: extracted?.lineCount,
     }
   }
 
-  const resultSummary = summarizeSuccessResult(input.result)
+  const extracted = extractResultContent(input.result)
   return {
     toolName,
-    summary: resultSummary ? `${summary} -> ${resultSummary}` : summary,
+    summary,
     status: input.result === undefined ? "pending" : "success",
-    resultSummary,
+    resultContent: extracted?.content,
+    resultLineCount: extracted?.lineCount,
   }
 }
 
@@ -283,13 +331,9 @@ export function compressTurnSegments(segments: readonly TurnSegment[]): MessageR
         existing.tool = {
           ...existing.tool,
           status: tool.status,
-          summary: tool.status === "error"
-            ? existing.tool.summary
-            : tool.resultSummary
-              ? `${existing.tool.summary} -> ${tool.resultSummary}`
-              : existing.tool.summary,
           errorSummary: tool.errorSummary,
-          resultSummary: tool.resultSummary,
+          resultContent: tool.resultContent,
+          resultLineCount: tool.resultLineCount,
         }
         continue
       }
