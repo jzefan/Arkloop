@@ -55,6 +55,7 @@ function resolveToken(flagToken?: string): string {
 export interface CLIFlags {
   host?: string
   token?: string
+  resume?: string
 }
 
 export function parseFlags(argv: string[]): CLIFlags {
@@ -64,6 +65,8 @@ export function parseFlags(argv: string[]): CLIFlags {
       flags.host = argv[++i]
     } else if (argv[i] === "--token" && argv[i + 1]) {
       flags.token = argv[++i]
+    } else if (argv[i] === "--resume" && argv[i + 1]) {
+      flags.resume = argv[++i]
     }
   }
   return flags
