@@ -62,6 +62,7 @@ func (r *REPL) Run(ctx context.Context) error {
 		if err != nil {
 			if errors.Is(err, io.EOF) {
 				fmt.Fprintln(r.stderr)
+				r.printResumeHint()
 				return nil
 			}
 			return fmt.Errorf("read input: %w", err)
@@ -75,6 +76,7 @@ func (r *REPL) Run(ctx context.Context) error {
 		case strings.HasPrefix(input, "/"):
 			handled, err := r.handleCommand(ctx, input)
 			if errors.Is(err, io.EOF) {
+				r.printResumeHint()
 				return nil
 			}
 			if err != nil {
@@ -105,6 +107,7 @@ func (r *REPL) Run(ctx context.Context) error {
 		}
 
 		if ctx.Err() != nil {
+			r.printResumeHint()
 			return nil
 		}
 	}
@@ -213,4 +216,10 @@ func timeoutDisplay(timeout time.Duration) string {
 		return ""
 	}
 	return timeout.String()
+}
+
+func (r *REPL) printResumeHint() {
+	if strings.TrimSpace(r.threadID) != "" {
+		fmt.Fprintf(r.stderr, "\nTo resume this session:\n  ark sessions resume %s\n", r.threadID)
+	}
 }
