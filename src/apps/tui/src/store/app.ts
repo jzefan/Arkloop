@@ -10,7 +10,10 @@ export const [currentModelContextLength, setCurrentModelContextLength] = createS
 export const [currentPersona, setCurrentPersona] = createSignal("")
 export const [currentPersonaLabel, setCurrentPersonaLabel] = createSignal("")
 export const [currentEffort, setCurrentEffort] = createSignal<EffortLevel>("medium")
-export const [overlay, setOverlay] = createSignal<"model" | "session" | "tool" | "effort" | null>(null)
+export const [currentUsername, setCurrentUsername] = createSignal("")
+export const [appVersion, setAppVersion] = createSignal("0.0.0")
+export const [workingDirectory, setWorkingDirectory] = createSignal("")
+export const [overlay, setOverlay] = createSignal<"model" | "session" | "effort" | null>(null)
 export const [tokenUsage, setTokenUsage] = createSignal({ input: 0, output: 0, context: 0 })
 export const [currentThreadId, setCurrentThreadId] = createSignal<string | null>(null)
 let focusInputHandler: (() => void) | null = null
@@ -35,6 +38,16 @@ export function applyCurrentEffort(effort: EffortLevel) {
   setCurrentEffort(effort)
   const model = currentModel()
   if (model) writeModelEffort(model, effort)
+}
+
+export function applyStartupContext(params: {
+  username?: string
+  version?: string
+  directory?: string
+}) {
+  if (params.username !== undefined) setCurrentUsername(params.username)
+  if (params.version !== undefined) setAppVersion(params.version)
+  if (params.directory !== undefined) setWorkingDirectory(params.directory)
 }
 
 export function registerInputFocus(handler: (() => void) | null) {
