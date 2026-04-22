@@ -308,11 +308,13 @@ func buildCountResult(lines []string, limit, offset int, started time.Time) tool
 	}
 
 	result := strings.Join(lines, "\n")
+	hasMore := truncated || (offset+len(lines)) < total
 	res := map[string]any{
 		"matches":       result,
 		"count":         len(lines),
 		"total_matches": totalMatches,
 		"truncated":     truncated,
+		"has_more":      hasMore,
 		"total":         total,
 		"offset":        offset,
 		"limit":         limit,
@@ -421,10 +423,12 @@ func paginateByBlocks(raw string, limit, offset int, started time.Time) tools.Ex
 }
 
 func paginatedResult(matchStr string, count int, truncated bool, total, limit, offset int, started time.Time) tools.ExecutionResult {
+	hasMore := truncated || (offset+count) < total
 	result := map[string]any{
 		"matches":   matchStr,
 		"count":     count,
 		"truncated": truncated,
+		"has_more":  hasMore,
 	}
 	if truncated || offset > 0 {
 		result["total"] = total

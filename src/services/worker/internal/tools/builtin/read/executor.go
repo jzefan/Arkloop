@@ -238,19 +238,19 @@ func (e *Executor) executeFilePath(
 		e.Tracker.RecordReadState(runID, normPath, mtimeNano, parsed.Offset, actualEnd)
 	}
 
-	result := numbered
+	resultJSON := map[string]any{
+		"content":     numbered,
+		"file_path":   filePath,
+		"total_lines": totalLines,
+		"truncated":   truncated,
+	}
 	if truncated {
 		nextOffset := actualEnd + 1
-		result += fmt.Sprintf("\n\n[文件已截断] 显示第 %d-%d 行，共 %d 行。使用 offset=%d 继续读取。",
+		resultJSON["hint"] = fmt.Sprintf("[文件已截断] 显示第 %d-%d 行，共 %d 行。使用 offset=%d 继续读取。",
 			parsed.Offset, actualEnd, totalLines, nextOffset)
 	}
 	return tools.ExecutionResult{
-		ResultJSON: map[string]any{
-			"content":     result,
-			"file_path":   filePath,
-			"total_lines": totalLines,
-			"truncated":   truncated,
-		},
+		ResultJSON: resultJSON,
 		DurationMs: durationMs(started),
 	}
 }

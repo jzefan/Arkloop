@@ -159,6 +159,7 @@ func (e *Executor) Execute(
 
 	// diff snippet before CRLF restore — offsets are LF-based
 	snippet := diffSnippet(newContent, editStart, oldLen, newLen, 4)
+	diff := unifiedDiff(content, newContent, filePath)
 
 	// restore CRLF
 	if hasCRLF {
@@ -187,6 +188,9 @@ func (e *Executor) Execute(
 	}
 	if snippet != "" {
 		result["snippet"] = snippet
+	}
+	if diff != "" {
+		result["diff"] = diff
 	}
 	return tools.ExecutionResult{
 		ResultJSON: result,
