@@ -40,6 +40,7 @@ function App() {
   const [authChecked, setAuthChecked] = useState(false)
   const [onboardingDone, setOnboardingDone] = useState<boolean | null>(null)
   const [sidecarError, setSidecarError] = useState<{ title: string; message: string } | null>(null)
+  const [sidecarChecked, setSidecarChecked] = useState(false)
 
   // Desktop: 检查 onboarding 状态
   useEffect(() => {
@@ -60,17 +61,69 @@ function App() {
 
   // Desktop: 检查 sidecar 启动错误
   useEffect(() => {
-    if (!isDesktop()) return
-    const api = getDesktopApi()
-    if (!api) return
-    api.sidecar.getRuntime().then((runtime) => {
-      if (runtime.lastError) {
+    if (!isDesktop()) {
+      setSidecarChecked(true)
+      return
+    }
+
+    let cancelled = false
+    let cleanupRuntimeListener: (() => void) | null = null
+
+    const check = async () => {
+      const api = getDesktopApi()
+      if (!api) {
+        // preload not injected yet, retry shortly
+        setTimeout(check, 100)
+        return
+      }
+
+      try {
+        // Subscribe to runtime changes for continuous updates
+        if (api.sidecar.onRuntimeChanged) {
+          cleanupRuntimeListener = api.sidecar.onRuntimeChanged((runtime) => {
+            if (cancelled) return
+            if (runtime.lastError) {
+              setSidecarError({
+                title: t.connectionFailed,
+                message: runtime.lastError,
+              })
+              setSidecarChecked(true)
+            } else if (runtime.status === 'running') {
+              setSidecarError(null)
+              setSidecarChecked(true)
+            }
+            // other statuses (starting, stopped without error): wait for next event
+          })
+        }
+
+        const runtime = await api.sidecar.getRuntime()
+        if (cancelled) return
+        if (runtime.lastError) {
+          setSidecarError({
+            title: t.connectionFailed,
+            message: runtime.lastError,
+          })
+          setSidecarChecked(true)
+        } else if (runtime.status === 'running') {
+          setSidecarChecked(true)
+        }
+        // stopped/starting without error: don't set sidecarChecked, wait for onRuntimeChanged
+      } catch (err) {
+        if (cancelled) return
         setSidecarError({
           title: t.connectionFailed,
-          message: runtime.lastError,
+          message: err instanceof Error ? err.message : 'Sidecar process is not responding',
         })
+        setSidecarChecked(true)
       }
-    }).catch(() => {})
+    }
+
+    check()
+
+    return () => {
+      cancelled = true
+      if (cleanupRuntimeListener) cleanupRuntimeListener()
+    }
   }, [t.connectionFailed])
 
   useEffect(() => {
@@ -155,6 +208,7 @@ function App() {
 
   const handleRetrySidecar = useCallback(async () => {
     setSidecarError(null)
+    setSidecarChecked(false)
     const api = getDesktopApi()
     if (!api) return
     try {
@@ -167,15 +221,24 @@ function App() {
               message: runtime.lastError,
             })
           }
-        }).catch(() => {})
+          setSidecarChecked(true)
+        }).catch(() => {
+          setSidecarChecked(true)
+        })
       }, 2000)
     } catch (err) {
       setSidecarError({
         title: t.connectionFailed,
         message: err instanceof Error ? err.message : String(err),
       })
+      setSidecarChecked(true)
     }
   }, [t.connectionFailed])
+
+  if (!sidecarChecked) {
+    if (isDesktop()) return <LoadingPage label={t.loading} />
+    return null
+  }
 
   if (sidecarError) {
     return <LoadingPage label={t.loading} error={sidecarError} onRetry={handleRetrySidecar} retryLabel={t.retryConnection} />

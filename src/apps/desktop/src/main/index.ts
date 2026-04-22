@@ -433,22 +433,10 @@ if (!hasSingleInstanceLock) {
     })
 
     const config = loadConfig()
-    if (config.mode === 'local') {
-      try {
-        await ensureLocalSidecar(config)
-      } catch (error) {
-        console.error('[desktop] failed to start local sidecar:', error)
-        syncRuntimeToRenderer(getSidecarRuntime())
-      }
-    } else {
-      activeSidecarPort = null
-    }
 
+    // 先创建窗口，让用户立即看到 LoadingPage
     mainWindow = createWindow()
 
-    // ensureLocalSidecar 在窗口创建之前完成，当时 sync*ToRenderer 因 mainWindow 为 null 丢弃。
-    // 渲染层 preload 里 sidecarRuntimeSnapshot 仍为初始值，getApiBaseUrl 可能与真实端口/bridge 不一致，
-    // 导致 /v1/me 等请求挂起或失败且界面长期 Loading。dom-ready / did-finish-load 后补发一次。
     const pushEmbeddedStateToRendererOnce = (() => {
       let sent = false
       return (): void => {
@@ -465,6 +453,18 @@ if (!hasSingleInstanceLock) {
     mainWindow.webContents.once('did-finish-load', pushEmbeddedStateToRendererOnce)
 
     loadContent(mainWindow)
+
+    // 窗口已显示，再启动 sidecar（可能阻塞 30s）
+    if (config.mode === 'local') {
+      try {
+        await ensureLocalSidecar(config)
+      } catch (error) {
+        console.error('[desktop] failed to start local sidecar:', error)
+        syncRuntimeToRenderer(getSidecarRuntime())
+      }
+    } else {
+      activeSidecarPort = null
+    }
 
     createTray(getWindow, showMainWindow)
     registerGlobalShortcut(getWindow, showMainWindow)
