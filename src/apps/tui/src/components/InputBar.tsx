@@ -1,0 +1,262 @@
+import type { KeyEvent, TextareaRenderable } from "@opentui/core"
+import { useTerminalDimensions } from "@opentui/solid"
+import { createEffect, createMemo, createSignal, For, Show } from "solid-js"
+import { effortSymbol, formatEffort } from "../lib/effort"
+import { streaming } from "../store/chat"
+import { tuiTheme } from "../lib/theme"
+import {
+  connected,
+  currentEffort,
+  currentModelLabel,
+  currentModelContextLength,
+  currentModelSupportsReasoning,
+  currentPersonaLabel,
+  registerInputFocus,
+  setOverlay,
+  tokenUsage,
+} from "../store/app"
+
+interface Props {
+  onSubmit: (text: string) => void
+}
+
+interface SlashCommand {
+  command: string
+  insert: string
+  description: string
+}
+
+const keyBindings = [
+  { name: "return", action: "submit" as const },
+  { name: "return", meta: true, action: "newline" as const },
+]
+
+const slashCommands: SlashCommand[] = [
+  { command: "/models", insert: "/models", description: "打开 model 选择器" },
+  { command: "/effort", insert: "/effort ", description: "设置思考强度" },
+  { command: "/sessions", insert: "/sessions", description: "打开会话列表" },
+  { command: "/new", insert: "/new", description: "新建会话" },
+  { command: "/model <name>", insert: "/model ", description: "直接切换模型" },
+  { command: "/effort <level>", insert: "/effort ", description: "none|minimal|low|medium|high|max" },
+]
+
+export function InputBar(props: Props) {
+  let input: TextareaRenderable
+  const terminal = useTerminalDimensions()
+  const [text, setText] = createSignal("")
+  const [selectedIndex, setSelectedIndex] = createSignal(0)
+
+  const suggestions = createMemo(() => {
+    const value = text().trimStart()
+    if (!value.startsWith("/")) return []
+    const needle = value.toLowerCase()
+    return slashCommands.filter((item) => item.command.toLowerCase().startsWith(needle) || item.command.toLowerCase().includes(needle))
+  })
+
+  const activeSuggestion = createMemo(() => suggestions()[selectedIndex()] ?? suggestions()[0])
+  const contextText = () => {
+    const usage = tokenUsage()
+    const limit = currentModelContextLength()
+    if (!limit || usage.context <= 0) return "context --/--"
+    const remaining = Math.max(0, limit - usage.context)
+    return `context ${usage.context}/${limit} · left ${remaining}`
+  }
+  const connectionText = () => connected() ? "connected" : "offline"
+  const connectionColor = () => connected() ? tuiTheme.success : tuiTheme.error
+  const lineText = () => {
+    const width = Math.max(12, terminal().width - 4)
+    return "─".repeat(width)
+  }
+
+  function submit() {
+    if (streaming() || !input || input.isDestroyed) return
+    const value = (input.plainText ?? "").trim()
+    if (!value) return
+    props.onSubmit(value)
+    input.clear()
+    setText("")
+  }
+
+  createEffect(() => {
+    if (!input || input.isDestroyed) return
+    if (!input.focused) input.focus()
+  })
+
+  createEffect(() => {
+    registerInputFocus(() => {
+      if (!input || input.isDestroyed) return
+      input.focus()
+    })
+  })
+
+  createEffect(() => {
+    const items = suggestions()
+    if (items.length === 0) {
+      setSelectedIndex(0)
+      return
+    }
+    if (selectedIndex() > items.length - 1) {
+      setSelectedIndex(items.length - 1)
+    }
+  })
+
+  function replaceWithSuggestion(command: string) {
+    if (!input || input.isDestroyed) return
+    input.setText(command)
+    setText(input.plainText ?? "")
+    input.focus()
+  }
+
+  function handleKeyDown(event: KeyEvent) {
+    if (suggestions().length === 0) return
+
+    if (event.name === "up") {
+      event.preventDefault()
+      setSelectedIndex((prev) => (prev <= 0 ? suggestions().length - 1 : prev - 1))
+      return
+    }
+
+    if (event.name === "down") {
+      event.preventDefault()
+      setSelectedIndex((prev) => (prev >= suggestions().length - 1 ? 0 : prev + 1))
+      return
+    }
+
+    if (event.name === "tab") {
+      event.preventDefault()
+      const next = activeSuggestion()
+      if (!next) return
+      replaceWithSuggestion(next.insert)
+      return
+    }
+
+    if (event.name === "return") {
+      const value = (input?.plainText ?? "").trim()
+      if (value.startsWith("/") && !slashCommands.some((item) => item.command === value) && activeSuggestion()) {
+        event.preventDefault()
+        replaceWithSuggestion(activeSuggestion()!.insert)
+      }
+    }
+  }
+
+  return (
+    <box flexDirection="column" width="100%" paddingTop={1}>
+      <box position="relative" width="100%" flexDirection="column">
+        <Show when={suggestions().length > 0}>
+          <box
+            position="absolute"
+            bottom="100%"
+            left={0}
+            right={0}
+            zIndex={20}
+            width="100%"
+            paddingLeft={1}
+            paddingRight={1}
+          >
+            <box
+              flexDirection="column"
+              width="100%"
+              backgroundColor={tuiTheme.panel}
+            >
+              <For each={suggestions()}>
+                {(item, index) => {
+                  const active = () => index() === selectedIndex()
+                  return (
+                    <box
+                      flexDirection="row"
+                      justifyContent="space-between"
+                      paddingLeft={2}
+                      paddingRight={2}
+                      backgroundColor={active() ? tuiTheme.primary : tuiTheme.panel}
+                    >
+                      <text content={item.command} fg={active() ? tuiTheme.background : tuiTheme.text} />
+                      <text content={item.description} fg={active() ? tuiTheme.background : tuiTheme.textMuted} />
+                    </box>
+                  )
+                }}
+              </For>
+            </box>
+          </box>
+        </Show>
+        <box
+          flexDirection="column"
+          width="100%"
+          backgroundColor={tuiTheme.background}
+          onMouseOver={() => input?.focus()}
+          onMouseDown={() => input?.focus()}
+        >
+          <box width="100%" paddingLeft={1}>
+            <text content={lineText()} fg={tuiTheme.borderSubtle} wrapMode="none" />
+          </box>
+          <box
+            width="100%"
+            flexDirection="row"
+            alignItems="center"
+            paddingLeft={1}
+            paddingRight={1}
+            backgroundColor={tuiTheme.background}
+          >
+            <text content="❯" fg={streaming() ? tuiTheme.primary : tuiTheme.text} />
+            <box flexGrow={1} paddingLeft={1}>
+              <textarea
+                ref={(r: TextareaRenderable) => {
+                  input = r
+                }}
+                onSubmit={() => {
+                  setTimeout(() => setTimeout(() => submit(), 0), 0)
+                }}
+                onContentChange={() => {
+                  setText(input?.plainText ?? "")
+                }}
+                onKeyDown={handleKeyDown}
+                keyBindings={keyBindings}
+                placeholder={streaming() ? "Waiting for response..." : "Type a message or / for commands..."}
+                placeholderColor={tuiTheme.textMuted}
+                textColor={tuiTheme.text}
+                focusedTextColor={tuiTheme.text}
+                focusedBackgroundColor={tuiTheme.background}
+                cursorColor={tuiTheme.primary}
+                width="100%"
+                minHeight={1}
+                maxHeight={4}
+              />
+            </box>
+          </box>
+          <box width="100%" paddingLeft={1}>
+            <text content={lineText()} fg={tuiTheme.borderSubtle} wrapMode="none" />
+          </box>
+        </box>
+      </box>
+      <box
+        flexDirection="row"
+        justifyContent="space-between"
+        width="100%"
+        paddingLeft={3}
+        paddingRight={3}
+        paddingTop={1}
+        paddingBottom={1}
+      >
+        <box flexDirection="row" gap={1}>
+          <text content={currentPersonaLabel() || "Work"} fg={tuiTheme.textMuted} />
+          <text content="·" fg={tuiTheme.border} />
+          <text content={currentModelLabel() || "auto"} fg={tuiTheme.textMuted} />
+          <Show when={currentModelSupportsReasoning() && currentEffort() !== "none"}>
+            <text content="·" fg={tuiTheme.border} />
+            <text
+              content={`${effortSymbol(currentEffort())}${effortSymbol(currentEffort()) ? " " : ""}${formatEffort(currentEffort())}`}
+              fg={tuiTheme.primary}
+              onMouseUp={() => setOverlay("effort")}
+            />
+          </Show>
+        </box>
+        <box flexDirection="row" gap={1}>
+          <text content={contextText()} fg={tuiTheme.textMuted} />
+          <text content="·" fg={tuiTheme.border} />
+          <text content={connectionText()} fg={connectionColor()} />
+          <text content="·" fg={tuiTheme.border} />
+          <text content={suggestions().length > 0 ? "tab 补全" : "/ 命令"} fg={tuiTheme.textMuted} />
+        </box>
+      </box>
+    </box>
+  )
+}
