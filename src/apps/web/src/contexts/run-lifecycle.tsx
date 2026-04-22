@@ -23,7 +23,7 @@ type ContextCompactBarState =
 
 type TerminalRunHandoffStatus = 'completed' | 'cancelled' | 'interrupted' | 'failed' | null
 
-const COMPLETED_RUN_SSE_TAIL_MS = 8000
+const COMPLETED_RUN_SSE_TAIL_MS = 30000
 
 interface RunLifecycleContextValue {
   activeRunId: string | null
