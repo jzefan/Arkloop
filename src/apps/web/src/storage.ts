@@ -26,7 +26,9 @@ const CUSTOM_THEMES_KEY = 'arkloop:web:custom-themes'
 const CUSTOM_BODY_FONT_KEY = 'arkloop:web:custom-body-font'
 const INPUT_DRAFT_TEXT_PREFIX = 'arkloop:web:input_draft_text'
 const INPUT_DRAFT_ATTACHMENTS_PREFIX = 'arkloop:web:input_draft_attachments'
+const INPUT_HISTORY_PREFIX = 'arkloop:web:input_history'
 const INPUT_DRAFT_TTL_MS = 30 * 24 * 60 * 60 * 1000
+const INPUT_HISTORY_MAX_ITEMS = 500
 const DRAFT_STORAGE_EVICTION_PREFIXES = [
   'arkloop:web:msg_run_events:',
   'arkloop:web:msg_assistant_turn:',
@@ -277,6 +279,12 @@ function inputDraftBaseKey(scope: InputDraftScope, prefix: string): string | nul
     return `${prefix}:${owner}:thread:${threadId}:${mode}:${search}`
   }
   return `${prefix}:${owner}:welcome:${mode}:${search}`
+}
+
+function inputHistoryKey(scope: InputDraftScope): string | null {
+  const owner = scope.ownerKey?.trim() || 'global'
+  const mode = scope.appMode === 'work' ? 'work' : 'chat'
+  return `${INPUT_HISTORY_PREFIX}:${owner}:${mode}`
 }
 
 function normalizeDraftAttachmentRecord(item: DraftAttachmentRecord): DraftAttachmentRecord | null {
@@ -1822,6 +1830,39 @@ export function readInputDraftAttachments(scope: InputDraftScope): DraftAttachme
 
 export function writeInputDraftAttachments(scope: InputDraftScope, attachments: DraftAttachmentRecord[]): void {
   writePersistedAttachmentDraft(scope, attachments)
+}
+
+export function readInputHistory(scope: InputDraftScope): string[] {
+  if (!canUseLocalStorage()) return []
+  const key = inputHistoryKey(scope)
+  if (!key) return []
+  try {
+    const raw = localStorage.getItem(key)
+    if (!raw) return []
+    const parsed = JSON.parse(raw) as unknown
+    if (!Array.isArray(parsed)) return []
+    return parsed.filter((item): item is string => typeof item === 'string' && item.trim() !== '')
+  } catch {
+    try { localStorage.removeItem(key) } catch { /* ignore */ }
+    return []
+  }
+}
+
+export function appendInputHistory(scope: InputDraftScope, text: string): void {
+  if (!canUseLocalStorage()) return
+  const key = inputHistoryKey(scope)
+  const trimmed = text.trim()
+  if (!key || !trimmed) return
+  const current = readInputHistory(scope)
+  const withoutDuplicate = current.filter((item) => item !== trimmed)
+  const next = [...withoutDuplicate, trimmed].slice(-INPUT_HISTORY_MAX_ITEMS)
+  try {
+    tryWriteDraftWithEviction(() => {
+      localStorage.setItem(key, JSON.stringify(next))
+    }, [key])
+  } catch {
+    // 忽略存储失败
+  }
 }
 
 export function clearInputDraft(scope: InputDraftScope): void {
