@@ -38,6 +38,7 @@ interface RunLifecycleContextValue {
   contextCompactBar: ContextCompactBarState | null
   terminalRunDisplayId: string | null
   terminalRunHandoffStatus: TerminalRunHandoffStatus
+  terminalRunCoveredRunIds: string[]
   terminalRunAssistantMessageId: string | null
   terminalRunHistoryExpanded: boolean
   completedTitleTailRunId: string | null
@@ -60,6 +61,7 @@ interface RunLifecycleContextValue {
   setContextCompactBar: (v: ContextCompactBarState | null) => void
   setTerminalRunDisplayId: (v: string | null) => void
   setTerminalRunHandoffStatus: (v: TerminalRunHandoffStatus) => void
+  setTerminalRunCoveredRunIds: React.Dispatch<React.SetStateAction<string[]>>
   markTerminalRunHistory: (msgId: string | null, expanded?: boolean) => void
   armCompletedTitleTail: (runId: string) => void
   clearCompletedTitleTail: () => void
@@ -96,6 +98,7 @@ export function RunLifecycleProvider({ children }: { children: ReactNode }) {
   const [contextCompactBar, setContextCompactBar] = useState<ContextCompactBarState | null>(null)
   const [terminalRunDisplayId, setTerminalRunDisplayId] = useState<string | null>(null)
   const [terminalRunHandoffStatus, setTerminalRunHandoffStatus] = useState<TerminalRunHandoffStatus>(null)
+  const [terminalRunCoveredRunIds, setTerminalRunCoveredRunIds] = useState<string[]>([])
   const [terminalRunAssistantMessageId, setTerminalRunAssistantMessageId] = useState<string | null>(null)
   const [terminalRunHistoryExpanded, setTerminalRunHistoryExpanded] = useState(false)
   const [completedTitleTailRunId, setCompletedTitleTailRunId] = useState<string | null>(null)
@@ -282,6 +285,7 @@ export function RunLifecycleProvider({ children }: { children: ReactNode }) {
     setQueuedDraft(null)
     setTerminalRunDisplayId(null)
     setTerminalRunHandoffStatus(null)
+    setTerminalRunCoveredRunIds([])
     markTerminalRunHistory(null)
     clearContextCompactHideTimer()
     injectionBlockedRunIdRef.current = null
@@ -307,6 +311,7 @@ export function RunLifecycleProvider({ children }: { children: ReactNode }) {
     contextCompactBar,
     terminalRunDisplayId,
     terminalRunHandoffStatus,
+    terminalRunCoveredRunIds,
     terminalRunAssistantMessageId,
     terminalRunHistoryExpanded,
     completedTitleTailRunId,
@@ -326,6 +331,7 @@ export function RunLifecycleProvider({ children }: { children: ReactNode }) {
     setContextCompactBar,
     setTerminalRunDisplayId,
     setTerminalRunHandoffStatus,
+    setTerminalRunCoveredRunIds,
     markTerminalRunHistory,
     armCompletedTitleTail,
     clearCompletedTitleTail,
@@ -354,6 +360,7 @@ export function RunLifecycleProvider({ children }: { children: ReactNode }) {
     contextCompactBar,
     terminalRunDisplayId,
     terminalRunHandoffStatus,
+    terminalRunCoveredRunIds,
     terminalRunAssistantMessageId,
     terminalRunHistoryExpanded,
     completedTitleTailRunId,

@@ -49,6 +49,7 @@ type LoadedRunInputs = loadedRunInputs
 type resumeReplayInsertion struct {
 	AnchorKey string
 	Messages  []llm.Message
+	RunID     uuid.UUID
 }
 
 type resumeUnavailableError struct {
@@ -107,6 +108,9 @@ func NewInputLoaderMiddleware(
 		rc.InputJSON = loaded.InputJSON
 		rc.Messages, rc.ThreadMessageIDs = sanitizeToolPairs(loaded.Messages, loaded.ThreadMessageIDs)
 		rc.ThreadContextFrontier = append([]FrontierNode(nil), loaded.ThreadContextFrontier...)
+		if rawWorkDir, ok := loaded.InputJSON["work_dir"].(string); ok {
+			rc.WorkDir = strings.TrimSpace(rawWorkDir)
+		}
 		emitTraceEvent(rc, "input_loader", "input_loader.loaded", map[string]any{
 			"run_kind":      strings.TrimSpace(stringValue(rc.InputJSON["run_kind"])),
 			"message_count": len(rc.Messages),
@@ -267,14 +271,26 @@ func loadRunInputs(
 
 	replayCount := 0
 	replayByAnchor := make(map[string][]resumeReplayInsertion, len(replayInsertions))
+	replayedRunIDs := make(map[uuid.UUID]struct{}, len(replayInsertions))
 	for _, insertion := range replayInsertions {
 		replayByAnchor[insertion.AnchorKey] = append(replayByAnchor[insertion.AnchorKey], insertion)
 		replayCount += len(insertion.Messages)
+		if insertion.RunID != uuid.Nil {
+			replayedRunIDs[insertion.RunID] = struct{}{}
+		}
 	}
 
 	llmMessages := make([]llm.Message, 0, len(canonicalContext.Messages)+replayCount)
 	ids := make([]uuid.UUID, 0, len(canonicalContext.ThreadMessageIDs)+replayCount)
+	messageRunIDs := canonicalAssistantRunIDs(messages)
 	for _, entry := range canonicalContext.Entries {
+		if entry.ThreadMessageID != uuid.Nil {
+			if runID, ok := messageRunIDs[entry.ThreadMessageID]; ok {
+				if _, replayed := replayedRunIDs[runID]; replayed {
+					continue
+				}
+			}
+		}
 		llmMessages = append(llmMessages, entry.Message)
 		ids = append(ids, entry.ThreadMessageID)
 		for _, insertion := range replayByAnchor[entry.AnchorKey] {
@@ -338,6 +354,26 @@ func isExplicitContinueJob(jobPayload map[string]any) bool {
 	}
 	raw, _ := jobPayload["source"].(string)
 	return strings.TrimSpace(raw) == "continue"
+}
+
+func canonicalAssistantRunIDs(messages []data.ThreadMessage) map[uuid.UUID]uuid.UUID {
+	out := make(map[uuid.UUID]uuid.UUID, len(messages))
+	for _, msg := range messages {
+		if msg.ID == uuid.Nil || msg.Role != "assistant" || len(msg.MetadataJSON) == 0 {
+			continue
+		}
+		var metadata map[string]any
+		if err := json.Unmarshal(msg.MetadataJSON, &metadata); err != nil {
+			continue
+		}
+		rawRunID, _ := metadata["run_id"].(string)
+		runID, err := uuid.Parse(strings.TrimSpace(rawRunID))
+		if err != nil {
+			continue
+		}
+		out[msg.ID] = runID
+	}
+	return out
 }
 
 func boundedThreadHistoryUpperBound(ctx context.Context, tx pgx.Tx, inputJSON map[string]any, jobPayload map[string]any) (uuid.UUID, bool, error) {
@@ -469,9 +505,6 @@ func loadResumedReplay(
 ) ([]resumeReplayInsertion, error) {
 	if run.ResumeFromRunID == nil {
 		return nil, nil
-	}
-	if rolloutStore == nil {
-		return nil, &resumeUnavailableError{reason: "resume rollout store is unavailable"}
 	}
 	if runsRepo == nil {
 		return nil, &resumeUnavailableError{reason: "resume run repository is unavailable"}
@@ -671,6 +704,11 @@ func collectResumeReplayInsertions(
 		return nil, &resumeUnavailableError{reason: "resume input block is missing"}
 	}
 
+	canonicalHasAssistant := canonicalThreadHasAssistantMessageForRun(canonicalContext, threadMessages, parentRun.ID)
+	if rolloutStore == nil {
+		return nil, &resumeUnavailableError{reason: "resume rollout store is unavailable"}
+	}
+
 	items, err := rollout.NewReader(rolloutStore).ReadRollout(ctx, parentRun.ID)
 	if err != nil {
 		return nil, &resumeUnavailableError{reason: "resume rollout is unavailable"}
@@ -680,14 +718,18 @@ func collectResumeReplayInsertions(
 	if err != nil {
 		return nil, err
 	}
-	if !canonicalThreadHasAssistantMessageForRun(canonicalContext, threadMessages, parentRun.ID) {
+	if !canonicalHasAssistant {
 		if err := appendVisibleRecoveryDraft(ctx, tx, parentRun.ID, rolloutStore, &replayedMessages); err != nil {
 			return nil, err
 		}
 	}
+	if len(replayedMessages) == 0 {
+		return nil, &resumeUnavailableError{reason: "resume rollout is unavailable"}
+	}
 	return append(insertions, resumeReplayInsertion{
 		AnchorKey: insertionAnchorKey,
 		Messages:  replayedMessages,
+		RunID:     parentRun.ID,
 	}), nil
 }
 

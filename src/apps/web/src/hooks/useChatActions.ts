@@ -79,6 +79,9 @@ export function useChatActions({ scrollToBottom }: UseChatActionsDeps) {
     pendingMessageRef,
     setTerminalRunDisplayId,
     setTerminalRunHandoffStatus,
+    setTerminalRunCoveredRunIds,
+    terminalRunDisplayId,
+    terminalRunCoveredRunIds,
   } = useRunLifecycle()
   const {
     resetLiveState,
@@ -112,6 +115,7 @@ export function useChatActions({ scrollToBottom }: UseChatActionsDeps) {
     resetLiveState()
     setTerminalRunDisplayId(null)
     setTerminalRunHandoffStatus(null)
+    setTerminalRunCoveredRunIds([])
     try {
       const message = await createMessage(accessToken, threadId, buildMessageRequest(normalized, []))
       invalidateMessageSync()
@@ -152,6 +156,7 @@ export function useChatActions({ scrollToBottom }: UseChatActionsDeps) {
     setQueuedDraft,
     setMessages,
     setSending,
+    setTerminalRunCoveredRunIds,
     setUserEnterMessageId,
     threadId,
     injectionBlockedRunIdRef,
@@ -188,6 +193,7 @@ export function useChatActions({ scrollToBottom }: UseChatActionsDeps) {
     resetLiveState()
     setTerminalRunDisplayId(null)
     setTerminalRunHandoffStatus(null)
+    setTerminalRunCoveredRunIds([])
     try {
       const nonTextParts = original.content_json?.parts?.filter((part) => part.type !== 'text') ?? []
       const newContentJson: MessageContent | undefined = original.content_json
@@ -231,6 +237,7 @@ export function useChatActions({ scrollToBottom }: UseChatActionsDeps) {
     setInjectionBlocked,
     setMessages,
     setSending,
+    setTerminalRunCoveredRunIds,
     threadId,
   ])
 
@@ -247,10 +254,19 @@ export function useChatActions({ scrollToBottom }: UseChatActionsDeps) {
     resetLiveState()
     setTerminalRunDisplayId(null)
     setTerminalRunHandoffStatus(null)
+    setTerminalRunCoveredRunIds([])
     try {
       const run = await retryThread(accessToken, threadId, modelOverride)
       invalidateMessageSync()
       setMessages((prev) => {
+        const coveredRunIds = new Set(terminalRunCoveredRunIds)
+        const next = prev.filter((message) => {
+          if (message.role !== 'assistant') return true
+          if (terminalRunDisplayId && message.run_id === terminalRunDisplayId) return false
+          if (message.run_id && coveredRunIds.has(message.run_id)) return false
+          return true
+        })
+        if (next.length !== prev.length) return next
         const lastAssistantIndex = prev.map((message) => message.role).lastIndexOf('assistant')
         if (lastAssistantIndex === -1) return prev
         return prev.filter((_, index) => index !== lastAssistantIndex)
@@ -287,8 +303,11 @@ export function useChatActions({ scrollToBottom }: UseChatActionsDeps) {
     setMessages,
     setPendingThinking,
     setSending,
+    setTerminalRunCoveredRunIds,
     setThinkingHint,
     t.copThinkingHints,
+    terminalRunCoveredRunIds,
+    terminalRunDisplayId,
     threadId,
   ])
 
