@@ -113,7 +113,7 @@ interface MessageMetaContextValue {
     threadId: string,
     runId: string,
     runData: {
-      terminalStatus?: MessageTerminalStatusRef | null
+      terminalStatus?: 'running' | MessageTerminalStatusRef | null
       handoffAssistantTurn: AssistantTurnUi
       runSources: WebSource[]
       runArtifacts: ArtifactRef[]
@@ -328,7 +328,7 @@ export function MessageMetaProvider({ children }: { children: ReactNode }) {
       threadId: string,
       runId: string,
       runData: {
-        terminalStatus?: MessageTerminalStatusRef | null
+        terminalStatus?: 'running' | MessageTerminalStatusRef | null
         handoffAssistantTurn: AssistantTurnUi
         runSources: WebSource[]
         runArtifacts: ArtifactRef[]
@@ -344,7 +344,7 @@ export function MessageMetaProvider({ children }: { children: ReactNode }) {
       if (!threadId || !runId) return
       writeThreadRunHandoff(threadId, {
         runId,
-        status: (runData.terminalStatus ?? 'cancelled') as Exclude<MessageTerminalStatusRef, 'completed'>,
+        status: (runData.terminalStatus ?? 'cancelled') as 'running' | Exclude<MessageTerminalStatusRef, 'completed'>,
         assistantTurn: runData.handoffAssistantTurn.segments.length > 0 ? runData.handoffAssistantTurn : null,
         sources: [...runData.runSources],
         artifacts: [...runData.runArtifacts],

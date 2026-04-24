@@ -953,6 +953,155 @@ describe('ChatPage loading state', () => {
     container.remove()
   })
 
+  it('continue 后应保留当前 handoff 并在同一块中继续追加新输出', async () => {
+    const mathRandomSpy = vi.spyOn(Math, 'random').mockReturnValue(0)
+    mockedListMessages.mockResolvedValue([
+      {
+        id: 'msg-1',
+        role: 'user',
+        content: 'hello',
+        account_id: 'acc-1',
+        thread_id: 'thread-1',
+        created_by_user_id: 'user-1',
+        created_at: '2026-03-10T00:00:00Z',
+      },
+    ])
+    mockedListThreadRuns.mockResolvedValue([
+      {
+        run_id: 'run-failed-handoff',
+        status: 'failed',
+        created_at: '2026-03-10T00:00:01Z',
+      },
+    ])
+    mockedListRunEvents.mockResolvedValue([
+      {
+        event_id: 'evt-1',
+        run_id: 'run-failed-handoff',
+        seq: 1,
+        ts: '2026-03-10T00:00:00Z',
+        type: 'message.delta',
+        data: {
+          role: 'assistant',
+          channel: 'thinking',
+          content_delta: '先想一下',
+        },
+      },
+      {
+        event_id: 'evt-2',
+        run_id: 'run-failed-handoff',
+        seq: 2,
+        ts: '2026-03-10T00:00:01Z',
+        type: 'run.failed',
+        data: {
+          message: 'upstream exploded',
+          error_class: 'provider.non_retryable',
+        },
+      },
+    ] as never)
+    sseMock.state = 'connected'
+
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const root = createRoot(container)
+    const outletContext = {
+      accessToken: 'token',
+      onLoggedOut: vi.fn(),
+      onRunStarted: vi.fn(),
+      onRunEnded: vi.fn(),
+      onThreadCreated: vi.fn(),
+      onThreadTitleUpdated: vi.fn(),
+      refreshCredits: vi.fn(),
+      onOpenNotifications: vi.fn(),
+      notificationVersion: 0,
+      creditsBalance: 0,
+      isPrivateMode: false,
+      onTogglePrivateMode: vi.fn(),
+      privateThreadIds: new Set<string>(),
+      onSetPendingIncognito: vi.fn(),
+      onRightPanelChange: vi.fn(),
+      threads: [],
+      onThreadDeleted: vi.fn(),
+    }
+
+    const renderTree = () => (
+      <LocaleProvider>
+        <MemoryRouter initialEntries={['/t/thread-1']}>
+          <Routes>
+            <Route element={<OutletShell context={outletContext} />}>
+              <Route path="/t/:threadId" element={<ChatPage />} />
+            </Route>
+          </Routes>
+        </MemoryRouter>
+      </LocaleProvider>
+    )
+
+    await act(async () => {
+      root.render(renderTree())
+    })
+
+    await act(async () => {
+      await flushMicrotasks()
+      await flushMicrotasks()
+    })
+
+    const actionButton = container.querySelector('.failed-run-retry-button')
+    expect(container.querySelector('[data-testid="current-run-handoff"]')).not.toBeNull()
+    expect(container.textContent).toContain('先想一下')
+    expect(actionButton?.textContent).toBe('继续')
+
+    await act(async () => {
+      actionButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      await flushMicrotasks()
+    })
+
+    expect(mockedContinueThread).toHaveBeenCalledWith('token', 'thread-1', 'run-failed-handoff')
+    expect(mockedClearThreadRunHandoff).not.toHaveBeenCalledWith('thread-1')
+    expect(container.querySelector('[data-testid="current-run-handoff"]')).not.toBeNull()
+    expect(container.textContent).toContain('先想一下')
+    expect(container.querySelector('.failed-run-retry-button')).toBeNull()
+
+    sseMock.events = [
+      {
+        event_id: 'evt-3',
+        run_id: 'run-continued',
+        seq: 1,
+        ts: '2026-03-10T00:00:02Z',
+        type: 'message.delta',
+        data: {
+          role: 'assistant',
+          channel: 'thinking',
+          content_delta: '继续执行',
+        },
+      },
+    ]
+
+    await act(async () => {
+      root.render(renderTree())
+      await flushMicrotasks()
+      await flushMicrotasks()
+      await flushAnimationFrames(12)
+    })
+
+    const continuedHandoff = container.querySelector('[data-testid="current-run-handoff"]')
+    expect(continuedHandoff).not.toBeNull()
+    const handoffText = continuedHandoff?.textContent ?? ''
+    expect(handoffText).toContain('thinking:先想一下')
+    expect(handoffText).toContain('thinking:继续执行')
+    expect(mockedWriteThreadRunHandoff).toHaveBeenCalledWith(
+      'thread-1',
+      expect.objectContaining({
+        runId: 'run-continued',
+        status: 'running',
+      }),
+    )
+
+    act(() => {
+      root.unmount()
+    })
+    container.remove()
+    mathRandomSpy.mockRestore()
+  })
+
   it('run.interrupted 后应把排队输入还原到输入框', async () => {
     mockedListThreadRuns.mockResolvedValue([
       {

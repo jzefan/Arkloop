@@ -12,7 +12,6 @@ import { useSSE, type UseSSEResult } from '../hooks/useSSE'
 import { type AppError } from '@arkloop/shared'
 import { apiBaseUrl } from '@arkloop/shared/api'
 import type { UserInputRequest } from '../userInputTypes'
-import { clearThreadRunHandoff } from '../storage'
 import { useAuth } from './auth'
 import { useChatSession } from './chat-session'
 
@@ -21,7 +20,7 @@ type ContextCompactBarState =
   | { type: 'persist'; status: 'running' | 'done' | 'llm_failed' }
   | { type: 'trim'; status: 'done'; dropped: number }
 
-type TerminalRunHandoffStatus = 'completed' | 'cancelled' | 'interrupted' | 'failed' | null
+type TerminalRunHandoffStatus = 'running' | 'completed' | 'cancelled' | 'interrupted' | 'failed' | null
 
 const COMPLETED_RUN_SSE_TAIL_MS = 30000
 
@@ -200,7 +199,6 @@ export function RunLifecycleProvider({ children }: { children: ReactNode }) {
   // activeRunId 变化 -> 连接 SSE、重置 refs
   useEffect(() => {
     if (!activeRunId) return
-    if (threadId) clearThreadRunHandoff(threadId)
     clearCompletedTitleTail()
     freezeCutoffRef.current = null
     injectionBlockedRunIdRef.current = null
@@ -213,7 +211,7 @@ export function RunLifecycleProvider({ children }: { children: ReactNode }) {
     lastVisibleNonTerminalSeqRef.current = 0
     setCancelSubmitting(false)
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeRunId, clearCompletedTitleTail, threadId])
+  }, [activeRunId, clearCompletedTitleTail])
 
   // sseRunId 变化 -> 连接/断开 SSE
   useEffect(() => {
@@ -229,8 +227,6 @@ export function RunLifecycleProvider({ children }: { children: ReactNode }) {
       lastVisibleNonTerminalSeqRef.current = 0
       return
     }
-    setTerminalRunDisplayId(null)
-    setTerminalRunHandoffStatus(null)
   }, [activeRunId])
 
   // activeRunId 变化 -> 清除 terminal run history

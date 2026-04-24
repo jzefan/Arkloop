@@ -19,7 +19,7 @@ export type TerminalRunCache = {
   runAssistantTurn: AssistantTurnUi
   handoffAssistantTurn: AssistantTurnUi
   pendingSearchSteps?: MessageSearchStepRef[] | null
-  terminalStatus?: MessageTerminalStatusRef | null
+  terminalStatus?: 'running' | MessageTerminalStatusRef | null
 }
 
 type PersistRunDataOptions = {
@@ -145,7 +145,7 @@ export function useRunTransition() {
     setTopLevelWebFetches,
   ])
 
-  const captureTerminalRunCache = useCallback((terminalStatus?: MessageTerminalStatusRef | null): TerminalRunCache => {
+  const captureTerminalRunCache = useCallback((terminalStatus?: 'running' | MessageTerminalStatusRef | null): TerminalRunCache => {
     const handoffAssistantTurn = snapshotAssistantTurn(assistantTurnFoldStateRef.current)
     return {
       runSources: [...currentRunSourcesRef.current],
@@ -181,7 +181,10 @@ export function useRunTransition() {
     runEvents: MsgRunEvent[],
     options?: PersistRunDataOptions,
   ) => {
-    persistRunDataToMessageState(messageId, runData, runEvents, options)
+    persistRunDataToMessageState(messageId, {
+      ...runData,
+      terminalStatus: runData.terminalStatus === 'running' ? null : runData.terminalStatus,
+    }, runEvents, options)
     if (threadId) {
       clearThreadRunHandoff(threadId)
     }

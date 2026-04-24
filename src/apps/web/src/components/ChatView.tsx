@@ -23,7 +23,6 @@ import { ShareModal } from './ShareModal'
 import { SourcesPanel } from './SourcesPanel'
 import { CodeExecutionPanel } from './CodeExecutionPanel'
 import { DocumentPanel } from './DocumentPanel'
-import { WorkRightPanel } from './WorkRightPanel'
 import { ChatTitleMenu } from './ChatTitleMenu'
 import { MessageList } from './MessageList'
 import { ContextCompactBar } from './ContextCompactBar'
@@ -45,6 +44,7 @@ import { getThreadTodos, setThreadTodos, clearThreadTodos } from '../todoDb'
 import {
   buildAssistantTurnFromRunEvents,
   copSegmentCalls,
+  createEmptyAssistantTurnFoldState,
   type AssistantTurnSegment,
   type AssistantTurnUi,
 } from '../assistantTurnSegments'
@@ -349,19 +349,19 @@ type LiveRunPaneProps = {
   pendingIncognito: boolean
   incognitoDividerText: string
   onIncognitoDividerComplete: () => void
-  terminalRunHandoffStatus: MessageTerminalStatusRef | null
+  terminalRunHandoffStatus: LiveRunHandoffStatus
   terminalRunDisplayId: string | null
   terminalRunHasOutput: boolean
   failedRunRetryTitle: string
   runInterruptedLabel: string
   runCancelledLabel: string
   actionLabelForTerminalRun: (params: {
-    status: MessageTerminalStatusRef | null
+    status: LiveRunHandoffStatus
     hasOutput: boolean
   }) => string | undefined
   actionHandlerForTerminalRun: (params: {
     runId: string | null | undefined
-    status: MessageTerminalStatusRef | null
+    status: LiveRunHandoffStatus
     hasOutput: boolean
   }) => (() => void) | undefined
   onOpenDocument: (artifact: ArtifactRef, options?: { trigger?: HTMLElement | null; artifacts?: ArtifactRef[]; runId?: string }) => void
@@ -595,6 +595,7 @@ const LiveRunPane = memo(function LiveRunPane({
 })
 
 type CopSegment = Extract<AssistantTurnSegment, { type: 'cop' }>
+type LiveRunHandoffStatus = 'running' | MessageTerminalStatusRef | null
 
 function liveStreamingWidgetEntriesForCop(seg: CopSegment, entries: StreamingArtifactEntry[]): StreamingArtifactEntry[] {
   const out: StreamingArtifactEntry[] = []
@@ -672,7 +673,7 @@ export function ChatView() {
     threads, addThread: onThreadCreated,
     markRunning: onRunStarted, markIdle: onRunEnded,
   } = useThreadList()
-  const { appMode, setAppMode } = useAppModeUI()
+  const { appMode } = useAppModeUI()
   const { openSettings: onOpenSettings } = useSettingsUI()
   const { threadId } = useChatSession()
   const {
@@ -751,6 +752,7 @@ export function ChatView() {
     searchSteps,
     setSearchSteps,
     searchStepsRef,
+    assistantTurnFoldStateRef,
     resetSearchSteps: resetSearchStepsState,
     streamingArtifacts,
     setStreamingArtifacts,
@@ -770,7 +772,6 @@ export function ChatView() {
     setTopLevelFileOps,
     topLevelWebFetches,
     setTopLevelWebFetches,
-    workTodos,
     setWorkTodos,
   } = useStream()
   const {
@@ -789,7 +790,6 @@ export function ChatView() {
   const navigate = useNavigate()
   const { t } = useLocale()
   const welcomeUserMessage = locationState?.welcomeUserMessage
-  const currentThread = threadId ? threads.find((thread) => thread.id === threadId) : undefined
   const shouldSkipInitialSkeleton = !!(
     welcomeUserMessage &&
     locationState?.userEnterMessageId === welcomeUserMessage.id &&
@@ -802,10 +802,7 @@ export function ChatView() {
     () => locationState?.isSearch === true || isSearchThreadId(threadId ?? ''),
   )
 
-  const {
-    messageSourcesMap,
-    messageFileOpsMap,
-  } = useMessageMetaCompat()
+  const { messageSourcesMap } = useMessageMetaCompat()
 
   const shareModalOpen = shareModal.open
   const sourcePanelMessageId = activePanel?.type === 'source' ? activePanel.messageId : null
@@ -894,7 +891,7 @@ export function ChatView() {
     topLevelCodeExecutionsLength: topLevelCodeExecutions.length,
   })
 
-  const { resetAssistantTurnLive } = useRunTransition()
+  const { resetAssistantTurnLive, captureTerminalRunCache, persistThreadRunHandoff } = useRunTransition()
 
   useThreadSseEffect({
     restoreQueuedDraftToInput,
@@ -909,6 +906,26 @@ export function ChatView() {
     }
     prevActiveRunIdRef.current = activeRunId
   }, [activeRunId, threadId])
+
+  useEffect(() => {
+    if (!threadId || !activeRunId || !preserveLiveRunUi) return
+    if (terminalRunDisplayId !== activeRunId) return
+    persistThreadRunHandoff(activeRunId, captureTerminalRunCache('running'))
+  }, [
+    activeRunId,
+    captureTerminalRunCache,
+    liveAssistantTurn,
+    persistThreadRunHandoff,
+    preserveLiveRunUi,
+    searchSteps,
+    streamingArtifacts,
+    terminalRunDisplayId,
+    threadId,
+    topLevelCodeExecutions,
+    topLevelFileOps,
+    topLevelSubAgents,
+    topLevelWebFetches,
+  ])
 
   useEffect(() => {
     if (messagesLoading) {
@@ -1245,7 +1262,11 @@ export function ChatView() {
           setPreserveLiveRunUi(true)
           setTerminalRunDisplayId(handoff.runId)
           setTerminalRunHandoffStatus(handoff.status)
+          assistantTurnFoldStateRef.current = createEmptyAssistantTurnFoldState()
+          assistantTurnFoldStateRef.current.segments = (handoff.assistantTurn?.segments ?? []).map((segment) => structuredClone(segment))
           setLiveAssistantTurn(handoff.assistantTurn ?? null)
+          setSegments([])
+          activeSegmentIdRef.current = null
           currentRunSourcesRef.current = [...handoff.sources]
           currentRunArtifactsRef.current = [...handoff.artifacts]
           currentRunCodeExecutionsRef.current = [...handoff.codeExecutions]
@@ -1267,8 +1288,7 @@ export function ChatView() {
         const cachedThreadHandoff = readThreadRunHandoff(threadId)
         const shouldRestoreThreadHandoff =
           !!cachedThreadHandoff &&
-          (!latest || latest.run_id === cachedThreadHandoff.runId) &&
-          !findAssistantMessageForRun(items, cachedThreadHandoff.runId)
+          (!latest || latest.run_id === cachedThreadHandoff.runId)
         if (
           cachedThreadHandoff &&
           shouldRestoreThreadHandoff
@@ -1295,7 +1315,13 @@ export function ChatView() {
           setThinkingHint(hints[Math.floor(Math.random() * hints.length)])
           if (threadId) onRunStarted(threadId)
         } else {
-          const isActiveRun = !shouldRestoreThreadHandoff && (latest?.status === 'running' || latest?.status === 'cancelling')
+          const shouldResumeActiveRunFromHandoff =
+            shouldRestoreThreadHandoff &&
+            cachedThreadHandoff?.status === 'running' &&
+            (latest?.status === 'running' || latest?.status === 'cancelling')
+          const isActiveRun =
+            shouldResumeActiveRunFromHandoff ||
+            (!shouldRestoreThreadHandoff && (latest?.status === 'running' || latest?.status === 'cancelling'))
           setActiveRunId(isActiveRun ? latest.run_id : null)
           if (isActiveRun && threadId) onRunStarted(threadId)
           else if (threadId) onRunEnded(threadId)
@@ -1380,13 +1406,9 @@ export function ChatView() {
   // 连接 SSE
   useEffect(() => {
     if (!activeRunId) return
-    if (threadId) {
-      clearThreadRunHandoff(threadId)
-    }
     clearCompletedTitleTail()
     freezeCutoffRef.current = null
     injectionBlockedRunIdRef.current = null
-    setPreserveLiveRunUi(false)
     sseTerminalFallbackRunIdRef.current = activeRunId
     sseTerminalFallbackArmedRef.current = false
     seenFirstToolCallInRunRef.current = false
@@ -1394,23 +1416,32 @@ export function ChatView() {
     sse.connect()
     processedEventCountRef.current = 0
     lastVisibleNonTerminalSeqRef.current = 0
-    setPreserveLiveRunUi(false)
-    currentRunSourcesRef.current = []
-    currentRunArtifactsRef.current = []
-    currentRunCodeExecutionsRef.current = []
-    currentRunBrowserActionsRef.current = []
-    currentRunSubAgentsRef.current = []
-    currentRunFileOpsRef.current = []
-    currentRunWebFetchesRef.current = []
-    resetAssistantTurnLive()
-    setSegments([])
-    activeSegmentIdRef.current = null
-    setTopLevelCodeExecutions([])
-    setTopLevelSubAgents([])
-    setTopLevelFileOps([])
-    setTopLevelWebFetches([])
-    streamingArtifactsRef.current = []
-    setStreamingArtifacts([])
+    const shouldCarryRunningHandoff =
+      preserveLiveRunUi &&
+      terminalRunHandoffStatus === 'running' &&
+      terminalRunDisplayId === activeRunId
+    if (!shouldCarryRunningHandoff && threadId) {
+      clearThreadRunHandoff(threadId)
+    }
+    if (!shouldCarryRunningHandoff) {
+      setPreserveLiveRunUi(false)
+      currentRunSourcesRef.current = []
+      currentRunArtifactsRef.current = []
+      currentRunCodeExecutionsRef.current = []
+      currentRunBrowserActionsRef.current = []
+      currentRunSubAgentsRef.current = []
+      currentRunFileOpsRef.current = []
+      currentRunWebFetchesRef.current = []
+      resetAssistantTurnLive()
+      setSegments([])
+      activeSegmentIdRef.current = null
+      setTopLevelCodeExecutions([])
+      setTopLevelSubAgents([])
+      setTopLevelFileOps([])
+      setTopLevelWebFetches([])
+      streamingArtifactsRef.current = []
+      setStreamingArtifacts([])
+    }
     setCancelSubmitting(false)
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeRunId, baseUrl, clearCompletedTitleTail, resetAssistantTurnLive, threadId])
@@ -1427,9 +1458,15 @@ export function ChatView() {
       lastVisibleNonTerminalSeqRef.current = 0
       return
     }
-    setTerminalRunDisplayId(null)
-    setTerminalRunHandoffStatus(null)
-  }, [activeRunId])
+    const shouldCarryRunningHandoff =
+      preserveLiveRunUi &&
+      terminalRunHandoffStatus === 'running' &&
+      terminalRunDisplayId === activeRunId
+    if (!shouldCarryRunningHandoff) {
+      setTerminalRunDisplayId(null)
+      setTerminalRunHandoffStatus(null)
+    }
+  }, [activeRunId, preserveLiveRunUi, setTerminalRunDisplayId, setTerminalRunHandoffStatus, terminalRunDisplayId, terminalRunHandoffStatus])
 
   useEffect(() => {
     if (!activeRunId) return
@@ -1674,7 +1711,7 @@ export function ChatView() {
   ])
 
   const actionLabelForTerminalRun = useCallback((params: {
-    status: MessageTerminalStatusRef | null
+    status: LiveRunHandoffStatus
     hasOutput: boolean
   }) => {
     if (isStreaming || sending) return undefined
@@ -1686,7 +1723,7 @@ export function ChatView() {
 
   const actionHandlerForTerminalRun = useCallback((params: {
     runId: string | null | undefined
-    status: MessageTerminalStatusRef | null
+    status: LiveRunHandoffStatus
     hasOutput: boolean
   }) => {
     if (isStreaming || sending) return undefined
@@ -1748,21 +1785,6 @@ export function ChatView() {
   const isCodePanelOpen = !!codePanelExecution
   const isDocumentPanelOpen = !!documentPanelArtifact
   const isPanelOpen = isSourcePanelOpen || isCodePanelOpen || isDocumentPanelOpen
-
-  const allReadFiles = useMemo(() => {
-    const seen = new Set<string>()
-    const result: string[] = []
-    const addOps = (ops: FileOpRef[]) => {
-      for (const op of ops) {
-        if ((op.toolName === 'read_file' || op.toolName === 'read') && op.status === 'success' && op.label && op.label !== 'read file') {
-          if (!seen.has(op.label)) { seen.add(op.label); result.push(op.label) }
-        }
-      }
-    }
-    for (const ops of messageFileOpsMap.values()) addOps(ops)
-    addOps(topLevelFileOps)
-    return result
-  }, [messageFileOpsMap, topLevelFileOps])
 
   const sourcesPanelContent = useMemo(() => {
     if (!isSourcePanelOpen || !panelDisplaySources || panelDisplaySources.length === 0) return null
@@ -2075,7 +2097,7 @@ export function ChatView() {
             hasWebFetches: !!(payload.webFetches && payload.webFetches.length > 0),
             hasGenericTools: !!(payload.genericTools && payload.genericTools.length > 0),
             hasThinking: thinkingRowsLive.length > 0 || copInlineLive.length > 0,
-            handoffStatus: terminalRunHandoffStatus,
+            handoffStatus: terminalRunHandoffStatus === 'running' ? null : terminalRunHandoffStatus,
           })
         : seg.title?.trim() || undefined
     const trailSeg = si + 1 <= lastSegIdx ? liveSegments[si + 1] : undefined
@@ -2344,28 +2366,7 @@ export function ChatView() {
 
         </div>
         {/* 右侧面板：flex 兄弟节点；chat 模式下用 motion 驱动 width，避免嵌套 flex + CSS transition 偶发不插值 */}
-        {appMode === 'work' ? (
-          <div
-            style={{
-              width: '300px',
-              flexShrink: 0,
-              overflow: 'hidden',
-            }}
-          >
-            <WorkRightPanel
-              accessToken={accessToken}
-              projectId={currentThread?.project_id || undefined}
-              steps={workTodos.map((td) => ({
-                id: td.id,
-                label: td.content,
-                status: td.status === 'completed' ? 'done' : td.status === 'in_progress' ? 'active' : 'pending',
-              }))}
-              onForbidden={() => setAppMode('chat')}
-              readFiles={allReadFiles}
-              threadId={threadId}
-            />
-          </div>
-        ) : (
+        {appMode === 'work' ? null : (
           <motion.div
             className="flex-shrink-0 overflow-hidden"
             initial={false}

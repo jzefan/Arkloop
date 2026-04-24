@@ -350,6 +350,7 @@ func TestThreadContinueCreatesResumedRun(t *testing.T) {
 	parentRole := "worker"
 	parentWorkDir := "/workspace/project"
 	parentReasoningMode := "high"
+	parentOutputModelKey := "gpt5"
 	if _, err := pool.Exec(ctx,
 		`UPDATE run_events
 		    SET data_json = data_json || jsonb_build_object(
@@ -357,7 +358,8 @@ func TestThreadContinueCreatesResumedRun(t *testing.T) {
 		        'persona_id', $3,
 		        'role', $4,
 		        'work_dir', $5,
-		        'reasoning_mode', $6
+		        'reasoning_mode', $6,
+		        'output_model_key', $7
 		    )
 		  WHERE run_id = $1 AND type = 'run.started'`,
 		runID,
@@ -366,6 +368,7 @@ func TestThreadContinueCreatesResumedRun(t *testing.T) {
 		parentRole,
 		parentWorkDir,
 		parentReasoningMode,
+		parentOutputModelKey,
 	); err != nil {
 		t.Fatalf("patch parent started event: %v", err)
 	}
@@ -441,6 +444,9 @@ func TestThreadContinueCreatesResumedRun(t *testing.T) {
 	if got, _ := startedData["reasoning_mode"].(string); got != parentReasoningMode {
 		t.Fatalf("unexpected continue reasoning_mode in started event: %#v", startedData["reasoning_mode"])
 	}
+	if got, _ := startedData["output_model_key"].(string); got != parentOutputModelKey {
+		t.Fatalf("unexpected continue output_model_key in started event: %#v", startedData["output_model_key"])
+	}
 
 	var jobPayload []byte
 	if err := pool.QueryRow(ctx,
@@ -471,6 +477,9 @@ func TestThreadContinueCreatesResumedRun(t *testing.T) {
 	}
 	if got, _ := payloadObj["reasoning_mode"].(string); got != parentReasoningMode {
 		t.Fatalf("unexpected continue reasoning_mode in job payload: %#v", payloadObj["reasoning_mode"])
+	}
+	if got, _ := payloadObj["output_model_key"].(string); got != parentOutputModelKey {
+		t.Fatalf("unexpected continue output_model_key in job payload: %#v", payloadObj["output_model_key"])
 	}
 }
 
