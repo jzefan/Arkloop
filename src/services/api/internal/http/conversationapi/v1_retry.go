@@ -539,7 +539,7 @@ func continueThread(
 			r.Context(),
 			thread.AccountID,
 			thread.ID,
-			&actor.UserID,
+			parentRun.CreatedByUserID,
 			"run.started",
 			startedData,
 			parentRun.ID,
@@ -547,6 +547,21 @@ func continueThread(
 		if err != nil {
 			writeThreadRunBusyOrInternal(w, traceID, err)
 			return
+		}
+		if parentRun.ProfileRef != nil || parentRun.WorkspaceRef != nil {
+			if _, err := tx.Exec(
+				r.Context(),
+				`UPDATE runs
+				    SET profile_ref = $2,
+				        workspace_ref = $3
+				  WHERE id = $1`,
+				run.ID,
+				parentRun.ProfileRef,
+				parentRun.WorkspaceRef,
+			); err != nil {
+				httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
+				return
+			}
 		}
 
 		_, err = jobRepo.WithTx(tx).EnqueueRun(

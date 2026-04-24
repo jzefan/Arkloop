@@ -866,6 +866,157 @@ func TestLoadRunInputsReplaysFailedRunBeforeTrailingUserInput(t *testing.T) {
 	}
 }
 
+func TestLoadRunInputsSkipsVisibleAssistantWhenReplayingSameRun(t *testing.T) {
+	ctx := context.Background()
+	db := testutil.SetupPostgresDatabase(t, "pipeline_input_loader_resume_visible_parent")
+	pool, err := pgxpool.New(ctx, db.DSN)
+	if err != nil {
+		t.Fatalf("pgxpool.New: %v", err)
+	}
+	t.Cleanup(pool.Close)
+
+	accountID := uuid.New()
+	projectID := uuid.New()
+	threadID := uuid.New()
+	parentRunID := uuid.New()
+	resumedRunID := uuid.New()
+	firstMessageID := uuid.New()
+	parentAssistantID := uuid.New()
+	continueMessageID := uuid.New()
+
+	if _, err := pool.Exec(ctx, `INSERT INTO threads (id, account_id, project_id) VALUES ($1, $2, $3)`, threadID, accountID, projectID); err != nil {
+		t.Fatalf("insert thread: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO runs (id, account_id, thread_id, status) VALUES ($1, $2, $3, 'interrupted')`, parentRunID, accountID, threadID); err != nil {
+		t.Fatalf("insert parent run: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO runs (id, account_id, thread_id, status, resume_from_run_id) VALUES ($1, $2, $3, 'running', $4)`, resumedRunID, accountID, threadID, parentRunID); err != nil {
+		t.Fatalf("insert resumed run: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO run_events (run_id, seq, type, data_json) VALUES ($1, 1, 'run.started', $2::jsonb)`, parentRunID, `{"thread_tail_message_id":"`+firstMessageID.String()+`"}`); err != nil {
+		t.Fatalf("insert parent run started event: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO run_events (run_id, seq, type, data_json) VALUES ($1, 1, 'run.started', '{}'::jsonb)`, resumedRunID); err != nil {
+		t.Fatalf("insert resumed run started event: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO messages (id, account_id, thread_id, role, content, metadata_json, hidden) VALUES ($1, $2, $3, 'user', $4, '{}'::jsonb, false)`, firstMessageID, accountID, threadID, "find the file"); err != nil {
+		t.Fatalf("insert first user message: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO messages (id, account_id, thread_id, role, content, metadata_json, hidden) VALUES ($1, $2, $3, 'assistant', $4, $5::jsonb, false)`, parentAssistantID, accountID, threadID, "I am checking", fmt.Sprintf(`{"run_id":"%s"}`, parentRunID)); err != nil {
+		t.Fatalf("insert visible assistant message: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO messages (id, account_id, thread_id, role, content, metadata_json, hidden) VALUES ($1, $2, $3, 'user', $4, '{}'::jsonb, false)`, continueMessageID, accountID, threadID, "continue"); err != nil {
+		t.Fatalf("insert trailing user message: %v", err)
+	}
+
+	storeRoot := t.TempDir()
+	store, err := objectstore.NewFilesystemOpener(storeRoot).Open(ctx, objectstore.RolloutBucket)
+	if err != nil {
+		t.Fatalf("open rollout store: %v", err)
+	}
+	blobStore, ok := store.(objectstore.BlobStore)
+	if !ok {
+		t.Fatal("expected blob store")
+	}
+	toolCallsJSON, err := json.Marshal([]llm.ToolCall{{
+		ToolCallID:    "call_1",
+		ToolName:      "echo",
+		ArgumentsJSON: map[string]any{"text": "hi"},
+	}})
+	if err != nil {
+		t.Fatalf("marshal tool calls: %v", err)
+	}
+	toolInputJSON, err := json.Marshal(map[string]any{"text": "hi"})
+	if err != nil {
+		t.Fatalf("marshal tool input: %v", err)
+	}
+	rolloutBody := marshalRolloutJSONL(t,
+		map[string]any{"type": "turn_start", "payload": map[string]any{"turn_index": 1, "model": "stub"}},
+		map[string]any{"type": "assistant_message", "payload": map[string]any{"content": "I am checking", "tool_calls": json.RawMessage(toolCallsJSON)}},
+		map[string]any{"type": "tool_call", "payload": map[string]any{"call_id": "call_1", "name": "echo", "input": json.RawMessage(toolInputJSON)}},
+		map[string]any{"type": "run_end", "payload": map[string]any{"final_status": "interrupted"}},
+	)
+	if err := blobStore.Put(ctx, "run/"+parentRunID.String()+".jsonl", rolloutBody); err != nil {
+		t.Fatalf("write rollout: %v", err)
+	}
+
+	loaded, err := loadRunInputs(ctx, pool, data.Run{
+		ID:              resumedRunID,
+		AccountID:       accountID,
+		ThreadID:        threadID,
+		ResumeFromRunID: &parentRunID,
+	}, map[string]any{"source": "continue"}, data.RunsRepository{}, data.RunEventsRepository{}, data.MessagesRepository{}, nil, blobStore, 20)
+	if err != nil {
+		t.Fatalf("loadRunInputs failed: %v", err)
+	}
+	if len(loaded.Messages) != 4 {
+		t.Fatalf("expected 4 prompt messages without duplicate canonical assistant, got %d", len(loaded.Messages))
+	}
+	if loaded.Messages[1].Role != "assistant" || len(loaded.Messages[1].ToolCalls) != 1 {
+		t.Fatalf("expected replayed assistant with tool calls, got %#v", loaded.Messages[1])
+	}
+	if loaded.Messages[2].Role != "tool" {
+		t.Fatalf("expected replayed tool result, got %#v", loaded.Messages[2])
+	}
+	if loaded.Messages[3].Role != "user" || loaded.Messages[3].Content[0].Text != "continue" {
+		t.Fatalf("unexpected trailing user message: %#v", loaded.Messages[3])
+	}
+}
+
+func TestLoadRunInputsExplicitContinueRequiresRolloutEvenWithVisibleAssistant(t *testing.T) {
+	ctx := context.Background()
+	db := testutil.SetupPostgresDatabase(t, "pipeline_input_loader_continue_requires_rollout")
+	pool, err := pgxpool.New(ctx, db.DSN)
+	if err != nil {
+		t.Fatalf("pgxpool.New: %v", err)
+	}
+	t.Cleanup(pool.Close)
+
+	accountID := uuid.New()
+	projectID := uuid.New()
+	threadID := uuid.New()
+	parentRunID := uuid.New()
+	resumedRunID := uuid.New()
+	firstMessageID := uuid.New()
+	parentAssistantID := uuid.New()
+	continueMessageID := uuid.New()
+
+	if _, err := pool.Exec(ctx, `INSERT INTO threads (id, account_id, project_id) VALUES ($1, $2, $3)`, threadID, accountID, projectID); err != nil {
+		t.Fatalf("insert thread: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO runs (id, account_id, thread_id, status) VALUES ($1, $2, $3, 'failed')`, parentRunID, accountID, threadID); err != nil {
+		t.Fatalf("insert parent run: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO runs (id, account_id, thread_id, status, resume_from_run_id) VALUES ($1, $2, $3, 'running', $4)`, resumedRunID, accountID, threadID, parentRunID); err != nil {
+		t.Fatalf("insert resumed run: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO run_events (run_id, seq, type, data_json) VALUES ($1, 1, 'run.started', $2::jsonb)`, parentRunID, `{"thread_tail_message_id":"`+firstMessageID.String()+`"}`); err != nil {
+		t.Fatalf("insert parent run started event: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO run_events (run_id, seq, type, data_json) VALUES ($1, 1, 'run.started', '{}'::jsonb)`, resumedRunID); err != nil {
+		t.Fatalf("insert resumed run started event: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO messages (id, account_id, thread_id, role, content, metadata_json, hidden) VALUES ($1, $2, $3, 'user', $4, '{}'::jsonb, false)`, firstMessageID, accountID, threadID, "find the file"); err != nil {
+		t.Fatalf("insert first user message: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO messages (id, account_id, thread_id, role, content, metadata_json, hidden) VALUES ($1, $2, $3, 'assistant', $4, $5::jsonb, false)`, parentAssistantID, accountID, threadID, "I am checking", fmt.Sprintf(`{"run_id":"%s"}`, parentRunID)); err != nil {
+		t.Fatalf("insert visible assistant message: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO messages (id, account_id, thread_id, role, content, metadata_json, hidden) VALUES ($1, $2, $3, 'user', $4, '{}'::jsonb, false)`, continueMessageID, accountID, threadID, "continue"); err != nil {
+		t.Fatalf("insert trailing user message: %v", err)
+	}
+
+	_, err = loadRunInputs(ctx, pool, data.Run{
+		ID:              resumedRunID,
+		AccountID:       accountID,
+		ThreadID:        threadID,
+		ResumeFromRunID: &parentRunID,
+	}, map[string]any{"source": "continue"}, data.RunsRepository{}, data.RunEventsRepository{}, data.MessagesRepository{}, nil, nil, 20)
+	if !IsResumeUnavailableError(err) {
+		t.Fatalf("expected explicit continue to fail without rollout, got %v", err)
+	}
+}
+
 func TestLoadRunInputsReplayCanonicalizesProviderToolNames(t *testing.T) {
 	ctx := context.Background()
 	db := testutil.SetupPostgresDatabase(t, "pipeline_input_loader_provider_name_replay")
@@ -1986,6 +2137,62 @@ func TestLoadRunInputsExplicitContinueFailsWhenResumeContextUnavailable(t *testi
 	}, map[string]any{"source": "continue"}, data.RunsRepository{}, data.RunEventsRepository{}, data.MessagesRepository{}, nil, nil, 20)
 	if !IsResumeUnavailableError(err) {
 		t.Fatalf("expected resume unavailable error, got %v", err)
+	}
+}
+
+func TestLoadRunInputsExplicitContinueFallsBackToCanonicalVisibleAssistantWhenRolloutMissing(t *testing.T) {
+	ctx := context.Background()
+	db := testutil.SetupPostgresDatabase(t, "pipeline_input_loader_continue_visible_without_rollout")
+	pool, err := pgxpool.New(ctx, db.DSN)
+	if err != nil {
+		t.Fatalf("pgxpool.New: %v", err)
+	}
+	t.Cleanup(pool.Close)
+
+	accountID := uuid.New()
+	projectID := uuid.New()
+	threadID := uuid.New()
+	parentRunID := uuid.New()
+	resumedRunID := uuid.New()
+	threadTailID := uuid.New()
+	parentAssistantID := uuid.New()
+
+	if _, err := pool.Exec(ctx, `INSERT INTO threads (id, account_id, project_id) VALUES ($1, $2, $3)`, threadID, accountID, projectID); err != nil {
+		t.Fatalf("insert thread: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO runs (id, account_id, thread_id, status) VALUES ($1, $2, $3, 'failed')`, parentRunID, accountID, threadID); err != nil {
+		t.Fatalf("insert parent run: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO runs (id, account_id, thread_id, status, resume_from_run_id) VALUES ($1, $2, $3, 'running', $4)`, resumedRunID, accountID, threadID, parentRunID); err != nil {
+		t.Fatalf("insert resumed run: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO run_events (run_id, seq, type, data_json) VALUES ($1, 1, 'run.started', $2::jsonb)`, parentRunID, fmt.Sprintf(`{"thread_tail_message_id":"%s"}`, threadTailID)); err != nil {
+		t.Fatalf("insert parent started: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO run_events (run_id, seq, type, data_json) VALUES ($1, 1, 'run.started', '{}'::jsonb)`, resumedRunID); err != nil {
+		t.Fatalf("insert resumed started: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO messages (id, account_id, thread_id, role, content, metadata_json, hidden) VALUES ($1, $2, $3, 'user', $4, '{}'::jsonb, false)`, threadTailID, accountID, threadID, "hello"); err != nil {
+		t.Fatalf("insert user message: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO messages (id, account_id, thread_id, role, content, metadata_json, hidden) VALUES ($1, $2, $3, 'assistant', $4, $5::jsonb, false)`, parentAssistantID, accountID, threadID, "partial", fmt.Sprintf(`{"run_id":"%s"}`, parentRunID)); err != nil {
+		t.Fatalf("insert assistant message: %v", err)
+	}
+
+	loaded, err := loadRunInputs(ctx, pool, data.Run{
+		ID:              resumedRunID,
+		AccountID:       accountID,
+		ThreadID:        threadID,
+		ResumeFromRunID: &parentRunID,
+	}, map[string]any{"source": "continue"}, data.RunsRepository{}, data.RunEventsRepository{}, data.MessagesRepository{}, nil, nil, 20)
+	if err != nil {
+		t.Fatalf("loadRunInputs failed: %v", err)
+	}
+	if len(loaded.Messages) != 2 {
+		t.Fatalf("expected canonical visible history only, got %d messages", len(loaded.Messages))
+	}
+	if loaded.Messages[1].Role != "assistant" || loaded.Messages[1].Content[0].Text != "partial" {
+		t.Fatalf("unexpected canonical assistant fallback: %#v", loaded.Messages[1])
 	}
 }
 

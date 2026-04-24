@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"io"
 	"log/slog"
+	"strings"
 
 	"arkloop/services/api/internal/observability"
 	"net/http/httptest"
@@ -351,6 +352,8 @@ func TestThreadContinueCreatesResumedRun(t *testing.T) {
 	parentWorkDir := "/workspace/project"
 	parentReasoningMode := "high"
 	parentOutputModelKey := "gpt5"
+	parentProfileRef := "profile_parent"
+	parentWorkspaceRef := "workspace_parent"
 	if _, err := pool.Exec(ctx,
 		`UPDATE run_events
 		    SET data_json = data_json || jsonb_build_object(
@@ -378,10 +381,14 @@ func TestThreadContinueCreatesResumedRun(t *testing.T) {
 		`UPDATE runs
 		    SET status = 'cancelled',
 		        status_updated_at = $2,
-		        failed_at = $2
+		        failed_at = $2,
+		        profile_ref = $3,
+		        workspace_ref = $4
 		  WHERE id = $1`,
 		runID,
 		cancelledAt,
+		parentProfileRef,
+		parentWorkspaceRef,
 	); err != nil {
 		t.Fatalf("mark run cancelled: %v", err)
 	}
@@ -410,6 +417,34 @@ func TestThreadContinueCreatesResumedRun(t *testing.T) {
 	}
 	if resumeFromRunID == nil || *resumeFromRunID != runID {
 		t.Fatalf("unexpected resume_from_run_id: %#v want %s", resumeFromRunID, runID)
+	}
+	var resumedCreatedByUserID *uuid.UUID
+	var resumedProfileRef *string
+	var resumedWorkspaceRef *string
+	if err := pool.QueryRow(ctx,
+		`SELECT created_by_user_id, profile_ref, workspace_ref FROM runs WHERE id = $1`,
+		continuePayload.RunID,
+	).Scan(&resumedCreatedByUserID, &resumedProfileRef, &resumedWorkspaceRef); err != nil {
+		t.Fatalf("load resumed bindings: %v", err)
+	}
+	if resumedCreatedByUserID == nil || *resumedCreatedByUserID != userID {
+		t.Fatalf("unexpected resumed created_by_user_id: %#v", resumedCreatedByUserID)
+	}
+	if got := strings.TrimSpace(func() string {
+		if resumedProfileRef == nil {
+			return ""
+		}
+		return *resumedProfileRef
+	}()); got != parentProfileRef {
+		t.Fatalf("unexpected resumed profile_ref: %#v", resumedProfileRef)
+	}
+	if got := strings.TrimSpace(func() string {
+		if resumedWorkspaceRef == nil {
+			return ""
+		}
+		return *resumedWorkspaceRef
+	}()); got != parentWorkspaceRef {
+		t.Fatalf("unexpected resumed workspace_ref: %#v", resumedWorkspaceRef)
 	}
 
 	var startedJSON []byte

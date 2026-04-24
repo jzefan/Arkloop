@@ -1379,6 +1379,47 @@ export function writeMessageWebFetches(messageId: string, fetches: WebFetchRef[]
   } catch { /* ignore */ }
 }
 
+// -- Covered continue chain --
+
+function messageCoveredRunIdsKey(messageId: string): string {
+  return `arkloop:web:msg_covered_run_ids:${messageId}`
+}
+
+export function readMessageCoveredRunIds(messageId: string): string[] | null {
+  if (!canUseLocalStorage() || !messageId) return null
+  try {
+    const raw = localStorage.getItem(messageCoveredRunIdsKey(messageId))
+    if (!raw) return null
+    const parsed = JSON.parse(raw) as unknown
+    if (!Array.isArray(parsed)) {
+      localStorage.removeItem(messageCoveredRunIdsKey(messageId))
+      return null
+    }
+    const coveredRunIds = parsed
+      .filter((value): value is string => typeof value === 'string' && value.trim() !== '')
+      .map((value) => value.trim())
+    if (coveredRunIds.length === 0) {
+      localStorage.removeItem(messageCoveredRunIdsKey(messageId))
+      return null
+    }
+    return coveredRunIds
+  } catch {
+    try { localStorage.removeItem(messageCoveredRunIdsKey(messageId)) } catch { /* ignore */ }
+    return null
+  }
+}
+
+export function writeMessageCoveredRunIds(messageId: string, coveredRunIds: string[]): void {
+  if (!canUseLocalStorage() || !messageId || coveredRunIds.length === 0) return
+  try {
+    const normalized = coveredRunIds
+      .filter((value): value is string => typeof value === 'string' && value.trim() !== '')
+      .map((value) => value.trim())
+    if (normalized.length === 0) return
+    writeEphemeralStorageItem(messageCoveredRunIdsKey(messageId), JSON.stringify(normalized))
+  } catch { /* ignore */ }
+}
+
 // -- Terminal handoff status --
 
 export type MessageTerminalStatusRef = 'completed' | 'cancelled' | 'interrupted' | 'failed'
@@ -1409,6 +1450,7 @@ export function writeMessageTerminalStatus(messageId: string, status: MessageTer
 export type ThreadRunHandoffRef = {
   runId: string
   status: 'running' | Exclude<MessageTerminalStatusRef, 'completed'>
+  coveredRunIds: string[]
   assistantTurn?: AssistantTurnUi | null
   sources: WebSource[]
   artifacts: ArtifactRef[]
@@ -1493,6 +1535,9 @@ export function readThreadRunHandoff(threadId: string): ThreadRunHandoffRef | nu
     const status = item.status
     if (!runId) return null
     if (status !== 'running' && status !== 'cancelled' && status !== 'interrupted' && status !== 'failed') return null
+    const coveredRunIds = Array.isArray(item.coveredRunIds)
+      ? item.coveredRunIds.filter((value): value is string => typeof value === 'string' && value.trim() !== '').map((value) => value.trim())
+      : []
     const assistantTurn = item.assistantTurn == null ? null : parseAssistantTurnData(item.assistantTurn)
     const sources = Array.isArray(item.sources) ? item.sources.filter(isWebSource) : []
     const artifacts = Array.isArray(item.artifacts) ? item.artifacts.filter(isArtifactRef) : []
@@ -1506,6 +1551,7 @@ export function readThreadRunHandoff(threadId: string): ThreadRunHandoffRef | nu
     return {
       runId,
       status,
+      coveredRunIds,
       assistantTurn,
       sources,
       artifacts,
@@ -1920,6 +1966,8 @@ export function migrateMessageMetadata(mapping: Array<{ old_id: string; new_id: 
     if (copBlocks) writeMessageCopBlocks(new_id, copBlocks)
     const assistantTurn = readMessageAssistantTurn(old_id)
     if (assistantTurn) writeMessageAssistantTurn(new_id, assistantTurn)
+    const coveredRunIds = readMessageCoveredRunIds(old_id)
+    if (coveredRunIds) writeMessageCoveredRunIds(new_id, coveredRunIds)
     const fileOps = readMessageFileOps(old_id)
     if (fileOps) writeMessageFileOps(new_id, fileOps)
     const webFetches = readMessageWebFetches(old_id)

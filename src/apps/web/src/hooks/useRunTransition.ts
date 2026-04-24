@@ -20,6 +20,7 @@ export type TerminalRunCache = {
   handoffAssistantTurn: AssistantTurnUi
   pendingSearchSteps?: MessageSearchStepRef[] | null
   terminalStatus?: 'running' | MessageTerminalStatusRef | null
+  coveredRunIds: string[]
 }
 
 type PersistRunDataOptions = {
@@ -33,6 +34,8 @@ export function useRunTransition() {
   const {
     setTerminalRunDisplayId,
     setTerminalRunHandoffStatus,
+    setTerminalRunCoveredRunIds,
+    terminalRunCoveredRunIds,
     terminalRunHandoffStatus,
     setAwaitingInput,
     setPendingUserInput,
@@ -73,7 +76,8 @@ export function useRunTransition() {
     setLiveAssistantTurn(null)
     setTerminalRunDisplayId(null)
     setTerminalRunHandoffStatus(null)
-  }, [assistantTurnFoldStateRef, setLiveAssistantTurn, setPreserveLiveRunUi, setTerminalRunDisplayId, setTerminalRunHandoffStatus])
+    setTerminalRunCoveredRunIds([])
+  }, [assistantTurnFoldStateRef, setLiveAssistantTurn, setPreserveLiveRunUi, setTerminalRunCoveredRunIds, setTerminalRunDisplayId, setTerminalRunHandoffStatus])
 
   const clearLiveRunTransientState = useCallback(() => {
     streamingArtifactsRef.current = []
@@ -129,6 +133,7 @@ export function useRunTransition() {
     clearLiveRunTransientState()
     setTerminalRunDisplayId(null)
     setTerminalRunHandoffStatus(null)
+    setTerminalRunCoveredRunIds([])
   }, [
     activeSegmentIdRef,
     assistantTurnFoldStateRef,
@@ -139,6 +144,7 @@ export function useRunTransition() {
     setSegments,
     setTerminalRunDisplayId,
     setTerminalRunHandoffStatus,
+    setTerminalRunCoveredRunIds,
     setTopLevelCodeExecutions,
     setTopLevelFileOps,
     setTopLevelSubAgents,
@@ -160,6 +166,7 @@ export function useRunTransition() {
       handoffAssistantTurn,
       pendingSearchSteps: pendingSearchStepsRef.current,
       terminalStatus: terminalStatus ?? terminalRunHandoffStatus,
+      coveredRunIds: [...terminalRunCoveredRunIds],
     }
   }, [
     assistantTurnFoldStateRef,
@@ -171,6 +178,7 @@ export function useRunTransition() {
     currentRunSubAgentsRef,
     currentRunWebFetchesRef,
     pendingSearchStepsRef,
+    terminalRunCoveredRunIds,
     streamingArtifactsRef,
     terminalRunHandoffStatus,
   ])

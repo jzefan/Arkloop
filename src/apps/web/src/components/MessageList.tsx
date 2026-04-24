@@ -1,4 +1,4 @@
-import { memo, Fragment, type ComponentProps, useState, useRef, useEffect } from 'react'
+import { memo, Fragment, type ComponentProps, useState, useRef, useEffect, useMemo } from 'react'
 import { Info } from 'lucide-react'
 import { Button } from '@arkloop/shared'
 import { MessageBubble } from './MessageBubble'
@@ -258,6 +258,7 @@ export const MessageList = memo(function MessageList({
   const sending = run.sending
   const terminalRunDisplayId = run.terminalRunDisplayId
   const terminalRunHandoffStatus = run.terminalRunHandoffStatus
+  const terminalRunCoveredRunIds = run.terminalRunCoveredRunIds
   const terminalRunHistoryExpanded = run.terminalRunHistoryExpanded
   const terminalRunAssistantMessageId = run.terminalRunAssistantMessageId
   const userEnterMessageId = msgs.userEnterMessageId
@@ -274,6 +275,23 @@ export const MessageList = memo(function MessageList({
       stream.topLevelWebFetches.length > 0 ||
       stream.streamingArtifacts.length > 0
     )
+
+  const coveredRunIdsForHistory = useMemo(() => {
+    const covered = new Set<string>()
+    for (const msg of messages) {
+      if (msg.role !== 'assistant') continue
+      const coveredRunIds = meta.getMeta(msg.id)?.coveredRunIds ?? []
+      for (const runId of coveredRunIds) {
+        if (runId.trim() !== '') covered.add(runId.trim())
+      }
+    }
+    if (hasCurrentRunHandoffUi) {
+      for (const runId of terminalRunCoveredRunIds) {
+        if (runId.trim() !== '') covered.add(runId.trim())
+      }
+    }
+    return covered
+  }, [hasCurrentRunHandoffUi, messages, meta, terminalRunCoveredRunIds])
 
   const resolvedMessageSources = resolveMessageSourcesForRender(messages, (() => {
     const map = new Map<string, WebSource[]>()
@@ -309,9 +327,10 @@ export const MessageList = memo(function MessageList({
   const renderMessage = (msg: import('../api').MessageResponse, idx: number) => {
     const hideTerminalRunMessage =
       msg.role === 'assistant' &&
-      hasCurrentRunHandoffUi &&
-      terminalRunDisplayId != null &&
-      msg.run_id === terminalRunDisplayId
+      (
+        (hasCurrentRunHandoffUi && terminalRunDisplayId != null && msg.run_id === terminalRunDisplayId) ||
+        (msg.run_id != null && coveredRunIdsForHistory.has(msg.run_id))
+      )
     if (hideTerminalRunMessage) return null
 
     const msgMeta = msg.role === 'assistant' ? meta.getMeta(msg.id) : undefined
