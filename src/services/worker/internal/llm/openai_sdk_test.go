@@ -370,3 +370,28 @@ func TestOpenAISDKGateway_ProviderOversizeDetails(t *testing.T) {
 		t.Fatalf("missing oversize details: %#v", failed.Error.Details)
 	}
 }
+
+func TestOpenAIResponsesInputUsesResponsesFunctionCallIDForProviderAgnosticToolCallID(t *testing.T) {
+	input, err := toOpenAIResponsesInput([]Message{{
+		Role: "assistant",
+		ToolCalls: []ToolCall{{
+			ToolCallID:    "toolu_0139RxnwMxUiL4oU5fgtiVqh",
+			ToolName:      "echo",
+			ArgumentsJSON: map[string]any{"text": "hi"},
+		}},
+	}})
+	if err != nil {
+		t.Fatalf("toOpenAIResponsesInput: %v", err)
+	}
+	if len(input) != 1 {
+		t.Fatalf("expected one input item, got %#v", input)
+	}
+	item := input[0]
+	if item["type"] != "function_call" || item["call_id"] != "toolu_0139RxnwMxUiL4oU5fgtiVqh" {
+		t.Fatalf("unexpected function call item: %#v", item)
+	}
+	id, _ := item["id"].(string)
+	if !strings.HasPrefix(id, "fc_hist_") {
+		t.Fatalf("responses function_call id must be provider-local fc id, got %#v", item)
+	}
+}
