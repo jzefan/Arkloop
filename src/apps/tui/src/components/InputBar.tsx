@@ -52,6 +52,7 @@ export function InputBar(props: Props) {
   const [text, setText] = createSignal("")
   const [images, setImages] = createSignal<PendingImageAttachment[]>([])
   const [selectedIndex, setSelectedIndex] = createSignal(0)
+  const [historyBrowsing, setHistoryBrowsing] = createSignal(false)
 
   // input history
   let history = loadHistory()
@@ -60,6 +61,7 @@ export function InputBar(props: Props) {
   let exitConfirmTimer: ReturnType<typeof setTimeout> | null = null
 
   const suggestions = createMemo(() => {
+    if (historyBrowsing()) return []
     const value = text().trimStart()
     if (!value.startsWith("/")) return []
     const needle = value.toLowerCase()
@@ -94,6 +96,7 @@ export function InputBar(props: Props) {
     input?.clear()
     setText("")
     setImages([])
+    setHistoryBrowsing(false)
   }
 
   function removeLastImage() {
@@ -146,6 +149,7 @@ export function InputBar(props: Props) {
     if (!input || input.isDestroyed) return
     input.setText(command)
     setText(input.plainText ?? "")
+    setHistoryBrowsing(false)
     input.focus()
   }
 
@@ -164,6 +168,7 @@ export function InputBar(props: Props) {
         }
         historyCursor = -1
         draft = ""
+        setHistoryBrowsing(false)
         clearComposer()
         setExitConfirmPending(false)
         if (exitConfirmTimer) clearTimeout(exitConfirmTimer)
@@ -246,6 +251,7 @@ export function InputBar(props: Props) {
         historyCursor = next
         input?.setText(value)
         setText(value)
+        setHistoryBrowsing(true)
       }
       return
     }
@@ -257,6 +263,7 @@ export function InputBar(props: Props) {
       historyCursor = next
       input?.setText(value)
       setText(value)
+      setHistoryBrowsing(next >= 0)
       return
     }
   }
@@ -351,7 +358,13 @@ export function InputBar(props: Props) {
                 setTimeout(() => setTimeout(() => submit(), 0), 0)
               }}
               onContentChange={() => {
-                setText(input?.plainText ?? "")
+                const value = input?.plainText ?? ""
+                setText(value)
+                if (historyBrowsing() && value !== historyValue(history, historyCursor, draft)) {
+                  historyCursor = -1
+                  draft = ""
+                  setHistoryBrowsing(false)
+                }
               }}
               onKeyDown={handleKeyDown}
               keyBindings={keyBindings}
@@ -417,4 +430,9 @@ function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+}
+
+function historyValue(entries: string[], cursor: number, draft: string): string {
+  if (cursor < 0) return draft
+  return entries[entries.length - 1 - cursor] ?? draft
 }
