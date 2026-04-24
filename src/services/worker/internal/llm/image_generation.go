@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"os"
 	"strings"
 )
 
@@ -56,14 +55,9 @@ func GenerateImageWithResolvedConfig(ctx context.Context, cfg ResolvedGatewayCon
 			Transport: cfg.Transport,
 			Protocol:  *cfg.OpenAI,
 		}
-		if os.Getenv("ARKLOOP_OPENAI_SDK_ENABLED") == "1" {
-			if generator, ok := NewOpenAIGatewaySDK(gatewayCfg).(interface {
-				GenerateImage(context.Context, string, ImageGenerationRequest) (GeneratedImage, error)
-			}); ok {
-				return generator.GenerateImage(ctx, cfg.Model, req)
-			}
-		}
-		gateway := NewOpenAIGateway(gatewayCfg)
+		gateway := NewOpenAIGatewaySDK(gatewayCfg).(interface {
+			GenerateImage(context.Context, string, ImageGenerationRequest) (GeneratedImage, error)
+		})
 		return gateway.GenerateImage(ctx, cfg.Model, req)
 	case ProtocolKindGeminiGenerateContent:
 		if cfg.Gemini == nil {
@@ -76,14 +70,9 @@ func GenerateImageWithResolvedConfig(ctx context.Context, cfg ResolvedGatewayCon
 			Transport: cfg.Transport,
 			Protocol:  *cfg.Gemini,
 		}
-		if os.Getenv("ARKLOOP_GEMINI_SDK_ENABLED") == "1" {
-			if generator, ok := NewGeminiGatewaySDK(gatewayCfg).(interface {
-				GenerateImage(context.Context, string, ImageGenerationRequest) (GeneratedImage, error)
-			}); ok {
-				return generator.GenerateImage(ctx, cfg.Model, req)
-			}
-		}
-		gateway := NewGeminiGateway(gatewayCfg)
+		gateway := NewGeminiGatewaySDK(gatewayCfg).(interface {
+			GenerateImage(context.Context, string, ImageGenerationRequest) (GeneratedImage, error)
+		})
 		return gateway.GenerateImage(ctx, cfg.Model, req)
 	default:
 		return GeneratedImage{}, GatewayError{
