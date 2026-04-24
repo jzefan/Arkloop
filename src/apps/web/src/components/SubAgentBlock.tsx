@@ -19,6 +19,7 @@ type Props = {
   currentRunId?: string
   accessToken?: string
   baseUrl?: string
+  onOpenPanel?: () => void
 }
 
 type Status = Props['status']
@@ -47,6 +48,7 @@ export function SubAgentBlock({
   currentRunId,
   accessToken = '',
   baseUrl = '',
+  onOpenPanel,
 }: Props) {
   const [expanded, setExpanded] = useState(false)
   const { t } = useLocale()
@@ -104,10 +106,20 @@ export function SubAgentBlock({
       <div
         role="button"
         tabIndex={0}
-        onClick={() => { if (expandable) setExpanded((p) => !p) }}
+        onClick={() => {
+          if (onOpenPanel) {
+            onOpenPanel()
+            return
+          }
+          if (expandable) setExpanded((p) => !p)
+        }}
         onKeyDown={(e) => {
-          if ((e.key === 'Enter' || e.key === ' ') && expandable) {
+          if ((e.key === 'Enter' || e.key === ' ') && (expandable || onOpenPanel)) {
             e.preventDefault()
+            if (onOpenPanel) {
+              onOpenPanel()
+              return
+            }
             setExpanded((p) => !p)
           }
         }}
@@ -117,7 +129,7 @@ export function SubAgentBlock({
           gap: '5px',
           padding: '4px 0',
           border: 'none',
-          cursor: expandable ? 'pointer' : 'default',
+          cursor: expandable || onOpenPanel ? 'pointer' : 'default',
           width: 'fit-content',
           maxWidth: '100%',
           background: 'transparent',
@@ -137,7 +149,7 @@ export function SubAgentBlock({
         }}>
           {streamTw ? displayedLabel : rawLabel}
         </span>
-        {expandable && (
+        {(expandable || onOpenPanel) && (
           expanded
             ? <ChevronDown size={12} style={{ flexShrink: 0, color: 'var(--c-text-muted)' }} strokeWidth={2} />
             : <ChevronRight size={12} style={{ flexShrink: 0, color: 'var(--c-text-muted)' }} strokeWidth={2} />

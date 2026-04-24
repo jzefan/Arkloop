@@ -1215,6 +1215,13 @@ export type FileOpRef = {
   status: 'running' | 'success' | 'failed'
   errorMessage?: string
   seq?: number
+  filePath?: string
+  pattern?: string
+  operation?: string
+  displayKind?: string
+  displayDescription?: string
+  displaySubject?: string
+  displayDetail?: string
 }
 
 function isFileOpRef(v: unknown): v is FileOpRef {

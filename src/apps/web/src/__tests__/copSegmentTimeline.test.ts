@@ -85,14 +85,15 @@ describe('copTimelinePayloadForSegment', () => {
         status: 'done',
         queries: ['Claude Desktop 更新'],
         seq: 3,
+        sources: [{ title: 'u', url: 'https://u.test', snippet: undefined }],
       },
       {
         id: 'ws1::reviewing',
         kind: 'reviewing',
         label: 'Reviewing sources',
         status: 'done',
-        sources: [{ title: 'u', url: 'https://u.test' }],
-        seq: 3.5,
+        sources: [{ title: 'u', url: 'https://u.test', snippet: undefined }],
+        seq: 3,
       },
     ])
     expect(r.sources).toEqual([{ title: 'u', url: 'https://u.test' }])
@@ -173,6 +174,51 @@ describe('copTimelinePayloadForSegment', () => {
     expect(r.genericTools).toBeUndefined()
   })
 
+  it('read、grep、glob、lsp 读取类工具聚合为 Explore', () => {
+    const r = copTimelinePayloadForSegment(
+      {
+        type: 'cop',
+        title: null,
+        items: [
+          call('r1', 'read', 1),
+          call('g1', 'grep', 2),
+          call('l1', 'lsp', 3),
+        ],
+      },
+      {
+        fileOps: [
+          { id: 'r1', toolName: 'read_file', label: 'Read ChatInput.tsx', status: 'success', seq: 1, filePath: 'src/ChatInput.tsx', displayKind: 'read' },
+          { id: 'g1', toolName: 'grep', label: 'Searched PersonaChip', status: 'success', seq: 2, pattern: 'PersonaChip', displayKind: 'grep' },
+          { id: 'l1', toolName: 'lsp', label: 'Found references', status: 'running', seq: 3, operation: 'references', displayKind: 'lsp' },
+        ],
+        sources: [],
+      },
+    )
+    expect(r.fileOps).toBeUndefined()
+    expect(r.exploreGroups).toHaveLength(1)
+    expect(r.exploreGroups?.[0]?.status).toBe('running')
+    expect(r.exploreGroups?.[0]?.items.map((item) => item.id)).toEqual(['r1', 'g1', 'l1'])
+  })
+
+  it('edit 和 lsp rename 不进入 Explore', () => {
+    const r = copTimelinePayloadForSegment(
+      {
+        type: 'cop',
+        title: null,
+        items: [call('e1', 'edit', 1), call('l1', 'lsp', 2)],
+      },
+      {
+        fileOps: [
+          { id: 'e1', toolName: 'edit', label: 'Edited a.ts', status: 'success', seq: 1, displayKind: 'edit' },
+          { id: 'l1', toolName: 'lsp', label: 'Renamed symbol', status: 'success', seq: 2, operation: 'rename', displayKind: 'edit' },
+        ],
+        sources: [],
+      },
+    )
+    expect(r.exploreGroups).toBeUndefined()
+    expect(r.fileOps?.map((item) => item.id)).toEqual(['e1', 'l1'])
+  })
+
   it('toolCallIdsInCopTimelines 汇总 COP 时间轴已占用的 id', () => {
     const ids = toolCallIdsInCopTimelines(
       {
@@ -190,5 +236,24 @@ describe('copTimelinePayloadForSegment', () => {
       },
     )
     expect(ids.has('fo1')).toBe(true)
+  })
+
+  it('toolCallIdsInCopTimelines 包含 Explore 内部工具 id', () => {
+    const ids = toolCallIdsInCopTimelines(
+      {
+        segments: [
+          {
+            type: 'cop',
+            title: null,
+            items: [call('r1', 'read', 1)],
+          },
+        ],
+      },
+      {
+        fileOps: [{ id: 'r1', toolName: 'read_file', label: 'Read a.ts', status: 'success', seq: 1, displayKind: 'read' }],
+        sources: [],
+      },
+    )
+    expect(ids.has('r1')).toBe(true)
   })
 })
