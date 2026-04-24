@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log/slog"
 	"strings"
 
 	"arkloop/services/shared/messagecontent"
@@ -167,6 +166,9 @@ func loadRunInputs(
 		if rawOutputRouteID, ok := dataJSON["output_route_id"].(string); ok && strings.TrimSpace(rawOutputRouteID) != "" {
 			inputJSON["output_route_id"] = strings.TrimSpace(rawOutputRouteID)
 		}
+		if rawOutputModelKey, ok := dataJSON["output_model_key"].(string); ok && strings.TrimSpace(rawOutputModelKey) != "" {
+			inputJSON["output_model_key"] = strings.TrimSpace(rawOutputModelKey)
+		}
 		if rawModel, ok := dataJSON["model"].(string); ok && strings.TrimSpace(rawModel) != "" {
 			inputJSON["model"] = strings.TrimSpace(rawModel)
 		}
@@ -248,6 +250,9 @@ func loadRunInputs(
 		if err != nil {
 			var resumeErr *resumeUnavailableError
 			if errors.As(err, &resumeErr) {
+				if isExplicitContinueJob(jobPayload) {
+					return nil, err
+				}
 				clearContinuationMetadata(inputJSON)
 				replayInsertions = nil
 			} else {
@@ -325,6 +330,14 @@ func clearContinuationMetadata(inputJSON map[string]any) {
 	inputJSON[runStartedContinuationSourceKey] = "none"
 	inputJSON[runStartedContinuationLoopKey] = false
 	delete(inputJSON, runStartedContinuationResponseKey)
+}
+
+func isExplicitContinueJob(jobPayload map[string]any) bool {
+	if len(jobPayload) == 0 {
+		return false
+	}
+	raw, _ := jobPayload["source"].(string)
+	return strings.TrimSpace(raw) == "continue"
 }
 
 func boundedThreadHistoryUpperBound(ctx context.Context, tx pgx.Tx, inputJSON map[string]any, jobPayload map[string]any) (uuid.UUID, bool, error) {
@@ -618,7 +631,7 @@ func collectResumeReplayInsertions(
 	if parentRun.ThreadID != threadID {
 		return nil, &resumeUnavailableError{reason: "resume source run does not belong to the thread"}
 	}
-	if parentRun.Status != "interrupted" && parentRun.Status != "cancelled" {
+	if parentRun.Status != "interrupted" && parentRun.Status != "cancelled" && parentRun.Status != "failed" {
 		return nil, &resumeUnavailableError{reason: "resume source run is not resumable"}
 	}
 
@@ -797,13 +810,17 @@ func buildReplayMessages(state *rollout.ReconstructedState) ([]llm.Message, erro
 	replayed := make([]llm.Message, 0, len(state.ReplayMessages)+len(state.PendingToolCalls))
 	for _, msg := range state.ReplayMessages {
 		var rebuilt llm.Message
+		var err error
 		var keep bool
 		switch msg.Role {
 		case "assistant":
 			if msg.Assistant == nil {
 				continue
 			}
-			rebuilt = replayAssistantMessage(*msg.Assistant)
+			rebuilt, err = replayAssistantMessage(*msg.Assistant)
+			if err != nil {
+				return nil, err
+			}
 		case "tool":
 			if msg.Tool == nil {
 				continue
@@ -832,24 +849,40 @@ func buildReplayMessages(state *rollout.ReconstructedState) ([]llm.Message, erro
 	return replayed, nil
 }
 
-func replayAssistantMessage(msg rollout.AssistantMessage) llm.Message {
-	var toolCalls []llm.ToolCall
-	if len(msg.ToolCalls) > 0 {
-		if err := json.Unmarshal(msg.ToolCalls, &toolCalls); err != nil {
-			slog.Warn("rollout: failed to parse assistant tool_calls", "err", err)
+func replayAssistantMessage(msg rollout.AssistantMessage) (llm.Message, error) {
+	raw := map[string]any{
+		"role": "assistant",
+	}
+	if len(msg.ContentParts) > 0 {
+		var content any
+		if err := json.Unmarshal(msg.ContentParts, &content); err != nil {
+			return llm.Message{}, err
 		}
+		raw["content"] = content
+	} else if text := sanitizeStoredAssistantText(msg.Content); strings.TrimSpace(text) != "" {
+		raw["content"] = []any{map[string]any{"type": messagecontent.PartTypeText, "text": text}}
 	}
-	toolCalls = llm.CanonicalToolCalls(toolCalls)
-	content := []llm.ContentPart(nil)
-	text := sanitizeStoredAssistantText(msg.Content)
-	if strings.TrimSpace(text) != "" {
-		content = []llm.ContentPart{{Type: messagecontent.PartTypeText, Text: text}}
+	if len(msg.ToolCalls) > 0 {
+		var toolCalls []llm.ToolCall
+		if err := json.Unmarshal(msg.ToolCalls, &toolCalls); err != nil {
+			return llm.Message{}, err
+		}
+		encodedToolCalls := make([]any, 0, len(toolCalls))
+		for _, call := range toolCalls {
+			encodedToolCalls = append(encodedToolCalls, map[string]any{
+				"tool_call_id": call.ToolCallID,
+				"tool_name":    call.ToolName,
+				"arguments":    call.ArgumentsJSON,
+			})
+		}
+		raw["tool_calls"] = encodedToolCalls
 	}
-	return llm.Message{
-		Role:      "assistant",
-		Content:   content,
-		ToolCalls: toolCalls,
+	parsed, err := llm.MessageFromJSONMap(raw)
+	if err != nil {
+		return llm.Message{}, err
 	}
+	parsed.ToolCalls = llm.CanonicalToolCalls(parsed.ToolCalls)
+	return parsed, nil
 }
 
 func replayToolResultMessage(result rollout.ReplayToolResult) llm.Message {
