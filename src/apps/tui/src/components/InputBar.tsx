@@ -1,11 +1,13 @@
 import type { KeyEvent, TextareaRenderable } from "@opentui/core"
-import { useRenderer } from "@opentui/solid"
+import { usePaste, useRenderer } from "@opentui/solid"
 import { createEffect, createMemo, createSignal, For, Show } from "solid-js"
+import type { MessageComposePayload, PendingImageAttachment } from "../api/types"
 import { effortSymbol, formatEffort } from "../lib/effort"
 import { addEntry, historyDown, historyUp, loadHistory, saveHistory } from "../lib/history"
 import { streaming } from "../store/chat"
 import { CHAT_CONTENT_GUTTER, CHAT_PREFIX_WIDTH } from "../lib/chatLayout"
 import { tuiTheme } from "../lib/theme"
+import { resolvePastedImage } from "../lib/clipboard"
 import {
   connected,
   currentEffort,
@@ -21,7 +23,7 @@ import {
 } from "../store/app"
 
 interface Props {
-  onSubmit: (text: string) => void
+  onSubmit: (payload: MessageComposePayload) => void | Promise<void>
 }
 
 interface SlashCommand {
@@ -48,6 +50,7 @@ export function InputBar(props: Props) {
   let input: TextareaRenderable
   const renderer = useRenderer()
   const [text, setText] = createSignal("")
+  const [images, setImages] = createSignal<PendingImageAttachment[]>([])
   const [selectedIndex, setSelectedIndex] = createSignal(0)
 
   // input history
@@ -78,17 +81,42 @@ export function InputBar(props: Props) {
     return parts.length > 0 ? parts.join(" · ") : null
   }
 
+  usePaste((event) => {
+    if (!input || input.isDestroyed || !input.focused || streaming()) return
+    const image = resolvePastedImage(event)
+    if (!image) return
+    event.preventDefault()
+    setImages((current) => [...current, image])
+    input.focus()
+  })
+
+  function clearComposer() {
+    input?.clear()
+    setText("")
+    setImages([])
+  }
+
+  function removeLastImage() {
+    setImages((current) => current.slice(0, -1))
+  }
+
+  function removeImage(index: number) {
+    setImages((current) => current.filter((_, currentIndex) => currentIndex !== index))
+  }
+
   function submit() {
     if (streaming() || !input || input.isDestroyed) return
     const value = (input.plainText ?? "").trim()
-    if (!value) return
-    props.onSubmit(value)
-    history = addEntry(history, value)
-    saveHistory(history)
+    const pendingImages = images()
+    if (!value && pendingImages.length === 0) return
+    props.onSubmit({ text: value, images: pendingImages })
+    if (value) {
+      history = addEntry(history, value)
+      saveHistory(history)
+    }
     historyCursor = -1
     draft = ""
-    input.clear()
-    setText("")
+    clearComposer()
   }
 
   createEffect(() => {
@@ -126,15 +154,17 @@ export function InputBar(props: Props) {
     if (event.ctrl && event.name === "c") {
       event.preventDefault()
       const value = (input?.plainText ?? "").trim()
+      const hasDraft = value.length > 0 || images().length > 0
 
       // tier 1: input has content — clear and save to history
-      if (value) {
-        history = addEntry(history, value)
-        saveHistory(history)
+      if (hasDraft) {
+        if (value) {
+          history = addEntry(history, value)
+          saveHistory(history)
+        }
         historyCursor = -1
         draft = ""
-        input?.clear()
-        setText("")
+        clearComposer()
         setExitConfirmPending(false)
         if (exitConfirmTimer) clearTimeout(exitConfirmTimer)
         exitConfirmTimer = null
@@ -197,6 +227,12 @@ export function InputBar(props: Props) {
           replaceWithSuggestion(activeSuggestion()!.insert)
         }
       }
+      return
+    }
+
+    if (event.name === "backspace" && (input?.plainText ?? "").length === 0 && images().length > 0) {
+      event.preventDefault()
+      removeLastImage()
       return
     }
 
@@ -278,6 +314,24 @@ export function InputBar(props: Props) {
             </box>
           </box>
         </Show>
+        <Show when={images().length > 0}>
+          <box
+            width="100%"
+            flexDirection="column"
+            paddingLeft={CHAT_CONTENT_GUTTER + CHAT_PREFIX_WIDTH}
+            paddingRight={1}
+            paddingTop={1}
+          >
+            <For each={images()}>
+              {(image, index) => (
+                <box flexDirection="row" justifyContent="space-between" gap={1}>
+                  <text content={`${image.filename} · ${formatBytes(image.size)}`} fg={tuiTheme.textMuted} wrapMode="word" />
+                  <text content="×" fg={tuiTheme.textMuted} onMouseUp={() => removeImage(index())} />
+                </box>
+              )}
+            </For>
+          </box>
+        </Show>
         <box
           width="100%"
           flexDirection="row"
@@ -342,8 +396,12 @@ export function InputBar(props: Props) {
                 <text content="·" fg={tuiTheme.border} />
               </Show>
               <text content={connectionText()} fg={connectionColor()} />
+              <Show when={images().length > 0}>
+                <text content="·" fg={tuiTheme.border} />
+                <text content={`${images().length} 图`} fg={tuiTheme.textMuted} />
+              </Show>
               <text content="·" fg={tuiTheme.border} />
-              <text content={suggestions().length > 0 ? "tab 补全" : "/ 命令"} fg={tuiTheme.textMuted} />
+              <text content={suggestions().length > 0 ? "tab 补全" : images().length > 0 ? "退格删图" : "/ 命令"} fg={tuiTheme.textMuted} />
             </>
           }>
             <text content="Press Ctrl+C again to exit" fg={tuiTheme.warning ?? tuiTheme.error} />
@@ -353,4 +411,10 @@ export function InputBar(props: Props) {
       <box width="100%" height={1} backgroundColor={tuiTheme.background} />
     </box>
   )
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
 }
