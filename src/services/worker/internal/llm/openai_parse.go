@@ -201,16 +201,12 @@ func toOpenAIResponsesAssistantItems(message Message, index int) ([]map[string]a
 		if err != nil {
 			argumentsJSON = "{}"
 		}
-		itemID := strings.TrimSpace(call.ToolCallID)
-		if itemID == "" {
-			itemID = fmt.Sprintf("fc_hist_%d_%d", index, callIndex)
-		}
 		callID := strings.TrimSpace(call.ToolCallID)
 		if callID == "" {
-			callID = itemID
+			callID = fmt.Sprintf("call_hist_%d_%d", index, callIndex)
 		}
 		items = append(items, map[string]any{
-			"id":        itemID,
+			"id":        fmt.Sprintf("fc_hist_%d_%d", index, callIndex),
 			"type":      "function_call",
 			"call_id":   callID,
 			"name":      call.ToolName,
