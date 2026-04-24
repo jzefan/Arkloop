@@ -2,6 +2,7 @@ import { isACPDelegateEventData, canonicalToolName, pickLogicalToolName } from '
 import type { MessageResponse, ThreadRunResponse } from './api'
 import type { RunEvent } from './sse'
 import type { ArtifactRef, BrowserActionRef, CodeExecutionRef, FileOpRef, MessageThinkingRef, SubAgentRef, WebFetchRef, WidgetRef } from './storage'
+import { presentationForTool } from './toolPresentation'
 
 const CODE_EXECUTION_TOOL_NAMES = new Set(['python_execute', 'exec_command'])
 const CODE_EXECUTION_RESULT_TOOL_NAMES = new Set(['python_execute', 'exec_command', 'continue_process', 'terminate_process'])
@@ -1132,7 +1133,7 @@ export function buildMessageSubAgentsFromRunEvents(events: RunEvent[]): SubAgent
 
 // --- File operation processing ---
 
-const FILE_OP_TOOL_NAMES = new Set(['grep', 'glob', 'read_file', 'read', 'write_file', 'edit', 'edit_file', 'load_tools', 'memory_write', 'memory_edit', 'memory_search', 'memory_read', 'memory_forget', 'notebook_write', 'notebook_read', 'notebook_edit', 'notebook_forget'])
+const FILE_OP_TOOL_NAMES = new Set(['grep', 'glob', 'read_file', 'read', 'write_file', 'edit', 'edit_file', 'load_tools', 'load_skill', 'lsp', 'memory_write', 'memory_edit', 'memory_search', 'memory_read', 'memory_forget', 'notebook_write', 'notebook_read', 'notebook_edit', 'notebook_forget'])
 
 function normalizeFileOpToolName(toolName: string): string {
   if (toolName === 'read' || toolName.startsWith('read.')) return 'read_file'
@@ -1451,12 +1452,21 @@ export function applyFileOpToolCall(
   const args = event.data && typeof event.data === 'object'
     ? (event.data as { arguments?: unknown }).arguments as Record<string, unknown> | undefined ?? {}
     : {}
+  const fallbackLabel = fileOpLabel(toolName, args)
+  const presentation = presentationForTool(toolName, args, fallbackLabel)
   const appended: FileOpRef = {
     id: pickToolCallId(event),
     toolName,
-    label: fileOpLabel(toolName, args),
+    label: presentation.description,
     status: 'running',
     seq: event.seq,
+    filePath: pickReadFilePath(args) || (typeof args.file_path === 'string' ? args.file_path : undefined),
+    pattern: typeof args.pattern === 'string' ? args.pattern : typeof args.query === 'string' ? args.query : undefined,
+    operation: typeof args.operation === 'string' ? args.operation : undefined,
+    displayKind: presentation.kind,
+    displayDescription: presentation.description,
+    displaySubject: presentation.subject,
+    displayDetail: presentation.detail,
   }
   return { appended, nextOps: [...ops, appended] }
 }

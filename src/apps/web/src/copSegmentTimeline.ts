@@ -9,6 +9,7 @@ import type {
 } from './storage'
 import type { WebSearchPhaseStep } from './components/CopTimeline'
 import { isWebFetchToolName } from './runEventProcessing'
+import { exploreGroupLabel, isExploreFileOp, type ExploreGroupRef } from './toolPresentation'
 import {
   DEFAULT_SEARCHING_LABEL,
   COMPLETED_SEARCHING_LABEL,
@@ -133,6 +134,7 @@ export function copTimelinePayloadForSegment(
   sources: WebSource[]
   codeExecutions?: CodeExecutionRef[]
   fileOps?: FileOpRef[]
+  exploreGroups?: ExploreGroupRef[]
   webFetches?: WebFetchRef[]
   subAgents?: SubAgentRef[]
   genericTools?: GenericToolCallRef[]
@@ -141,7 +143,18 @@ export function copTimelinePayloadForSegment(
   const ids = new Set(calls.map((c) => c.toolCallId))
 
   const codeExecutions = sortBySeq((pools.codeExecutions ?? []).filter((x) => ids.has(x.id)))
-  const fileOps = sortBySeq((pools.fileOps ?? []).filter((x) => ids.has(x.id)))
+  const allFileOps = sortBySeq((pools.fileOps ?? []).filter((x) => ids.has(x.id)))
+  const exploreFileOps = allFileOps.filter(isExploreFileOp)
+  const fileOps = allFileOps.filter((op) => !isExploreFileOp(op))
+  const exploreGroups: ExploreGroupRef[] = exploreFileOps.length > 0
+    ? [{
+        id: `explore:${exploreFileOps.map((item) => item.id).join(':')}`,
+        label: exploreGroupLabel(exploreFileOps, exploreFileOps.some((item) => item.status === 'running') ? 'running' : exploreFileOps.some((item) => item.status === 'failed') ? 'failed' : 'success'),
+        status: exploreFileOps.some((item) => item.status === 'running') ? 'running' : exploreFileOps.some((item) => item.status === 'failed') ? 'failed' : 'success',
+        items: exploreFileOps,
+        seq: exploreFileOps[0]?.seq,
+      }]
+    : []
   const webFetches = sortBySeq((pools.webFetches ?? []).filter((x) => ids.has(x.id)))
   const subAgents = sortBySeq((pools.subAgents ?? []).filter((x) => ids.has(x.id)))
 
@@ -196,7 +209,7 @@ export function copTimelinePayloadForSegment(
   const sources = segmentSources.length > 0 ? segmentSources : (steps.length > 0 ? pools.sources : [])
   const renderedIds = new Set<string>([
     ...codeExecutions.map((item) => item.id),
-    ...fileOps.map((item) => item.id),
+    ...allFileOps.map((item) => item.id),
     ...webFetches.map((item) => item.id),
     ...subAgents.map((item) => item.id),
     ...steps.map((item) => item.id),
@@ -233,6 +246,7 @@ export function copTimelinePayloadForSegment(
     stepsWithScopedSources.length > 0 ||
     codeExecutions.length > 0 ||
     fileOps.length > 0 ||
+    exploreGroups.length > 0 ||
     webFetches.length > 0 ||
     subAgents.length > 0 ||
     genericTools.length > 0
@@ -252,6 +266,7 @@ export function copTimelinePayloadForSegment(
     sources,
     ...(codeExecutions.length > 0 ? { codeExecutions } : {}),
     ...(fileOps.length > 0 ? { fileOps } : {}),
+    ...(exploreGroups.length > 0 ? { exploreGroups } : {}),
     ...(webFetches.length > 0 ? { webFetches } : {}),
     ...(subAgents.length > 0 ? { subAgents } : {}),
     ...(genericTools.length > 0 ? { genericTools } : {}),
@@ -277,6 +292,9 @@ export function toolCallIdsInCopTimelines(
     for (const s of payload.steps) ids.add(s.id)
     for (const c of payload.codeExecutions ?? []) ids.add(c.id)
     for (const f of payload.fileOps ?? []) ids.add(f.id)
+    for (const group of payload.exploreGroups ?? []) {
+      for (const item of group.items) ids.add(item.id)
+    }
     for (const w of payload.webFetches ?? []) ids.add(w.id)
     for (const a of payload.subAgents ?? []) ids.add(a.id)
     for (const g of payload.genericTools ?? []) ids.add(g.id)

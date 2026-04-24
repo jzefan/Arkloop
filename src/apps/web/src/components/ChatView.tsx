@@ -23,6 +23,7 @@ import { ShareModal } from './ShareModal'
 import { SourcesPanel } from './SourcesPanel'
 import { CodeExecutionPanel } from './CodeExecutionPanel'
 import { DocumentPanel } from './DocumentPanel'
+import { AgentPanel } from './AgentPanel'
 import { ChatTitleMenu } from './ChatTitleMenu'
 import { MessageList } from './MessageList'
 import { ContextCompactBar } from './ContextCompactBar'
@@ -368,6 +369,7 @@ type LiveRunPaneProps = {
   }) => (() => void) | undefined
   onOpenDocument: (artifact: ArtifactRef, options?: { trigger?: HTMLElement | null; artifacts?: ArtifactRef[]; runId?: string }) => void
   onOpenCodeExecution: (ce: CodeExecution) => void
+  onOpenSubAgent: (agent: SubAgentRef) => void
   onArtifactAction: ComponentProps<typeof WidgetBlock>['onAction']
   renderLiveCopItems: (seg: CopSegment, si: number) => React.ReactNode[]
   renderLiveCopSegment: (seg: CopSegment, si: number, key?: string) => React.ReactNode
@@ -419,6 +421,7 @@ const LiveRunPane = memo(function LiveRunPane({
   actionHandlerForTerminalRun,
   onOpenDocument,
   onOpenCodeExecution,
+  onOpenSubAgent,
   onArtifactAction,
   renderLiveCopItems,
   renderLiveCopSegment,
@@ -490,6 +493,7 @@ const LiveRunPane = memo(function LiveRunPane({
             isComplete
             codeExecutions={dedupedTopLevelCodeExecutions.length > 0 ? dedupedTopLevelCodeExecutions : undefined}
             onOpenCodeExecution={onOpenCodeExecution}
+            onOpenSubAgent={onOpenSubAgent}
             activeCodeExecutionId={codePanelExecutionId ?? undefined}
             subAgents={topLevelSubAgents.length > 0 ? topLevelSubAgents : undefined}
             fileOps={topLevelFileOps.length > 0 ? topLevelFileOps : undefined}
@@ -785,6 +789,7 @@ export function ChatView() {
     openSourcePanel,
     openCodePanel: openCodePanelState,
     openDocumentPanel: openDocumentPanelState,
+    openAgentPanel: openAgentPanelState,
     closePanel,
     closeShareModal,
   } = usePanels()
@@ -813,6 +818,7 @@ export function ChatView() {
   const sourcePanelMessageId = activePanel?.type === 'source' ? activePanel.messageId : null
   const codePanelExecution = activePanel?.type === 'code' ? activePanel.execution : null
   const documentPanelArtifact = activePanel?.type === 'document' ? activePanel.artifact : null
+  const agentPanelAgent = activePanel?.type === 'agent' ? activePanel.agent : null
   const setSourcePanelMessageId = useCallback<React.Dispatch<React.SetStateAction<string | null>>>((value) => {
     const next = typeof value === 'function' ? value(sourcePanelMessageId) : value
     if (next) openSourcePanel(next)
@@ -830,6 +836,7 @@ export function ChatView() {
   }, [activePanel, closePanel, documentPanelArtifact, openDocumentPanelState])
   const lastCodePanelRef = useRef<CodeExecution | null>(null)
   const lastDocumentPanelRef = useRef<DocumentPanelState | null>(null)
+  const lastAgentPanelRef = useRef<SubAgentRef | null>(null)
   // 关闭动画期间保留上一次的数据
   const lastPanelSourcesRef = useRef<WebSource[] | undefined>(undefined)
   const lastPanelQueryRef = useRef<string | undefined>(undefined)
@@ -1977,14 +1984,17 @@ export function ChatView() {
   if (sourcePanelUserQuery !== undefined) lastPanelQueryRef.current = sourcePanelUserQuery
   if (codePanelExecution) lastCodePanelRef.current = codePanelExecution
   if (documentPanelArtifact) lastDocumentPanelRef.current = documentPanelArtifact
+  if (agentPanelAgent) lastAgentPanelRef.current = agentPanelAgent
   const panelDisplaySources = sourcePanelSources ?? lastPanelSourcesRef.current
   const panelDisplayQuery = sourcePanelUserQuery ?? lastPanelQueryRef.current
   const codePanelDisplay = codePanelExecution ?? lastCodePanelRef.current
   const documentPanelDisplay = documentPanelArtifact ?? lastDocumentPanelRef.current
+  const agentPanelDisplay = agentPanelAgent ?? lastAgentPanelRef.current
   const isSourcePanelOpen = !!(sourcePanelSources && sourcePanelSources.length > 0)
   const isCodePanelOpen = !!codePanelExecution
   const isDocumentPanelOpen = !!documentPanelArtifact
-  const isPanelOpen = isSourcePanelOpen || isCodePanelOpen || isDocumentPanelOpen
+  const isAgentPanelOpen = !!agentPanelAgent
+  const isPanelOpen = isSourcePanelOpen || isCodePanelOpen || isDocumentPanelOpen || isAgentPanelOpen
 
   const sourcesPanelContent = useMemo(() => {
     if (!isSourcePanelOpen || !panelDisplaySources || panelDisplaySources.length === 0) return null
@@ -2028,6 +2038,15 @@ export function ChatView() {
       </div>
     )
   }, [isDocumentPanelOpen, documentPanelDisplay, accessToken, stabilizeDocumentPanelScroll, setDocumentPanelArtifact])
+
+  const agentPanelContent = useMemo(() => {
+    if (!isAgentPanelOpen || !agentPanelDisplay) return null
+    return (
+      <div style={{ width: `${sidePanelWidth}px`, height: '100%', contain: 'layout style' }}>
+        <AgentPanel agent={agentPanelDisplay} onClose={closePanel} />
+      </div>
+    )
+  }, [isAgentPanelOpen, agentPanelDisplay, closePanel])
 
   const openCodePanel = useCallback((ce: CodeExecution) => {
     if (codePanelExecution?.id === ce.id) {
@@ -2311,9 +2330,11 @@ export function ChatView() {
         isComplete={copTimelineComplete}
         codeExecutions={payload.codeExecutions}
         onOpenCodeExecution={openCodePanel}
+        onOpenSubAgent={openAgentPanelState}
         activeCodeExecutionId={codePanelExecution?.id}
         subAgents={payload.subAgents}
         fileOps={payload.fileOps}
+        exploreGroups={payload.exploreGroups}
         webFetches={payload.webFetches}
         genericTools={payload.genericTools}
         headerOverride={timelineTitleOverride}
@@ -2457,6 +2478,7 @@ export function ChatView() {
                     actionHandlerForTerminalRun={actionHandlerForTerminalRun}
                     onOpenDocument={openDocumentPanel}
                     onOpenCodeExecution={openCodePanel}
+                    onOpenSubAgent={openAgentPanelState}
                     onArtifactAction={handleArtifactAction}
                     renderLiveCopItems={renderLiveCopItems}
                     renderLiveCopSegment={renderLiveCopSegment}
@@ -2474,6 +2496,7 @@ export function ChatView() {
                 handleArtifactAction={handleArtifactAction}
                 openDocumentPanel={openDocumentPanel}
                 openCodePanel={openCodePanel}
+                openAgentPanel={openAgentPanelState}
                 sourcePanelMessageId={sourcePanelMessageId}
                 setRunDetailPanelRunId={setRunDetailPanelRunId}
                 clearUserEnterAnimation={clearUserEnterAnimation}
@@ -2573,13 +2596,13 @@ export function ChatView() {
             animate={{
               width: isDocumentPanelOpen
                 ? documentPanelWidth
-                : (isSourcePanelOpen || isCodePanelOpen)
+                : (isSourcePanelOpen || isCodePanelOpen || isAgentPanelOpen)
                   ? sidePanelWidth
                   : 0,
             }}
             transition={{ duration: 0.28, ease: [0.16, 1, 0.3, 1] }}
             style={{
-              borderLeft: (panelDisplaySources || codePanelDisplay || documentPanelDisplay)
+              borderLeft: (panelDisplaySources || codePanelDisplay || documentPanelDisplay || agentPanelDisplay)
                 ? '0.5px solid var(--c-border-subtle)'
                 : 'none',
             }}
@@ -2587,6 +2610,7 @@ export function ChatView() {
             {sourcesPanelContent}
             {codePanelContent}
             {documentPanelContent}
+            {agentPanelContent}
           </motion.div>
         )}
       </div>
