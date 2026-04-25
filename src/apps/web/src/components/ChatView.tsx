@@ -39,6 +39,7 @@ import {
   buildMessageSubAgentsFromRunEvents,
   buildMessageFileOpsFromRunEvents,
   buildMessageWebFetchesFromRunEvents,
+  buildMessageThinkingFromRunEvents,
   buildTodosFromRunEvents,
 } from '../runEventProcessing'
 import { getThreadTodos, setThreadTodos, clearThreadTodos } from '../todoDb'
@@ -1131,6 +1132,7 @@ export function ChatView() {
             const replaySearchSteps = finalizeSearchSteps(
               replayEvents.reduce<WebSearchPhaseStep[]>((acc, event) => applyRunEventToWebSearchSteps(acc, event), []),
             )
+            const replayThinking = buildMessageThinkingFromRunEvents(replayEvents)
             const replayTurn = buildAssistantTurnFromRunEvents(replayEvents)
             if (latest.status === 'interrupted') {
               interruptedError = interruptedErrorFromRunEvents(replayEvents, t.runInterrupted)
@@ -1198,6 +1200,7 @@ export function ChatView() {
               !lastAssistant &&
               hasRecoverableRunOutput({
                 assistantTurn: replayTurn,
+                thinking: replayThinking,
                 searchSteps: replaySearchSteps,
                 widgets: replayWidgets,
                 codeExecutions: replayExecs,
