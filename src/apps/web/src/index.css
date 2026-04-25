@@ -672,8 +672,6 @@ button:not(:disabled) {
 .cop-timeline-root .shell-exec-trigger > span:first-of-type {
   font-weight: var(--c-cop-row-weight) !important;
   color: var(--c-cop-row-fg) !important;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
 }
 .cop-timeline-root .shell-exec-trigger svg {
   color: var(--c-cop-row-subtle-fg);
