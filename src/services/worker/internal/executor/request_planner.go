@@ -6,6 +6,7 @@ import (
 	"arkloop/services/worker/internal/agent"
 	"arkloop/services/worker/internal/llm"
 	"arkloop/services/worker/internal/pipeline"
+	"arkloop/services/worker/internal/routing"
 )
 
 type promptPlanMode string
@@ -60,7 +61,7 @@ func planRequestFromRunContext(rc *pipeline.RunContext, input requestPlannerInpu
 		Model:           input.Model,
 		Messages:        messages,
 		Tools:           tools,
-		MaxOutputTokens: cloneIntPtr(input.MaxOutputTokens),
+		MaxOutputTokens: effectiveMaxOutputTokens(rc, input.MaxOutputTokens),
 		Temperature:     cloneFloatPtr(input.Temperature),
 		ReasoningMode:   strings.TrimSpace(input.ReasoningMode),
 		ToolChoice:      cloneToolChoice(input.ToolChoice),
@@ -144,6 +145,21 @@ func applyRuntimeTailFromAssembly(rc *pipeline.RunContext, baseMessages []llm.Me
 		return append([]llm.Message(nil), baseMessages...), 0, false
 	}
 	return out, tailCount, true
+}
+
+func effectiveMaxOutputTokens(rc *pipeline.RunContext, requested *int) *int {
+	maxOutput := 0
+	if requested != nil && *requested > 0 {
+		maxOutput = *requested
+	}
+	capabilities := routing.SelectedRouteModelCapabilities(rc.SelectedRoute)
+	if capabilities.MaxOutputTokens > 0 && (maxOutput == 0 || capabilities.MaxOutputTokens < maxOutput) {
+		maxOutput = capabilities.MaxOutputTokens
+	}
+	if maxOutput <= 0 {
+		return nil
+	}
+	return &maxOutput
 }
 
 func normalizePromptSegmentRole(rawRole string, target string) string {

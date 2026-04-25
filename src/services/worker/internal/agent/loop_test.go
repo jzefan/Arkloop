@@ -1652,6 +1652,135 @@ func TestAgentLoopProvider413RecoversOnceAndRewritesHistory(t *testing.T) {
 	}
 }
 
+func TestAgentLoopProviderContextLengthExceededRecoversOnce(t *testing.T) {
+	primary := &openAIContextLengthThenSuccessGateway{}
+	compact := &compactSummaryGateway{}
+	loop := NewLoop(primary, nil)
+	emitter := events.NewEmitter("trace")
+
+	var got []events.RunEvent
+	err := loop.Run(
+		context.Background(),
+		RunContext{
+			RunID:               uuid.New(),
+			TraceID:             "trace",
+			InputJSON:           map[string]any{},
+			ReasoningIterations: 1,
+			LlmRetryMaxAttempts: 3,
+			LlmRetryBaseDelayMs: 1,
+			CancelSignal:        func() bool { return false },
+			PipelineRC:          newCompactPipelineRC(compact, 1, 1),
+		},
+		llm.Request{
+			Model: "stub",
+			Messages: []llm.Message{
+				{
+					Role: "user",
+					Content: []llm.ContentPart{{
+						Type: messagecontent.PartTypeImage,
+						Data: []byte("old-image"),
+						Attachment: &messagecontent.AttachmentRef{
+							Key:      "attachments/old.png",
+							MimeType: "image/png",
+						},
+					}},
+				},
+				{Role: "tool", Content: []llm.TextPart{{Text: `{"tool_call_id":"call_old","tool_name":"read","result":{"old":true}}`}}},
+				{Role: "tool", Content: []llm.TextPart{{Text: `{"tool_call_id":"call_new","tool_name":"read","result":{"new":true}}`}}},
+				{Role: "user", Content: []llm.TextPart{{Text: "tail"}}},
+			},
+		},
+		emitter,
+		func(ev events.RunEvent) error {
+			got = append(got, ev)
+			return nil
+		},
+	)
+	if err != nil {
+		t.Fatalf("loop.Run failed: %v", err)
+	}
+	if primary.calls != 2 {
+		t.Fatalf("expected provider call followed by compacted retry, got %d", primary.calls)
+	}
+	if countEventType(got, "run.llm.retry") != 0 {
+		t.Fatalf("expected no generic llm retry for context length recovery, got %#v", got)
+	}
+	if countEventType(got, "run.context_compact") != 1 {
+		t.Fatalf("expected one context compact recovery event, got %#v", got)
+	}
+	if phase, _ := firstEventOfType(got, "run.context_compact").DataJSON["trigger_phase"].(string); phase != "provider" {
+		t.Fatalf("expected provider-triggered context compact, got %#v", firstEventOfType(got, "run.context_compact").DataJSON)
+	}
+	lastRequest := primary.requests[len(primary.requests)-1]
+	if got := joinTestMessageText(lastRequest.Messages[1]); !strings.Contains(got, `"cleared":true`) {
+		t.Fatalf("expected old tool result to be microcompacted in rewritten provider request, got %q", got)
+	}
+	if got[len(got)-1].Type != "run.completed" {
+		t.Fatalf("expected final run.completed, got %s", got[len(got)-1].Type)
+	}
+}
+
+func TestAgentLoopProviderAnthropicContextLengthExceededRecoversOnce(t *testing.T) {
+	primary := &anthropicContextLengthThenSuccessGateway{}
+	compact := &compactSummaryGateway{}
+	loop := NewLoop(primary, nil)
+	emitter := events.NewEmitter("trace")
+
+	var got []events.RunEvent
+	err := loop.Run(
+		context.Background(),
+		RunContext{
+			RunID:               uuid.New(),
+			TraceID:             "trace",
+			InputJSON:           map[string]any{},
+			ReasoningIterations: 1,
+			LlmRetryMaxAttempts: 3,
+			LlmRetryBaseDelayMs: 1,
+			CancelSignal:        func() bool { return false },
+			PipelineRC:          newCompactPipelineRC(compact, 1, 1),
+		},
+		llm.Request{
+			Model: "stub",
+			Messages: []llm.Message{
+				{
+					Role: "user",
+					Content: []llm.ContentPart{{
+						Type: messagecontent.PartTypeImage,
+						Data: []byte("old-image"),
+						Attachment: &messagecontent.AttachmentRef{
+							Key:      "attachments/old.png",
+							MimeType: "image/png",
+						},
+					}},
+				},
+				{Role: "tool", Content: []llm.TextPart{{Text: `{"tool_call_id":"call_old","tool_name":"read","result":{"old":true}}`}}},
+				{Role: "tool", Content: []llm.TextPart{{Text: `{"tool_call_id":"call_new","tool_name":"read","result":{"new":true}}`}}},
+				{Role: "user", Content: []llm.TextPart{{Text: "tail"}}},
+			},
+		},
+		emitter,
+		func(ev events.RunEvent) error {
+			got = append(got, ev)
+			return nil
+		},
+	)
+	if err != nil {
+		t.Fatalf("loop.Run failed: %v", err)
+	}
+	if primary.calls != 2 {
+		t.Fatalf("expected provider call followed by compacted retry, got %d", primary.calls)
+	}
+	if countEventType(got, "run.llm.retry") != 0 {
+		t.Fatalf("expected no generic llm retry for context length recovery, got %#v", got)
+	}
+	if countEventType(got, "run.context_compact") != 1 {
+		t.Fatalf("expected one context compact recovery event, got %#v", got)
+	}
+	if got[len(got)-1].Type != "run.completed" {
+		t.Fatalf("expected final run.completed, got %s", got[len(got)-1].Type)
+	}
+}
+
 func TestAgentLoopProvider413StopsAfterSingleRecovery(t *testing.T) {
 	primary := &alwaysOversizeGateway{phase: llm.OversizePhaseProvider}
 	compact := &compactSummaryGateway{}
@@ -2714,6 +2843,16 @@ type oversizeThenSuccessGateway struct {
 	requests []llm.Request
 }
 
+type openAIContextLengthThenSuccessGateway struct {
+	calls    int
+	requests []llm.Request
+}
+
+type anthropicContextLengthThenSuccessGateway struct {
+	calls    int
+	requests []llm.Request
+}
+
 type alwaysOversizeGateway struct {
 	calls    int
 	phase    string
@@ -2766,6 +2905,52 @@ func (g *oversizeThenSuccessGateway) Stream(ctx context.Context, request llm.Req
 				ErrorClass: llm.ErrorClassProviderNonRetryable,
 				Message:    "payload too large",
 				Details:    llm.OversizeFailureDetails(llm.RequestPayloadLimitBytes+1, g.phase, nil),
+			},
+		})
+	}
+	if err := yield(llm.StreamMessageDelta{ContentDelta: "done", Role: "assistant"}); err != nil {
+		return err
+	}
+	return yield(llm.StreamRunCompleted{})
+}
+
+func (g *openAIContextLengthThenSuccessGateway) Stream(ctx context.Context, request llm.Request, yield func(llm.StreamEvent) error) error {
+	_ = ctx
+	g.calls++
+	g.requests = append(g.requests, request)
+	if g.calls == 1 {
+		return yield(llm.StreamRunFailed{
+			Error: llm.GatewayError{
+				ErrorClass: llm.ErrorClassProviderNonRetryable,
+				Message:    "This model's maximum context length is 128000 tokens. However, your messages resulted in 155628 tokens.",
+				Details: map[string]any{
+					"status_code":        400,
+					"openai_error_type":  "invalid_request_error",
+					"openai_error_code":  "context_length_exceeded",
+					"openai_error_param": "messages",
+				},
+			},
+		})
+	}
+	if err := yield(llm.StreamMessageDelta{ContentDelta: "done", Role: "assistant"}); err != nil {
+		return err
+	}
+	return yield(llm.StreamRunCompleted{})
+}
+
+func (g *anthropicContextLengthThenSuccessGateway) Stream(ctx context.Context, request llm.Request, yield func(llm.StreamEvent) error) error {
+	_ = ctx
+	g.calls++
+	g.requests = append(g.requests, request)
+	if g.calls == 1 {
+		return yield(llm.StreamRunFailed{
+			Error: llm.GatewayError{
+				ErrorClass: llm.ErrorClassProviderNonRetryable,
+				Message:    "This model's maximum context length is 128000 tokens. However, your messages resulted in 128313 tokens.",
+				Details: map[string]any{
+					"status_code":          400,
+					"anthropic_error_type": "context_length_exceeded",
+				},
 			},
 		})
 	}

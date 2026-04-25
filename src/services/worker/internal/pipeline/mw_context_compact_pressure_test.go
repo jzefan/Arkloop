@@ -263,6 +263,97 @@ func TestRewriteOversizeRequestPersistsReplacementAndRebuildsRealView(t *testing
 	}
 }
 
+func TestRewriteOversizeRequestForceCompactsAfterProviderContextError(t *testing.T) {
+	db := testutil.SetupPostgresDatabase(t, "context_compact_provider_forced")
+	pool, err := pgxpool.New(context.Background(), db.DSN)
+	if err != nil {
+		t.Fatalf("pgxpool.New: %v", err)
+	}
+	t.Cleanup(pool.Close)
+
+	accountID := uuid.New()
+	projectID := uuid.New()
+	threadID := uuid.New()
+	if _, err := pool.Exec(context.Background(), `INSERT INTO accounts (id, type) VALUES ($1, 'personal')`, accountID); err != nil {
+		t.Fatalf("insert account: %v", err)
+	}
+	if _, err := pool.Exec(context.Background(), `INSERT INTO projects (id, account_id, name) VALUES ($1, $2, 'p')`, projectID, accountID); err != nil {
+		t.Fatalf("insert project: %v", err)
+	}
+	if _, err := pool.Exec(context.Background(), `INSERT INTO threads (id, account_id, project_id, next_message_seq) VALUES ($1, $2, $3, 10)`, threadID, accountID, projectID); err != nil {
+		t.Fatalf("insert thread: %v", err)
+	}
+	for i, content := range []string{"first persisted message", "second persisted message", "tail message"} {
+		role := "user"
+		if i == 1 {
+			role = "assistant"
+		}
+		if _, err := pool.Exec(context.Background(),
+			`INSERT INTO messages (id, account_id, thread_id, thread_seq, role, content, metadata_json, hidden)
+			 VALUES ($1, $2, $3, $4, $5, $6, '{}'::jsonb, false)`,
+			uuid.New(), accountID, threadID, i+1, role, content,
+		); err != nil {
+			t.Fatalf("insert message: %v", err)
+		}
+	}
+
+	tx, err := pool.BeginTx(context.Background(), pgx.TxOptions{})
+	if err != nil {
+		t.Fatalf("begin tx: %v", err)
+	}
+	canonical, err := buildCanonicalThreadContext(
+		context.Background(),
+		tx,
+		data.Run{AccountID: accountID, ThreadID: threadID},
+		data.MessagesRepository{},
+		nil,
+		nil,
+		0,
+	)
+	_ = tx.Rollback(context.Background())
+	if err != nil {
+		t.Fatalf("build canonical context: %v", err)
+	}
+
+	gateway := &compactSummaryGateway{summary: "provider forced summary"}
+	rc := &RunContext{
+		Run:                   data.Run{AccountID: accountID, ThreadID: threadID},
+		DB:                    pool,
+		Messages:              canonical.Messages,
+		ThreadMessageIDs:      canonical.ThreadMessageIDs,
+		ThreadContextFrontier: canonical.Frontier,
+		ContextCompact: ContextCompactSettings{
+			PersistEnabled:              true,
+			TargetContextPct:            65,
+			FallbackContextWindowTokens: 4096,
+		},
+		ContextWindowTokens: 4096,
+		Gateway:             gateway,
+		SelectedRoute: &routing.SelectedProviderRoute{
+			Route:      routing.ProviderRouteRule{Model: "gpt-4o", ID: "route-1"},
+			Credential: routing.ProviderCredential{ProviderKind: routing.ProviderKindOpenAI},
+		},
+	}
+	request := llm.Request{Model: "stub", Messages: canonical.Messages}
+	requestEstimate := func(req llm.Request) (int, error) {
+		return len(req.Messages) * 100, nil
+	}
+
+	rewritten, stats, err := RewriteOversizeRequestWithOptions(context.Background(), rc, request, nil, requestEstimate, true)
+	if err != nil {
+		t.Fatalf("RewriteOversizeRequestWithOptions failed: %v", err)
+	}
+	if !stats.CompactApplied {
+		t.Fatalf("expected forced provider rewrite to compact despite fitting local estimate, got %#v", stats)
+	}
+	if len(gateway.requests) != 1 {
+		t.Fatalf("expected one compact summary request, got %d", len(gateway.requests))
+	}
+	if messageText(rewritten.Messages[0]) != "provider forced summary" {
+		t.Fatalf("unexpected replacement text: %q", messageText(rewritten.Messages[0]))
+	}
+}
+
 func TestResolveContextCompactPressureAnchorReadsNewestTurnAnchor(t *testing.T) {
 	db := testutil.SetupPostgresDatabase(t, "context_compact_pressure_anchor")
 	pool, err := pgxpool.New(context.Background(), db.DSN)

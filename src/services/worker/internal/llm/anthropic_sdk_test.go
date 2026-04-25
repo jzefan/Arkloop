@@ -224,6 +224,8 @@ func TestAnthropicSDKGateway_ErrorClassification(t *testing.T) {
 		{name: "rate_limit", status: http.StatusTooManyRequests, typeName: "rate_limit_error", wantClass: ErrorClassProviderRetryable},
 		{name: "server", status: http.StatusInternalServerError, typeName: "api_error", wantClass: ErrorClassProviderRetryable},
 		{name: "auth", status: http.StatusUnauthorized, typeName: "authentication_error", wantClass: ErrorClassProviderNonRetryable},
+		{name: "context_length", status: http.StatusBadRequest, typeName: "context_length_exceeded", wantClass: ErrorClassProviderNonRetryable},
+		{name: "invalid_value", status: http.StatusBadRequest, typeName: "invalid_value", wantClass: ErrorClassProviderNonRetryable},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

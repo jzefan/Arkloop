@@ -371,6 +371,22 @@ func TestOpenAISDKGateway_ProviderOversizeDetails(t *testing.T) {
 	}
 }
 
+func TestClassifyOpenAIStatusContextLengthExceeded(t *testing.T) {
+	got := classifyOpenAIStatus(http.StatusBadRequest, map[string]any{
+		"openai_error_code": "context_length_exceeded",
+	})
+	if got != ErrorClassProviderNonRetryable {
+		t.Fatalf("expected context length error to be non-retryable, got %q", got)
+	}
+
+	got = classifyOpenAIStatus(http.StatusBadRequest, map[string]any{
+		"openai_error_code": "rate_limit_exceeded",
+	})
+	if got != ErrorClassProviderRetryable {
+		t.Fatalf("expected other 400 errors to keep existing retryable behavior, got %q", got)
+	}
+}
+
 func TestOpenAIResponsesInputUsesResponsesFunctionCallIDForProviderAgnosticToolCallID(t *testing.T) {
 	input, err := toOpenAIResponsesInput([]Message{{
 		Role: "assistant",

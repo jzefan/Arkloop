@@ -119,6 +119,33 @@ func TestSimpleExecutor_SystemPromptInjected(t *testing.T) {
 	}
 }
 
+func TestSimpleExecutor_ClampsMaxOutputTokensToRouteCatalog(t *testing.T) {
+	captured := 0
+	gateway := &captureRequestGateway{
+		onCapture: func(req llm.Request) {
+			if req.MaxOutputTokens != nil {
+				captured = *req.MaxOutputTokens
+			}
+		},
+	}
+
+	ex := &SimpleExecutor{}
+	rc := buildMinimalRC(gateway, "", nil, map[string]any{
+		"available_catalog": map[string]any{
+			"max_output_tokens": float64(16384),
+		},
+	})
+	requested := 32768
+	rc.MaxOutputTokens = &requested
+
+	if err := ex.Execute(context.Background(), rc, events.NewEmitter("trace"), func(ev events.RunEvent) error { return nil }); err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	if captured != 16384 {
+		t.Fatalf("expected max_output_tokens clamped to 16384, got %d", captured)
+	}
+}
+
 func TestSimpleExecutor_SystemPromptCacheControl(t *testing.T) {
 	var capturedMessages []llm.Message
 	gateway := &captureRequestGateway{

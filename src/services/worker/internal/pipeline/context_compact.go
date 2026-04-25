@@ -458,6 +458,17 @@ func RewriteOversizeRequest(
 	anchor *ContextCompactPressureAnchor,
 	requestEstimate func(llm.Request) (int, error),
 ) (llm.Request, OversizeRewriteStats, error) {
+	return RewriteOversizeRequestWithOptions(ctx, rc, request, anchor, requestEstimate, false)
+}
+
+func RewriteOversizeRequestWithOptions(
+	ctx context.Context,
+	rc *RunContext,
+	request llm.Request,
+	anchor *ContextCompactPressureAnchor,
+	requestEstimate func(llm.Request) (int, error),
+	forceCompact bool,
+) (llm.Request, OversizeRewriteStats, error) {
 	stats := OversizeRewriteStats{}
 	if rc == nil {
 		return request, stats, fmt.Errorf("provider request estimator unavailable")
@@ -513,7 +524,7 @@ func RewriteOversizeRequest(
 		return request, stats, err
 	}
 	stats.RequestTokensAfterRewrite = EstimateRequestContextTokens(rc, rewritten)
-	if !llm.RequestExceedsLimits(
+	if !forceCompact && !llm.RequestExceedsLimits(
 		stats.RequestBytesAfterRewrite,
 		stats.RequestTokensAfterRewrite,
 		contextWindowTokens,
@@ -521,7 +532,7 @@ func RewriteOversizeRequest(
 		return rewritten, stats, nil
 	}
 
-	emergencyCompact, compactStats, changed, compactErr := rewriteOversizeRequestWithPersistedReplacement(ctx, rc, rewritten, anchor, requestEstimate)
+	emergencyCompact, compactStats, changed, compactErr := rewriteOversizeRequestWithPersistedReplacement(ctx, rc, rewritten, anchor, requestEstimate, forceCompact)
 	if compactErr != nil {
 		return request, stats, compactErr
 	}
@@ -549,6 +560,7 @@ func rewriteOversizeRequestWithPersistedReplacement(
 	request llm.Request,
 	anchor *ContextCompactPressureAnchor,
 	requestEstimate func(llm.Request) (int, error),
+	forceCompact bool,
 ) (llm.Request, ContextCompactPressureStats, bool, error) {
 	stats := ComputeContextCompactPressure(EstimateRequestContextTokens(rc, request), anchor)
 	if rc == nil || rc.DB == nil || rc.Gateway == nil || rc.SelectedRoute == nil {
@@ -567,10 +579,10 @@ func rewriteOversizeRequestWithPersistedReplacement(
 		}
 		currentEstimateTokens := EstimateRequestContextTokens(rc, current)
 		stats = ComputeContextCompactPressure(currentEstimateTokens, anchor)
-		if !llm.RequestExceedsLimits(currentBytes, currentEstimateTokens, window) {
+		if !forceCompact && !llm.RequestExceedsLimits(currentBytes, currentEstimateTokens, window) {
 			return current, stats, changedAny, nil
 		}
-		next, roundStats, changed, err := persistEmergencyReplacementRound(ctx, rc, current, anchor, round)
+		next, roundStats, changed, err := persistEmergencyReplacementRound(ctx, rc, current, anchor, round, forceCompact)
 		if err != nil {
 			return request, stats, changedAny, err
 		}
@@ -580,6 +592,7 @@ func rewriteOversizeRequestWithPersistedReplacement(
 		current = next
 		stats = roundStats
 		changedAny = true
+		forceCompact = false
 	}
 }
 
@@ -589,6 +602,7 @@ func persistEmergencyReplacementRound(
 	request llm.Request,
 	anchor *ContextCompactPressureAnchor,
 	round int,
+	forceCompact bool,
 ) (llm.Request, ContextCompactPressureStats, bool, error) {
 	stats := ComputeContextCompactPressure(EstimateRequestContextTokens(rc, request), anchor)
 	if rc == nil || rc.DB == nil || rc.Gateway == nil || rc.SelectedRoute == nil {
@@ -624,6 +638,9 @@ func persistEmergencyReplacementRound(
 		return request, stats, false, nil
 	}
 	selection, ok := selectPersistFrontierWindowForPressure(rc, canonical.Frontier, stats.ContextPressureTokens)
+	if forceCompact && !ok {
+		selection, ok = selectProviderForcedFrontierWindow(rc, canonical.Frontier)
+	}
 	if !ok {
 		return request, stats, false, nil
 	}
@@ -819,6 +836,26 @@ func selectPersistFrontierWindowForPressure(
 	}
 
 	selection := selectCompactAtomWindow(eligible, pressureTokens-targetTokens, contextCompactMaxLLMInputTokens)
+	if len(selection.Nodes) == 0 {
+		return nil, false
+	}
+	return selection.Nodes, true
+}
+
+func selectProviderForcedFrontierWindow(rc *RunContext, frontier []FrontierNode) ([]FrontierNode, bool) {
+	selectionFrontier := buildCompactFrontierAtomsFromPersistFrontier(frontier)
+	if len(selectionFrontier) == 0 {
+		return nil, false
+	}
+	window := ResolveRunContextWindowTokens(rc)
+	targetTokens := contextCompactTargetTokens(rc.ContextCompact, window)
+	if targetTokens <= 0 {
+		targetTokens = window * 65 / 100
+	}
+	if targetTokens <= 0 {
+		targetTokens = defaultFallbackContextWindowTokens * 65 / 100
+	}
+	selection := selectCompactAtomWindow(selectionFrontier, targetTokens, contextCompactMaxLLMInputTokens)
 	if len(selection.Nodes) == 0 {
 		return nil, false
 	}

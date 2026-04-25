@@ -87,7 +87,7 @@ func inheritedPromptCacheRequest(
 		Model:           input.Model,
 		Messages:        messages,
 		Tools:           cloneToolSpecs(snapshot.Tools),
-		MaxOutputTokens: cloneIntPtr(input.MaxOutputTokens),
+		MaxOutputTokens: effectiveMaxOutputTokens(rc, input.MaxOutputTokens),
 		Temperature:     cloneFloatPtr(input.Temperature),
 		ReasoningMode:   strings.TrimSpace(input.ReasoningMode),
 		ToolChoice:      cloneToolChoice(input.ToolChoice),
@@ -122,7 +122,7 @@ func canReuseInheritedPromptCache(
 	if strings.TrimSpace(snapshot.ReasoningMode) != strings.TrimSpace(input.ReasoningMode) {
 		return false, "reasoning_mismatch"
 	}
-	if !intPtrEqual(snapshot.MaxOutputTokens, input.MaxOutputTokens) {
+	if !intPtrEqual(snapshot.MaxOutputTokens, effectiveMaxOutputTokens(rc, input.MaxOutputTokens)) {
 		return false, "max_tokens_mismatch"
 	}
 	if !floatPtrEqual(snapshot.Temperature, input.Temperature) {
