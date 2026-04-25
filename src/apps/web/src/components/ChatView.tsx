@@ -2439,6 +2439,7 @@ export function ChatView() {
             maxWidth: appMode === 'work' ? 1000 : 800,
             margin: '0 auto',
             padding: `50px ${isPanelOpen ? chatContentPadding.panelOpen : chatContentPadding.panelClosed} var(--chat-input-area-height)`,
+            gap: appMode === 'work' ? 0 : undefined,
           }}
           className="flex w-full flex-col gap-6"
         >
@@ -2457,6 +2458,7 @@ export function ChatView() {
               )}
               <CopTimelineLocalExpansionProvider stabilizeScroll={stabilizeDocumentPanelScroll}>
                 <MessageList
+                isWorkMode={appMode === 'work'}
                 lastTurnStartIdx={lastTurnStartIdx}
                 lastTurnRef={lastUserMsgRef}
                 lastUserPromptRef={lastUserPromptRef}

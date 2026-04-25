@@ -40,6 +40,7 @@ type Props = {
   /** 与正文展示解耦的复制文本（例如分段 Markdown 合并） */
   plainTextForCopy?: string
   isLast?: boolean
+  isWorkMode?: boolean
 }
 
 function renderBrowserScreenshots(browserActions?: BrowserActionRef[], accessToken?: string) {
@@ -83,6 +84,7 @@ export function AssistantMessage({
   contentOverride,
   plainTextForCopy,
   isLast,
+  isWorkMode,
 }: Props) {
   const { t } = useLocale()
   const messageText = messageTextContent(message)
@@ -129,7 +131,7 @@ export function AssistantMessage({
           ))}
         </div>
       )}
-      <div style={{ maxWidth: '663px' }}>
+      <div style={{ maxWidth: isWorkMode ? undefined : '663px' }}>
         {artifacts && onOpenDocument && (() => {
           const referenced = artifacts.filter((a) => isDocumentArtifact(a) && isArtifactReferenced(messageText, a.key))
           if (referenced.length === 0) return null

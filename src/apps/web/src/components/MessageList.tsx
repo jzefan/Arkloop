@@ -203,6 +203,7 @@ export const MessageList = memo(function MessageList({
   actionHandlerForTerminalRun,
   clearUserEnterAnimation,
   failedRunError,
+  isWorkMode,
 }: {
   lastTurnRef: React.RefObject<HTMLDivElement | null>
   lastUserPromptRef: React.RefObject<HTMLDivElement | null>
@@ -240,6 +241,7 @@ export const MessageList = memo(function MessageList({
   }) => (() => void) | undefined
   clearUserEnterAnimation: () => void
   failedRunError?: import('./ErrorCallout').AppError | null
+  isWorkMode?: boolean
 }) {
   const { threadId, isSearchThread } = useChatSession()
   const { accessToken } = useAuth()
@@ -396,7 +398,7 @@ export const MessageList = memo(function MessageList({
         className="group/turn"
       >
         {msg.role === 'assistant' && hasAssistantTurn && (
-          <div style={{ marginBottom: '6px', display: 'flex', flexDirection: 'column', gap: 0, maxWidth: '663px' }}>
+          <div style={{ marginBottom: '6px', display: 'flex', flexDirection: 'column', gap: 0, maxWidth: isWorkMode ? undefined : '663px' }}>
             {!isSearchThread &&
               msgThinking != null &&
               msgThinking.thinkingText.trim() !== '' &&
@@ -578,6 +580,7 @@ export const MessageList = memo(function MessageList({
           browserActions={msg.role === 'assistant' ? msgMeta?.browserActions : undefined}
           widgets={bubbleWidgets}
           accessToken={accessToken}
+          isWorkMode={isWorkMode}
           onWidgetAction={msg.role === 'assistant' ? handleArtifactAction : undefined}
           onShowSources={
             msg.role === 'assistant' && canShowSources
@@ -621,7 +624,7 @@ export const MessageList = memo(function MessageList({
     <>
       {messages.slice(0, lastTurnStartIdx).map(renderMessage)}
       {(hasLastTurn || lastTurnChildren) && (
-        <div ref={lastTurnRef} className="flex flex-col gap-6">
+        <div ref={lastTurnRef} className="flex flex-col" style={{ gap: isWorkMode ? 0 : '1.5rem' }}>
           {hasLastTurn && messages.slice(lastTurnStartIdx).map((msg, i) => renderMessage(msg, lastTurnStartIdx + i))}
           {lastTurnChildren}
         </div>
