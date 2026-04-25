@@ -1395,6 +1395,7 @@ func (l *Loop) runTurnWithRetry(
 				turnIndex,
 				"preflight",
 				sizeEstimator.Estimate,
+				false,
 			)
 			if err != nil {
 				return turnResult{}, err
@@ -1451,6 +1452,7 @@ func (l *Loop) runTurnWithRetry(
 				turnIndex,
 				"provider",
 				sizeEstimator.Estimate,
+				true,
 			)
 			if err != nil {
 				return turnResult{}, err
@@ -1540,16 +1542,18 @@ func maybeRecoverOversizeRequest(
 	turnIndex int,
 	triggerPhase string,
 	requestEstimate func(llm.Request) (int, error),
+	forceCompact bool,
 ) (llm.Request, bool, *pipeline.CurrentInputOversizeError, error) {
 	if runCtx.PipelineRC == nil {
 		return request, false, nil, nil
 	}
-	rewritten, stats, rewriteErr := pipeline.RewriteOversizeRequest(
+	rewritten, stats, rewriteErr := pipeline.RewriteOversizeRequestWithOptions(
 		ctx,
 		runCtx.PipelineRC,
 		request,
 		currentContextCompactAnchor(runCtx),
 		requestEstimate,
+		forceCompact,
 	)
 	currentInputErr, currentInputTooLarge := pipeline.IsCurrentInputOversizeError(rewriteErr)
 	phase := "completed"
@@ -1707,7 +1711,15 @@ func isOversizeTurn(turn turnResult) bool {
 	}
 	details, _ := last.DataJSON["details"].(map[string]any)
 	statusCode, ok := anyToInt64(details["status_code"])
-	return ok && statusCode == 413
+	if ok && statusCode == 413 {
+		return true
+	}
+	if ok && statusCode == 400 {
+		openAICode, _ := details["openai_error_code"].(string)
+		anthropicType, _ := details["anthropic_error_type"].(string)
+		return openAICode == "context_length_exceeded" || anthropicType == "context_length_exceeded"
+	}
+	return false
 }
 
 func currentContextCompactAnchor(runCtx RunContext) *pipeline.ContextCompactPressureAnchor {

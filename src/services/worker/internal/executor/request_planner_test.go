@@ -12,7 +12,13 @@ import (
 
 func TestPlanRequestFromRunContextReusesInheritedPromptCacheSnapshot(t *testing.T) {
 	description := "echo tool"
-	route := &routing.SelectedProviderRoute{Route: routing.ProviderRouteRule{ID: "route-1", Model: "anthropic^claude-sonnet-4-5"}}
+	route := &routing.SelectedProviderRoute{Route: routing.ProviderRouteRule{
+		ID:    "route-1",
+		Model: "anthropic^claude-sonnet-4-5",
+		AdvancedJSON: map[string]any{
+			"available_catalog": map[string]any{"max_output_tokens": float64(16384)},
+		},
+	}}
 	tools := []llm.ToolSpec{{Name: "echo", Description: &description}}
 	parentBaseMessages := []llm.Message{
 		{Role: "user", Content: []llm.ContentPart{{Text: "parent question"}}},
@@ -22,6 +28,7 @@ func TestPlanRequestFromRunContextReusesInheritedPromptCacheSnapshot(t *testing.
 		Role:    "user",
 		Content: []llm.ContentPart{{Text: "child task"}},
 	})
+	catalogMaxOutputTokens := 16384
 	rc := &pipeline.RunContext{
 		AgentConfig: &pipeline.ResolvedAgentConfig{PromptCacheControl: "system_prompt"},
 		PersonaDefinition: &personas.Definition{
@@ -57,8 +64,9 @@ func TestPlanRequestFromRunContextReusesInheritedPromptCacheSnapshot(t *testing.
 				Description: &description,
 				CacheHint:   &llm.CacheHint{Action: llm.CacheHintActionWrite, Scope: "global"},
 			}},
-			Model:         route.Route.Model,
-			ReasoningMode: "high",
+			Model:           route.Route.Model,
+			MaxOutputTokens: &catalogMaxOutputTokens,
+			ReasoningMode:   "high",
 			PromptPlan: &llm.PromptPlan{
 				SystemBlocks: []llm.PromptPlanBlock{{
 					Name:          "persona.system_prompt",
@@ -72,11 +80,13 @@ func TestPlanRequestFromRunContextReusesInheritedPromptCacheSnapshot(t *testing.
 		},
 	}
 
+	maxOutputTokens := 32768
 	planned := planRequestFromRunContext(rc, requestPlannerInput{
 		Model:            route.Route.Model,
 		BaseMessages:     currentBaseMessages,
 		PromptMode:       promptPlanModeFull,
 		Tools:            tools,
+		MaxOutputTokens:  &maxOutputTokens,
 		ReasoningMode:    "high",
 		ApplyImageFilter: false,
 	})
@@ -95,6 +105,9 @@ func TestPlanRequestFromRunContextReusesInheritedPromptCacheSnapshot(t *testing.
 	}
 	if got := planned.CacheSafeSnapshot.PersonaID; got != "researcher@1" {
 		t.Fatalf("unexpected cache snapshot persona id: %q", got)
+	}
+	if planned.Request.MaxOutputTokens == nil || *planned.Request.MaxOutputTokens != 16384 {
+		t.Fatalf("expected inherited request max_output_tokens clamped to 16384, got %#v", planned.Request.MaxOutputTokens)
 	}
 }
 

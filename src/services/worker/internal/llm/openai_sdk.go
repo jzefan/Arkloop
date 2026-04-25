@@ -554,9 +554,18 @@ func openAISDKErrorToGateway(err error, fallback string, payloadBytes int) Gatew
 			details["network_attempted"] = true
 			details = OversizeFailureDetails(payloadBytes, OversizePhaseProvider, details)
 		}
-		return GatewayError{ErrorClass: classifyHTTPStatus(apiErr.StatusCode), Message: message, Details: details}
+		return GatewayError{ErrorClass: classifyOpenAIStatus(apiErr.StatusCode, details), Message: message, Details: details}
 	}
 	return GatewayError{ErrorClass: ErrorClassProviderRetryable, Message: "OpenAI network error", Details: map[string]any{"reason": err.Error()}}
+}
+
+func classifyOpenAIStatus(status int, details map[string]any) string {
+	if status == http.StatusBadRequest {
+		if code, _ := details["openai_error_code"].(string); code == "context_length_exceeded" {
+			return ErrorClassProviderNonRetryable
+		}
+	}
+	return classifyHTTPStatus(status)
 }
 func openAISDKUnsupportedResponsesError(err error, allow bool) (openAIResponsesNotSupportedError, bool) {
 	var apiErr *openai.Error

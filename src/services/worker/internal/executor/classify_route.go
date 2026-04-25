@@ -151,7 +151,7 @@ func (e *ClassifyRouteExecutor) execute(
 		Messages: append([]llm.Message{
 			{Role: "system", Content: []llm.TextPart{{Text: routeCfg.PromptOverride}}},
 		}, rc.Messages...),
-		MaxOutputTokens: rc.MaxOutputTokens,
+		MaxOutputTokens: effectiveMaxOutputTokens(rc, rc.MaxOutputTokens),
 	}
 
 	var completedData map[string]any

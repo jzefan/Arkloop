@@ -838,14 +838,19 @@ func anthropicSDKErrorToGateway(err error, payloadBytes int) GatewayError {
 			details["network_attempted"] = true
 			details = OversizeFailureDetails(payloadBytes, OversizePhaseProvider, details)
 		}
-		return GatewayError{ErrorClass: anthropicSDKErrorClass(apiErr), Message: message, Details: details}
+		return GatewayError{ErrorClass: anthropicSDKErrorClass(apiErr, details), Message: message, Details: details}
 	}
 	return GatewayError{ErrorClass: ErrorClassProviderRetryable, Message: "Anthropic network error", Details: map[string]any{"reason": err.Error()}}
 }
 
-func anthropicSDKErrorClass(err *anthropic.Error) string {
+func anthropicSDKErrorClass(err *anthropic.Error, details map[string]any) string {
 	if err == nil {
 		return ErrorClassProviderRetryable
+	}
+	if err.StatusCode == http.StatusBadRequest {
+		if errorType, _ := details["anthropic_error_type"].(string); errorType == "context_length_exceeded" || errorType == "invalid_value" {
+			return ErrorClassProviderNonRetryable
+		}
 	}
 	switch err.Type() {
 	case anthropic.ErrorTypeOverloadedError, anthropic.ErrorTypeRateLimitError, anthropic.ErrorTypeTimeoutError, anthropic.ErrorTypeAPIError:
