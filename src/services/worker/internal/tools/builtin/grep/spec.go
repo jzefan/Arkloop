@@ -30,7 +30,7 @@ var LlmSpec = llm.ToolSpec{
 			},
 			"include": map[string]any{
 				"type":        "string",
-				"description": "file glob to restrict search (e.g. *.go, *.ts)",
+				"description": "file glob to restrict search for faster results (e.g. *.go, *.ts)",
 			},
 			"context_lines": map[string]any{
 				"type":        "integer",

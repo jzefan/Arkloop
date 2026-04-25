@@ -226,7 +226,7 @@ var registry = []ToolMeta{
 		LLMDescription: "search file contents for a regex pattern. Three output modes: " +
 			"files_with_matches (default, returns file paths), content (matching lines with context), count (match counts per file). " +
 			"Uses ripgrep when available; falls back to Go regex walk. Results sorted by modification time (newest first). " +
-			"Use include to restrict to specific file types (e.g. *.go). " +
+			"Use include to restrict to specific file types (e.g. *.go) for faster results. " +
 			"Supports pagination via limit (default 200, max 1000) and offset. " +
 			"In content mode, context_lines (0-10) adds surrounding lines; when omitted, auto-context is applied based on match count. " +
 			"Set case_sensitive=false for case-insensitive matching. Set multiline=true for cross-line pattern matching. " +
