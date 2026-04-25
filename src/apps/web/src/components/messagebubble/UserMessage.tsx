@@ -27,9 +27,10 @@ type Props = {
   onRetry?: () => void
   onEdit?: (newContent: string) => void
   accessToken?: string
+  isWorkMode?: boolean
 }
 
-export function UserMessage({ message, onEdit, accessToken, animateEnter, onEnterAnimationEnd }: Props) {
+export function UserMessage({ message, onEdit, accessToken, animateEnter, onEnterAnimationEnd, isWorkMode = false }: Props) {
   const { t } = useLocale()
   const [editing, setEditing] = useState(false)
   const [editText, setEditText] = useState('')
@@ -131,10 +132,10 @@ export function UserMessage({ message, onEdit, accessToken, animateEnter, onEnte
 
   if (editing) {
     return (
-      <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+      <div style={{ display: 'flex', justifyContent: isWorkMode ? 'flex-start' : 'flex-end' }}>
         <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', width: '100%', maxWidth: '663px' }}>
           {fileNames.length > 0 && (
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', justifyContent: 'flex-end' }}>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', justifyContent: isWorkMode ? 'flex-start' : 'flex-end' }}>
               {fileNames.map((name) => (
                 <div
                   key={name}
@@ -182,7 +183,7 @@ export function UserMessage({ message, onEdit, accessToken, animateEnter, onEnte
               }}
             />
           </div>
-          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px' }}>
+          <div style={{ display: 'flex', justifyContent: isWorkMode ? 'flex-start' : 'flex-end', gap: '8px' }}>
             <button
               onClick={handleEditCancel}
               style={{
@@ -223,14 +224,14 @@ export function UserMessage({ message, onEdit, accessToken, animateEnter, onEnte
 
   return (
     <div
-      style={{ display: 'flex', justifyContent: 'flex-end' }}
+      style={{ display: 'flex', justifyContent: isWorkMode ? 'flex-start' : 'flex-end' }}
     >
       <div
-        style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', maxWidth: '663px' }}
+        style={{ display: 'flex', flexDirection: 'column', alignItems: isWorkMode ? 'flex-start' : 'flex-end', maxWidth: '663px' }}
       >
-        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '8px' }}>
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: isWorkMode ? 'flex-start' : 'flex-end', gap: '8px' }}>
         {(imageAttachments.length > 0 || pastedAttachments.length > 0) && accessToken && (
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '12px', justifyContent: 'flex-end' }}>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '12px', justifyContent: isWorkMode ? 'flex-start' : 'flex-end' }}>
             {imageAttachments.map((part) => (
               <ImageThumbnailCard
                 key={part.attachment.key}
@@ -254,7 +255,7 @@ export function UserMessage({ message, onEdit, accessToken, animateEnter, onEnte
           </div>
         )}
         {fileAttachments.length > 0 && accessToken && (
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', justifyContent: 'flex-end' }}>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', justifyContent: isWorkMode ? 'flex-start' : 'flex-end' }}>
             {fileAttachments.map((part) => (
               <ArtifactDownload
                 key={part.attachment.key}
@@ -266,7 +267,7 @@ export function UserMessage({ message, onEdit, accessToken, animateEnter, onEnte
           </div>
         )}
         {((!accessToken && fileNames.length > 0) || (fileAttachments.length === 0 && imageAttachments.length === 0 && pastedAttachments.length === 0 && fileNames.length > 0)) && (
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', justifyContent: 'flex-end' }}>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', justifyContent: isWorkMode ? 'flex-start' : 'flex-end' }}>
             {fileNames.map((name) => (
               <div
                 key={name}
@@ -371,9 +372,13 @@ export function UserMessage({ message, onEdit, accessToken, animateEnter, onEnte
             marginTop: '8px',
           }}
         >
-          <div style={{ marginRight: '12px', marginBottom: '0px' }}>
-            <MessageDate createdAt={message.created_at} />
-          </div>
+          <CopyIconButton
+            onCopy={handleCopy}
+            size={16}
+            tooltip={t.copyAction}
+            hoverBackground="var(--c-bg-deep)"
+            className="flex h-9 w-9 items-center justify-center rounded-[7px] text-[var(--c-text-secondary)] opacity-60 transition-[opacity,color] duration-[60ms] hover:opacity-100 hover:text-[var(--c-text-primary)] cursor-pointer border-none bg-transparent"
+          />
           <ActionIconButton
             onClick={handleEditStart}
             tooltip={t.editAction}
@@ -382,13 +387,9 @@ export function UserMessage({ message, onEdit, accessToken, animateEnter, onEnte
           >
             <Pencil size={16} />
           </ActionIconButton>
-          <CopyIconButton
-            onCopy={handleCopy}
-            size={16}
-            tooltip={t.copyAction}
-            hoverBackground="var(--c-bg-deep)"
-            className="flex h-9 w-9 items-center justify-center rounded-[7px] text-[var(--c-text-secondary)] opacity-60 transition-[opacity,color] duration-[60ms] hover:opacity-100 hover:text-[var(--c-text-primary)] cursor-pointer border-none bg-transparent"
-          />
+          <div style={{ marginLeft: '12px', marginBottom: '0px' }}>
+            <MessageDate createdAt={message.created_at} />
+          </div>
         </div>
       </div>
     </div>

@@ -32,9 +32,10 @@ type Props = {
   contentOverride?: string
   plainTextForCopy?: string
   isLast?: boolean
+  isWorkMode?: boolean
 }
 
-export function MessageBubble({ message, streamAssistantMarkdown, animateUserEnter, onUserEnterAnimationEnd, onRetry, onEdit, onFork, onShare, shareState, webSources, artifacts, browserActions, widgets, accessToken, onWidgetAction, onShowSources, onOpenDocument, activePanelArtifactKey, onViewRunDetail, contentPrefix, contentOverride, plainTextForCopy, isLast }: Props) {
+export function MessageBubble({ message, streamAssistantMarkdown, animateUserEnter, onUserEnterAnimationEnd, onRetry, onEdit, onFork, onShare, shareState, webSources, artifacts, browserActions, widgets, accessToken, onWidgetAction, onShowSources, onOpenDocument, activePanelArtifactKey, onViewRunDetail, contentPrefix, contentOverride, plainTextForCopy, isLast, isWorkMode }: Props) {
   if (message.role === 'user') {
     return (
       <UserMessage
@@ -44,6 +45,7 @@ export function MessageBubble({ message, streamAssistantMarkdown, animateUserEnt
         onRetry={onRetry}
         onEdit={onEdit}
         accessToken={accessToken}
+        isWorkMode={isWorkMode}
       />
     )
   }
@@ -70,6 +72,7 @@ export function MessageBubble({ message, streamAssistantMarkdown, animateUserEnt
       contentOverride={contentOverride}
       plainTextForCopy={plainTextForCopy}
       isLast={isLast}
+      isWorkMode={isWorkMode}
     />
   )
 }
