@@ -877,7 +877,7 @@ button:not(:disabled) {
   color: var(--c-cop-row-fg);
 }
 .cop-timeline-root .cop-thinking-card-trigger {
-  display: inline-flex;
+  display: flex;
   align-items: center;
   gap: 5px;
   padding: 2px 0 1px;
