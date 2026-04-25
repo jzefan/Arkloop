@@ -113,6 +113,8 @@ export function CopTimelineSegment({
     setExpanded((v) => !v)
   }
 
+  const editOnly = segment.category === 'edit' && segment.items.every(i => i.kind === 'call')
+
   const headerLabel = segment.title
   const headerLive = isOpen && isLive
 
@@ -188,32 +190,36 @@ export function CopTimelineSegment({
           style={{
             position: 'relative',
             paddingTop: 6,
-            paddingLeft: COP_TIMELINE_CONTENT_PADDING_LEFT_PX,
+            paddingLeft: editOnly ? 0 : COP_TIMELINE_CONTENT_PADDING_LEFT_PX,
             paddingBottom: EXPLORE_BOTTOM_PAD,
           }}
         >
           {segment.items.map((item, index) => (
-            <div
-              key={itemTypeId(item)}
-              ref={(node) => {
-                const id = itemTypeId(item)
-                if (node) itemRefs.current.set(id, node)
-                else itemRefs.current.delete(id)
-              }}
-              style={{ position: 'relative' }}
-            >
-              <CopTimelineUnifiedRow
-                isFirst={index === 0}
-                isLast={index === segment.items.length - 1}
-                multiItems={segment.items.length >= 2}
-                dotColor={itemDotColor(item)}
-                dotTop={itemDotTop(item)}
-                paddingBottom={8}
-                horizontalMotion={false}
+              <div
+                key={itemTypeId(item)}
+                ref={(node) => {
+                  const id = itemTypeId(item)
+                  if (node) itemRefs.current.set(id, node)
+                  else itemRefs.current.delete(id)
+                }}
+                style={{ position: 'relative' }}
               >
-                {renderItem(item, pool, isLive, onOpenCodeExecution, activeCodeExecutionId, onOpenSubAgent, accessToken, baseUrl)}
-              </CopTimelineUnifiedRow>
-            </div>
+                {editOnly ? (
+                  renderItem(item, pool, isLive, onOpenCodeExecution, activeCodeExecutionId, onOpenSubAgent, accessToken, baseUrl)
+                ) : (
+                  <CopTimelineUnifiedRow
+                    isFirst={index === 0}
+                    isLast={index === segment.items.length - 1}
+                    multiItems={segment.items.length >= 2}
+                    dotColor={itemDotColor(item)}
+                    dotTop={itemDotTop(item)}
+                    paddingBottom={8}
+                    horizontalMotion={false}
+                  >
+                    {renderItem(item, pool, isLive, onOpenCodeExecution, activeCodeExecutionId, onOpenSubAgent, accessToken, baseUrl)}
+                  </CopTimelineUnifiedRow>
+                )}
+              </div>
           ))}
         </motion.div>
       </motion.div>
