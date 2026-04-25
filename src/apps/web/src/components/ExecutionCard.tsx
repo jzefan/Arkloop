@@ -167,7 +167,7 @@ export function ExecutionCard({ variant, toolName, label, code, output, emptyLab
         onKeyDown={(e) => { if ((e.key === 'Enter' || e.key === ' ') && expandable) { e.preventDefault(); setExpanded((p) => !p) } }}
         className="shell-exec-trigger"
         style={{
-          display: 'inline-flex',
+          display: 'flex',
           alignItems: 'center',
           gap: '5px',
           padding: '4px 0',

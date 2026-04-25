@@ -125,7 +125,7 @@ export function SubAgentBlock({
           }
         }}
         style={{
-          display: 'inline-flex',
+          display: 'flex',
           alignItems: 'center',
           gap: '5px',
           padding: '4px 0',

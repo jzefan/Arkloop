@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useLayoutEffect, useCallback } from 'react'
 import { motion, useReducedMotion } from 'framer-motion'
 import { ChevronDown, ChevronRight } from 'lucide-react'
-import type { CopSubSegment, ResolvedPool } from '../../copSubSegment'
+import { categoryForTool, type CopSubSegment, type ResolvedPool } from '../../copSubSegment'
 import type { CodeExecution } from '../CodeExecutionCard'
 import type { SubAgentRef } from '../../storage'
 import { CopTimelineUnifiedRow } from './CopUnifiedRow'
@@ -144,7 +144,7 @@ export function CopTimelineSegment({
         onMouseEnter={() => setHovered(true)}
         onMouseLeave={() => setHovered(false)}
         style={{
-          display: 'inline-flex',
+          display: 'flex',
           alignItems: 'center',
           gap: 6,
           maxWidth: '100%',
@@ -246,6 +246,9 @@ function itemDotTop(item: CopSubSegment['items'][number]): number | undefined {
     // Cards with title bars need higher dot alignment
     if (n === 'edit' || n === 'edit_file' || n === 'write_file') return 18
     if (n === 'python_execute') return 18
+    // Rows with 4px top padding (ExecutionCard, SubAgentBlock)
+    const cat = categoryForTool(item.call.toolName)
+    if (cat === 'exec' || cat === 'agent') return 9
   }
   return 6
 }
