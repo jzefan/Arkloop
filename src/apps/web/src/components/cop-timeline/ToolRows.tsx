@@ -91,7 +91,14 @@ export function FileOpToolCard({ op }: { op: FileOpRef }) {
       {lines.length > 0 ? (
         <pre style={{ margin: 0, padding: '9px 0', maxHeight: 280, overflow: 'auto', fontFamily: MONO, fontSize: 12, lineHeight: '18px', color: 'var(--c-text-secondary)', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
           {lines
-            .filter((line) => !line.startsWith('--- ') && !line.startsWith('+++ ') && line !== '---' && line !== '+++')
+            .filter((line) => {
+              const t = line.trim()
+              if (!t) return false
+              if (t.startsWith('--- ') || t.startsWith('+++ ') || t === '---' || t === '+++') return false
+              if (t.startsWith('@@') && t.includes('@@')) return false
+              if (t.startsWith('diff --git') || t.startsWith('index ')) return false
+              return true
+            })
             .map((line, lineIndex) => {
               let bg: string | undefined
               if (line.startsWith('+')) bg = 'rgba(34,197,94,0.12)'
