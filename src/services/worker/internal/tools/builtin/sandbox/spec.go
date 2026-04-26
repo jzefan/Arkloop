@@ -63,7 +63,7 @@ var PythonExecuteLlmSpec = llm.ToolSpec{
 			"timeout_ms": map[string]any{"type": "integer", "minimum": 1000, "maximum": 300000},
 			"display_description": map[string]any{
 				"type":        "string",
-				"description": "Short human-readable label for this action, shown in the UI timeline. Keep under 60 characters.",
+				"description": `REQUIRED. Present-tense action label for the UI timeline (e.g., "Installing dependencies", "Running tests", "Checking git status"). 2-6 words. Never omit. Never copy the raw command.`,
 			},
 		},
 		"required":             []string{"code", "display_description"},
@@ -113,7 +113,7 @@ var ExecCommandLlmSpec = llm.ToolSpec{
 			},
 			"display_description": map[string]any{
 				"type":        "string",
-				"description": `Short human-readable label for this action (e.g., "Install dependencies", "Run tests"), shown in the UI timeline. Keep under 60 characters.`,
+				"description": `REQUIRED. Present-tense action label for the UI timeline (e.g., "Installing dependencies", "Running tests", "Checking git status"). 2-6 words. Never omit. Never copy the raw command.`,
 			},
 		},
 		"required":             []string{"command", "display_description"},
@@ -200,7 +200,7 @@ var BrowserLlmSpec = llm.ToolSpec{
 			},
 			"display_description": map[string]any{
 				"type":        "string",
-				"description": "Short human-readable label for this action, shown in the UI timeline. Keep under 60 characters.",
+				"description": `REQUIRED. Present-tense action label for the UI timeline (e.g., "Installing dependencies", "Running tests", "Checking git status"). 2-6 words. Never omit. Never copy the raw command.`,
 			},
 		},
 		"required":             []string{"command", "display_description"},

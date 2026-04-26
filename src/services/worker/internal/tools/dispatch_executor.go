@@ -218,6 +218,9 @@ func (e *DispatchingExecutor) ToolCallEvent(
 	toolCallID string,
 	displayDescription string,
 ) events.RunEvent {
+	if strings.TrimSpace(displayDescription) == "" {
+		displayDescription = fallbackDisplayDescription(args)
+	}
 	identity := e.resolveToolIdentity(toolName)
 	if e.policyEnforcer == nil {
 		payload := map[string]any{
@@ -504,4 +507,30 @@ func durationMs(started time.Time) int {
 		return 0
 	}
 	return millis
+}
+
+func fallbackDisplayDescription(args map[string]any) string {
+	if args == nil {
+		return ""
+	}
+	raw := ""
+	for _, key := range []string{"command", "cmd", "code"} {
+		v, ok := args[key].(string)
+		if !ok {
+			continue
+		}
+		trimmed := strings.TrimSpace(v)
+		if trimmed != "" {
+			raw = trimmed
+			break
+		}
+	}
+	if raw == "" {
+		return ""
+	}
+	firstLine := strings.TrimSpace(strings.SplitN(raw, "\n", 2)[0])
+	if len(firstLine) > 72 {
+		firstLine = firstLine[:72]
+	}
+	return firstLine
 }
