@@ -167,7 +167,10 @@ func NewChannelDeliveryMiddlewareWithOptions(pool *pgxpool.Pool, opts ChannelDel
 			stopTyping()
 		}
 
-		if err != nil || rc == nil || rc.ChannelContext == nil {
+		if rc == nil || rc.ChannelContext == nil {
+			return err
+		}
+		if err != nil && strings.TrimSpace(rc.ChannelTerminalNotice) == "" {
 			return err
 		}
 		channelType = normalizedChannelTypeFromContext(rc)

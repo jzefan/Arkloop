@@ -179,6 +179,9 @@ func NewAgentLoopHandler(
 			return nil
 		})
 		if err != nil && !errors.Is(err, errStopProcessing) {
+			if writer.TerminalUserMessage() == "" {
+				rc.ChannelTerminalNotice = err.Error()
+			}
 			return err
 		}
 
