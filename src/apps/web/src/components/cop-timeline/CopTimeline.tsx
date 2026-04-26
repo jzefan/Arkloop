@@ -146,44 +146,17 @@ export function CopTimeline({
   const [hovered, setHovered] = useState(false)
 
   useEffect(() => {
-    previousHeaderLabelRef.current = headerLabel
-  }, [headerLabel])
-
-  useEffect(() => {
-    const timelinePerfSample = {
-      steps: visibleSteps.length,
-      narratives: textEntries.length,
-      thinkingRows: thinkingRowList.length,
-      inlineRows: copInlineList.length,
-      sources: sourceCount,
-      codes: codeExecCount,
-      subAgents: subAgentCount,
-      fileOps: fileOpCount,
-      webFetches: webFetchCount,
-      genericTools: genericToolCount,
+    recordPerfCount('cop_timeline_render', 1, {
+      segments: segments.length,
+      thinkingOnly: !!hasThinkingOnly,
       live: !!live,
-    }
-    recordPerfCount('cop_timeline_render', 1, timelinePerfSample)
-    recordPerfValue('cop_timeline_visible_nodes', unifiedEntries.length, 'nodes', {
+      collapsed,
+    })
+    recordPerfValue('cop_timeline_segments', segments.length, 'segments', {
       collapsed,
       live: !!live,
     })
-  }, [
-    collapsed,
-    codeExecCount,
-    copInlineList.length,
-    fileOpCount,
-    genericToolCount,
-    live,
-    sourceCount,
-    subAgentCount,
-    textEntries.length,
-    thinkingRowList.length,
-    unifiedEntries.length,
-    useUnified,
-    visibleSteps.length,
-    webFetchCount,
-  ])
+  }, [collapsed, hasThinkingOnly, live, segments.length])
 
   if (!shouldRender) return null
 
