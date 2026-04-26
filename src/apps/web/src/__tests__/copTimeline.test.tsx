@@ -412,14 +412,15 @@ describe('CopTimeline', () => {
       expect(html).toContain('2 steps completed')
     })
 
-    it('complete with 1 segment -> "1 step completed" (singular)', () => {
+    it('complete with 1 segment uses segment title', () => {
       const seg = makeSeg({ id: 's1', status: 'closed', title: 'Step 1', seq: 0 })
       const html = renderTimeline({
         segments: [seg],
         pool: EMPTY_POOL,
         isComplete: true,
       })
-      expect(html).toContain('1 step completed')
+      expect(html).toContain('Step 1')
+      expect(html).not.toContain('1 step completed')
     })
   })
 
