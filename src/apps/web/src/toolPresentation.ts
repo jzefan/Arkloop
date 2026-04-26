@@ -36,6 +36,20 @@ function basename(path: string): string {
   return normalized.split('/').filter(Boolean).pop() ?? path
 }
 
+// 把命令行中疑似路径的 token 简化为 basename，避免长绝对路径塞满 UI
+export function compactCommandLine(line: string): string {
+  if (!line) return line
+  return line.split(' ').map((token) => {
+    if (!token) return token
+    if (token.startsWith('-')) return token
+    if (token.includes('://')) return token
+    if (!token.includes('/')) return token
+    const segments = token.split('/').filter(Boolean)
+    if (segments.length < 3) return token
+    return basename(token)
+  }).join(' ')
+}
+
 function truncate(value: string, max: number): string {
   return value.length > max ? `${value.slice(0, max)}…` : value
 }
@@ -157,7 +171,8 @@ export function presentationForTool(toolNameInput: string, args: Record<string, 
       const command = stringArg(args, 'cmd') || stringArg(args, 'command') || stringArg(args, 'code')
       detail = command || undefined
       subject = command ? command.split(/\s+/)[0] : undefined
-      description = fallback || (command ? truncate(command.split('\n')[0].trim(), 72) : 'Run command')
+      const firstLine = command ? command.split('\n')[0]!.trim() : ''
+      description = fallback || (firstLine ? truncate(compactCommandLine(firstLine), 72) : 'Run command')
       break
     }
     case 'load_tools':

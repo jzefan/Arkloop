@@ -1,5 +1,5 @@
 import type { CopBlockItem } from './assistantTurnSegments'
-import { normalizeToolName } from './toolPresentation'
+import { normalizeToolName, compactCommandLine } from './toolPresentation'
 
 export type CopSegmentCategory = 'explore' | 'exec' | 'edit' | 'agent' | 'fetch' | 'generic'
 
@@ -104,6 +104,244 @@ export function segmentCompletedTitle(seg: CopSubSegment): string {
       return `${calls.length} steps completed`
     }
   }
+}
+
+// 聚合统计：跨 segment 收集所有 tool call 的分类计数
+export type AggregatedCallStats = {
+  readPaths: Set<string>
+  searchCount: number
+  globCount: number
+  editPaths: string[]
+  execCount: number
+  agentCount: number
+  fetchCount: number
+  genericCount: number
+  byToolName: Map<string, number>
+}
+
+type CallItem = Extract<CopBlockItem, { kind: 'call' }>
+
+function getReadPath(c: CallItem['call']): string {
+  const direct = c.arguments?.file_path as string | undefined
+  if (typeof direct === 'string' && direct) return direct
+  const source = c.arguments?.source as { file_path?: string } | undefined
+  if (source && typeof source.file_path === 'string' && source.file_path) return source.file_path
+  return c.toolCallId
+}
+
+function getEditPath(c: CallItem['call']): string {
+  const p = c.arguments?.file_path
+  return typeof p === 'string' ? p : ''
+}
+
+export function aggregateCallStats(calls: ReadonlyArray<CallItem['call']>): AggregatedCallStats {
+  const stats: AggregatedCallStats = {
+    readPaths: new Set<string>(),
+    searchCount: 0,
+    globCount: 0,
+    editPaths: [],
+    execCount: 0,
+    agentCount: 0,
+    fetchCount: 0,
+    genericCount: 0,
+    byToolName: new Map<string, number>(),
+  }
+  for (const c of calls) {
+    const n = normalizeToolName(c.toolName)
+    stats.byToolName.set(n, (stats.byToolName.get(n) ?? 0) + 1)
+    const cat = categoryForTool(c.toolName)
+    if (n === 'read_file') {
+      stats.readPaths.add(getReadPath(c))
+      continue
+    }
+    if (n === 'grep') { stats.searchCount += 1; continue }
+    if (n === 'glob') { stats.globCount += 1; continue }
+    if (n === 'lsp') {
+      // rename 算 edit，其余算 search
+      const op = typeof c.arguments?.operation === 'string' ? c.arguments.operation : ''
+      if (MUTATING_LSP.has(op)) {
+        const fp = typeof c.arguments?.file_path === 'string' ? c.arguments.file_path : ''
+        stats.editPaths.push(fp ? basename(fp) : c.toolCallId)
+      } else {
+        stats.searchCount += 1
+      }
+      continue
+    }
+    if (cat === 'edit') {
+      const fp = getEditPath(c)
+      stats.editPaths.push(fp ? basename(fp) : c.toolCallId)
+      continue
+    }
+    if (cat === 'exec') { stats.execCount += 1; continue }
+    if (cat === 'agent') { stats.agentCount += 1; continue }
+    if (cat === 'fetch') { stats.fetchCount += 1; continue }
+    stats.genericCount += 1
+  }
+  return stats
+}
+
+function truncate(value: string, max: number): string {
+  return value.length > max ? `${value.slice(0, max)}…` : value
+}
+
+function lspProgressive(args: Record<string, unknown>): string {
+  const op = typeof args.operation === 'string' ? args.operation : ''
+  const query = typeof args.query === 'string' ? args.query : ''
+  const filePath = typeof args.file_path === 'string' ? args.file_path : ''
+  const subject = query || (filePath ? basename(filePath) : '')
+  switch (op) {
+    case 'definition': return subject ? `Finding definition in ${subject}` : 'Finding definition'
+    case 'references': return subject ? `Finding references in ${subject}` : 'Finding references'
+    case 'hover': return subject ? `Inspecting symbol in ${subject}` : 'Inspecting symbol'
+    case 'document_symbols': return subject ? `Listing symbols in ${subject}` : 'Listing symbols'
+    case 'workspace_symbols': return query ? `Searching symbols for ${truncate(query, 36)}` : 'Searching symbols'
+    case 'type_definition': return subject ? `Finding type definition in ${subject}` : 'Finding type definition'
+    case 'implementation': return subject ? `Finding implementations in ${subject}` : 'Finding implementations'
+    case 'diagnostics': return subject ? `Checking diagnostics in ${subject}` : 'Checking diagnostics'
+    case 'rename': return subject ? `Renaming symbol in ${subject}` : 'Renaming symbol'
+    default: return op ? `Running LSP ${op}` : 'Running LSP'
+  }
+}
+
+export function presentToProgressive(
+  toolNameInput: string,
+  args: Record<string, unknown> = {},
+  displayDescription?: string,
+): string {
+  const dd = (displayDescription ?? '').trim()
+  if (dd) return dd
+  const toolName = normalizeToolName(toolNameInput)
+  switch (toolName) {
+    case 'read_file': {
+      const path = (typeof args.file_path === 'string' && args.file_path)
+        || ((args.source as { file_path?: string } | undefined)?.file_path ?? '')
+      return path ? `Reading ${truncate(basename(path), 48)}` : 'Reading file'
+    }
+    case 'grep': {
+      const pattern = typeof args.pattern === 'string' ? args.pattern : ''
+      return pattern ? `Searching ${truncate(pattern, 48)}` : 'Searching code'
+    }
+    case 'glob': {
+      const pattern = typeof args.pattern === 'string' ? args.pattern : ''
+      return pattern ? `Listing ${truncate(pattern, 48)}` : 'Listing files'
+    }
+    case 'edit':
+    case 'edit_file': {
+      const fp = typeof args.file_path === 'string' ? args.file_path : ''
+      return fp ? `Editing ${truncate(basename(fp), 48)}` : 'Editing file'
+    }
+    case 'write_file': {
+      const fp = typeof args.file_path === 'string' ? args.file_path : ''
+      return fp ? `Writing ${truncate(basename(fp), 48)}` : 'Writing file'
+    }
+    case 'exec_command':
+    case 'continue_process':
+    case 'terminate_process':
+    case 'python_execute': {
+      const cmd = (typeof args.cmd === 'string' && args.cmd)
+        || (typeof args.command === 'string' && args.command)
+        || (typeof args.code === 'string' && args.code) || ''
+      if (cmd) return truncate(compactCommandLine(cmd.split('\n')[0]!.trim()), 72)
+      return 'Running command'
+    }
+    case 'load_tools': return 'Loading tools'
+    case 'load_skill': return 'Loading skill'
+    case 'lsp': return lspProgressive(args)
+    default: return `${toolName}...`
+  }
+}
+
+function pluralize(n: number, singular: string, plural: string): string {
+  return n === 1 ? singular : plural
+}
+
+function formatStatsParts(stats: AggregatedCallStats): string {
+  const parts: string[] = []
+  if (stats.editPaths.length === 1) parts.push(`Edited ${stats.editPaths[0]}`)
+  else if (stats.editPaths.length > 1) parts.push(`Edited ${stats.editPaths.length} files`)
+  if (stats.readPaths.size > 0) parts.push(`Read ${stats.readPaths.size} ${pluralize(stats.readPaths.size, 'file', 'files')}`)
+  if (stats.searchCount > 0) parts.push(`${stats.searchCount} ${pluralize(stats.searchCount, 'search', 'searches')}`)
+  if (stats.globCount > 0) parts.push(`Listed ${stats.globCount} ${pluralize(stats.globCount, 'file', 'files')}`)
+  if (stats.execCount > 0) parts.push(`Ran ${stats.execCount} ${pluralize(stats.execCount, 'command', 'commands')}`)
+  if (stats.agentCount > 0) parts.push(`${stats.agentCount} agent ${pluralize(stats.agentCount, 'task', 'tasks')}`)
+  if (stats.fetchCount > 0) parts.push(`${stats.fetchCount} ${pluralize(stats.fetchCount, 'fetch', 'fetches')}`)
+  return parts.join(', ')
+}
+
+function formatSingleCategoryTitle(cat: CopSegmentCategory, stats: AggregatedCallStats, total: number): string {
+  switch (cat) {
+    case 'explore': {
+      const parts = formatStatsParts(stats)
+      return parts || 'Explored code'
+    }
+    case 'exec':
+      return `${stats.execCount} ${pluralize(stats.execCount, 'step', 'steps')} completed`
+    case 'edit': {
+      if (stats.editPaths.length === 1) return `Edited ${stats.editPaths[0]}`
+      if (stats.editPaths.length > 1) return `Edited ${stats.editPaths.length} files`
+      return 'Edit completed'
+    }
+    case 'agent':
+      return stats.agentCount === 1 ? 'Agent completed' : `${stats.agentCount} agent tasks completed`
+    case 'fetch':
+      return stats.fetchCount === 1 ? 'Fetch completed' : `${stats.fetchCount} fetches completed`
+    case 'generic':
+      return `${total} ${pluralize(total, 'step', 'steps')} completed`
+  }
+}
+
+export function aggregateMainTitle(
+  segments: ReadonlyArray<CopSubSegment>,
+  isLive: boolean,
+  isComplete: boolean,
+): string {
+  if (segments.length === 0) return ''
+
+  const collectCalls = (segs: ReadonlyArray<CopSubSegment>): CallItem['call'][] => {
+    const out: CallItem['call'][] = []
+    for (const s of segs) {
+      for (const it of s.items) {
+        if (it.kind === 'call') out.push(it.call)
+      }
+    }
+    return out
+  }
+
+  if (isLive && !isComplete) {
+    // 找最后一个 open（或最后一段）的最后一个 call
+    let openSeg: CopSubSegment | null = null
+    for (let i = segments.length - 1; i >= 0; i--) {
+      if (segments[i]!.status === 'open') { openSeg = segments[i]!; break }
+    }
+    if (!openSeg) openSeg = segments[segments.length - 1]!
+    let lastCall: CallItem['call'] | null = null
+    for (let i = openSeg.items.length - 1; i >= 0; i--) {
+      const it = openSeg.items[i]!
+      if (it.kind === 'call') { lastCall = it.call; break }
+    }
+    const current = lastCall
+      ? presentToProgressive(lastCall.toolName, lastCall.arguments, lastCall.displayDescription)
+      : segmentLiveTitle(openSeg.category).replace(/\.\.\.$/, '')
+    const closedSegs = segments.filter((s) => s !== openSeg && s.status === 'closed')
+    const closedCalls = collectCalls(closedSegs)
+    if (closedCalls.length === 0) return `${current}...`
+    const stats = aggregateCallStats(closedCalls)
+    const history = formatStatsParts(stats)
+    return history ? `${history} · ${current}...` : `${current}...`
+  }
+
+  // complete 态
+  const allCalls = collectCalls(segments)
+  if (allCalls.length === 0) {
+    // 退化路径：没有真实 call（例如 segments 仅作为 title 占位），沿用旧 segment.title 行为
+    if (segments.length > 1) return `${segments.length} steps completed`
+    return segments[0]!.title || 'Completed'
+  }
+  const stats = aggregateCallStats(allCalls)
+  const cats = Array.from(new Set(segments.map((s) => s.category)))
+  if (cats.length === 1) return formatSingleCategoryTitle(cats[0]!, stats, allCalls.length)
+  const parts = formatStatsParts(stats)
+  return parts || `${allCalls.length} ${pluralize(allCalls.length, 'step', 'steps')} completed`
 }
 
 export function buildSubSegments(items: CopBlockItem[]): CopSubSegment[] {

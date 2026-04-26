@@ -116,6 +116,7 @@ export function CopTimelineSegment({
   }
 
   const editOnly = segment.category === 'edit' && segment.items.every(i => i.kind === 'call')
+  const exploreCard = segment.category === 'explore'
 
   const headerLabel = segment.title
   const headerLive = isOpen && isLive
@@ -142,26 +143,44 @@ export function CopTimelineSegment({
 
   if (hideHeader) {
     return (
-      <div style={{ position: 'relative', paddingTop: 6, paddingLeft: editOnly ? 0 : COP_TIMELINE_CONTENT_PADDING_LEFT_PX, paddingBottom: EXPLORE_BOTTOM_PAD }}>
-        {segment.items.map((item, index) => (
-          <div key={itemTypeId(item)} style={{ position: 'relative' }}>
-            {editOnly ? (
-              renderItem(item, pool, isLive, onOpenCodeExecution, activeCodeExecutionId, onOpenSubAgent, accessToken, baseUrl)
-            ) : (
-              <CopTimelineUnifiedRow
-                isFirst={index === 0}
-                isLast={index === segment.items.length - 1}
-                multiItems={segment.items.length >= 2}
-                dotColor={itemDotColor(item)}
-                dotTop={itemDotTop(item)}
-                paddingBottom={8}
-                horizontalMotion={false}
-              >
+      <div style={{ position: 'relative', paddingTop: 6, paddingLeft: editOnly || exploreCard ? 0 : COP_TIMELINE_CONTENT_PADDING_LEFT_PX, paddingBottom: EXPLORE_BOTTOM_PAD }}>
+        {exploreCard ? (
+          <div
+            style={{
+              borderRadius: 8,
+              background: 'var(--c-attachment-bg)',
+              border: '0.5px solid var(--c-border-subtle)',
+              padding: '6px 10px',
+              overflow: 'hidden',
+            }}
+          >
+            {segment.items.map((item) => (
+              <div key={itemTypeId(item)} style={{ position: 'relative', padding: '3px 0' }}>
                 {renderItem(item, pool, isLive, onOpenCodeExecution, activeCodeExecutionId, onOpenSubAgent, accessToken, baseUrl)}
-              </CopTimelineUnifiedRow>
-            )}
+              </div>
+            ))}
           </div>
-        ))}
+        ) : (
+          segment.items.map((item, index) => (
+            <div key={itemTypeId(item)} style={{ position: 'relative' }}>
+              {editOnly ? (
+                renderItem(item, pool, isLive, onOpenCodeExecution, activeCodeExecutionId, onOpenSubAgent, accessToken, baseUrl)
+              ) : (
+                <CopTimelineUnifiedRow
+                  isFirst={index === 0}
+                  isLast={index === segment.items.length - 1}
+                  multiItems={segment.items.length >= 2}
+                  dotColor={itemDotColor(item)}
+                  dotTop={itemDotTop(item)}
+                  paddingBottom={8}
+                  horizontalMotion={false}
+                >
+                  {renderItem(item, pool, isLive, onOpenCodeExecution, activeCodeExecutionId, onOpenSubAgent, accessToken, baseUrl)}
+                </CopTimelineUnifiedRow>
+              )}
+            </div>
+          ))
+        )}
       </div>
     )
   }
@@ -218,11 +237,36 @@ export function CopTimelineSegment({
           style={{
             position: 'relative',
             paddingTop: 6,
-            paddingLeft: editOnly ? 0 : COP_TIMELINE_CONTENT_PADDING_LEFT_PX,
+            paddingLeft: editOnly || exploreCard ? 0 : COP_TIMELINE_CONTENT_PADDING_LEFT_PX,
             paddingBottom: EXPLORE_BOTTOM_PAD,
           }}
         >
-          {segment.items.map((item, index) => (
+          {exploreCard ? (
+            <div
+              style={{
+                borderRadius: 8,
+                background: 'var(--c-attachment-bg)',
+                border: '0.5px solid var(--c-border-subtle)',
+                padding: '6px 10px',
+                overflow: 'hidden',
+              }}
+            >
+              {segment.items.map((item) => (
+                <div
+                  key={itemTypeId(item)}
+                  ref={(node) => {
+                    const id = itemTypeId(item)
+                    if (node) itemRefs.current.set(id, node)
+                    else itemRefs.current.delete(id)
+                  }}
+                  style={{ position: 'relative', padding: '3px 0' }}
+                >
+                  {renderItem(item, pool, isLive, onOpenCodeExecution, activeCodeExecutionId, onOpenSubAgent, accessToken, baseUrl)}
+                </div>
+              ))}
+            </div>
+          ) : (
+            segment.items.map((item, index) => (
               <div
                 key={itemTypeId(item)}
                 ref={(node) => {
@@ -248,7 +292,8 @@ export function CopTimelineSegment({
                   </CopTimelineUnifiedRow>
                 )}
               </div>
-          ))}
+            ))
+          )}
         </motion.div>
       </motion.div>
     </div>
