@@ -18,8 +18,9 @@ import (
 )
 
 const (
-	defaultLimit = 200
-	maxLimit     = 1000
+	defaultLimit  = 200
+	maxLimit      = 1000
+	rgTimeoutSecs = 20
 )
 
 // skipDirs are directory names skipped during the regex fallback walk.
@@ -118,13 +119,16 @@ func (e *Executor) Execute(
 
 	rgExtra := buildRgExtraFlags(caseSensitive, multiline, fileType)
 
+	rgCtx, rgCancel := context.WithTimeout(ctx, rgTimeoutSecs*time.Second)
+	defer rgCancel()
+
 	switch outputMode {
 	case "files_with_matches":
-		return executeFilesWithMatches(ctx, backend, pattern, searchPath, include, rgExtra, limit, offset, started)
+		return executeFilesWithMatches(rgCtx, backend, pattern, searchPath, include, rgExtra, limit, offset, started)
 	case "count":
-		return executeCount(ctx, backend, pattern, searchPath, include, rgExtra, limit, offset, started)
+		return executeCount(rgCtx, backend, pattern, searchPath, include, rgExtra, limit, offset, started)
 	case "content":
-		return executeContent(ctx, backend, pattern, searchPath, include, rgExtra, caseSensitive, contextLines, hasContextLines, limit, offset, started)
+		return executeContent(rgCtx, backend, pattern, searchPath, include, rgExtra, caseSensitive, contextLines, hasContextLines, limit, offset, started)
 	default:
 		return errResult(fmt.Sprintf("unknown output_mode: %s", outputMode), started)
 	}
@@ -150,8 +154,7 @@ func buildRgExtraFlags(caseSensitive, multiline bool, fileType string) string {
 
 // executeFilesWithMatches returns file paths sorted by mtime (newest first).
 func executeFilesWithMatches(ctx context.Context, backend fileops.Backend, pattern, searchPath, include, rgExtra string, limit, offset int, started time.Time) tools.ExecutionResult {
-	// use rg -l for efficiency
-	cmd := fmt.Sprintf("rg -l --sortr=modified %s", shellQuote(pattern))
+	cmd := fmt.Sprintf("rg -l %s", shellQuote(pattern))
 	if rgExtra != "" {
 		cmd += " " + rgExtra
 	}
@@ -164,6 +167,9 @@ func executeFilesWithMatches(ctx context.Context, backend fileops.Backend, patte
 
 	stdout, _, exitCode, err := backend.Exec(ctx, cmd)
 	if err != nil {
+		if ctx.Err() != nil {
+			return timeoutResult(started)
+		}
 		return executeFilesWithMatchesFallback(ctx, backend, pattern, searchPath, include, rgExtra, limit, offset, started)
 	}
 	if exitCode == 1 {
@@ -173,11 +179,10 @@ func executeFilesWithMatches(ctx context.Context, backend fileops.Backend, patte
 		}
 	}
 	if exitCode != 0 && stdout == "" {
-		// rg --sortr may not be supported, fallback
 		return executeFilesWithMatchesFallback(ctx, backend, pattern, searchPath, include, rgExtra, limit, offset, started)
 	}
 
-	lines := splitNonEmpty(stdout)
+	lines := sortFilesByMtime(splitNonEmpty(stdout))
 	total := len(lines)
 
 	// apply pagination
@@ -228,7 +233,7 @@ func executeFilesWithMatchesFallback(ctx context.Context, backend fileops.Backen
 
 // executeCount returns match counts per file.
 func executeCount(ctx context.Context, backend fileops.Backend, pattern, searchPath, include, rgExtra string, limit, offset int, started time.Time) tools.ExecutionResult {
-	cmd := fmt.Sprintf("rg -c --sortr=modified %s", shellQuote(pattern))
+	cmd := fmt.Sprintf("rg -c %s", shellQuote(pattern))
 	if rgExtra != "" {
 		cmd += " " + rgExtra
 	}
@@ -241,6 +246,9 @@ func executeCount(ctx context.Context, backend fileops.Backend, pattern, searchP
 
 	stdout, _, exitCode, err := backend.Exec(ctx, cmd)
 	if err != nil {
+		if ctx.Err() != nil {
+			return timeoutResult(started)
+		}
 		return executeCountFallback(ctx, backend, pattern, searchPath, include, rgExtra, limit, offset, started)
 	}
 	if exitCode == 1 {
@@ -445,6 +453,41 @@ func paginatedResult(matchStr string, count int, truncated bool, total, limit, o
 	}
 }
 
+func timeoutResult(started time.Time) tools.ExecutionResult {
+	return tools.ExecutionResult{
+		ResultJSON: map[string]any{
+			"error":   fmt.Sprintf("grep timed out after %ds", rgTimeoutSecs),
+			"hint":    "use include (e.g. *.go) or path to narrow the search scope and retry",
+			"timeout": true,
+		},
+		DurationMs: durationMs(started),
+	}
+}
+
+// sortFilesByMtime sorts file paths by mtime descending (newest first).
+func sortFilesByMtime(files []string) []string {
+	type entry struct {
+		path  string
+		mtime time.Time
+	}
+	entries := make([]entry, 0, len(files))
+	for _, f := range files {
+		var mtime time.Time
+		if info, err := os.Stat(f); err == nil {
+			mtime = info.ModTime()
+		}
+		entries = append(entries, entry{path: f, mtime: mtime})
+	}
+	sort.Slice(entries, func(i, j int) bool {
+		return entries[i].mtime.After(entries[j].mtime)
+	})
+	result := make([]string, len(entries))
+	for i, e := range entries {
+		result[i] = e.path
+	}
+	return result
+}
+
 func splitNonEmpty(s string) []string {
 	var out []string
 	for _, line := range strings.Split(s, "\n") {
@@ -484,7 +527,7 @@ func sortMatchesByMtime(matches []grepMatch) {
 }
 
 func searchWithRipgrep(ctx context.Context, backend fileops.Backend, pattern, searchPath, include, rgExtra string) ([]grepMatch, error) {
-	cmd := fmt.Sprintf("rg -H -n -a --max-count 1000 --sortr=modified %s", shellQuote(pattern))
+	cmd := fmt.Sprintf("rg -H -n -a --max-count 1000 %s", shellQuote(pattern))
 	if rgExtra != "" {
 		cmd += " " + rgExtra
 	}
@@ -496,6 +539,9 @@ func searchWithRipgrep(ctx context.Context, backend fileops.Backend, pattern, se
 	}
 	stdout, _, exitCode, err := backend.Exec(ctx, cmd)
 	if err != nil {
+		if ctx.Err() != nil {
+			return nil, fmt.Errorf("grep timed out after %ds: use include to narrow the search scope", rgTimeoutSecs)
+		}
 		return nil, err
 	}
 	if exitCode == 1 {
@@ -536,7 +582,7 @@ func searchWithRipgrep(ctx context.Context, backend fileops.Backend, pattern, se
 }
 
 func searchWithRipgrepRaw(ctx context.Context, backend fileops.Backend, pattern, searchPath, include, rgExtra string, contextLines int) (string, error) {
-	cmd := fmt.Sprintf("rg -H -n -a --max-count 1000 --sortr=modified -C %d %s", contextLines, shellQuote(pattern))
+	cmd := fmt.Sprintf("rg -H -n -a --max-count 1000 -C %d %s", contextLines, shellQuote(pattern))
 	if rgExtra != "" {
 		cmd += " " + rgExtra
 	}
@@ -548,6 +594,9 @@ func searchWithRipgrepRaw(ctx context.Context, backend fileops.Backend, pattern,
 	}
 	stdout, _, exitCode, err := backend.Exec(ctx, cmd)
 	if err != nil {
+		if ctx.Err() != nil {
+			return "", fmt.Errorf("grep timed out after %ds: use include to narrow the search scope", rgTimeoutSecs)
+		}
 		return "", err
 	}
 	if exitCode == 1 {
