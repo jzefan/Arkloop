@@ -672,6 +672,10 @@ button:not(:disabled) {
 .cop-timeline-root .shell-exec-trigger > span:first-of-type {
   font-weight: var(--c-cop-row-weight) !important;
   color: var(--c-cop-row-fg) !important;
+  transition: color 150ms ease !important;
+}
+.cop-timeline-root .shell-exec-trigger:hover > span:first-of-type {
+  color: var(--c-cop-row-hover-fg) !important;
 }
 .cop-timeline-root .shell-exec-trigger svg {
   color: var(--c-cop-row-subtle-fg);
@@ -878,7 +882,7 @@ button:not(:disabled) {
   display: flex;
   align-items: center;
   gap: 5px;
-  padding: 2px 0 1px;
+  padding: 0;
   cursor: pointer;
   user-select: none;
   -webkit-user-select: none;

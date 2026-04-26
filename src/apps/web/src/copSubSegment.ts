@@ -60,7 +60,12 @@ export function segmentCompletedTitle(seg: CopSubSegment): string {
 
   switch (seg.category) {
     case 'explore': {
-      const readPaths = new Set(calls.filter((c) => normalizeToolName(c.toolName) === 'read_file').map((c) => c.arguments?.file_path as string | undefined ?? ''))
+      const readCalls = calls.filter((c) => normalizeToolName(c.toolName) === 'read_file')
+      const readPaths = new Set(readCalls.map((c) => {
+        const path = c.arguments?.file_path as string | undefined
+          ?? (c.arguments?.source as { file_path?: string } | undefined)?.file_path
+        return path || c.toolCallId
+      }))
       const searchCount = calls.filter((c) => {
         const n = normalizeToolName(c.toolName)
         return n === 'grep' || n === 'lsp'
@@ -248,13 +253,18 @@ export function buildThinkingOnlyFromItems(items: { kind: string; content?: stri
   let markdown = ''
   let live = false
   let startedAtMs: number | undefined
+  let endedAtMs: number | undefined
   for (const item of items) {
     if (item.kind === 'thinking' && item.content) {
       markdown += item.content
       if (item.endedAtMs == null) live = true
       if (startedAtMs == null && item.startedAtMs != null) startedAtMs = item.startedAtMs
+      if (item.endedAtMs != null) endedAtMs = item.endedAtMs
     }
   }
   if (!markdown.trim()) return null
-  return { markdown, live, durationSec: 0, startedAtMs }
+  const durationSec = startedAtMs != null && endedAtMs != null
+    ? Math.max(0, Math.round((endedAtMs - startedAtMs) / 1000))
+    : 0
+  return { markdown, live, durationSec, startedAtMs }
 }

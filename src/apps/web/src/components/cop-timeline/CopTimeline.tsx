@@ -213,35 +213,59 @@ export function CopTimeline({
         transition={!reduceMotion ? { duration: 0.24, ease: [0.4, 0, 0.2, 1] } : { duration: 0 }}
         style={{ overflow: collapsed ? 'hidden' : 'visible' }}
       >
-        <div style={{ position: 'relative', paddingTop: '3px', paddingBottom: '3px', paddingLeft: segments.length > 1 ? '24px' : undefined }}>
+        <div style={{ position: 'relative', paddingTop: '3px', paddingBottom: '3px', paddingLeft: (segments.length > 1 || hasThinkingOnly) ? '24px' : undefined }}>
           {/* Thinking-only mode (no segments) */}
-          {hasThinkingOnly && thinkingOnly && (
-            <>
-              <div
-                style={{
-                  paddingTop: Math.max(0, COP_TIMELINE_DOT_TOP + COP_TIMELINE_DOT_SIZE / 2 - COP_TIMELINE_THINKING_PLAIN_LINE_HEIGHT_PX / 2),
-                }}
-              >
-                <AssistantThinkingMarkdown
-                  markdown={thinkingOnly.markdown}
-                  live={!!thinkingOnly.live && !isComplete}
-                  variant="timeline-plain"
-                />
-              </div>
-              {isComplete && !thinkingOnly.live && (
-                <div
-                  style={{
-                    fontSize: '13px',
-                    color: 'var(--c-cop-row-fg)',
-                    lineHeight: '18px',
-                    paddingTop: '6px',
-                  }}
+          {hasThinkingOnly && thinkingOnly && (() => {
+            const showDone = isComplete && !thinkingOnly.live
+            const multiItems = showDone
+            return (
+              <>
+                <CopTimelineUnifiedRow
+                  isFirst={true}
+                  isLast={!showDone}
+                  multiItems={multiItems}
+                  dotColor={thinkingOnly.live && !isComplete ? 'var(--c-text-secondary)' : 'var(--c-border-mid)'}
+                  dotTop={COP_TIMELINE_DOT_TOP}
+                  paddingBottom={8}
+                  horizontalMotion={false}
                 >
-                  {t.copThinkingDone as string}
-                </div>
-              )}
-            </>
-          )}
+                  <div
+                    style={{
+                      paddingTop: Math.max(0, COP_TIMELINE_DOT_TOP + COP_TIMELINE_DOT_SIZE / 2 - COP_TIMELINE_THINKING_PLAIN_LINE_HEIGHT_PX / 2),
+                    }}
+                  >
+                    <AssistantThinkingMarkdown
+                      markdown={thinkingOnly.markdown}
+                      live={!!thinkingOnly.live && !isComplete}
+                      variant="timeline-plain"
+                    />
+                  </div>
+                </CopTimelineUnifiedRow>
+                {showDone && (
+                  <CopTimelineUnifiedRow
+                    isFirst={false}
+                    isLast={true}
+                    multiItems={multiItems}
+                    dotColor="var(--c-text-muted)"
+                    dotTop={COP_TIMELINE_DOT_TOP}
+                    paddingBottom={0}
+                    horizontalMotion={false}
+                  >
+                    <div
+                      style={{
+                        fontSize: '13px',
+                        color: 'var(--c-cop-row-fg)',
+                        lineHeight: '18px',
+                        paddingTop: '3px',
+                      }}
+                    >
+                      {t.copThinkingDone as string}
+                    </div>
+                  </CopTimelineUnifiedRow>
+                )}
+              </>
+            )
+          })()}
 
           {/* Segments */}
           {segments.length === 1 ? (
