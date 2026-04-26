@@ -3,6 +3,7 @@ import { Info } from 'lucide-react'
 import { Button } from '@arkloop/shared'
 import { MessageBubble } from './MessageBubble'
 import { CopTimeline, type WebSearchPhaseStep } from './cop-timeline/CopTimeline'
+import { AssistantActionBar } from './messagebubble/AssistantMessage'
 import { MarkdownRenderer } from './MarkdownRenderer'
 import { WidgetBlock } from './WidgetBlock'
 import { IncognitoDivider } from './IncognitoDivider'
@@ -519,6 +520,23 @@ export const MessageList = memo(function MessageList({
                 })()
               ),
             )}
+          {idx === messages.length - 1 && !isStreaming && !sending && (
+            <AssistantActionBar
+              textToCopy={assistantTurnPlainText(historicalTurn!)}
+              onRetry={handleRetry}
+              onFork={() => void handleFork(msg.id)}
+              onShare={threadId && !privateThreadIds.has(threadId) ? () => createShareForMessage(msg.id) : undefined}
+              shareState={sharingMessageId === msg.id ? 'sharing' : sharedMessageId === msg.id ? 'shared' : 'idle'}
+              webSources={resolvedSources}
+              onShowSources={canShowSources ? () => {
+                if (sourcePanelMessageId === msg.id) { panels.closePanel(); return }
+                panels.closePanel()
+                panels.openSourcePanel(msg.id)
+              } : undefined}
+              onViewRunDetail={showRunEvents && msg.run_id ? () => setRunDetailPanelRunId(msg.run_id!) : undefined}
+              isLast={true}
+            />
+          )}
           </div>
         )}
         {msg.role === 'assistant' && !hasAssistantTurn && (timelineSteps.length > 0 || hasMessageCodeExecutions || (messageSubAgents && messageSubAgents.length > 0) || (messageFileOps && messageFileOps.length > 0) || (messageWebFetches && messageWebFetches.length > 0)) && (
@@ -606,6 +624,7 @@ export const MessageList = memo(function MessageList({
           }
           contentOverride={msg.role === 'assistant' && hasAssistantTurn ? '' : undefined}
           plainTextForCopy={msg.role === 'assistant' && hasAssistantTurn ? assistantTurnPlainText(historicalTurn!) : undefined}
+          suppressActionBar={msg.role === 'assistant' && hasAssistantTurn}
         />
         {msg.role === 'assistant' && (effectiveTerminalStatus === 'failed' || effectiveTerminalStatus === 'interrupted' || effectiveTerminalStatus === 'cancelled') && (
           <FailedRunRetryCard

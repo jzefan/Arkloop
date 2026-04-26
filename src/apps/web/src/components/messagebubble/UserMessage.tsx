@@ -305,7 +305,7 @@ export function UserMessage({ message, onEdit, accessToken, animateEnter, onEnte
               className={[animateEnter ? 'user-prompt-bubble-enter' : '', 'user-prompt-bubble'].filter(Boolean).join(' ')}
               style={{
                 '--user-prompt-enter-scale': String(enterScale),
-                borderRadius: isWorkMode ? '12px 12px 12px 4px' : '12px',
+                borderRadius: isWorkMode ? '12px 12px 12px 8px' : '12px',
                 padding: '10px 16px',
                 fontSize: '16.5px',
                 fontWeight: 300,
