@@ -271,6 +271,10 @@ type RunContext struct {
 	// -- end_reply --
 	EndReplyRequested bool // set by end_reply tool, agent loop reads to terminate run
 
+	// -- plan mode --
+	IsPlanMode   bool
+	PlanFilePath string
+
 	// -- Impression --
 	ImpressionRun bool
 	// -- Sticker register --
@@ -319,6 +323,35 @@ func (rc *RunContext) SetEndReplyRequested(requested bool) {
 		return
 	}
 	rc.EndReplyRequested = requested
+}
+
+// SetIsPlanMode implements tools/builtin/enter_plan_mode.PipelineBinding.
+func (rc *RunContext) SetIsPlanMode(active bool) {
+	if rc == nil {
+		return
+	}
+	rc.IsPlanMode = active
+}
+
+// SetPlanFilePath implements tools/builtin/enter_plan_mode.PipelineBinding.
+func (rc *RunContext) SetPlanFilePath(path string) {
+	if rc == nil {
+		return
+	}
+	rc.PlanFilePath = path
+}
+
+// PlanFilePathValue implements tools/builtin/exit_plan_mode.PipelineBinding.
+func (rc *RunContext) PlanFilePathValue() string {
+	if rc == nil {
+		return ""
+	}
+	return rc.PlanFilePath
+}
+
+// IsPlanModeActive is consumed by write tools to enforce plan-mode read-only constraint.
+func (rc *RunContext) IsPlanModeActive() bool {
+	return rc != nil && rc.IsPlanMode
 }
 
 // IsHeartbeatRun implements tools/builtin/heartbeat_decision.PipelineBinding.

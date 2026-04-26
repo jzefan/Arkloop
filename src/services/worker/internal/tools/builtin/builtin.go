@@ -10,6 +10,8 @@ import (
 	arkloophelp "arkloop/services/worker/internal/tools/builtin/arkloop_help"
 	"arkloop/services/worker/internal/tools/builtin/askuser"
 	"arkloop/services/worker/internal/tools/builtin/edit"
+	enterplanmode "arkloop/services/worker/internal/tools/builtin/enter_plan_mode"
+	exitplanmode "arkloop/services/worker/internal/tools/builtin/exit_plan_mode"
 	"arkloop/services/worker/internal/tools/builtin/fileops"
 	"arkloop/services/worker/internal/tools/builtin/glob"
 	"arkloop/services/worker/internal/tools/builtin/grep"
@@ -66,6 +68,8 @@ func AgentSpecs() []tools.AgentToolSpec {
 		acptool.CloseACPAgentSpec,
 		showwidget.AgentSpec,
 		todowrite.AgentSpec,
+		enterplanmode.AgentSpec,
+		exitplanmode.AgentSpec,
 	}
 }
 
@@ -94,6 +98,8 @@ func LlmSpecs() []llm.ToolSpec {
 		acptool.CloseACPLlmSpec,
 		showwidget.LlmSpec,
 		todowrite.LlmSpec,
+		enterplanmode.LlmSpec,
+		exitplanmode.LlmSpec,
 	}
 }
 
@@ -131,5 +137,7 @@ func Executors(pool *pgxpool.Pool, rdb *redis.Client, resolver sharedconfig.Reso
 		acptool.CloseACPAgentSpec.Name:     acptool.ToolExecutor{ConfigResolver: resolver},
 		showwidget.AgentSpec.Name:          showwidget.NewToolExecutor(),
 		todowrite.AgentSpec.Name:           &todowrite.Executor{},
+		enterplanmode.AgentSpec.Name:       enterplanmode.New(),
+		exitplanmode.AgentSpec.Name:        exitplanmode.New(),
 	}, tracker
 }

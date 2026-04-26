@@ -26,6 +26,10 @@ func (e *Executor) Execute(
 ) tools.ExecutionResult {
 	started := time.Now()
 
+	if blocked, isBlocked := tools.PlanModeBlocked(execCtx.PipelineRC, started); isBlocked {
+		return blocked
+	}
+
 	filePath, _ := args["file_path"].(string)
 	if filePath == "" {
 		return errResult("file_path is required", started)

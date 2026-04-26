@@ -48,6 +48,10 @@ func (e *ToolExecutor) Execute(
 ) tools.ExecutionResult {
 	started := time.Now()
 
+	if blocked, isBlocked := tools.PlanModeBlocked(execCtx.PipelineRC, started); isBlocked {
+		return blocked
+	}
+
 	filename, _ := args["filename"].(string)
 	filename = strings.TrimSpace(filename)
 	if filename == "" {
