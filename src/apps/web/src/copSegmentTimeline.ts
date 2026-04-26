@@ -280,7 +280,7 @@ export function copTimelinePayloadForSegment(
         return {
           id: call.toolCallId,
           toolName: call.toolName,
-          label: preview,
+          label: call.displayDescription || preview,
           output: resultSummary.output,
           emptyLabel: resultSummary.emptyLabel,
           status: hasError ? 'failed' : call.result === undefined ? 'running' : 'success',

@@ -223,9 +223,10 @@ func PartPromptText(part ContentPart) string {
 }
 
 type ToolCall struct {
-	ToolCallID    string
-	ToolName      string
-	ArgumentsJSON map[string]any
+	ToolCallID         string
+	ToolName           string
+	ArgumentsJSON      map[string]any
+	DisplayDescription string
 }
 
 func (c ToolCall) ToDataJSON() map[string]any {
@@ -233,11 +234,15 @@ func (c ToolCall) ToDataJSON() map[string]any {
 	if toolName == "" {
 		toolName = c.ToolName
 	}
-	return map[string]any{
+	payload := map[string]any{
 		"tool_call_id": c.ToolCallID,
 		"tool_name":    toolName,
 		"arguments":    mapOrEmpty(c.ArgumentsJSON),
 	}
+	if c.DisplayDescription != "" {
+		payload["display_description"] = c.DisplayDescription
+	}
+	return payload
 }
 
 type Message struct {
@@ -649,13 +654,14 @@ func (c StreamLlmResponseChunk) ToDataJSON() map[string]any {
 }
 
 type StreamToolResult struct {
-	ToolCallID   string
-	ToolName     string
-	ResultJSON   map[string]any
-	ContentParts []ContentPart // 多模态附件（图片等），由 agent loop 注入 tool result message
-	Error        *GatewayError
-	Usage        *Usage
-	Cost         *Cost
+	ToolCallID         string
+	ToolName           string
+	DisplayDescription string
+	ResultJSON         map[string]any
+	ContentParts       []ContentPart // 多模态附件（图片等），由 agent loop 注入 tool result message
+	Error              *GatewayError
+	Usage              *Usage
+	Cost               *Cost
 }
 
 func (r StreamToolResult) ToDataJSON() map[string]any {
@@ -666,6 +672,9 @@ func (r StreamToolResult) ToDataJSON() map[string]any {
 	payload := map[string]any{
 		"tool_call_id": r.ToolCallID,
 		"tool_name":    toolName,
+	}
+	if r.DisplayDescription != "" {
+		payload["display_description"] = r.DisplayDescription
 	}
 	if r.ResultJSON != nil {
 		payload["result"] = r.ResultJSON
@@ -1112,10 +1121,12 @@ func ToolCallFromJSONMap(raw map[string]any) (ToolCall, error) {
 	if args == nil {
 		args, _ = raw["arguments_json"].(map[string]any)
 	}
+	displayDesc := strings.TrimSpace(stringValue(raw["display_description"]))
 	return ToolCall{
-		ToolCallID:    callID,
-		ToolName:      toolName,
-		ArgumentsJSON: mapOrEmpty(args),
+		ToolCallID:         callID,
+		ToolName:           toolName,
+		ArgumentsJSON:      mapOrEmpty(args),
+		DisplayDescription: displayDesc,
 	}, nil
 }
 

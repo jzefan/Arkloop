@@ -33,6 +33,12 @@ func CanonicalToolCall(call ToolCall) ToolCall {
 	if call.ArgumentsJSON == nil {
 		call.ArgumentsJSON = map[string]any{}
 	}
+	if raw, ok := call.ArgumentsJSON["display_description"]; ok {
+		if s, ok := raw.(string); ok && strings.TrimSpace(s) != "" {
+			call.DisplayDescription = strings.TrimSpace(s)
+		}
+		delete(call.ArgumentsJSON, "display_description")
+	}
 	return call
 }
 

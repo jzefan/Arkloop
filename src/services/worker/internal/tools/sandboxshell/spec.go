@@ -82,8 +82,12 @@ var ExecCommandLlmSpec = llm.ToolSpec{
 				"description":          "environment variable overrides for the command; values may be strings or null to unset",
 				"additionalProperties": map[string]any{"type": []string{"string", "null"}},
 			},
+			"display_description": map[string]any{
+				"type":        "string",
+				"description": `Short human-readable label for this action (e.g., "Install dependencies", "Run tests"), shown in the UI timeline. Keep under 60 characters.`,
+			},
 		},
-		"required":             []string{"command"},
+		"required":             []string{"command", "display_description"},
 		"additionalProperties": false,
 	},
 }

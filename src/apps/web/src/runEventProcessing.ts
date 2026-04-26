@@ -414,11 +414,18 @@ export function applyCodeExecutionToolCall(
   const code = typeof args?.code === 'string' ? args.code
     : typeof args?.command === 'string' ? args.command
     : undefined
+  const displayDescriptionRaw = event.data && typeof event.data === 'object'
+    ? (event.data as { display_description?: unknown }).display_description
+    : undefined
+  const displayDescription = typeof displayDescriptionRaw === 'string' && displayDescriptionRaw.trim() !== ''
+    ? displayDescriptionRaw.trim()
+    : undefined
   const appended: CodeExecutionRef = {
     id: pickToolCallId(event),
     language,
     mode: toolName === 'exec_command' ? pickExecCommandMode(args) : undefined,
     code,
+    displayDescription,
     status: 'running',
     seq: event.seq,
   }
@@ -1539,19 +1546,25 @@ export function applyFileOpToolCall(
   const args = event.data && typeof event.data === 'object'
     ? (event.data as { arguments?: unknown }).arguments as Record<string, unknown> | undefined ?? {}
     : {}
+  const eventDisplayDescription = event.data && typeof event.data === 'object'
+    ? (event.data as { display_description?: unknown }).display_description
+    : undefined
+  const overrideLabel = typeof eventDisplayDescription === 'string' && eventDisplayDescription.trim() !== ''
+    ? eventDisplayDescription.trim()
+    : undefined
   const fallbackLabel = fileOpLabel(toolName, args)
   const presentation = presentationForTool(toolName, args, fallbackLabel)
   const appended: FileOpRef = {
     id: pickToolCallId(event),
     toolName,
-    label: presentation.description,
+    label: overrideLabel ?? presentation.description,
     status: 'running',
     seq: event.seq,
     filePath: pickReadFilePath(args) || (typeof args.file_path === 'string' ? args.file_path : undefined),
     pattern: typeof args.pattern === 'string' ? args.pattern : typeof args.query === 'string' ? args.query : undefined,
     operation: typeof args.operation === 'string' ? args.operation : undefined,
     displayKind: presentation.kind,
-    displayDescription: presentation.description,
+    displayDescription: overrideLabel ?? presentation.description,
     displaySubject: presentation.subject,
     displayDetail: presentation.detail,
   }

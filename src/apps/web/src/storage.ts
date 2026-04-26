@@ -707,6 +707,7 @@ export type CodeExecutionRef = {
   language: 'python' | 'shell'
   mode?: 'buffered' | 'follow' | 'stdin' | 'pty'
   code?: string
+  displayDescription?: string
   output?: string
   emptyLabel?: string
   exitCode?: number

@@ -61,8 +61,12 @@ var PythonExecuteLlmSpec = llm.ToolSpec{
 		"properties": map[string]any{
 			"code":       map[string]any{"type": "string"},
 			"timeout_ms": map[string]any{"type": "integer", "minimum": 1000, "maximum": 300000},
+			"display_description": map[string]any{
+				"type":        "string",
+				"description": "Short human-readable label for this action, shown in the UI timeline. Keep under 60 characters.",
+			},
 		},
-		"required":             []string{"code"},
+		"required":             []string{"code", "display_description"},
 		"additionalProperties": false,
 	},
 }
@@ -107,8 +111,12 @@ var ExecCommandLlmSpec = llm.ToolSpec{
 				"description":         "environment variable overrides for the command; values may be strings or null to unset",
 				"additionalProperties": map[string]any{"type": []string{"string", "null"}},
 			},
+			"display_description": map[string]any{
+				"type":        "string",
+				"description": `Short human-readable label for this action (e.g., "Install dependencies", "Run tests"), shown in the UI timeline. Keep under 60 characters.`,
+			},
 		},
-		"required":             []string{"command"},
+		"required":             []string{"command", "display_description"},
 		"additionalProperties": false,
 	},
 }
@@ -190,8 +198,12 @@ var BrowserLlmSpec = llm.ToolSpec{
 				"maximum":     30000,
 				"description": "time to wait for the page to settle before the backend gives up; increase this for navigation, snapshot after navigation, and render-heavy interactions",
 			},
+			"display_description": map[string]any{
+				"type":        "string",
+				"description": "Short human-readable label for this action, shown in the UI timeline. Keep under 60 characters.",
+			},
 		},
-		"required":             []string{"command"},
+		"required":             []string{"command", "display_description"},
 		"additionalProperties": false,
 	},
 }

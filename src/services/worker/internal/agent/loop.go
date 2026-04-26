@@ -461,7 +461,7 @@ func (l *Loop) Run(
 				}
 
 				resolvedID := call.ToolCallID
-				toolResult := toolResultFromExecution(resolvedID, call.ToolName, result)
+				toolResult := toolResultFromExecution(resolvedID, call.ToolName, call.DisplayDescription, result)
 
 				if call.ToolName == "web_search" {
 					webSourceCount = injectWebSourceIDs(toolResult.ResultJSON, webSourceCount)
@@ -2881,6 +2881,9 @@ func toolResultMessage(result llm.StreamToolResult) llm.Message {
 		"tool_call_id": result.ToolCallID,
 		"tool_name":    result.ToolName,
 	}
+	if result.DisplayDescription != "" {
+		envelope["display_description"] = result.DisplayDescription
+	}
 	if result.ResultJSON != nil {
 		envelope["result"] = result.ResultJSON
 	}
@@ -3135,7 +3138,7 @@ func prepareToolCallStart(
 	if dispatcher == nil {
 		return call, emitter.Emit("tool.call", call.ToDataJSON(), stringPtr(call.ToolName), nil)
 	}
-	ev := dispatcher.ToolCallEvent(emitter, call.ToolName, call.ArgumentsJSON, call.ToolCallID)
+	ev := dispatcher.ToolCallEvent(emitter, call.ToolName, call.ArgumentsJSON, call.ToolCallID, call.DisplayDescription)
 	if raw, ok := ev.DataJSON["tool_call_id"].(string); ok && strings.TrimSpace(raw) != "" {
 		call.ToolCallID = strings.TrimSpace(raw)
 	}
@@ -3145,7 +3148,7 @@ func prepareToolCallStart(
 	return call, ev
 }
 
-func toolResultFromExecution(toolCallID string, toolName string, result tools.ExecutionResult) llm.StreamToolResult {
+func toolResultFromExecution(toolCallID string, toolName string, displayDescription string, result tools.ExecutionResult) llm.StreamToolResult {
 	toolName = llm.CanonicalToolName(toolName)
 	var errObj *llm.GatewayError
 	if result.Error != nil {
@@ -3174,11 +3177,12 @@ func toolResultFromExecution(toolCallID string, toolName string, result tools.Ex
 		})
 	}
 	return llm.StreamToolResult{
-		ToolCallID:   toolCallID,
-		ToolName:     toolName,
-		ResultJSON:   resultJSON,
-		ContentParts: contentParts,
-		Error:        errObj,
+		ToolCallID:         toolCallID,
+		ToolName:           toolName,
+		DisplayDescription: displayDescription,
+		ResultJSON:         resultJSON,
+		ContentParts:       contentParts,
+		Error:              errObj,
 	}
 }
 
