@@ -10,8 +10,13 @@ func TestBrowserLlmSpecHidesSessionRef(t *testing.T) {
 	if _, exists := schema["session_ref"]; exists {
 		t.Fatalf("browser llm spec should not expose session_ref: %#v", schema)
 	}
-	if len(schema) != 2 {
-		t.Fatalf("browser llm spec should only expose command and yield_time_ms, got %#v", schema)
+	for _, key := range []string{"command", "yield_time_ms", "display_description"} {
+		if _, exists := schema[key]; !exists {
+			t.Fatalf("browser llm spec missing %q field: %#v", key, schema)
+		}
+	}
+	if len(schema) != 3 {
+		t.Fatalf("browser llm spec should only expose command, yield_time_ms, and display_description, got %#v", schema)
 	}
 }
 
