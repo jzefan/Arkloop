@@ -216,6 +216,7 @@ func (e *DispatchingExecutor) ToolCallEvent(
 	toolName string,
 	args map[string]any,
 	toolCallID string,
+	displayDescription string,
 ) events.RunEvent {
 	identity := e.resolveToolIdentity(toolName)
 	if e.policyEnforcer == nil {
@@ -227,9 +228,12 @@ func (e *DispatchingExecutor) ToolCallEvent(
 		if identity.ResolvedName != "" {
 			payload["resolved_tool_name"] = identity.ResolvedName
 		}
+		if displayDescription != "" {
+			payload["display_description"] = displayDescription
+		}
 		return emitter.Emit("tool.call", payload, stringPtr(identity.LogicalName), nil)
 	}
-	return e.policyEnforcer.BuildToolCallEvent(emitter, identity.LogicalName, args, toolCallID, identity.ResolvedName)
+	return e.policyEnforcer.BuildToolCallEvent(emitter, identity.LogicalName, args, toolCallID, displayDescription, identity.ResolvedName)
 }
 
 func (e *DispatchingExecutor) Bind(toolName string, executor Executor) error {

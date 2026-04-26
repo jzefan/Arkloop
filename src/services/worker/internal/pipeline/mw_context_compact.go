@@ -629,6 +629,9 @@ func serializeMessagesForCompact(msgs []llm.Message) string {
 				calls := make([]string, 0, len(m.ToolCalls))
 				for _, tc := range m.ToolCalls {
 					call := tc.ToolName
+					if tc.DisplayDescription != "" {
+						call += " [" + tc.DisplayDescription + "]"
+					}
 					if len(tc.ArgumentsJSON) > 0 {
 						if args, err := json.Marshal(tc.ArgumentsJSON); err == nil {
 							call += "(" + string(args) + ")"

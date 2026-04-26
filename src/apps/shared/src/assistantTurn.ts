@@ -16,6 +16,7 @@ export type TurnToolCallRef = {
   toolCallId: string
   toolName: string
   arguments: Record<string, unknown>
+  displayDescription?: string
   result?: unknown
   errorClass?: string
 }
@@ -96,6 +97,12 @@ function extractArguments(data: unknown): Record<string, unknown> {
     return { ...(raw as Record<string, unknown>) }
   }
   return {}
+}
+
+function pickDisplayDescription(data: unknown): string | undefined {
+  if (!data || typeof data !== 'object') return undefined
+  const raw = (data as { display_description?: unknown }).display_description
+  return typeof raw === 'string' && raw.trim() !== '' ? raw.trim() : undefined
 }
 
 function extractResultPayload(event: AssistantTurnEvent): unknown {
@@ -403,6 +410,7 @@ export function foldAssistantTurnEvent(state: AssistantTurnFoldState, event: Ass
         toolCallId: pickToolCallId(event),
         toolName,
         arguments: extractArguments(event.data),
+        displayDescription: pickDisplayDescription(event.data),
       },
       seq: event.seq,
     })

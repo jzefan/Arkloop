@@ -294,7 +294,7 @@ function renderItem(
   const codeExec = pool.codeExecutions.get(toolCallId)
   if (codeExec) {
     return codeExec.language === 'shell'
-      ? <ExecutionCard variant="shell" code={codeExec.code} output={codeExec.output} status={codeExec.status} errorMessage={codeExec.errorMessage} smooth={live && codeExec.status === 'running'} />
+      ? <ExecutionCard variant="shell" displayDescription={codeExec.displayDescription} code={codeExec.code} output={codeExec.output} status={codeExec.status} errorMessage={codeExec.errorMessage} smooth={live && codeExec.status === 'running'} />
       : <CodeExecutionCard language={codeExec.language} code={codeExec.code} output={codeExec.output} errorMessage={codeExec.errorMessage} status={codeExec.status} onOpen={onOpenCodeExecution ? () => onOpenCodeExecution(codeExec) : undefined} isActive={activeCodeExecutionId === codeExec.id} />
   }
 

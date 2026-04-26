@@ -11,6 +11,7 @@ type Props = {
   variant: 'shell' | 'fileop'
   toolName?: string
   label?: string
+  displayDescription?: string
   code?: string
   output?: string
   emptyLabel?: string
@@ -97,7 +98,7 @@ function StatusBadge({ status }: { status: Status }) {
   )
 }
 
-export function ExecutionCard({ variant, toolName, label, code, output, emptyLabel, errorMessage, status, smooth = false }: Props) {
+export function ExecutionCard({ variant, toolName, label, displayDescription, code, output, emptyLabel, errorMessage, status, smooth = false }: Props) {
   const { t } = useLocale()
   const [expanded, setExpanded] = useState(false)
   const [cmdHovered, setCmdHovered] = useState(false)
@@ -105,7 +106,9 @@ export function ExecutionCard({ variant, toolName, label, code, output, emptyLab
   const outputRef = useRef<HTMLDivElement>(null)
   const [scrollEdge, setScrollEdge] = useState<ScrollEdge>('none')
 
-  const preview = variant === 'shell' ? (extractCommandPreview(code) || t.shellRan) : (label || '')
+  const preview = variant === 'shell'
+    ? (displayDescription || extractCommandPreview(code) || t.shellRan)
+    : (label || '')
   const displayOutput = output?.trim()
     ? output
     : errorMessage?.trim()

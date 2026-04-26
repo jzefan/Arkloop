@@ -41,6 +41,14 @@ func NewRuntimeContextMiddleware() RunMiddleware {
 			Stability:     PromptStabilitySessionPrefix,
 			CacheEligible: true,
 		})
+		rc.UpsertPromptSegment(PromptSegment{
+			Name:          "runtime.tool_usage_guidance",
+			Target:        PromptTargetSystemPrefix,
+			Role:          "system",
+			Text:          buildToolUsageGuidanceBlock(),
+			Stability:     PromptStabilitySessionPrefix,
+			CacheEligible: true,
+		})
 		return next(ctx, rc)
 	}
 }
@@ -51,6 +59,17 @@ Your text outputs are delivered to the chat platform in real-time as separate me
 When you call tools mid-reply, text before and after the tool call becomes distinct messages visible to the user.
 Avoid repeating content that was already sent. If you have nothing new to add after a tool call, use end_reply.
 </channel_output_behavior>`
+}
+
+func buildToolUsageGuidanceBlock() string {
+	return `<tool_usage_guidance>
+Prefer dedicated tools over exec_command for file operations:
+- Use Read instead of exec_command with cat, head, or tail
+- Use Edit or Write instead of exec_command with sed, awk, or echo redirects
+- Use Glob instead of exec_command with find, fd, or ls
+- Use Grep instead of exec_command with grep, rg, or ag
+Reserve exec_command for operations that genuinely require a shell: running build systems, package managers, compilers, or interactive processes.
+</tool_usage_guidance>`
 }
 
 func buildRuntimeContextBlock(ctx context.Context, rc *RunContext) string {

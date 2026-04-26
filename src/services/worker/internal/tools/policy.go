@@ -42,7 +42,7 @@ func (p *PolicyEnforcer) RequestToolCall(
 	resolvedToolNames ...string,
 ) ToolCallDecision {
 	resolvedToolName := resolvePolicyToolName(logicalToolName, resolvedToolNames...)
-	callEvent, resolvedID, argsHash, hasSpec := p.buildToolCallEvent(emitter, logicalToolName, resolvedToolName, argsJSON, toolCallID)
+	callEvent, resolvedID, argsHash, hasSpec := p.buildToolCallEvent(emitter, logicalToolName, resolvedToolName, argsJSON, toolCallID, "")
 	allowlistName := strings.TrimSpace(logicalToolName)
 	if allowlistName == "" {
 		allowlistName = strings.TrimSpace(resolvedToolName)
@@ -136,10 +136,11 @@ func (p *PolicyEnforcer) BuildToolCallEvent(
 	logicalToolName string,
 	argsJSON map[string]any,
 	toolCallID string,
+	displayDescription string,
 	resolvedToolNames ...string,
 ) events.RunEvent {
 	resolvedToolName := resolvePolicyToolName(logicalToolName, resolvedToolNames...)
-	callEvent, _, _, _ := p.buildToolCallEvent(emitter, logicalToolName, resolvedToolName, argsJSON, toolCallID)
+	callEvent, _, _, _ := p.buildToolCallEvent(emitter, logicalToolName, resolvedToolName, argsJSON, toolCallID, displayDescription)
 	return callEvent
 }
 
@@ -149,6 +150,7 @@ func (p *PolicyEnforcer) buildToolCallEvent(
 	resolvedToolName string,
 	argsJSON map[string]any,
 	toolCallID string,
+	displayDescription string,
 ) (events.RunEvent, string, string, bool) {
 	resolvedID := resolveToolCallID(toolCallID)
 
@@ -168,6 +170,9 @@ func (p *PolicyEnforcer) buildToolCallEvent(
 	}
 	if argsHash != "" {
 		callPayload["args_hash"] = argsHash
+	}
+	if displayDescription != "" {
+		callPayload["display_description"] = displayDescription
 	}
 	if hasSpec {
 		for key, value := range toolCallSpecPayload(spec) {
