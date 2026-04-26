@@ -103,6 +103,7 @@ export function ExecutionCard({ variant, toolName, label, displayDescription, co
   const [expanded, setExpanded] = useState(false)
   const [cmdHovered, setCmdHovered] = useState(false)
   const [outHovered, setOutHovered] = useState(false)
+  const [triggerHovered, setTriggerHovered] = useState(false)
   const outputRef = useRef<HTMLDivElement>(null)
   const [scrollEdge, setScrollEdge] = useState<ScrollEdge>('none')
 
@@ -168,12 +169,14 @@ export function ExecutionCard({ variant, toolName, label, displayDescription, co
         tabIndex={0}
         onClick={() => { if (expandable) setExpanded((p) => !p) }}
         onKeyDown={(e) => { if ((e.key === 'Enter' || e.key === ' ') && expandable) { e.preventDefault(); setExpanded((p) => !p) } }}
+        onMouseEnter={() => setTriggerHovered(true)}
+        onMouseLeave={() => setTriggerHovered(false)}
         className="shell-exec-trigger"
         style={{
           display: 'flex',
           alignItems: 'center',
           gap: '5px',
-          padding: '4px 0',
+          padding: 0,
           border: 'none',
           cursor: expandable ? 'pointer' : 'default',
           width: 'fit-content',
@@ -189,7 +192,7 @@ export function ExecutionCard({ variant, toolName, label, displayDescription, co
           overflow: 'hidden',
           textOverflow: 'ellipsis',
           lineHeight: '18px',
-          color: 'var(--c-cop-row-fg, var(--c-text-secondary))',
+          color: triggerHovered ? 'var(--c-cop-row-hover-fg, var(--c-text-primary))' : 'var(--c-cop-row-fg, var(--c-text-secondary))',
           fontWeight: 'var(--c-cop-row-weight, 400)',
           opacity: 1,
           transition: 'color 150ms ease',
