@@ -305,7 +305,7 @@ export function UserMessage({ message, onEdit, accessToken, animateEnter, onEnte
               className={[animateEnter ? 'user-prompt-bubble-enter' : '', 'user-prompt-bubble'].filter(Boolean).join(' ')}
               style={{
                 '--user-prompt-enter-scale': String(enterScale),
-                borderRadius: '12px',
+                borderRadius: isWorkMode ? '12px 12px 12px 4px' : '12px',
                 padding: '10px 16px',
                 fontSize: '16.5px',
                 fontWeight: 300,
@@ -388,7 +388,7 @@ export function UserMessage({ message, onEdit, accessToken, animateEnter, onEnte
             <Pencil size={16} />
           </ActionIconButton>
           <div style={{ marginLeft: '12px', marginBottom: '0px' }}>
-            <MessageDate createdAt={message.created_at} />
+            <MessageDate createdAt={message.created_at} isWorkMode={isWorkMode} />
           </div>
         </div>
       </div>
