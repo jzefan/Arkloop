@@ -115,6 +115,8 @@ button:not(:disabled) {
   --c-code-panel-output-bg: rgba(255, 255, 255, 0.04);
   --c-artifact-card-bg: rgba(255, 255, 255, 0.04);
   --c-attachment-bg: #30302E;
+  --c-code-preview-bg: #313640;
+  --c-thought-bg: #262624;
   --c-attachment-border: rgba(255, 255, 255, 0.11);
     --c-attachment-border-hover: rgba(255, 255, 255, 0.38);
   --c-attachment-close-bg: #303030;
@@ -252,6 +254,8 @@ button:not(:disabled) {
     --c-code-panel-output-bg: rgba(0, 0, 0, 0.04);
     --c-artifact-card-bg: rgba(0, 0, 0, 0.02);
     --c-attachment-bg: #FFFFFF;
+    --c-code-preview-bg: #FFFFFF;
+    --c-thought-bg: #FFFFFF;
     --c-attachment-border: rgba(0, 0, 0, 0.08);
     --c-attachment-border-hover: rgba(0, 0, 0, 0.32);
     --c-attachment-close-bg: #E5E5E3;
@@ -370,6 +374,8 @@ button:not(:disabled) {
   --c-code-panel-output-bg: rgba(0, 0, 0, 0.04);
   --c-artifact-card-bg: rgba(0, 0, 0, 0.02);
   --c-attachment-bg: #FFFFFF;
+  --c-code-preview-bg: #FFFFFF;
+  --c-thought-bg: #FFFFFF;
   --c-attachment-border: rgba(0, 0, 0, 0.08);
   --c-attachment-border-hover: rgba(0, 0, 0, 0.32);
   --c-attachment-close-bg: #E5E5E3;
@@ -905,7 +911,7 @@ button:not(:disabled) {
 }
 .cop-timeline-root .cop-thinking-card-outer {
   border-radius: 8px;
-  background: var(--c-attachment-bg);
+  background: var(--c-thought-bg);
   overflow: hidden;
   margin-top: 3px;
 }

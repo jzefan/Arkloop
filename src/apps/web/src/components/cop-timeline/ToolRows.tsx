@@ -1,6 +1,7 @@
-import { createContext, useCallback, useContext, useLayoutEffect, useRef, useState } from 'react'
+import { createContext, useCallback, useContext, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion'
 import { ChevronDown, ChevronRight } from 'lucide-react'
+import hljs from 'highlight.js/lib/common'
 import type { FileOpRef } from '../../storage'
 import { CopThoughtSummaryRow } from './ThinkingBlock'
 import type { ExploreGroupRef } from '../../toolPresentation'
@@ -47,7 +48,36 @@ function basename(path: string): string {
   return path.replace(/\\/g, '/').split('/').filter(Boolean).pop() ?? path
 }
 
-function previewLines(text: string | undefined, limit = 18): string[] {
+const EXT_TO_LANG: Record<string, string> = {
+  ts: 'typescript', tsx: 'typescript', mts: 'typescript', cts: 'typescript',
+  js: 'javascript', jsx: 'javascript', mjs: 'javascript', cjs: 'javascript',
+  go: 'go', py: 'python', rb: 'ruby', rs: 'rust', java: 'java', kt: 'kotlin',
+  c: 'c', h: 'c', cc: 'cpp', cpp: 'cpp', hpp: 'cpp', cs: 'csharp', swift: 'swift',
+  php: 'php', lua: 'lua', sh: 'bash', bash: 'bash', zsh: 'bash',
+  json: 'json', yaml: 'yaml', yml: 'yaml', toml: 'ini', ini: 'ini',
+  css: 'css', scss: 'scss', html: 'xml', xml: 'xml', svg: 'xml',
+  md: 'markdown', sql: 'sql', dockerfile: 'dockerfile',
+}
+
+function languageFromPath(path: string): string | undefined {
+  const name = basename(path).toLowerCase()
+  if (name === 'dockerfile') return 'dockerfile'
+  const ext = name.includes('.') ? name.split('.').pop() : ''
+  return ext ? EXT_TO_LANG[ext] : undefined
+}
+
+function highlightCode(code: string, lang: string | undefined): string {
+  try {
+    if (lang && hljs.getLanguage(lang)) {
+      return hljs.highlight(code, { language: lang, ignoreIllegals: true }).value
+    }
+    return hljs.highlightAuto(code).value
+  } catch {
+    return ''
+  }
+}
+
+function previewLines(text: string | undefined, limit = 30): string[] {
   if (!text?.trim()) return []
   return text.replace(/\r\n/g, '\n').split('\n').slice(0, limit)
 }
@@ -56,19 +86,30 @@ function statusColor(_status: FileOpRef['status']): string {
   return 'var(--c-cop-row-fg)'
 }
 
-function ToolTitle({ title, live, status }: { title: string; live?: boolean; status?: FileOpRef['status'] }) {
+function ToolTitle({ title, live, status: _status, highlightedSuffix }: { title: string; live?: boolean; status?: FileOpRef['status']; highlightedSuffix?: string }) {
+  const head = highlightedSuffix && title.endsWith(highlightedSuffix)
+    ? title.slice(0, title.length - highlightedSuffix.length)
+    : title
+  const tail = highlightedSuffix && title.endsWith(highlightedSuffix) ? highlightedSuffix : ''
   return (
     <span
       style={{
         ...TIMELINE_ROW_TITLE_STYLE,
-        color: status ? statusColor(status) : TIMELINE_ROW_TITLE_STYLE.color,
+        color: 'inherit',
         minWidth: 0,
         overflow: 'hidden',
         textOverflow: 'ellipsis',
         whiteSpace: 'nowrap',
       }}
     >
-      <TypewriterText text={title} live={live} className={live ? 'thinking-shimmer-dim' : undefined} />
+      {tail ? (
+        <>
+          <TypewriterText text={head} live={live} className={live ? 'thinking-shimmer-dim' : undefined} />
+          <span style={{ color: 'var(--c-text-primary)' }}>{tail}</span>
+        </>
+      ) : (
+        <TypewriterText text={title} live={live} className={live ? 'thinking-shimmer-dim' : undefined} />
+      )}
     </span>
   )
 }
@@ -131,6 +172,14 @@ export function FileOpToolRow({ op, live }: { op: FileOpRef; live?: boolean }) {
   const cardTitle = op.pattern || op.displaySubject || (filePath ? basename(filePath) : title)
   const cardSubtitle = filePath && cardTitle !== filePath ? filePath : op.displayDetail || ''
   const expandable = !!(filePath || lines.length > 0 || op.pattern || op.operation)
+  const isReadFile = op.toolName === 'read_file' || op.toolName === 'read' || op.toolName.startsWith('read.')
+  const fileNameForTitle = isReadFile && filePath ? basename(filePath) : ''
+  const codeBody = useMemo(() => {
+    if (!isReadFile || lines.length === 0 || op.status === 'running') return null
+    const text = lines.map((line, index) => `${String(index + 1).padStart(3, ' ')}  ${line}`).join('\n')
+    const html = highlightCode(text, languageFromPath(filePath))
+    return html || null
+  }, [isReadFile, lines, op.status, filePath])
 
   return (
     <div style={{ maxWidth: 'min(100%, 760px)', minWidth: 0 }}>
@@ -159,7 +208,7 @@ export function FileOpToolRow({ op, live }: { op: FileOpRef; live?: boolean }) {
           transition: 'color 0.15s ease',
         }}
       >
-        <ToolTitle title={title} live={live && op.status === 'running'} status={op.status} />
+        <ToolTitle title={title} live={live && op.status === 'running'} status={op.status} highlightedSuffix={fileNameForTitle} />
         {op.displaySubject && !title.includes(op.displaySubject) && (
           <span style={{ color: 'var(--c-text-muted)', fontSize: 12, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{op.displaySubject}</span>
         )}
@@ -175,7 +224,7 @@ export function FileOpToolRow({ op, live }: { op: FileOpRef; live?: boolean }) {
             transition={{ duration: 0.22, ease: 'easeOut' }}
             style={{ overflow: 'hidden' }}
           >
-            <div style={{ marginTop: 4, borderRadius: 8, background: 'var(--c-attachment-bg)', overflow: 'hidden', border: '0.5px solid var(--c-border-subtle)' }}>
+            <div style={{ marginTop: 4, borderRadius: 8, background: 'var(--c-code-preview-bg)', overflow: 'hidden', border: '0.5px solid var(--c-border-subtle)' }}>
               {(cardTitle || cardSubtitle) && (
                 <div style={{ padding: '8px 10px', fontFamily: MONO, fontSize: 12, color: 'var(--c-text-secondary)', background: 'var(--c-bg-menu)', borderBottom: '0.5px solid var(--c-border-subtle)', display: 'flex', alignItems: 'baseline', gap: 8, minWidth: 0 }}>
                   <span style={{ fontWeight: 600, color: 'var(--c-text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{cardTitle}</span>
@@ -183,9 +232,18 @@ export function FileOpToolRow({ op, live }: { op: FileOpRef; live?: boolean }) {
                 </div>
               )}
               {lines.length > 0 ? (
-                <pre style={{ margin: 0, padding: '9px 10px', maxHeight: 280, overflow: 'auto', fontFamily: MONO, fontSize: 12, lineHeight: '18px', color: op.status === 'failed' ? 'var(--c-status-error-text, #ef4444)' : 'var(--c-text-secondary)', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
-                  {lines.map((line, index) => `${String(index + 1).padStart(3, ' ')}  ${line}`).join('\n')}
-                </pre>
+                codeBody ? (
+                  <pre
+                    className="hljs"
+                    style={{ margin: 0, padding: '9px 10px', maxHeight: 280, overflow: 'auto', fontFamily: MONO, fontSize: 12, lineHeight: '18px', background: 'var(--c-code-preview-bg)', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}
+                  >
+                    <code className={`language-${languageFromPath(filePath) ?? 'plaintext'}`} dangerouslySetInnerHTML={{ __html: codeBody }} />
+                  </pre>
+                ) : (
+                  <pre style={{ margin: 0, padding: '9px 10px', maxHeight: 280, overflow: 'auto', fontFamily: MONO, fontSize: 12, lineHeight: '18px', color: op.status === 'failed' ? 'var(--c-status-error-text, #ef4444)' : 'var(--c-text-secondary)', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+                    {lines.map((line, index) => `${String(index + 1).padStart(3, ' ')}  ${line}`).join('\n')}
+                  </pre>
+                )
               ) : (
                 <div style={{ padding: '8px 10px', fontSize: 12, color: 'var(--c-text-muted)' }}>
                   {op.pattern || op.operation || basename(filePath) || op.toolName}
