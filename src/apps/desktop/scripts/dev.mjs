@@ -125,7 +125,7 @@ async function main() {
   console.log('starting electron...')
 
   const electronPath = resolveElectronPath()
-  const electron = spawn(electronPath, ['.'], {
+  const electron = spawn(electronPath, ['.', '--remote-debugging-port=9222'], {
     cwd: root,
     stdio: 'inherit',
     shell: shouldUseShell(electronPath),
