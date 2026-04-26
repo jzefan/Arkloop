@@ -712,6 +712,23 @@ func (f StreamProviderFallback) ToDataJSON() map[string]any {
 	return payload
 }
 
+type StreamQuirkLearned struct {
+	LlmCallID    string
+	ProviderKind string
+	QuirkID      string
+}
+
+func (q StreamQuirkLearned) ToDataJSON() map[string]any {
+	payload := map[string]any{
+		"provider_kind": q.ProviderKind,
+		"quirk_id":      q.QuirkID,
+	}
+	if q.LlmCallID != "" {
+		payload["llm_call_id"] = q.LlmCallID
+	}
+	return payload
+}
+
 type StreamRunCompleted struct {
 	LlmCallID        string
 	Usage            *Usage

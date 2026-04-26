@@ -52,6 +52,31 @@ function extractCommandPreview(code: string | undefined): string {
   return first.length > 72 ? first.slice(0, 72) + '...' : first
 }
 
+// 把多段命令归一到首 token，按 &&/||/;/| 切分，逗号连接
+function abbreviateCommandHeads(code: string | undefined): string {
+  if (!code) return ''
+  const line = code.split('\n')[0]
+  if (!line) return ''
+  const segments = line.split(/&&|\|\||;|\|/)
+  const heads: string[] = []
+  const seen = new Set<string>()
+  for (const seg of segments) {
+    const trimmed = seg.trim()
+    if (!trimmed) continue
+    let token = trimmed.split(/\s+/)[0] ?? ''
+    // 去掉 env 赋值前缀如 FOO=bar
+    while (token && /^[A-Za-z_][A-Za-z0-9_]*=/.test(token)) {
+      const rest = trimmed.slice(trimmed.indexOf(token) + token.length).trim()
+      token = rest.split(/\s+/)[0] ?? ''
+    }
+    if (!token) continue
+    if (seen.has(token)) continue
+    seen.add(token)
+    heads.push(token)
+  }
+  return heads.join(', ')
+}
+
 function CopyBtn({ onClick }: { onClick: () => void }) {
   return (
     <CopyIconButton
@@ -110,6 +135,10 @@ export function ExecutionCard({ variant, toolName, label, displayDescription, co
   const preview = variant === 'shell'
     ? (displayDescription || extractCommandPreview(code) || t.shellRan)
     : (label || '')
+  const commandHeads = variant === 'shell' ? abbreviateCommandHeads(code) : ''
+  const statusWord = variant === 'shell'
+    ? (status === 'running' ? t.shellRunning : t.shellRanShort)
+    : ''
   const displayOutput = output?.trim()
     ? output
     : errorMessage?.trim()
@@ -197,7 +226,20 @@ export function ExecutionCard({ variant, toolName, label, displayDescription, co
           opacity: 1,
           transition: 'color 150ms ease',
         }}>
-          {smooth ? previewTw : preview}
+          {variant === 'shell' && statusWord && (
+            <span
+              className={status === 'running' ? 'thinking-shimmer' : undefined}
+              style={{ marginRight: '6px', color: 'var(--c-text-secondary)' }}
+            >
+              {statusWord}
+            </span>
+          )}
+          <span>{smooth ? previewTw : preview}</span>
+          {variant === 'shell' && commandHeads && (
+            <span style={{ marginLeft: '6px', color: 'var(--c-text-muted)', opacity: 0.75 }}>
+              , {commandHeads}
+            </span>
+          )}
         </span>
         {expandable && (
           expanded

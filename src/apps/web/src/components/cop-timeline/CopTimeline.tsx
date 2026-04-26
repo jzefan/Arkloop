@@ -2,6 +2,8 @@ import { useState, useEffect, useRef } from 'react'
 import { motion, useReducedMotion } from 'framer-motion'
 import { ChevronRight } from 'lucide-react'
 import type { CodeExecution } from '../CodeExecutionCard'
+import { CodeExecutionCard } from '../CodeExecutionCard'
+import { ExecutionCard } from '../ExecutionCard'
 import type { SubAgentRef } from '../../storage'
 import { useLocale } from '../../contexts/LocaleContext'
 import type { CopSubSegment, ResolvedPool } from '../../copSubSegment'
@@ -103,6 +105,9 @@ export function CopTimeline({
 
   const shouldRender = hasSegments || hasThinkingOnly || !!thinkingHint
 
+  const nonExecSegments = segments.filter((s) => s.category !== 'exec')
+  const hasNonExecBody = nonExecSegments.length > 0 || hasThinkingOnly || !!thinkingHint || anyThinking
+
   const thoughtDurationLabel =
     aggregatedDurationSec > 0
       ? t.copTimelineThoughtForSeconds(aggregatedDurationSec)
@@ -125,7 +130,7 @@ export function CopTimeline({
     if (anyThinking && isComplete && !hasSegments) return thoughtDurationLabel
     if (pendingShowThinkingHeader) return `${thinkingHint}...`
     if (hasSegments) {
-      const aggregated = aggregateMainTitle(segments, !!live, isComplete)
+      const aggregated = aggregateMainTitle(nonExecSegments, !!live, isComplete)
       if (aggregated) return aggregated
     }
     if (anyThinking) return thoughtDurationLabel
@@ -154,6 +159,38 @@ export function CopTimeline({
 
   if (!shouldRender) return null
 
+  // exec items: 收集所有 exec segment 的 call items，保持原始 segment 顺序
+  const execItems: { segId: string; callItem: Extract<import('../../assistantTurnSegments').CopBlockItem, { kind: 'call' }>; segIndex: number }[] = []
+  segments.forEach((seg, si) => {
+    if (seg.category !== 'exec') return
+    for (const item of seg.items) {
+      if (item.kind === 'call') execItems.push({ segId: seg.id, callItem: item, segIndex: si })
+    }
+  })
+
+  const renderExecItems = () =>
+    execItems.map(({ callItem }) => {
+      const ce = pool.codeExecutions.get(callItem.call.toolCallId)
+      if (!ce) return null
+      return (
+        <div key={callItem.call.toolCallId} style={{ padding: '4px 0' }}>
+          {ce.language === 'shell'
+            ? <ExecutionCard variant="shell" displayDescription={ce.displayDescription} code={ce.code} output={ce.output} status={ce.status} errorMessage={ce.errorMessage} smooth={!!live && ce.status === 'running'} />
+            : <CodeExecutionCard language={ce.language} code={ce.code} output={ce.output} errorMessage={ce.errorMessage} status={ce.status} onOpen={onOpenCodeExecution ? () => onOpenCodeExecution(ce) : undefined} isActive={activeCodeExecutionId === ce.id} />
+          }
+        </div>
+      )
+    })
+
+  // exec-only: 没有非 exec 内容，直接平铺
+  if (!hasNonExecBody && execItems.length > 0) {
+    return (
+      <div className="cop-timeline-root" style={{ maxWidth: '663px' }}>
+        {renderExecItems()}
+      </div>
+    )
+  }
+
   const toggleBody = () => {
     setUserToggled(true)
     setCollapsed((v) => !v)
@@ -161,153 +198,159 @@ export function CopTimeline({
 
   return (
     <div className="cop-timeline-root" style={{ maxWidth: '663px' }}>
-      <button
-        type="button"
-        onMouseEnter={() => setHovered(true)}
-        onMouseLeave={() => setHovered(false)}
-        onClick={toggleBody}
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: '6px',
-          padding: '4px 0 2px',
-          background: 'none',
-          border: 'none',
-          cursor: 'pointer',
-          color: hovered ? 'var(--c-cop-row-hover-fg)' : 'var(--c-cop-row-fg)',
-          fontSize: '13px',
-          fontWeight: 400,
-          transition: 'color 0.15s ease',
-          maxWidth: '100%',
-          minWidth: 0,
-          alignSelf: 'stretch',
-        }}
-      >
-        <CopTimelineHeaderLabel
-          text={headerLabel}
-          phaseKey={headerPhaseKey}
-          shimmer={!!shimmer}
-          incremental={headerUsesIncrementalTypewriter}
-        />
-        {(isComplete || live) && bodyHasContent && (
-          <motion.div
-            animate={{ rotate: collapsed ? 0 : 90 }}
-            transition={{ duration: 0.2, ease: 'easeOut' }}
-            style={{ display: 'flex', flexShrink: 0 }}
+      {hasNonExecBody && (
+        <>
+          <button
+            type="button"
+            onMouseEnter={() => setHovered(true)}
+            onMouseLeave={() => setHovered(false)}
+            onClick={toggleBody}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px',
+              padding: '4px 0 2px',
+              background: 'none',
+              border: 'none',
+              cursor: 'pointer',
+              color: hovered ? 'var(--c-cop-row-hover-fg)' : 'var(--c-cop-row-fg)',
+              fontSize: '13px',
+              fontWeight: 400,
+              transition: 'color 0.15s ease',
+              maxWidth: '100%',
+              minWidth: 0,
+              alignSelf: 'stretch',
+            }}
           >
-            <ChevronRight size={13} />
-          </motion.div>
-        )}
-      </button>
-
-      <motion.div
-        initial={false}
-        animate={{ height: collapsed ? 0 : 'auto', opacity: collapsed ? 0 : 1 }}
-        transition={!reduceMotion ? { duration: 0.24, ease: [0.4, 0, 0.2, 1] } : { duration: 0 }}
-        style={{ overflow: collapsed ? 'hidden' : 'visible' }}
-      >
-        <div style={{ position: 'relative', paddingTop: '3px', paddingBottom: '3px', paddingLeft: (segments.length > 1 || hasThinkingOnly) ? '24px' : undefined }}>
-          {/* Thinking-only mode (no segments) */}
-          {hasThinkingOnly && thinkingOnly && (() => {
-            const showDone = isComplete && !thinkingOnly.live
-            const multiItems = showDone
-            return (
-              <>
-                <CopTimelineUnifiedRow
-                  isFirst={true}
-                  isLast={!showDone}
-                  multiItems={multiItems}
-                  dotColor={thinkingOnly.live && !isComplete ? 'var(--c-text-secondary)' : 'var(--c-border-mid)'}
-                  dotTop={COP_TIMELINE_DOT_TOP}
-                  paddingBottom={8}
-                  horizontalMotion={false}
-                >
-                  <div
-                    style={{
-                      paddingTop: Math.max(0, COP_TIMELINE_DOT_TOP + COP_TIMELINE_DOT_SIZE / 2 - COP_TIMELINE_THINKING_PLAIN_LINE_HEIGHT_PX / 2),
-                    }}
-                  >
-                    <AssistantThinkingMarkdown
-                      markdown={thinkingOnly.markdown}
-                      live={!!thinkingOnly.live && !isComplete}
-                      variant="timeline-plain"
-                    />
-                  </div>
-                </CopTimelineUnifiedRow>
-                {showDone && (
-                  <CopTimelineUnifiedRow
-                    isFirst={false}
-                    isLast={true}
-                    multiItems={multiItems}
-                    dotColor="var(--c-text-muted)"
-                    dotTop={COP_TIMELINE_DOT_TOP}
-                    paddingBottom={0}
-                    horizontalMotion={false}
-                  >
-                    <div
-                      style={{
-                        fontSize: '13px',
-                        color: 'var(--c-cop-row-fg)',
-                        lineHeight: '18px',
-                        paddingTop: '3px',
-                      }}
-                    >
-                      {t.copThinkingDone as string}
-                    </div>
-                  </CopTimelineUnifiedRow>
-                )}
-              </>
-            )
-          })()}
-
-          {/* Segments */}
-          {segments.length === 1 ? (
-            <CopTimelineSegment
-              segment={segments[0]!}
-              pool={pool}
-              isLive={!!live && segments[0]!.status === 'open'}
-              defaultExpanded={true}
-              hideHeader
-              onOpenCodeExecution={onOpenCodeExecution}
-              activeCodeExecutionId={activeCodeExecutionId}
-              onOpenSubAgent={onOpenSubAgent}
-              accessToken={accessToken}
-              baseUrl={baseUrl}
+            <CopTimelineHeaderLabel
+              text={headerLabel}
+              phaseKey={headerPhaseKey}
+              shimmer={!!shimmer}
+              incremental={headerUsesIncrementalTypewriter}
             />
-          ) : (
-            segments.map((seg, index) => {
-            const isLast = index === segments.length - 1
-            const segDotColor = seg.status === 'open'
-              ? 'var(--c-text-secondary)'
-              : 'var(--c-text-muted)'
-            return (
-              <CopTimelineUnifiedRow
-                key={seg.id}
-                isFirst={index === 0}
-                isLast={isLast}
-                multiItems={segments.length >= 2}
-                dotColor={segDotColor}
-                dotTop={8}
-                paddingBottom={7}
-                horizontalMotion={false}
+            {(isComplete || live) && bodyHasContent && (
+              <motion.div
+                animate={{ rotate: collapsed ? 0 : 90 }}
+                transition={{ duration: 0.2, ease: 'easeOut' }}
+                style={{ display: 'flex', flexShrink: 0 }}
               >
+                <ChevronRight size={13} />
+              </motion.div>
+            )}
+          </button>
+
+          <motion.div
+            initial={false}
+            animate={{ height: collapsed ? 0 : 'auto', opacity: collapsed ? 0 : 1 }}
+            transition={!reduceMotion ? { duration: 0.24, ease: [0.4, 0, 0.2, 1] } : { duration: 0 }}
+            style={{ overflow: collapsed ? 'hidden' : 'visible' }}
+          >
+            <div style={{ position: 'relative', paddingTop: '3px', paddingBottom: '3px', paddingLeft: (nonExecSegments.length > 1 || hasThinkingOnly) ? '24px' : undefined }}>
+              {/* Thinking-only mode (no segments) */}
+              {hasThinkingOnly && thinkingOnly && (() => {
+                const showDone = isComplete && !thinkingOnly.live
+                const multiItems = showDone
+                return (
+                  <>
+                    <CopTimelineUnifiedRow
+                      isFirst={true}
+                      isLast={!showDone}
+                      multiItems={multiItems}
+                      dotColor={thinkingOnly.live && !isComplete ? 'var(--c-text-secondary)' : 'var(--c-border-mid)'}
+                      dotTop={COP_TIMELINE_DOT_TOP}
+                      paddingBottom={8}
+                      horizontalMotion={false}
+                    >
+                      <div
+                        style={{
+                          paddingTop: Math.max(0, COP_TIMELINE_DOT_TOP + COP_TIMELINE_DOT_SIZE / 2 - COP_TIMELINE_THINKING_PLAIN_LINE_HEIGHT_PX / 2),
+                        }}
+                      >
+                        <AssistantThinkingMarkdown
+                          markdown={thinkingOnly.markdown}
+                          live={!!thinkingOnly.live && !isComplete}
+                          variant="timeline-plain"
+                        />
+                      </div>
+                    </CopTimelineUnifiedRow>
+                    {showDone && (
+                      <CopTimelineUnifiedRow
+                        isFirst={false}
+                        isLast={true}
+                        multiItems={multiItems}
+                        dotColor="var(--c-text-muted)"
+                        dotTop={COP_TIMELINE_DOT_TOP}
+                        paddingBottom={0}
+                        horizontalMotion={false}
+                      >
+                        <div
+                          style={{
+                            fontSize: '13px',
+                            color: 'var(--c-cop-row-fg)',
+                            lineHeight: '18px',
+                            paddingTop: '3px',
+                          }}
+                        >
+                          {t.copThinkingDone as string}
+                        </div>
+                      </CopTimelineUnifiedRow>
+                    )}
+                  </>
+                )
+              })()}
+
+              {/* Non-exec segments */}
+              {nonExecSegments.length === 1 ? (
                 <CopTimelineSegment
-                  segment={seg}
+                  segment={nonExecSegments[0]!}
                   pool={pool}
-                  isLive={!!live && seg.status === 'open'}
-                  defaultExpanded={isLast && (!isComplete || seg.status === 'open')}
+                  isLive={!!live && nonExecSegments[0]!.status === 'open'}
+                  defaultExpanded={true}
+                  hideHeader
                   onOpenCodeExecution={onOpenCodeExecution}
                   activeCodeExecutionId={activeCodeExecutionId}
                   onOpenSubAgent={onOpenSubAgent}
                   accessToken={accessToken}
                   baseUrl={baseUrl}
                 />
-              </CopTimelineUnifiedRow>
-            )
-          }))}
+              ) : (
+                nonExecSegments.map((seg, index) => {
+                const isLast = index === nonExecSegments.length - 1
+                const segDotColor = seg.status === 'open'
+                  ? 'var(--c-text-secondary)'
+                  : 'var(--c-text-muted)'
+                return (
+                  <CopTimelineUnifiedRow
+                    key={seg.id}
+                    isFirst={index === 0}
+                    isLast={isLast}
+                    multiItems={nonExecSegments.length >= 2}
+                    dotColor={segDotColor}
+                    dotTop={8}
+                    paddingBottom={7}
+                    horizontalMotion={false}
+                  >
+                    <CopTimelineSegment
+                      segment={seg}
+                      pool={pool}
+                      isLive={!!live && seg.status === 'open'}
+                      defaultExpanded={isLast && (!isComplete || seg.status === 'open')}
+                      onOpenCodeExecution={onOpenCodeExecution}
+                      activeCodeExecutionId={activeCodeExecutionId}
+                      onOpenSubAgent={onOpenSubAgent}
+                      accessToken={accessToken}
+                      baseUrl={baseUrl}
+                    />
+                  </CopTimelineUnifiedRow>
+                )
+              }))}
+            </div>
+          </motion.div>
+        </>
+      )}
 
-        </div>
-      </motion.div>
+      {/* Exec items: 始终在折叠体外，与 header/segment 平级 */}
+      {renderExecItems()}
     </div>
   )
 }

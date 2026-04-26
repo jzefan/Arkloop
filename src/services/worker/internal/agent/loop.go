@@ -1899,6 +1899,8 @@ func (l *Loop) runSingleTurn(
 			return yieldOrStop(emitter.Emit("llm.response.chunk", typed.ToDataJSON(), nil, nil))
 		case llm.StreamProviderFallback:
 			return yieldOrStop(emitter.Emit("run.provider_fallback", typed.ToDataJSON(), nil, nil))
+		case llm.StreamQuirkLearned:
+			return yieldOrStop(emitter.Emit("run.quirk_learned", typed.ToDataJSON(), nil, nil))
 		case llm.ToolCallArgumentDelta:
 			typed.ToolName = llm.CanonicalToolName(typed.ToolName)
 			return yieldOrStop(emitter.Emit("tool.call.delta", typed.ToDataJSON(), nil, nil))

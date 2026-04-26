@@ -532,3 +532,76 @@ func TestOpenAIToolsNormalizeEmptyParameters(t *testing.T) {
 		t.Fatalf("responses tool parameters must be object schema: %#v", responsesParams)
 	}
 }
+
+func TestOpenAISDKGateway_QuirkRetryEchoReasoningContent(t *testing.T) {
+	t.Setenv("ARKLOOP_OUTBOUND_ALLOW_LOOPBACK_HTTP", "true")
+	var attempts int
+	var bodies []map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		bodies = append(bodies, body)
+		attempts++
+		if attempts == 1 {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"error":{"message":"Error from provider (DeepSeek): The reasoning_content in the thinking mode must be passed back to the API.","type":"invalid_request_error"}}`))
+			return
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte(openAISDKSSE([]string{
+			`{"id":"chatcmpl_1","object":"chat.completion.chunk","created":1,"model":"gpt","choices":[{"index":0,"delta":{"role":"assistant","content":"ok"},"finish_reason":"stop"}]}`,
+		})))
+	}))
+	defer server.Close()
+
+	gateway := NewOpenAIGatewaySDK(OpenAIGatewayConfig{Transport: TransportConfig{APIKey: "key", BaseURL: server.URL}, Protocol: OpenAIProtocolConfig{PrimaryKind: ProtocolKindOpenAIChatCompletions}})
+	var completed *StreamRunCompleted
+	var learned []StreamQuirkLearned
+	if err := gateway.Stream(context.Background(), Request{
+		Model: "deepseek",
+		Messages: []Message{
+			{Role: "user", Content: []ContentPart{{Text: "hello"}}},
+			{Role: "assistant", Content: []ContentPart{{Text: "earlier"}}},
+			{Role: "user", Content: []ContentPart{{Text: "again"}}},
+		},
+	}, func(event StreamEvent) error {
+		switch ev := event.(type) {
+		case StreamRunCompleted:
+			completed = &ev
+		case StreamQuirkLearned:
+			learned = append(learned, ev)
+		}
+		return nil
+	}); err != nil {
+		t.Fatalf("Stream: %v", err)
+	}
+	if attempts != 2 {
+		t.Fatalf("expected retry, got attempts=%d", attempts)
+	}
+	if completed == nil {
+		t.Fatalf("expected completion after retry")
+	}
+	if !gateway.(*openAISDKGateway).quirks.Has(QuirkEchoReasoningContent) {
+		t.Fatalf("quirk not stored")
+	}
+	if len(learned) != 1 || learned[0].ProviderKind != "openai" || learned[0].QuirkID != string(QuirkEchoReasoningContent) {
+		t.Fatalf("expected one StreamQuirkLearned event, got %#v", learned)
+	}
+	secondMsgs := bodies[1]["messages"].([]any)
+	sawAssistantWithReasoning := false
+	for _, raw := range secondMsgs {
+		m := raw.(map[string]any)
+		if m["role"] != "assistant" {
+			continue
+		}
+		if _, ok := m["reasoning_content"]; ok {
+			sawAssistantWithReasoning = true
+		}
+	}
+	if !sawAssistantWithReasoning {
+		t.Fatalf("retry payload missing reasoning_content on assistant message: %#v", secondMsgs)
+	}
+}
