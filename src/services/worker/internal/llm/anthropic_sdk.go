@@ -21,6 +21,7 @@ type anthropicSDKGateway struct {
 	protocol  AnthropicProtocolConfig
 	client    anthropic.Client
 	configErr error
+	quirks    *QuirkStore
 }
 
 func NewAnthropicGatewaySDK(cfg AnthropicGatewayConfig) Gateway {
@@ -87,6 +88,7 @@ func NewAnthropicGatewaySDK(cfg AnthropicGatewayConfig) Gateway {
 		protocol:  protocol,
 		client:    anthropic.NewClient(opts...),
 		configErr: configErr,
+		quirks:    NewQuirkStore(),
 	}
 }
 
@@ -108,6 +110,10 @@ func (g *anthropicSDKGateway) Stream(ctx context.Context, request Request, yield
 
 	ctx, stopTimeout, markActivity := withStreamIdleTimeout(ctx, g.transport.cfg.TotalTimeout)
 	defer stopTimeout()
+	return g.streamAttempt(ctx, request, yield, markActivity, 0)
+}
+
+func (g *anthropicSDKGateway) streamAttempt(ctx context.Context, request Request, yield func(StreamEvent) error, markActivity func(), attempt int) error {
 	llmCallID := uuid.NewString()
 
 	params, payload, providerPayloadBytes, err := g.messageParams(request)
@@ -167,9 +173,22 @@ func (g *anthropicSDKGateway) Stream(ctx context.Context, request Request, yield
 		return err
 	}
 
-	opts := make([]option.RequestOption, 0, len(g.protocol.AdvancedPayloadJSON)+1)
+	opts := make([]option.RequestOption, 0, len(g.protocol.AdvancedPayloadJSON)+4)
 	if anthropicSDKMessagesRequireRawJSON(payload) {
 		opts = append(opts, option.WithJSONSet("messages", payload["messages"]))
+	}
+	// quirk 修改的字段必须显式覆盖 SDK params struct 序列化结果，
+	// 否则 ApplyAll 对 payload 的修改不会到达上游。新增 quirk 时在这里挂对应 key。
+	if g.quirks.Has(QuirkStripUnsignedThinking) {
+		opts = append(opts, option.WithJSONSet("messages", payload["messages"]))
+	}
+	if g.quirks.Has(QuirkForceTempOneOnThink) {
+		if v, ok := payload["temperature"]; ok {
+			opts = append(opts, option.WithJSONSet("temperature", v))
+		}
+		if v, ok := payload["thinking"]; ok {
+			opts = append(opts, option.WithJSONSet("thinking", v))
+		}
 	}
 	for key, value := range g.protocol.AdvancedPayloadJSON {
 		opts = append(opts, option.WithJSONSet(key, value))
@@ -194,6 +213,15 @@ func (g *anthropicSDKGateway) Stream(ctx context.Context, request Request, yield
 		}
 	}
 	if err := stream.Err(); err != nil {
+		if attempt == 0 {
+			if id, ok := anthropicSDKDetectQuirk(err); ok {
+				if emitErr := yield(StreamQuirkLearned{LlmCallID: llmCallID, ProviderKind: "anthropic", QuirkID: string(id)}); emitErr != nil {
+					return emitErr
+				}
+				g.quirks.Set(id)
+				return g.streamAttempt(ctx, request, yield, markActivity, attempt+1)
+			}
+		}
 		if emitErr := g.emitDebugErrorChunk(llmCallID, err, yield); emitErr != nil {
 			return emitErr
 		}
@@ -240,6 +268,15 @@ func isDeepSeekAnthropicBaseURL(baseURL string) bool {
 	return strings.Contains(baseURL, "api.deepseek.com")
 }
 
+func anthropicSDKDetectQuirk(err error) (QuirkID, bool) {
+	var apiErr *anthropic.Error
+	if !errors.As(err, &apiErr) {
+		return "", false
+	}
+	rawBody := string(apiErr.DumpResponse(true))
+	return detectQuirk(apiErr.StatusCode, rawBody, anthropicQuirks)
+}
+
 func (g *anthropicSDKGateway) messageParams(request Request) (anthropic.MessageNewParams, map[string]any, int, error) {
 	systemMaps, messageMaps, err := toAnthropicMessagesWithPlan(request.Messages, request.PromptPlan)
 	if err != nil {
@@ -275,6 +312,7 @@ func (g *anthropicSDKGateway) messageParams(request Request) (anthropic.MessageN
 	}
 	applyAnthropicReasoningMode(payload, g.anthropicReasoningMode(request.ReasoningMode))
 	enforceAnthropicCacheControlLimit(payload)
+	g.quirks.ApplyAll(payload, anthropicQuirks)
 
 	params := anthropic.MessageNewParams{
 		Model:     anthropic.Model(request.Model),

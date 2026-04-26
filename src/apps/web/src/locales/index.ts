@@ -413,6 +413,7 @@ export interface LocaleStrings {
   shellCompleted: string
   shellNoOutput: string
   shellRunning: string
+  shellRanShort: string
   // sub-agent
   agentSubAgent: string
   agentAcpAgent: string

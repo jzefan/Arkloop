@@ -23,6 +23,7 @@ type openAISDKGateway struct {
 	protocol  OpenAIProtocolConfig
 	client    openai.Client
 	configErr error
+	quirks    *QuirkStore
 }
 
 func NewOpenAIGatewaySDK(cfg OpenAIGatewayConfig) Gateway {
@@ -72,7 +73,7 @@ func NewOpenAIGatewaySDK(cfg OpenAIGatewayConfig) Gateway {
 		}
 	}
 
-	return &openAISDKGateway{cfg: cfg, transport: normalizedTransport, protocol: protocol, client: openai.NewClient(opts...), configErr: configErr}
+	return &openAISDKGateway{cfg: cfg, transport: normalizedTransport, protocol: protocol, client: openai.NewClient(opts...), configErr: configErr, quirks: NewQuirkStore()}
 }
 
 func (g *openAISDKGateway) ProtocolKind() ProtocolKind { return g.protocol.PrimaryKind }
@@ -89,17 +90,17 @@ func (g *openAISDKGateway) Stream(ctx context.Context, request Request, yield fu
 
 	switch g.protocol.PrimaryKind {
 	case ProtocolKindOpenAIChatCompletions:
-		return g.chatCompletions(ctx, request, yield, markActivity)
+		return g.chatCompletions(ctx, request, yield, markActivity, 0)
 	case ProtocolKindOpenAIResponses:
 		allowFallback := g.protocol.FallbackKind != nil && *g.protocol.FallbackKind == ProtocolKindOpenAIChatCompletions
-		if err := g.responses(ctx, request, yield, allowFallback, markActivity); err != nil {
+		if err := g.responses(ctx, request, yield, allowFallback, markActivity, 0); err != nil {
 			var fallback *openAIResponsesNotSupportedError
 			if errors.As(err, &fallback) && allowFallback {
 				status := fallback.StatusCode
 				if emitErr := yield(StreamProviderFallback{ProviderKind: "openai", FromAPIMode: "responses", ToAPIMode: "chat_completions", Reason: "responses_not_supported", StatusCode: &status}); emitErr != nil {
 					return emitErr
 				}
-				return g.chatCompletions(ctx, request, yield, markActivity)
+				return g.chatCompletions(ctx, request, yield, markActivity, 0)
 			}
 			return err
 		}
@@ -109,7 +110,7 @@ func (g *openAISDKGateway) Stream(ctx context.Context, request Request, yield fu
 	}
 }
 
-func (g *openAISDKGateway) chatCompletions(ctx context.Context, request Request, yield func(StreamEvent) error, markActivity func()) error {
+func (g *openAISDKGateway) chatCompletions(ctx context.Context, request Request, yield func(StreamEvent) error, markActivity func(), attempt int) error {
 	llmCallID := uuid.NewString()
 	payload, payloadBytes, requestEvent, err := g.chatPayload(request, llmCallID)
 	if err != nil {
@@ -143,6 +144,15 @@ func (g *openAISDKGateway) chatCompletions(ctx context.Context, request Request,
 		}
 	}
 	if err := stream.Err(); err != nil {
+		if attempt == 0 {
+			if id, ok := openAISDKDetectQuirk(err); ok {
+				if emitErr := yield(StreamQuirkLearned{LlmCallID: llmCallID, ProviderKind: "openai", QuirkID: string(id)}); emitErr != nil {
+					return emitErr
+				}
+				g.quirks.Set(id)
+				return g.chatCompletions(ctx, request, yield, markActivity, attempt+1)
+			}
+		}
 		if emitErr := g.emitDebugErrorChunk(llmCallID, "chat_completions", err, yield); emitErr != nil {
 			return emitErr
 		}
@@ -151,7 +161,7 @@ func (g *openAISDKGateway) chatCompletions(ctx context.Context, request Request,
 	return state.complete()
 }
 
-func (g *openAISDKGateway) responses(ctx context.Context, request Request, yield func(StreamEvent) error, allowFallback bool, markActivity func()) error {
+func (g *openAISDKGateway) responses(ctx context.Context, request Request, yield func(StreamEvent) error, allowFallback bool, markActivity func(), attempt int) error {
 	llmCallID := uuid.NewString()
 	payload, payloadBytes, requestEvent, err := g.responsesPayload(request, llmCallID)
 	if err != nil {
@@ -188,6 +198,15 @@ func (g *openAISDKGateway) responses(ctx context.Context, request Request, yield
 		if unsupported, ok := openAISDKUnsupportedResponsesError(err, allowFallback); ok {
 			return &unsupported
 		}
+		if attempt == 0 {
+			if id, ok := openAISDKDetectQuirk(err); ok {
+				if emitErr := yield(StreamQuirkLearned{LlmCallID: llmCallID, ProviderKind: "openai", QuirkID: string(id)}); emitErr != nil {
+					return emitErr
+				}
+				g.quirks.Set(id)
+				return g.responses(ctx, request, yield, allowFallback, markActivity, attempt+1)
+			}
+		}
 		if emitErr := g.emitDebugErrorChunk(llmCallID, "responses", err, yield); emitErr != nil {
 			return emitErr
 		}
@@ -218,6 +237,7 @@ func (g *openAISDKGateway) chatPayload(request Request, llmCallID string) (map[s
 		}
 	}
 	applyOpenAIChatReasoningMode(payload, request.ReasoningMode)
+	g.quirks.ApplyAll(payload, openAIQuirks)
 	return g.providerRequest(request, llmCallID, "chat_completions", "/chat/completions", payload)
 }
 
@@ -247,6 +267,7 @@ func (g *openAISDKGateway) responsesPayload(request Request, llmCallID string) (
 		}
 	}
 	applyOpenAIResponsesReasoningMode(payload, request.ReasoningMode)
+	g.quirks.ApplyAll(payload, openAIQuirks)
 	return g.providerRequest(request, llmCallID, "responses", "/responses", payload)
 }
 
@@ -287,6 +308,15 @@ func openAISDKPayloadOptions(payload map[string]any) []option.RequestOption {
 		opts = append(opts, option.WithJSONSet(key, value))
 	}
 	return opts
+}
+
+func openAISDKDetectQuirk(err error) (QuirkID, bool) {
+	var apiErr *openai.Error
+	if !errors.As(err, &apiErr) {
+		return "", false
+	}
+	rawBody := string(apiErr.DumpResponse(true))
+	return detectQuirk(apiErr.StatusCode, rawBody, openAIQuirks)
 }
 
 type openAISDKChatState struct {

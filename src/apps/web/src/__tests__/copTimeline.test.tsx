@@ -69,7 +69,7 @@ function makePool(overrides?: Partial<ResolvedPool>): ResolvedPool {
 function makeSeg(overrides?: Partial<CopSubSegment>): CopSubSegment {
   return {
     id: 'seg1',
-    category: 'exec',
+    category: 'explore',
     status: 'closed',
     items: [],
     seq: 0,
@@ -272,7 +272,7 @@ describe('CopTimeline', () => {
     })
 
     it('multiple segments rendered in order', () => {
-      const seg1 = makeSeg({ id: 'seg1', title: 'First segment', seq: 0, status: 'closed' })
+      const seg1 = makeSeg({ id: 'seg1', title: 'First segment', seq: 0, status: 'closed', category: 'generic' })
       const seg2 = makeSeg({ id: 'seg2', title: 'Second segment', seq: 1, status: 'closed', category: 'edit' })
       const html = renderTimeline({
         segments: [seg1, seg2],
@@ -304,22 +304,26 @@ describe('CopTimeline', () => {
     })
 
     it('segment with status=closed shows its completed title', () => {
-      const seg = makeSeg({
+      const seg1 = makeSeg({
         id: 'seg1',
-        category: 'exec',
+        category: 'edit',
         status: 'closed',
-        title: '2 steps completed',
-        items: [
-          { kind: 'call', call: { toolCallId: 'c1', toolName: 'exec_command', arguments: {} }, seq: 0 },
-          { kind: 'call', call: { toolCallId: 'c2', toolName: 'exec_command', arguments: {} }, seq: 1 },
-        ],
+        title: 'Edited foo.ts',
+        items: [{ kind: 'call', call: { toolCallId: 'c1', toolName: 'edit_file', arguments: {} }, seq: 0 }],
+      })
+      const seg2 = makeSeg({
+        id: 'seg2',
+        category: 'explore',
+        status: 'closed',
+        title: 'Read 1 file',
+        items: [{ kind: 'call', call: { toolCallId: 'c2', toolName: 'read_file', arguments: {} }, seq: 1 }],
       })
       const html = renderTimeline({
-        segments: [seg],
+        segments: [seg1, seg2],
         pool: EMPTY_POOL,
         isComplete: true,
       })
-      expect(html).toContain('2 steps completed')
+      expect(html).toContain('Edited foo.ts')
     })
   })
 
@@ -358,7 +362,7 @@ describe('CopTimeline', () => {
 
     it('live with open last segment -> header shows that segment title', () => {
       const seg1 = makeSeg({ id: 's1', status: 'closed', title: 'Read 1 file', seq: 0 })
-      const seg2 = makeSeg({ id: 's2', status: 'open', title: 'Running...', seq: 1, category: 'exec' })
+      const seg2 = makeSeg({ id: 's2', status: 'open', title: 'Running...', seq: 1, category: 'edit' })
       const html = renderTimeline({
         segments: [seg1, seg2],
         pool: EMPTY_POOL,

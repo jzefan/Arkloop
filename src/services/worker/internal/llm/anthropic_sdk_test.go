@@ -439,3 +439,85 @@ func countAnthropicCacheControlBlocks(payload map[string]any) int {
 	}
 	return count
 }
+
+func TestAnthropicSDKGateway_QuirkRetryStripUnsignedThinking(t *testing.T) {
+	t.Setenv("ARKLOOP_OUTBOUND_ALLOW_LOOPBACK_HTTP", "true")
+	var attempts int
+	var bodies []map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		bodies = append(bodies, body)
+		attempts++
+		if attempts == 1 {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"error":{"type":"invalid_request_error","message":"Invalid signature in thinking block"}}`))
+			return
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte(anthropicSDKSSEBody([]string{
+			`{"type":"message_start","message":{"id":"msg_1","type":"message","role":"assistant","model":"claude","content":[],"stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":1,"output_tokens":0}}}`,
+			`{"type":"message_stop"}`,
+		})))
+	}))
+	defer server.Close()
+
+	gateway := NewAnthropicGatewaySDK(AnthropicGatewayConfig{
+		Transport: TransportConfig{APIKey: "key", BaseURL: server.URL},
+		Protocol:  AnthropicProtocolConfig{Version: "2023-06-01"},
+	})
+	request := Request{
+		Model: "claude-test",
+		Messages: []Message{
+			{Role: "user", Content: []ContentPart{{Text: "hi"}}},
+			{Role: "assistant", Content: []ContentPart{{Type: "thinking", Text: "unsigned"}, {Text: "answer"}}},
+			{Role: "user", Content: []ContentPart{{Text: "again"}}},
+		},
+	}
+	var completed bool
+	var learned []StreamQuirkLearned
+	if err := gateway.Stream(context.Background(), request, func(event StreamEvent) error {
+		switch ev := event.(type) {
+		case StreamRunCompleted:
+			completed = true
+		case StreamQuirkLearned:
+			learned = append(learned, ev)
+		}
+		return nil
+	}); err != nil {
+		t.Fatalf("Stream: %v", err)
+	}
+	if attempts != 2 {
+		t.Fatalf("expected retry, got attempts=%d", attempts)
+	}
+	if !completed {
+		t.Fatalf("missing completion after retry")
+	}
+	if !gateway.(*anthropicSDKGateway).quirks.Has(QuirkStripUnsignedThinking) {
+		t.Fatalf("quirk not stored")
+	}
+	if len(learned) != 1 || learned[0].ProviderKind != "anthropic" || learned[0].QuirkID != string(QuirkStripUnsignedThinking) {
+		t.Fatalf("expected one StreamQuirkLearned event, got %#v", learned)
+	}
+	secondMsgs, _ := bodies[1]["messages"].([]any)
+	for _, raw := range secondMsgs {
+		m := raw.(map[string]any)
+		content, _ := m["content"].([]any)
+		for _, blockRaw := range content {
+			block, ok := blockRaw.(map[string]any)
+			if !ok {
+				continue
+			}
+			if typ, _ := block["type"].(string); typ != "thinking" {
+				continue
+			}
+			sig, _ := block["signature"].(string)
+			if strings.TrimSpace(sig) == "" {
+				t.Fatalf("retry must drop unsigned thinking, found %#v", block)
+			}
+		}
+	}
+}
