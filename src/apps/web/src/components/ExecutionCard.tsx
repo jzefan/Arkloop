@@ -135,7 +135,8 @@ export function ExecutionCard({ variant, toolName, label, displayDescription, co
   const preview = variant === 'shell'
     ? (displayDescription || extractCommandPreview(code) || t.shellRan)
     : (label || '')
-  const commandHeads = variant === 'shell' ? abbreviateCommandHeads(code) : ''
+  // 只在有 displayDescription 时追加命令缩写，避免与 extractCommandPreview 重复
+  const commandHeads = variant === 'shell' && displayDescription ? abbreviateCommandHeads(code) : ''
   const statusWord = variant === 'shell'
     ? (status === 'running' ? t.shellRunning : t.shellRanShort)
     : ''
@@ -236,8 +237,8 @@ export function ExecutionCard({ variant, toolName, label, displayDescription, co
           )}
           <span>{smooth ? previewTw : preview}</span>
           {variant === 'shell' && commandHeads && (
-            <span style={{ marginLeft: '6px', color: 'var(--c-text-muted)', opacity: 0.75 }}>
-              , {commandHeads}
+            <span style={{ marginLeft: '6px', color: 'var(--c-text-muted)', opacity: 0.7 }}>
+              {commandHeads}
             </span>
           )}
         </span>

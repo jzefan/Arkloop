@@ -271,6 +271,42 @@ describe('CopTimeline', () => {
       expect(html).toContain('cop-timeline-root')
     })
 
+    it('exec segment renders outside header collapse, not as nested segment', () => {
+      const seg = makeSeg({
+        id: 'seg1',
+        category: 'exec',
+        status: 'closed',
+        title: '1 steps completed',
+        items: [{ kind: 'call', call: { toolCallId: 'ce1', toolName: 'exec_command', arguments: {} }, seq: 0 }],
+      })
+      const html = renderTimeline({
+        segments: [seg],
+        pool: EMPTY_POOL,
+        isComplete: true,
+      })
+      // exec-only: no header button should render
+      expect(html).not.toContain('1 steps completed')
+    })
+
+    it('exec segment is not collapsed when mixed with non-exec segments', () => {
+      const seg1 = makeSeg({ id: 'seg1', category: 'explore', status: 'closed', title: 'Read 2 files', seq: 0 })
+      const seg2 = makeSeg({
+        id: 'seg2',
+        category: 'exec',
+        status: 'closed',
+        title: '1 steps completed',
+        items: [{ kind: 'call', call: { toolCallId: 'ce1', toolName: 'exec_command', arguments: {} }, seq: 1 }],
+      })
+      const html = renderTimeline({
+        segments: [seg1, seg2],
+        pool: EMPTY_POOL,
+        isComplete: true,
+      })
+      // header should only reflect non-exec segments
+      expect(html).not.toContain('1 steps completed')
+      expect(html).toContain('Read 2 files')
+    })
+
     it('multiple segments rendered in order', () => {
       const seg1 = makeSeg({ id: 'seg1', title: 'First segment', seq: 0, status: 'closed', category: 'generic' })
       const seg2 = makeSeg({ id: 'seg2', title: 'Second segment', seq: 1, status: 'closed', category: 'edit' })
