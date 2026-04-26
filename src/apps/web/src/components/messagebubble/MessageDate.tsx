@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { formatShortDate, formatFullDate } from './utils'
 
-export function MessageDate({ createdAt }: { createdAt: string }) {
+export function MessageDate({ createdAt, isWorkMode }: { createdAt: string; isWorkMode?: boolean }) {
   const [hovered, setHovered] = useState(false)
   return (
     <span
@@ -23,7 +23,8 @@ export function MessageDate({ createdAt }: { createdAt: string }) {
           style={{
             position: 'absolute',
             top: 'calc(100% + 4px)',
-            right: 0,
+            right: isWorkMode ? undefined : 0,
+            left: isWorkMode ? 0 : undefined,
             fontSize: '11px',
             lineHeight: 1,
             color: 'var(--c-text-primary)',
