@@ -114,10 +114,15 @@ func NewInputLoaderMiddleware(
 		if rawWorkDir, ok := loaded.InputJSON["work_dir"].(string); ok {
 			rc.WorkDir = strings.TrimSpace(rawWorkDir)
 		}
+		rc.IsPlanMode = detectPlanModeFromHistory(rc.Messages)
+		if rc.IsPlanMode && rc.PlanFilePath == "" {
+			rc.PlanFilePath = "plans/" + rc.Run.ThreadID.String() + ".md"
+		}
 		emitTraceEvent(rc, "input_loader", "input_loader.loaded", map[string]any{
 			"run_kind":      strings.TrimSpace(stringValue(rc.InputJSON["run_kind"])),
 			"message_count": len(rc.Messages),
 			"history_limit": rc.ThreadMessageHistoryLimit,
+			"plan_mode":     rc.IsPlanMode,
 		})
 
 		return next(ctx, rc)
@@ -129,6 +134,26 @@ func stringValue(value any) string {
 		return raw
 	}
 	return ""
+}
+
+// detectPlanModeFromHistory recovers plan-mode state from message history by
+// finding the most recent enter_plan_mode / exit_plan_mode tool call.
+func detectPlanModeFromHistory(msgs []llm.Message) bool {
+	for i := len(msgs) - 1; i >= 0; i-- {
+		msg := msgs[i]
+		if msg.Role != "assistant" || len(msg.ToolCalls) == 0 {
+			continue
+		}
+		for j := len(msg.ToolCalls) - 1; j >= 0; j-- {
+			switch msg.ToolCalls[j].ToolName {
+			case "enter_plan_mode":
+				return true
+			case "exit_plan_mode":
+				return false
+			}
+		}
+	}
+	return false
 }
 
 func loadRunInputs(
