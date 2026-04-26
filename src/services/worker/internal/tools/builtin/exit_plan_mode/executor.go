@@ -13,6 +13,7 @@ import (
 type PipelineBinding interface {
 	SetIsPlanMode(active bool)
 	PlanFilePathValue() string
+	IsPlanModeActive() bool
 }
 
 type executor struct{}
@@ -42,6 +43,10 @@ func (executor) Execute(
 	binding, ok := execCtx.PipelineRC.(PipelineBinding)
 	if !ok || binding == nil {
 		return errResult("exit_plan_mode: pipeline binding unavailable", started)
+	}
+
+	if !binding.IsPlanModeActive() {
+		return errResult("not in plan mode", started)
 	}
 
 	planPath := binding.PlanFilePathValue()
