@@ -69,6 +69,7 @@ const DEFAULT_DOWNLOAD_BASE = `https://github.com/${DEFAULT_GITHUB_REPO}/release
 const GITHUB_API_LATEST_RELEASE = `https://api.github.com/repos/${DEFAULT_GITHUB_REPO}/releases/latest`
 const desktopAccessToken = `arkloop-desktop-${randomBytes(24).toString('hex')}`
 const DESKTOP_TOKEN_FILE = path.join(ARKLOOP_HOME, 'desktop.token')
+const DESKTOP_PORT_FILE = path.join(ARKLOOP_HOME, 'desktop.port')
 
 let proc: ChildProcess | null = null
 let restartCount = 0
@@ -1368,7 +1369,9 @@ export async function startSidecar(preferredPort: number, portMode: LocalPortMod
   for (let attempt = 0; attempt < MAX_AUTO_PORT_RETRIES; attempt++) {
     try {
       const port = await resolveLaunchPort(nextPreferredPort, portMode)
-      return await launchOnPort(port, portMode)
+      const runtime = await launchOnPort(port, portMode)
+      try { fs.writeFileSync(DESKTOP_PORT_FILE, String(port), { mode: 0o600 }) } catch {}
+      return runtime
     } catch (error) {
       if (error instanceof SidecarStartError) {
         setRuntime({
