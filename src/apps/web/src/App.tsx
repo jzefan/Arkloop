@@ -66,6 +66,12 @@ function App() {
       return
     }
 
+    // 无 Electron preload（如 Chrome dev 环境），跳过 sidecar 检查
+    if (!getDesktopApi()) {
+      setSidecarChecked(true)
+      return
+    }
+
     let cancelled = false
     let cleanupRuntimeListener: (() => void) | null = null
 
