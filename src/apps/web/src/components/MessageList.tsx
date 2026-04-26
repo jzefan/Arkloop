@@ -449,8 +449,13 @@ export const MessageList = memo(function MessageList({
                     lastSeg.title = segmentLiveTitle(lastSeg.category)
                   }
 
+                  const thinkingOnlyData = subSegments.length === 0 && !payload.codeExecutions?.length && !payload.subAgents?.length && !payload.fileOps?.length && !payload.webFetches?.length && !payload.genericTools?.length
+                    ? buildThinkingOnlyFromItems(seg.items)
+                    : null
+
                   const hasTimelineBody =
                     subSegments.length > 0 ||
+                    thinkingOnlyData != null ||
                     payload.steps.length > 0 ||
                     !!payload.codeExecutions?.length ||
                     !!payload.fileOps?.length ||
@@ -475,10 +480,6 @@ export const MessageList = memo(function MessageList({
                         handoffStatus: displayTerminalStatus,
                       })
                     : seg.title?.trim() || undefined
-
-                  const thinkingOnlyData = subSegments.length === 0 && !payload.codeExecutions?.length && !payload.subAgents?.length && !payload.fileOps?.length && !payload.webFetches?.length && !payload.genericTools?.length
-                    ? buildThinkingOnlyFromItems(seg.items)
-                    : null
 
                   const entryComplete = !segmentLive
                   const promotedNodes = [(

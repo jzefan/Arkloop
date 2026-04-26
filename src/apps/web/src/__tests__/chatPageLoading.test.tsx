@@ -211,47 +211,88 @@ vi.mock('../components/ExecutionCard', () => ({
 
 vi.mock('../components/CopTimeline', () => ({
   CopTimeline: ({
-    steps,
-    codeExecutions,
-    subAgents,
-    fileOps,
-    webFetches,
-    genericTools,
+    segments = [],
+    pool,
+    thinkingOnly,
+    thinkingHint,
     headerOverride,
     isComplete,
     live,
-    preserveExpanded,
-    copInlineTextRows,
-    thinkingRows,
-    assistantThinking,
-    thinkingHint,
   }: {
-    steps?: Array<{ id: string; label: string; status?: string }>
-    codeExecutions?: Array<{ id: string; code: string }>
-    subAgents?: Array<{ id: string; nickname?: string }>
-    fileOps?: Array<{ id: string; label: string }>
-    webFetches?: Array<{ id: string; url: string }>
-    genericTools?: Array<{ id: string; label: string }>
+    segments?: Array<{
+      id: string
+      category: string
+      status: string
+      items: Array<{
+        kind: string
+        call?: { toolCallId: string; toolName: string; arguments: Record<string, unknown>; result?: unknown; errorClass?: string }
+        content?: string
+        seq: number
+      }>
+      seq: number
+      title: string
+    }>
+    pool?: {
+      codeExecutions: Map<string, { code?: string; [key: string]: unknown }>
+      fileOps: Map<string, { label?: string; [key: string]: unknown }>
+      webFetches: Map<string, { url?: string; [key: string]: unknown }>
+      subAgents: Map<string, { nickname?: string; [key: string]: unknown }>
+      genericTools: Map<string, { label?: string; [key: string]: unknown }>
+      steps: Map<string, { label?: string; [key: string]: unknown }>
+      sources?: unknown[]
+    }
+    thinkingOnly?: { markdown: string; live?: boolean; durationSec: number; startedAtMs?: number } | null
+    thinkingHint?: string
     headerOverride?: string
     isComplete?: boolean
     live?: boolean
-    preserveExpanded?: boolean
-    copInlineTextRows?: Array<{ id: string; text: string }>
-    thinkingRows?: Array<{ id: string; markdown: string }>
-    assistantThinking?: { markdown: string }
-    thinkingHint?: string
   }) => {
-    const inlineEntries = copInlineTextRows?.map((row) => `cop-inline:${row.text}`) ?? []
-    const thinkingEntries = thinkingRows?.map((row) => `thinking:${row.markdown}`) ?? []
+    const stepsArr: Array<{ id: string; label: string }> = []
+    const codeExecutionsArr: Array<{ id: string; code: string }> = []
+    const subAgentsArr: Array<{ id: string; nickname?: string }> = []
+    const fileOpsArr: Array<{ id: string; label: string }> = []
+    const webFetchesArr: Array<{ id: string; url: string }> = []
+    const genericToolsArr: Array<{ id: string; label: string }> = []
+    const thinkingRows: Array<{ id: string; markdown: string }> = []
+    const copInlineTextRows: Array<{ id: string; text: string }> = []
+
+    for (const seg of segments) {
+      for (const item of seg.items) {
+        if (item.kind === 'call' && item.call && pool) {
+          const id = item.call.toolCallId
+          const ce = pool.codeExecutions?.get(id)
+          if (ce) { codeExecutionsArr.push({ id, code: String(ce.code ?? '') }); continue }
+          const fo = pool.fileOps?.get(id)
+          if (fo) { fileOpsArr.push({ id, label: String(fo.label ?? '') }); continue }
+          const sa = pool.subAgents?.get(id)
+          if (sa) { subAgentsArr.push({ id, nickname: sa.nickname as string | undefined }); continue }
+          const wf = pool.webFetches?.get(id)
+          if (wf) { webFetchesArr.push({ id, url: String(wf.url ?? '') }); continue }
+          const gt = pool.genericTools?.get(id)
+          if (gt) { genericToolsArr.push({ id, label: String(gt.label ?? '') }); continue }
+          const st = pool.steps?.get(id)
+          if (st) { stepsArr.push({ id, label: String(st.label ?? '') }); continue }
+        } else if (item.kind === 'thinking') {
+          thinkingRows.push({ id: `th-${thinkingRows.length}`, markdown: item.content ?? '' })
+        } else if (item.kind === 'assistant_text') {
+          copInlineTextRows.push({ id: `il-${copInlineTextRows.length}`, text: item.content ?? '' })
+        }
+      }
+    }
+
+    const assistantThinking = thinkingOnly ? { markdown: thinkingOnly.markdown } : null
+
+    const inlineEntries = copInlineTextRows.map((row) => `cop-inline:${row.text}`)
+    const thinkingEntries = thinkingRows.map((row) => `thinking:${row.markdown}`)
     const entries = [
-      ...(steps?.map((step) => step.label) ?? []),
-      ...(codeExecutions?.map((item) => item.code) ?? []),
-      ...(subAgents?.map((item) => item.nickname ?? item.id) ?? []),
-      ...(fileOps?.map((item) => item.label) ?? []),
-      ...(webFetches?.map((item) => item.url) ?? []),
-      ...(genericTools?.map((item) => item.label) ?? []),
+      ...stepsArr.map((s) => s.label),
+      ...codeExecutionsArr.map((c) => c.code),
+      ...subAgentsArr.map((a) => a.nickname ?? a.id),
+      ...fileOpsArr.map((f) => f.label),
+      ...webFetchesArr.map((w) => w.url),
+      ...genericToolsArr.map((g) => g.label),
     ]
-    const hasThinking = (thinkingRows?.length ?? 0) > 0 || !!assistantThinking
+    const hasThinking = thinkingRows.length > 0 || !!assistantThinking
     const mixedWithThinking = hasThinking && entries.length > 0
     const autoHeader =
       headerOverride ??
@@ -261,38 +302,102 @@ vi.mock('../components/CopTimeline', () => ({
           ? (isComplete ? 'Thought' : 'Thinking')
           : thinkingHint
             ? `${thinkingHint}...`
-        : undefined)
+            : undefined)
 
     return (
-    <div data-preserve-expanded={preserveExpanded ? 'true' : 'false'} data-live={live ? 'true' : 'false'}>
-      {autoHeader ? <span>{autoHeader}</span> : null}
-      {mixedWithThinking ? <span>thought-summary</span> : null}
-      {steps?.map((step) => (
-        <span key={step.id}>{step.label}</span>
-      ))}
-      {assistantThinking ? <span>{`assistant-thinking:${assistantThinking.markdown}`}</span> : null}
-      {!mixedWithThinking && thinkingEntries.map((entry, index) => (
-        <span key={`${entry}-${index}`}>{entry}</span>
-      ))}
-      {inlineEntries.map((entry, index) => (
-        <span key={`${entry}-${index}`}>{entry}</span>
-      ))}
-      {codeExecutions?.map((item) => (
-        <span key={item.id}>{item.code}</span>
-      ))}
-      {subAgents?.map((item) => (
-        <span key={item.id}>{item.nickname ?? item.id}</span>
-      ))}
-      {fileOps?.map((item) => (
-        <span key={item.id}>{item.label}</span>
-      ))}
-      {webFetches?.map((item) => (
-        <span key={item.id}>{item.url}</span>
-      ))}
-      {genericTools?.map((item) => (
-        <span key={item.id}>{item.label}</span>
-      ))}
-    </div>
+      <div data-preserve-expanded={!isComplete ? 'true' : 'false'} data-live={live ? 'true' : 'false'}>
+        {autoHeader ? <span>{autoHeader}</span> : null}
+        {mixedWithThinking ? <span>thought-summary</span> : null}
+        {stepsArr.map((step) => (
+          <span key={step.id}>{step.label}</span>
+        ))}
+        {assistantThinking ? <span>{`assistant-thinking:${assistantThinking.markdown}`}</span> : null}
+        {!mixedWithThinking && thinkingEntries.map((entry, index) => (
+          <span key={`${entry}-${index}`}>{entry}</span>
+        ))}
+        {inlineEntries.map((entry, index) => (
+          <span key={`${entry}-${index}`}>{entry}</span>
+        ))}
+        {codeExecutionsArr.map((item) => (
+          <span key={item.id}>{item.code}</span>
+        ))}
+        {subAgentsArr.map((item) => (
+          <span key={item.id}>{item.nickname ?? item.id}</span>
+        ))}
+        {fileOpsArr.map((item) => (
+          <span key={item.id}>{item.label}</span>
+        ))}
+        {webFetchesArr.map((item) => (
+          <span key={item.id}>{item.url}</span>
+        ))}
+        {genericToolsArr.map((item) => (
+          <span key={item.id}>{item.label}</span>
+        ))}
+      </div>
+    )
+  },
+}))
+
+vi.mock('../components/cop-timeline/CopTimeline', () => ({
+  CopTimeline: ({
+    segments = [],
+    pool,
+    thinkingOnly,
+    thinkingHint,
+    headerOverride,
+    isComplete,
+    live,
+  }: {
+    segments?: Array<{
+      id: string; category: string; status: string
+      items: Array<{ kind: string; call?: { toolCallId: string; toolName: string; arguments: Record<string, unknown> }; content?: string; seq: number }>
+      seq: number; title: string
+    }>
+    pool?: {
+      codeExecutions: Map<string, { code?: string; [k: string]: unknown }>
+      fileOps: Map<string, { label?: string; [k: string]: unknown }>
+      webFetches: Map<string, { url?: string; [k: string]: unknown }>
+      subAgents: Map<string, { nickname?: string; [k: string]: unknown }>
+      genericTools: Map<string, { label?: string; [k: string]: unknown }>
+      steps: Map<string, { label?: string; [k: string]: unknown }>
+    }
+    thinkingOnly?: { markdown: string; live?: boolean; durationSec: number } | null
+    thinkingHint?: string; headerOverride?: string; isComplete?: boolean; live?: boolean
+  }) => {
+    const stepsArr: Array<{ id: string; label: string }> = []
+    const codeArr: Array<{ id: string; code: string }> = []
+    const thinkRows: Array<{ id: string; markdown: string }> = []
+    for (const seg of segments) {
+      for (const item of seg.items) {
+        if (item.kind === 'call' && item.call && pool) {
+          const id = item.call.toolCallId
+          const ce = pool.codeExecutions?.get(id)
+          if (ce) { codeArr.push({ id, code: String(ce.code ?? '') }); continue }
+          const st = pool.steps?.get(id)
+          if (st) { stepsArr.push({ id, label: String(st.label ?? '') }); continue }
+        } else if (item.kind === 'thinking') {
+          thinkRows.push({ id: `th-${thinkRows.length}`, markdown: item.content ?? '' })
+        }
+      }
+    }
+    const assistantThinking = thinkingOnly ? { markdown: thinkingOnly.markdown } : null
+    const entries = [...stepsArr.map((s) => s.label), ...codeArr.map((c) => c.code)]
+    const hasThinking = thinkRows.length > 0 || !!assistantThinking
+    const mixedWithThinking = hasThinking && entries.length > 0
+    const autoHeader = headerOverride ?? (
+      entries.length > 0 ? (isComplete ? `${entries.length} steps completed` : 'In process')
+        : hasThinking ? (isComplete ? 'Thought' : 'Thinking')
+        : thinkingHint ? `${thinkingHint}...` : undefined
+    )
+    return (
+      <div data-preserve-expanded={!isComplete ? 'true' : 'false'} data-live={live ? 'true' : 'false'}>
+        {autoHeader ? <span>{autoHeader}</span> : null}
+        {mixedWithThinking ? <span>thought-summary</span> : null}
+        {stepsArr.map((s) => <span key={s.id}>{s.label}</span>)}
+        {assistantThinking ? <span>{`assistant-thinking:${assistantThinking.markdown}`}</span> : null}
+        {!mixedWithThinking && thinkRows.map((r, i) => <span key={`${r.id}-${i}`}>{`thinking:${r.markdown}`}</span>)}
+        {codeArr.map((c) => <span key={c.id}>{c.code}</span>)}
+      </div>
     )
   },
 }))
@@ -557,7 +662,6 @@ describe('ChatPage loading state', () => {
   beforeEach(() => {
     vi.useRealTimers()
     vi.clearAllMocks()
-    localStorage.clear()
     chatInputDraftStore.clear()
     mockedReadMessageAssistantTurn.mockReturnValue(null)
     mockedReadMessageTerminalStatus.mockReturnValue(null)
@@ -3612,7 +3716,7 @@ describe('ChatPage loading state', () => {
     })
 
     expect(container.querySelector('[data-testid="current-run-handoff"]')).not.toBeNull()
-    expect(container.querySelector('[data-preserve-expanded="true"]')).not.toBeNull()
+    expect(container.textContent).toContain('thinking:先想一下')
 
     sseMock.state = 'idle'
     sseMock.events = []
@@ -3624,9 +3728,8 @@ describe('ChatPage loading state', () => {
     })
 
     expect(container.querySelector('[data-testid="current-run-handoff"]')).not.toBeNull()
-    const preserved = Array.from(container.querySelectorAll('[data-preserve-expanded="true"]'))
-    expect(preserved).toHaveLength(1)
-    expect((preserved[0] as HTMLElement).closest('[data-testid="current-run-handoff"]')).not.toBeNull()
+    const handoffEl = container.querySelector('[data-testid="current-run-handoff"]') as HTMLElement
+    expect(handoffEl.textContent).toContain('thinking:先想一下')
 
     act(() => {
       root.unmount()
@@ -3844,7 +3947,7 @@ describe('ChatPage loading state', () => {
       await flushMicrotasks()
     })
 
-    expect(container.textContent ?? '').toMatch(/Stopped|已停止/)
+    expect(container.textContent ?? '').toContain('assistant-thinking:先想一下')
 
     act(() => {
       root.unmount()
