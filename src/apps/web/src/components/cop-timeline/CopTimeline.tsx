@@ -160,16 +160,17 @@ export function CopTimeline({
   if (!shouldRender) return null
 
   // exec items: 收集所有 exec segment 的 call items，保持原始 segment 顺序
-  const execItems: { segId: string; callItem: Extract<import('../../assistantTurnSegments').CopBlockItem, { kind: 'call' }>; segIndex: number }[] = []
-  segments.forEach((seg, si) => {
-    if (seg.category !== 'exec') return
+  type ExecCallItem = Extract<import('../../assistantTurnSegments').CopBlockItem, { kind: 'call' }>
+  const execCallItems: ExecCallItem[] = []
+  for (const seg of segments) {
+    if (seg.category !== 'exec') continue
     for (const item of seg.items) {
-      if (item.kind === 'call') execItems.push({ segId: seg.id, callItem: item, segIndex: si })
+      if (item.kind === 'call') execCallItems.push(item)
     }
-  })
+  }
 
   const renderExecItems = () =>
-    execItems.map(({ callItem }) => {
+    execCallItems.map((callItem) => {
       const ce = pool.codeExecutions.get(callItem.call.toolCallId)
       if (!ce) return null
       return (
@@ -183,7 +184,7 @@ export function CopTimeline({
     })
 
   // exec-only: 没有非 exec 内容，直接平铺
-  if (!hasNonExecBody && execItems.length > 0) {
+  if (!hasNonExecBody && execCallItems.length > 0) {
     return (
       <div className="cop-timeline-root" style={{ maxWidth: '663px' }}>
         {renderExecItems()}
