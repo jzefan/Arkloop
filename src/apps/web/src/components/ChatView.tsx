@@ -2450,7 +2450,7 @@ export function ChatView() {
           className="flex w-full flex-col gap-6"
         >
           {messagesLoading ? (
-            <ChatSkeleton />
+            <ChatSkeleton isWorkMode={appMode === 'work'} />
           ) : (
             <>
               {contextCompactBar && (
