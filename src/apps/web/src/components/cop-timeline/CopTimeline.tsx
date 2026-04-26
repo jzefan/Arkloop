@@ -124,14 +124,15 @@ export function CopTimeline({
   const headerLabel = headerOverride ?? (() => {
     if (anyThinkingLive || (anyThinking && live)) return thinkingLiveHeaderLabel
     if (anyThinking && isComplete && hasSegments) {
-      return totalStepCount > 0
-        ? `${totalStepCount} step${totalStepCount === 1 ? '' : 's'} completed`
-        : thoughtDurationLabel
+      if (totalStepCount > 1) return `${totalStepCount} steps completed`
+      if (totalStepCount === 1) return segments[0]!.title
+      return thoughtDurationLabel
     }
     if (anyThinking) return thoughtDurationLabel
     if (pendingShowThinkingHeader) return `${thinkingHint}...`
     if (isComplete) {
-      if (totalStepCount > 0) return `${totalStepCount} step${totalStepCount === 1 ? '' : 's'} completed`
+      if (totalStepCount > 1) return `${totalStepCount} steps completed`
+      if (totalStepCount === 1) return segments[0]!.title
       return 'Completed'
     }
     const lastSeg = segments[segments.length - 1]
@@ -212,7 +213,7 @@ export function CopTimeline({
         transition={!reduceMotion ? { duration: 0.24, ease: [0.4, 0, 0.2, 1] } : { duration: 0 }}
         style={{ overflow: collapsed ? 'hidden' : 'visible' }}
       >
-        <div style={{ position: 'relative', paddingTop: '3px', paddingBottom: '3px', paddingLeft: segments.length > 0 ? '24px' : undefined }}>
+        <div style={{ position: 'relative', paddingTop: '3px', paddingBottom: '3px', paddingLeft: segments.length > 1 ? '24px' : undefined }}>
           {/* Thinking-only mode (no segments) */}
           {hasThinkingOnly && thinkingOnly && (
             <>
@@ -243,7 +244,21 @@ export function CopTimeline({
           )}
 
           {/* Segments */}
-          {segments.map((seg, index) => {
+          {segments.length === 1 ? (
+            <CopTimelineSegment
+              segment={segments[0]!}
+              pool={pool}
+              isLive={!!live && segments[0]!.status === 'open'}
+              defaultExpanded={true}
+              hideHeader
+              onOpenCodeExecution={onOpenCodeExecution}
+              activeCodeExecutionId={activeCodeExecutionId}
+              onOpenSubAgent={onOpenSubAgent}
+              accessToken={accessToken}
+              baseUrl={baseUrl}
+            />
+          ) : (
+            segments.map((seg, index) => {
             const isLast = index === segments.length - 1
             const segDotColor = seg.status === 'open'
               ? 'var(--c-text-secondary)'
@@ -272,7 +287,7 @@ export function CopTimeline({
                 />
               </CopTimelineUnifiedRow>
             )
-          })}
+          }))}
 
         </div>
       </motion.div>

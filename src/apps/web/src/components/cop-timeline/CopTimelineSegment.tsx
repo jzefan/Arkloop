@@ -25,6 +25,7 @@ export function CopTimelineSegment({
   pool,
   isLive,
   defaultExpanded,
+  hideHeader,
   onOpenCodeExecution,
   activeCodeExecutionId,
   onOpenSubAgent,
@@ -35,6 +36,7 @@ export function CopTimelineSegment({
   pool: ResolvedPool
   isLive: boolean
   defaultExpanded: boolean
+  hideHeader?: boolean
   onOpenCodeExecution?: (ce: CodeExecution) => void
   activeCodeExecutionId?: string
   onOpenSubAgent?: (agent: SubAgentRef) => void
@@ -137,6 +139,32 @@ export function CopTimelineSegment({
       </span>
     )
   })()
+
+  if (hideHeader) {
+    return (
+      <div style={{ position: 'relative', paddingTop: 6, paddingLeft: editOnly ? 0 : COP_TIMELINE_CONTENT_PADDING_LEFT_PX, paddingBottom: EXPLORE_BOTTOM_PAD }}>
+        {segment.items.map((item, index) => (
+          <div key={itemTypeId(item)} style={{ position: 'relative' }}>
+            {editOnly ? (
+              renderItem(item, pool, isLive, onOpenCodeExecution, activeCodeExecutionId, onOpenSubAgent, accessToken, baseUrl)
+            ) : (
+              <CopTimelineUnifiedRow
+                isFirst={index === 0}
+                isLast={index === segment.items.length - 1}
+                multiItems={segment.items.length >= 2}
+                dotColor={itemDotColor(item)}
+                dotTop={itemDotTop(item)}
+                paddingBottom={8}
+                horizontalMotion={false}
+              >
+                {renderItem(item, pool, isLive, onOpenCodeExecution, activeCodeExecutionId, onOpenSubAgent, accessToken, baseUrl)}
+              </CopTimelineUnifiedRow>
+            )}
+          </div>
+        ))}
+      </div>
+    )
+  }
 
   return (
     <div style={{ maxWidth: 'min(100%, 760px)', minWidth: 0 }}>
