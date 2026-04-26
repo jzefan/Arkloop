@@ -81,6 +81,12 @@ func (e *Executor) Execute(
 	_ = toolCallID
 	started := time.Now()
 
+	if toolName == ExecCommandAgentSpec.Name {
+		if blocked, isBlocked := tools.PlanModeBlocked(execCtx.PipelineRC, started); isBlocked {
+			return blocked
+		}
+	}
+
 	switch toolName {
 	case ExecCommandAgentSpec.Name:
 		return e.executeExecCommand(ctx, args, execCtx, started)

@@ -180,6 +180,13 @@ func (e *ToolExecutor) Execute(
 	}
 
 	switch toolName {
+	case "python_execute", "exec_command":
+		if blocked, isBlocked := tools.PlanModeBlocked(execCtx.PipelineRC, started); isBlocked {
+			return blocked
+		}
+	}
+
+	switch toolName {
 	case "python_execute":
 		return e.executePython(ctx, args, execCtx, started)
 	case "exec_command":
