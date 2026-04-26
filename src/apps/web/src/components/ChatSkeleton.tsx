@@ -2,11 +2,11 @@ import { memo } from 'react'
 
 const BAR_WIDTHS = ['85%', '65%', '90%', '55%', '75%', '60%', '80%', '50%', '70%', '40%']
 
-export const ChatSkeleton = memo(function ChatSkeleton() {
+export const ChatSkeleton = memo(function ChatSkeleton({ isWorkMode }: { isWorkMode?: boolean }) {
   return (
     <div className="animate-pulse flex flex-col gap-6">
-      {/* user prompt placeholder - right aligned */}
-      <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+      {/* user prompt placeholder */}
+      <div style={{ display: 'flex', justifyContent: isWorkMode ? 'flex-start' : 'flex-end' }}>
         <div
           style={{
             width: 200,
