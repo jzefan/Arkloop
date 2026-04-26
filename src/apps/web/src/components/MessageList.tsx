@@ -47,10 +47,12 @@ function FailedRunRetryCard({
   actionLabel,
   onRetry,
   error,
+  isWorkMode,
 }: {
   title: string
   actionLabel?: string
   onRetry?: () => void
+  isWorkMode?: boolean
   error?: AppError | null
 }) {
   const [open, setOpen] = useState(false)
@@ -90,7 +92,7 @@ function FailedRunRetryCard({
 
   return (
     <div
-      className="mt-3 flex w-full max-w-[756px] items-center justify-between gap-3 rounded-2xl px-4 py-4"
+      className={`mt-3 flex w-full ${isWorkMode ? '' : 'max-w-[756px]'} items-center justify-between gap-3 rounded-2xl px-4 py-4`}
       style={{ background: 'var(--c-bg-sub)', border: '0.75px solid var(--c-border)' }}
     >
       <div className="flex min-w-0 items-center gap-2 text-[var(--c-text-secondary)]">
@@ -611,6 +613,7 @@ export const MessageList = memo(function MessageList({
             actionLabel={!isStreaming && !sending ? terminalActionLabel : undefined}
             onRetry={!isStreaming && !sending ? terminalActionHandler : undefined}
             error={effectiveTerminalStatus === 'failed' ? (msgMeta?.failedError || failedRunError) : undefined}
+	            isWorkMode={isWorkMode}
           />
         )}
         {locationState?.isIncognitoFork && locationState.forkBaseCount != null && idx === locationState.forkBaseCount - 1 && (

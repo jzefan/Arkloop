@@ -171,11 +171,13 @@ function FailedRunRetryCard({
   actionLabel,
   onRetry,
   error,
+  isWorkMode,
 }: {
   title: string
   actionLabel?: string
   onRetry?: () => void
   error?: AppError | null
+  isWorkMode?: boolean
 }) {
   const [open, setOpen] = useState(false)
   const [popoverStyle, setPopoverStyle] = useState<{ position: 'fixed'; left: string; top?: string; bottom?: string; width: string; zIndex: number } | null>(null)
@@ -214,7 +216,7 @@ function FailedRunRetryCard({
 
   return (
     <div
-      className="mt-3 flex w-full max-w-[756px] items-center justify-between gap-3 rounded-2xl px-4 py-4"
+      className={`mt-3 flex w-full ${isWorkMode ? '' : 'max-w-[756px]'} items-center justify-between gap-3 rounded-2xl px-4 py-4`}
       style={{ background: 'var(--c-bg-sub)', border: '0.75px solid var(--c-border)' }}
     >
       <div className="flex min-w-0 items-center gap-2 text-[var(--c-text-secondary)]">
@@ -379,6 +381,7 @@ type LiveRunPaneProps = {
   renderLiveCopSegment: (seg: CopSegment, si: number, key?: string) => React.ReactNode
   bottomRef: React.RefObject<HTMLDivElement | null>
   messages: MessageResponse[]
+  isWorkMode?: boolean
 }
 
 const LiveRunPane = memo(function LiveRunPane({
@@ -431,6 +434,7 @@ const LiveRunPane = memo(function LiveRunPane({
   renderLiveCopSegment,
   bottomRef,
   messages,
+  isWorkMode,
 }: LiveRunPaneProps) {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
@@ -603,6 +607,7 @@ const LiveRunPane = memo(function LiveRunPane({
             hasOutput: terminalRunHasOutput,
           })}
           error={terminalRunHandoffStatus === 'failed' ? failedRunError : undefined}
+          isWorkMode={isWorkMode}
         />
       )}
       {/* reserve action bar height to prevent text from touching input area during streaming */}
@@ -2518,6 +2523,7 @@ export function ChatView() {
                     renderLiveCopSegment={renderLiveCopSegment}
                     bottomRef={bottomRef}
                     messages={messages}
+                    isWorkMode={appMode === 'work'}
                   />
                 }
                 showRunEvents={showRunEvents}
@@ -2547,7 +2553,7 @@ export function ChatView() {
       {/* 输入区域 */}
       <div
         ref={inputAreaRef}
-        style={{ maxWidth: 1200, margin: '0 auto', padding: `12px ${appMode === 'work' ? chatInputPadding.work : isPanelOpen ? chatInputPadding.panelOpen : chatInputPadding.panelClosed} 8px`, position: 'absolute', bottom: 0, left: 0, right: 0, zIndex: 10, background: 'linear-gradient(to bottom, transparent 0%, var(--c-bg-page) 24px)' }}
+        style={{ maxWidth: appMode === 'work' ? 1000 : 1200, margin: '0 auto', padding: `12px ${appMode === 'work' ? (isPanelOpen ? chatContentPadding.panelOpen : chatContentPadding.panelClosed) : isPanelOpen ? chatInputPadding.panelOpen : chatInputPadding.panelClosed} 8px`, position: 'absolute', bottom: 0, left: 0, right: 0, zIndex: 10, background: 'linear-gradient(to bottom, transparent 0%, var(--c-bg-page) 24px)' }}
         className="flex w-full flex-col items-center gap-2"
       >
         {/* 滚动到底部按钮：始终锚定在输入框顶边正上方 */}

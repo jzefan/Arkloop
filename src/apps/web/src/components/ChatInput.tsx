@@ -475,7 +475,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
         display: 'flex',
         flexDirection: 'column',
         gap: '8px',
-        maxWidth: variant === 'welcome' ? '840px' : '720px',
+        maxWidth: variant === 'welcome' ? '840px' : appMode === 'work' ? undefined : '663px',
       }}
     >
       {isFileDragging && (
