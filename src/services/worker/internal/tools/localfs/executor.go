@@ -51,6 +51,12 @@ func (e *Executor) Execute(
 ) tools.ExecutionResult {
 	started := time.Now()
 
+	if toolName == "file_write" {
+		if blocked, isBlocked := tools.PlanModeBlocked(execCtx.PipelineRC, started); isBlocked {
+			return blocked
+		}
+	}
+
 	switch toolName {
 	case "file_read":
 		return e.executeRead(args, started)

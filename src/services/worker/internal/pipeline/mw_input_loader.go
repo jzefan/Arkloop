@@ -118,6 +118,18 @@ func NewInputLoaderMiddleware(
 		if rc.IsPlanMode && rc.PlanFilePath == "" {
 			rc.PlanFilePath = "plans/" + rc.Run.ThreadID.String() + ".md"
 		}
+		if rc.IsPlanMode {
+			rc.UpsertPromptSegment(PromptSegment{
+				Name:      "plan_mode",
+				Target:    PromptTargetRuntimeTail,
+				Role:      "user",
+				Stability: PromptStabilityVolatileTail,
+				Text: "[Plan Mode Active] 你当前处于 Plan Mode，只能使用只读工具" +
+					"（read, grep, glob, web_search, web_fetch, ask_user）。" +
+					"写工具（edit, write_file, document_write, exec_command, python_execute）被禁用。" +
+					"Plan 文件：" + rc.PlanFilePath + "。调用 exit_plan_mode 退出。",
+			})
+		}
 		emitTraceEvent(rc, "input_loader", "input_loader.loaded", map[string]any{
 			"run_kind":      strings.TrimSpace(stringValue(rc.InputJSON["run_kind"])),
 			"message_count": len(rc.Messages),

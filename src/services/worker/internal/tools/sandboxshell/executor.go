@@ -86,6 +86,12 @@ func (e *Executor) Execute(
 		return errResult(errorUnavailable, "VM sandbox is not running", started)
 	}
 
+	if toolName == ExecCommandAgentSpec.Name {
+		if blocked, isBlocked := tools.PlanModeBlocked(execCtx.PipelineRC, started); isBlocked {
+			return blocked
+		}
+	}
+
 	switch toolName {
 	case ExecCommandAgentSpec.Name:
 		return e.executeExecCommand(ctx, args, execCtx, started)
