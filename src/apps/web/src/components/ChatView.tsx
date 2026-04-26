@@ -2325,8 +2325,13 @@ export function ChatView() {
     const liveWidgets = liveStreamingWidgetEntriesForCop(seg, streamingArtifacts)
     const liveArts = liveInlineArtifactEntriesForCop(seg, streamingArtifacts)
 
+    const thinkingOnlyData = subSegments.length === 0 && !payload.codeExecutions?.length && !payload.subAgents?.length && !payload.fileOps?.length && !payload.webFetches?.length && !payload.genericTools?.length
+      ? buildThinkingOnlyFromItems(seg.items)
+      : null
+
     const hasTimelineBody =
       subSegments.length > 0 ||
+      thinkingOnlyData != null ||
       payload.steps.length > 0 ||
       payload.sources.length > 0 ||
       !!payload.codeExecutions?.length ||
@@ -2354,10 +2359,6 @@ export function ChatView() {
             handoffStatus: terminalRunHandoffStatus === 'running' ? null : terminalRunHandoffStatus,
           })
         : seg.title?.trim() || undefined
-
-    const thinkingOnlyData = subSegments.length === 0 && payload.codeExecutions?.length === 0 && payload.subAgents?.length === 0 && payload.fileOps?.length === 0 && payload.webFetches?.length === 0 && payload.genericTools?.length === 0
-      ? buildThinkingOnlyFromItems(seg.items)
-      : null
 
     return [
       subSegments.length > 0 || thinkingOnlyData ? (
