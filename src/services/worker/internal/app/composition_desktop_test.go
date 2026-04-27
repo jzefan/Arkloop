@@ -1472,6 +1472,137 @@ func TestDesktopInputLoaderIgnoresLegacyCompactSnapshotReplacement(t *testing.T)
 	}
 }
 
+func TestDesktopInputLoaderAppliesPlanMode(t *testing.T) {
+	ctx := context.Background()
+	sqlitePool, err := sqliteadapter.AutoMigrate(ctx, filepath.Join(t.TempDir(), "desktop-plan-mode.db"))
+	if err != nil {
+		t.Fatalf("auto migrate sqlite: %v", err)
+	}
+	defer sqlitePool.Close()
+
+	db := sqlitepgx.New(sqlitePool.Unwrap())
+	accountID := uuid.New()
+	projectID := uuid.New()
+	threadID := uuid.New()
+	runID := uuid.New()
+
+	for _, stmt := range []struct {
+		sql  string
+		args []any
+	}{
+		{
+			sql:  `INSERT INTO accounts (id, slug, name, type, status) VALUES ($1, $2, $3, 'personal', 'active')`,
+			args: []any{accountID, "desktop-plan-" + accountID.String(), "Desktop Plan"},
+		},
+		{
+			sql:  `INSERT INTO projects (id, account_id, name, visibility) VALUES ($1, $2, $3, 'private')`,
+			args: []any{projectID, accountID, "Plan Project"},
+		},
+		{
+			sql:  `INSERT INTO threads (id, account_id, project_id, is_private) VALUES ($1, $2, $3, TRUE)`,
+			args: []any{threadID, accountID, projectID},
+		},
+		{
+			sql:  `INSERT INTO runs (id, account_id, thread_id, status) VALUES ($1, $2, $3, 'running')`,
+			args: []any{runID, accountID, threadID},
+		},
+		{
+			sql:  `INSERT INTO run_events (run_id, seq, type, data_json) VALUES ($1, 1, 'run.started', '{"plan_mode":true}'::jsonb)`,
+			args: []any{runID},
+		},
+	} {
+		if _, err := db.Exec(ctx, stmt.sql, stmt.args...); err != nil {
+			t.Fatalf("seed data: %v", err)
+		}
+	}
+
+	loader := desktopInputLoader(db, data.DesktopRunsRepository{}, data.DesktopRunEventsRepository{}, nil, nil)
+	rc := &pipeline.RunContext{
+		Run: data.Run{
+			ID:        runID,
+			AccountID: accountID,
+			ThreadID:  threadID,
+		},
+		ThreadMessageHistoryLimit: 10,
+	}
+	called := false
+	if err := loader(ctx, rc, func(_ context.Context, got *pipeline.RunContext) error {
+		called = true
+		if got.InputJSON["plan_mode"] != true {
+			t.Fatalf("unexpected plan_mode input: %#v", got.InputJSON["plan_mode"])
+		}
+		if !got.IsPlanMode {
+			t.Fatal("expected desktop plan mode to be active")
+		}
+		wantPlanPath := "plans/" + threadID.String() + ".md"
+		if got.PlanFilePath != wantPlanPath {
+			t.Fatalf("unexpected plan path: got %q want %q", got.PlanFilePath, wantPlanPath)
+		}
+		if len(got.Messages) != len(got.ThreadMessageIDs) {
+			t.Fatalf("messages and ids must stay aligned: messages=%d ids=%d", len(got.Messages), len(got.ThreadMessageIDs))
+		}
+		if len(got.Messages) != 0 {
+			t.Fatalf("plan mode should not synthesize history messages, got %#v", got.Messages)
+		}
+		for _, segment := range got.PromptSegments() {
+			if segment.Name == "plan_mode" && strings.Contains(segment.Text, wantPlanPath) {
+				return nil
+			}
+		}
+		t.Fatalf("missing plan mode prompt segment: %#v", got.PromptSegments())
+		return nil
+	}); err != nil {
+		t.Fatalf("desktopInputLoader failed: %v", err)
+	}
+	if !called {
+		t.Fatal("expected desktop input loader to call next")
+	}
+}
+
+func TestDesktopPersonaResolutionRestoresPlanModePromptAfterReset(t *testing.T) {
+	reg := personas.NewRegistry()
+	reg.Set(personas.Definition{
+		ID:             "test-persona",
+		Version:        "1",
+		Title:          "Test Persona",
+		SoulMD:         "persona soul",
+		PromptMD:       "system prompt",
+		ExecutorType:   "agent.simple",
+		ExecutorConfig: map[string]any{},
+	})
+	mw := desktopPersonaResolution(nil, func() *personas.Registry { return reg }, data.DesktopRunsRepository{}, data.DesktopRunEventsRepository{})
+
+	threadID := uuid.New()
+	rc := &pipeline.RunContext{
+		Run: data.Run{
+			ThreadID: threadID,
+		},
+		InputJSON: map[string]any{
+			"persona_id": "test-persona",
+			"plan_mode":  true,
+		},
+	}
+	pipeline.ApplyPlanMode(rc)
+
+	var gotRuntimePrompt string
+	h := pipeline.Build([]pipeline.RunMiddleware{mw}, func(_ context.Context, got *pipeline.RunContext) error {
+		gotRuntimePrompt = got.RuntimePrompt
+		return nil
+	})
+	if err := h(context.Background(), rc); err != nil {
+		t.Fatalf("desktopPersonaResolution failed: %v", err)
+	}
+	if !rc.IsPlanMode {
+		t.Fatal("expected plan mode to remain active")
+	}
+	if !strings.Contains(gotRuntimePrompt, "[Plan Mode Active]") {
+		t.Fatalf("expected plan mode prompt after desktop persona reset, got %q", gotRuntimePrompt)
+	}
+	if !strings.Contains(gotRuntimePrompt, "plans/"+threadID.String()+".md") {
+		t.Fatalf("expected plan path in runtime prompt, got %q", gotRuntimePrompt)
+	}
+}
+
 func TestDesktopEventWriterCommitsNonStreamingEventsBeforeToolExecution(t *testing.T) {
 	ctx := context.Background()
 

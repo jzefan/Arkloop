@@ -1215,11 +1215,13 @@ func desktopInputLoader(
 		rc.Messages = loaded.Messages
 		rc.ThreadMessageIDs = loaded.ThreadMessageIDs
 		rc.ThreadContextFrontier = append([]pipeline.FrontierNode(nil), loaded.ThreadContextFrontier...)
+		pipeline.ApplyPlanMode(rc)
 		if rc.Tracer != nil {
 			rc.Tracer.Event("input_loader", "input_loader.loaded", map[string]any{
 				"run_kind":      strings.TrimSpace(desktopStringValue(loaded.InputJSON["run_kind"])),
 				"message_count": len(rc.Messages),
 				"history_limit": rc.ThreadMessageHistoryLimit,
+				"plan_mode":     rc.IsPlanMode,
 			})
 		}
 
@@ -2727,6 +2729,7 @@ func desktopPersonaResolution(
 				rc.ResultSummarizer = fallback.ResultSummarizer
 			}
 		}
+		pipeline.ApplyPlanMode(rc)
 
 		return next(ctx, rc)
 	}

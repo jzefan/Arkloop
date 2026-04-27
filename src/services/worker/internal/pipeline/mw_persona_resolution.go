@@ -192,6 +192,7 @@ func NewPersonaResolutionMiddleware(
 				rc.ResultSummarizer = summarizerDef.ResultSummarizer
 			}
 		}
+		ApplyPlanMode(rc)
 
 		return next(ctx, rc)
 	}

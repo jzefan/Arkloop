@@ -215,6 +215,52 @@ func TestPersonaResolutionAppendsPendingSubAgentCallbacksBlock(t *testing.T) {
 	}
 }
 
+func TestPersonaResolutionRestoresPlanModePromptAfterReset(t *testing.T) {
+	reg := buildPersonaRegistry(t, personas.Definition{
+		ID:             "test-persona",
+		Version:        "1",
+		Title:          "Test Persona",
+		SoulMD:         "persona soul",
+		PromptMD:       "system prompt",
+		ExecutorType:   "agent.simple",
+		ExecutorConfig: map[string]any{},
+	})
+	mw := pipeline.NewPersonaResolutionMiddleware(
+		func() *personas.Registry { return reg },
+		nil, data.RunsRepository{}, data.RunEventsRepository{}, nil,
+	)
+
+	threadID := uuid.New()
+	rc := &pipeline.RunContext{
+		Run: data.Run{
+			ThreadID: threadID,
+		},
+		InputJSON: map[string]any{
+			"persona_id": "test-persona",
+			"plan_mode":  true,
+		},
+	}
+	pipeline.ApplyPlanMode(rc)
+
+	var gotRuntimePrompt string
+	h := pipeline.Build([]pipeline.RunMiddleware{mw}, func(_ context.Context, rc *pipeline.RunContext) error {
+		gotRuntimePrompt = rc.RuntimePrompt
+		return nil
+	})
+	if err := h(context.Background(), rc); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !rc.IsPlanMode {
+		t.Fatal("expected plan mode to remain active")
+	}
+	if !strings.Contains(gotRuntimePrompt, "[Plan Mode Active]") {
+		t.Fatalf("expected plan mode prompt after persona reset, got %q", gotRuntimePrompt)
+	}
+	if !strings.Contains(gotRuntimePrompt, "plans/"+threadID.String()+".md") {
+		t.Fatalf("expected plan path in runtime prompt, got %q", gotRuntimePrompt)
+	}
+}
+
 func TestPersonaResolutionLoadsSystemSummarizerConfig(t *testing.T) {
 	reg := buildPersonaRegistry(t,
 		personas.Definition{

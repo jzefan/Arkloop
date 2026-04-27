@@ -81,6 +81,7 @@ type createRunRequest struct {
 	Model          *string `json:"model"`
 	WorkDir        *string `json:"work_dir"`
 	ReasoningMode  *string `json:"reasoning_mode"`
+	PlanMode       *bool   `json:"plan_mode"`
 }
 
 type createRunResponse struct {
@@ -250,6 +251,9 @@ func createThreadRun(
 				return
 			}
 			startedData["reasoning_mode"] = reasoningMode
+		}
+		if body != nil && body.PlanMode != nil {
+			startedData["plan_mode"] = *body.PlanMode
 		}
 
 		thread, err := threadRepo.GetByID(r.Context(), threadID)
