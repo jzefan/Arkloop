@@ -84,6 +84,17 @@ func inheritRunExecutionData(startedData map[string]any, jobData map[string]any,
 		startedData[key] = value
 		jobData[key] = value
 	}
+	copyBool := func(key string) {
+		if parentStartedData == nil {
+			return
+		}
+		value, ok := parentStartedData[key].(bool)
+		if !ok {
+			return
+		}
+		startedData[key] = value
+		jobData[key] = value
+	}
 
 	for _, key := range []string{
 		"route_id",
@@ -97,6 +108,7 @@ func inheritRunExecutionData(startedData map[string]any, jobData map[string]any,
 	} {
 		copyString(key)
 	}
+	copyBool("plan_mode")
 
 	if parentStartedData != nil {
 		if value, ok := parentStartedData["timeout_seconds"]; ok {
@@ -131,6 +143,29 @@ func inheritRunExecutionData(startedData map[string]any, jobData map[string]any,
 	}
 }
 
+func hasInheritedRunExecutionData(startedData map[string]any) bool {
+	if startedData == nil {
+		return false
+	}
+	for _, key := range []string{
+		"route_id",
+		"persona_id",
+		"role",
+		"output_route_id",
+		"output_model_key",
+		"model",
+		"work_dir",
+		"reasoning_mode",
+		"plan_mode",
+		"timeout_seconds",
+	} {
+		if _, ok := startedData[key]; ok {
+			return true
+		}
+	}
+	return false
+}
+
 func inheritContinueRunExecutionData(startedData map[string]any, jobData map[string]any, parentStartedData map[string]any, parentRun *data.Run) {
 	inheritRunExecutionData(startedData, jobData, parentStartedData, parentRun)
 }
@@ -150,6 +185,90 @@ func applyRetryModelOverride(startedData map[string]any, jobData map[string]any,
 	}
 	startedData["model"] = model
 	jobData["model"] = model
+}
+
+func applyEditRunRequestOverrides(startedData map[string]any, jobData map[string]any, body createMessageRequest) error {
+	if body.RouteID != nil {
+		routeID := strings.TrimSpace(*body.RouteID)
+		if !routeIDRegex.MatchString(routeID) {
+			return errors.New("route_id invalid")
+		}
+		startedData["route_id"] = routeID
+		jobData["route_id"] = routeID
+	}
+	if body.PersonaID != nil {
+		personaID := strings.TrimSpace(*body.PersonaID)
+		if !personaIDRegex.MatchString(personaID) {
+			return errors.New("persona_id invalid")
+		}
+		startedData["persona_id"] = personaID
+		jobData["persona_id"] = personaID
+	}
+	if body.Model != nil {
+		model := strings.TrimSpace(*body.Model)
+		if model != "" {
+			startedData["model"] = model
+			jobData["model"] = model
+		}
+	}
+	if body.WorkDir != nil {
+		workDir := strings.TrimSpace(*body.WorkDir)
+		if workDir != "" {
+			startedData["work_dir"] = workDir
+			jobData["work_dir"] = workDir
+		}
+	}
+	if body.ReasoningMode != nil {
+		reasoningMode := strings.TrimSpace(*body.ReasoningMode)
+		if reasoningMode != "" {
+			startedData["reasoning_mode"] = reasoningMode
+			jobData["reasoning_mode"] = reasoningMode
+		}
+	}
+	if body.PlanMode != nil {
+		startedData["plan_mode"] = *body.PlanMode
+		jobData["plan_mode"] = *body.PlanMode
+	}
+	return nil
+}
+
+func resolveEditRunExecutionParent(ctx context.Context, runRepo *data.RunEventRepository, accountID uuid.UUID, threadID uuid.UUID, messageID uuid.UUID) (*data.Run, map[string]any, error) {
+	runs, err := runRepo.ListRunsByThread(ctx, accountID, threadID, 200)
+	if err != nil {
+		return nil, nil, err
+	}
+	messageIDText := messageID.String()
+	for i := range runs {
+		run := runs[i]
+		if run.ParentRunID != nil || run.DeletedAt != nil {
+			continue
+		}
+		startedData, err := runRepo.FirstRunStartedData(ctx, run.ID)
+		if err != nil {
+			return nil, nil, err
+		}
+		if tailID, _ := startedData["thread_tail_message_id"].(string); strings.TrimSpace(tailID) != messageIDText {
+			continue
+		}
+		candidateStarted := map[string]any{"source": "edit"}
+		candidateJob := map[string]any{"source": "edit"}
+		inheritRunExecutionData(candidateStarted, candidateJob, startedData, &run)
+		if !hasInheritedRunExecutionData(candidateStarted) {
+			continue
+		}
+		runCopy := run
+		return &runCopy, startedData, nil
+	}
+
+	parentRun, err := runRepo.GetLatestRootRunForThread(ctx, threadID)
+	if err != nil || parentRun == nil {
+		return parentRun, nil, err
+	}
+	startedData, err := runRepo.FirstRunStartedData(ctx, parentRun.ID)
+	if err != nil {
+		return nil, nil, err
+	}
+	return parentRun, startedData, nil
 }
 
 func editThreadMessage(
@@ -256,31 +375,48 @@ func editThreadMessage(
 			return
 		}
 
-		run, _, err := runRepo.CreateRunWithStartedEvent(
-			r.Context(),
-			thread.AccountID,
-			thread.ID,
-			&actor.UserID,
-			"run.started",
-			map[string]any{"source": "edit"},
-		)
+		startedData := map[string]any{"source": "edit"}
+		jobData := map[string]any{"source": "edit"}
+		parentRun, parentStartedData, err := resolveEditRunExecutionParent(r.Context(), runRepo, thread.AccountID, thread.ID, messageID)
 		if err != nil {
 			httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 			return
 		}
+		inheritRunExecutionData(startedData, jobData, parentStartedData, parentRun)
+		if err := applyEditRunRequestOverrides(startedData, jobData, body); err != nil {
+			httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "request validation failed", traceID, map[string]any{"reason": err.Error()})
+			return
+		}
 
-		_, err = jobRepo.EnqueueRun(
+		run, err := createThreadRunForSource(
 			r.Context(),
+			runRepo,
+			jobRepo.WithTx(tx),
 			thread.AccountID,
-			run.ID,
+			thread.ID,
+			&actor.UserID,
 			traceID,
-			data.RunExecuteJobType,
-			map[string]any{"source": "edit"},
-			nil,
+			startedData,
+			jobData,
 		)
 		if err != nil {
-			httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
+			writeThreadRunBusyOrInternal(w, traceID, err)
 			return
+		}
+		if parentRun != nil && (parentRun.ProfileRef != nil || parentRun.WorkspaceRef != nil) {
+			if _, err := tx.Exec(
+				r.Context(),
+				`UPDATE runs
+				    SET profile_ref = $2,
+				        workspace_ref = $3
+				  WHERE id = $1`,
+				run.ID,
+				parentRun.ProfileRef,
+				parentRun.WorkspaceRef,
+			); err != nil {
+				httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
+				return
+			}
 		}
 
 		txThreadRepo, err := data.NewThreadRepository(tx)

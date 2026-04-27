@@ -29,6 +29,7 @@ import {
   migrateMessageMetadata,
   readSelectedModelFromStorage,
   readSelectedPersonaKeyFromStorage,
+  readPlanModeFromStorage,
   readThreadWorkFolder,
   readThreadReasoningMode,
   SEARCH_PERSONA_KEY,
@@ -201,7 +202,21 @@ export function useChatActions({ scrollToBottom }: UseChatActionsDeps) {
       const newContentJson: MessageContent | undefined = original.content_json
         ? { parts: [{ type: 'text', text: newContent }, ...nonTextParts] }
         : undefined
-      const run = await editMessage(accessToken, threadId, original.id, newContent, newContentJson)
+      const personaKey = readSelectedPersonaKeyFromStorage() ?? undefined
+      const modelOverride = readSelectedModelFromStorage() ?? undefined
+      const reasoningMode = readThreadReasoningMode(threadId)
+      const run = await editMessage(
+        accessToken,
+        threadId,
+        original.id,
+        newContent,
+        newContentJson,
+        personaKey,
+        modelOverride,
+        readThreadWorkFolder(threadId) ?? undefined,
+        reasoningMode !== 'off' ? reasoningMode as RunReasoningMode : undefined,
+        readPlanModeFromStorage(),
+      )
       invalidateMessageSync()
       setMessages((prev) => {
         const index = prev.findIndex((message) => message.id === original.id)

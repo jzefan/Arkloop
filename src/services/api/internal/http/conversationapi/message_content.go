@@ -16,10 +16,10 @@ const (
 	maxMessageAttachmentCount      = 8
 	maxMessageAttachmentTotalBytes = 20 << 20
 	// MaxImageAttachmentBytes 单图上限（与 Worker 多模态装载一致）。
-	MaxImageAttachmentBytes        = 10 << 20
-	maxTextAttachmentBytes         = 1 << 20
-	maxTextAttachmentRunes         = 12000
-	maxMessageAttachmentTextRunes  = 40000
+	MaxImageAttachmentBytes       = 10 << 20
+	maxTextAttachmentBytes        = 1 << 20
+	maxTextAttachmentRunes        = 12000
+	maxMessageAttachmentTextRunes = 40000
 )
 
 var supportedImageMIMEs = map[string]struct{}{
@@ -37,13 +37,19 @@ var supportedTextExtensions = map[string]struct{}{
 }
 
 type createMessageRequest struct {
-	Content     string          `json:"content"`
-	ContentJSON json.RawMessage `json:"content_json"`
+	Content       string          `json:"content"`
+	ContentJSON   json.RawMessage `json:"content_json"`
+	RouteID       *string         `json:"route_id"`
+	PersonaID     *string         `json:"persona_id"`
+	Model         *string         `json:"model"`
+	WorkDir       *string         `json:"work_dir"`
+	ReasoningMode *string         `json:"reasoning_mode"`
+	PlanMode      *bool           `json:"plan_mode"`
 }
 
 type messageResponse struct {
 	ID              string          `json:"id"`
-	AccountID           string          `json:"account_id"`
+	AccountID       string          `json:"account_id"`
 	ThreadID        string          `json:"thread_id"`
 	CreatedByUserID *string         `json:"created_by_user_id"`
 	RunID           *string         `json:"run_id,omitempty"`
