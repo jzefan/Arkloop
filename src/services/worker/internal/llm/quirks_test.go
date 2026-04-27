@@ -18,6 +18,7 @@ func TestQuirkMatch_EchoReasoningContent(t *testing.T) {
 		want   bool
 	}{
 		{"deepseek_real", 400, `{"error":{"message":"Error from provider (DeepSeek): The reasoning_content in the thinking mode must be passed back to the API."}}`, true},
+		{"moonshot_missing", 400, `{"error":{"message":"reasoning_content is missing when thinking is enabled"}}`, true},
 		{"wrong_status", 500, `reasoning_content must be passed back`, false},
 		{"missing_phrase", 400, `reasoning_content is invalid`, false},
 		{"missing_field", 400, `must be passed back`, false},
@@ -199,6 +200,10 @@ func TestDetectQuirk(t *testing.T) {
 	}
 	if _, ok := detectQuirk(200, `reasoning_content must be passed back`, openAIQuirks); ok {
 		t.Fatalf("status 200 must not match")
+	}
+	id, ok = detectQuirk(400, `reasoning_content is missing because thinking is enabled`, openAIQuirks)
+	if !ok || id != QuirkEchoReasoningContent {
+		t.Fatalf("expected moonshot echo, got %s ok=%v", id, ok)
 	}
 	id, ok = detectQuirk(400, `Invalid signature in thinking block`, anthropicQuirks)
 	if !ok || id != QuirkStripUnsignedThinking {

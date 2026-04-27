@@ -68,7 +68,7 @@ type continueThreadRequest struct {
 	RunID string `json:"run_id"`
 }
 
-func inheritContinueRunExecutionData(startedData map[string]any, jobData map[string]any, parentStartedData map[string]any, parentRun *data.Run) {
+func inheritRunExecutionData(startedData map[string]any, jobData map[string]any, parentStartedData map[string]any, parentRun *data.Run) {
 	copyString := func(key string) {
 		if parentStartedData == nil {
 			return
@@ -129,6 +129,27 @@ func inheritContinueRunExecutionData(startedData map[string]any, jobData map[str
 			jobData["persona_id"] = personaID
 		}
 	}
+}
+
+func inheritContinueRunExecutionData(startedData map[string]any, jobData map[string]any, parentStartedData map[string]any, parentRun *data.Run) {
+	inheritRunExecutionData(startedData, jobData, parentStartedData, parentRun)
+}
+
+func inheritRetryRunExecutionData(startedData map[string]any, jobData map[string]any, parentStartedData map[string]any, parentRun *data.Run, body *createRunRequest) {
+	inheritRunExecutionData(startedData, jobData, parentStartedData, parentRun)
+	applyRetryModelOverride(startedData, jobData, body)
+}
+
+func applyRetryModelOverride(startedData map[string]any, jobData map[string]any, body *createRunRequest) {
+	if body == nil || body.Model == nil {
+		return
+	}
+	model := strings.TrimSpace(*body.Model)
+	if model == "" {
+		return
+	}
+	startedData["model"] = model
+	jobData["model"] = model
 }
 
 func editThreadMessage(
@@ -386,13 +407,20 @@ func retryThread(
 
 		startedData := map[string]any{"source": "retry"}
 		jobData := map[string]any{"source": "retry"}
-		if body != nil && body.Model != nil {
-			model := strings.TrimSpace(*body.Model)
-			if model != "" {
-				startedData["model"] = model
-				jobData["model"] = model
+		parentRun, err := runRepo.GetLatestRootRunForThread(r.Context(), thread.ID)
+		if err != nil {
+			httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
+			return
+		}
+		var parentStartedData map[string]any
+		if parentRun != nil {
+			parentStartedData, err = runRepo.FirstRunStartedData(r.Context(), parentRun.ID)
+			if err != nil {
+				httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
+				return
 			}
 		}
+		inheritRetryRunExecutionData(startedData, jobData, parentStartedData, parentRun, body)
 
 		run, err := createThreadRunForSource(
 			r.Context(),
@@ -408,6 +436,21 @@ func retryThread(
 		if err != nil {
 			writeThreadRunBusyOrInternal(w, traceID, err)
 			return
+		}
+		if parentRun != nil && (parentRun.ProfileRef != nil || parentRun.WorkspaceRef != nil) {
+			if _, err := tx.Exec(
+				r.Context(),
+				`UPDATE runs
+				    SET profile_ref = $2,
+				        workspace_ref = $3
+				  WHERE id = $1`,
+				run.ID,
+				parentRun.ProfileRef,
+				parentRun.WorkspaceRef,
+			); err != nil {
+				httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
+				return
+			}
 		}
 
 		txThreadRepo, err := data.NewThreadRepository(tx)

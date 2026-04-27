@@ -708,6 +708,13 @@ func parseOpenAIResponsesAssistantResponse(root map[string]any) (Message, []Tool
 			continue
 		}
 
+		if typ == "reasoning" {
+			if text := openAIResponsesReasoningItemText(item); text != "" {
+				assistantMessage.Content = append(assistantMessage.Content, ContentPart{Type: "thinking", Text: text})
+			}
+			continue
+		}
+
 		if typ != "function_call" {
 			continue
 		}
@@ -771,6 +778,30 @@ func parseOpenAIResponsesAssistantResponse(root map[string]any) (Message, []Tool
 		assistantMessage.Content = []TextPart{{Text: contentBuilder.String()}}
 	}
 	return assistantMessage, toolCalls, usage, cost, nil
+}
+
+func openAIResponsesReasoningItemText(item map[string]any) string {
+	var out strings.Builder
+	appendText := func(text string) {
+		if text != "" {
+			out.WriteString(text)
+		}
+	}
+	appendText(openAIResponsesTextValue(item["text"], item["reasoning"], item["summary_text"]))
+	for _, key := range []string{"summary", "content"} {
+		rawList, ok := item[key].([]any)
+		if !ok {
+			continue
+		}
+		for _, rawPart := range rawList {
+			part, ok := rawPart.(map[string]any)
+			if !ok {
+				continue
+			}
+			appendText(openAIResponsesTextValue(part["text"], part["summary_text"], part["value"]))
+		}
+	}
+	return out.String()
 }
 
 func openAIResponsesMessageContentText(part map[string]any) (string, bool) {

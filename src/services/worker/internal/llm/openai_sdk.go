@@ -323,6 +323,8 @@ type openAISDKChatState struct {
 	llmCallID       string
 	yield           func(StreamEvent) error
 	toolBuffer      *openAIChatToolCallBuffer
+	visible         strings.Builder
+	thinking        strings.Builder
 	usage           *Usage
 	cost            *Cost
 	emittedMain     bool
@@ -349,6 +351,7 @@ func (s *openAISDKChatState) handle(chunk openai.ChatCompletionChunk) error {
 		role = strings.TrimSpace(choice.Delta.Role)
 	}
 	if choice.Delta.Refusal != "" {
+		s.visible.WriteString(choice.Delta.Refusal)
 		s.emittedAny = true
 		s.emittedMain = true
 		if err := s.yield(StreamMessageDelta{ContentDelta: choice.Delta.Refusal, Role: role}); err != nil {
@@ -359,12 +362,14 @@ func (s *openAISDKChatState) handle(chunk openai.ChatCompletionChunk) error {
 		thinkingPart, mainPart := splitThinkContent(&s.inThink, choice.Delta.Content)
 		ch := "thinking"
 		if thinkingPart != "" {
+			s.thinking.WriteString(thinkingPart)
 			s.emittedAny = true
 			if err := s.yield(StreamMessageDelta{ContentDelta: thinkingPart, Role: role, Channel: &ch}); err != nil {
 				return err
 			}
 		}
 		if mainPart != "" {
+			s.visible.WriteString(mainPart)
 			s.emittedAny = true
 			s.emittedMain = true
 			if err := s.yield(StreamMessageDelta{ContentDelta: mainPart, Role: role}); err != nil {
@@ -377,6 +382,7 @@ func (s *openAISDKChatState) handle(chunk openai.ChatCompletionChunk) error {
 	if delta, _ := rawChoice["delta"].(map[string]any); delta != nil {
 		if text, _ := delta["reasoning_content"].(string); text != "" {
 			ch := "thinking"
+			s.thinking.WriteString(text)
 			s.emittedAny = true
 			if err := s.yield(StreamMessageDelta{ContentDelta: text, Role: role, Channel: &ch}); err != nil {
 				return err
@@ -384,6 +390,7 @@ func (s *openAISDKChatState) handle(chunk openai.ChatCompletionChunk) error {
 		}
 		if text, _ := delta["reasoning"].(string); text != "" {
 			ch := "thinking"
+			s.thinking.WriteString(text)
 			s.emittedAny = true
 			if err := s.yield(StreamMessageDelta{ContentDelta: text, Role: role, Channel: &ch}); err != nil {
 				return err
@@ -446,12 +453,24 @@ func (s *openAISDKChatState) complete() error {
 		}
 		return s.yield(StreamRunFailed{LlmCallID: s.llmCallID, Error: RetryableStreamEndedError(), Usage: s.usage, Cost: s.cost})
 	}
-	return s.yield(StreamRunCompleted{LlmCallID: s.llmCallID, Usage: s.usage, Cost: s.cost})
+	assistantMessage := s.assistantMessage()
+	return s.yield(StreamRunCompleted{LlmCallID: s.llmCallID, Usage: s.usage, Cost: s.cost, AssistantMessage: &assistantMessage})
+}
+func (s *openAISDKChatState) assistantMessage() Message {
+	parts := make([]ContentPart, 0, 2)
+	if text := s.thinking.String(); text != "" {
+		parts = append(parts, ContentPart{Type: "thinking", Text: text})
+	}
+	if text := s.visible.String(); text != "" {
+		parts = append(parts, TextPart{Text: text})
+	}
+	return Message{Role: "assistant", Content: parts}
 }
 
 type openAISDKResponsesState struct {
 	llmCallID          string
 	yield              func(StreamEvent) error
+	thinking           strings.Builder
 	completed          bool
 	emittedVisibleText bool
 	toolBuffers        map[int]*openAIResponsesToolBuffer
@@ -473,6 +492,7 @@ func (s *openAISDKResponsesState) handle(event responses.ResponseStreamEventUnio
 	if delta := openAIResponsesDeltaText(root); delta != "" {
 		ch := "thinking"
 		if openAIResponsesIsReasoningDelta(typ) {
+			s.thinking.WriteString(delta)
 			if err := s.yield(StreamMessageDelta{ContentDelta: delta, Role: "assistant", Channel: &ch}); err != nil {
 				return err
 			}
@@ -495,6 +515,7 @@ func (s *openAISDKResponsesState) handle(event responses.ResponseStreamEventUnio
 				return s.yield(openAIParseFailure(err, "OpenAI responses response parse failed", "OpenAI responses tool_call arguments parse failed", s.llmCallID))
 			}
 		}
+		s.applyStreamedThinking(&assistantMessage)
 		if !s.emittedVisibleText {
 			if text := VisibleMessageText(assistantMessage); text != "" {
 				s.emittedVisibleText = true
@@ -533,6 +554,20 @@ func (s *openAISDKResponsesState) complete() error {
 		return nil
 	}
 	return s.yield(StreamRunFailed{LlmCallID: s.llmCallID, Error: RetryableStreamEndedError()})
+}
+
+func (s *openAISDKResponsesState) applyStreamedThinking(message *Message) {
+	if s == nil || message == nil {
+		return
+	}
+	text := s.thinking.String()
+	if text == "" {
+		return
+	}
+	if _, ok := openAIReasoningContent(message.Content); ok {
+		return
+	}
+	message.Content = append([]ContentPart{{Type: "thinking", Text: text}}, message.Content...)
 }
 
 func openAISDKChatUsageFromRaw(raw string, currentUsage *Usage, currentCost *Cost) (*Usage, *Cost) {
