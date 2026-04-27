@@ -4212,6 +4212,108 @@ describe('ChatPage loading state', () => {
     container.remove()
   })
 
+  it('completed run 没有 assistant message 时刷新后应恢复 handoff 和结束态操作', async () => {
+    mockedListMessages.mockResolvedValue([
+      {
+        id: 'msg-1',
+        role: 'user',
+        content: 'hello',
+        account_id: 'acc-1',
+        thread_id: 'thread-1',
+        created_by_user_id: 'user-1',
+        created_at: '2026-03-10T00:00:00Z',
+      },
+    ])
+    mockedListThreadRuns.mockResolvedValue([
+      {
+        run_id: 'run-completed-no-message',
+        status: 'completed',
+        created_at: '2026-03-10T00:00:00Z',
+      },
+    ])
+    mockedListRunEvents.mockResolvedValue([
+      {
+        event_id: 'evt-completed-1',
+        run_id: 'run-completed-no-message',
+        seq: 1,
+        ts: '2026-03-10T00:00:00Z',
+        type: 'message.delta',
+        data: {
+          role: 'assistant',
+          content_delta: '完成输出',
+        },
+      },
+      {
+        event_id: 'evt-completed-2',
+        run_id: 'run-completed-no-message',
+        seq: 2,
+        ts: '2026-03-10T00:00:01Z',
+        type: 'run.completed',
+        data: {},
+      },
+    ])
+
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const root = createRoot(container)
+    const outletContext = {
+      accessToken: 'token',
+      onLoggedOut: vi.fn(),
+      onRunStarted: vi.fn(),
+      onRunEnded: vi.fn(),
+      onThreadCreated: vi.fn(),
+      onThreadTitleUpdated: vi.fn(),
+      refreshCredits: vi.fn(),
+      onOpenNotifications: vi.fn(),
+      notificationVersion: 0,
+      creditsBalance: 0,
+      isPrivateMode: false,
+      onTogglePrivateMode: vi.fn(),
+      privateThreadIds: new Set<string>(),
+      onSetPendingIncognito: vi.fn(),
+      onRightPanelChange: vi.fn(),
+      threads: [],
+      onThreadDeleted: vi.fn(),
+    }
+
+    await act(async () => {
+      root.render(
+        <LocaleProvider>
+          <MemoryRouter initialEntries={['/t/thread-1']}>
+            <Routes>
+              <Route element={<OutletShell context={outletContext} />}>
+                <Route path="/t/:threadId" element={<ChatPage />} />
+              </Route>
+            </Routes>
+          </MemoryRouter>
+        </LocaleProvider>,
+      )
+      await flushMicrotasks()
+      await flushMicrotasks()
+    })
+
+    expect(mockedListRunEvents).toHaveBeenCalledWith('token', 'run-completed-no-message', { follow: false })
+    const handoff = container.querySelector('[data-testid="current-run-handoff"]') as HTMLElement | null
+    expect(handoff).not.toBeNull()
+    expect(handoff?.textContent).toContain('完成输出')
+    const actionBar = handoff?.nextElementSibling as HTMLElement | null
+    const actionButtons = actionBar?.querySelectorAll('button') ?? []
+    expect(actionButtons.length).toBeGreaterThanOrEqual(2)
+    expect(actionButtons[0]?.disabled).toBe(false)
+    expect(actionButtons[1]?.disabled).toBe(false)
+
+    await act(async () => {
+      actionButtons[1]?.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
+      await flushMicrotasks()
+    })
+    expect(mockedRetryThread).toHaveBeenCalledWith('token', 'thread-1', undefined)
+
+    act(() => {
+      root.unmount()
+    })
+    container.remove()
+  })
+
   it('run.completed handoff 不应继续把最后一个 cop 当作 live', async () => {
     let resolveRefresh: ((value: Awaited<ReturnType<typeof listMessages>>) => void) | null = null
     mockedListMessages

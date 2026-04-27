@@ -42,6 +42,7 @@ import {
   isTerminalRunEventType,
   buildFrozenAssistantTurnFromRunEvents,
   finalizeSearchSteps,
+  hasRecoverableRunOutput,
 } from '../lib/chat-helpers'
 import { extractPartialArtifactFields, extractPartialWidgetFields } from '../components/ArtifactStreamBlock'
 import type { MsgRunEvent } from '../storage'
@@ -718,6 +719,21 @@ export function useThreadSseEffect({
         if (runSearchSteps.length > 0) {
           pendingSearchStepsRef.current = runSearchSteps
         }
+        const completedRunCache = {
+          ...runCache,
+          pendingSearchSteps: runSearchSteps.length > 0 ? runSearchSteps : runCache.pendingSearchSteps,
+        }
+        if (hasRecoverableRunOutput({
+          assistantTurn: completedRunCache.handoffAssistantTurn,
+          searchSteps: completedRunCache.pendingSearchSteps,
+          widgets: completedRunCache.runWidgets,
+          codeExecutions: completedRunCache.runCodeExecs,
+          subAgents: completedRunCache.runSubAgents,
+          fileOps: completedRunCache.runFileOps,
+          webFetches: completedRunCache.runWebFetches,
+        })) {
+          persistThreadRunHandoff(completedRunId, completedRunCache)
+        }
         setQueuedDraft(null)
         setAwaitingInput(false)
         setPendingUserInput(null)
@@ -731,7 +747,7 @@ export function useThreadSseEffect({
               const pendingSteps = pendingSearchStepsRef.current
               pendingSearchStepsRef.current = null
               persistRunDataToMessage(completedAssistant.id, {
-                ...runCache,
+                ...completedRunCache,
                 pendingSearchSteps: pendingSteps,
               }, runEventsForMessage)
               markTerminalRunHistory(completedAssistant.id, false)

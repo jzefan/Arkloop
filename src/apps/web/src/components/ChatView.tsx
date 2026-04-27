@@ -29,6 +29,7 @@ import { ChatTitleMenu } from './ChatTitleMenu'
 import { MessageList } from './MessageList'
 import { ContextCompactBar } from './ContextCompactBar'
 import { IncognitoDivider } from './IncognitoDivider'
+import { AssistantActionBar } from './messagebubble/AssistantMessage'
 import {
   buildMessageArtifactsFromRunEvents,
   buildMessageCodeExecutionsFromRunEvents,
@@ -46,6 +47,7 @@ import {
 import { getThreadTodos, setThreadTodos, clearThreadTodos } from '../todoDb'
 import {
   buildAssistantTurnFromRunEvents,
+  assistantTurnPlainText,
   copSegmentCalls,
   createEmptyAssistantTurnFoldState,
   snapshotAssistantTurn,
@@ -374,6 +376,7 @@ type LiveRunPaneProps = {
     status: LiveRunHandoffStatus
     hasOutput: boolean
   }) => (() => void) | undefined
+  onRetry: () => void
   onOpenDocument: (artifact: ArtifactRef, options?: { trigger?: HTMLElement | null; artifacts?: ArtifactRef[]; runId?: string }) => void
   onOpenCodeExecution: (ce: CodeExecution) => void
   onOpenSubAgent: (agent: SubAgentRef) => void
@@ -427,6 +430,7 @@ const LiveRunPane = memo(function LiveRunPane({
   runCancelledLabel,
   actionLabelForTerminalRun,
   actionHandlerForTerminalRun,
+  onRetry,
   onOpenDocument,
   onOpenCodeExecution,
   onOpenSubAgent,
@@ -437,6 +441,11 @@ const LiveRunPane = memo(function LiveRunPane({
   messages,
   isWorkMode,
 }: LiveRunPaneProps) {
+  const completedAssistantText =
+    terminalRunHandoffStatus === 'completed' && liveAssistantTurn
+      ? assistantTurnPlainText(liveAssistantTurn)
+      : ''
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
       {(showPendingThinkingShell || liveSegments.length > 0) && (
@@ -488,6 +497,16 @@ const LiveRunPane = memo(function LiveRunPane({
               renderLiveCopSegment(seg, si, `live-acw-${si}`)
             )
           })}
+        </div>
+      )}
+
+      {completedAssistantText.trim() !== '' && (
+        <div style={{ maxWidth: '663px' }}>
+          <AssistantActionBar
+            textToCopy={completedAssistantText}
+            onRetry={onRetry}
+            isLast
+          />
         </div>
       )}
 
@@ -1113,9 +1132,8 @@ export function ChatView() {
         }
 
         // 服务端回放：补齐最新一轮的运行缓存
-        const lastAssistant = latest
-          ? findAssistantMessageForRun(items, latest.run_id)
-          : [...items].reverse().find((m) => m.role === 'assistant')
+        const latestAssistant = latest ? findAssistantMessageForRun(items, latest.run_id) : null
+        const lastAssistant = latest ? latestAssistant : [...items].reverse().find((m) => m.role === 'assistant')
         const replayWidgetsNeeded = !!(lastAssistant && !widgetsMap.has(lastAssistant.id))
         const replayCodeExecNeeded = !!(lastAssistant && shouldReplayMessageCodeExecutions(codeExecMap.get(lastAssistant.id)))
         const replayBrowserActionsNeeded = !!(lastAssistant && !browserActionsMap.has(lastAssistant.id))
@@ -1131,6 +1149,7 @@ export function ChatView() {
             latest.status === 'interrupted' ||
             latest.status === 'failed' ||
             latest.status === 'cancelled' ||
+            latest.status === 'completed' ||
             (lastAssistant != null && (
               replayWidgetsNeeded ||
               replayCodeExecNeeded ||
@@ -1248,7 +1267,7 @@ export function ChatView() {
             ) {
               replayThreadHandoff = {
                 runId: latest.run_id,
-                status: latest.status === 'cancelled' ? 'cancelled' : latest.status === 'interrupted' ? 'interrupted' : 'failed',
+                status: latest.status === 'completed' ? 'completed' : latest.status === 'cancelled' ? 'cancelled' : latest.status === 'interrupted' ? 'interrupted' : 'failed',
                 coveredRunIds: [],
                 assistantTurn: replayTurn.segments.length > 0 ? replayTurn : null,
                 sources: replaySearchSteps.flatMap((step) => step.sources ?? []),
@@ -1383,6 +1402,12 @@ export function ChatView() {
           latest.run_id === replayThreadHandoff.runId
         const shouldRestoreThreadHandoff =
           !!effectiveCachedThreadHandoff &&
+          !(
+            effectiveCachedThreadHandoff.status === 'completed' &&
+            !!latest &&
+            latest.run_id === effectiveCachedThreadHandoff.runId &&
+            latestAssistant != null
+          ) &&
           (
             !latest ||
             latest.run_id === effectiveCachedThreadHandoff.runId ||
@@ -2528,6 +2553,7 @@ export function ChatView() {
                     runCancelledLabel={t.runCancelled}
                     actionLabelForTerminalRun={actionLabelForTerminalRun}
                     actionHandlerForTerminalRun={actionHandlerForTerminalRun}
+                    onRetry={handleRetry}
                     onOpenDocument={openDocumentPanel}
                     onOpenCodeExecution={openCodePanel}
                     onOpenSubAgent={openAgentPanelState}
