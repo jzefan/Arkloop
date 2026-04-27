@@ -17,6 +17,7 @@ func toOpenAIChatMessages(messages []Message) ([]map[string]any, error) {
 				"tool_calls": toOpenAIAssistantToolCalls(message.ToolCalls),
 			}
 			applyOpenAIReasoningContent(item, message.Content)
+			ensureOpenAIReasoningContent(item)
 			out = append(out, item)
 			continue
 		}
@@ -77,6 +78,13 @@ func applyOpenAIReasoningContent(item map[string]any, parts []ContentPart) {
 		return
 	}
 	item["reasoning_content"] = text
+}
+
+func ensureOpenAIReasoningContent(item map[string]any) {
+	if _, ok := item["reasoning_content"]; ok {
+		return
+	}
+	item["reasoning_content"] = ""
 }
 
 func joinParts(parts []ContentPart) string {

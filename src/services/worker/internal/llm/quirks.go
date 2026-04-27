@@ -86,7 +86,14 @@ var openAIQuirks = []Quirk{
 				return false
 			}
 			lower := strings.ToLower(rawBody)
-			return strings.Contains(lower, "reasoning_content") && strings.Contains(lower, "passed back")
+			if !strings.Contains(lower, "reasoning_content") {
+				return false
+			}
+			if strings.Contains(lower, "passed back") {
+				return true
+			}
+			return strings.Contains(lower, "reasoning_content is missing") &&
+				strings.Contains(lower, "thinking is enabled")
 		},
 		Apply: applyEchoReasoningContent,
 	},

@@ -68,6 +68,54 @@ func TestOpenAISDKGateway_ChatCompletionsStreamsToolAndCost(t *testing.T) {
 	}
 }
 
+func TestOpenAISDKGateway_ChatCompletionsCompletedMessageCarriesThinking(t *testing.T) {
+	t.Setenv("ARKLOOP_OUTBOUND_ALLOW_LOOPBACK_HTTP", "true")
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte(openAISDKSSE([]string{
+			`{"id":"chatcmpl_1","object":"chat.completion.chunk","created":1,"model":"gpt","choices":[{"index":0,"delta":{"role":"assistant","content":"<think>plan"},"finish_reason":null}]}`,
+			`{"id":"chatcmpl_1","object":"chat.completion.chunk","created":1,"model":"gpt","choices":[{"index":0,"delta":{"content":"</think>visible "},"finish_reason":null}]}`,
+			`{"id":"chatcmpl_1","object":"chat.completion.chunk","created":1,"model":"gpt","choices":[{"index":0,"delta":{"reasoning_content":"deep "},"finish_reason":null}]}`,
+			`{"id":"chatcmpl_1","object":"chat.completion.chunk","created":1,"model":"gpt","choices":[{"index":0,"delta":{"reasoning":"trace"},"finish_reason":null}]}`,
+			`{"id":"chatcmpl_1","object":"chat.completion.chunk","created":1,"model":"gpt","choices":[{"index":0,"delta":{"content":"answer"},"finish_reason":"stop"}]}`,
+		})))
+	}))
+	defer server.Close()
+
+	gateway := NewOpenAIGatewaySDK(OpenAIGatewayConfig{Transport: TransportConfig{APIKey: "key", BaseURL: server.URL}, Protocol: OpenAIProtocolConfig{PrimaryKind: ProtocolKindOpenAIChatCompletions}})
+	var thinkingDeltas []string
+	var visibleDeltas []string
+	var completed *StreamRunCompleted
+	if err := gateway.Stream(context.Background(), Request{Model: "gpt", Messages: []Message{{Role: "user", Content: []ContentPart{{Text: "hello"}}}}}, func(event StreamEvent) error {
+		switch ev := event.(type) {
+		case StreamMessageDelta:
+			if ev.Channel != nil && *ev.Channel == "thinking" {
+				thinkingDeltas = append(thinkingDeltas, ev.ContentDelta)
+			} else {
+				visibleDeltas = append(visibleDeltas, ev.ContentDelta)
+			}
+		case StreamRunCompleted:
+			completed = &ev
+		}
+		return nil
+	}); err != nil {
+		t.Fatalf("stream: %v", err)
+	}
+	if strings.Join(thinkingDeltas, "") != "plandeep trace" {
+		t.Fatalf("unexpected thinking deltas: %#v", thinkingDeltas)
+	}
+	if strings.Join(visibleDeltas, "") != "visible answer" {
+		t.Fatalf("unexpected visible deltas: %#v", visibleDeltas)
+	}
+	if completed == nil || completed.AssistantMessage == nil {
+		t.Fatalf("missing assistant message: %#v", completed)
+	}
+	parts := completed.AssistantMessage.Content
+	if len(parts) != 2 || parts[0].Kind() != "thinking" || parts[0].Text != "plandeep trace" || parts[1].Text != "visible answer" {
+		t.Fatalf("unexpected assistant parts: %#v", parts)
+	}
+}
+
 func TestOpenAISDKGateway_ResponsesAutoFallback(t *testing.T) {
 	t.Setenv("ARKLOOP_OUTBOUND_ALLOW_LOOPBACK_HTTP", "true")
 	var paths []string
@@ -344,6 +392,75 @@ func TestOpenAISDKResponsesState_CompletedOnlyEmitsVisibleTextDelta(t *testing.T
 	}
 }
 
+func TestOpenAISDKResponsesState_CompletedMessageCarriesReasoningDelta(t *testing.T) {
+	var thinkingDeltas []string
+	var completed *StreamRunCompleted
+	var toolCalls []ToolCall
+	state := newOpenAISDKResponsesState("llm_1", func(event StreamEvent) error {
+		switch ev := event.(type) {
+		case StreamMessageDelta:
+			if ev.Channel != nil && *ev.Channel == "thinking" {
+				thinkingDeltas = append(thinkingDeltas, ev.ContentDelta)
+			}
+		case ToolCall:
+			toolCalls = append(toolCalls, ev)
+		case StreamRunCompleted:
+			completed = &ev
+		}
+		return nil
+	})
+	chunks := []string{
+		`{"type":"response.reasoning_summary_text.delta","delta":"plan"}`,
+		`{"type":"response.completed","response":{"output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"final answer"}]},{"type":"function_call","call_id":"call_1","name":"echo","arguments":"{\"text\":\"hi\"}"}],"usage":{"input_tokens":1,"output_tokens":2}}}`,
+	}
+	for _, chunk := range chunks {
+		var event responses.ResponseStreamEventUnion
+		if err := json.Unmarshal([]byte(chunk), &event); err != nil {
+			t.Fatalf("unmarshal: %v", err)
+		}
+		if err := state.handle(event); err != nil {
+			t.Fatalf("handle: %v", err)
+		}
+	}
+	if strings.Join(thinkingDeltas, "") != "plan" {
+		t.Fatalf("unexpected thinking deltas: %#v", thinkingDeltas)
+	}
+	if len(toolCalls) != 1 || toolCalls[0].ToolCallID != "call_1" {
+		t.Fatalf("unexpected tool calls: %#v", toolCalls)
+	}
+	if completed == nil || completed.AssistantMessage == nil {
+		t.Fatalf("missing completion: %#v", completed)
+	}
+	parts := completed.AssistantMessage.Content
+	if len(parts) != 2 || parts[0].Kind() != "thinking" || parts[0].Text != "plan" || parts[1].Text != "final answer" {
+		t.Fatalf("unexpected assistant parts: %#v", parts)
+	}
+}
+
+func TestParseOpenAIResponsesAssistantResponseCarriesReasoningItem(t *testing.T) {
+	message, _, _, _, err := parseOpenAIResponsesAssistantResponse(map[string]any{
+		"output": []any{
+			map[string]any{
+				"type": "reasoning",
+				"summary": []any{
+					map[string]any{"type": "summary_text", "text": "plan"},
+				},
+			},
+			map[string]any{
+				"type":    "message",
+				"role":    "assistant",
+				"content": []any{map[string]any{"type": "output_text", "text": "final answer"}},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("parseOpenAIResponsesAssistantResponse: %v", err)
+	}
+	if len(message.Content) != 2 || message.Content[0].Kind() != "thinking" || message.Content[0].Text != "plan" || message.Content[1].Text != "final answer" {
+		t.Fatalf("unexpected assistant message: %#v", message)
+	}
+}
+
 func TestOpenAISDKGateway_ProviderOversizeDetails(t *testing.T) {
 	t.Setenv("ARKLOOP_OUTBOUND_ALLOW_LOOPBACK_HTTP", "true")
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -490,6 +607,27 @@ func TestOpenAIChatMessagesCarryAssistantThinkingAsReasoningContent(t *testing.T
 		t.Fatalf("expected one message, got %#v", messages)
 	}
 	if messages[0]["content"] != "answer" || messages[0]["reasoning_content"] != "first second" {
+		t.Fatalf("unexpected assistant message: %#v", messages[0])
+	}
+}
+
+func TestOpenAIChatMessagesAddEmptyReasoningContentForAssistantToolCalls(t *testing.T) {
+	messages, err := toOpenAIChatMessages([]Message{{
+		Role:    "assistant",
+		Content: []ContentPart{{Text: "answer"}},
+		ToolCalls: []ToolCall{{
+			ToolCallID:    "call_1",
+			ToolName:      "echo",
+			ArgumentsJSON: map[string]any{"text": "hi"},
+		}},
+	}})
+	if err != nil {
+		t.Fatalf("toOpenAIChatMessages: %v", err)
+	}
+	if len(messages) != 1 {
+		t.Fatalf("expected one message, got %#v", messages)
+	}
+	if messages[0]["content"] != "answer" || messages[0]["reasoning_content"] != "" {
 		t.Fatalf("unexpected assistant message: %#v", messages[0])
 	}
 }
