@@ -1,6 +1,7 @@
 import { memo, useState, useRef, useEffect, useCallback, useMemo, useLayoutEffect } from 'react'
 import { createPortal } from 'react-dom'
 import { useNavigate, useParams, useLocation } from 'react-router-dom'
+import { Virtuoso } from 'react-virtuoso'
 import {
   SquarePen,
   Search,
@@ -36,6 +37,124 @@ function threadTitle(thread: ThreadResponse, untitled: string): string {
   const title = (thread.title ?? '').trim()
   return title.length > 0 ? title : untitled
 }
+
+type SidebarThreadItemProps = {
+  thread: ThreadResponse
+  section: 'starred' | 'regular'
+  isRunning: boolean
+  isMenuOpen: boolean
+  isEditing: boolean
+  isActive: boolean
+  isStarred: boolean
+  editingTitle: string
+  untitled: string
+  editInputRef: React.RefObject<HTMLInputElement | null>
+  setEditingTitle: React.Dispatch<React.SetStateAction<string>>
+  setEditingThreadId: React.Dispatch<React.SetStateAction<string | null>>
+  commitRename: (id: string, newTitle: string) => void
+  beforeNavigateToThread?: () => void
+  navigate: ReturnType<typeof useNavigate>
+  openMenu: (event: React.MouseEvent, id: string) => void
+}
+
+const SidebarThreadItem = memo(function SidebarThreadItem({
+  thread,
+  section,
+  isRunning,
+  isMenuOpen,
+  isEditing,
+  isActive,
+  isStarred,
+  editingTitle,
+  untitled,
+  editInputRef,
+  setEditingTitle,
+  setEditingThreadId,
+  commitRename,
+  beforeNavigateToThread,
+  navigate,
+  openMenu,
+}: SidebarThreadItemProps) {
+  return (
+    <div
+      key={`${thread.id}-${section}`}
+      className={[
+        'group relative flex w-full items-center rounded-[6px]',
+        isActive || isMenuOpen
+          ? 'bg-[var(--c-bg-deep)]'
+          : 'hover:bg-[var(--c-bg-deep)]',
+      ].join(' ')}
+    >
+      {isEditing ? (
+        <input
+          ref={editInputRef}
+          value={editingTitle}
+          onChange={(e) => setEditingTitle(e.target.value)}
+          onBlur={() => commitRename(thread.id, editingTitle)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') {
+              e.preventDefault()
+              commitRename(thread.id, editingTitle)
+            } else if (e.key === 'Escape') {
+              setEditingThreadId(null)
+            }
+          }}
+          className="min-w-0 flex-1 bg-transparent px-2 py-[7px] text-[13px] text-[var(--c-text-primary)] outline-none"
+          style={{ border: 'none', fontWeight: 'var(--c-sidebar-thread-weight)' }}
+          maxLength={200}
+        />
+      ) : (
+        <button
+          onClick={() => {
+            beforeNavigateToThread?.()
+            navigate(`/t/${thread.id}`)
+          }}
+          className={[
+            'flex min-w-0 flex-1 items-center gap-2 px-2 py-[7px] text-left text-[14px] group-hover:text-[var(--c-text-primary)]',
+            isActive
+              ? 'text-[var(--c-text-primary)]'
+              : 'text-[var(--c-text-secondary)]',
+          ].join(' ')}
+          style={{ fontWeight: 'var(--c-sidebar-thread-weight)' }}
+        >
+          {isStarred && (
+            <Star size={11} className="shrink-0 fill-[var(--c-text-muted)] text-[var(--c-text-muted)] opacity-70" />
+          )}
+          <span className="min-w-0 flex-1 truncate">{threadTitle(thread, untitled)}</span>
+        </button>
+      )}
+
+      {!isEditing && (
+        <div className="mr-1 flex shrink-0 items-center">
+          {isRunning && (
+            <span className="mr-1 h-3 w-3 shrink-0 animate-spin rounded-full border border-[var(--c-text-muted)] border-t-transparent" />
+          )}
+          <div
+            className={[
+              'shrink-0',
+              isRunning
+                ? `overflow-hidden transition-[width] duration-150 ${isMenuOpen ? 'w-6' : 'w-0 group-hover:w-6'}`
+                : 'w-6',
+            ].join(' ')}
+          >
+            <button
+              data-menu-button={thread.id}
+              onClick={(e) => openMenu(e, thread.id)}
+              className={[
+                'flex h-6 w-6 shrink-0 items-center justify-center rounded-md transition-transform duration-[80ms] active:scale-[0.96]',
+                isMenuOpen
+                  ? 'opacity-100 bg-[var(--c-sidebar-btn-hover)] text-[var(--c-text-primary)]'
+                  : 'opacity-0 group-hover:opacity-100 text-[var(--c-text-muted)] hover:bg-[var(--c-sidebar-btn-hover)] hover:text-[var(--c-text-primary)]',
+              ].join(' ')}
+            >
+              <MoreHorizontal size={14} />
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+})
 
 type SidebarThreadListProps = {
   starredThreads: ThreadResponse[]
@@ -84,99 +203,54 @@ const SidebarThreadList = memo(function SidebarThreadList({
     })
   })
 
-  const renderThread = (thread: ThreadResponse, section: 'starred' | 'regular') => {
-    const isRunning = runningThreadIds.has(thread.id)
-    const isMenuOpen = menuThreadId === thread.id
-    const isEditing = editingThreadId === thread.id
-    return (
-      <div
-        key={`${thread.id}-${section}`}
-        className={[
-          'group relative flex w-full items-center rounded-[6px]',
-          thread.id === activeThreadId || isMenuOpen
-            ? 'bg-[var(--c-bg-deep)]'
-            : 'hover:bg-[var(--c-bg-deep)]',
-        ].join(' ')}
-      >
-        {isEditing ? (
-          <input
-            ref={editInputRef}
-            value={editingTitle}
-            onChange={(e) => setEditingTitle(e.target.value)}
-            onBlur={() => commitRename(thread.id, editingTitle)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') {
-                e.preventDefault()
-                commitRename(thread.id, editingTitle)
-              } else if (e.key === 'Escape') {
-                setEditingThreadId(null)
-              }
-            }}
-            className="min-w-0 flex-1 bg-transparent px-2 py-[7px] text-[13px] text-[var(--c-text-primary)] outline-none"
-            style={{ border: 'none', fontWeight: 'var(--c-sidebar-thread-weight)' }}
-            maxLength={200}
-          />
-        ) : (
-          <button
-            onClick={() => {
-              beforeNavigateToThread?.()
-              navigate(`/t/${thread.id}`)
-            }}
-            className={[
-              'flex min-w-0 flex-1 items-center gap-2 px-2 py-[7px] text-left text-[14px] group-hover:text-[var(--c-text-primary)]',
-              thread.id === activeThreadId
-                ? 'text-[var(--c-text-primary)]'
-                : 'text-[var(--c-text-secondary)]',
-            ].join(' ')}
-            style={{ fontWeight: 'var(--c-sidebar-thread-weight)' }}
-          >
-            {starredSet.has(thread.id) && (
-              <Star size={11} className="shrink-0 fill-[var(--c-text-muted)] text-[var(--c-text-muted)] opacity-70" />
-            )}
-            <span className="min-w-0 flex-1 truncate">{threadTitle(thread, untitled)}</span>
-          </button>
-        )}
+  const allThreads = useMemo(() => {
+    const result: { thread: ThreadResponse; section: 'starred' | 'regular' }[] = []
+    for (const thread of starredThreads) {
+      result.push({ thread, section: 'starred' as const })
+    }
+    if (starredThreads.length > 0 && regularThreads.length > 0) {
+      result.push({ thread: { id: '__separator__', title: '' } as ThreadResponse, section: 'regular' as const })
+    }
+    for (const thread of regularThreads) {
+      result.push({ thread, section: 'regular' as const })
+    }
+    return result
+  }, [starredThreads, regularThreads])
 
-        {!isEditing && (
-          <div className="mr-1 flex shrink-0 items-center">
-            {isRunning && (
-              <span className="mr-1 h-3 w-3 shrink-0 animate-spin rounded-full border border-[var(--c-text-muted)] border-t-transparent" />
-            )}
-            <div
-              className={[
-                'shrink-0',
-                isRunning
-                  ? `overflow-hidden transition-[width] duration-150 ${isMenuOpen ? 'w-6' : 'w-0 group-hover:w-6'}`
-                  : 'w-6',
-              ].join(' ')}
-            >
-              <button
-                data-menu-button={thread.id}
-                onClick={(e) => openMenu(e, thread.id)}
-                className={[
-                  'flex h-6 w-6 shrink-0 items-center justify-center rounded-md transition-transform duration-[80ms] active:scale-[0.96]',
-                  isMenuOpen
-                    ? 'opacity-100 bg-[var(--c-sidebar-btn-hover)] text-[var(--c-text-primary)]'
-                    : 'opacity-0 group-hover:opacity-100 text-[var(--c-text-muted)] hover:bg-[var(--c-sidebar-btn-hover)] hover:text-[var(--c-text-primary)]',
-                ].join(' ')}
-              >
-                <MoreHorizontal size={14} />
-              </button>
-            </div>
-          </div>
-        )}
-      </div>
+  const itemContent = useCallback((_index: number, item: { thread: ThreadResponse; section: 'starred' | 'regular' }) => {
+    if (item.thread.id === '__separator__') {
+      return <div className="my-1 mx-2 h-px bg-[var(--c-border-subtle)]" />
+    }
+    const thread = item.thread
+    const section = item.section
+    return (
+      <SidebarThreadItem
+        thread={thread}
+        section={section}
+        isRunning={runningThreadIds.has(thread.id)}
+        isMenuOpen={menuThreadId === thread.id}
+        isEditing={editingThreadId === thread.id}
+        isActive={thread.id === activeThreadId}
+        isStarred={starredSet.has(thread.id)}
+        editingTitle={editingTitle}
+        untitled={untitled}
+        editInputRef={editInputRef}
+        setEditingTitle={setEditingTitle}
+        setEditingThreadId={setEditingThreadId}
+        commitRename={commitRename}
+        beforeNavigateToThread={beforeNavigateToThread}
+        navigate={navigate}
+        openMenu={openMenu}
+      />
     )
-  }
+  }, [runningThreadIds, menuThreadId, editingThreadId, activeThreadId, starredSet, editingTitle, untitled, editInputRef, setEditingTitle, setEditingThreadId, commitRename, beforeNavigateToThread, navigate, openMenu])
 
   return (
-    <>
-      {starredThreads.map((thread) => renderThread(thread, 'starred'))}
-      {starredThreads.length > 0 && regularThreads.length > 0 && (
-        <div className="my-1 mx-2 h-px bg-[var(--c-border-subtle)]" />
-      )}
-      {regularThreads.map((thread) => renderThread(thread, 'regular'))}
-    </>
+    <Virtuoso
+      data={allThreads}
+      itemContent={itemContent}
+      style={{ height: '100%' }}
+    />
   )
 })
 
@@ -720,7 +794,7 @@ export function Sidebar({
               {t.recents}
             </h3>
           </div>
-          <div className="flex flex-col gap-[2px]">
+          <div className="flex flex-col gap-[2px] flex-1 min-h-0">
             {/* incognito placeholder */}
             <div
               style={{
@@ -747,7 +821,7 @@ export function Sidebar({
 
             <div
               key={appMode}
-              className="flex w-full flex-col gap-[2px]"
+              className="flex w-full flex-1 flex-col gap-[2px] min-h-0"
               style={{
                 opacity: isPrivateModeEffective ? 0 : 1,
                 transition: 'opacity 0.15s ease',

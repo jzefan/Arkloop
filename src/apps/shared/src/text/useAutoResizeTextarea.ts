@@ -48,7 +48,9 @@ function readFont(style: CSSStyleDeclaration) {
 function computeContentWidth(element: HTMLTextAreaElement, style: CSSStyleDeclaration) {
   const horizontalPadding = readNumber(style, 'padding-left') + readNumber(style, 'padding-right')
   const horizontalBorder = readNumber(style, 'border-left-width') + readNumber(style, 'border-right-width')
-  return Math.max(element.clientWidth - horizontalPadding, element.offsetWidth - horizontalPadding - horizontalBorder, 1)
+  const clientWidth = element.clientWidth
+  const offsetWidth = element.offsetWidth
+  return Math.max(clientWidth - horizontalPadding, offsetWidth - horizontalPadding - horizontalBorder, 1)
 }
 
 function computeOuterHeight(contentHeight: number, style: CSSStyleDeclaration, boxSizing: BoxSizing) {
@@ -70,11 +72,16 @@ function measureContentHeightWithScrollHeight(
   element.style.height = '0px'
   element.style.overflowY = 'hidden'
   const scrollHeight = element.scrollHeight
+  if (!(scrollHeight > 0)) {
+    element.style.height = previousHeight
+    element.style.overflowY = previousOverflowY
+    return null
+  }
+  const verticalPadding = readNumber(style, 'padding-top') + readNumber(style, 'padding-bottom')
+  const result = Math.max(scrollHeight - verticalPadding, minContentHeight)
   element.style.height = previousHeight
   element.style.overflowY = previousOverflowY
-  if (!(scrollHeight > 0)) return null
-  const verticalPadding = readNumber(style, 'padding-top') + readNumber(style, 'padding-bottom')
-  return Math.max(scrollHeight - verticalPadding, minContentHeight)
+  return result
 }
 
 function createResizeObserver(callback: () => void) {

@@ -5,6 +5,7 @@ import { BrowserScreenshotCard, BrowserActionSummaryCard } from './BrowserScreen
 import { UserMessage } from './messagebubble/UserMessage'
 import { AssistantMessage } from './messagebubble/AssistantMessage'
 import type { ArtifactAction } from './ArtifactIframe'
+import { memo } from 'react'
 import { useTypewriter } from '../hooks/useTypewriter'
 
 type Props = {
@@ -36,7 +37,7 @@ type Props = {
   suppressActionBar?: boolean
 }
 
-export function MessageBubble({ message, streamAssistantMarkdown, animateUserEnter, onUserEnterAnimationEnd, onRetry, onEdit, onFork, onShare, shareState, webSources, artifacts, browserActions, widgets, accessToken, onWidgetAction, onShowSources, onOpenDocument, activePanelArtifactKey, onViewRunDetail, contentPrefix, contentOverride, plainTextForCopy, isLast, isWorkMode, suppressActionBar }: Props) {
+export const MessageBubble = memo(function MessageBubble({ message, streamAssistantMarkdown, animateUserEnter, onUserEnterAnimationEnd, onRetry, onEdit, onFork, onShare, shareState, webSources, artifacts, browserActions, widgets, accessToken, onWidgetAction, onShowSources, onOpenDocument, activePanelArtifactKey, onViewRunDetail, contentPrefix, contentOverride, plainTextForCopy, isLast, isWorkMode, suppressActionBar }: Props) {
   if (message.role === 'user') {
     return (
       <UserMessage
@@ -77,7 +78,7 @@ export function MessageBubble({ message, streamAssistantMarkdown, animateUserEnt
       suppressActionBar={suppressActionBar}
     />
   )
-}
+})
 
 function renderBrowserScreenshots(browserActions?: BrowserActionRef[], accessToken?: string) {
   if (!browserActions || browserActions.length === 0) return null
