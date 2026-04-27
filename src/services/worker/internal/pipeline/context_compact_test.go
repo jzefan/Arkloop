@@ -2150,6 +2150,25 @@ func TestSanitizeToolPairs_PartialToolCallsPrunesAssistant(t *testing.T) {
 	}
 }
 
+func TestSanitizeToolPairs_DuplicateLaterResultDoesNotKeepEarlierAssistantCall(t *testing.T) {
+	msgs := []llm.Message{
+		assistantWithCalls("c1"),
+		{Role: "user", Content: []llm.TextPart{{Text: "between"}}},
+		assistantWithCalls("c1"),
+		toolMsg("c1"),
+	}
+	out, _ := sanitizeToolPairs(msgs, nil)
+	if len(out) != 4 {
+		t.Fatalf("expected visible assistant text to remain, got %d", len(out))
+	}
+	if out[0].Role != "assistant" || len(out[0].ToolCalls) != 0 {
+		t.Fatalf("earlier assistant must not borrow later tool result, got %#v", out[0])
+	}
+	if out[2].Role != "assistant" || len(out[2].ToolCalls) != 1 {
+		t.Fatalf("later assistant should keep its closed tool call, got %#v", out[2])
+	}
+}
+
 func TestSanitizeToolPairs_EmptyAssistantToolCallsKeepsVisibleText(t *testing.T) {
 	msgs := []llm.Message{
 		{Role: "user", Content: []llm.TextPart{{Text: "hi"}}},

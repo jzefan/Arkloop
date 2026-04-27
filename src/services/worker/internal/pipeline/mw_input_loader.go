@@ -362,6 +362,7 @@ func loadRunInputs(
 			break
 		}
 	}
+	llmMessages, ids = sanitizeToolPairs(llmMessages, ids)
 
 	return &loadedRunInputs{
 		InputJSON:             inputJSON,
