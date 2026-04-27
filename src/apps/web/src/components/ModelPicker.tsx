@@ -41,11 +41,12 @@ type Props = {
   onChange: (model: string | null) => void
   onAddApiKey: () => void
   variant?: 'welcome' | 'chat'
+  controlHeight?: 'default' | 'legacyChat'
   thinkingEnabled: string
   onThinkingChange: (mode: string) => void
 }
 
-export function ModelPicker({ accessToken, value, onChange, onAddApiKey, variant = 'chat', thinkingEnabled, onThinkingChange }: Props) {
+export function ModelPicker({ accessToken, value, onChange, onAddApiKey, variant = 'chat', controlHeight = 'default', thinkingEnabled, onThinkingChange }: Props) {
   const { t } = useLocale()
   const mp = t.modelPicker
   const desktopShell = isDesktop()
@@ -197,7 +198,10 @@ export function ModelPicker({ accessToken, value, onChange, onAddApiKey, variant
         onClick={() => setOpen((v) => !v)}
         onMouseEnter={() => setHovered(true)}
         onMouseLeave={() => setHovered(false)}
-        className="relative flex h-[33px] items-center gap-1 rounded-lg"
+        className={[
+          'relative flex items-center gap-1 rounded-lg',
+          controlHeight === 'legacyChat' ? 'h-[31.5px]' : 'h-[33px]',
+        ].join(' ')}
         style={{
           padding: '0 8px 0 10px',
           overflow: 'hidden',

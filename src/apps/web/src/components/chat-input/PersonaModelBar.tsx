@@ -68,6 +68,7 @@ export function PersonaModelBar({
   const [folderMenuOpen, setFolderMenuOpen] = useState(false)
   const [workFolder, setWorkFolder] = useState<string | null>(() => readWorkFolder())
   const [recentFolders, setRecentFolders] = useState<string[]>(() => readWorkRecentFolders())
+  const isWorkMode = appMode === 'work'
 
   // close plus menu on outside click
   useEffect(() => {
@@ -230,7 +231,10 @@ export function PersonaModelBar({
           ref={plusBtnRef}
           type="button"
           onClick={() => setMenuOpen((v) => !v)}
-          className="flex h-[33.5px] w-[33.5px] items-center justify-center rounded-lg text-[var(--c-text-secondary)] transition-[background] duration-[60ms] hover:bg-[var(--c-bg-deep)]"
+          className={[
+            'flex items-center justify-center rounded-lg text-[var(--c-text-secondary)] transition-[background] duration-[60ms] hover:bg-[var(--c-bg-deep)]',
+            isWorkMode ? 'h-[33.5px] w-[33.5px]' : 'h-8 w-8',
+          ].join(' ')}
         >
           <Plus size={20} strokeWidth={1.5} />
         </button>
@@ -343,6 +347,7 @@ export function PersonaModelBar({
           onChange={onModelChange}
           onAddApiKey={() => onOpenSettings?.('models')}
           variant={variant}
+          controlHeight={isWorkMode ? 'default' : 'legacyChat'}
           thinkingEnabled={thinkingEnabled}
           onThinkingChange={onThinkingChange}
         />
