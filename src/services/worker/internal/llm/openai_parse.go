@@ -182,8 +182,7 @@ func toOpenAIChatContentBlocks(parts []ContentPart) ([]map[string]any, bool, err
 func toOpenAIResponsesAssistantItems(message Message, index int) ([]map[string]any, error) {
 	items := make([]map[string]any, 0, len(message.ToolCalls)+1)
 	contentBlocks := toOpenAIResponsesAssistantContentBlocks(message.Content)
-	_, hasReasoning := openAIReasoningContent(message.Content)
-	if len(contentBlocks) > 0 || hasReasoning {
+	if len(contentBlocks) > 0 {
 		item := map[string]any{
 			"id":      fmt.Sprintf("msg_hist_%d", index),
 			"type":    "message",
@@ -191,7 +190,6 @@ func toOpenAIResponsesAssistantItems(message Message, index int) ([]map[string]a
 			"status":  "completed",
 			"content": contentBlocks,
 		}
-		applyOpenAIReasoningContent(item, message.Content)
 		if message.Phase != nil && strings.TrimSpace(*message.Phase) != "" {
 			item["phase"] = strings.TrimSpace(*message.Phase)
 		}

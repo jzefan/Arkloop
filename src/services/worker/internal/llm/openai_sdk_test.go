@@ -632,7 +632,7 @@ func TestOpenAIChatMessagesAddEmptyReasoningContentForAssistantToolCalls(t *test
 	}
 }
 
-func TestOpenAIResponsesInputCarriesEmptyAssistantThinkingAsReasoningContent(t *testing.T) {
+func TestOpenAIResponsesInputDropsAssistantThinkingWireField(t *testing.T) {
 	input, err := toOpenAIResponsesInput([]Message{{
 		Role:    "assistant",
 		Content: []ContentPart{{Type: "thinking", Text: ""}},
@@ -645,14 +645,14 @@ func TestOpenAIResponsesInputCarriesEmptyAssistantThinkingAsReasoningContent(t *
 	if err != nil {
 		t.Fatalf("toOpenAIResponsesInput: %v", err)
 	}
-	if len(input) != 2 {
-		t.Fatalf("expected reasoning message plus function call, got %#v", input)
+	if len(input) != 1 {
+		t.Fatalf("expected only function call, got %#v", input)
 	}
-	if input[0]["type"] != "message" || input[0]["reasoning_content"] != "" {
-		t.Fatalf("missing empty reasoning_content: %#v", input[0])
+	if input[0]["type"] != "function_call" || input[0]["call_id"] != "call_1" {
+		t.Fatalf("unexpected responses assistant item: %#v", input[0])
 	}
-	if content, ok := input[0]["content"].([]map[string]any); !ok || len(content) != 0 {
-		t.Fatalf("thinking must not leak into response content: %#v", input[0])
+	if _, ok := input[0]["reasoning_content"]; ok {
+		t.Fatalf("responses input must not include reasoning_content: %#v", input[0])
 	}
 }
 

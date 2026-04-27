@@ -126,7 +126,6 @@ var anthropicQuirks = []Quirk{
 
 func applyEchoReasoningContent(payload map[string]any) {
 	walkAssistantItems(payload["messages"], echoReasoningContentOnItem)
-	walkAssistantItems(payload["input"], echoReasoningContentOnItem)
 }
 
 func walkAssistantItems(value any, fn func(map[string]any)) {

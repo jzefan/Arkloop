@@ -104,8 +104,8 @@ func TestQuirkApply_EchoReasoningContent(t *testing.T) {
 		t.Fatalf("must not overwrite existing: %#v", msgs[2])
 	}
 	inputItem := payload["input"].([]any)[0].(map[string]any)
-	if inputItem["reasoning_content"] != "" {
-		t.Fatalf("input assistant should get empty reasoning_content, got %#v", inputItem)
+	if _, ok := inputItem["reasoning_content"]; ok {
+		t.Fatalf("responses input must not get reasoning_content: %#v", inputItem)
 	}
 }
 
