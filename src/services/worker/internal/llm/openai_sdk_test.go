@@ -533,6 +533,99 @@ func TestOpenAIToolsNormalizeEmptyParameters(t *testing.T) {
 	}
 }
 
+func TestOpenAISDKGateway_RequestBodyKeepsEmptyToolSchemaObjects(t *testing.T) {
+	t.Setenv("ARKLOOP_OUTBOUND_ALLOW_LOOPBACK_HTTP", "true")
+	rawByPath := map[string]string{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatalf("read body: %v", err)
+		}
+		rawByPath[r.URL.Path] = string(body)
+		w.Header().Set("Content-Type", "text/event-stream")
+		switch r.URL.Path {
+		case "/chat/completions":
+			_, _ = w.Write([]byte(openAISDKSSE([]string{
+				`{"id":"chatcmpl_1","object":"chat.completion.chunk","created":1,"model":"gpt","choices":[{"index":0,"delta":{"role":"assistant","content":"ok"},"finish_reason":"stop"}]}`,
+			})))
+		case "/responses":
+			_, _ = w.Write([]byte(openAISDKSSE([]string{
+				`{"type":"response.completed","response":{"id":"resp_1","output":[],"usage":{"input_tokens":1,"output_tokens":1}}}`,
+			})))
+		default:
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	var nilProperties map[string]any
+	var nilRequired []string
+	request := Request{
+		Model:    "gpt",
+		Messages: []Message{{Role: "user", Content: []ContentPart{{Text: "hello"}}}},
+		Tools: []ToolSpec{{
+			Name: "enter_plan_mode",
+			JSONSchema: map[string]any{
+				"type":       "object",
+				"properties": nilProperties,
+				"required":   nilRequired,
+			},
+		}},
+	}
+
+	for _, kind := range []ProtocolKind{ProtocolKindOpenAIChatCompletions, ProtocolKindOpenAIResponses} {
+		gateway := NewOpenAIGatewaySDK(OpenAIGatewayConfig{
+			Transport: TransportConfig{APIKey: "key", BaseURL: server.URL},
+			Protocol:  OpenAIProtocolConfig{PrimaryKind: kind},
+		})
+		if err := gateway.Stream(context.Background(), request, func(StreamEvent) error { return nil }); err != nil {
+			t.Fatalf("%s stream: %v", kind, err)
+		}
+	}
+
+	assertOpenAISDKToolSchemaBody(t, rawByPath["/chat/completions"], true)
+	assertOpenAISDKToolSchemaBody(t, rawByPath["/responses"], false)
+}
+
+func assertOpenAISDKToolSchemaBody(t *testing.T, raw string, chat bool) {
+	t.Helper()
+	if raw == "" {
+		t.Fatal("missing captured request body")
+	}
+	for _, fragment := range []string{`"parameters":null`, `"properties":null`, `"required":null`} {
+		if strings.Contains(raw, fragment) {
+			t.Fatalf("request body contains %s: %s", fragment, raw)
+		}
+	}
+
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(raw), &payload); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	tools, ok := payload["tools"].([]any)
+	if !ok || len(tools) != 1 {
+		t.Fatalf("unexpected tools payload: %#v", payload["tools"])
+	}
+	tool := tools[0].(map[string]any)
+	var parameters any
+	if chat {
+		function := tool["function"].(map[string]any)
+		parameters = function["parameters"]
+	} else {
+		parameters = tool["parameters"]
+	}
+	params, ok := parameters.(map[string]any)
+	if !ok {
+		t.Fatalf("parameters must be an object: %#v", parameters)
+	}
+	if properties, ok := params["properties"].(map[string]any); !ok || properties == nil {
+		t.Fatalf("properties must be an object: %#v", params["properties"])
+	}
+	if required, ok := params["required"].([]any); !ok || required == nil {
+		t.Fatalf("required must be an array: %#v", params["required"])
+	}
+}
+
 func TestOpenAISDKGateway_QuirkRetryEchoReasoningContent(t *testing.T) {
 	t.Setenv("ARKLOOP_OUTBOUND_ALLOW_LOOPBACK_HTTP", "true")
 	var attempts int
