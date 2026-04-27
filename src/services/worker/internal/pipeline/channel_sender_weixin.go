@@ -7,6 +7,8 @@ import (
 	"unicode/utf8"
 
 	"arkloop/services/shared/weixinclient"
+
+	"github.com/google/uuid"
 )
 
 const weixinMessageMaxLen = 2048
@@ -46,10 +48,13 @@ func (s *WeixinChannelSender) SendText(ctx context.Context, target ChannelDelive
 	segments := splitWeixinMessage(text, weixinMessageMaxLen)
 	ids := make([]string, 0, len(segments))
 	for idx, seg := range segments {
+		clientID := "arkloop-weixin-" + uuid.NewString()
 		req := weixinclient.SendMessageRequest{
 			ToUserID:     toUserID,
+			FromUserID:   "",
 			MessageType:  2,
 			MessageState: 2,
+			ClientID:     clientID,
 			ItemList: []weixinclient.MessageItem{
 				{Type: 1, TextItem: &weixinclient.TextItem{Text: seg}},
 			},
@@ -62,9 +67,13 @@ func (s *WeixinChannelSender) SendText(ctx context.Context, target ChannelDelive
 		if err != nil {
 			return ids, err
 		}
-		if resp != nil && resp.MessageID != "" {
-			ids = append(ids, resp.MessageID)
+		messageID := clientID
+		if resp != nil {
+			if returnedID := strings.TrimSpace(resp.MessageID); returnedID != "" {
+				messageID = returnedID
+			}
 		}
+		ids = append(ids, messageID)
 		if idx < len(segments)-1 && s.segmentDelay > 0 {
 			time.Sleep(s.segmentDelay)
 		}

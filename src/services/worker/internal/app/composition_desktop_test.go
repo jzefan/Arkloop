@@ -118,7 +118,7 @@ func TestDesktopNormalPersonaSearchableIncludesSpawnAgent(t *testing.T) {
 		}
 	}
 
-	executors := builtin.Executors(nil, nil, nil, nil)
+	executors, _ := builtin.Executors(nil, nil, nil, nil)
 	allowlist := map[string]struct{}{}
 	for _, name := range registry.ListNames() {
 		if executors[name] != nil {
@@ -885,9 +885,11 @@ func TestDesktopGatewayFromRoute_UsesUnifiedGatewayResolver(t *testing.T) {
 		t.Fatalf("desktopGatewayFromRoute returned error: %v", err)
 	}
 
-	geminiGateway, ok := gateway.(*llm.GeminiGateway)
+	geminiGateway, ok := gateway.(interface {
+		ProtocolKind() llm.ProtocolKind
+	})
 	if !ok {
-		t.Fatalf("expected GeminiGateway, got %T", gateway)
+		t.Fatalf("expected gateway protocol surface, got %T", gateway)
 	}
 	if geminiGateway.ProtocolKind() != llm.ProtocolKindGeminiGenerateContent {
 		t.Fatalf("unexpected protocol kind: %s", geminiGateway.ProtocolKind())
@@ -965,8 +967,14 @@ func TestDesktopRoutingResolveGatewayForAgentNameUsesSelector(t *testing.T) {
 		if selected == nil || selected.Route.ID != "route-gemini-b" {
 			t.Fatalf("unexpected selected route: %#v", selected)
 		}
-		if _, ok := gateway.(*llm.GeminiGateway); !ok {
-			t.Fatalf("expected GeminiGateway, got %T", gateway)
+		geminiGateway, ok := gateway.(interface {
+			ProtocolKind() llm.ProtocolKind
+		})
+		if !ok {
+			t.Fatalf("expected gateway protocol surface, got %T", gateway)
+		}
+		if geminiGateway.ProtocolKind() != llm.ProtocolKindGeminiGenerateContent {
+			t.Fatalf("unexpected protocol kind: %s", geminiGateway.ProtocolKind())
 		}
 		return nil
 	})
@@ -3376,6 +3384,194 @@ func TestDesktopChannelDeliveryPersistsDiscordDeliveryAndReplyReference(t *testi
 	}
 	if sent.MessageReference == nil || sent.MessageReference.MessageID != "88" {
 		t.Fatalf("unexpected discord message reference: %#v", sent.MessageReference)
+	}
+}
+
+func TestDesktopChannelDeliverySendsWeixinAndPersistsOutbox(t *testing.T) {
+	ctx := context.Background()
+
+	sqlitePool, err := sqliteadapter.AutoMigrate(ctx, filepath.Join(t.TempDir(), "desktop.db"))
+	if err != nil {
+		t.Fatalf("auto migrate sqlite: %v", err)
+	}
+	defer sqlitePool.Close()
+
+	db := sqlitepgx.New(sqlitePool.Unwrap())
+
+	var sent struct {
+		BaseInfo struct {
+			ChannelVersion string `json:"channel_version"`
+		} `json:"base_info"`
+		Msg struct {
+			ToUserID     string `json:"to_user_id"`
+			FromUserID   string `json:"from_user_id"`
+			MessageType  int    `json:"message_type"`
+			MessageState int    `json:"message_state"`
+			ClientID     string `json:"client_id"`
+			ContextToken string `json:"context_token"`
+			ItemList     []struct {
+				Type     int `json:"type"`
+				TextItem struct {
+					Text string `json:"text"`
+				} `json:"text_item"`
+			} `json:"item_list"`
+		} `json:"msg"`
+	}
+	server := httptest.NewServer(nethttp.HandlerFunc(func(w nethttp.ResponseWriter, r *nethttp.Request) {
+		if r.URL.Path != "/ilink/bot/sendmessage" {
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+		if got := r.Header.Get("AuthorizationType"); got != "ilink_bot_token" {
+			t.Fatalf("unexpected auth type: %q", got)
+		}
+		if got := r.Header.Get("Authorization"); got != "Bearer desktop-weixin-token" {
+			t.Fatalf("unexpected auth header: %q", got)
+		}
+		if strings.TrimSpace(r.Header.Get("X-WECHAT-UIN")) == "" {
+			t.Fatal("expected X-WECHAT-UIN header")
+		}
+		if err := json.NewDecoder(r.Body).Decode(&sent); err != nil {
+			t.Fatalf("decode request body: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	defer server.Close()
+	t.Setenv("ARKLOOP_WEIXIN_API_BASE_URL", "")
+
+	keyBytes := [32]byte{}
+	for i := range keyBytes {
+		keyBytes[i] = byte(i + 71)
+	}
+	dataDir := t.TempDir()
+	t.Setenv("ARKLOOP_DATA_DIR", dataDir)
+	if err := os.WriteFile(filepath.Join(dataDir, "encryption.key"), []byte(hex.EncodeToString(keyBytes[:])), 0o600); err != nil {
+		t.Fatalf("write encryption key: %v", err)
+	}
+
+	accountID := uuid.New()
+	projectID := uuid.New()
+	threadID := uuid.New()
+	runID := uuid.New()
+	channelID := uuid.New()
+	secretID := uuid.New()
+
+	for _, stmt := range []struct {
+		sql  string
+		args []any
+	}{
+		{
+			sql:  `INSERT INTO accounts (id, slug, name, type, status) VALUES ($1, $2, $3, 'personal', 'active')`,
+			args: []any{accountID, "desktop-weixin-success-" + accountID.String(), "Desktop Weixin Success"},
+		},
+		{
+			sql:  `INSERT INTO projects (id, account_id, name, visibility) VALUES ($1, $2, $3, 'private')`,
+			args: []any{projectID, accountID, "Channel Project"},
+		},
+		{
+			sql:  `INSERT INTO threads (id, account_id, project_id, is_private) VALUES ($1, $2, $3, TRUE)`,
+			args: []any{threadID, accountID, projectID},
+		},
+		{
+			sql:  `INSERT INTO runs (id, account_id, thread_id, status) VALUES ($1, $2, $3, 'running')`,
+			args: []any{runID, accountID, threadID},
+		},
+		{
+			sql:  `INSERT INTO secrets (id, account_id, name, encrypted_value, key_version) VALUES ($1, $2, $3, $4, 1)`,
+			args: []any{secretID, accountID, "desktop-weixin-token-" + channelID.String(), encryptDesktopChannelToken(t, keyBytes, "desktop-weixin-token")},
+		},
+		{
+			sql:  `INSERT INTO channels (id, account_id, channel_type, credentials_id, config_json, is_active) VALUES ($1, $2, 'weixin', $3, $4, 1)`,
+			args: []any{channelID, accountID, secretID, fmt.Sprintf(`{"base_url":%q}`, server.URL)},
+		},
+	} {
+		if _, err := db.Exec(ctx, stmt.sql, stmt.args...); err != nil {
+			t.Fatalf("seed data: %v", err)
+		}
+	}
+
+	rc := &pipeline.RunContext{
+		Run:                  data.Run{ID: runID, AccountID: accountID, ThreadID: threadID},
+		FinalAssistantOutput: "你好，来自微信。",
+		ChannelContext: &pipeline.ChannelContext{
+			ChannelID:        channelID,
+			ChannelType:      "weixin",
+			ConversationType: "group",
+			Conversation: pipeline.ChannelConversationRef{
+				Target: "wx-group-1",
+			},
+			InboundMessage: pipeline.ChannelMessageRef{MessageID: "ctx-123"},
+			TriggerMessage: &pipeline.ChannelMessageRef{MessageID: "ctx-123"},
+		},
+	}
+
+	mw := desktopChannelDelivery(db, nil)
+	if err := mw(ctx, rc, func(_ context.Context, _ *pipeline.RunContext) error { return nil }); err != nil {
+		t.Fatalf("desktop channel delivery middleware failed: %v", err)
+	}
+
+	if sent.Msg.ToUserID != "wx-group-1" {
+		t.Fatalf("unexpected weixin to_user_id: %q", sent.Msg.ToUserID)
+	}
+	if sent.BaseInfo.ChannelVersion == "" {
+		t.Fatal("expected weixin base_info.channel_version")
+	}
+	if sent.Msg.FromUserID != "" {
+		t.Fatalf("unexpected weixin from_user_id: %q", sent.Msg.FromUserID)
+	}
+	if !strings.HasPrefix(sent.Msg.ClientID, "arkloop-weixin-") {
+		t.Fatalf("unexpected weixin client_id: %q", sent.Msg.ClientID)
+	}
+	if sent.Msg.MessageType != 2 || sent.Msg.MessageState != 2 {
+		t.Fatalf("unexpected weixin message flags: type=%d state=%d", sent.Msg.MessageType, sent.Msg.MessageState)
+	}
+	if sent.Msg.ContextToken != "ctx-123" {
+		t.Fatalf("unexpected weixin context token: %q", sent.Msg.ContextToken)
+	}
+	if len(sent.Msg.ItemList) != 1 || sent.Msg.ItemList[0].Type != 1 || sent.Msg.ItemList[0].TextItem.Text != "你好，来自微信。" {
+		t.Fatalf("unexpected weixin item list: %#v", sent.Msg.ItemList)
+	}
+
+	var (
+		deliveryCount int
+		parentID      *string
+		channelType   string
+		messageID     string
+		outboxStatus  string
+		payloadToken  string
+		payloadReply  string
+	)
+	if err := db.QueryRow(
+		ctx,
+		`SELECT
+				(SELECT COUNT(*) FROM channel_message_deliveries),
+				(SELECT platform_parent_message_id FROM channel_message_ledger LIMIT 1),
+				(SELECT channel_type FROM channel_message_ledger LIMIT 1),
+				(SELECT platform_message_id FROM channel_message_ledger LIMIT 1),
+				(SELECT status FROM channel_delivery_outbox WHERE run_id = $1),
+				(SELECT json_extract(payload_json, '$.metadata.context_token') FROM channel_delivery_outbox WHERE run_id = $1),
+				(SELECT json_extract(payload_json, '$.reply_to_message_id') FROM channel_delivery_outbox WHERE run_id = $1)`,
+		runID,
+	).Scan(&deliveryCount, &parentID, &channelType, &messageID, &outboxStatus, &payloadToken, &payloadReply); err != nil {
+		t.Fatalf("load weixin delivery state: %v", err)
+	}
+	if deliveryCount != 1 {
+		t.Fatalf("expected one delivery row, got %d", deliveryCount)
+	}
+	if parentID == nil || *parentID != "ctx-123" {
+		t.Fatalf("unexpected platform_parent_message_id: %#v", parentID)
+	}
+	if channelType != "weixin" {
+		t.Fatalf("unexpected ledger channel type: %q", channelType)
+	}
+	if messageID != sent.Msg.ClientID {
+		t.Fatalf("unexpected ledger message id: got %q want %q", messageID, sent.Msg.ClientID)
+	}
+	if outboxStatus != "sent" {
+		t.Fatalf("expected sent outbox, got %q", outboxStatus)
+	}
+	if payloadToken != "ctx-123" || payloadReply != "ctx-123" {
+		t.Fatalf("unexpected outbox payload refs: token=%q reply=%q", payloadToken, payloadReply)
 	}
 }
 

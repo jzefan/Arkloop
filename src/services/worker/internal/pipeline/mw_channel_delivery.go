@@ -172,6 +172,7 @@ func NewChannelDeliveryMiddlewareWithOptions(pool *pgxpool.Pool, opts ChannelDel
 				ids, sendErr := wxSender.SendText(ctx2, ChannelDeliveryTarget{
 					ChannelType:  rc.ChannelContext.ChannelType,
 					Conversation: rc.ChannelContext.Conversation,
+					Metadata:     weixinDeliveryMetadata(rc),
 				}, text)
 				if sendErr != nil {
 					return sendErr
@@ -340,6 +341,7 @@ func buildOutboxPayload(rc *RunContext, channelType, output string, outputs []st
 			}
 		}
 	case "weixin":
+		payload.Metadata = weixinDeliveryMetadata(rc)
 		if !rc.HeartbeatRun && !isPrivateChannelConversation(rc.ChannelContext.ConversationType) {
 			if rc.ChannelContext.TriggerMessage != nil && rc.ChannelContext.TriggerMessage.MessageID != "" {
 				payload.ReplyToMessageID = rc.ChannelContext.TriggerMessage.MessageID
@@ -648,6 +650,7 @@ func inlineDeliverWeixinOutbox(
 			ChannelType:  rc.ChannelContext.ChannelType,
 			Conversation: rc.ChannelContext.Conversation,
 			ReplyTo:      ref,
+			Metadata:     payload.Metadata,
 		}
 		messageIDs, sendErr := sender.SendText(ctx, target, trimmed)
 		if sendErr != nil {
@@ -689,6 +692,26 @@ func weixinReplyReference(rc *RunContext) *ChannelMessageRef {
 	}
 	ref := rc.ChannelContext.InboundMessage
 	return &ref
+}
+
+func weixinDeliveryMetadata(rc *RunContext) map[string]any {
+	token := weixinContextToken(rc)
+	if token == "" {
+		return nil
+	}
+	return map[string]any{"context_token": token}
+}
+
+func weixinContextToken(rc *RunContext) string {
+	if rc == nil || rc.ChannelContext == nil {
+		return ""
+	}
+	if rc.ChannelContext.TriggerMessage != nil {
+		if token := strings.TrimSpace(rc.ChannelContext.TriggerMessage.MessageID); token != "" {
+			return token
+		}
+	}
+	return strings.TrimSpace(rc.ChannelContext.InboundMessage.MessageID)
 }
 
 func normalizedChannelTypeFromContext(rc *RunContext) string {

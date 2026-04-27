@@ -18,8 +18,10 @@ type QRCodeStatusResp struct {
 // SendMessageRequest iLink 发送消息请求体。
 type SendMessageRequest struct {
 	ToUserID     string        `json:"to_user_id"`
+	FromUserID   string        `json:"from_user_id"`
 	MessageType  int           `json:"message_type"`
 	MessageState int           `json:"message_state"`
+	ClientID     string        `json:"client_id"`
 	ContextToken string        `json:"context_token,omitempty"`
 	ItemList     []MessageItem `json:"item_list"`
 }

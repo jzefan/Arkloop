@@ -4,7 +4,6 @@ package app
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -366,19 +365,7 @@ func drainDesktopWeixinOutbox(
 		return handleDesktopDrainFailure(ctx, db, row, lastErr, outboxRepo)
 	}
 
-	baseURL := strings.TrimSpace(os.Getenv("ARKLOOP_WEIXIN_API_BASE_URL"))
-	if baseURL == "" {
-		var cfg struct {
-			BaseURL string `json:"base_url"`
-		}
-		_ = json.Unmarshal(channel.ConfigJSON, &cfg)
-		baseURL = strings.TrimSpace(cfg.BaseURL)
-		if baseURL == "" {
-			baseURL = "https://ilinkai.weixin.qq.com"
-		}
-	}
-
-	client := weixinclient.NewClient(baseURL, channel.Token, nil)
+	client := weixinclient.NewClient(desktopWeixinAPIBaseURL(channel.ConfigJSON), channel.Token, nil)
 	sender := pipeline.NewWeixinChannelSenderWithClient(client, 50*time.Millisecond)
 	replyTo := weixinReplyReferenceFromPayload(payload)
 
@@ -398,6 +385,7 @@ func drainDesktopWeixinOutbox(
 			ChannelType:  row.ChannelType,
 			Conversation: pipeline.ChannelConversationRef{Target: payload.PlatformChatID, ThreadID: payload.PlatformThreadID},
 			ReplyTo:      ref,
+			Metadata:     payload.Metadata,
 		}, trimmed)
 		if sendErr != nil {
 			return handleDesktopDrainFailure(ctx, db, row, sendErr, outboxRepo)

@@ -409,6 +409,7 @@ func (d *ChannelDeliveryDrainer) drainWeixin(ctx context.Context, row data.Chann
 			ChannelType:  row.ChannelType,
 			Conversation: ChannelConversationRef{Target: payload.PlatformChatID, ThreadID: payload.PlatformThreadID},
 			ReplyTo:      ref,
+			Metadata:     payload.Metadata,
 		}, trimmed)
 		if sendErr != nil {
 			return d.handleFailure(ctx, row, sendErr, outboxRepo)

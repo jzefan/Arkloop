@@ -1898,6 +1898,165 @@ func encryptChannelToken(t *testing.T, key []byte, plaintext string) string {
 	return base64.StdEncoding.EncodeToString(append(nonce, ciphertext...))
 }
 
+func TestChannelDeliveryMiddlewareSendsWeixinContextToken(t *testing.T) {
+	ctx := context.Background()
+	db := testutil.SetupPostgresDatabase(t, "pipeline_channel_delivery_weixin_context")
+	pool, err := pgxpool.New(ctx, db.DSN)
+	if err != nil {
+		t.Fatalf("pgxpool.New: %v", err)
+	}
+	t.Cleanup(pool.Close)
+
+	createChannelDeliveryTables(t, pool, `CREATE TABLE channel_message_ledger (
+		channel_id UUID NOT NULL,
+		channel_type TEXT NOT NULL,
+		direction TEXT NOT NULL,
+		thread_id UUID NULL,
+		run_id UUID NULL,
+		platform_conversation_id TEXT NOT NULL,
+		platform_message_id TEXT NOT NULL,
+		platform_parent_message_id TEXT NULL,
+		platform_thread_id TEXT NULL,
+		sender_channel_identity_id UUID NULL,
+		metadata_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+		UNIQUE (channel_id, direction, platform_conversation_id, platform_message_id)
+	)`)
+
+	keyBytes := make([]byte, 32)
+	for i := range keyBytes {
+		keyBytes[i] = byte(i + 17)
+	}
+	t.Setenv("ARKLOOP_ENCRYPTION_KEY", hex.EncodeToString(keyBytes))
+
+	var sent struct {
+		BaseInfo struct {
+			ChannelVersion string `json:"channel_version"`
+		} `json:"base_info"`
+		Msg struct {
+			ToUserID     string `json:"to_user_id"`
+			FromUserID   string `json:"from_user_id"`
+			MessageType  int    `json:"message_type"`
+			MessageState int    `json:"message_state"`
+			ClientID     string `json:"client_id"`
+			ContextToken string `json:"context_token"`
+			ItemList     []struct {
+				Type     int `json:"type"`
+				TextItem struct {
+					Text string `json:"text"`
+				} `json:"text_item"`
+			} `json:"item_list"`
+		} `json:"msg"`
+	}
+	server := httptest.NewServer(nethttp.HandlerFunc(func(w nethttp.ResponseWriter, r *nethttp.Request) {
+		if r.URL.Path != "/ilink/bot/sendmessage" {
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+		if got := r.Header.Get("AuthorizationType"); got != "ilink_bot_token" {
+			t.Fatalf("unexpected auth type: %q", got)
+		}
+		if got := r.Header.Get("Authorization"); got != "Bearer wx-token" {
+			t.Fatalf("unexpected auth header: %q", got)
+		}
+		if strings.TrimSpace(r.Header.Get("X-WECHAT-UIN")) == "" {
+			t.Fatal("expected X-WECHAT-UIN header")
+		}
+		if err := json.NewDecoder(r.Body).Decode(&sent); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	defer server.Close()
+	t.Setenv("ARKLOOP_WEIXIN_API_BASE_URL", server.URL)
+
+	accountID := uuid.New()
+	projectID := uuid.New()
+	threadID := uuid.New()
+	runID := uuid.New()
+	channelID := uuid.New()
+	secretID := uuid.New()
+
+	seedPipelineThread(t, pool, accountID, threadID, projectID)
+	seedPipelineRun(t, pool, accountID, threadID, runID, nil)
+	if _, err := pool.Exec(ctx, `INSERT INTO secrets (id, encrypted_value, key_version) VALUES ($1, $2, 1)`, secretID, encryptChannelToken(t, keyBytes, "wx-token")); err != nil {
+		t.Fatalf("insert secret: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO channels (id, channel_type, credentials_id, is_active) VALUES ($1, 'weixin', $2, TRUE)`, channelID, secretID); err != nil {
+		t.Fatalf("insert channel: %v", err)
+	}
+
+	rc := &RunContext{
+		Run:                  data.Run{ID: runID, AccountID: accountID, ThreadID: threadID},
+		FinalAssistantOutput: "weixin reply text",
+		ChannelContext: &ChannelContext{
+			ChannelID:        channelID,
+			ChannelType:      "weixin",
+			ConversationType: "group",
+			Conversation: ChannelConversationRef{
+				Target: "wx-group-1",
+			},
+			InboundMessage: ChannelMessageRef{MessageID: "ctx-456"},
+			TriggerMessage: &ChannelMessageRef{MessageID: "ctx-456"},
+		},
+	}
+
+	mw := NewChannelDeliveryMiddleware(pool)
+	if err := mw(ctx, rc, func(_ context.Context, _ *RunContext) error { return nil }); err != nil {
+		t.Fatalf("middleware returned error: %v", err)
+	}
+
+	if sent.Msg.ToUserID != "wx-group-1" {
+		t.Fatalf("unexpected weixin target: %q", sent.Msg.ToUserID)
+	}
+	if sent.BaseInfo.ChannelVersion == "" {
+		t.Fatal("expected weixin base_info.channel_version")
+	}
+	if sent.Msg.FromUserID != "" {
+		t.Fatalf("unexpected weixin from_user_id: %q", sent.Msg.FromUserID)
+	}
+	if !strings.HasPrefix(sent.Msg.ClientID, "arkloop-weixin-") {
+		t.Fatalf("unexpected weixin client_id: %q", sent.Msg.ClientID)
+	}
+	if sent.Msg.MessageType != 2 || sent.Msg.MessageState != 2 {
+		t.Fatalf("unexpected weixin flags: type=%d state=%d", sent.Msg.MessageType, sent.Msg.MessageState)
+	}
+	if sent.Msg.ContextToken != "ctx-456" {
+		t.Fatalf("unexpected context token: %q", sent.Msg.ContextToken)
+	}
+	if len(sent.Msg.ItemList) != 1 || sent.Msg.ItemList[0].Type != 1 || sent.Msg.ItemList[0].TextItem.Text != "weixin reply text" {
+		t.Fatalf("unexpected weixin item list: %#v", sent.Msg.ItemList)
+	}
+
+	var (
+		outboxStatus string
+		payloadToken string
+		messageID    string
+		parentID     *string
+	)
+	if err := pool.QueryRow(ctx, `
+		SELECT
+				(SELECT status FROM channel_delivery_outbox WHERE run_id = $1),
+				(SELECT payload_json #>> '{metadata,context_token}' FROM channel_delivery_outbox WHERE run_id = $1),
+				(SELECT platform_message_id FROM channel_message_ledger WHERE run_id = $1 LIMIT 1),
+				(SELECT platform_parent_message_id FROM channel_message_ledger WHERE run_id = $1 LIMIT 1)`,
+		runID,
+	).Scan(&outboxStatus, &payloadToken, &messageID, &parentID); err != nil {
+		t.Fatalf("query weixin delivery state: %v", err)
+	}
+	if outboxStatus != "sent" {
+		t.Fatalf("expected sent outbox, got %q", outboxStatus)
+	}
+	if payloadToken != "ctx-456" {
+		t.Fatalf("unexpected outbox context token: %q", payloadToken)
+	}
+	if messageID != sent.Msg.ClientID {
+		t.Fatalf("unexpected ledger message id: got %q want %q", messageID, sent.Msg.ClientID)
+	}
+	if parentID == nil || *parentID != "ctx-456" {
+		t.Fatalf("unexpected ledger parent id: %#v", parentID)
+	}
+}
+
 func TestChannelDeliveryMiddlewareWritesOutboxAndInlineTrySucceeds(t *testing.T) {
 	ctx := context.Background()
 	db := testutil.SetupPostgresDatabase(t, "pipeline_channel_delivery_outbox_success")
