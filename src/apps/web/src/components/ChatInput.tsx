@@ -279,6 +279,18 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
 
   const isNonDefaultMode = selectedPersonaKey !== DEFAULT_PERSONA_KEY && selectedPersonaKey !== WORK_PERSONA_KEY
   const showSendButton = draft.trim().length > 0 || attachments.length > 0
+  const isWorkChat = variant === 'chat' && appMode === 'work'
+  const isPlainChatThread = variant === 'chat' && appMode !== 'work'
+  const formPadding = isPlainChatThread
+    ? '19px 12px 11px 20px'
+    : variant === 'welcome'
+      ? '10px 14px 14px 22px'
+      : '6px 12px 11px 20px'
+  const textareaWrapperMarginBottom = isPlainChatThread
+    ? '1px'
+    : variant === 'welcome'
+      ? '12px'
+      : '9px'
 
   useEffect(() => {
     const prevScope = prevDraftScopeRef.current
@@ -475,7 +487,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
         display: 'flex',
         flexDirection: 'column',
         gap: '8px',
-        maxWidth: variant === 'welcome' ? '840px' : appMode === 'work' ? undefined : '663px',
+        maxWidth: variant === 'welcome' ? '840px' : isWorkChat ? undefined : '720px',
       }}
     >
       {isFileDragging && (
@@ -638,13 +650,13 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
       <form
         onSubmit={handleFormSubmit}
         style={{
-          padding: variant === 'welcome' ? '10px 14px 14px 22px' : '6px 12px 11px 20px',
+          padding: formPadding,
         }}
       >
         <div
           style={{
             position: 'relative',
-            marginBottom: variant === 'welcome' ? '12px' : '9px',
+            marginBottom: textareaWrapperMarginBottom,
           }}
         >
           <AutoResizeTextarea
@@ -697,7 +709,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
           />
 
           {/* mic + send 共用同一位置，disabled 时显示 spinner */}
-          <div style={{ position: 'relative', width: '31.5px', height: '31.5px', flexShrink: 0 }}>
+          <div style={{ position: 'relative', width: isWorkChat ? '31.5px' : '30px', height: isWorkChat ? '31.5px' : '30px', flexShrink: 0 }}>
             {disabled ? (
               <div className="flex h-full w-full items-center justify-center rounded-lg bg-[var(--c-accent-send)]" style={{ opacity: 0.5 }}>
                 <Loader2 size={14} className="animate-spin" style={{ color: 'var(--c-accent-send-text)' }} />
