@@ -645,6 +645,22 @@ func RunDesktop(ctx context.Context) error {
 		Bus:                      desktopBus,
 	})
 
+	accountapi.StartWeChatPollingListener(ctx, accountapi.WeChatPollingDeps{
+		ChannelsRepo:            channelsRepo,
+		ChannelIdentitiesRepo:   channelIdentitiesRepo,
+		ChannelDMThreadsRepo:    channelDMThreadsRepo,
+		ChannelGroupThreadsRepo: channelGroupThreadsRepo,
+		ChannelReceiptsRepo:     channelReceiptsRepo,
+		PersonasRepo:            personasRepo,
+		ThreadRepo:              threadRepo,
+		MessageRepo:             messageRepo,
+		RunEventRepo:            runEventRepo,
+		JobRepo:                 jobRepo,
+		SecretsRepo:             secretsRepo,
+		Pool:                    pgxPool,
+		Bus:                     desktopBus,
+	})
+
 	// ---- HTTP server ----
 
 	srv := &nethttp.Server{
