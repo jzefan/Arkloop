@@ -150,6 +150,7 @@ import {
   readInputDraftAttachments,
   readThreadWorkFolder,
   readThreadReasoningMode,
+  readPlanModeFromStorage,
   writeInputDraftAttachments,
 } from '../storage'
 
@@ -1756,7 +1757,19 @@ export function ChatView() {
           )
         })
         activateAnchor()
-        const run = await editMessage(accessToken, threadId, replaceMessageId, text, replacedContentJson)
+        const reasoningMode = readThreadReasoningMode(threadId)
+        const run = await editMessage(
+          accessToken,
+          threadId,
+          replaceMessageId,
+          text,
+          replacedContentJson,
+          personaKey,
+          modelOverride,
+          readThreadWorkFolder(threadId) ?? undefined,
+          reasoningMode !== 'off' ? reasoningMode as RunReasoningMode : undefined,
+          readPlanModeFromStorage(),
+        )
         if (personaKey === SEARCH_PERSONA_KEY) addSearchThreadId(threadId)
         noResponseMsgIdRef.current = replaceMessageId
         resetSearchSteps()

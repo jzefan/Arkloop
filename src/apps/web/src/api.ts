@@ -814,11 +814,24 @@ export async function editMessage(
   messageId: string,
   content: string,
   contentJson?: MessageContent,
+  personaId?: string,
+  modelOverride?: string,
+  workDir?: string,
+  reasoningMode?: RunReasoningMode,
+  planMode?: boolean,
 ): Promise<CreateRunResponse> {
   return await apiFetch<CreateRunResponse>(`/v1/threads/${threadId}/messages/${messageId}`, {
     method: 'PATCH',
     accessToken,
-    body: JSON.stringify({ content, content_json: contentJson }),
+    body: JSON.stringify({
+      content,
+      content_json: contentJson,
+      ...(personaId ? { persona_id: personaId } : {}),
+      ...(modelOverride ? { model: modelOverride } : {}),
+      ...(workDir ? { work_dir: workDir } : {}),
+      ...(reasoningMode ? { reasoning_mode: reasoningMode } : {}),
+      ...(planMode ? { plan_mode: planMode } : {}),
+    }),
   })
 }
 
