@@ -57,6 +57,70 @@ func TestLoadRunInputsIncludesRoleFromFirstEvent(t *testing.T) {
 	}
 }
 
+func TestLoadRunInputsIncludesPlanModeFromFirstEvent(t *testing.T) {
+	db := testutil.SetupPostgresDatabase(t, "pipeline_input_loader_plan_mode")
+	pool, err := pgxpool.New(context.Background(), db.DSN)
+	if err != nil {
+		t.Fatalf("pgxpool.New: %v", err)
+	}
+	t.Cleanup(pool.Close)
+
+	accountID := uuid.New()
+	projectID := uuid.New()
+	threadID := uuid.New()
+	runID := uuid.New()
+	if _, err := pool.Exec(context.Background(), `INSERT INTO threads (id, account_id, project_id) VALUES ($1, $2, $3)`, threadID, accountID, projectID); err != nil {
+		t.Fatalf("insert thread: %v", err)
+	}
+	if _, err := pool.Exec(context.Background(), `INSERT INTO runs (id, account_id, thread_id, status) VALUES ($1, $2, $3, 'running')`, runID, accountID, threadID); err != nil {
+		t.Fatalf("insert run: %v", err)
+	}
+	if _, err := pool.Exec(context.Background(), `INSERT INTO run_events (run_id, seq, type, data_json) VALUES ($1, 1, 'run.started', '{"plan_mode":true}'::jsonb)`, runID); err != nil {
+		t.Fatalf("insert run event: %v", err)
+	}
+
+	loaded, err := loadRunInputs(context.Background(), pool, data.Run{ID: runID, AccountID: accountID, ThreadID: threadID}, nil, data.RunsRepository{}, data.RunEventsRepository{}, data.MessagesRepository{}, nil, nil, 20)
+	if err != nil {
+		t.Fatalf("loadRunInputs failed: %v", err)
+	}
+	if got := loaded.InputJSON["plan_mode"]; got != true {
+		t.Fatalf("unexpected plan_mode: %#v", got)
+	}
+}
+
+func TestApplyPlanModeKeepsMessagesAndIDsAligned(t *testing.T) {
+	messageID := uuid.New()
+	threadID := uuid.New()
+	rc := &RunContext{
+		Run: data.Run{
+			ThreadID: threadID,
+		},
+		InputJSON: map[string]any{
+			"plan_mode": true,
+		},
+		Messages: []llm.Message{{
+			Role:    "user",
+			Content: []llm.ContentPart{{Text: "plan this"}},
+		}},
+		ThreadMessageIDs: []uuid.UUID{messageID},
+	}
+
+	ApplyPlanMode(rc)
+
+	if !rc.IsPlanMode {
+		t.Fatal("expected plan mode to be active")
+	}
+	if len(rc.Messages) != len(rc.ThreadMessageIDs) {
+		t.Fatalf("messages and ids must stay aligned: messages=%d ids=%d", len(rc.Messages), len(rc.ThreadMessageIDs))
+	}
+	if len(rc.Messages) != 1 || rc.ThreadMessageIDs[0] != messageID {
+		t.Fatalf("unexpected message mutation: messages=%#v ids=%#v", rc.Messages, rc.ThreadMessageIDs)
+	}
+	if rc.PlanFilePath != "plans/"+threadID.String()+".md" {
+		t.Fatalf("unexpected plan path: %q", rc.PlanFilePath)
+	}
+}
+
 func TestBuildMessagePartsRestoresAssistantThinkingState(t *testing.T) {
 	message := llm.Message{Role: "assistant", Content: []llm.ContentPart{
 		{Type: "thinking", Text: "reason", Signature: "sig_1"},

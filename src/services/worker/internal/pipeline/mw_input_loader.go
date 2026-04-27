@@ -114,22 +114,7 @@ func NewInputLoaderMiddleware(
 		if rawWorkDir, ok := loaded.InputJSON["work_dir"].(string); ok {
 			rc.WorkDir = strings.TrimSpace(rawWorkDir)
 		}
-		rc.IsPlanMode = detectPlanModeFromHistory(rc.Messages)
-		if rc.IsPlanMode && rc.PlanFilePath == "" {
-			rc.PlanFilePath = "plans/" + rc.Run.ThreadID.String() + ".md"
-		}
-		if rc.IsPlanMode {
-			rc.UpsertPromptSegment(PromptSegment{
-				Name:      "plan_mode",
-				Target:    PromptTargetRuntimeTail,
-				Role:      "user",
-				Stability: PromptStabilityVolatileTail,
-				Text: "[Plan Mode Active] 你当前处于 Plan Mode，只能使用只读工具" +
-					"（read, grep, glob, web_search, web_fetch, ask_user）。" +
-					"写工具（edit, write_file, document_write, exec_command, python_execute）被禁用。" +
-					"Plan 文件：" + rc.PlanFilePath + "。调用 exit_plan_mode 退出。",
-			})
-		}
+		ApplyPlanMode(rc)
 		emitTraceEvent(rc, "input_loader", "input_loader.loaded", map[string]any{
 			"run_kind":      strings.TrimSpace(stringValue(rc.InputJSON["run_kind"])),
 			"message_count": len(rc.Messages),
@@ -166,6 +151,32 @@ func detectPlanModeFromHistory(msgs []llm.Message) bool {
 		}
 	}
 	return false
+}
+
+// ApplyPlanMode restores plan-mode state after run input and message history are loaded.
+func ApplyPlanMode(rc *RunContext) {
+	if rc == nil {
+		return
+	}
+	rc.IsPlanMode = detectPlanModeFromHistory(rc.Messages)
+	if planMode, ok := rc.InputJSON["plan_mode"].(bool); ok && planMode && !rc.IsPlanMode {
+		rc.IsPlanMode = true
+	}
+	if rc.IsPlanMode && rc.PlanFilePath == "" {
+		rc.PlanFilePath = "plans/" + rc.Run.ThreadID.String() + ".md"
+	}
+	if rc.IsPlanMode {
+		rc.UpsertPromptSegment(PromptSegment{
+			Name:      "plan_mode",
+			Target:    PromptTargetRuntimeTail,
+			Role:      "user",
+			Stability: PromptStabilityVolatileTail,
+			Text: "[Plan Mode Active] 你当前处于 Plan Mode，只能使用只读工具" +
+				"（read, grep, glob, web_search, web_fetch, ask_user）。" +
+				"写工具（edit, write_file, document_write, exec_command, python_execute）被禁用。" +
+				"Plan 文件：" + rc.PlanFilePath + "。调用 exit_plan_mode 退出。",
+		})
+	}
 }
 
 func loadRunInputs(
@@ -221,6 +232,9 @@ func loadRunInputs(
 		}
 		if rawReasoningMode, ok := dataJSON["reasoning_mode"].(string); ok && strings.TrimSpace(rawReasoningMode) != "" {
 			inputJSON["reasoning_mode"] = strings.TrimSpace(rawReasoningMode)
+		}
+		if rawPlanMode, ok := dataJSON["plan_mode"].(bool); ok {
+			inputJSON["plan_mode"] = rawPlanMode
 		}
 		if rawTimeoutSeconds, ok := dataJSON["timeout_seconds"]; ok {
 			switch value := rawTimeoutSeconds.(type) {
