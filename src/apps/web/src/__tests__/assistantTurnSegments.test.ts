@@ -324,6 +324,47 @@ describe('buildAssistantTurnFromRunEvents', () => {
     expect(copSegmentCalls(turn.segments[1]).map((call) => call.toolCallId)).toEqual(['read_1'])
   })
 
+  it('exec_command 在 reducer 层切断前后工具段', () => {
+    const turn = buildAssistantTurnFromRunEvents([
+      ev('r1', 1, 'tool.call', { tool_name: 'memory_search', tool_call_id: 'mem_1', arguments: { query: '清风' } }),
+      ev('r1', 2, 'tool.result', { tool_name: 'memory_search', tool_call_id: 'mem_1', result: { hits: [] } }),
+      ev('r1', 3, 'tool.call', { tool_name: 'exec_command', tool_call_id: 'cmd_1', arguments: { command: 'pwd' } }),
+      ev('r1', 4, 'tool.result', { tool_name: 'exec_command', tool_call_id: 'cmd_1', result: { exit_code: 0 } }),
+      ev('r1', 5, 'tool.call', { tool_name: 'write_file', tool_call_id: 'write_1', arguments: { file_path: 'hello.py' } }),
+    ])
+
+    expect(turn.segments).toHaveLength(3)
+    expect(turn.segments.map((segment) => segment.type)).toEqual(['cop', 'cop', 'cop'])
+    const calls = turn.segments.map((segment) => {
+      if (segment.type !== 'cop') throw new Error('expected cop')
+      return copSegmentCalls(segment).map((call) => call.toolName)
+    })
+    expect(calls).toEqual([
+      ['memory_search'],
+      ['exec_command'],
+      ['write_file'],
+    ])
+  })
+
+  it('timeline_title 不会挂到 exec_command 段上', () => {
+    const turn = buildAssistantTurnFromRunEvents([
+      ev('r1', 1, 'tool.call', {
+        tool_name: 'timeline_title',
+        tool_call_id: 'title_1',
+        arguments: { label: 'Gathering my thoughts' },
+      }),
+      ev('r1', 2, 'tool.call', { tool_name: 'exec_command', tool_call_id: 'cmd_1', arguments: { command: 'pwd' } }),
+    ])
+
+    expect(turn.segments).toHaveLength(1)
+    expect(turn.segments[0]).toMatchObject({
+      type: 'cop',
+      title: null,
+    })
+    if (turn.segments[0]?.type !== 'cop') throw new Error('expected cop')
+    expect(copSegmentCalls(turn.segments[0]).map((call) => call.toolName)).toEqual(['exec_command'])
+  })
+
   it('timeline_title 仅设置 cop.title，不进入 items', () => {
     const turn = buildAssistantTurnFromRunEvents([
       ev('r1', 1, 'tool.call', {

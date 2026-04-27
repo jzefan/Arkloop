@@ -106,7 +106,8 @@ export function CopTimeline({
   const shouldRender = hasSegments || hasThinkingOnly || !!thinkingHint
 
   const nonExecSegments = segments.filter((s) => s.category !== 'exec')
-  const hasNonExecBody = nonExecSegments.length > 0 || hasThinkingOnly || !!thinkingHint || anyThinking
+  const nonExecTimelineLive = !!live && nonExecSegments.some((s) => s.status === 'open')
+  const hasNonExecBody = nonExecSegments.length > 0 || hasThinkingOnly || anyThinking || (!hasSegments && !!thinkingHint)
 
   const thoughtDurationLabel =
     aggregatedDurationSec > 0
@@ -119,7 +120,7 @@ export function CopTimeline({
       ? 'thought'
       : pendingShowThinkingHeader
         ? 'thinking-pending'
-        : live
+        : nonExecTimelineLive
           ? 'live'
           : isComplete
             ? 'complete'
@@ -130,7 +131,8 @@ export function CopTimeline({
     if (anyThinking && isComplete && !hasSegments) return thoughtDurationLabel
     if (pendingShowThinkingHeader) return `${thinkingHint}...`
     if (hasSegments) {
-      const aggregated = aggregateMainTitle(nonExecSegments, !!live, isComplete)
+      const nonExecComplete = isComplete || (!!live && !nonExecTimelineLive)
+      const aggregated = aggregateMainTitle(nonExecSegments, nonExecTimelineLive, nonExecComplete)
       if (aggregated) return aggregated
     }
     if (anyThinking) return thoughtDurationLabel
@@ -139,7 +141,7 @@ export function CopTimeline({
   })()
 
   const seededStatusAnimation =
-    !!live || !!shimmer || headerPhaseKey === 'thinking-pending' || headerPhaseKey === 'thinking-live' || headerPhaseKey === 'thought'
+    nonExecTimelineLive || !!shimmer || headerPhaseKey === 'thinking-pending' || headerPhaseKey === 'thinking-live' || headerPhaseKey === 'thought'
   const headerUsesIncrementalTypewriter = seededStatusAnimation || headerPhaseKey === 'thought'
 
   const [hovered, setHovered] = useState(false)

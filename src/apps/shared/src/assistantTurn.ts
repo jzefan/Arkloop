@@ -41,9 +41,14 @@ export type AssistantTurnFoldState = {
 
 const TIMELINE_TITLE_TOOL = 'timeline_title'
 const HIDDEN_COP_TOOLS = new Set(['end_reply'])
+const EXECUTION_COP_TOOLS = new Set(['exec_command', 'python_execute', 'continue_process', 'terminate_process'])
 
 function shouldHideCopTool(toolName: string): boolean {
   return HIDDEN_COP_TOOLS.has(toolName.trim())
+}
+
+function isExecutionCopTool(toolName: string): boolean {
+  return EXECUTION_COP_TOOLS.has(toolName.trim())
 }
 
 export function copSegmentCalls(segment: { type: 'cop'; items: CopBlockItem[] }): TurnToolCallRef[] {
@@ -119,6 +124,7 @@ function cloneTurnToolCall(c: TurnToolCallRef): TurnToolCallRef {
     toolCallId: c.toolCallId,
     toolName: c.toolName,
     arguments: { ...c.arguments },
+    ...(c.displayDescription != null ? { displayDescription: c.displayDescription } : {}),
     result: c.result,
     errorClass: c.errorClass,
   }
@@ -187,10 +193,15 @@ function lastSegmentHasCalls(segments: AssistantTurnSegment[]): boolean {
   return !!(last?.type === 'cop' && last.items.some((item) => item.kind === 'call'))
 }
 
+function copHasExecutionCall(cop: { items: CopBlockItem[] }): boolean {
+  return cop.items.some((item) => item.kind === 'call' && isExecutionCopTool(item.call.toolName))
+}
+
 function appendThinkingToPreviousToolCop(segments: AssistantTurnSegment[], delta: string, seq: number, startedAtMs: number): boolean {
   const last = segments[segments.length - 1]
   if (last?.type !== 'cop') return false
   if (!last.items.some((item) => item.kind === 'call')) return false
+  if (copHasExecutionCall(last)) return false
   const tail = last.items[last.items.length - 1]
   if (tail?.kind === 'thinking') {
     tail.content += delta
@@ -279,11 +290,25 @@ export function foldAssistantTurnEvent(state: AssistantTurnFoldState, event: Ass
     }
   }
 
+  const shouldBreakCopBeforeTool = (toolName: string): boolean => {
+    if (currentCop == null) return false
+    if (isExecutionCopTool(toolName)) return true
+    return copHasExecutionCall(currentCop)
+  }
+
+  const shouldBreakCopBeforeOrphanResult = (toolName: string): boolean => {
+    if (currentCop == null) return false
+    const currentHasExecution = copHasExecutionCall(currentCop)
+    if (isExecutionCopTool(toolName)) return !currentHasExecution
+    return currentHasExecution
+  }
+
   const attachResultToCop = (toolCallId: string, toolName: string, result: unknown, errorClass?: string) => {
     if (currentCop && attachResultToItems(currentCop.items, toolCallId, result, errorClass)) {
       return
     }
     if (attachResultToSegments(segments, toolCallId, result, errorClass)) return
+    if (shouldBreakCopBeforeOrphanResult(toolName)) flushCop(eventTs)
     ensureCop()
     const targetCop = currentCop
     if (targetCop == null) return
@@ -331,6 +356,9 @@ export function foldAssistantTurnEvent(state: AssistantTurnFoldState, event: Ass
       const forceNew = state.thinkingMustBreakBeforeNext
       if (forceNew) {
         state.thinkingMustBreakBeforeNext = false
+      }
+      if (currentCop != null && copHasExecutionCall(currentCop)) {
+        flushCop(eventTs)
       }
       if (currentCop == null && forceNew && appendThinkingToPreviousToolCop(segments, delta, event.seq, eventTs)) {
         state.currentCop = currentCop
@@ -389,6 +417,9 @@ export function foldAssistantTurnEvent(state: AssistantTurnFoldState, event: Ass
     if (isACPDelegateEventData(event.data)) return
     const toolName = pickToolName(event.data)
     if (toolName === TIMELINE_TITLE_TOOL) {
+      if (currentCop != null && copHasExecutionCall(currentCop)) {
+        flushCop(eventTs)
+      }
       ensureCop()
       const args = extractArguments(event.data)
       const labelRaw = args.label
@@ -403,6 +434,7 @@ export function foldAssistantTurnEvent(state: AssistantTurnFoldState, event: Ass
       state.currentCop = currentCop
       return
     }
+    if (shouldBreakCopBeforeTool(toolName)) flushCop(eventTs)
     ensureCop()
     currentCop!.items.push({
       kind: 'call',

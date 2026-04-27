@@ -288,6 +288,25 @@ describe('CopTimeline', () => {
       expect(html).not.toContain('1 steps completed')
     })
 
+    it('exec-only live segment ignores thinking hint header', () => {
+      const seg = makeSeg({
+        id: 'seg1',
+        category: 'exec',
+        status: 'open',
+        title: 'Running...',
+        items: [{ kind: 'call', call: { toolCallId: 'ce1', toolName: 'exec_command', arguments: {} }, seq: 0 }],
+      })
+      const html = renderTimeline({
+        segments: [seg],
+        pool: EMPTY_POOL,
+        isComplete: false,
+        live: true,
+        thinkingHint: 'Gathering my thoughts',
+      })
+      expect(html).not.toContain('Gathering my thoughts')
+      expect(html).not.toContain('Running...')
+    })
+
     it('exec segment is not collapsed when mixed with non-exec segments', () => {
       const seg1 = makeSeg({ id: 'seg1', category: 'explore', status: 'closed', title: 'Read 2 files', seq: 0 })
       const seg2 = makeSeg({
@@ -360,6 +379,23 @@ describe('CopTimeline', () => {
         isComplete: true,
       })
       expect(html).toContain('Edited foo.ts')
+    })
+
+    it('write_file completed title stays Wrote instead of Edited', () => {
+      const seg = makeSeg({
+        id: 'seg1',
+        category: 'edit',
+        status: 'closed',
+        title: 'Wrote hello.py',
+        items: [{ kind: 'call', call: { toolCallId: 'c1', toolName: 'write_file', arguments: { file_path: '/tmp/hello.py' } }, seq: 0 }],
+      })
+      const html = renderTimeline({
+        segments: [seg],
+        pool: EMPTY_POOL,
+        isComplete: true,
+      })
+      expect(html).toContain('Wrote hello.py')
+      expect(html).not.toContain('Edited hello.py')
     })
   })
 
