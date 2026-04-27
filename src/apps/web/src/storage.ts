@@ -1461,7 +1461,7 @@ export function writeMessageTerminalStatus(messageId: string, status: MessageTer
 
 export type ThreadRunHandoffRef = {
   runId: string
-  status: 'running' | Exclude<MessageTerminalStatusRef, 'completed'>
+  status: 'running' | MessageTerminalStatusRef
   coveredRunIds: string[]
   assistantTurn?: AssistantTurnUi | null
   sources: WebSource[]
@@ -1546,7 +1546,7 @@ export function readThreadRunHandoff(threadId: string): ThreadRunHandoffRef | nu
     const runId = typeof item.runId === 'string' ? item.runId.trim() : ''
     const status = item.status
     if (!runId) return null
-    if (status !== 'running' && status !== 'cancelled' && status !== 'interrupted' && status !== 'failed') return null
+    if (status !== 'running' && status !== 'completed' && status !== 'cancelled' && status !== 'interrupted' && status !== 'failed') return null
     const coveredRunIds = Array.isArray(item.coveredRunIds)
       ? item.coveredRunIds.filter((value): value is string => typeof value === 'string' && value.trim() !== '').map((value) => value.trim())
       : []

@@ -1866,6 +1866,137 @@ func TestDesktopEventWriterFinalizeCancelledIfRequested(t *testing.T) {
 	}
 }
 
+func TestDesktopCompletedRunPublishesAfterAssistantMessagePersisted(t *testing.T) {
+	ctx := context.Background()
+
+	sqlitePool, err := sqliteadapter.AutoMigrate(ctx, filepath.Join(t.TempDir(), "desktop.db"))
+	if err != nil {
+		t.Fatalf("auto migrate sqlite: %v", err)
+	}
+	defer sqlitePool.Close()
+
+	db := sqlitepgx.New(sqlitePool.Unwrap())
+	bus := eventbus.NewLocalEventBus()
+	defer bus.Close()
+
+	accountID := uuid.New()
+	userID := uuid.New()
+	threadID := uuid.New()
+	runID := uuid.New()
+	seedDesktopRunBindingAccount(t, db, accountID, userID)
+	seedDesktopRunBindingThread(t, db, accountID, threadID, nil, &userID)
+	seedDesktopRunBindingRun(t, db, accountID, threadID, &userID, runID)
+
+	sub, err := bus.Subscribe(ctx, "run_events:"+runID.String())
+	if err != nil {
+		t.Fatalf("subscribe run events: %v", err)
+	}
+	defer sub.Close()
+
+	run := data.Run{ID: runID, AccountID: accountID, ThreadID: threadID}
+	writer := &desktopEventWriter{
+		db:         db,
+		bus:        bus,
+		run:        run,
+		traceID:    "desktop-completed-publish-order",
+		runsRepo:   data.DesktopRunsRepository{},
+		eventsRepo: data.DesktopRunEventsRepository{},
+		usageRepo:  data.UsageRecordsRepository{},
+	}
+	writer.intermediateMessages = []desktopIntermediateMessage{
+		{Role: "assistant", Content: "tool call", ContentJSON: json.RawMessage(`[]`), Ordinal: 1},
+		{Role: "tool", Content: `{"ok":true}`, ToolCallID: "call-1", Ordinal: 2},
+	}
+	emitter := events.NewEmitter("desktop-completed-publish-order")
+
+	delta := emitter.Emit("message.delta", map[string]any{
+		"role":          "assistant",
+		"content_delta": "完成输出",
+	}, nil, nil)
+	if err := writer.append(ctx, runID, delta, ""); err != nil {
+		t.Fatalf("append message.delta: %v", err)
+	}
+	select {
+	case <-sub.Channel():
+	case <-time.After(time.Second):
+		t.Fatal("expected non-terminal run event notification")
+	}
+
+	completed := emitter.Emit("run.completed", map[string]any{}, nil, nil)
+	if err := writer.append(ctx, runID, completed, ""); err != nil {
+		t.Fatalf("append run.completed: %v", err)
+	}
+	select {
+	case <-sub.Channel():
+	case <-time.After(time.Second):
+		t.Fatal("expected completed run notification")
+	}
+
+	var persistedCount int
+	if err := db.QueryRow(ctx, `SELECT COUNT(*) FROM messages WHERE thread_id = $1 AND role = 'assistant' AND hidden = FALSE`, threadID).Scan(&persistedCount); err != nil {
+		t.Fatalf("count assistant messages after completed: %v", err)
+	}
+	if persistedCount != 1 {
+		t.Fatalf("expected assistant message to be persisted with completed event, got %d", persistedCount)
+	}
+
+	rc := &pipeline.RunContext{
+		Run:     run,
+		Emitter: emitter,
+	}
+	if err := desktopPersistFinalAssistantOutput(ctx, db, rc, writer, data.DesktopRunsRepository{}, data.DesktopRunEventsRepository{}); err != nil {
+		t.Fatalf("desktopPersistFinalAssistantOutput: %v", err)
+	}
+	var finalCount int
+	if err := db.QueryRow(ctx, `SELECT COUNT(*) FROM messages WHERE thread_id = $1 AND role = 'assistant' AND hidden = FALSE`, threadID).Scan(&finalCount); err != nil {
+		t.Fatalf("count assistant messages after final persist: %v", err)
+	}
+	if finalCount != 1 {
+		t.Fatalf("expected final persist to avoid duplicate assistant message, got %d", finalCount)
+	}
+
+	rows, err := db.Query(ctx, `SELECT role, hidden FROM messages WHERE thread_id = $1 ORDER BY thread_seq ASC`, threadID)
+	if err != nil {
+		t.Fatalf("select message order: %v", err)
+	}
+	defer rows.Close()
+	var ordered []string
+	for rows.Next() {
+		var role string
+		var hidden bool
+		if err := rows.Scan(&role, &hidden); err != nil {
+			t.Fatalf("scan message order: %v", err)
+		}
+		ordered = append(ordered, fmt.Sprintf("%s:%t", role, hidden))
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("iterate message order: %v", err)
+	}
+	wantOrder := []string{"assistant:true", "tool:true", "assistant:false"}
+	if !slices.Equal(ordered, wantOrder) {
+		t.Fatalf("unexpected message order: got %#v want %#v", ordered, wantOrder)
+	}
+
+	var content string
+	var rawMetadata string
+	if err := db.QueryRow(ctx,
+		`SELECT content, metadata_json
+		   FROM messages
+		  WHERE thread_id = $1 AND role = 'assistant'
+		  ORDER BY thread_seq DESC
+		  LIMIT 1`,
+		threadID,
+	).Scan(&content, &rawMetadata); err != nil {
+		t.Fatalf("select assistant message: %v", err)
+	}
+	if content != "完成输出" {
+		t.Fatalf("expected persisted assistant content, got %q", content)
+	}
+	if !strings.Contains(rawMetadata, runID.String()) {
+		t.Fatalf("expected assistant message metadata to include run_id, got %q", rawMetadata)
+	}
+}
+
 func TestDesktopPersistFinalAssistantOutputWritesRunFailedWhenMessageInsertFails(t *testing.T) {
 	ctx := context.Background()
 

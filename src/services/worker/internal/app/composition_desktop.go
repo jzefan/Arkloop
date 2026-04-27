@@ -3118,6 +3118,8 @@ type desktopEventWriter struct {
 	draftVisibleContent      string
 	draftUseVisible          bool
 	heartbeatRun             bool
+	assistantOutputPersisted bool
+	intermediatePersisted    bool
 	pendingToolCalls         []llm.ToolCall
 	pendingToolResults       []desktopIntermediateMessage
 	intermediateMessages     []desktopIntermediateMessage
@@ -3382,6 +3384,30 @@ func (w *desktopEventWriter) append(ctx context.Context, runID uuid.UUID, ev eve
 				nextRunIDs = append(nextRunIDs, *projection.NextRunID)
 			}
 		}
+		if status == "completed" {
+			if err := w.persistCompletedAssistantOutputInTx(ctx, tx, runID); err != nil {
+				_ = tx.Rollback(ctx)
+				w.completed = false
+				w.terminalStatus = "failed"
+				w.terminalUserMessage = "assistant output persistence failed"
+				failErr := desktopWriteFailure(
+					ctx,
+					w.db,
+					w.run,
+					events.NewEmitter(w.traceID),
+					w.runsRepo,
+					w.eventsRepo,
+					"database.write_failed",
+					"assistant output persistence failed",
+					map[string]any{"reason": err.Error()},
+				)
+				if failErr != nil {
+					return failErr
+				}
+				w.publishRunEvents(ctx)
+				return errDesktopStopProcessing
+			}
+		}
 	} else if err := w.runsRepo.TouchRunActivity(ctx, tx, w.run.ID); err != nil {
 		return err
 	}
@@ -3546,7 +3572,7 @@ func (w *desktopEventWriter) visibleAssistantOutput() string {
 
 func (w *desktopEventWriter) visibleAssistantOutputs() []string {
 	if len(w.visibleAssistantTexts) == 0 {
-		output := strings.TrimSpace(w.visibleAssistantOutput())
+		output := strings.TrimSpace(w.persistableAssistantOutput())
 		if output == "" {
 			return nil
 		}
@@ -3733,6 +3759,67 @@ func (w *desktopEventWriter) assistantOutput() string {
 	return strings.Join(w.assistantDeltas, "")
 }
 
+func (w *desktopEventWriter) persistableAssistantOutput() string {
+	if content := strings.TrimSpace(w.visibleAssistantOutput()); content != "" {
+		return content
+	}
+	return w.assistantOutput()
+}
+
+func (w *desktopEventWriter) persistCompletedAssistantOutputInTx(ctx context.Context, tx pgx.Tx, runID uuid.UUID) error {
+	if w.heartbeatRun || w.assistantOutputPersisted || w.telegramSentOutputCount > 0 {
+		return nil
+	}
+	content := w.persistableAssistantOutput()
+	if strings.TrimSpace(content) == "" {
+		return nil
+	}
+	if len(w.intermediateMessages) > 0 && !w.intermediatePersisted {
+		if err := w.insertIntermediateMessagesInTx(ctx, tx, w.run.AccountID, w.run.ThreadID, runID); err != nil {
+			return err
+		}
+		w.intermediatePersisted = true
+	}
+
+	message := w.finalAssistantMessage()
+	text := llm.VisibleMessageText(message)
+	_, deliverySegments := pipeline.PrepareStickerDeliveryOutputs(w.visibleAssistantOutputs())
+	if len(deliverySegments) > 0 {
+		text = pipeline.StripStickerPlaceholders(content)
+		message = llm.Message{
+			Role:    "assistant",
+			Content: []llm.TextPart{{Text: text}},
+		}
+	}
+	if strings.TrimSpace(text) == "" {
+		return nil
+	}
+	contentJSON, err := llm.BuildAssistantThreadContentJSON(message)
+	if err != nil {
+		return err
+	}
+	metadata := map[string]any{
+		"completion_state": "complete",
+		"finish_reason":    "completed",
+	}
+	messageID, err := (data.MessagesRepository{}).InsertAssistantMessageWithMetadata(
+		ctx,
+		tx,
+		w.run.AccountID,
+		w.run.ThreadID,
+		runID,
+		text,
+		contentJSON,
+		false,
+		metadata,
+	)
+	if err != nil {
+		return err
+	}
+	w.assistantOutputPersisted = messageID != uuid.Nil
+	return nil
+}
+
 func (w *desktopEventWriter) finalAssistantMessage() llm.Message {
 	if w.assistantMessage != nil {
 		return *w.assistantMessage
@@ -3779,7 +3866,7 @@ func desktopPersistFinalAssistantOutput(
 		return nil
 	}
 
-	content := w.visibleAssistantOutput()
+	content := w.persistableAssistantOutput()
 	hasStreamedChunks := w.telegramBoundaryFlush != nil && w.telegramSentOutputCount > 0
 	shouldPersistAssistantOutput := (w.completed || w.terminalStatus == "cancelled" || w.terminalStatus == "interrupted") && strings.TrimSpace(content) != ""
 	if !shouldPersistAssistantOutput || pipeline.ShouldSuppressHeartbeatOutput(rc, content) {
@@ -3794,9 +3881,11 @@ func desktopPersistFinalAssistantOutput(
 	}
 	cleanOutputs, deliverySegments := pipeline.PrepareStickerDeliveryOutputs(stickerSourceOutputs)
 
-	if w.completed && w.terminalStatus == "completed" && len(w.intermediateMessages) > 0 {
+	if w.completed && w.terminalStatus == "completed" && len(w.intermediateMessages) > 0 && !w.intermediatePersisted {
 		if err := w.batchInsertIntermediateMessages(ctx, db, rc.Run.AccountID, rc.Run.ThreadID, rc.Run.ID); err != nil {
 			slog.ErrorContext(ctx, "desktop: persist intermediate messages failed", "run_id", rc.Run.ID, "err", err.Error())
+		} else {
+			w.intermediatePersisted = true
 		}
 	}
 
@@ -3810,26 +3899,28 @@ func desktopPersistFinalAssistantOutput(
 	}
 
 	var persistErr error
-	if len(deliverySegments) > 0 {
-		if hasStreamedChunks {
-			if strings.TrimSpace(remainderCleanOutput) != "" {
-				metadata["stream_chunk"] = true
-				persistErr = persistDesktopStreamChunkMessageWithMetadata(ctx, db, rc.Run, remainderCleanOutput, metadata)
+	if !w.assistantOutputPersisted {
+		if len(deliverySegments) > 0 {
+			if hasStreamedChunks {
+				if strings.TrimSpace(remainderCleanOutput) != "" {
+					metadata["stream_chunk"] = true
+					persistErr = persistDesktopStreamChunkMessageWithMetadata(ctx, db, rc.Run, remainderCleanOutput, metadata)
+				}
+			} else if strings.TrimSpace(fullCleanOutput) != "" {
+				persistErr = desktopInsertAssistantMessage(ctx, db, rc.Run, llm.Message{
+					Role:    "assistant",
+					Content: []llm.TextPart{{Text: fullCleanOutput}},
+				}, metadata)
 			}
-		} else if strings.TrimSpace(fullCleanOutput) != "" {
-			persistErr = desktopInsertAssistantMessage(ctx, db, rc.Run, llm.Message{
-				Role:    "assistant",
-				Content: []llm.TextPart{{Text: fullCleanOutput}},
-			}, metadata)
+		} else if hasStreamedChunks {
+			remainder := w.telegramStreamRemainder()
+			if strings.TrimSpace(remainder) != "" {
+				metadata["stream_chunk"] = true
+				persistErr = persistDesktopStreamChunkMessageWithMetadata(ctx, db, rc.Run, remainder, metadata)
+			}
+		} else {
+			persistErr = desktopInsertAssistantMessage(ctx, db, rc.Run, w.finalAssistantMessage(), metadata)
 		}
-	} else if hasStreamedChunks {
-		remainder := w.telegramStreamRemainder()
-		if strings.TrimSpace(remainder) != "" {
-			metadata["stream_chunk"] = true
-			persistErr = persistDesktopStreamChunkMessageWithMetadata(ctx, db, rc.Run, remainder, metadata)
-		}
-	} else {
-		persistErr = desktopInsertAssistantMessage(ctx, db, rc.Run, w.finalAssistantMessage(), metadata)
 	}
 	if persistErr != nil {
 		slog.ErrorContext(ctx, "desktop: persist assistant output failed", "run_id", rc.Run.ID, "err", persistErr.Error())
@@ -3888,6 +3979,17 @@ func (w *desktopEventWriter) batchInsertIntermediateMessages(
 	}
 	defer func() { _ = tx.Rollback(ctx) }() //nolint:errcheck
 
+	if err := w.insertIntermediateMessagesInTx(ctx, tx, accountID, threadID, runID); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
+func (w *desktopEventWriter) insertIntermediateMessagesInTx(
+	ctx context.Context,
+	tx pgx.Tx,
+	accountID, threadID, runID uuid.UUID,
+) error {
 	if len(w.intermediateMessages) == 0 {
 		return nil
 	}
@@ -3917,7 +4019,7 @@ func (w *desktopEventWriter) batchInsertIntermediateMessages(
 			return err
 		}
 	}
-	return tx.Commit(ctx)
+	return nil
 }
 
 func desktopWriteTerminalEvent(

@@ -373,7 +373,7 @@ export function MessageMetaProvider({ children }: { children: ReactNode }) {
       if (!threadId || !runId) return
       writeThreadRunHandoff(threadId, {
         runId,
-        status: (runData.terminalStatus ?? 'cancelled') as 'running' | Exclude<MessageTerminalStatusRef, 'completed'>,
+        status: (runData.terminalStatus ?? 'cancelled') as 'running' | MessageTerminalStatusRef,
         coveredRunIds: [...(runData.coveredRunIds ?? [])],
         assistantTurn: runData.handoffAssistantTurn.segments.length > 0 ? runData.handoffAssistantTurn : null,
         sources: [...runData.runSources],
