@@ -6,6 +6,7 @@ import {
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
   type ReactNode,
 } from 'react'
 import type { CodeExecutionRef, FileOpRef, SubAgentRef, ThreadRunHandoffRef, WebFetchRef } from '../storage'
@@ -76,9 +77,59 @@ interface StreamContextValue {
   requestAssistantTurnThinkingBreak: () => void
   releaseCompletedHandoffToHistory: () => void
   resetSearchSteps: () => void
+
+  // 流式增量更新 API（不走 setState，直接 mutate ref + notify subscribers）
+  appendSegmentContent: (segmentId: string, delta: string) => void
+  endSegmentStream: (segmentId: string) => void
+  addSegment: (segment: Segment) => void
+  flushSegmentsRefToState: () => void
 }
 
 const StreamContext = createContext<StreamContextValue | null>(null)
+
+// 单个 segment content 的订阅系统，用于 useStreamingContent
+type ContentListener = () => void
+const contentListeners = new Map<string, Set<ContentListener>>()
+
+function notifyContentListeners(segmentId: string) {
+  const listeners = contentListeners.get(segmentId)
+  if (listeners) {
+    for (const cb of listeners) {
+      cb()
+    }
+  }
+}
+
+export function useStreamingContent(segmentId: string | null | undefined): string {
+  return useSyncExternalStore(
+    useCallback((callback: () => void) => {
+      if (!segmentId) return () => {}
+      let listeners = contentListeners.get(segmentId)
+      if (!listeners) {
+        listeners = new Set()
+        contentListeners.set(segmentId, listeners)
+      }
+      listeners.add(callback)
+      return () => {
+        listeners!.delete(callback)
+        if (listeners!.size === 0) {
+          contentListeners.delete(segmentId)
+        }
+      }
+    }, [segmentId]),
+    () => {
+      // 在 StreamProvider 内部，通过 context 获取最新值
+      // 但 useSyncExternalStore 要求 getSnapshot 是 O(1) 且稳定
+      // 这里我们通过一个全局 weak ref 来访问当前 provider 的 segmentsRef
+      // 实际上由于 React 的同步渲染保证，这个 snapshot 会在 render 时读取
+      return segmentId ? (globalSegmentsRef?.current.find((s) => s.segmentId === segmentId)?.content ?? '') : ''
+    },
+    () => '',
+  )
+}
+
+// 全局 ref，让 useStreamingContent 的 getSnapshot 能访问到当前 provider 的 segmentsRef
+let globalSegmentsRef: React.RefObject<Segment[]> | null = null
 
 export function StreamProvider({ children }: { children: ReactNode }) {
   const [segments, setSegments] = useState<Segment[]>([])
@@ -96,6 +147,11 @@ export function StreamProvider({ children }: { children: ReactNode }) {
 
   const segmentsRef = useRef<Segment[]>([])
   useEffect(() => { segmentsRef.current = segments }, [segments])
+  // 同步到全局 ref，供 useStreamingContent 读取
+  useEffect(() => {
+    globalSegmentsRef = segmentsRef
+    return () => { globalSegmentsRef = null }
+  }, [])
   const searchStepsRef = useRef<WebSearchPhaseStep[]>([])
   const streamingArtifactsRef = useRef<StreamingArtifactEntry[]>([])
   const activeSegmentIdRef = useRef<string | null>(null)
@@ -174,6 +230,33 @@ export function StreamProvider({ children }: { children: ReactNode }) {
     setSearchSteps([])
   }, [])
 
+  // 流式增量更新：直接 mutate ref + notify subscribers，不走 setState
+  const appendSegmentContent = useCallback((segmentId: string, delta: string) => {
+    const seg = segmentsRef.current.find((s) => s.segmentId === segmentId)
+    if (seg && seg.mode !== 'hidden') {
+      seg.content += delta
+      notifyContentListeners(segmentId)
+    }
+  }, [])
+
+  const endSegmentStream = useCallback((segmentId: string) => {
+    const seg = segmentsRef.current.find((s) => s.segmentId === segmentId)
+    if (seg) {
+      seg.isStreaming = false
+      notifyContentListeners(segmentId)
+    }
+  }, [])
+
+  const addSegment = useCallback((segment: Segment) => {
+    segmentsRef.current = [...segmentsRef.current, segment]
+    // 新 segment 需要触发一次整体渲染（让 MessageList 知道有新 segment）
+    setSegments(segmentsRef.current)
+  }, [])
+
+  const flushSegmentsRefToState = useCallback(() => {
+    setSegments([...segmentsRef.current])
+  }, [])
+
   const value = useMemo<StreamContextValue>(() => ({
     segments,
     streamingArtifacts,
@@ -214,6 +297,10 @@ export function StreamProvider({ children }: { children: ReactNode }) {
     requestAssistantTurnThinkingBreak: requestAssistantTurnThinkingBreakAction,
     releaseCompletedHandoffToHistory,
     resetSearchSteps,
+    appendSegmentContent,
+    endSegmentStream,
+    addSegment,
+    flushSegmentsRefToState,
   }), [
     segments,
     streamingArtifacts,
@@ -238,6 +325,10 @@ export function StreamProvider({ children }: { children: ReactNode }) {
     requestAssistantTurnThinkingBreakAction,
     releaseCompletedHandoffToHistory,
     resetSearchSteps,
+    appendSegmentContent,
+    endSegmentStream,
+    addSegment,
+    flushSegmentsRefToState,
   ])
 
   return (

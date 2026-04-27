@@ -121,6 +121,10 @@ export function useThreadSseEffect({
     setSegments,
     segmentsRef,
     activeSegmentIdRef,
+    appendSegmentContent,
+    endSegmentStream,
+    addSegment,
+    flushSegmentsRefToState,
     setPendingThinking,
     setThinkingHint: _setThinkingHint,
     setTopLevelCodeExecutions,
@@ -203,7 +207,7 @@ export function useThreadSseEffect({
       if (!handoffRunCache) {
         streamingArtifactsRef.current = []
         setStreamingArtifacts([])
-        setSegments([])
+        flushSegmentsRefToState()
         resetAssistantTurnLive()
         activeSegmentIdRef.current = null
         currentRunSourcesRef.current = []
@@ -267,7 +271,7 @@ export function useThreadSseEffect({
         if (kind.startsWith('search_')) {
           continue
         }
-        setSegments((prev) => [...prev, { segmentId, kind, mode, label, content: '', isStreaming: true, codeExecutions: [] }])
+        addSegment({ segmentId, kind, mode, label, content: '', isStreaming: true, codeExecutions: [] })
         continue
       }
 
@@ -335,9 +339,7 @@ export function useThreadSseEffect({
         requestAssistantTurnThinkingBreak(assistantTurnFoldStateRef.current)
         foldAssistantTurnEvent(assistantTurnFoldStateRef.current, event)
         bumpAssistantTurnSnapshot()
-        setSegments((prev) =>
-          prev.map((s) => (s.segmentId === segmentId ? { ...s, isStreaming: false } : s)),
-        )
+        endSegmentStream(segmentId)
         continue
       }
 
@@ -368,13 +370,7 @@ export function useThreadSseEffect({
           const activeSegment = segmentsRef.current.find((segment) => segment.segmentId === activeSeg)
           const activeSegmentVisible = !!activeSegment && activeSegment.mode !== 'hidden'
           requestAssistantTurnThinkingBreak(assistantTurnFoldStateRef.current)
-          setSegments((prev) =>
-            prev.map((s) =>
-              s.segmentId === activeSeg && s.mode !== 'hidden'
-                ? { ...s, content: s.content + delta }
-                : s,
-            ),
-          )
+          appendSegmentContent(activeSeg, delta)
           if (activeSegmentVisible) {
             foldAssistantTurnEvent(assistantTurnFoldStateRef.current, event)
             bumpAssistantTurnSnapshot()
@@ -716,6 +712,7 @@ export function useThreadSseEffect({
         setActiveRunId(null)
         setCancelSubmitting(false)
         setPendingThinking(false)
+        flushSegmentsRefToState()
 
         const runSearchSteps = finalizeSearchSteps(searchStepsRef.current)
         if (runSearchSteps.length > 0) {
@@ -902,7 +899,7 @@ export function useThreadSseEffect({
         continue
       }
     }
-  }, [sseRunId, activeRunId, armCompletedTitleTail, clearCompletedTitleTail, clearContextCompactHideTimer, clearLiveRunSecurityArtifacts, clearQueuedDraft, completedTitleTailRunId, persistThreadRunHandoff, refreshMessages, refreshCredits, resetSearchSteps, restoreQueuedDraftToInput, sse.events]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [sseRunId, activeRunId, armCompletedTitleTail, clearCompletedTitleTail, clearContextCompactHideTimer, clearLiveRunSecurityArtifacts, clearQueuedDraft, completedTitleTailRunId, persistThreadRunHandoff, refreshMessages, refreshCredits, resetSearchSteps, restoreQueuedDraftToInput, sse.events, appendSegmentContent, endSegmentStream, addSegment, flushSegmentsRefToState]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // 401 SSE 错误时登出
   useEffect(() => {

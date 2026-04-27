@@ -366,9 +366,6 @@ export function useScrollPin(options: UseScrollPinOptions = {}): ScrollPinResult
         return
       }
 
-      programmaticScrollDepthRef.current++
-      container.scrollTop += delta
-      rememberScrollTop(container)
       viewportAnchorRef.current = {
         element: currentAnchor.element,
         top: anchor.top,
@@ -376,12 +373,19 @@ export function useScrollPin(options: UseScrollPinOptions = {}): ScrollPinResult
         path: currentAnchor.path ?? anchor.path,
       }
       requestAnimationFrame(() => {
-        programmaticScrollDepthRef.current--
-        rememberScrollTop(container)
-        syncBottomState(container)
-        if (shouldPreserveViewport()) {
-          captureViewportAnchor()
-        }
+        const freshContainer = scrollContainerRef.current
+        if (!freshContainer) return
+        programmaticScrollDepthRef.current++
+        freshContainer.scrollTop += delta
+        rememberScrollTop(freshContainer)
+        requestAnimationFrame(() => {
+          programmaticScrollDepthRef.current--
+          rememberScrollTop(freshContainer)
+          syncBottomState(freshContainer)
+          if (shouldPreserveViewport()) {
+            captureViewportAnchor()
+          }
+        })
       })
       return
     }
@@ -396,9 +400,7 @@ export function useScrollPin(options: UseScrollPinOptions = {}): ScrollPinResult
       Math.max(container.clientHeight - 1, 0),
       Math.max(16, SCROLL_TOP_OFFSET + 8),
     )
-    programmaticScrollDepthRef.current++
-    container.scrollTop = Math.max(0, offsetInContainer(turn) + anchor.turnOffset - markerTop)
-    rememberScrollTop(container)
+    const targetScrollTop = Math.max(0, offsetInContainer(turn) + anchor.turnOffset - markerTop)
     viewportAnchorRef.current = {
       element: null,
       top: markerTop,
@@ -406,12 +408,19 @@ export function useScrollPin(options: UseScrollPinOptions = {}): ScrollPinResult
       path: anchor.path,
     }
     requestAnimationFrame(() => {
-      programmaticScrollDepthRef.current--
-      rememberScrollTop(container)
-      syncBottomState(container)
-      if (shouldPreserveViewport()) {
-        captureViewportAnchor()
-      }
+      const freshContainer = scrollContainerRef.current
+      if (!freshContainer) return
+      programmaticScrollDepthRef.current++
+      freshContainer.scrollTop = targetScrollTop
+      rememberScrollTop(freshContainer)
+      requestAnimationFrame(() => {
+        programmaticScrollDepthRef.current--
+        rememberScrollTop(freshContainer)
+        syncBottomState(freshContainer)
+        if (shouldPreserveViewport()) {
+          captureViewportAnchor()
+        }
+      })
     })
   }, [captureViewportAnchor, contentRoot, findViewportAnchor, offsetInContainer, rememberScrollTop, resolvePathFromRoot, shouldPreserveViewport, syncBottomState])
 

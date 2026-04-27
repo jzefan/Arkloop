@@ -1,10 +1,8 @@
-import { Children, useState, useCallback, useRef, useContext, createContext, Fragment, isValidElement, cloneElement, useMemo, useEffect } from 'react'
+import { Children, useState, useCallback, useRef, useContext, createContext, Fragment, isValidElement, cloneElement, useMemo, useEffect, memo } from 'react'
 import type { ReactNode } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import remarkMath from 'remark-math'
-import rehypeHighlight from 'rehype-highlight'
-import rehypeKatex from 'rehype-katex'
 import { CopyIconButton } from './CopyIconButton'
 import type { Components, Options, UrlTransform } from 'react-markdown'
 import { defaultUrlTransform } from 'react-markdown'
@@ -697,7 +695,7 @@ type Props = {
   trimTrailingMargin?: boolean
 }
 
-export function MarkdownRenderer({ content, disableMath, streaming = false, webSources, artifacts, accessToken, runId, onOpenDocument, compact = false, trimTrailingMargin = false }: Props) {
+export const MarkdownRenderer = memo(function MarkdownRenderer({ content, disableMath, streaming = false, webSources, artifacts, accessToken, runId, onOpenDocument, compact = false, trimTrailingMargin = false }: Props) {
   const sourceCount = webSources?.length ?? 0
   const artifactCount = artifacts?.length ?? 0
   const shouldThrottleStreamingMath = streaming && !disableMath && containsLikelyMath(content)
@@ -708,18 +706,48 @@ export function MarkdownRenderer({ content, disableMath, streaming = false, webS
     [effectiveDisableMath],
   )
 
+  // 异步加载 rehype 插件：流式期间跳过高亮，完成后异步加载
+  const [asyncPlugins, setAsyncPlugins] = useState<NonNullable<Options['rehypePlugins']>>([])
+  const loadedRef = useRef(false)
+
+  useEffect(() => {
+    if (streaming) {
+      // 流式期间：重置加载状态，使用空插件或仅 katex
+      loadedRef.current = false
+      if (effectiveDisableMath) {
+        setAsyncPlugins([])
+      } else {
+        // 流式期间数学仍同步渲染（remark-math 已处理），但 katex 也异步
+        setAsyncPlugins([])
+      }
+      return
+    }
+
+    // 流式完成且未加载过：异步加载插件
+    if (!loadedRef.current) {
+      loadedRef.current = true
+      const loadPlugins = async () => {
+        // 动态加载 rehype 插件，异步执行不阻塞渲染
+        const plugins: any[] = []
+        if (!effectiveDisableMath) {
+          try {
+            const m = await import('rehype-katex')
+            plugins.push([m.default ?? m, { throwOnError: false, output: 'htmlAndMathml' }])
+          } catch { /* skip */ }
+        }
+        try {
+          const m = await import('rehype-highlight')
+          plugins.push([m.default ?? m, { ignoreMissing: true }])
+        } catch { /* skip */ }
+        setAsyncPlugins(plugins as NonNullable<Options['rehypePlugins']>)
+      }
+      void loadPlugins()
+    }
+  }, [streaming, effectiveDisableMath])
+
   const rehypePlugins = useMemo<NonNullable<Options['rehypePlugins']>>(
-    () => (
-      effectiveDisableMath
-        ? (streaming ? [] : [[rehypeHighlight, { ignoreMissing: true }]])
-        : streaming
-          ? [[rehypeKatex, { throwOnError: false, output: 'htmlAndMathml' }]]
-          : [
-              [rehypeKatex, { throwOnError: false, output: 'htmlAndMathml' }],
-              [rehypeHighlight, { ignoreMissing: true }],
-            ]
-    ),
-    [effectiveDisableMath, streaming],
+    () => asyncPlugins,
+    [asyncPlugins],
   )
 
   const artifactsValue = useMemo<ArtifactsContextValue>(() => ({
@@ -772,4 +800,4 @@ export function MarkdownRenderer({ content, disableMath, streaming = false, webS
       </WebSourcesContext.Provider>
     </ArtifactsContext.Provider>
   )
-}
+})

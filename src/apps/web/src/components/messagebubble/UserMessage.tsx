@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useLayoutEffect, type CSSProperties } from 'react'
+import { useState, useRef, useEffect, useCallback, type CSSProperties } from 'react'
 import { Pencil, Paperclip } from 'lucide-react'
 import type { MessageResponse } from '../../api'
 import type { ArtifactRef } from '../../storage'
@@ -17,8 +17,6 @@ import {
   USER_TEXT_COLLAPSED_HEIGHT,
   USER_TEXT_FADE_HEIGHT,
 } from './utils'
-
-const useIsomorphicLayoutEffect = typeof window === 'undefined' ? useEffect : useLayoutEffect
 
 type Props = {
   message: MessageResponse
@@ -40,6 +38,7 @@ export function UserMessage({ message, onEdit, accessToken, animateEnter, onEnte
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const userTextRef = useRef<HTMLDivElement>(null)
   const enterBubbleRef = useRef<HTMLDivElement>(null)
+  const roRef = useRef<ResizeObserver | null>(null)
 
   useEffect(() => {
     if (!animateEnter || !onEnterAnimationEnd) return
@@ -109,26 +108,59 @@ export function UserMessage({ message, onEdit, accessToken, animateEnter, onEnte
     ? [...imageAttachments, ...allFileAttachments].map((part) => part.attachment.filename)
     : legacy.fileNames
 
-  useIsomorphicLayoutEffect(() => {
+  useEffect(() => {
     if (!animateEnter) {
       setEnterScale(USER_PROMPT_ENTER_BASE_SCALE)
       return
     }
-    const width = enterBubbleRef.current?.getBoundingClientRect().width ?? 0
-    setEnterScale(getUserPromptEnterScale(width))
+    const el = enterBubbleRef.current
+    if (!el) return
+    if (typeof ResizeObserver === 'undefined') {
+      const width = el.getBoundingClientRect().width ?? 0
+      setEnterScale(getUserPromptEnterScale(width))
+      return
+    }
+    const ro = new ResizeObserver((entries) => {
+      const entry = entries[0]
+      if (!entry) return
+      const width = entry.contentRect.width
+      setEnterScale(getUserPromptEnterScale(width))
+    })
+    ro.observe(el)
+    return () => ro.disconnect()
   }, [animateEnter, displayText])
 
-  useIsomorphicLayoutEffect(() => {
-    const el = userTextRef.current
-    if (!el) return
-    const prev = el.style.maxHeight
-    el.style.maxHeight = 'none'
+  const measureFullHeight = useCallback((el: HTMLDivElement) => {
     const fullHeight = el.scrollHeight
-    el.style.maxHeight = prev
     const nextHeight = fullHeight > USER_TEXT_COLLAPSED_HEIGHT + 1 ? fullHeight : null
     setUserTextFullHeight(nextHeight)
     if (nextHeight === null) setUserTextExpanded(false)
-  }, [displayText])
+  }, [])
+
+  useEffect(() => {
+    const el = userTextRef.current
+    if (!el) return
+    if (typeof ResizeObserver === 'undefined') {
+      measureFullHeight(el)
+      return
+    }
+    if (roRef.current) {
+      roRef.current.disconnect()
+    }
+    el.style.maxHeight = 'none'
+    const ro = new ResizeObserver((entries) => {
+      const entry = entries[0]
+      if (!entry) return
+      measureFullHeight(el)
+    })
+    ro.observe(el)
+    roRef.current = ro
+    measureFullHeight(el)
+    return () => {
+      ro.disconnect()
+      roRef.current = null
+    }
+  }, [displayText, measureFullHeight])
 
   if (editing) {
     return (
