@@ -94,6 +94,12 @@ func (c *weixinConnector) HandleWeChatMessage(ctx context.Context, traceID strin
 		return nil
 	}
 
+	freshChannel, ok, err := c.currentWeixinChannel(ctx, ch)
+	if err != nil || !ok {
+		return err
+	}
+	ch = freshChannel
+
 	cfg, err := resolveWeixinChannelConfig(ch.ConfigJSON)
 	if err != nil {
 		return fmt.Errorf("invalid weixin channel config: %w", err)
@@ -293,6 +299,20 @@ func (c *weixinConnector) HandleWeChatMessage(ctx context.Context, traceID strin
 		return err
 	}
 	return commitTx()
+}
+
+func (c *weixinConnector) currentWeixinChannel(ctx context.Context, ch data.Channel) (data.Channel, bool, error) {
+	if c == nil || c.channelsRepo == nil || ch.ID == uuid.Nil {
+		return ch, true, nil
+	}
+	latest, err := c.channelsRepo.GetByID(ctx, ch.ID)
+	if err != nil {
+		return data.Channel{}, false, err
+	}
+	if latest == nil || !latest.IsActive || latest.ChannelType != "weixin" {
+		return data.Channel{}, false, nil
+	}
+	return *latest, true, nil
 }
 
 // --- persona ---

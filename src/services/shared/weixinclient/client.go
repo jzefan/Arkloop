@@ -64,16 +64,23 @@ func (c *Client) GetQRCodeStatus(ctx context.Context, qrcode string) (*QRCodeSta
 
 // SendMessage 发送消息（需要 bot_token 鉴权）。
 func (c *Client) SendMessage(ctx context.Context, reqBody *SendMessageRequest) (*SendMessageResponse, error) {
-	return callJSON[SendMessageResponse](c, ctx, "POST", "/ilink/bot/sendmessage", reqBody)
+	return callJSON[SendMessageResponse](c, ctx, "POST", "/ilink/bot/sendmessage", map[string]any{
+		"msg":       reqBody,
+		"base_info": weixinBaseInfo(),
+	})
 }
 
 // GetUpdates 长轮询收消息（需要 bot_token 鉴权）。
 func (c *Client) GetUpdates(ctx context.Context, cursor string) (*GetUpdatesResponse, error) {
 	body := map[string]any{
 		"get_updates_buf": cursor,
-		"base_info":       map[string]string{"channel_version": "1.0.2"},
+		"base_info":       weixinBaseInfo(),
 	}
 	return callJSON[GetUpdatesResponse](c, ctx, "POST", "/ilink/bot/getupdates", body)
+}
+
+func weixinBaseInfo() map[string]string {
+	return map[string]string{"channel_version": "1.0.2"}
 }
 
 // callJSON 通用 POST 请求，携带 iLink 鉴权头。

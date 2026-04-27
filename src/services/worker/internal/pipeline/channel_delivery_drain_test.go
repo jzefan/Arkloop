@@ -125,6 +125,153 @@ func TestChannelDeliveryDrainerSendsPendingOutbox(t *testing.T) {
 	}
 }
 
+func TestChannelDeliveryDrainerSendsWeixinContextToken(t *testing.T) {
+	ctx := context.Background()
+	db := testutil.SetupPostgresDatabase(t, "channel_delivery_drain_weixin_context")
+	pool, err := pgxpool.New(ctx, db.DSN)
+	if err != nil {
+		t.Fatalf("pgxpool.New: %v", err)
+	}
+	defer pool.Close()
+
+	createChannelDeliveryTables(t, pool, `CREATE TABLE channel_message_ledger (
+		channel_id UUID NOT NULL,
+		channel_type TEXT NOT NULL,
+		direction TEXT NOT NULL,
+		thread_id UUID NULL,
+		run_id UUID NULL,
+		platform_conversation_id TEXT NOT NULL,
+		platform_message_id TEXT NOT NULL,
+		platform_parent_message_id TEXT NULL,
+		platform_thread_id TEXT NULL,
+		sender_channel_identity_id UUID NULL,
+		metadata_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+		UNIQUE (channel_id, direction, platform_conversation_id, platform_message_id)
+	)`)
+
+	keyBytes := make([]byte, 32)
+	for i := range keyBytes {
+		keyBytes[i] = byte(i + 23)
+	}
+	t.Setenv("ARKLOOP_ENCRYPTION_KEY", hex.EncodeToString(keyBytes))
+
+	var sent struct {
+		BaseInfo struct {
+			ChannelVersion string `json:"channel_version"`
+		} `json:"base_info"`
+		Msg struct {
+			ToUserID     string `json:"to_user_id"`
+			FromUserID   string `json:"from_user_id"`
+			ClientID     string `json:"client_id"`
+			ContextToken string `json:"context_token"`
+			ItemList     []struct {
+				Type     int `json:"type"`
+				TextItem struct {
+					Text string `json:"text"`
+				} `json:"text_item"`
+			} `json:"item_list"`
+		} `json:"msg"`
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/ilink/bot/sendmessage" {
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+		if got := r.Header.Get("Authorization"); got != "Bearer wx-token" {
+			t.Fatalf("unexpected auth header: %q", got)
+		}
+		if err := json.NewDecoder(r.Body).Decode(&sent); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	defer server.Close()
+	t.Setenv("ARKLOOP_WEIXIN_API_BASE_URL", server.URL)
+
+	accountID := uuid.New()
+	projectID := uuid.New()
+	threadID := uuid.New()
+	runID := uuid.New()
+	channelID := uuid.New()
+	secretID := uuid.New()
+	outboxID := uuid.New()
+
+	seedPipelineThread(t, pool, accountID, threadID, projectID)
+	seedPipelineRun(t, pool, accountID, threadID, runID, nil)
+	if _, err := pool.Exec(ctx, `INSERT INTO secrets (id, encrypted_value, key_version) VALUES ($1, $2, 1)`, secretID, encryptChannelToken(t, keyBytes, "wx-token")); err != nil {
+		t.Fatalf("insert secret: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO channels (id, channel_type, credentials_id, is_active) VALUES ($1, 'weixin', $2, TRUE)`, channelID, secretID); err != nil {
+		t.Fatalf("insert channel: %v", err)
+	}
+
+	payload := data.OutboxPayload{
+		AccountID:        accountID,
+		RunID:            runID,
+		ThreadID:         &threadID,
+		Outputs:          []string{"retry hello"},
+		PlatformChatID:   "wx-group-1",
+		ReplyToMessageID: "ctx-789",
+		Metadata:         map[string]any{"context_token": "ctx-789"},
+	}
+	payloadJSON, _ := json.Marshal(payload)
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO channel_delivery_outbox (
+			id, run_id, thread_id, channel_id, channel_type, status, payload_json, segments_sent, attempts, last_error, next_retry_at, created_at, updated_at
+		) VALUES ($1, $2, $3, $4, 'weixin', 'pending', $5, 0, 0, NULL, $6, $6, $6)
+	`, outboxID, runID, threadID, channelID, payloadJSON, time.Now().UTC().Add(-time.Minute)); err != nil {
+		t.Fatalf("insert outbox: %v", err)
+	}
+
+	drainer := NewChannelDeliveryDrainer(pool, ChannelDeliveryDrainOptions{})
+	drainer.Start(ctx)
+	time.Sleep(2 * time.Second)
+	drainer.Stop()
+
+	if sent.Msg.ToUserID != "wx-group-1" {
+		t.Fatalf("unexpected weixin target: %q", sent.Msg.ToUserID)
+	}
+	if sent.BaseInfo.ChannelVersion == "" {
+		t.Fatal("expected weixin base_info.channel_version")
+	}
+	if sent.Msg.FromUserID != "" {
+		t.Fatalf("unexpected weixin from_user_id: %q", sent.Msg.FromUserID)
+	}
+	if !strings.HasPrefix(sent.Msg.ClientID, "arkloop-weixin-") {
+		t.Fatalf("unexpected weixin client_id: %q", sent.Msg.ClientID)
+	}
+	if sent.Msg.ContextToken != "ctx-789" {
+		t.Fatalf("unexpected context token: %q", sent.Msg.ContextToken)
+	}
+	if len(sent.Msg.ItemList) != 1 || sent.Msg.ItemList[0].TextItem.Text != "retry hello" {
+		t.Fatalf("unexpected weixin item list: %#v", sent.Msg.ItemList)
+	}
+
+	var (
+		status    string
+		messageID string
+		parentID  *string
+	)
+	if err := pool.QueryRow(ctx, `
+			SELECT
+				(SELECT status FROM channel_delivery_outbox WHERE id = $1),
+				(SELECT platform_message_id FROM channel_message_ledger WHERE run_id = $2 LIMIT 1),
+				(SELECT platform_parent_message_id FROM channel_message_ledger WHERE run_id = $2 LIMIT 1)`,
+		outboxID, runID,
+	).Scan(&status, &messageID, &parentID); err != nil {
+		t.Fatalf("query post-drain state: %v", err)
+	}
+	if status != "sent" {
+		t.Fatalf("expected outbox sent, got %q", status)
+	}
+	if messageID != sent.Msg.ClientID {
+		t.Fatalf("unexpected ledger message id: got %q want %q", messageID, sent.Msg.ClientID)
+	}
+	if parentID == nil || *parentID != "ctx-789" {
+		t.Fatalf("unexpected ledger parent id: %#v", parentID)
+	}
+}
+
 func TestChannelDeliveryDrainerMarksEmptyPayloadDead(t *testing.T) {
 	ctx := context.Background()
 	db := testutil.SetupPostgresDatabase(t, "channel_delivery_drain_empty_payload")
