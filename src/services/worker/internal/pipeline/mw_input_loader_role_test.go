@@ -121,6 +121,65 @@ func TestApplyPlanModeKeepsMessagesAndIDsAligned(t *testing.T) {
 	}
 }
 
+func TestLoadRunInputsSanitizesUnclosedAssistantToolCall(t *testing.T) {
+	ctx := context.Background()
+	db := testutil.SetupPostgresDatabase(t, "pipeline_input_loader_sanitize_unclosed_tool")
+	pool, err := pgxpool.New(ctx, db.DSN)
+	if err != nil {
+		t.Fatalf("pgxpool.New: %v", err)
+	}
+	t.Cleanup(pool.Close)
+
+	accountID := uuid.New()
+	projectID := uuid.New()
+	threadID := uuid.New()
+	runID := uuid.New()
+	userMessageID := uuid.New()
+	assistantMessageID := uuid.New()
+	followupMessageID := uuid.New()
+
+	if _, err := pool.Exec(ctx, `INSERT INTO threads (id, account_id, project_id) VALUES ($1, $2, $3)`, threadID, accountID, projectID); err != nil {
+		t.Fatalf("insert thread: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO runs (id, account_id, thread_id, status) VALUES ($1, $2, $3, 'running')`, runID, accountID, threadID); err != nil {
+		t.Fatalf("insert run: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO run_events (run_id, seq, type, data_json) VALUES ($1, 1, 'run.started', '{}'::jsonb)`, runID); err != nil {
+		t.Fatalf("insert run started event: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO messages (id, account_id, thread_id, role, content, metadata_json, hidden) VALUES ($1, $2, $3, 'user', $4, '{}'::jsonb, false)`, userMessageID, accountID, threadID, "start"); err != nil {
+		t.Fatalf("insert user message: %v", err)
+	}
+	assistantContentJSON, err := json.Marshal(map[string]any{
+		"parts": []map[string]any{{"type": "text", "text": "working"}},
+		"tool_calls": []map[string]any{{
+			"tool_call_id": "call_pending",
+			"tool_name":    "exec_command",
+			"arguments":    map[string]any{"command": "date"},
+		}},
+	})
+	if err != nil {
+		t.Fatalf("marshal assistant content json: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO messages (id, account_id, thread_id, role, content, content_json, metadata_json, hidden) VALUES ($1, $2, $3, 'assistant', $4, $5::jsonb, '{}'::jsonb, false)`, assistantMessageID, accountID, threadID, "working", string(assistantContentJSON)); err != nil {
+		t.Fatalf("insert assistant message: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO messages (id, account_id, thread_id, role, content, metadata_json, hidden) VALUES ($1, $2, $3, 'user', $4, '{}'::jsonb, false)`, followupMessageID, accountID, threadID, "next"); err != nil {
+		t.Fatalf("insert followup message: %v", err)
+	}
+
+	loaded, err := loadRunInputs(ctx, pool, data.Run{ID: runID, AccountID: accountID, ThreadID: threadID}, nil, data.RunsRepository{}, data.RunEventsRepository{}, data.MessagesRepository{}, nil, nil, 20)
+	if err != nil {
+		t.Fatalf("loadRunInputs failed: %v", err)
+	}
+	if len(loaded.Messages) != 3 {
+		t.Fatalf("expected three visible messages, got %d", len(loaded.Messages))
+	}
+	if loaded.Messages[1].Role != "assistant" || len(loaded.Messages[1].ToolCalls) != 0 {
+		t.Fatalf("expected unclosed assistant tool call to be removed, got %#v", loaded.Messages[1])
+	}
+}
+
 func TestBuildMessagePartsRestoresAssistantThinkingState(t *testing.T) {
 	message := llm.Message{Role: "assistant", Content: []llm.ContentPart{
 		{Type: "thinking", Text: "reason", Signature: "sig_1"},

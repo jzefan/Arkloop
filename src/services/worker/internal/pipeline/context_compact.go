@@ -249,20 +249,7 @@ func sanitizeToolPairs(msgs []llm.Message, ids []uuid.UUID) ([]llm.Message, []uu
 		}
 	}
 
-	// pass 2: 收集所有存活的 tool_call_id
-	survivingToolCallIDs := make(map[string]struct{})
-	for i, m := range msgs {
-		if _, removed := removeSet[i]; removed {
-			continue
-		}
-		if m.Role == "tool" {
-			if callID := extractToolCallID(m); callID != "" {
-				survivingToolCallIDs[callID] = struct{}{}
-			}
-		}
-	}
-
-	// pass 3: 仅保留 assistant(tool_use) 中仍有对应 tool result 的 ToolCalls。
+	// pass 2: 仅保留 assistant(tool_use) 中被紧邻 tool result 闭合的 ToolCalls。
 	// 如果一条 assistant 最终没有可保留的 ToolCalls，且也没有可见文本，则整条移除。
 	for i, m := range msgs {
 		if _, removed := removeSet[i]; removed {
@@ -271,9 +258,18 @@ func sanitizeToolPairs(msgs []llm.Message, ids []uuid.UUID) ([]llm.Message, []uu
 		if m.Role != "assistant" || len(m.ToolCalls) == 0 {
 			continue
 		}
+		followingToolCallIDs := make(map[string]struct{})
+		for j := i + 1; j < len(msgs) && msgs[j].Role == "tool"; j++ {
+			if _, removed := removeSet[j]; removed {
+				continue
+			}
+			if callID := extractToolCallID(msgs[j]); callID != "" {
+				followingToolCallIDs[callID] = struct{}{}
+			}
+		}
 		kept := make([]llm.ToolCall, 0, len(m.ToolCalls))
 		for _, tc := range m.ToolCalls {
-			if _, ok := survivingToolCallIDs[tc.ToolCallID]; ok {
+			if _, ok := followingToolCallIDs[tc.ToolCallID]; ok {
 				kept = append(kept, tc)
 			}
 		}
