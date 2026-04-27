@@ -21,6 +21,7 @@ var LlmSpec = llm.ToolSpec{
 	JSONSchema: map[string]any{
 		"type":       "object",
 		"properties": map[string]any{},
+		"required":   []string{},
 	},
 }
 
