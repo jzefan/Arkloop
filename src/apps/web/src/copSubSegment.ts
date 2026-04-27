@@ -84,7 +84,8 @@ export function segmentCompletedTitle(seg: CopSubSegment): string {
     case 'edit': {
       const editCall = calls[0]
       const filePath = (editCall?.arguments?.file_path as string | undefined) ?? ''
-      return filePath ? `Edited ${basename(filePath)}` : 'Edit completed'
+      const action = normalizeToolName(editCall?.toolName ?? '') === 'write_file' ? 'Wrote' : 'Edited'
+      return filePath ? `${action} ${basename(filePath)}` : `${action} file`
     }
     case 'agent': {
       const n = calls.length
@@ -111,6 +112,7 @@ export type AggregatedCallStats = {
   readPaths: Set<string>
   searchCount: number
   globCount: number
+  writePaths: string[]
   editPaths: string[]
   execCount: number
   agentCount: number
@@ -139,6 +141,7 @@ export function aggregateCallStats(calls: ReadonlyArray<CallItem['call']>): Aggr
     readPaths: new Set<string>(),
     searchCount: 0,
     globCount: 0,
+    writePaths: [],
     editPaths: [],
     execCount: 0,
     agentCount: 0,
@@ -169,7 +172,9 @@ export function aggregateCallStats(calls: ReadonlyArray<CallItem['call']>): Aggr
     }
     if (cat === 'edit') {
       const fp = getEditPath(c)
-      stats.editPaths.push(fp ? basename(fp) : c.toolCallId)
+      const target = fp ? basename(fp) : c.toolCallId
+      if (n === 'write_file') stats.writePaths.push(target)
+      else stats.editPaths.push(target)
       continue
     }
     if (cat === 'exec') { stats.execCount += 1; continue }
@@ -257,6 +262,8 @@ function pluralize(n: number, singular: string, plural: string): string {
 
 function formatStatsParts(stats: AggregatedCallStats): string {
   const parts: string[] = []
+  if (stats.writePaths.length === 1) parts.push(`Wrote ${stats.writePaths[0]}`)
+  else if (stats.writePaths.length > 1) parts.push(`Wrote ${stats.writePaths.length} files`)
   if (stats.editPaths.length === 1) parts.push(`Edited ${stats.editPaths[0]}`)
   else if (stats.editPaths.length > 1) parts.push(`Edited ${stats.editPaths.length} files`)
   if (stats.readPaths.size > 0) parts.push(`Read ${stats.readPaths.size} ${pluralize(stats.readPaths.size, 'file', 'files')}`)
@@ -277,6 +284,13 @@ function formatSingleCategoryTitle(cat: CopSegmentCategory, stats: AggregatedCal
     case 'exec':
       return `${stats.execCount} ${pluralize(stats.execCount, 'step', 'steps')} completed`
     case 'edit': {
+      if (stats.writePaths.length > 0 && stats.editPaths.length > 0) {
+        return formatStatsParts(stats)
+      }
+      if (stats.writePaths.length > 0 && stats.editPaths.length === 0) {
+        if (stats.writePaths.length === 1) return `Wrote ${stats.writePaths[0]}`
+        return `Wrote ${stats.writePaths.length} files`
+      }
       if (stats.editPaths.length === 1) return `Edited ${stats.editPaths[0]}`
       if (stats.editPaths.length > 1) return `Edited ${stats.editPaths.length} files`
       return 'Edit completed'
