@@ -81,7 +81,6 @@ export function DesktopWeixinSettingsPanel({
   // QR code login state
   const [qrCodeImg, setQrCodeImg] = useState<string | null>(null)
   const [qrCodeDataURL, setQrCodeDataURL] = useState<string | null>(null)
-  const [qrCodeKey, setQrCodeKey] = useState('')
   const [qrStatus, setQrStatus] = useState<'idle' | 'loading' | 'scanned' | 'confirmed' | 'expired'>('idle')
   const [botToken, setBotToken] = useState('')
   const [baseURL, setBaseURL] = useState((channel?.config_json?.base_url as string | undefined) ?? '')
@@ -122,7 +121,6 @@ export function DesktopWeixinSettingsPanel({
     setBotToken('')
     setQrCodeImg(null)
     setQrCodeDataURL(null)
-    setQrCodeKey('')
     setQrStatus('idle')
     clearPolling()
   }, [channel, personas])
@@ -231,7 +229,6 @@ export function DesktopWeixinSettingsPanel({
     try {
       const qr = await getWeixinQRCode(accessToken)
       setQrCodeImg(qr.qrcode_img_content)
-      setQrCodeKey(qr.qrcode)
       setQrStatus('scanned')
 
       // Start polling every 2 seconds
@@ -502,7 +499,6 @@ export function DesktopWeixinSettingsPanel({
                       <button
                         type="button"
                         onClick={handleStartQRLogin}
-                        disabled={qrStatus === 'loading'}
                         className={`${secondaryButtonSmCls} shrink-0`}
                         style={secondaryButtonBorderStyle}
                       >
@@ -526,11 +522,10 @@ export function DesktopWeixinSettingsPanel({
                   <button
                     type="button"
                     onClick={handleStartQRLogin}
-                    disabled={qrStatus === 'loading'}
                     className={`${secondaryButtonSmCls} shrink-0`}
                     style={secondaryButtonBorderStyle}
                   >
-                    {qrStatus === 'loading' ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
+                    <RefreshCw size={14} />
                     {ct.weixinRelogin}
                   </button>
                 </div>
