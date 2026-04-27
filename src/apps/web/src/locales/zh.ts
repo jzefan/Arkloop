@@ -684,6 +684,15 @@ export const zh: LocaleStrings = {
     discordTokenHint: '在 Discord Developer Portal 创建 bot 并获取 Token',
     discordServerIdHint: '在 Discord 开启开发者模式后，右键服务器即可复制 ID',
     bindCodeInGroupHint: '在群聊中发送此命令以关联 bot',
+    weixin: '微信',
+    weixinScanQR: '请使用微信扫描二维码',
+    weixinLoggedIn: '已登录',
+    weixinRelogin: '重新登录',
+    weixinQRExpired: '二维码已过期，请重新获取',
+    weixinScanning: '等待扫码中...',
+    weixinBotTokenHint: '扫码登录后自动获取',
+    weixinAllowedUsersHint: '允许私聊的用户微信 ID，每行一个，留空允许所有人',
+    weixinAllowedGroupsHint: '允许的群聊 ID，每行一个，留空允许所有群',
   },
   // model picker
   modelPicker: {

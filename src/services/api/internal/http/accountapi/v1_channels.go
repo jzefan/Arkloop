@@ -29,6 +29,7 @@ var validChannelTypes = map[string]struct{}{
 	"discord":  {},
 	"feishu":   {},
 	"qq":       {},
+	"weixin":   {},
 }
 
 type channelResponse struct {

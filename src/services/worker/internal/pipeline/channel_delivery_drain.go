@@ -15,6 +15,7 @@ import (
 
 	"arkloop/services/shared/onebotclient"
 	"arkloop/services/shared/telegrambot"
+	"arkloop/services/shared/weixinclient"
 	"arkloop/services/worker/internal/data"
 
 	"github.com/google/uuid"
@@ -147,6 +148,8 @@ func (d *ChannelDeliveryDrainer) drainRecord(ctx context.Context, row data.Chann
 		return d.drainDiscord(ctx, row, payload, channel, outboxRepo)
 	case "qq":
 		return d.drainQQ(ctx, row, payload, channel, outboxRepo)
+	case "weixin":
+		return d.drainWeixin(ctx, row, payload, channel, outboxRepo)
 	default:
 		return fmt.Errorf("unsupported channel type: %s", row.ChannelType)
 	}
@@ -354,6 +357,58 @@ func (d *ChannelDeliveryDrainer) drainQQ(ctx context.Context, row data.ChannelDe
 			Conversation: ChannelConversationRef{Target: payload.PlatformChatID, ThreadID: payload.PlatformThreadID},
 			ReplyTo:      ref,
 			Metadata:     metadata,
+		}, trimmed)
+		if sendErr != nil {
+			return d.handleFailure(ctx, row, sendErr, outboxRepo)
+		}
+		if len(messageIDs) > 0 {
+			if payload.IsTerminalNotice {
+				if _, err := d.recordTerminalNoticeSuccess(ctx, payload, row.ChannelID, row.ChannelType, ref, messageIDs, trimmed); err != nil {
+					return d.handleFailure(ctx, row, err, outboxRepo)
+				}
+			} else {
+				if err := d.recordDeliverySuccess(ctx, payload, row.ChannelID, row.ChannelType, ref, messageIDs); err != nil {
+					return d.handleFailure(ctx, row, err, outboxRepo)
+				}
+			}
+		}
+		if err := outboxRepo.UpdateProgress(ctx, d.pool, row.ID, i+1); err != nil {
+			return fmt.Errorf("update progress failed: %w", err)
+		}
+		row.SegmentsSent = i + 1
+	}
+	if err := outboxRepo.UpdateSent(ctx, d.pool, row.ID); err != nil {
+		return fmt.Errorf("update sent failed: %w", err)
+	}
+	return nil
+}
+
+func (d *ChannelDeliveryDrainer) drainWeixin(ctx context.Context, row data.ChannelDeliveryOutboxRecord, payload data.OutboxPayload, channel *data.DeliveryChannelRecord, outboxRepo data.ChannelDeliveryOutboxRepository) error {
+	wxBaseURL := strings.TrimSpace(os.Getenv("ARKLOOP_WEIXIN_API_BASE_URL"))
+	if wxBaseURL == "" {
+		wxBaseURL = "https://ilinkai.weixin.qq.com"
+	}
+	wxToken := strings.TrimSpace(channel.Token)
+	wxClient := weixinclient.NewClient(wxBaseURL, wxToken, nil)
+	sender := NewWeixinChannelSenderWithClient(wxClient, resolveSegmentDelay())
+
+	replyTo := d.replyRefFromPayload(payload)
+	for i := row.SegmentsSent; i < len(payload.Outputs); i++ {
+		trimmed := strings.TrimSpace(payload.Outputs[i])
+		if trimmed == "" {
+			if err := outboxRepo.UpdateProgress(ctx, d.pool, row.ID, i+1); err != nil {
+				return fmt.Errorf("update progress failed: %w", err)
+			}
+			continue
+		}
+		ref := replyTo
+		if i > 0 {
+			ref = nil
+		}
+		messageIDs, sendErr := sender.SendText(ctx, ChannelDeliveryTarget{
+			ChannelType:  row.ChannelType,
+			Conversation: ChannelConversationRef{Target: payload.PlatformChatID, ThreadID: payload.PlatformThreadID},
+			ReplyTo:      ref,
 		}, trimmed)
 		if sendErr != nil {
 			return d.handleFailure(ctx, row, sendErr, outboxRepo)

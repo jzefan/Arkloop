@@ -672,6 +672,15 @@ export interface LocaleStrings {
     qqOneBotTokenPlaceholder: string
     qqOneBotAutoFilled: string
     qqExternalOneBotHint: string
+    weixin: string
+    weixinScanQR: string
+    weixinLoggedIn: string
+    weixinRelogin: string
+    weixinQRExpired: string
+    weixinScanning: string
+    weixinBotTokenHint: string
+    weixinAllowedUsersHint: string
+    weixinAllowedGroupsHint: string
   }
   // model picker (chat input)
   modelPicker: {

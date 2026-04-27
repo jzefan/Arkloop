@@ -14,6 +14,7 @@ import (
 
 	"arkloop/services/shared/onebotclient"
 	"arkloop/services/shared/telegrambot"
+	"arkloop/services/shared/weixinclient"
 	"arkloop/services/worker/internal/data"
 
 	"github.com/google/uuid"
@@ -58,7 +59,7 @@ func NewChannelDeliveryMiddlewareWithOptions(pool *pgxpool.Pool, opts ChannelDel
 		var ux TelegramChannelUX
 		var obUX OneBotChannelUX
 		channelType := normalizedChannelTypeFromContext(rc)
-		if pool != nil && rc != nil && rc.ChannelContext != nil && (channelType == "telegram" || channelType == "discord" || channelType == "qq") {
+		if pool != nil && rc != nil && rc.ChannelContext != nil && (channelType == "telegram" || channelType == "discord" || channelType == "qq" || channelType == "weixin") {
 			ch, prefetchErr := repo.GetChannel(ctx, pool, rc.ChannelContext.ChannelID)
 			if prefetchErr != nil {
 				slog.WarnContext(ctx, "channel delivery prefetch failed", "run_id", rc.Run.ID, "err", prefetchErr.Error())
@@ -69,6 +70,9 @@ func NewChannelDeliveryMiddlewareWithOptions(pool *pgxpool.Pool, opts ChannelDel
 				}
 				if channelType == "qq" {
 					obUX = ParseOneBotChannelUX(ch.ConfigJSON)
+				}
+				if channelType == "weixin" {
+					_ = ParseWeixinChannelUX(ch.ConfigJSON)
 				}
 			}
 		}
@@ -151,6 +155,39 @@ func NewChannelDeliveryMiddlewareWithOptions(pool *pgxpool.Pool, opts ChannelDel
 			rc.TelegramToolBoundaryFlush = streamFlush
 		}
 
+		// 微信渠道流式投递
+		if preloaded != nil && pool != nil && rc != nil && rc.ChannelContext != nil && channelType == "weixin" {
+			wxBaseURL := strings.TrimSpace(os.Getenv("ARKLOOP_WEIXIN_API_BASE_URL"))
+			if wxBaseURL == "" {
+				wxBaseURL = "https://ilinkai.weixin.qq.com"
+			}
+			wxToken := strings.TrimSpace(preloaded.Token)
+			wxClient := weixinclient.NewClient(wxBaseURL, wxToken, nil)
+			wxSender := NewWeixinChannelSenderWithClient(wxClient, resolveSegmentDelay())
+
+			streamFlush = func(ctx2 context.Context, text string) error {
+				if rc.HeartbeatRun && (rc.HeartbeatToolOutcome == nil || !rc.HeartbeatToolOutcome.Reply) {
+					return nil
+				}
+				ids, sendErr := wxSender.SendText(ctx2, ChannelDeliveryTarget{
+					ChannelType:  rc.ChannelContext.ChannelType,
+					Conversation: rc.ChannelContext.Conversation,
+				}, text)
+				if sendErr != nil {
+					return sendErr
+				}
+				if err := recordChannelDeliverySuccess(ctx2, pool, repo, ledgerRepo, rc, nil, ids, nil); err != nil {
+					return err
+				}
+				if err := persistStreamChunkMessage(ctx2, pool, messagesRepo, rc, text); err != nil {
+					slog.WarnContext(ctx2, "persist stream chunk message failed", "run_id", rc.Run.ID, "err", err.Error())
+				}
+				streamMidCount++
+				return nil
+			}
+			rc.TelegramToolBoundaryFlush = streamFlush
+		}
+
 		var stopTyping context.CancelFunc
 		if preloaded != nil && ux.TypingIndicator && strings.TrimSpace(preloaded.Token) != "" && tgClient != nil && !IsHeartbeatRunContext(rc) {
 			stopTyping = StartTelegramTypingRefresh(ctx, tgClient, preloaded.Token, rc.ChannelContext.Conversation.Target)
@@ -174,7 +211,7 @@ func NewChannelDeliveryMiddlewareWithOptions(pool *pgxpool.Pool, opts ChannelDel
 			return err
 		}
 		channelType = normalizedChannelTypeFromContext(rc)
-		if pool == nil || (channelType != "telegram" && channelType != "discord" && channelType != "qq") {
+		if pool == nil || (channelType != "telegram" && channelType != "discord" && channelType != "qq" && channelType != "weixin") {
 			return err
 		}
 		finalOutput := strings.TrimSpace(rc.FinalAssistantOutput)
@@ -255,6 +292,8 @@ func NewChannelDeliveryMiddlewareWithOptions(pool *pgxpool.Pool, opts ChannelDel
 			if deliverErr == nil && strings.TrimSpace(obUX.ReactionEmojiID) != "" {
 				MaybeOneBotInboundReaction(ctx, channel, rc, obUX.ReactionEmojiID)
 			}
+		case "weixin":
+			deliverErr = inlineDeliverWeixinOutbox(ctx, pool, rc, channel, outboxRecord, payload, outboxRepo, repo, ledgerRepo, messagesRepo)
 		}
 
 		if deliverErr != nil {
@@ -293,6 +332,14 @@ func buildOutboxPayload(rc *RunContext, channelType, output string, outputs []st
 			payload.ReplyToMessageID = rc.ChannelContext.InboundMessage.MessageID
 		}
 	case "qq":
+		if !rc.HeartbeatRun && !isPrivateChannelConversation(rc.ChannelContext.ConversationType) {
+			if rc.ChannelContext.TriggerMessage != nil && rc.ChannelContext.TriggerMessage.MessageID != "" {
+				payload.ReplyToMessageID = rc.ChannelContext.TriggerMessage.MessageID
+			} else if rc.ChannelContext.InboundMessage.MessageID != "" {
+				payload.ReplyToMessageID = rc.ChannelContext.InboundMessage.MessageID
+			}
+		}
+	case "weixin":
 		if !rc.HeartbeatRun && !isPrivateChannelConversation(rc.ChannelContext.ConversationType) {
 			if rc.ChannelContext.TriggerMessage != nil && rc.ChannelContext.TriggerMessage.MessageID != "" {
 				payload.ReplyToMessageID = rc.ChannelContext.TriggerMessage.MessageID
@@ -561,6 +608,89 @@ func inlineDeliverOneBotOutbox(
 	return outboxRepo.UpdateSent(ctx, pool, outboxRec.ID)
 }
 
+func inlineDeliverWeixinOutbox(
+	ctx context.Context,
+	pool *pgxpool.Pool,
+	rc *RunContext,
+	channel *data.DeliveryChannelRecord,
+	outboxRec *data.ChannelDeliveryOutboxRecord,
+	payload data.OutboxPayload,
+	outboxRepo data.ChannelDeliveryOutboxRepository,
+	deliveryRepo data.ChannelDeliveryRepository,
+	ledgerRepo data.ChannelMessageLedgerRepository,
+	messagesRepo data.MessagesRepository,
+) error {
+	if err := validateOutboxPayload(payload); err != nil {
+		return handleInlineOutboxFailure(ctx, pool, outboxRec, err, outboxRepo)
+	}
+	wxBaseURL := strings.TrimSpace(os.Getenv("ARKLOOP_WEIXIN_API_BASE_URL"))
+	if wxBaseURL == "" {
+		wxBaseURL = "https://ilinkai.weixin.qq.com"
+	}
+	wxToken := strings.TrimSpace(channel.Token)
+	wxClient := weixinclient.NewClient(wxBaseURL, wxToken, nil)
+	sender := NewWeixinChannelSenderWithClient(wxClient, resolveSegmentDelay())
+	replyTo := weixinReplyReference(rc)
+
+	for i := outboxRec.SegmentsSent; i < len(payload.Outputs); i++ {
+		trimmed := strings.TrimSpace(payload.Outputs[i])
+		if trimmed == "" {
+			if err := outboxRepo.UpdateProgress(ctx, pool, outboxRec.ID, i+1); err != nil {
+				return err
+			}
+			continue
+		}
+		ref := replyTo
+		if i > 0 {
+			ref = nil
+		}
+		target := ChannelDeliveryTarget{
+			ChannelType:  rc.ChannelContext.ChannelType,
+			Conversation: rc.ChannelContext.Conversation,
+			ReplyTo:      ref,
+		}
+		messageIDs, sendErr := sender.SendText(ctx, target, trimmed)
+		if sendErr != nil {
+			return handleInlineOutboxFailure(ctx, pool, outboxRec, sendErr, outboxRepo)
+		}
+		if payload.IsTerminalNotice {
+			_, err := recordChannelTerminalNoticeSuccess(ctx, pool, messagesRepo, deliveryRepo, ledgerRepo, rc, ref, messageIDs, trimmed)
+			if err != nil {
+				return handleInlineOutboxFailure(ctx, pool, outboxRec, err, outboxRepo)
+			}
+		} else {
+			if err := recordChannelDeliverySuccess(ctx, pool, deliveryRepo, ledgerRepo, rc, ref, messageIDs, nil); err != nil {
+				return handleInlineOutboxFailure(ctx, pool, outboxRec, err, outboxRepo)
+			}
+		}
+		if err := outboxRepo.UpdateProgress(ctx, pool, outboxRec.ID, i+1); err != nil {
+			return err
+		}
+		outboxRec.SegmentsSent = i + 1
+	}
+	return outboxRepo.UpdateSent(ctx, pool, outboxRec.ID)
+}
+
+func weixinReplyReference(rc *RunContext) *ChannelMessageRef {
+	if rc == nil || rc.ChannelContext == nil {
+		return nil
+	}
+	if rc.HeartbeatRun {
+		return nil
+	}
+	if isPrivateChannelConversation(rc.ChannelContext.ConversationType) {
+		return nil
+	}
+	if rc.ChannelContext.TriggerMessage != nil && strings.TrimSpace(rc.ChannelContext.TriggerMessage.MessageID) != "" {
+		return rc.ChannelContext.TriggerMessage
+	}
+	if strings.TrimSpace(rc.ChannelContext.InboundMessage.MessageID) == "" {
+		return nil
+	}
+	ref := rc.ChannelContext.InboundMessage
+	return &ref
+}
+
 func normalizedChannelTypeFromContext(rc *RunContext) string {
 	if rc == nil || rc.ChannelContext == nil {
 		return ""
@@ -807,6 +937,76 @@ func deliverOneBotTerminalNotice(
 		Conversation: rc.ChannelContext.Conversation,
 		ReplyTo:      replyTo,
 		Metadata:     metadata,
+	}, output)
+	if err != nil {
+		return err
+	}
+	_, err = recordChannelTerminalNoticeSuccess(ctx, pool, messagesRepo, deliveryRepo, ledgerRepo, rc, replyTo, messageIDs, output)
+	return err
+}
+
+func deliverWeixinChannelOutput(
+	ctx context.Context,
+	pool *pgxpool.Pool,
+	deliveryRepo data.ChannelDeliveryRepository,
+	ledgerRepo data.ChannelMessageLedgerRepository,
+	rc *RunContext,
+	channel *data.DeliveryChannelRecord,
+	output string,
+) error {
+	if strings.TrimSpace(output) == "" {
+		return nil
+	}
+	wxBaseURL := strings.TrimSpace(os.Getenv("ARKLOOP_WEIXIN_API_BASE_URL"))
+	if wxBaseURL == "" {
+		wxBaseURL = "https://ilinkai.weixin.qq.com"
+	}
+	wxToken := strings.TrimSpace(channel.Token)
+	wxClient := weixinclient.NewClient(wxBaseURL, wxToken, nil)
+	sender := NewWeixinChannelSenderWithClient(wxClient, resolveSegmentDelay())
+
+	replyTo := weixinReplyReference(rc)
+	messageIDs, err := sender.SendText(ctx, ChannelDeliveryTarget{
+		ChannelType:  rc.ChannelContext.ChannelType,
+		Conversation: rc.ChannelContext.Conversation,
+		ReplyTo:      replyTo,
+	}, output)
+	if err != nil {
+		return err
+	}
+	if err := recordChannelDeliverySuccess(ctx, pool, deliveryRepo, ledgerRepo, rc, replyTo, messageIDs, nil); err != nil {
+		slog.WarnContext(ctx, "weixin channel delivery record failed", "run_id", rc.Run.ID, "err", err.Error())
+		return err
+	}
+	return nil
+}
+
+func deliverWeixinTerminalNotice(
+	ctx context.Context,
+	pool *pgxpool.Pool,
+	messagesRepo data.MessagesRepository,
+	deliveryRepo data.ChannelDeliveryRepository,
+	ledgerRepo data.ChannelMessageLedgerRepository,
+	rc *RunContext,
+	channel *data.DeliveryChannelRecord,
+	output string,
+) error {
+	if strings.TrimSpace(output) == "" {
+		return nil
+	}
+	wxBaseURL := strings.TrimSpace(os.Getenv("ARKLOOP_WEIXIN_API_BASE_URL"))
+	if wxBaseURL == "" {
+		wxBaseURL = "https://ilinkai.weixin.qq.com"
+	}
+	wxToken := strings.TrimSpace(channel.Token)
+	wxClient := weixinclient.NewClient(wxBaseURL, wxToken, nil)
+	sender := NewWeixinChannelSenderWithClient(wxClient, resolveSegmentDelay())
+
+	replyTo := weixinReplyReference(rc)
+	messageIDs, err := sender.SendText(ctx, ChannelDeliveryTarget{
+		ChannelType:  rc.ChannelContext.ChannelType,
+		Conversation: rc.ChannelContext.Conversation,
+		ReplyTo:      replyTo,
 	}, output)
 	if err != nil {
 		return err
@@ -1237,7 +1437,7 @@ func TryDeliverChannelInjectionBlockNotice(ctx context.Context, pool *pgxpool.Po
 		return
 	}
 	channelType := normalizedChannelTypeFromContext(rc)
-	if channelType != "telegram" && channelType != "discord" && channelType != "qq" {
+	if channelType != "telegram" && channelType != "discord" && channelType != "qq" && channelType != "weixin" {
 		return
 	}
 	repo := data.ChannelDeliveryRepository{}
@@ -1279,6 +1479,8 @@ func TryDeliverChannelInjectionBlockNotice(ctx context.Context, pool *pgxpool.Po
 		if deliverErr == nil && strings.TrimSpace(uxSend.ReactionEmojiID) != "" {
 			MaybeOneBotInboundReaction(ctx, channel, rc, uxSend.ReactionEmojiID)
 		}
+	case "weixin":
+		deliverErr = deliverWeixinTerminalNotice(ctx, pool, messagesRepo, repo, ledgerRepo, rc, channel, text)
 	}
 	if deliverErr != nil {
 		recordChannelDeliveryFailure(ctx, pool, rc.Run.ID, deliverErr)
