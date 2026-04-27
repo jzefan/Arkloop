@@ -173,12 +173,21 @@ func openAIToolParameters(schema map[string]any) map[string]any {
 		}
 	}
 	if typ, _ := schema["type"].(string); strings.TrimSpace(typ) != "" {
-		if schema["properties"] == nil {
+		props, propsOK := schema["properties"].(map[string]any)
+		if !propsOK || props == nil || schemaHasNilRequired(schema) {
 			out := make(map[string]any, len(schema)+1)
 			for key, value := range schema {
 				out[key] = value
 			}
-			out["properties"] = map[string]any{}
+			if !propsOK || props == nil {
+				out["properties"] = map[string]any{}
+			}
+			if required, ok := out["required"].([]string); ok && required == nil {
+				out["required"] = []string{}
+			}
+			if required, ok := out["required"].([]any); ok && required == nil {
+				out["required"] = []any{}
+			}
 			return out
 		}
 		return schema
@@ -188,10 +197,26 @@ func openAIToolParameters(schema map[string]any) map[string]any {
 		out[key] = value
 	}
 	out["type"] = "object"
-	if _, ok := out["properties"]; !ok {
+	if props, ok := out["properties"].(map[string]any); !ok || props == nil {
 		out["properties"] = map[string]any{}
 	}
+	if required, ok := out["required"].([]string); ok && required == nil {
+		out["required"] = []string{}
+	}
+	if required, ok := out["required"].([]any); ok && required == nil {
+		out["required"] = []any{}
+	}
 	return out
+}
+
+func schemaHasNilRequired(schema map[string]any) bool {
+	if required, ok := schema["required"].([]string); ok && required == nil {
+		return true
+	}
+	if required, ok := schema["required"].([]any); ok && required == nil {
+		return true
+	}
+	return false
 }
 
 var errOpenAIToolCallArguments = errors.New("openai_tool_call_arguments")

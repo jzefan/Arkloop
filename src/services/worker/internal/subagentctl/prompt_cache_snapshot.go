@@ -144,7 +144,7 @@ func cloneFloatPtr(src *float64) *float64 {
 }
 
 func cloneSnapshotMap(src map[string]any) map[string]any {
-	if len(src) == 0 {
+	if src == nil {
 		return nil
 	}
 	out := make(map[string]any, len(src))
@@ -165,7 +165,10 @@ func cloneSnapshotAny(value any) any {
 		}
 		return out
 	case []string:
-		return append([]string(nil), typed...)
+		if typed == nil {
+			return []string(nil)
+		}
+		return append(make([]string, 0, len(typed)), typed...)
 	case []byte:
 		return append([]byte(nil), typed...)
 	case messagecontent.AttachmentRef:
