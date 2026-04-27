@@ -572,6 +572,8 @@ function OutletShell({ context }: { context: LegacyOutletContext }) {
     closeNotifications: () => {},
     markNotificationRead: () => {},
     setAppMode: () => navigate('/'),
+    isPlanMode: false,
+    togglePlanMode: () => {},
     queueSkillPrompt: () => {},
     consumeSkillPrompt: () => {},
     setTitleBarIncognitoClick: () => {},

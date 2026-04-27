@@ -1,8 +1,9 @@
-import { useRef, useEffect, useCallback, useMemo, useState, forwardRef, useImperativeHandle } from 'react'
+import { useRef, useEffect, useCallback, useMemo, useState, forwardRef, useImperativeHandle, useLayoutEffect } from 'react'
 import { ArrowUp, Mic, X, Check, Loader2 } from 'lucide-react'
 import type { FormEvent, KeyboardEvent, ClipboardEvent as ReactClipboardEvent } from 'react'
 import { listSelectablePersonas, type SelectablePersona, type UploadedThreadAttachment } from '../api'
 import { useLocale } from '../contexts/LocaleContext'
+import { usePlanModeUI } from '../contexts/app-ui'
 import { PastedContentModal } from './PastedContentModal'
 import type { SettingsTab } from './SettingsModal'
 import {
@@ -32,7 +33,8 @@ import {
 import { useAudioRecorder } from './chat-input/useAudioRecorder'
 import { useAttachments } from './chat-input/useAttachments'
 import { PersonaModelBar } from './chat-input/PersonaModelBar'
-import { AutoResizeTextarea } from '@arkloop/shared'
+import { ModelPicker } from './ModelPicker'
+import { AutoResizeTextarea, measureTextareaHeight } from '@arkloop/shared'
 import { useLatest } from '../hooks/useLatest'
 import { useInputPerfDebug } from '../hooks/useInputPerfDebug'
 
@@ -78,6 +80,12 @@ type Props = {
   draftOwnerKey?: string | null
 }
 
+type TextareaSelection = {
+  start: number
+  end: number
+  direction: 'forward' | 'backward' | 'none'
+}
+
 function buildFallbackSelectablePersonas(_selectedPersonaKey: string): SelectablePersona[] {
   return []
 }
@@ -102,6 +110,39 @@ function countLinesWithinLimit(text: string, limit: number) {
     if (lines >= limit) return lines
   }
   return lines
+}
+
+function readStyleNumber(style: CSSStyleDeclaration, key: string) {
+  const value = Number.parseFloat(style.getPropertyValue(key))
+  return Number.isFinite(value) ? value : 0
+}
+
+function readTextareaLineHeight(style: CSSStyleDeclaration) {
+  const explicit = Number.parseFloat(style.lineHeight)
+  if (Number.isFinite(explicit)) return explicit
+  const fontSize = Number.parseFloat(style.fontSize)
+  return Number.isFinite(fontSize) ? fontSize * 1.5 : 20
+}
+
+function readTextareaFont(style: CSSStyleDeclaration) {
+  if (style.font) return style.font
+  return [
+    style.fontStyle,
+    style.fontVariant,
+    style.fontWeight,
+    style.fontSize,
+    style.fontFamily,
+  ].filter(Boolean).join(' ')
+}
+
+function measureTextareaContentWidth(element: HTMLTextAreaElement, style: CSSStyleDeclaration) {
+  const horizontalPadding = readStyleNumber(style, 'padding-left') + readStyleNumber(style, 'padding-right')
+  const horizontalBorder = readStyleNumber(style, 'border-left-width') + readStyleNumber(style, 'border-right-width')
+  return Math.max(
+    element.clientWidth - horizontalPadding,
+    element.offsetWidth - horizontalPadding - horizontalBorder,
+    1,
+  )
 }
 
 function isSameDraftDomain(left: InputDraftScope | null, right: InputDraftScope): boolean {
@@ -172,6 +213,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
   const onVoiceNotConfiguredRef = useLatest<(() => void) | undefined>(() => onOpenSettings?.('voice' as never))
 
   const { t } = useLocale()
+  const { isPlanMode, togglePlanMode } = usePlanModeUI()
 
   const [selectablePersonas, setSelectablePersonas] = useState<SelectablePersona[]>([])
   const [selectedPersonaKey, setSelectedPersonaKey] = useState(readSelectedPersonaKeyFromStorage)
@@ -179,7 +221,11 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
   const [collapsingGrid, setCollapsingGrid] = useState(false)
   const [pastedModalAttachment, setPastedModalAttachment] = useState<Attachment | null>(null)
   const [chipExiting, setChipExiting] = useState(false)
+  const [workCompactInputWraps, setWorkCompactInputWraps] = useState(false)
   const [selectedModel, setSelectedModel] = useState<string | null>(readSelectedModelFromStorage)
+  const compactTextareaWidthRef = useRef<number | null>(null)
+  const pendingTextareaFocusRef = useRef<TextareaSelection | null>(null)
+  const inputLayoutChangingRef = useRef(false)
   const draftScope = useMemo<InputDraftScope>(() => ({
     ownerKey: draftOwnerKey,
     page: variant === 'welcome' ? 'welcome' : 'thread',
@@ -279,18 +325,120 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
 
   const isNonDefaultMode = selectedPersonaKey !== DEFAULT_PERSONA_KEY && selectedPersonaKey !== WORK_PERSONA_KEY
   const showSendButton = draft.trim().length > 0 || attachments.length > 0
+  const isWelcomeInput = variant === 'welcome'
   const isWorkChat = variant === 'chat' && appMode === 'work'
+  const hasAttachments = attachments.length > 0
+  const showAttachmentGrid = hasAttachments && !collapsingGrid
+  const showWelcomeAttachmentSpacer = isWelcomeInput && (!hasAttachments || collapsingGrid)
   const isPlainChatThread = variant === 'chat' && appMode !== 'work'
+  const isWorkSingleLogicalLine = countLinesWithinLimit(draft, 2) === 1
+  const isWorkCompactInput = isWorkChat && isWorkSingleLogicalLine && !workCompactInputWraps
+  const isWorkExpandedInput = isWorkChat && !isWorkCompactInput
   const formPadding = isPlainChatThread
     ? '19px 12px 11px 20px'
-    : variant === 'welcome'
+    : isWelcomeInput
       ? '10px 14px 14px 22px'
-      : '6px 12px 11px 20px'
+      : isWorkChat
+        ? '8px 12px 8px 14px'
+        : '6px 12px 11px 20px'
   const textareaWrapperMarginBottom = isPlainChatThread
     ? '1px'
-    : variant === 'welcome'
+    : isWelcomeInput
       ? '12px'
-      : '9px'
+      : isWorkExpandedInput
+        ? '6px'
+        : '9px'
+
+  const readTextareaSelection = useCallback((textarea: HTMLTextAreaElement): TextareaSelection => ({
+    start: textarea.selectionStart,
+    end: textarea.selectionEnd,
+    direction: textarea.selectionDirection as TextareaSelection['direction'],
+  }), [])
+
+  const restoreTextareaFocus = useCallback((selection?: TextareaSelection | null) => {
+    const textarea = textareaRef.current
+    if (!textarea || disabled) return
+    textarea.focus({ preventScroll: true })
+    setFocused(true)
+    if (!selection) return
+    const start = Math.min(selection.start, textarea.value.length)
+    const end = Math.min(selection.end, textarea.value.length)
+    textarea.setSelectionRange(start, end, selection.direction)
+  }, [disabled])
+
+  const measureWorkInputWraps = useCallback((value: string, textarea: HTMLTextAreaElement) => {
+    const style = window.getComputedStyle(textarea)
+    const measuredWidth = measureTextareaContentWidth(textarea, style)
+    if (isWorkCompactInput) compactTextareaWidthRef.current = measuredWidth
+    const compactWidth = compactTextareaWidthRef.current ?? measuredWidth
+    const lineHeight = readTextareaLineHeight(style)
+    const visualHeight = measureTextareaHeight({
+      value,
+      width: compactWidth,
+      font: readTextareaFont(style),
+      lineHeight,
+      minRows: 1,
+    })
+    return visualHeight > lineHeight + 0.5
+  }, [isWorkCompactInput])
+
+  const willWorkInputLayoutChange = useCallback((value: string, textarea: HTMLTextAreaElement) => {
+    if (!isWorkChat) return false
+    const nextSingleLogicalLine = countLinesWithinLimit(value, 2) === 1
+    const nextWraps = nextSingleLogicalLine ? measureWorkInputWraps(value, textarea) : false
+    const nextCompactInput = nextSingleLogicalLine && !nextWraps
+    return nextCompactInput !== isWorkCompactInput
+  }, [isWorkChat, isWorkCompactInput, measureWorkInputWraps])
+
+  useLayoutEffect(() => {
+    if (!isWorkChat) {
+      compactTextareaWidthRef.current = null
+      if (workCompactInputWraps) setWorkCompactInputWraps(false)
+      return
+    }
+    if (!isWorkSingleLogicalLine) {
+      if (workCompactInputWraps) setWorkCompactInputWraps(false)
+      return
+    }
+
+    const textarea = textareaRef.current
+    if (!textarea) return
+    const style = window.getComputedStyle(textarea)
+    const measuredWidth = measureTextareaContentWidth(textarea, style)
+    if (isWorkCompactInput) compactTextareaWidthRef.current = measuredWidth
+
+    const compactWidth = compactTextareaWidthRef.current ?? measuredWidth
+    const lineHeight = readTextareaLineHeight(style)
+    const visualHeight = measureTextareaHeight({
+      value: draft,
+      width: compactWidth,
+      font: readTextareaFont(style),
+      lineHeight,
+      minRows: 1,
+    })
+    const nextWraps = visualHeight > lineHeight + 0.5
+    if (nextWraps !== workCompactInputWraps) {
+      inputLayoutChangingRef.current = true
+      setWorkCompactInputWraps(nextWraps)
+    }
+  }, [draft, isWorkChat, isWorkCompactInput, isWorkSingleLogicalLine, workCompactInputWraps])
+
+  useLayoutEffect(() => {
+    if (!pendingTextareaFocusRef.current) return
+    if (inputLayoutChangingRef.current) {
+      inputLayoutChangingRef.current = false
+      return
+    }
+    const selection = pendingTextareaFocusRef.current
+    pendingTextareaFocusRef.current = null
+    restoreTextareaFocus(selection)
+  }, [draft, isWorkCompactInput, isWorkExpandedInput, restoreTextareaFocus])
+
+  useLayoutEffect(() => {
+    if (disabled || isRecording || isTranscribing) return
+    const frame = requestAnimationFrame(() => restoreTextareaFocus(null))
+    return () => cancelAnimationFrame(frame)
+  }, [disabled, draftScopeKey, isRecording, isTranscribing, restoreTextareaFocus])
 
   useEffect(() => {
     const prevScope = prevDraftScopeRef.current
@@ -407,6 +555,11 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
   }
 
   const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === 'Tab' && e.shiftKey && appMode === 'work') {
+      e.preventDefault()
+      togglePlanMode()
+      return
+    }
     if (!e.nativeEvent.isComposing && e.key === 'ArrowUp' && handleHistoryNavigation('up', e.currentTarget)) {
       e.preventDefault()
       return
@@ -457,17 +610,24 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
       const end = el.selectionEnd
       const before = draft.slice(0, start)
       const after = draft.slice(end)
-      setDraft(before + cleaned + after)
+      const nextDraft = before + cleaned + after
+      const pos = start + cleaned.length
+      pendingTextareaFocusRef.current = { start: pos, end: pos, direction: 'none' }
+      trackedSetDraft(nextDraft)
       requestAnimationFrame(() => {
-        const pos = start + cleaned.length
-        el.selectionStart = el.selectionEnd = pos
+        const target = textareaRef.current
+        if (!target) return
+        target.selectionStart = target.selectionEnd = pos
       })
     }
   }
 
-  const handleDraftChange = (value: string) => {
+  const handleDraftChange = (target: HTMLTextAreaElement) => {
     resetHistoryCursor()
-    trackedSetDraft(value)
+    if (document.activeElement === target && willWorkInputLayoutChange(target.value, target)) {
+      pendingTextareaFocusRef.current = readTextareaSelection(target)
+    }
+    trackedSetDraft(target.value)
   }
 
   const handleFormSubmit = (e: FormEvent<HTMLFormElement>) => {
@@ -589,11 +749,13 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
           borderColor: focused
             ? 'var(--c-input-border-color-focus)'
             : 'var(--c-input-border-color)',
-          borderRadius: '20px',
+          borderRadius: isWorkChat ? (isWorkCompactInput ? '12px' : '16px') : '20px',
           boxShadow: focused
             ? 'var(--c-input-shadow-focus)'
             : 'var(--c-input-shadow)',
-          transition: 'border-color 0.2s ease, box-shadow 0.2s ease',
+          transition: isWorkChat
+            ? 'border-color 0.2s ease, box-shadow 0.2s ease, border-radius 180ms cubic-bezier(0.16, 1, 0.3, 1)'
+            : 'border-color 0.2s ease, box-shadow 0.2s ease',
           cursor: 'default',
         }}
         onClick={(e) => {
@@ -606,13 +768,13 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
       <div
         style={{
           display: 'grid',
-          gridTemplateRows: (attachments.length > 0 && !collapsingGrid) ? '1fr' : '0fr',
+          gridTemplateRows: showAttachmentGrid ? '1fr' : '0fr',
           transition: 'grid-template-rows 0.3s ease',
           overflow: 'hidden',
         }}
       >
-        <div style={{ minHeight: 0, padding: '14px 16px 0' }}>
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '12px', paddingBottom: '8px' }}>
+        <div style={{ minHeight: 0, overflow: 'hidden' }}>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '12px', padding: '14px 16px 8px' }}>
             {attachments.map((att) => {
               const removeHandler = () => {
                 if (attachments.length === 1) {
@@ -647,46 +809,74 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
           </div>
         </div>
       </div>
+      {isWelcomeInput && (
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateRows: showWelcomeAttachmentSpacer ? '1fr' : '0fr',
+            transition: 'grid-template-rows 0.3s ease',
+            overflow: 'hidden',
+          }}
+        >
+          <div style={{ minHeight: 0, overflow: 'hidden' }}>
+            <div style={{ height: '14px' }} />
+          </div>
+        </div>
+      )}
       <form
         onSubmit={handleFormSubmit}
         style={{
           padding: formPadding,
         }}
       >
+        {!isWorkCompactInput && (
+          <div
+            style={{
+              position: 'relative',
+              marginBottom: textareaWrapperMarginBottom,
+              ...(isWorkExpandedInput
+                ? { marginLeft: '3.5px', padding: '10px 0 0' }
+                : {}),
+            }}
+          >
+            <AutoResizeTextarea
+              ref={textareaRef}
+              rows={1}
+              className="w-full resize-none bg-transparent outline-none placeholder:text-[var(--c-placeholder)] placeholder:font-[360] disabled:cursor-not-allowed"
+              value={draft}
+              onChange={(e) => handleDraftChange(e.currentTarget)}
+              onKeyDown={handleKeyDown}
+              onPaste={handleTextareaPaste}
+              onFocus={() => setFocused(true)}
+              onBlur={() => setFocused(false)}
+              placeholder={placeholder}
+              disabled={disabled}
+              minRows={1}
+              maxHeight={300}
+              style={{
+                fontFamily: 'inherit',
+                fontSize: '16px',
+                fontWeight: 310,
+                ...(variant === 'chat' ? { lineHeight: 1.45 as const } : {}),
+                color: 'var(--c-text-primary)',
+                marginTop: '0px',
+                marginBottom: '0px',
+                ...(isWorkExpandedInput ? { display: 'block', padding: 0, border: 'none' } : {}),
+                letterSpacing: '-0.16px',
+              }}
+            />
+          </div>
+        )}
+
         <div
+          className="flex items-center"
           style={{
-            position: 'relative',
-            marginBottom: textareaWrapperMarginBottom,
+            gap: '2px',
+            minHeight: isWorkChat ? '34.5px' : '32px',
+            width: '100%',
+            minWidth: 0,
           }}
         >
-          <AutoResizeTextarea
-            ref={textareaRef}
-            rows={1}
-            className="w-full resize-none bg-transparent outline-none placeholder:text-[var(--c-placeholder)] placeholder:font-[360] disabled:cursor-not-allowed"
-            value={draft}
-            onChange={(e) => handleDraftChange(e.target.value)}
-            onKeyDown={handleKeyDown}
-            onPaste={handleTextareaPaste}
-            onFocus={() => setFocused(true)}
-            onBlur={() => setFocused(false)}
-            placeholder={placeholder}
-            disabled={disabled}
-            minRows={1}
-            maxHeight={300}
-            style={{
-              fontFamily: 'inherit',
-              fontSize: '16px',
-              fontWeight: 310,
-              ...(variant === 'chat' ? { lineHeight: 1.45 as const } : {}),
-              color: 'var(--c-text-primary)',
-              marginTop: '0px',
-              marginBottom: '0px',
-              letterSpacing: '-0.16px',
-            }}
-          />
-        </div>
-
-        <div className="flex items-center" style={{ gap: '2px', minHeight: '32px' }}>
           <PersonaModelBar
             personas={personas}
             selectedPersonaKey={selectedPersonaKey}
@@ -704,12 +894,76 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
             accessToken={accessToken}
             variant={variant}
             appMode={appMode}
+            isPlanMode={isPlanMode}
+            onTogglePlanMode={togglePlanMode}
             threadHasMessages={hasMessages}
             workThreadId={workThreadId}
+            hideModelPicker={isWorkCompactInput}
           />
 
+          {isWorkCompactInput && (
+            <>
+              <div
+                style={{
+                  flex: '1 1 auto',
+                  minWidth: 0,
+                  display: 'flex',
+                  alignItems: 'center',
+                  padding: `0 8px 0 ${isPlanMode ? 10 : 4}px`,
+                }}
+              >
+                <AutoResizeTextarea
+                  ref={textareaRef}
+                  rows={1}
+                  className="w-full resize-none bg-transparent outline-none placeholder:text-[var(--c-placeholder)] placeholder:font-[360] disabled:cursor-not-allowed"
+                  value={draft}
+                  onChange={(e) => handleDraftChange(e.currentTarget)}
+                  onKeyDown={handleKeyDown}
+                  onPaste={handleTextareaPaste}
+                  onFocus={() => setFocused(true)}
+                  onBlur={() => setFocused(false)}
+                  placeholder={placeholder}
+                  disabled={disabled}
+                  minRows={1}
+                  maxHeight={300}
+                  style={{
+                    display: 'block',
+                    fontFamily: 'inherit',
+                    fontSize: '16px',
+                    fontWeight: 310,
+                    lineHeight: 1.45 as const,
+                    color: 'var(--c-text-primary)',
+                    marginTop: '0px',
+                    marginBottom: '0px',
+                    padding: 0,
+                    border: 'none',
+                    letterSpacing: '-0.16px',
+                  }}
+                />
+              </div>
+              <div style={{ flexShrink: 0, marginRight: '4px', display: 'flex', alignItems: 'center', position: 'relative' }}>
+                <ModelPicker
+                  accessToken={accessToken}
+                  value={selectedModel}
+                  onChange={handleModelChange}
+                  onAddApiKey={() => onOpenSettings?.('models')}
+                  variant={variant}
+                  thinkingEnabled={reasoningMode}
+                  onThinkingChange={handleReasoningModeChange}
+                />
+              </div>
+            </>
+          )}
+
           {/* mic + send 共用同一位置，disabled 时显示 spinner */}
-          <div style={{ position: 'relative', width: isWorkChat ? '31.5px' : '30px', height: isWorkChat ? '31.5px' : '30px', flexShrink: 0 }}>
+          <div
+            style={{
+              position: 'relative',
+              width: isWorkChat ? '31.5px' : '30px',
+              height: isWorkChat ? '31.5px' : '30px',
+              flexShrink: 0,
+            }}
+          >
             {disabled ? (
               <div className="flex h-full w-full items-center justify-center rounded-lg bg-[var(--c-accent-send)]" style={{ opacity: 0.5 }}>
                 <Loader2 size={14} className="animate-spin" style={{ color: 'var(--c-accent-send-text)' }} />
@@ -800,7 +1054,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
           style={{
             position: 'absolute',
             inset: 0,
-            borderRadius: '20px',
+            borderRadius: isWorkChat ? (isWorkCompactInput ? '12px' : '16px') : '20px',
             background: 'rgba(0,0,0,0.06)',
             overflow: 'hidden',
             pointerEvents: 'none',

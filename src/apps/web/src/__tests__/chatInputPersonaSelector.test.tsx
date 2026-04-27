@@ -17,6 +17,10 @@ vi.mock('../api', async () => {
   }
 })
 
+vi.mock('../contexts/app-ui', () => ({
+  usePlanModeUI: () => ({ isPlanMode: false, togglePlanMode: () => {} }),
+}))
+
 function flushMicrotasks(): Promise<void> {
   return Promise.resolve()
     .then(() => Promise.resolve())

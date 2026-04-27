@@ -862,8 +862,9 @@ export async function createRun(
   modelOverride?: string,
   workDir?: string,
   reasoningMode?: RunReasoningMode,
+  planMode?: boolean,
 ): Promise<CreateRunResponse> {
-  const hasBody = personaId || modelOverride || workDir || reasoningMode
+  const hasBody = personaId || modelOverride || workDir || reasoningMode || planMode
   return await apiFetch<CreateRunResponse>(`/v1/threads/${threadId}/runs`, {
     method: 'POST',
     accessToken,
@@ -873,6 +874,7 @@ export async function createRun(
           ...(modelOverride ? { model: modelOverride } : {}),
           ...(workDir ? { work_dir: workDir } : {}),
           ...(reasoningMode ? { reasoning_mode: reasoningMode } : {}),
+          ...(planMode ? { plan_mode: planMode } : {}),
         })
       : undefined,
   })

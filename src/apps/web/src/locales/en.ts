@@ -337,6 +337,7 @@ export const en: LocaleStrings = {
   addFromLocal: "Add from local files",
   addFromGitHub: "Add from GitHub",
   learningMode: "Learning Guide",
+  planMode: "Plan",
   dragToAttach: "Drop files here",
   searchChatsPlaceholder: "Search chats...",
   searchNoResults: "No results",
