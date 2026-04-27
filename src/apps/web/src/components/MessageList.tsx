@@ -624,7 +624,7 @@ export const MessageList = memo(function MessageList({
           }
           contentOverride={msg.role === 'assistant' && hasAssistantTurn ? '' : undefined}
           plainTextForCopy={msg.role === 'assistant' && hasAssistantTurn ? assistantTurnPlainText(historicalTurn!) : undefined}
-          suppressActionBar={msg.role === 'assistant' && hasAssistantTurn}
+          suppressActionBar={msg.role === 'assistant' && hasAssistantTurn && idx === messages.length - 1 && !isStreaming && !sending}
         />
         {msg.role === 'assistant' && (effectiveTerminalStatus === 'failed' || effectiveTerminalStatus === 'interrupted' || effectiveTerminalStatus === 'cancelled') && (
           <FailedRunRetryCard
