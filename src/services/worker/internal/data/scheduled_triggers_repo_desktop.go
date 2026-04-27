@@ -294,15 +294,11 @@ func (ScheduledTriggersRepository) ClaimDueTriggers(
 			    SET next_fire_at = $1,
 			        updated_at = $2
 			  WHERE id = $3
-			    AND next_fire_at = $4
-			    AND interval_min = $5
-			    AND model = $6`,
+			    AND next_fire_at = $4`,
 			next.Format(time.RFC3339Nano),
 			now.Format(time.RFC3339Nano),
 			r.ID,
 			pendingRaw[i],
-			r.IntervalMin,
-			r.Model,
 		)
 		if err != nil {
 			return nil, err
