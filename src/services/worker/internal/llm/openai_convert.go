@@ -173,6 +173,14 @@ func openAIToolParameters(schema map[string]any) map[string]any {
 		}
 	}
 	if typ, _ := schema["type"].(string); strings.TrimSpace(typ) != "" {
+		if schema["properties"] == nil {
+			out := make(map[string]any, len(schema)+1)
+			for key, value := range schema {
+				out[key] = value
+			}
+			out["properties"] = map[string]any{}
+			return out
+		}
 		return schema
 	}
 	out := make(map[string]any, len(schema)+1)

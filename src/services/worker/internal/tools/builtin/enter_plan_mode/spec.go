@@ -19,9 +19,8 @@ var LlmSpec = llm.ToolSpec{
 	Name:        ToolName,
 	Description: strPtr("进入 Plan Mode。在 Plan Mode 中，只能使用只读工具（read, grep, glob, web_search, web_fetch, ask_user）。所有写工具（edit, write_file, document_write 等）会被拦截。完成方案后调用 exit_plan_mode 提交 plan 并退出。"),
 	JSONSchema: map[string]any{
-		"type":                 "object",
-		"additionalProperties": false,
-		"properties":           map[string]any{},
+		"type":       "object",
+		"properties": map[string]any{},
 	},
 }
 
