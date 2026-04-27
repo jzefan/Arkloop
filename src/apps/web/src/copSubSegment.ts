@@ -1,7 +1,8 @@
 import type { CopBlockItem } from './assistantTurnSegments'
 import { normalizeToolName, compactCommandLine } from './toolPresentation'
+import { isWebSearchToolName, webSearchQueriesFromArguments } from './webSearchTimelineFromRunEvent'
 
-export type CopSegmentCategory = 'explore' | 'exec' | 'edit' | 'agent' | 'fetch' | 'generic'
+export type CopSegmentCategory = 'explore' | 'exec' | 'edit' | 'agent' | 'fetch' | 'search' | 'generic'
 
 export type CopSubSegment = {
   id: string
@@ -25,6 +26,7 @@ const MUTATING_LSP = new Set(['rename'])
 
 export function categoryForTool(toolName: string): CopSegmentCategory {
   const n = normalizeToolName(toolName)
+  if (isWebSearchToolName(toolName)) return 'search'
   if (EXPLORE_NAMES.has(n)) {
     if (n === 'lsp' && MUTATING_LSP.has(toolName)) return 'edit'
     return 'explore'
@@ -43,6 +45,7 @@ export function segmentLiveTitle(cat: CopSegmentCategory): string {
     case 'edit': return 'Editing...'
     case 'agent': return 'Agent running...'
     case 'fetch': return 'Fetching...'
+    case 'search': return 'Searching...'
     case 'generic': return 'Working...'
   }
 }
@@ -92,6 +95,7 @@ export function segmentCompletedTitle(seg: CopSubSegment): string {
       return n === 1 ? 'Agent completed' : `${n} agent tasks completed`
     }
     case 'fetch': return 'Fetch completed'
+    case 'search': return webSearchCompletedTitle(calls)
     case 'generic': {
       if (calls.length === 1) {
         const t = calls[0]!.toolName
@@ -117,6 +121,8 @@ export type AggregatedCallStats = {
   execCount: number
   agentCount: number
   fetchCount: number
+  webSearchCount: number
+  webSearchQueries: string[]
   genericCount: number
   byToolName: Map<string, number>
 }
@@ -146,6 +152,8 @@ export function aggregateCallStats(calls: ReadonlyArray<CallItem['call']>): Aggr
     execCount: 0,
     agentCount: 0,
     fetchCount: 0,
+    webSearchCount: 0,
+    webSearchQueries: [],
     genericCount: 0,
     byToolName: new Map<string, number>(),
   }
@@ -177,6 +185,14 @@ export function aggregateCallStats(calls: ReadonlyArray<CallItem['call']>): Aggr
       else stats.editPaths.push(target)
       continue
     }
+    if (cat === 'search') {
+      stats.webSearchCount += 1
+      const queries = webSearchQueriesFromArguments(c.arguments) ?? []
+      for (const query of queries) {
+        if (!stats.webSearchQueries.includes(query)) stats.webSearchQueries.push(query)
+      }
+      continue
+    }
     if (cat === 'exec') { stats.execCount += 1; continue }
     if (cat === 'agent') { stats.agentCount += 1; continue }
     if (cat === 'fetch') { stats.fetchCount += 1; continue }
@@ -187,6 +203,42 @@ export function aggregateCallStats(calls: ReadonlyArray<CallItem['call']>): Aggr
 
 function truncate(value: string, max: number): string {
   return value.length > max ? `${value.slice(0, max)}…` : value
+}
+
+function uniqueWebSearchQueries(calls: ReadonlyArray<CallItem['call']>): string[] {
+  const seen = new Set<string>()
+  const queries: string[] = []
+  for (const call of calls) {
+    const fromArgs = webSearchQueriesFromArguments(call.arguments) ?? []
+    for (const q of fromArgs) {
+      if (seen.has(q)) continue
+      seen.add(q)
+      queries.push(q)
+    }
+  }
+  return queries
+}
+
+function formatWebSearchTitle(prefix: 'Searching for' | 'Searched for', queries: ReadonlyArray<string>): string | null {
+  if (queries.length === 0) return null
+  const first = truncate(queries[0]!, 64)
+  return queries.length === 1 ? `${prefix} ${first}` : `${prefix} ${first} +${queries.length - 1}`
+}
+
+function webSearchLiveTitle(args: Record<string, unknown>): string {
+  return formatWebSearchTitle('Searching for', webSearchQueriesFromArguments(args) ?? []) ?? 'Searching'
+}
+
+function webSearchCompletedTitle(calls: ReadonlyArray<CallItem['call']>): string {
+  const byQuery = formatWebSearchTitle('Searched for', uniqueWebSearchQueries(calls))
+  if (byQuery) return byQuery
+  return calls.length === 1 ? 'Search completed' : `${calls.length} searches completed`
+}
+
+function webSearchStatsTitle(stats: AggregatedCallStats): string | null {
+  if (stats.webSearchCount <= 0) return null
+  return formatWebSearchTitle('Searched for', stats.webSearchQueries)
+    ?? (stats.webSearchCount === 1 ? 'Search completed' : `${stats.webSearchCount} searches completed`)
 }
 
 function lspProgressive(args: Record<string, unknown>): string {
@@ -215,6 +267,7 @@ export function presentToProgressive(
 ): string {
   const dd = (displayDescription ?? '').trim()
   if (dd) return dd
+  if (isWebSearchToolName(toolNameInput)) return webSearchLiveTitle(args)
   const toolName = normalizeToolName(toolNameInput)
   switch (toolName) {
     case 'read_file': {
@@ -252,7 +305,7 @@ export function presentToProgressive(
     case 'load_tools': return 'Loading tools'
     case 'load_skill': return 'Loading skill'
     case 'lsp': return lspProgressive(args)
-    default: return `${toolName}...`
+    default: return toolName
   }
 }
 
@@ -272,6 +325,8 @@ function formatStatsParts(stats: AggregatedCallStats): string {
   if (stats.execCount > 0) parts.push(`Ran ${stats.execCount} ${pluralize(stats.execCount, 'command', 'commands')}`)
   if (stats.agentCount > 0) parts.push(`${stats.agentCount} agent ${pluralize(stats.agentCount, 'task', 'tasks')}`)
   if (stats.fetchCount > 0) parts.push(`${stats.fetchCount} ${pluralize(stats.fetchCount, 'fetch', 'fetches')}`)
+  const webSearchTitle = webSearchStatsTitle(stats)
+  if (webSearchTitle) parts.push(webSearchTitle)
   return parts.join(', ')
 }
 
@@ -299,6 +354,8 @@ function formatSingleCategoryTitle(cat: CopSegmentCategory, stats: AggregatedCal
       return stats.agentCount === 1 ? 'Agent completed' : `${stats.agentCount} agent tasks completed`
     case 'fetch':
       return stats.fetchCount === 1 ? 'Fetch completed' : `${stats.fetchCount} fetches completed`
+    case 'search':
+      return webSearchStatsTitle(stats) ?? 'Search completed'
     case 'generic':
       return `${total} ${pluralize(total, 'step', 'steps')} completed`
   }
