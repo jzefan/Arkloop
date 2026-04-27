@@ -158,7 +158,7 @@ func (c *weixinConnector) HandleWeChatMessage(ctx context.Context, traceID strin
 
 	if c.channelLedgerRepo != nil {
 		ledgerMeta, _ := json.Marshal(map[string]any{
-			"source":           "weixin",
+			"source":            "weixin",
 			"conversation_type": chatType,
 		})
 		if _, err := c.channelLedgerRepo.WithTx(tx).Record(ctx, data.ChannelMessageLedgerRecordInput{
@@ -207,12 +207,12 @@ func (c *weixinConnector) HandleWeChatMessage(ctx context.Context, traceID strin
 	}
 
 	metadataJSON, _ := json.Marshal(map[string]any{
-		"source":               "weixin",
-		"channel_identity_id":  identity.ID.String(),
-		"platform_chat_id":     platformChatID,
-		"platform_message_id":  msg.ContextToken,
-		"platform_user_id":     userID,
-		"chat_type":            chatType,
+		"source":              "weixin",
+		"channel_identity_id": identity.ID.String(),
+		"platform_chat_id":    platformChatID,
+		"platform_message_id": msg.ContextToken,
+		"platform_user_id":    userID,
+		"chat_type":           chatType,
 	})
 
 	if _, err := c.messageRepo.WithTx(tx).CreateStructuredWithMetadata(
@@ -252,7 +252,30 @@ func (c *weixinConnector) HandleWeChatMessage(ctx context.Context, traceID strin
 		return commitTx()
 	}
 
-	runData := map[string]any{"persona_id": personaRef}
+	channelDelivery := map[string]any{
+		"channel_id":   ch.ID.String(),
+		"channel_type": "weixin",
+		"conversation_ref": map[string]any{
+			"target": platformChatID,
+		},
+		"inbound_message_ref": map[string]any{
+			"message_id": msg.ContextToken,
+		},
+		"trigger_message_ref": map[string]any{
+			"message_id": msg.ContextToken,
+		},
+		"platform_chat_id":           platformChatID,
+		"platform_message_id":        msg.ContextToken,
+		"sender_channel_identity_id": identity.ID.String(),
+		"conversation_type":          chatType,
+	}
+
+	runData := map[string]any{
+		"persona_id":          personaRef,
+		"continuation_source": "none",
+		"continuation_loop":   false,
+		"channel_delivery":    channelDelivery,
+	}
 	if m := strings.TrimSpace(cfg.DefaultModel); m != "" {
 		runData["model"] = m
 	}
@@ -262,35 +285,13 @@ func (c *weixinConnector) HandleWeChatMessage(ctx context.Context, traceID strin
 	}
 
 	jobPayload := map[string]any{
-		"source": "weixin",
-		"channel_delivery": map[string]any{
-			"channel_id":   ch.ID.String(),
-			"channel_type": "weixin",
-			"conversation_ref": map[string]any{
-				"target": platformChatID,
-			},
-			"inbound_message_ref": map[string]any{
-				"message_id": msg.ContextToken,
-			},
-			"trigger_message_ref": map[string]any{
-				"message_id": msg.ContextToken,
-			},
-			"platform_chat_id":           platformChatID,
-			"platform_message_id":        msg.ContextToken,
-			"sender_channel_identity_id": identity.ID.String(),
-			"conversation_type":          chatType,
-		},
-		"context_token": msg.ContextToken,
+		"source":           "weixin",
+		"channel_delivery": channelDelivery,
+		"context_token":    msg.ContextToken,
 	}
 	if _, err := c.jobRepo.WithTx(tx).EnqueueRun(ctx, ch.AccountID, run.ID, traceID, data.RunExecuteJobType, jobPayload, nil); err != nil {
 		return err
 	}
-
-	slog.InfoContext(ctx, "weixin_inbound_processed",
-		"stage", "new_run_enqueued",
-		"channel_id", ch.ID, "run_id", run.ID, "thread_id", threadID,
-	)
-
 	return commitTx()
 }
 
