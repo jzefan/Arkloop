@@ -690,6 +690,15 @@ export const en: LocaleStrings = {
     discordTokenHint: 'Create a bot at Discord Developer Portal',
     discordServerIdHint: 'Enable Developer Mode in Discord, then right-click the server to copy ID',
     bindCodeInGroupHint: 'Send this command in your group chat to link the bot',
+    weixin: 'WeChat',
+    weixinScanQR: 'Scan QR code with WeChat',
+    weixinLoggedIn: 'Logged in',
+    weixinRelogin: 'Re-login',
+    weixinQRExpired: 'QR code expired, please refresh',
+    weixinScanning: 'Waiting for scan...',
+    weixinBotTokenHint: 'Auto-obtained after QR login',
+    weixinAllowedUsersHint: 'WeChat user IDs allowed for private chat, one per line, leave empty to allow all',
+    weixinAllowedGroupsHint: 'Group IDs allowed, one per line, leave empty to allow all groups',
   },
   // model picker
   modelPicker: {

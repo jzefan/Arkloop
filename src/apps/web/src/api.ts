@@ -2077,6 +2077,31 @@ export async function napCatQuickLogin(accessToken: string, uin: string): Promis
   })
 }
 
+// --- WeChat (weixin channel) ---
+
+export interface WeixinQRCodeResponse {
+  qrcode: string
+  qrcode_img_content: string // base64 PNG
+}
+
+export interface WeixinQRCodeStatusResponse {
+  status: string // "pending" | "confirmed" | "expired"
+  bot_token?: string
+  baseurl?: string
+}
+
+export async function getWeixinQRCode(accessToken: string): Promise<WeixinQRCodeResponse> {
+  return apiFetch<WeixinQRCodeResponse>('/v1/weixin/qrcode', {
+    accessToken,
+  })
+}
+
+export async function getWeixinQRCodeStatus(accessToken: string, qrcode: string): Promise<WeixinQRCodeStatusResponse> {
+  return apiFetch<WeixinQRCodeStatusResponse>(`/v1/weixin/qrcode-status?qrcode=${encodeURIComponent(qrcode)}`, {
+    accessToken,
+  })
+}
+
 // external skills
 
 export interface ExternalSkill {

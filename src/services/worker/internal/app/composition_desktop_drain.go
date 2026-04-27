@@ -4,6 +4,7 @@ package app
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -14,6 +15,7 @@ import (
 
 	"arkloop/services/shared/onebotclient"
 	"arkloop/services/shared/telegrambot"
+	"arkloop/services/shared/weixinclient"
 	"arkloop/services/worker/internal/data"
 	"arkloop/services/worker/internal/pipeline"
 
@@ -118,6 +120,8 @@ func drainDesktopOutboxRecord(
 		return drainDesktopDiscordOutbox(ctx, db, row, payload, outboxRepo)
 	case "qq":
 		return drainDesktopOneBotOutbox(ctx, db, row, payload, outboxRepo)
+	case "weixin":
+		return drainDesktopWeixinOutbox(ctx, db, row, payload, outboxRepo)
 	default:
 		return fmt.Errorf("unsupported channel type: %s", row.ChannelType)
 	}
@@ -346,6 +350,72 @@ func drainDesktopOneBotOutbox(
 	return outboxRepo.UpdateSent(ctx, db, row.ID)
 }
 
+func drainDesktopWeixinOutbox(
+	ctx context.Context,
+	db data.DesktopDB,
+	row data.ChannelDeliveryOutboxRecord,
+	payload data.OutboxPayload,
+	outboxRepo data.ChannelDeliveryOutboxRepository,
+) error {
+	channel, err := loadDesktopDeliveryChannel(ctx, db, row.ChannelID)
+	if err != nil || channel == nil {
+		lastErr := errors.New("weixin channel not found or inactive")
+		if err != nil {
+			lastErr = err
+		}
+		return handleDesktopDrainFailure(ctx, db, row, lastErr, outboxRepo)
+	}
+
+	baseURL := strings.TrimSpace(os.Getenv("ARKLOOP_WEIXIN_API_BASE_URL"))
+	if baseURL == "" {
+		var cfg struct {
+			BaseURL string `json:"base_url"`
+		}
+		_ = json.Unmarshal(channel.ConfigJSON, &cfg)
+		baseURL = strings.TrimSpace(cfg.BaseURL)
+		if baseURL == "" {
+			baseURL = "https://ilinkai.weixin.qq.com"
+		}
+	}
+
+	client := weixinclient.NewClient(baseURL, channel.Token, nil)
+	sender := pipeline.NewWeixinChannelSenderWithClient(client, 50*time.Millisecond)
+	replyTo := weixinReplyReferenceFromPayload(payload)
+
+	for i := row.SegmentsSent; i < len(payload.Outputs); i++ {
+		trimmed := strings.TrimSpace(payload.Outputs[i])
+		if trimmed == "" {
+			if err := outboxRepo.UpdateProgress(ctx, db, row.ID, i+1); err != nil {
+				return err
+			}
+			continue
+		}
+		ref := replyTo
+		if i > 0 {
+			ref = nil
+		}
+		messageIDs, sendErr := sender.SendText(ctx, pipeline.ChannelDeliveryTarget{
+			ChannelType:  row.ChannelType,
+			Conversation: pipeline.ChannelConversationRef{Target: payload.PlatformChatID, ThreadID: payload.PlatformThreadID},
+			ReplyTo:      ref,
+		}, trimmed)
+		if sendErr != nil {
+			return handleDesktopDrainFailure(ctx, db, row, sendErr, outboxRepo)
+		}
+		if err := recordDesktopChannelDelivery(
+			ctx, db, row.RunID, derefOutboxThreadID(row.ThreadID), row.ChannelID, row.ChannelType,
+			payload.PlatformChatID, ref, payload.PlatformThreadID, messageIDs,
+		); err != nil {
+			return handleDesktopDrainFailure(ctx, db, row, err, outboxRepo)
+		}
+		if err := outboxRepo.UpdateProgress(ctx, db, row.ID, i+1); err != nil {
+			return err
+		}
+		row.SegmentsSent = i + 1
+	}
+	return outboxRepo.UpdateSent(ctx, db, row.ID)
+}
+
 // handleDesktopDrainFailure 向调用方传播发送失败的真实错误；bookkeeping 失败时
 // 用 errors.Join 合并两段错误，便于日志和上层定位。
 func handleDesktopDrainFailure(
@@ -397,6 +467,13 @@ func discordReplyReferenceFromPayload(payload data.OutboxPayload) *pipeline.Chan
 }
 
 func onebotReplyReferenceFromPayload(payload data.OutboxPayload) *pipeline.ChannelMessageRef {
+	if strings.TrimSpace(payload.ReplyToMessageID) == "" {
+		return nil
+	}
+	return &pipeline.ChannelMessageRef{MessageID: strings.TrimSpace(payload.ReplyToMessageID)}
+}
+
+func weixinReplyReferenceFromPayload(payload data.OutboxPayload) *pipeline.ChannelMessageRef {
 	if strings.TrimSpace(payload.ReplyToMessageID) == "" {
 		return nil
 	}

@@ -24,7 +24,7 @@ type Props = {
   accessToken: string
 }
 
-const CHANNEL_TYPES = ['telegram', 'discord', 'feishu', 'qq'] as const
+const CHANNEL_TYPES = ['telegram', 'discord', 'feishu', 'qq', 'weixin'] as const
 type ChannelType = (typeof CHANNEL_TYPES)[number]
 
 function parseAllowedUserIds(input: string): string[] {
@@ -166,7 +166,7 @@ export function ChannelsSettingsContent({ accessToken }: Props) {
   }
 
   const channelLabel = (type: string) => {
-    const map: Record<string, string> = { telegram: ct.telegram, discord: ct.discord, feishu: ct.feishu, qq: 'QQ' }
+    const map: Record<string, string> = { telegram: ct.telegram, discord: ct.discord, feishu: ct.feishu, qq: 'QQ', weixin: ct.weixin }
     return map[type] || type
   }
 

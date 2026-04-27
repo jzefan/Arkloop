@@ -458,6 +458,11 @@ func NewHandler(cfg HandlerConfig) nethttp.Handler {
 		AttachmentStore:          cfg.MessageAttachmentStore,
 	})
 
+	// Weixin QR code login
+	accountapi.RegisterWeixinRoutes(mux, accountapi.WeixinDeps{
+		AuthService: cfg.AuthService,
+	})
+
 	if cfg.ScheduledJobsRepo != nil {
 		scheduledjobsapi.RegisterRoutes(mux, scheduledjobsapi.Deps{
 			AuthService:           cfg.AuthService,
