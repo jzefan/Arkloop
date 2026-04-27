@@ -1,5 +1,5 @@
 import { useRef, useState, useCallback, useEffect } from 'react'
-import { Plus, Paperclip, BookOpen, Search, Folder, FolderOpen, X, Check } from 'lucide-react'
+import { Plus, Paperclip, BookOpen, Search, Folder, FolderOpen, X, Check, Map } from 'lucide-react'
 import type { SelectablePersona } from '../../api'
 import { ModelPicker } from '../ModelPicker'
 import type { SettingsTab } from '../SettingsModal'
@@ -34,8 +34,11 @@ type Props = {
   accessToken?: string
   variant?: 'welcome' | 'chat'
   appMode?: AppMode
+  isPlanMode?: boolean
+  onTogglePlanMode?: () => void
   threadHasMessages?: boolean
   workThreadId?: string
+  hideModelPicker?: boolean
 }
 
 export function PersonaModelBar({
@@ -55,8 +58,11 @@ export function PersonaModelBar({
   accessToken,
   variant,
   appMode,
+  isPlanMode,
+  onTogglePlanMode,
   threadHasMessages,
   workThreadId,
+  hideModelPicker,
 }: Props) {
   const { t } = useLocale()
   const menuRef = useRef<HTMLDivElement>(null)
@@ -120,7 +126,7 @@ export function PersonaModelBar({
   return (
     <>
       {/* work folder picker -- desktop only, hidden once thread has messages */}
-      {appMode === 'work' && isDesktop() && !threadHasMessages && (
+      {isWorkMode && isDesktop() && !threadHasMessages && (
         <div
           className="relative -ml-1.5"
           style={{
@@ -256,47 +262,127 @@ export function PersonaModelBar({
             }}
           >
             <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
-              <button
-                type="button"
-                onClick={() => { onFileInputClick(); setMenuOpen(false) }}
-                className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm text-[var(--c-text-secondary)] hover:bg-[var(--c-bg-deep)] hover:text-[var(--c-text-primary)]"
-              >
-                <Paperclip size={14} style={{ color: 'var(--c-text-secondary)', flexShrink: 0 }} />
-                {t.addFromLocal}
-              </button>
-              <div style={{ height: '1px', background: 'var(--c-border-subtle)', margin: '2px 4px' }} />
-              {personas.map((persona) => {
-                const isActive = selectedPersonaKey === persona.persona_key
-                const icon = persona.persona_key === LEARNING_PERSONA_KEY
-                  ? <BookOpen size={14} style={{ flexShrink: 0 }} />
-                  : persona.persona_key === SEARCH_PERSONA_KEY
-                    ? <Search size={14} style={{ flexShrink: 0 }} />
-                    : null
-                return (
+              {isWorkMode ? (
+                <>
                   <button
-                    key={persona.persona_key}
                     type="button"
-                    onClick={() => { onModeSelect(persona.persona_key); setMenuOpen(false) }}
+                    onClick={() => { onTogglePlanMode?.(); setMenuOpen(false) }}
                     className="flex w-full items-center justify-between rounded-lg px-3 py-2 text-sm hover:bg-[var(--c-bg-deep)]"
                     style={{
-                      color: isActive ? 'var(--c-text-primary)' : 'var(--c-text-secondary)',
-                      fontWeight: isActive ? 500 : 400,
+                      color: isPlanMode ? 'var(--c-plan-icon)' : 'var(--c-text-secondary)',
+                      fontWeight: isPlanMode ? 500 : 400,
                     }}
                   >
                     <span style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                      {icon}
-                      {persona.selector_name}
+                      <Map size={14} style={{ color: isPlanMode ? 'var(--c-plan-icon)' : 'var(--c-text-secondary)', flexShrink: 0 }} />
+                      {t.planMode}
                     </span>
-                    {(isActive || (chipExiting && selectedPersonaKey === persona.persona_key)) && (
+                    {isPlanMode && (
                       <Check size={13} style={{ color: '#4691F6', flexShrink: 0 }} />
                     )}
                   </button>
-                )
-              })}
+                  <div style={{ height: '1px', background: 'var(--c-border-subtle)', margin: '2px 4px' }} />
+                  <button
+                    type="button"
+                    onClick={() => { onFileInputClick(); setMenuOpen(false) }}
+                    className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm text-[var(--c-text-secondary)] hover:bg-[var(--c-bg-deep)] hover:text-[var(--c-text-primary)]"
+                  >
+                    <Paperclip size={14} style={{ color: 'var(--c-text-secondary)', flexShrink: 0 }} />
+                    {t.addFromLocal}
+                  </button>
+                </>
+              ) : (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => { onFileInputClick(); setMenuOpen(false) }}
+                    className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm text-[var(--c-text-secondary)] hover:bg-[var(--c-bg-deep)] hover:text-[var(--c-text-primary)]"
+                  >
+                    <Paperclip size={14} style={{ color: 'var(--c-text-secondary)', flexShrink: 0 }} />
+                    {t.addFromLocal}
+                  </button>
+                  <div style={{ height: '1px', background: 'var(--c-border-subtle)', margin: '2px 4px' }} />
+                  {personas.map((persona) => {
+                    const isActive = selectedPersonaKey === persona.persona_key
+                    const icon = persona.persona_key === LEARNING_PERSONA_KEY
+                      ? <BookOpen size={14} style={{ flexShrink: 0 }} />
+                      : persona.persona_key === SEARCH_PERSONA_KEY
+                        ? <Search size={14} style={{ flexShrink: 0 }} />
+                        : null
+                    return (
+                      <button
+                        key={persona.persona_key}
+                        type="button"
+                        onClick={() => { onModeSelect(persona.persona_key); setMenuOpen(false) }}
+                        className="flex w-full items-center justify-between rounded-lg px-3 py-2 text-sm hover:bg-[var(--c-bg-deep)]"
+                        style={{
+                          color: isActive ? 'var(--c-text-primary)' : 'var(--c-text-secondary)',
+                          fontWeight: isActive ? 500 : 400,
+                        }}
+                      >
+                        <span style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                          {icon}
+                          {persona.selector_name}
+                        </span>
+                        {(isActive || (chipExiting && selectedPersonaKey === persona.persona_key)) && (
+                          <Check size={13} style={{ color: '#4691F6', flexShrink: 0 }} />
+                        )}
+                      </button>
+                    )
+                  })}
+                </>
+              )}
             </div>
           </div>
         )}
       </div>
+
+      {/* Plan mode chip — work mode only, no animation, no border */}
+      {isPlanMode && isWorkMode && (
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: '1px',
+            height: isWorkMode ? '33.5px' : '32px',
+            padding: '0 4px 0 9px',
+            borderRadius: '8px',
+            background: 'var(--c-plan-bg)',
+            flexShrink: 0,
+            marginLeft: '4px',
+          }}
+        >
+          <Map size={14} style={{ color: 'var(--c-plan-icon)', flexShrink: 0 }} />
+          <span style={{
+            fontSize: '14px',
+            color: 'var(--c-plan-text)',
+            fontWeight: 375,
+            whiteSpace: 'nowrap',
+            margin: '0 2px',
+          }}>
+            {t.planMode}
+          </span>
+          <button
+            type="button"
+            onClick={onTogglePlanMode}
+            className="bg-transparent hover:bg-[rgba(0,0,0,0.05)]"
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              width: '20px',
+              height: '20px',
+              borderRadius: '5px',
+              border: 'none',
+              cursor: 'pointer',
+              padding: 0,
+              flexShrink: 0,
+            }}
+          >
+            <X size={14} strokeWidth={2} style={{ color: 'var(--c-plan-icon)', opacity: 0.7 }} />
+          </button>
+        </div>
+      )}
 
       {/* active mode chip */}
       {(isNonDefaultMode || chipExiting) && (
@@ -340,18 +426,20 @@ export function PersonaModelBar({
       )}
 
       {/* model picker + spacer */}
-      <div style={{ marginLeft: 'auto', marginRight: '4px', display: 'flex', alignItems: 'center', gap: '14px', position: 'relative' }}>
-        <ModelPicker
-          accessToken={accessToken}
-          value={selectedModel}
-          onChange={onModelChange}
-          onAddApiKey={() => onOpenSettings?.('models')}
-          variant={variant}
-          controlHeight={isWorkMode ? 'default' : 'legacyChat'}
-          thinkingEnabled={thinkingEnabled}
-          onThinkingChange={onThinkingChange}
-        />
-      </div>
+      {!hideModelPicker && (
+        <div style={{ marginLeft: 'auto', marginRight: '4px', display: 'flex', alignItems: 'center', gap: '14px', position: 'relative' }}>
+          <ModelPicker
+            accessToken={accessToken}
+            value={selectedModel}
+            onChange={onModelChange}
+            onAddApiKey={() => onOpenSettings?.('models')}
+            variant={variant}
+            controlHeight={isWorkMode ? 'default' : 'legacyChat'}
+            thinkingEnabled={thinkingEnabled}
+            onThinkingChange={onThinkingChange}
+          />
+        </div>
+      )}
     </>
   )
 }

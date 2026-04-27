@@ -15,6 +15,8 @@ import type { DesktopSettingsKey } from '../components/DesktopSettings'
 import {
   readAppModeFromStorage,
   writeAppModeToStorage,
+  readPlanModeFromStorage,
+  writePlanModeToStorage,
   type AppMode,
 } from '../storage'
 import {
@@ -40,6 +42,7 @@ export interface AppUIContextValue {
   notificationVersion: number
   appMode: AppMode
   availableAppModes: AppMode[]
+  isPlanMode: boolean
   pendingSkillPrompt: string | null
 
   toggleSidebar: (source?: 'sidebar' | 'titlebar') => void
@@ -54,6 +57,7 @@ export interface AppUIContextValue {
   closeNotifications: () => void
   markNotificationRead: () => void
   setAppMode: (mode: AppMode) => void
+  togglePlanMode: () => void
   queueSkillPrompt: (prompt: string) => void
   consumeSkillPrompt: () => void
   setTitleBarIncognitoClick: (fn: (() => void) | null) => void
@@ -72,6 +76,7 @@ type SearchUIContextValue = Pick<
 type SettingsUIContextValue = Pick<AppUIContextValue, 'settingsOpen' | 'settingsInitialTab' | 'desktopSettingsSection' | 'openSettings' | 'closeSettings'>
 type NotificationsUIContextValue = Pick<AppUIContextValue, 'notificationsOpen' | 'notificationVersion' | 'openNotifications' | 'closeNotifications' | 'markNotificationRead'>
 type AppModeUIContextValue = Pick<AppUIContextValue, 'appMode' | 'availableAppModes' | 'setAppMode'>
+type PlanModeUIContextValue = Pick<AppUIContextValue, 'isPlanMode' | 'togglePlanMode'>
 type SkillPromptUIContextValue = Pick<AppUIContextValue, 'pendingSkillPrompt' | 'queueSkillPrompt' | 'consumeSkillPrompt'>
 type TitleBarIncognitoUIContextValue = Pick<AppUIContextValue, 'setTitleBarIncognitoClick' | 'triggerTitleBarIncognitoClick'>
 
@@ -81,6 +86,7 @@ const SearchUIContext = createContext<SearchUIContextValue | null>(null)
 const SettingsUIContext = createContext<SettingsUIContextValue | null>(null)
 const NotificationsUIContext = createContext<NotificationsUIContextValue | null>(null)
 const AppModeUIContext = createContext<AppModeUIContextValue | null>(null)
+const PlanModeUIContext = createContext<PlanModeUIContextValue | null>(null)
 const SkillPromptUIContext = createContext<SkillPromptUIContextValue | null>(null)
 const TitleBarIncognitoUIContext = createContext<TitleBarIncognitoUIContextValue | null>(null)
 
@@ -170,6 +176,14 @@ function AppUIProviders({
     [value.appMode, value.availableAppModes, value.setAppMode],
   )
 
+  const planModeValue = useMemo<PlanModeUIContextValue>(
+    () => ({
+      isPlanMode: value.isPlanMode,
+      togglePlanMode: value.togglePlanMode,
+    }),
+    [value.isPlanMode, value.togglePlanMode],
+  )
+
   const skillPromptValue = useMemo<SkillPromptUIContextValue>(
     () => ({
       pendingSkillPrompt: value.pendingSkillPrompt,
@@ -194,11 +208,13 @@ function AppUIProviders({
           <SettingsUIContext.Provider value={settingsValue}>
             <NotificationsUIContext.Provider value={notificationsValue}>
               <AppModeUIContext.Provider value={appModeValue}>
+                <PlanModeUIContext.Provider value={planModeValue}>
                 <SkillPromptUIContext.Provider value={skillPromptValue}>
                   <TitleBarIncognitoUIContext.Provider value={titleBarIncognitoValue}>
                     {children}
                   </TitleBarIncognitoUIContext.Provider>
                 </SkillPromptUIContext.Provider>
+                </PlanModeUIContext.Provider>
               </AppModeUIContext.Provider>
             </NotificationsUIContext.Provider>
           </SettingsUIContext.Provider>
@@ -231,6 +247,7 @@ export function AppUIProvider({ children }: { children: ReactNode }) {
   )
   const [notificationVersion, setNotificationVersion] = useState(0)
   const [appMode, setAppModeState] = useState<AppMode>(readAppModeFromStorage)
+  const [isPlanMode, setIsPlanMode] = useState<boolean>(readPlanModeFromStorage)
   const [pendingSkillPrompt, setPendingSkillPrompt] = useState<string | null>(null)
 
   const settingsOpenTraceRef = useRef<ReturnType<typeof beginPerfTrace>>(null)
@@ -370,6 +387,14 @@ export function AppUIProvider({ children }: { children: ReactNode }) {
       navigate('/')
     }
   }, [location.pathname, navigate])
+
+  const togglePlanMode = useCallback(() => {
+    setIsPlanMode((prev) => {
+      const next = !prev
+      writePlanModeToStorage(next)
+      return next
+    })
+  }, [])
 
   const queueSkillPrompt = useCallback((prompt: string) => {
     setPendingSkillPrompt(prompt)
@@ -549,6 +574,7 @@ export function AppUIProvider({ children }: { children: ReactNode }) {
     notificationVersion,
     appMode,
     availableAppModes,
+    isPlanMode,
     pendingSkillPrompt,
     toggleSidebar,
     setRightPanelOpen,
@@ -562,6 +588,7 @@ export function AppUIProvider({ children }: { children: ReactNode }) {
     closeNotifications,
     markNotificationRead,
     setAppMode: handleSetAppMode,
+    togglePlanMode,
     queueSkillPrompt,
     consumeSkillPrompt,
     setTitleBarIncognitoClick,
@@ -579,6 +606,7 @@ export function AppUIProvider({ children }: { children: ReactNode }) {
     notificationVersion,
     appMode,
     availableAppModes,
+    isPlanMode,
     pendingSkillPrompt,
     toggleSidebar,
     setRightPanelOpen,
@@ -592,6 +620,7 @@ export function AppUIProvider({ children }: { children: ReactNode }) {
     closeNotifications,
     markNotificationRead,
     handleSetAppMode,
+    togglePlanMode,
     queueSkillPrompt,
     consumeSkillPrompt,
     setTitleBarIncognitoClick,
@@ -644,6 +673,12 @@ export function useNotificationsUI(): NotificationsUIContextValue {
 export function useAppModeUI(): AppModeUIContextValue {
   const ctx = useContext(AppModeUIContext)
   if (!ctx) throw new Error('useAppModeUI must be used within AppUIProvider')
+  return ctx
+}
+
+export function usePlanModeUI(): PlanModeUIContextValue {
+  const ctx = useContext(PlanModeUIContext)
+  if (!ctx) throw new Error('usePlanModeUI must be used within AppUIProvider')
   return ctx
 }
 

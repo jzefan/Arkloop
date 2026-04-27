@@ -335,6 +335,7 @@ export const zh: LocaleStrings = {
   addFromLocal: "从本地文件添加",
   addFromGitHub: "从 GitHub 添加",
   learningMode: "学习辅导",
+  planMode: "Plan",
   dragToAttach: "请拖动到此处",
   searchChatsPlaceholder: "搜索会话...",
   searchNoResults: "无匹配结果",

@@ -321,6 +321,7 @@ export interface LocaleStrings {
   addFromLocal: string;
   addFromGitHub: string;
   learningMode: string;
+  planMode: string;
   dragToAttach: string;
   // chats search modal
   searchChatsPlaceholder: string;

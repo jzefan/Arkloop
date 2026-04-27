@@ -19,6 +19,7 @@ import {
   readSelectedReasoningMode,
   readInputDraftAttachments,
   readWorkFolder,
+  readPlanModeFromStorage,
   readDeveloperShowDebugPanel,
   writeInputDraftAttachments,
 } from '../storage'
@@ -366,6 +367,7 @@ export function WelcomePage() {
         modelOverride,
         readWorkFolder() ?? undefined,
         readSelectedReasoningMode() !== 'off' ? readSelectedReasoningMode() as RunReasoningMode : undefined,
+        readPlanModeFromStorage(),
       )
 
       if (personaKey === SEARCH_PERSONA_KEY) addSearchThreadId(thread.id)
