@@ -115,6 +115,7 @@ func (g *anthropicSDKGateway) Stream(ctx context.Context, request Request, yield
 
 func (g *anthropicSDKGateway) streamAttempt(ctx context.Context, request Request, yield func(StreamEvent) error, markActivity func(), attempt int) error {
 	llmCallID := uuid.NewString()
+	PrepareRequestModelInputImages(&request)
 
 	params, payload, providerPayloadBytes, err := g.messageParams(request)
 	if err != nil {

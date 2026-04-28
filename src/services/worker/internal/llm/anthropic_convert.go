@@ -1,7 +1,6 @@
 package llm
 
 import (
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -633,7 +632,7 @@ func anthropicContentBlocks(parts []ContentPart) ([]map[string]any, error) {
 			}
 			blocks = append(blocks, map[string]any{"type": "text", "text": text})
 		case "image":
-			mimeType, data, err := modelInputImage(part)
+			mimeType, encoded, err := modelInputImageBase64(part)
 			if err != nil {
 				return nil, err
 			}
@@ -648,7 +647,7 @@ func anthropicContentBlocks(parts []ContentPart) ([]map[string]any, error) {
 				"source": map[string]any{
 					"type":       "base64",
 					"media_type": mimeType,
-					"data":       base64.StdEncoding.EncodeToString(data),
+					"data":       encoded,
 				},
 			})
 		}
@@ -704,7 +703,7 @@ func anthropicToolResultBlock(text string, imageParts []ContentPart) (map[string
 		{"type": "text", "text": contentText},
 	}
 	for _, part := range imageParts {
-		mimeType, data, err := modelInputImage(part)
+		mimeType, encoded, err := modelInputImageBase64(part)
 		if err != nil {
 			return nil, err
 		}
@@ -713,7 +712,7 @@ func anthropicToolResultBlock(text string, imageParts []ContentPart) (map[string
 			"source": map[string]any{
 				"type":       "base64",
 				"media_type": mimeType,
-				"data":       base64.StdEncoding.EncodeToString(data),
+				"data":       encoded,
 			},
 		})
 	}

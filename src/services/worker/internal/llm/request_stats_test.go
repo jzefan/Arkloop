@@ -1,6 +1,10 @@
 package llm
 
-import "testing"
+import (
+	"testing"
+
+	"arkloop/services/shared/messagecontent"
+)
 
 func TestComputeRequestStats_StablePrefixHashIgnoresToolOrderButIncludesSchema(t *testing.T) {
 	reqA := Request{
@@ -100,5 +104,44 @@ func TestComputeRequestStats_PromptPlanBucketsAndHashes(t *testing.T) {
 	}
 	if stats.CacheCandidateBytes == 0 {
 		t.Fatalf("expected cache candidate bytes > 0")
+	}
+}
+
+func TestPrepareRequestModelInputImagesCachesPreparedData(t *testing.T) {
+	req := Request{Messages: []Message{{
+		Role: "user",
+		Content: []ContentPart{{
+			Type: messagecontent.PartTypeImage,
+			Attachment: &messagecontent.AttachmentRef{
+				Key:      "attachments/image.png",
+				MimeType: "image/png",
+			},
+			Data: []byte("raw-image"),
+		}},
+	}}}
+
+	PrepareRequestModelInputImages(&req)
+	if !req.modelInputImagesPrepared {
+		t.Fatal("expected request to be marked prepared")
+	}
+	part := req.Messages[0].Content[0]
+	part.Data = []byte("changed")
+
+	mimeType, data, err := modelInputImage(part)
+	if err != nil {
+		t.Fatalf("modelInputImage failed: %v", err)
+	}
+	if mimeType != "image/png" {
+		t.Fatalf("expected image/png, got %q", mimeType)
+	}
+	if string(data) != "raw-image" {
+		t.Fatalf("expected prepared data to be reused, got %q", string(data))
+	}
+	size, err := modelInputImageBase64Size(part)
+	if err != nil {
+		t.Fatalf("modelInputImageBase64Size failed: %v", err)
+	}
+	if size != base64EncodedLen(len("raw-image")) {
+		t.Fatalf("expected cached base64 size, got %d", size)
 	}
 }

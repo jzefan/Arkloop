@@ -99,6 +99,7 @@ func (g *AuxGateway) Stream(ctx context.Context, request Request, yield func(Str
 	}
 
 	llmCallID := uuid.NewString()
+	PrepareRequestModelInputImages(&request)
 	stats := ComputeRequestStats(request)
 	debugPayload, redactedHints := sanitizeDebugPayloadJSON(request.ToJSON())
 	if err := yield(StreamLlmRequest{

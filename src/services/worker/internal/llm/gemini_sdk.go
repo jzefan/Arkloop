@@ -90,6 +90,7 @@ func (g *geminiSDKGateway) Stream(ctx context.Context, request Request, yield fu
 	ctx, stopTimeout, markActivity := withStreamIdleTimeout(ctx, g.transport.cfg.TotalTimeout)
 	defer stopTimeout()
 	llmCallID := uuid.NewString()
+	PrepareRequestModelInputImages(&request)
 
 	payload, err := toGeminiPayload(request, g.protocol.AdvancedPayloadJSON)
 	if err != nil {

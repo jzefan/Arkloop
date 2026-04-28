@@ -85,6 +85,7 @@ func (g *openAISDKGateway) Stream(ctx context.Context, request Request, yield fu
 	if g.transport.baseURLErr != nil {
 		return yield(StreamRunFailed{Error: GatewayError{ErrorClass: ErrorClassInternalError, Message: "OpenAI base_url blocked", Details: map[string]any{"reason": g.transport.baseURLErr.Error()}}})
 	}
+	PrepareRequestModelInputImages(&request)
 	ctx, stopTimeout, markActivity := withStreamIdleTimeout(ctx, g.transport.cfg.TotalTimeout)
 	defer stopTimeout()
 
@@ -220,6 +221,7 @@ func (g *openAISDKGateway) responses(ctx context.Context, request Request, yield
 }
 
 func (g *openAISDKGateway) chatPayload(request Request, llmCallID string) (map[string]any, int, StreamLlmRequest, error) {
+	PrepareRequestModelInputImages(&request)
 	messagesPayload, err := toOpenAIChatMessages(request.Messages)
 	if err != nil {
 		return nil, 0, StreamLlmRequest{}, err
@@ -246,6 +248,7 @@ func (g *openAISDKGateway) chatPayload(request Request, llmCallID string) (map[s
 }
 
 func (g *openAISDKGateway) responsesPayload(request Request, llmCallID string) (map[string]any, int, StreamLlmRequest, error) {
+	PrepareRequestModelInputImages(&request)
 	instructions, inputMessages := splitOpenAIResponsesInstructions(request.Messages)
 	input, err := toOpenAIResponsesInput(inputMessages)
 	if err != nil {
