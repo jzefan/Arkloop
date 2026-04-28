@@ -21,6 +21,7 @@ core_tools:
     - notebook_write
     - grep
     - glob
+    - lsp
     - edit
     - write_file
     - enter_plan_mode
