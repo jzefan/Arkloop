@@ -355,6 +355,21 @@ export class SSEClient {
     if (!sseEvent.data) return
 
     try {
+      // catch-up batch：服务端一次性打包的缺失事件，展开后逐个走 onEvent
+      if (sseEvent.event === 'run.catch_up') {
+        const batch = JSON.parse(sseEvent.data) as RunEvent[]
+        if (!Array.isArray(batch) || batch.length === 0) return
+        let maxSeq = this.lastSeq
+        for (const event of batch) {
+          if (typeof event.seq === 'number' && event.seq > maxSeq) {
+            maxSeq = event.seq
+          }
+          this.options.onEvent(event)
+        }
+        this.lastSeq = maxSeq
+        return
+      }
+
       const runEvent = JSON.parse(sseEvent.data) as RunEvent
 
       // Gap-tolerant cursor: accept any received seq regardless of gaps.

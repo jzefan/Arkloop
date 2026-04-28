@@ -765,6 +765,22 @@ func (r *RunEventRepository) ListEvents(
 	return events, nil
 }
 
+// GetLatestSeq returns the maximum seq for a run's events, or 0 if no events exist.
+func (r *RunEventRepository) GetLatestSeq(ctx context.Context, runID uuid.UUID) (int64, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if runID == uuid.Nil {
+		return 0, fmt.Errorf("run_id must not be empty")
+	}
+	var seq int64
+	err := r.db.QueryRow(ctx,
+		`SELECT COALESCE(MAX(seq), 0) FROM run_events WHERE run_id = $1`,
+		runID,
+	).Scan(&seq)
+	return seq, err
+}
+
 func (r *RunEventRepository) lockRunRow(ctx context.Context, runID uuid.UUID) error {
 	var lockedID uuid.UUID
 	err := r.db.QueryRow(
