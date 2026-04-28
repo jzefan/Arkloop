@@ -995,21 +995,46 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
           />
 
           {isEditingQueuedPrompt && (
-            <button
-              type="button"
-              onClick={onCancelQueuedEdit}
-              className="flex shrink-0 items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-sm transition-colors hover:bg-[var(--c-bg-sub)]"
+            <div
+              className="flex shrink-0 items-center gap-1"
               style={{
-                color: 'var(--c-text-secondary)',
+                height: '33.5px',
+                padding: '0 4px 0 9px',
+                borderRadius: '8px',
                 background: 'color-mix(in srgb, var(--c-bg-sub) 82%, transparent)',
                 border: '0.5px solid var(--c-border-subtle)',
-                fontWeight: 520,
               }}
             >
-              <Pencil size={15} />
-              <span>{queuedEditLabel}</span>
-              <X size={15} />
-            </button>
+              <Pencil size={14} style={{ color: 'var(--c-text-secondary)', flexShrink: 0 }} />
+              <span style={{
+                fontSize: '14px',
+                color: 'var(--c-text-secondary)',
+                fontWeight: 375,
+                whiteSpace: 'nowrap',
+                margin: '0 2px',
+              }}>
+                {queuedEditLabel}
+              </span>
+              <button
+                type="button"
+                onClick={onCancelQueuedEdit}
+                className="bg-transparent hover:bg-[rgba(0,0,0,0.05)]"
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  width: '20px',
+                  height: '20px',
+                  borderRadius: '5px',
+                  border: 'none',
+                  cursor: 'pointer',
+                  padding: 0,
+                  flexShrink: 0,
+                }}
+              >
+                <X size={14} strokeWidth={2} style={{ color: 'var(--c-text-secondary)', opacity: 0.7 }} />
+              </button>
+            </div>
           )}
 
           {isWorkCompactInput && (

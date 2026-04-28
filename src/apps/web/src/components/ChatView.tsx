@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo, useSyncExternalStore, memo, Fragment, type ComponentProps } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { motion } from 'framer-motion'
-import { ArrowDown, ArrowUp, ChevronDown, ChevronRight, CornerDownLeft, Pencil, Trash2 } from 'lucide-react'
+import { ArrowDown, ArrowUp, ArrowUpFromLine, ChevronDown, ChevronRight, CornerDownLeft, Pencil, Trash2 } from 'lucide-react'
 import { AutoResizeTextarea, DebugTrigger } from '@arkloop/shared'
 import { ChatInput, type Attachment, type ChatInputHandle } from './ChatInput'
 import { RunDetailPanel } from './RunDetailPanel'
@@ -659,70 +659,79 @@ function QueuedPromptNotice({
         borderWidth: '0.5px',
         borderStyle: 'solid',
         borderColor: 'var(--c-input-border-color-focus)',
-        borderRadius: '20px',
+        borderRadius: '12px',
         background: 'var(--c-bg-input)',
         boxShadow: 'var(--c-input-shadow-focus)',
       }}
     >
       <div
-        className="flex items-center gap-2 px-4 pt-3 text-sm"
+        className="flex items-center justify-between px-4 py-2"
         style={{
           color: 'var(--c-text-secondary)',
-          paddingBottom: expanded ? '4px' : '12px',
-          transition: 'padding-bottom 0.2s ease',
+          fontSize: '14px',
+          lineHeight: '1.4',
         }}
       >
+        <div className="flex items-center gap-2">
+          <span style={{ fontWeight: 460, color: 'var(--c-text-primary)' }}>
+            {items.length} Queued
+          </span>
+          <span className="inline-flex items-center gap-1" style={{ color: 'var(--c-text-muted)' }}>
+            <CornerDownLeft size={14} />
+            <span>to Send</span>
+          </span>
+        </div>
         <button
           type="button"
           onClick={() => setExpanded(!expanded)}
-          className="flex items-center justify-center rounded-md p-0.5 transition-colors hover:bg-[var(--c-bg-sub)]"
+          className="flex items-center justify-center rounded-md p-1.5 transition-colors hover:bg-[var(--c-bg-sub)]"
           style={{ color: 'var(--c-text-muted)' }}
         >
           {expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
         </button>
-        <span style={{ fontWeight: 560, color: 'var(--c-text-primary)' }}>
-          {items.length} Queued
-        </span>
-        <span className="inline-flex items-center gap-1" style={{ color: 'var(--c-text-muted)' }}>
-          <CornerDownLeft size={14} />
-          <span>to Send</span>
-        </span>
       </div>
-      {expanded && (
-        <div className="max-h-[220px] overflow-y-auto px-2 pb-2">
-          {items.map((item) => {
+      <div
+        style={{
+          display: 'grid',
+          gridTemplateRows: expanded ? '1fr' : '0fr',
+          transition: 'grid-template-rows 0.25s cubic-bezier(0.4, 0, 0.2, 1)',
+        }}
+      >
+        <div style={{ minHeight: 0, overflow: 'hidden' }}>
+          <div className="px-2 pb-2">
+            {items.map((item) => {
             const isEditing = item.id === editingId
             const sendNowDisabled = !!activeRunId && item.attachments.length > 0
             return (
               <div
                 key={item.id}
-                className="group flex items-center gap-2 rounded-xl px-2 py-2 hover:bg-[var(--c-bg-sub)]"
+                className="group flex items-center gap-2 rounded-lg px-2 py-1.5 hover:bg-[var(--c-bg-sub)]"
                 style={{ color: 'var(--c-text-primary)', transition: 'background-color 0.15s ease' }}
               >
                 <div
-                  className="min-w-0 flex-1 whitespace-pre-wrap break-words text-[15px] leading-[1.45]"
+                  className="min-w-0 flex-1 whitespace-pre-wrap break-words text-[14px] leading-[1.4]"
                   style={{ fontWeight: 340 }}
                 >
                   {item.text || item.attachments.map((attachment) => attachment.filename).join(', ')}
                 </div>
                 {isEditing ? (
                   <span
-                    className="shrink-0 text-sm"
-                    style={{ color: 'var(--c-text-muted)', fontWeight: 400 }}
+                    className="shrink-0 text-sm flex items-center"
+                    style={{ color: 'var(--c-text-muted)', fontWeight: 400, height: '22px' }}
                   >
                     Editing
                   </span>
                 ) : (
-                  <div className="flex shrink-0 items-center gap-1 opacity-0 transition-opacity duration-150 group-hover:opacity-100">
+                  <div className="flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity duration-150 group-hover:opacity-100">
                     <button
                       type="button"
                       aria-label="Edit queued prompt"
                       title="Edit"
                       onClick={() => onEdit(item)}
-                      className="flex h-7 w-7 items-center justify-center rounded-lg transition-colors hover:bg-[var(--c-bg-deep)]"
-                      style={{ color: 'var(--c-text-secondary)' }}
+                      className="flex items-center justify-center rounded-md transition-colors hover:bg-[var(--c-bg-deep)]"
+                      style={{ color: 'var(--c-text-secondary)', width: '22px', height: '22px' }}
                     >
-                      <Pencil size={14} />
+                      <Pencil size={13} />
                     </button>
                     <button
                       type="button"
@@ -730,28 +739,29 @@ function QueuedPromptNotice({
                       title={sendNowDisabled ? 'Attachments can be sent after this run finishes' : 'Send now'}
                       onClick={() => onSendNow(item)}
                       disabled={sendNowDisabled}
-                      className="flex h-7 w-7 items-center justify-center rounded-lg transition-colors hover:bg-[var(--c-bg-deep)] disabled:cursor-not-allowed disabled:opacity-35"
-                      style={{ color: 'var(--c-text-primary)' }}
+                      className="flex items-center justify-center rounded-md transition-colors hover:bg-[var(--c-bg-deep)] disabled:cursor-not-allowed disabled:opacity-35"
+                      style={{ color: 'var(--c-text-primary)', width: '22px', height: '22px' }}
                     >
-                      <ArrowUp size={15} />
+                      <ArrowUpFromLine size={14} />
                     </button>
                     <button
                       type="button"
                       aria-label="Delete queued prompt"
                       title="Delete"
                       onClick={() => onDelete(item)}
-                      className="flex h-7 w-7 items-center justify-center rounded-lg transition-colors hover:bg-[var(--c-bg-deep)]"
-                      style={{ color: 'var(--c-text-secondary)' }}
+                      className="flex items-center justify-center rounded-md transition-colors hover:bg-[var(--c-bg-deep)]"
+                      style={{ color: 'var(--c-text-secondary)', width: '22px', height: '22px' }}
                     >
-                      <Trash2 size={14} />
+                      <Trash2 size={13} />
                     </button>
                   </div>
                 )}
               </div>
             )
           })}
+          </div>
         </div>
-      )}
+      </div>
     </div>
   )
 }
