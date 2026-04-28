@@ -141,8 +141,8 @@ export function CopTimeline({
   })()
 
   const seededStatusAnimation =
-    nonExecTimelineLive || !!shimmer || headerPhaseKey === 'thinking-pending' || headerPhaseKey === 'thinking-live' || headerPhaseKey === 'thought'
-  const headerUsesIncrementalTypewriter = seededStatusAnimation || headerPhaseKey === 'thought'
+    nonExecTimelineLive || !!shimmer || headerPhaseKey === 'thinking-pending' || headerPhaseKey === 'thinking-live'
+  const headerUsesIncrementalTypewriter = seededStatusAnimation
 
   const [hovered, setHovered] = useState(false)
 
@@ -217,8 +217,9 @@ export function CopTimeline({
               border: 'none',
               cursor: 'pointer',
               color: hovered ? 'var(--c-cop-row-hover-fg)' : 'var(--c-cop-row-fg)',
-              fontSize: '13px',
+              fontSize: '14px',
               fontWeight: 400,
+              lineHeight: '20px',
               transition: 'color 0.15s ease',
               maxWidth: '100%',
               minWidth: 0,
@@ -288,9 +289,9 @@ export function CopTimeline({
                       >
                         <div
                           style={{
-                            fontSize: '13px',
+                            fontSize: '14px',
                             color: 'var(--c-cop-row-fg)',
-                            lineHeight: '18px',
+                            lineHeight: '20px',
                             paddingTop: '3px',
                           }}
                         >

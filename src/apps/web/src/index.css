@@ -679,8 +679,8 @@ button:not(:disabled) {
   --c-cop-row-hover-fg: var(--c-text-primary);
   --c-cop-row-subtle-fg: var(--c-text-tertiary);
   --c-cop-row-weight: var(--c-fw-400);
-  --c-cop-think-label-size: 13px;
-  --c-cop-think-label-lh: 18px;
+  --c-cop-think-label-size: 14px;
+  --c-cop-think-label-lh: 20px;
   --c-cop-think-card-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
 }
 
@@ -907,8 +907,8 @@ button:not(:disabled) {
   border: none;
 }
 .cop-timeline-root .cop-thinking-card-trigger-label {
-  font-size: 13px;
-  line-height: 18px;
+  font-size: 14px;
+  line-height: 20px;
   font-weight: 400;
   color: var(--c-cop-row-fg);
 }
