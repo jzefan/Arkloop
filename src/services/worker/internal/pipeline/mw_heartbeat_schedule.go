@@ -2,6 +2,7 @@ package pipeline
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"log/slog"
 	"strings"
@@ -91,7 +92,10 @@ func NewHeartbeatScheduleMiddleware(db data.DB) RunMiddleware {
 		}
 		model := strings.TrimSpace(cfg.Model)
 
-		// model fallback：InputJSON → PersonaDefinition
+		// If heartbeat follows the conversation, use the current channel default.
+		if model == "" {
+			model = currentChannelDefaultModel(ctx, db, channelID)
+		}
 		if model == "" {
 			if m, ok := rc.InputJSON["model"].(string); ok && strings.TrimSpace(m) != "" {
 				model = strings.TrimSpace(m)
@@ -142,6 +146,26 @@ func NewHeartbeatScheduleMiddleware(db data.DB) RunMiddleware {
 		slog.DebugContext(ctx, "heartbeat_schedule: trigger unchanged", "identity_id", identityID)
 		return nil
 	}
+}
+
+func currentChannelDefaultModel(ctx context.Context, db data.DB, channelID uuid.UUID) string {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if db == nil || channelID == uuid.Nil {
+		return ""
+	}
+	var raw json.RawMessage
+	if err := db.QueryRow(ctx, `SELECT config_json FROM channels WHERE id = $1`, channelID).Scan(&raw); err != nil {
+		return ""
+	}
+	var payload struct {
+		DefaultModel string `json:"default_model"`
+	}
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		return ""
+	}
+	return strings.TrimSpace(payload.DefaultModel)
 }
 
 func resolveHeartbeatIdentityConfig(ctx context.Context, db data.DB, rc *RunContext) (uuid.UUID, uuid.UUID, *data.HeartbeatIdentityConfig, string, string) {
