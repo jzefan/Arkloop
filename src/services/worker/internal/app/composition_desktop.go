@@ -778,6 +778,7 @@ func (e *DesktopEngine) Execute(ctx context.Context, run data.Run, traceID strin
 			MessagesRepo:    data.MessagesRepository{},
 			EventsRepo:      data.DesktopRunEventsRepository{},
 			EmitDebugEvents: e.emitDebugEvents,
+			AttachmentStore: e.messageAttachmentStore,
 		})),
 		pipeline.NewTitleSummarizerMiddleware(e.db, nil, e.auxGateway, e.emitDebugEvents, e.routingLoader),
 		pipeline.NewContextCompactMiddleware(e.db, data.MessagesRepository{}, data.DesktopRunEventsRepository{}, e.auxGateway, e.emitDebugEvents, e.routingLoader),

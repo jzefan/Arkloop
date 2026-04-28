@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"arkloop/services/shared/messagecontent"
 	"arkloop/services/shared/objectstore"
 	"arkloop/services/shared/rollout"
 	"arkloop/services/worker/internal/data"
@@ -202,6 +203,37 @@ func TestBuildMessagePartsRestoresAssistantThinkingState(t *testing.T) {
 	}
 	if len(parts) != 2 || parts[0].Kind() != "thinking" || parts[0].Signature != "sig_1" {
 		t.Fatalf("expected assistant thinking state restored, got %#v", parts)
+	}
+}
+
+func TestBuildMessagePartsWithOptionsLazyImagesKeepsAttachmentReference(t *testing.T) {
+	contentJSON, err := (messagecontent.Content{Parts: []messagecontent.Part{{
+		Type: messagecontent.PartTypeImage,
+		Attachment: &messagecontent.AttachmentRef{
+			Key:      "attachments/image.png",
+			Filename: "image.png",
+			MimeType: "image/png",
+		},
+	}}}).JSON()
+	if err != nil {
+		t.Fatalf("marshal content json: %v", err)
+	}
+
+	parts, err := BuildMessagePartsWithOptions(context.Background(), nil, data.ThreadMessage{
+		Role:        "user",
+		ContentJSON: contentJSON,
+	}, MessagePartBuildOptions{LazyImages: true})
+	if err != nil {
+		t.Fatalf("BuildMessagePartsWithOptions failed: %v", err)
+	}
+	if len(parts) != 1 || parts[0].Kind() != messagecontent.PartTypeImage {
+		t.Fatalf("expected one image part, got %#v", parts)
+	}
+	if parts[0].Attachment == nil || parts[0].Attachment.Key != "attachments/image.png" {
+		t.Fatalf("expected attachment reference to be preserved, got %#v", parts[0].Attachment)
+	}
+	if len(parts[0].Data) != 0 {
+		t.Fatalf("expected image data to stay unloaded")
 	}
 }
 

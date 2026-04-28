@@ -46,6 +46,7 @@ func buildCanonicalThreadContext(
 	attachmentStore MessageAttachmentStore,
 	upperBoundMessageID *uuid.UUID,
 	messageLimit int,
+	partOptions ...MessagePartBuildOptions,
 ) (*canonicalThreadContext, error) {
 	fetchLimit := canonicalHistoryFetchLimit(messageLimit)
 
@@ -121,7 +122,7 @@ func buildCanonicalThreadContext(
 		firstContextSeq = chunks[0].ContextSeq
 	}
 	selected := selectRenderableReplacementSpans(mapped, firstContextSeq, lastAtom)
-	entries, _, err := renderCanonicalThreadMessagesFromGraph(ctx, attachmentStore, atoms, chunks, selected)
+	entries, _, err := renderCanonicalThreadMessagesFromGraph(ctx, attachmentStore, atoms, chunks, selected, partOptions...)
 	if err != nil {
 		return nil, err
 	}
@@ -303,6 +304,7 @@ func renderCanonicalThreadMessagesFromGraph(
 	atoms []canonicalAtom,
 	chunks []canonicalChunk,
 	replacements []canonicalReplacementSpan,
+	partOptions ...MessagePartBuildOptions,
 ) ([]canonicalThreadContextEntry, string, error) {
 	frontier := make([]FrontierNode, 0, len(chunks)+len(replacements))
 	skipped := make(map[int64]struct{})
@@ -351,7 +353,7 @@ func renderCanonicalThreadMessagesFromGraph(
 		}
 		return frontier[i].EndContextSeq < frontier[j].EndContextSeq
 	})
-	entries, err := renderCanonicalThreadMessagesFromFrontier(ctx, attachmentStore, atoms, chunks, frontier)
+	entries, err := renderCanonicalThreadMessagesFromFrontier(ctx, attachmentStore, atoms, chunks, frontier, partOptions...)
 	return entries, "", err
 }
 
@@ -361,7 +363,9 @@ func renderCanonicalThreadMessagesFromFrontier(
 	atoms []canonicalAtom,
 	chunks []canonicalChunk,
 	frontier []FrontierNode,
+	partOptions ...MessagePartBuildOptions,
 ) ([]canonicalThreadContextEntry, error) {
+	opts := resolveMessagePartBuildOptions(partOptions...)
 	entries := make([]canonicalThreadContextEntry, 0, len(frontier))
 	if len(frontier) == 0 {
 		return entries, nil
@@ -379,7 +383,7 @@ func renderCanonicalThreadMessagesFromFrontier(
 		if strings.TrimSpace(msg.Role) == "" {
 			return nil
 		}
-		parts, err := BuildMessageParts(ctx, attachmentStore, msg)
+		parts, err := BuildMessagePartsWithOptions(ctx, attachmentStore, msg, opts)
 		if err != nil {
 			if attachmentStore == nil {
 				parts = fallbackTextParts(msg.Content)
