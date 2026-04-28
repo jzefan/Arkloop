@@ -179,9 +179,9 @@ export function CopTimelineSegment({
           background: 'transparent',
           cursor: 'pointer',
           color: hovered ? 'var(--c-cop-row-hover-fg)' : 'var(--c-cop-row-fg)',
-          fontSize: 14,
+          fontSize: 'var(--c-cop-row-font-size)',
           fontWeight: 400,
-          lineHeight: '20px',
+          lineHeight: 'var(--c-cop-row-line-height)',
           transition: 'color 0.15s ease',
         }}
       >
@@ -361,7 +361,7 @@ function renderItem(
   if (step) {
     return (
       <div>
-        <div style={{ fontSize: '14px', color: 'var(--c-cop-row-fg)', lineHeight: '20px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+        <div style={{ fontSize: 'var(--c-cop-row-font-size)', color: 'var(--c-cop-row-fg)', lineHeight: 'var(--c-cop-row-line-height)', display: 'flex', alignItems: 'center', gap: '6px' }}>
           <TypewriterText text={timelineStepDisplayLabel(step)} className={step.status === 'active' ? 'thinking-shimmer-dim' : undefined} live={live} />
         </div>
         {step.kind === 'searching' && step.queries && step.queries.length > 0 && (
@@ -377,7 +377,7 @@ function renderItem(
   // Fallback: render tool name + status
   const hasError = typeof call.errorClass === 'string' && call.errorClass !== ''
   return (
-    <div style={{ fontSize: '14px', color: 'var(--c-cop-row-fg)', lineHeight: '20px' }}>
+    <div style={{ fontSize: 'var(--c-cop-row-font-size)', color: 'var(--c-cop-row-fg)', lineHeight: 'var(--c-cop-row-line-height)' }}>
       <TypewriterText text={call.toolName} live={live && !hasError && call.result === undefined} />
     </div>
   )

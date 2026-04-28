@@ -160,7 +160,7 @@ export function TimelineNarrativeBody({ text, tone = 'secondary', live }: { text
   return (
     <div
       style={{
-        fontSize: '14px',
+        fontSize: 'var(--c-cop-row-font-size)',
         lineHeight: '1.6',
         color,
         ...(tone === 'primary' ? {} : { fontWeight: 'var(--c-narrative-weight, 275)' as const }),

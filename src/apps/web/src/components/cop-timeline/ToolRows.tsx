@@ -12,9 +12,9 @@ const MONO = 'ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospac
 const EXPLORE_VIEWPORT_BOTTOM_PAD = 10
 const TIMELINE_ROW_TITLE_STYLE = {
   color: 'var(--c-cop-row-fg, var(--c-text-secondary))',
-  fontSize: 14,
+  fontSize: 'var(--c-cop-row-font-size)',
   fontWeight: 400,
-  lineHeight: '20px',
+  lineHeight: 'var(--c-cop-row-line-height)',
 } as const
 
 const LocalExpansionScrollContext = createContext<((trigger?: HTMLElement | null) => void) | null>(null)
@@ -352,9 +352,9 @@ export function ExploreTimelineRow({ group, live, segmentLive, headerVariant = '
               paddingBlock: 1,
               marginBlock: -1,
               color: 'inherit',
-              fontSize: '14px',
+              fontSize: 'var(--c-cop-row-font-size)',
               fontWeight: 400,
-              lineHeight: '20px',
+              lineHeight: 'var(--c-cop-row-line-height)',
             }}
           >
             <TypewriterText text={group.label} live={live && group.status === 'running'} className={live && group.status === 'running' ? 'thinking-shimmer-dim' : undefined} />
@@ -468,9 +468,9 @@ export function EditTimelineSegment({ op, attachedThinkingRows }: { op: FileOpRe
             background: 'transparent',
             cursor: 'pointer',
             color: hovered ? 'var(--c-cop-row-hover-fg, var(--c-cop-row-fg))' : 'var(--c-cop-row-fg)',
-            fontSize: 14,
+            fontSize: 'var(--c-cop-row-font-size)',
             fontWeight: 400,
-            lineHeight: '20px',
+            lineHeight: 'var(--c-cop-row-line-height)',
             transition: 'color 0.15s ease',
           }}
         >
