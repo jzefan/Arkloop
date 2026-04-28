@@ -1,5 +1,5 @@
 import { useRef, useEffect, useCallback, useMemo, useState, forwardRef, useImperativeHandle, useLayoutEffect } from 'react'
-import { ArrowUp, Mic, X, Check, Loader2 } from 'lucide-react'
+import { ArrowUp, Mic, X, Check, Loader2, Pencil } from 'lucide-react'
 import type { FormEvent, KeyboardEvent, ClipboardEvent as ReactClipboardEvent } from 'react'
 import { listSelectablePersonas, type SelectablePersona, type UploadedThreadAttachment } from '../api'
 import { useLocale } from '../contexts/LocaleContext'
@@ -77,6 +77,8 @@ type Props = {
   hasMessages?: boolean
   messagesLoading?: boolean
   workThreadId?: string
+  queuedEditLabel?: string
+  onCancelQueuedEdit?: () => void
   draftOwnerKey?: string | null
   planMode?: boolean
   onTogglePlanMode?: (currentMode: boolean) => Promise<void>
@@ -177,6 +179,8 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
   hasMessages,
   messagesLoading,
   workThreadId,
+  queuedEditLabel,
+  onCancelQueuedEdit,
   draftOwnerKey,
   planMode,
   onTogglePlanMode: onTogglePlanModeProp,
@@ -350,6 +354,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
   const showAttachmentGrid = hasAttachments && !collapsingGrid
   const showWelcomeAttachmentSpacer = isWelcomeInput && (!hasAttachments || collapsingGrid)
   const isPlainChatThread = variant === 'chat' && appMode !== 'work'
+  const isEditingQueuedPrompt = !!queuedEditLabel
   const isWorkSingleLogicalLine = countLinesWithinLimit(draft, 2) === 1
   const isWorkCompactInput = isWorkChat && isWorkSingleLogicalLine && !workCompactInputWraps
   const isWorkExpandedInput = isWorkChat && !isWorkCompactInput
@@ -989,6 +994,24 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
             onMenuOpenChange={handleMenuOpenChange}
           />
 
+          {isEditingQueuedPrompt && (
+            <button
+              type="button"
+              onClick={onCancelQueuedEdit}
+              className="flex shrink-0 items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-sm transition-colors hover:bg-[var(--c-bg-sub)]"
+              style={{
+                color: 'var(--c-text-secondary)',
+                background: 'color-mix(in srgb, var(--c-bg-sub) 82%, transparent)',
+                border: '0.5px solid var(--c-border-subtle)',
+                fontWeight: 520,
+              }}
+            >
+              <Pencil size={15} />
+              <span>{queuedEditLabel}</span>
+              <X size={15} />
+            </button>
+          )}
+
           {isWorkCompactInput && (
             <>
               <div
@@ -1056,7 +1079,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
               <div className="flex h-full w-full items-center justify-center rounded-lg bg-[var(--c-accent-send)]" style={{ opacity: 0.5 }}>
                 <Loader2 size={14} className="animate-spin" style={{ color: 'var(--c-accent-send-text)' }} />
               </div>
-            ) : isStreaming && canCancel ? (
+            ) : isStreaming && canCancel && !isEditingQueuedPrompt ? (
               <button
                 type="button"
                 onClick={onCancel}
@@ -1111,7 +1134,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                 </button>
                 <button
                   type="submit"
-                  disabled={isStreaming || (!draft.trim() && attachments.length === 0)}
+                  disabled={(!isEditingQueuedPrompt && isStreaming) || (!draft.trim() && attachments.length === 0)}
                   className="flex h-full w-full items-center justify-center rounded-lg bg-[var(--c-accent-send)] text-[var(--c-accent-send-text)] hover:bg-[var(--c-accent-send-hover)] active:opacity-[0.75] active:scale-[0.93] disabled:cursor-not-allowed"
                   style={{
                     position: 'absolute',

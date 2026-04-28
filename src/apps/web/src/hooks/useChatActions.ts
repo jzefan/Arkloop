@@ -21,6 +21,7 @@ import {
   type RunReasoningMode,
 } from '../api'
 import { buildMessageRequest } from '../messageContent'
+import { createQueuedPrompt } from '../queuedPrompts'
 import {
   addSearchThreadId,
   clearThreadRunHandoff,
@@ -59,7 +60,7 @@ export function useChatActions({ scrollToBottom }: UseChatActionsDeps) {
     setCancelSubmitting,
     setError,
     setInjectionBlocked,
-    setQueuedDraft,
+    setQueuedPrompts,
     setAwaitingInput,
     pendingUserInput,
     setPendingUserInput,
@@ -73,7 +74,6 @@ export function useChatActions({ scrollToBottom }: UseChatActionsDeps) {
     freezeCutoffRef,
     lastVisibleNonTerminalSeqRef,
     noResponseMsgIdRef,
-    pendingMessageRef,
     setTerminalRunDisplayId,
     setTerminalRunHandoffStatus,
     setTerminalRunCoveredRunIds,
@@ -94,8 +94,7 @@ export function useChatActions({ scrollToBottom }: UseChatActionsDeps) {
     if (!normalized) return
     markTerminalRunHistory(null)
     if (activeRunId || sending) {
-      pendingMessageRef.current = normalized
-      setQueuedDraft(normalized)
+      setQueuedPrompts((prev) => [...prev, createQueuedPrompt({ text: normalized })])
       return
     }
 
@@ -140,7 +139,6 @@ export function useChatActions({ scrollToBottom }: UseChatActionsDeps) {
     noResponseMsgIdRef,
     onLoggedOut,
     onRunStarted,
-    pendingMessageRef,
     resetLiveState,
     resetSearchSteps,
     scrollToBottom,
@@ -148,7 +146,7 @@ export function useChatActions({ scrollToBottom }: UseChatActionsDeps) {
     setActiveRunId,
     setError,
     setInjectionBlocked,
-    setQueuedDraft,
+    setQueuedPrompts,
     setMessages,
     setSending,
     setTerminalRunDisplayId,

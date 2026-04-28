@@ -1,4 +1,4 @@
-import { useEffect, useRef, useCallback, useState } from 'react'
+import { useEffect, useRef, useCallback, useState, type RefObject } from 'react'
 import { canonicalToolName, pickLogicalToolName } from '@arkloop/shared'
 import { setThreadTodos } from '../todoDb'
 import { useAuth } from '../contexts/auth'
@@ -53,13 +53,13 @@ import type { RequestedSchema } from '../userInputTypes'
 import { noteShowWidgetDelta } from '../streamDebug'
 
 type UseThreadSseEffectDeps = {
-  restoreQueuedDraftToInput: () => void
-  clearQueuedDraft: () => void
+  drainQueuedPromptRef: RefObject<(() => void) | null>
+  drainForcedQueuedPromptRef: RefObject<(() => boolean) | null>
 }
 
 export function useThreadSseEffect({
-  restoreQueuedDraftToInput,
-  clearQueuedDraft,
+  drainQueuedPromptRef,
+  drainForcedQueuedPromptRef,
 }: UseThreadSseEffectDeps): void {
   const { logout: onLoggedOut } = useAuth()
   const { threadId } = useChatSession()
@@ -76,7 +76,6 @@ export function useThreadSseEffect({
     setError,
     setInjectionBlocked,
     injectionBlockedRunIdRef,
-    setQueuedDraft,
     setAwaitingInput,
     setPendingUserInput,
     setCheckInDraft,
@@ -97,7 +96,6 @@ export function useThreadSseEffect({
     sseTerminalFallbackRunIdRef,
     sseTerminalFallbackArmedRef,
     noResponseMsgIdRef,
-    pendingMessageRef,
     seenFirstToolCallInRunRef,
   } = useRunLifecycle()
   const {
@@ -137,7 +135,6 @@ export function useThreadSseEffect({
   } = useStream()
   const {
     refreshMessages,
-    sendMessageRef,
   } = useMessageStore()
   const {
     resetAssistantTurnLive,
@@ -181,7 +178,6 @@ export function useThreadSseEffect({
   useEffect(() => {
     if (!sseRunId) return
     const resetTerminalRunState = (options?: {
-      restoreQueuedDraft?: boolean
       preserveSearchSteps?: boolean
       handoffRunCache?: TerminalRunCache
     }) => {
@@ -207,11 +203,6 @@ export function useThreadSseEffect({
         setTopLevelSubAgents([])
         setTopLevelFileOps([])
         setTopLevelWebFetches([])
-      }
-      if (options?.restoreQueuedDraft) {
-        restoreQueuedDraftToInput()
-      } else {
-        clearQueuedDraft()
       }
       if (!handoffRunCache) {
         streamingArtifactsRef.current = []
@@ -701,7 +692,6 @@ export function useThreadSseEffect({
         injectionBlockedRunIdRef.current = event.run_id
         sseTerminalFallbackArmedRef.current = false
         sseTerminalFallbackRunIdRef.current = null
-        restoreQueuedDraftToInput()
         sse.disconnect()
         setActiveRunId(null)
         setCancelSubmitting(false)
@@ -761,7 +751,6 @@ export function useThreadSseEffect({
         })) {
           persistThreadRunHandoff(completedRunId, completedRunCache)
         }
-        setQueuedDraft(null)
         setAwaitingInput(false)
         setPendingUserInput(null)
         setCheckInDraft('')
@@ -780,11 +769,7 @@ export function useThreadSseEffect({
               markTerminalRunHistory(completedAssistant.id, false)
               releaseCompletedHandoffToHistory()
             }
-            const pending = pendingMessageRef.current
-            if (pending) {
-              pendingMessageRef.current = null
-              sendMessageRef.current?.(pending)
-            }
+            drainQueuedPromptRef.current?.()
           })
           .catch((err) => console.error('persist run data failed', err))
         continue
@@ -817,7 +802,6 @@ export function useThreadSseEffect({
           persistThreadRunHandoff(runId, runCache)
         }
         resetTerminalRunState({
-          restoreQueuedDraft: true,
           preserveSearchSteps: true,
           handoffRunCache: runCache,
         })
@@ -832,6 +816,7 @@ export function useThreadSseEffect({
                 persistRunDataToMessage(assistant.id, runCache, runEventsForMessage)
                 markTerminalRunHistory(assistant.id, false)
               }
+              drainForcedQueuedPromptRef.current?.()
             })
             .catch((err) => console.error('persist run data failed', err))
         }
@@ -860,7 +845,6 @@ export function useThreadSseEffect({
           persistThreadRunHandoff(runId, runCache)
         }
         resetTerminalRunState({
-          restoreQueuedDraft: true,
           preserveSearchSteps: true,
           handoffRunCache: runCache,
         })
@@ -886,6 +870,7 @@ export function useThreadSseEffect({
               if (assistant) {
                 persistRunDataToMessage(assistant.id, runCache, runEventsForMessage)
               }
+              drainForcedQueuedPromptRef.current?.()
             })
             .catch((err) => console.error('persist run data failed', err))
         }
@@ -914,7 +899,6 @@ export function useThreadSseEffect({
           persistThreadRunHandoff(runId, runCache)
         }
         resetTerminalRunState({
-          restoreQueuedDraft: true,
           preserveSearchSteps: true,
           handoffRunCache: runCache,
         })
@@ -936,13 +920,14 @@ export function useThreadSseEffect({
               if (assistant) {
                 persistRunDataToMessage(assistant.id, runCache, runEventsForMessage)
               }
+              drainForcedQueuedPromptRef.current?.()
             })
             .catch((err) => console.error('persist run data failed', err))
         }
         continue
       }
     }
-  }, [sseRunId, activeRunId, armCompletedTitleTail, clearCompletedTitleTail, clearContextCompactHideTimer, clearLiveRunSecurityArtifacts, clearQueuedDraft, completedTitleTailRunId, deferredRunEventDrainTick, scheduleDeferredRunEventDrain, persistThreadRunHandoff, refreshMessages, refreshCredits, resetSearchSteps, restoreQueuedDraftToInput, sse.events, appendSegmentContent, endSegmentStream, addSegment, flushSegmentsRefToState]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [sseRunId, activeRunId, armCompletedTitleTail, clearCompletedTitleTail, clearContextCompactHideTimer, clearLiveRunSecurityArtifacts, completedTitleTailRunId, deferredRunEventDrainTick, scheduleDeferredRunEventDrain, persistThreadRunHandoff, refreshMessages, refreshCredits, resetSearchSteps, sse.events, appendSegmentContent, endSegmentStream, addSegment, flushSegmentsRefToState]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // 401 SSE 错误时登出
   useEffect(() => {
@@ -985,7 +970,6 @@ export function useThreadSseEffect({
 
     setActiveRunId(null)
     setPendingThinking(false)
-    setQueuedDraft(null)
     setAwaitingInput(false)
     setPendingUserInput(null)
     setCheckInDraft('')

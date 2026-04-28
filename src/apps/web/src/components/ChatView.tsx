@@ -1,9 +1,9 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo, useSyncExternalStore, memo, Fragment, type ComponentProps } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { motion } from 'framer-motion'
-import { ArrowDown, X } from 'lucide-react'
+import { ArrowDown, ArrowUp, CornerDownLeft, Pencil, Trash2 } from 'lucide-react'
 import { AutoResizeTextarea, DebugTrigger } from '@arkloop/shared'
-import { ChatInput, type ChatInputHandle } from './ChatInput'
+import { ChatInput, type Attachment, type ChatInputHandle } from './ChatInput'
 import { RunDetailPanel } from './RunDetailPanel'
 import type { CodeExecution } from './CodeExecutionCard'
 import {
@@ -87,6 +87,7 @@ import { apiBaseUrl } from '@arkloop/shared/api'
 import { ChatSkeleton } from './ChatSkeleton'
 import { buildDraftAttachmentRecords, restoreAttachmentFromDraftRecord } from '../draftAttachments'
 import {
+  cancelRun,
   createMessage,
   createRun,
   forkThread,
@@ -100,8 +101,10 @@ import {
   type CollaborationMode,
   type MessageResponse,
   type RunReasoningMode,
+  type UploadedThreadAttachment,
 } from '../api'
 import { buildMessageRequest } from '../messageContent'
+import { createQueuedPrompt, type QueuedPrompt } from '../queuedPrompts'
 import {
   addSearchThreadId,
   SEARCH_PERSONA_KEY,
@@ -629,6 +632,113 @@ const ScrollToBottomButton = memo(function ScrollToBottomButton({
   )
 })
 
+type QueuedPromptNoticeProps = {
+  items: QueuedPrompt[]
+  editingId: string | null
+  activeRunId: string | null
+  onEdit: (item: QueuedPrompt) => void
+  onSendNow: (item: QueuedPrompt) => void
+  onDelete: (item: QueuedPrompt) => void
+}
+
+function QueuedPromptNotice({
+  items,
+  editingId,
+  activeRunId,
+  onEdit,
+  onSendNow,
+  onDelete,
+}: QueuedPromptNoticeProps) {
+  if (items.length === 0) return null
+  return (
+    <div
+      className="chat-input-box overflow-hidden"
+      style={{
+        width: '100%',
+        border: '0.5px solid var(--c-input-border-color)',
+        borderRadius: '20px',
+        background: 'var(--c-bg-input)',
+        boxShadow: 'var(--c-input-shadow)',
+      }}
+    >
+      <div
+        className="flex items-center gap-2 px-4 pb-1 pt-3 text-sm"
+        style={{ color: 'var(--c-text-secondary)' }}
+      >
+        <span style={{ fontWeight: 560, color: 'var(--c-text-primary)' }}>
+          {items.length} Queued
+        </span>
+        <span className="inline-flex items-center gap-1" style={{ color: 'var(--c-text-muted)' }}>
+          <CornerDownLeft size={14} />
+          <span>to Send</span>
+        </span>
+      </div>
+      <div className="max-h-[220px] overflow-y-auto px-2 pb-2">
+        {items.map((item) => {
+          const isEditing = item.id === editingId
+          const sendNowDisabled = !!activeRunId && item.attachments.length > 0
+          return (
+            <div
+              key={item.id}
+              className="group flex items-center gap-2 rounded-xl px-2 py-2"
+              style={{ color: 'var(--c-text-primary)' }}
+            >
+              <div
+                className="min-w-0 flex-1 whitespace-pre-wrap break-words text-[15px] leading-[1.45]"
+                style={{ fontWeight: 340 }}
+              >
+                {item.text || item.attachments.map((attachment) => attachment.filename).join(', ')}
+              </div>
+              {isEditing ? (
+                <span
+                  className="shrink-0 text-sm"
+                  style={{ color: 'var(--c-text-muted)', fontWeight: 500 }}
+                >
+                  Editing
+                </span>
+              ) : (
+                <div className="flex shrink-0 items-center gap-1">
+                  <button
+                    type="button"
+                    aria-label="Edit queued prompt"
+                    title="Edit"
+                    onClick={() => onEdit(item)}
+                    className="flex h-8 w-8 items-center justify-center rounded-lg transition-colors hover:bg-[var(--c-bg-sub)]"
+                    style={{ color: 'var(--c-text-secondary)' }}
+                  >
+                    <Pencil size={16} />
+                  </button>
+                  <button
+                    type="button"
+                    aria-label="Send queued prompt now"
+                    title={sendNowDisabled ? 'Attachments can be sent after this run finishes' : 'Send now'}
+                    onClick={() => onSendNow(item)}
+                    disabled={sendNowDisabled}
+                    className="flex h-8 w-8 items-center justify-center rounded-lg transition-colors hover:bg-[var(--c-bg-sub)] disabled:cursor-not-allowed disabled:opacity-35"
+                    style={{ color: 'var(--c-text-primary)' }}
+                  >
+                    <ArrowUp size={17} />
+                  </button>
+                  <button
+                    type="button"
+                    aria-label="Delete queued prompt"
+                    title="Delete"
+                    onClick={() => onDelete(item)}
+                    className="flex h-8 w-8 items-center justify-center rounded-lg transition-colors hover:bg-[var(--c-bg-sub)]"
+                    style={{ color: 'var(--c-text-secondary)' }}
+                  >
+                    <Trash2 size={16} />
+                  </button>
+                </div>
+              )}
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
 export const ChatView = memo(function ChatView() {
   const { accessToken, logout: onLoggedOut, me } = useAuth()
   const {
@@ -676,8 +786,8 @@ export const ChatView = memo(function ChatView() {
     injectionBlocked,
     setInjectionBlocked,
     injectionBlockedRunIdRef,
-    queuedDraft,
-    setQueuedDraft,
+    queuedPrompts,
+    setQueuedPrompts,
     awaitingInput,
     setAwaitingInput,
     pendingUserInput,
@@ -702,7 +812,6 @@ export const ChatView = memo(function ChatView() {
     sseTerminalFallbackRunIdRef,
     sseTerminalFallbackArmedRef,
     noResponseMsgIdRef,
-    pendingMessageRef,
     seenFirstToolCallInRunRef,
   } = useRunLifecycle()
   const {
@@ -814,22 +923,17 @@ export const ChatView = memo(function ChatView() {
   const resetSearchSteps = useCallback(() => {
     resetSearchStepsState()
   }, [resetSearchStepsState])
-  const clearQueuedDraft = useCallback(() => {
-    pendingMessageRef.current = null
-    setPreserveLiveRunUi(false)
-    setQueuedDraft(null)
-  }, [])
+  const drainQueuedPromptRef = useRef<(() => void) | null>(null)
+  const drainForcedQueuedPromptRef = useRef<(() => boolean) | null>(null)
+  const forcedQueuedPromptRef = useRef<QueuedPrompt | null>(null)
+  const queuedPromptsRef = useRef<QueuedPrompt[]>(queuedPrompts)
+  queuedPromptsRef.current = queuedPrompts
+  const [editingQueuedPromptId, setEditingQueuedPromptId] = useState<string | null>(null)
+  const queuedEditPreviousDraftRef = useRef('')
+
   const clearCompletedTitleTail = useCallback(() => {
     clearCompletedTitleTailState()
   }, [clearCompletedTitleTailState])
-  const restoreQueuedDraftToInput = useCallback(() => {
-    const pending = pendingMessageRef.current
-    pendingMessageRef.current = null
-    setQueuedDraft(null)
-    if (!pending) return
-    const current = chatInputRef.current?.getValue() ?? ''
-    if (!current.trim()) chatInputRef.current?.setValue(pending)
-  }, [])
 
   const liveRunUiVisible = isStreaming || preserveLiveRunUi
   const liveRunUiActive =
@@ -872,10 +976,7 @@ export const ChatView = memo(function ChatView() {
 
   const { resetAssistantTurnLive, captureTerminalRunCache, persistThreadRunHandoff } = useRunTransition()
 
-  useThreadSseEffect({
-    restoreQueuedDraftToInput,
-    clearQueuedDraft,
-  })
+  useThreadSseEffect({ drainQueuedPromptRef, drainForcedQueuedPromptRef })
 
   const prevActiveRunIdRef = useRef<string | null>(null)
   useEffect(() => {
@@ -1451,8 +1552,9 @@ export const ChatView = memo(function ChatView() {
     setAwaitingInput(false)
     setPendingUserInput(null)
     setCheckInDraft('')
-    pendingMessageRef.current = null
-    setQueuedDraft(null)
+    setQueuedPrompts([])
+    setEditingQueuedPromptId(null)
+    queuedEditPreviousDraftRef.current = ''
     currentRunSourcesRef.current = []
     currentRunArtifactsRef.current = []
     currentRunCodeExecutionsRef.current = []
@@ -1628,9 +1730,211 @@ export const ChatView = memo(function ChatView() {
     writeInputDraftAttachments(draftScope, buildDraftAttachmentRecords(attachments))
   }, [attachments, draftScope, draftScopeKey])
 
+  const queueReadyAttachments = useCallback((items: Attachment[]): UploadedThreadAttachment[] | null => {
+    const uploads: UploadedThreadAttachment[] = []
+    for (const item of items) {
+      if (item.status !== 'ready' || !item.uploaded) return null
+      uploads.push(item.uploaded)
+    }
+    return uploads
+  }, [])
+
+  const resolveReasoningMode = useCallback((): RunReasoningMode | undefined => {
+    if (!threadId) return undefined
+    const mode = readThreadReasoningMode(threadId)
+    return mode !== 'off' ? mode as RunReasoningMode : undefined
+  }, [threadId])
+
+  const appendQueuedPrompt = useCallback((prompt: QueuedPrompt) => {
+    setQueuedPrompts((prev) => [...prev, prompt])
+  }, [setQueuedPrompts])
+
+  const removeQueuedPrompt = useCallback((id: string) => {
+    setQueuedPrompts((prev) => prev.filter((item) => item.id !== id))
+    if (editingQueuedPromptId === id) {
+      setEditingQueuedPromptId(null)
+      queuedEditPreviousDraftRef.current = ''
+    }
+  }, [editingQueuedPromptId, setQueuedPrompts])
+
+  const runQueuedPrompt = useCallback(async (prompt: QueuedPrompt) => {
+    if (!threadId) return
+    const hint = chooseThinkingHint(t.copThinkingHints)
+    setSending(true)
+    setPendingThinking(true)
+    setThinkingHint(hint)
+    setError(null)
+    setInjectionBlocked(null)
+    injectionBlockedRunIdRef.current = null
+
+    try {
+      const message = await createMessage(accessToken, threadId, buildMessageRequest(prompt.text, prompt.attachments))
+      invalidateMessageSync()
+      setUserEnterMessageId(message.id)
+      setMessages((prev) => (prev.some((item) => item.id === message.id) ? prev : [...prev, message]))
+      const run = await createRun(
+        accessToken,
+        threadId,
+        prompt.personaKey,
+        prompt.modelOverride,
+        prompt.workDir,
+        prompt.reasoningMode,
+      )
+      writeRunThinkingHint(run.run_id, hint)
+      if (prompt.personaKey === SEARCH_PERSONA_KEY) addSearchThreadId(threadId)
+      resetSearchSteps()
+      setActiveRunId(run.run_id)
+      onRunStarted(threadId)
+      activateAnchor()
+    } catch (err) {
+      if (isApiError(err) && err.status === 401) {
+        onLoggedOut()
+        return
+      }
+      setQueuedPrompts((prev) => [prompt, ...prev])
+      setError(normalizeError(err))
+    } finally {
+      setSending(false)
+    }
+  }, [
+    accessToken,
+    activateAnchor,
+    injectionBlockedRunIdRef,
+    invalidateMessageSync,
+    onLoggedOut,
+    onRunStarted,
+    resetSearchSteps,
+    setActiveRunId,
+    setError,
+    setInjectionBlocked,
+    setMessages,
+    setPendingThinking,
+    setQueuedPrompts,
+    setSending,
+    setThinkingHint,
+    setUserEnterMessageId,
+    t.copThinkingHints,
+    threadId,
+  ])
+
+  const drainNextQueuedPrompt = useCallback(() => {
+    if (drainForcedQueuedPromptRef.current?.()) return
+    const next = queuedPromptsRef.current[0]
+    if (!next) return
+    setQueuedPrompts((prev) => prev.filter((item) => item.id !== next.id))
+    void runQueuedPrompt(next)
+  }, [runQueuedPrompt, setQueuedPrompts])
+
+  const drainForcedQueuedPrompt = useCallback(() => {
+    const next = forcedQueuedPromptRef.current
+    if (!next) return false
+    forcedQueuedPromptRef.current = null
+    setQueuedPrompts((prev) => prev.filter((item) => item.id !== next.id))
+    void runQueuedPrompt(next)
+    return true
+  }, [runQueuedPrompt, setQueuedPrompts])
+
+  useEffect(() => {
+    drainQueuedPromptRef.current = drainNextQueuedPrompt
+    drainForcedQueuedPromptRef.current = drainForcedQueuedPrompt
+    return () => {
+      if (drainQueuedPromptRef.current === drainNextQueuedPrompt) {
+        drainQueuedPromptRef.current = null
+      }
+      if (drainForcedQueuedPromptRef.current === drainForcedQueuedPrompt) {
+        drainForcedQueuedPromptRef.current = null
+      }
+    }
+  }, [drainForcedQueuedPrompt, drainNextQueuedPrompt])
+
+  useEffect(() => {
+    if (editingQueuedPromptId && !queuedPrompts.some((item) => item.id === editingQueuedPromptId)) {
+      setEditingQueuedPromptId(null)
+      queuedEditPreviousDraftRef.current = ''
+    }
+  }, [editingQueuedPromptId, queuedPrompts])
+
+  const restoreDraftAfterQueuedEdit = useCallback(() => {
+    chatInputRef.current?.setValue(queuedEditPreviousDraftRef.current)
+    queuedEditPreviousDraftRef.current = ''
+  }, [])
+
+  const saveQueuedPromptEdit = useCallback(() => {
+    if (!editingQueuedPromptId) return false
+    const text = chatInputRef.current?.getValue().trim() ?? ''
+    if (!text) return true
+    setQueuedPrompts((prev) => prev.map((item) =>
+      item.id === editingQueuedPromptId ? { ...item, text } : item,
+    ))
+    setEditingQueuedPromptId(null)
+    restoreDraftAfterQueuedEdit()
+    return true
+  }, [editingQueuedPromptId, restoreDraftAfterQueuedEdit, setQueuedPrompts])
+
+  const cancelQueuedPromptEdit = useCallback(() => {
+    setEditingQueuedPromptId(null)
+    restoreDraftAfterQueuedEdit()
+  }, [restoreDraftAfterQueuedEdit])
+
+  const startQueuedPromptEdit = useCallback((item: QueuedPrompt) => {
+    if (editingQueuedPromptId && editingQueuedPromptId !== item.id) {
+      saveQueuedPromptEdit()
+    }
+    queuedEditPreviousDraftRef.current = chatInputRef.current?.getValue() ?? ''
+    setEditingQueuedPromptId(item.id)
+    chatInputRef.current?.setValue(item.text)
+  }, [editingQueuedPromptId, saveQueuedPromptEdit])
+
+  const sendQueuedPromptNow = useCallback(async (item: QueuedPrompt) => {
+    if (!activeRunId) {
+      removeQueuedPrompt(item.id)
+      void runQueuedPrompt(item)
+      return
+    }
+    if (cancelSubmitting) return
+
+    forcedQueuedPromptRef.current = item
+    const cancelBoundary = Math.max(0, lastVisibleNonTerminalSeqRef.current)
+    freezeCutoffRef.current = cancelBoundary
+    noResponseMsgIdRef.current = null
+    setCancelSubmitting(true)
+    setError(null)
+    setInjectionBlocked(null)
+
+    try {
+      await cancelRun(accessToken, activeRunId, cancelBoundary)
+    } catch (err) {
+      forcedQueuedPromptRef.current = null
+      freezeCutoffRef.current = null
+      setCancelSubmitting(false)
+      if (isApiError(err) && err.status === 401) {
+        onLoggedOut()
+        return
+      }
+      setError(normalizeError(err))
+    }
+  }, [
+    accessToken,
+    activeRunId,
+    cancelSubmitting,
+    freezeCutoffRef,
+    lastVisibleNonTerminalSeqRef,
+    noResponseMsgIdRef,
+    onLoggedOut,
+    removeQueuedPrompt,
+    runQueuedPrompt,
+    setCancelSubmitting,
+    setError,
+    setInjectionBlocked,
+  ])
+
   const handleSend = useCallback(async (e: React.FormEvent<HTMLFormElement>, personaKey: string, modelOverride?: string) => {
     e.preventDefault()
     if (sending || !threadId) return
+    if (editingQueuedPromptId) {
+      saveQueuedPromptEdit()
+      return
+    }
     const terminalRunIdToSync =
       terminalRunDisplayId &&
       terminalRunHandoffStatus !== 'running' &&
@@ -1659,9 +1963,22 @@ export const ChatView = memo(function ChatView() {
 
     if (isStreaming) {
       const text = draft.trim()
-      if (text) {
-        pendingMessageRef.current = text
-        setQueuedDraft(text)
+      if (text || attachments.length > 0) {
+        const queuedAttachments = queueReadyAttachments(attachments)
+        if (!queuedAttachments) {
+          setError({ message: 'Attachments are still uploading.' })
+          return
+        }
+        appendQueuedPrompt(createQueuedPrompt({
+          text,
+          attachments: queuedAttachments,
+          personaKey,
+          modelOverride,
+          workDir: readThreadWorkFolder(threadId) ?? undefined,
+          reasoningMode: resolveReasoningMode(),
+        }))
+        attachments.forEach((attachment) => revokeDraftAttachment(attachment))
+        setAttachments([])
         chatInputRef.current?.clear()
       }
       return
@@ -1760,6 +2077,8 @@ export const ChatView = memo(function ChatView() {
     }
   }, [
     accessToken,
+    appendQueuedPrompt,
+    editingQueuedPromptId,
     invalidateMessageSync,
     isStreaming,
     terminalRunDisplayId,
@@ -1775,12 +2094,12 @@ export const ChatView = memo(function ChatView() {
     activateAnchor,
     scrollToBottom,
     sending,
+    saveQueuedPromptEdit,
     setActiveRunId,
     setAttachments,
     setError,
     setInjectionBlocked,
     setMessages,
-    setQueuedDraft,
     setSending,
     setPendingThinking,
     setThinkingHint,
@@ -1788,6 +2107,8 @@ export const ChatView = memo(function ChatView() {
     t.copThinkingHints,
     threadId,
     waitForPlanModeUpdate,
+    queueReadyAttachments,
+    resolveReasoningMode,
   ])
 
   const terminalSseError = useMemo(() => {
@@ -2092,7 +2413,7 @@ export const ChatView = memo(function ChatView() {
       ref={chatInputRef}
       onSubmit={handleSend}
       onCancel={handleCancel}
-      placeholder={t.replyPlaceholder}
+      placeholder={isStreaming ? 'Send follow-up' : t.replyPlaceholder}
       disabled={sending}
       isStreaming={isStreaming}
       canCancel={canCancel}
@@ -2110,11 +2431,13 @@ export const ChatView = memo(function ChatView() {
       hasMessages={hasMessages}
       messagesLoading={messagesLoading}
       workThreadId={threadId}
+      queuedEditLabel={editingQueuedPromptId ? 'Edit Queued' : undefined}
+      onCancelQueuedEdit={cancelQueuedPromptEdit}
       draftOwnerKey={me?.id}
       planMode={currentThread?.collaboration_mode === 'plan'}
       onTogglePlanMode={handleTogglePlanMode}
     />
-  ), [attachments, sending, isStreaming, canCancel, cancelSubmitting, appMode, isSearchThread, hasMessages, messagesLoading, threadId, accessToken, me?.id, t.replyPlaceholder, handleSend, handleCancel, handleAttachFiles, handlePasteContent, handleRemoveAttachment, handleAsrError, handlePersonaChange, onOpenSettings])
+  ), [attachments, sending, isStreaming, canCancel, cancelSubmitting, appMode, isSearchThread, hasMessages, messagesLoading, threadId, accessToken, me?.id, t.replyPlaceholder, handleSend, handleCancel, handleAttachFiles, handlePasteContent, handleRemoveAttachment, handleAsrError, handlePersonaChange, onOpenSettings, editingQueuedPromptId, cancelQueuedPromptEdit, currentThread?.collaboration_mode, handleTogglePlanMode])
 
   const renderLiveCopItems = (
     seg: Extract<AssistantTurnSegment, { type: 'cop' }>,
@@ -2384,48 +2707,44 @@ export const ChatView = memo(function ChatView() {
           subscribeIsAtBottom={subscribeIsAtBottom}
           getIsAtBottomSnapshot={getIsAtBottomSnapshot}
         />
-        {showInputError && inputError && (
+        {(showInputError || queuedPrompts.length > 0) && (
           <div
-            className="pointer-events-none absolute"
+            className="pointer-events-none absolute flex flex-col gap-2"
             style={{
               left: 'var(--chat-input-horizontal-padding)',
               right: 'var(--chat-input-horizontal-padding)',
-              bottom: 'calc(100% + 4px)',
+              bottom: 'calc(100% + 6px)',
               zIndex: 30,
             }}
           >
-            <div
-              className="pointer-events-auto w-full"
-              style={{ maxWidth: appMode === 'work' ? undefined : '720px', margin: '0 auto' }}
-            >
-              <RunErrorNotice
-                error={inputError}
-                onDismiss={() => {
-                  if (inputErrorKey) setDismissedInputErrorKey(inputErrorKey)
-                }}
-              />
-            </div>
-          </div>
-        )}
-        {queuedDraft && (
-          <div
-            className="flex w-full max-w-[756px] items-center gap-2 rounded-xl px-3 py-2"
-            style={{ background: 'var(--c-bg-sub)', border: '0.5px solid var(--c-border-subtle)' }}
-          >
-            <span
-              className="flex-1 truncate text-sm"
-              style={{ color: 'var(--c-text-secondary)' }}
-            >
-              {queuedDraft}
-            </span>
-            <button
-              type="button"
-              onClick={() => { pendingMessageRef.current = null; setQueuedDraft(null) }}
-              className="flex items-center justify-center rounded opacity-70 transition-opacity hover:opacity-100"
-              style={{ color: 'var(--c-text-muted)' }}
-            >
-              <X size={12} />
-            </button>
+            {showInputError && inputError && (
+              <div
+                className="pointer-events-auto w-full"
+                style={{ maxWidth: appMode === 'work' ? undefined : '720px', margin: '0 auto' }}
+              >
+                <RunErrorNotice
+                  error={inputError}
+                  onDismiss={() => {
+                    if (inputErrorKey) setDismissedInputErrorKey(inputErrorKey)
+                  }}
+                />
+              </div>
+            )}
+            {queuedPrompts.length > 0 && (
+              <div
+                className="pointer-events-auto w-full"
+                style={{ maxWidth: appMode === 'work' ? undefined : '720px', margin: '0 auto' }}
+              >
+                <QueuedPromptNotice
+                  items={queuedPrompts}
+                  editingId={editingQueuedPromptId}
+                  activeRunId={activeRunId}
+                  onEdit={startQueuedPromptEdit}
+                  onSendNow={(item) => { void sendQueuedPromptNow(item) }}
+                  onDelete={(item) => removeQueuedPrompt(item.id)}
+                />
+              </div>
+            )}
           </div>
         )}
         {pendingUserInput ? (

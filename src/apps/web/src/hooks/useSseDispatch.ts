@@ -47,11 +47,7 @@ import { isWebFetchToolName } from '../runEventProcessing'
 import type { UserInputRequest, RequestedSchema } from '../userInputTypes'
 import { useLatest } from './useLatest'
 
-export function useSseDispatch(params: {
-  restoreQueuedDraftRef: React.RefObject<(() => void) | null>
-}): void {
-  const { restoreQueuedDraftRef } = params
-
+export function useSseDispatch(): void {
   const { logout } = useAuth()
   const session = useChatSession()
   const run = useRunLifecycle()
@@ -106,7 +102,6 @@ export function useSseDispatch(params: {
   }
 
   const resetTerminalRunState = (options?: {
-    restoreQueuedDraft?: boolean
     preserveSearchSteps?: boolean
     handoffRunCache?: ReturnType<typeof captureTerminalRunCache>
   }) => {
@@ -133,13 +128,6 @@ export function useSseDispatch(params: {
       stream.setTopLevelSubAgents([])
       stream.setTopLevelFileOps([])
       stream.setTopLevelWebFetches([])
-    }
-
-    if (options?.restoreQueuedDraft) {
-      restoreQueuedDraftRef.current?.()
-    } else {
-      run.pendingMessageRef.current = null
-      run.setQueuedDraft(null)
     }
 
     if (!handoffRunCache) {
@@ -640,7 +628,6 @@ export function useSseDispatch(params: {
         run.injectionBlockedRunIdRef.current = event.run_id
         run.sseTerminalFallbackArmedRef.current = false
         run.sseTerminalFallbackRunIdRef.current = null
-        restoreQueuedDraftRef.current?.()
         run.sse.disconnect()
         run.setActiveRunId(null)
         run.setCancelSubmitting(false)
@@ -699,7 +686,6 @@ export function useSseDispatch(params: {
         if (runSearchSteps.length > 0) {
           meta.pendingSearchStepsRef.current = runSearchSteps
         }
-        run.setQueuedDraft(null)
         run.setAwaitingInput(false)
         run.setPendingUserInput(null)
         run.setCheckInDraft('')
@@ -720,11 +706,6 @@ export function useSseDispatch(params: {
               }, runEventsForMessage)
               run.markTerminalRunHistory(completedAssistant.id, false)
               stream.releaseCompletedHandoffToHistory()
-            }
-            const pending = run.pendingMessageRef.current
-            if (pending) {
-              run.pendingMessageRef.current = null
-              void msgs.sendMessageRef.current?.(pending)
             }
           })
           .catch((err) => console.error('persist run data failed', err))
@@ -757,7 +738,7 @@ export function useSseDispatch(params: {
         if (runId && session.threadId) {
           meta.persistThreadRunHandoff(session.threadId, runId, runCache)
         }
-        resetTerminalRunState({ restoreQueuedDraft: true, preserveSearchSteps: true, handoffRunCache: runCache })
+        resetTerminalRunState({ preserveSearchSteps: true, handoffRunCache: runCache })
         if (!blockedByInjection) run.setError(null)
         if (runId) {
           void refreshMessagesRef.current({ requiredCompletedRunId: runId })
@@ -794,7 +775,7 @@ export function useSseDispatch(params: {
         if (runId && session.threadId) {
           meta.persistThreadRunHandoff(session.threadId, runId, runCache)
         }
-        resetTerminalRunState({ restoreQueuedDraft: true, preserveSearchSteps: true, handoffRunCache: runCache })
+        resetTerminalRunState({ preserveSearchSteps: true, handoffRunCache: runCache })
         const obj = event.data as { message?: unknown; error_class?: unknown; code?: unknown; details?: unknown }
         const errorClass = typeof obj?.error_class === 'string' ? obj.error_class : undefined
         const details = (obj?.details && typeof obj.details === 'object' && !Array.isArray(obj.details))
@@ -841,7 +822,7 @@ export function useSseDispatch(params: {
         if (runId && session.threadId) {
           meta.persistThreadRunHandoff(session.threadId, runId, runCache)
         }
-        resetTerminalRunState({ restoreQueuedDraft: true, preserveSearchSteps: true, handoffRunCache: runCache })
+        resetTerminalRunState({ preserveSearchSteps: true, handoffRunCache: runCache })
         const obj = event.data as { message?: unknown; error_class?: unknown; code?: unknown; details?: unknown }
         const errorClass = typeof obj?.error_class === 'string' ? obj.error_class : undefined
         const details = (obj?.details && typeof obj.details === 'object' && !Array.isArray(obj.details))
@@ -913,7 +894,6 @@ export function useSseDispatch(params: {
 
     run.setActiveRunId(null)
     stream.setPendingThinking(false)
-    run.setQueuedDraft(null)
     run.setAwaitingInput(false)
     run.setPendingUserInput(null)
     run.setCheckInDraft('')
