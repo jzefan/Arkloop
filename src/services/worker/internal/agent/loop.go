@@ -1983,6 +1983,13 @@ func (l *Loop) runSingleTurn(
 				"tool_calls":     traceTurnToolCalls(toolCalls),
 			})
 		}
+		if completedTurnIsEmpty(strings.Join(assistantChunks, ""), assistantMessage, toolCalls, toolResults) {
+			if runCtx.RolloutRecorder != nil {
+				appendRollout(ctx, runCtx.RolloutRecorder, MakeTurnEnd(turnIndex))
+			}
+			eventsOut = append(eventsOut, emptyCompletionFailureEvent(emitter, completedJSON))
+			return turnResult{Events: eventsOut, Terminal: true}, nil
+		}
 	}
 	// Rollout: 写入 TurnEnd
 	if runCtx.RolloutRecorder != nil {
@@ -2561,6 +2568,52 @@ func turnHasRecoverableProgressData(
 		(assistantMessage != nil && len(assistantMessage.Content) > 0) ||
 		len(toolCalls) > 0 ||
 		len(toolResults) > 0
+}
+
+func completedTurnIsEmpty(
+	assistantText string,
+	assistantMessage *llm.Message,
+	toolCalls []llm.ToolCall,
+	toolResults []llm.StreamToolResult,
+) bool {
+	if strings.TrimSpace(assistantText) != "" || len(toolCalls) > 0 || len(toolResults) > 0 {
+		return false
+	}
+	if assistantMessage == nil {
+		return true
+	}
+	if len(assistantMessage.ToolCalls) > 0 {
+		return false
+	}
+	for _, part := range llm.VisibleContentParts(assistantMessage.Content) {
+		switch part.Kind() {
+		case messagecontent.PartTypeImage:
+			return false
+		case messagecontent.PartTypeText, messagecontent.PartTypeFile:
+			if strings.TrimSpace(llm.PartPromptText(part)) != "" {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+func emptyCompletionFailureEvent(emitter events.Emitter, completedJSON map[string]any) events.RunEvent {
+	payload := llm.GatewayError{
+		ErrorClass: llm.ErrorClassProviderRetryable,
+		Message:    "upstream stream completed without assistant content",
+		Details:    map[string]any{"reason": "empty_assistant_completion"},
+	}.ToJSON()
+	if llmCallID, ok := completedJSON["llm_call_id"]; ok && llmCallID != nil {
+		payload["llm_call_id"] = llmCallID
+	}
+	if usage, ok := completedJSON["usage"]; ok && usage != nil {
+		payload["usage"] = usage
+	}
+	if cost, ok := completedJSON["cost"]; ok && cost != nil {
+		payload["cost"] = cost
+	}
+	return emitter.Emit("run.failed", payload, nil, stringPtr(llm.ErrorClassProviderRetryable))
 }
 
 func pressureAnchorFromCompleted(data map[string]any) *pipeline.ContextCompactPressureAnchor {
