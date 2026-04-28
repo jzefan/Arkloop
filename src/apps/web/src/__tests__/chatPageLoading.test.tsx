@@ -1948,6 +1948,15 @@ describe('ChatPage loading state', () => {
       'thread-1',
       expect.objectContaining({ content: 'send immediately' }),
     )
+    expect(mockedCreateRun).toHaveBeenLastCalledWith(
+      'token',
+      'thread-1',
+      'default',
+      undefined,
+      undefined,
+      undefined,
+      { resumeFromRunId: 'run-active' },
+    )
 
     act(() => {
       root.unmount()
