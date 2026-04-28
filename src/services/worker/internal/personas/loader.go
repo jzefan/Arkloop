@@ -246,7 +246,7 @@ func loadSinglePersona(yamlPath string) (Definition, error) {
 
 		IsSystem:                asOptionalBool(obj["is_system"]),
 		IsBuiltin:               asOptionalBool(obj["is_builtin"]),
-		AllowPlatformDelegation: asOptionalBool(obj["allow_platform_delegation"]),
+
 
 		HeartbeatEnabled:         hbEnabled,
 		HeartbeatIntervalMinutes: hbInterval,
@@ -744,7 +744,7 @@ func mergeDefinition(base Definition, override Definition) Definition {
 	// DB 无对应列的字段保留文件系统值
 	merged.IsSystem = base.IsSystem
 	merged.IsBuiltin = base.IsBuiltin
-	merged.AllowPlatformDelegation = base.AllowPlatformDelegation
+
 	if len(merged.CoreTools) == 0 {
 		merged.CoreTools = base.CoreTools
 	}

@@ -26,6 +26,6 @@ budgets:
 reasoning_mode: auto
 prompt_cache_control: system_prompt
 executor_type: agent.simple
-allow_platform_delegation: true
+
 heartbeat:
   enabled: true
