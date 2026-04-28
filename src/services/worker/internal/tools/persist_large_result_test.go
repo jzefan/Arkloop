@@ -197,33 +197,37 @@ func TestPersistLargeResult_FallbackOnWriteFailure(t *testing.T) {
 
 func TestPersistLargeResult_Preview(t *testing.T) {
 	tests := []struct {
-		name   string
-		raw    []byte
-		budget int
-		want   string
+		name       string
+		raw        []byte
+		headBudget int
+		tailBudget int
+		want       string
 	}{
 		{
-			name:   "fits budget",
-			raw:    []byte("hello world"),
-			budget: 100,
-			want:   "hello world",
+			name:       "fits budget",
+			raw:        []byte("hello world"),
+			headBudget: 100,
+			tailBudget: 100,
+			want:       "hello world",
 		},
 		{
-			name:   "truncates at newline",
-			raw:    []byte("line one\nline two\nline three\nline four"),
-			budget: 25,
-			want:   "line one\nline two\n...[truncated]",
+			name:       "truncates with head and tail",
+			raw:        []byte("abcdefghijklmnopqrstuvwxyz"),
+			headBudget: 5,
+			tailBudget: 5,
+			want:       "abcde\n...[16 bytes truncated]...\nvwxyz",
 		},
 		{
-			name:   "truncates hard when no newline in second half",
-			raw:    []byte("abcdefghijklmnopqrstuvwxyz"),
-			budget: 20,
-			want:   "abcdefghijklmnopqrst\n...[truncated]",
+			name:       "truncates at newline boundaries",
+			raw:        []byte("line one\nline two\nline three\nline four"),
+			headBudget: 20,
+			tailBudget: 12,
+			want:       "line one\nline two\n...[12 bytes truncated]...\nline four",
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := generatePreview(tt.raw, tt.budget)
+			got := generatePreview(tt.raw, tt.headBudget, tt.tailBudget)
 			if got != tt.want {
 				t.Fatalf("generatePreview() = %q, want %q", got, tt.want)
 			}
