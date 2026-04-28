@@ -193,7 +193,9 @@ func (g *anthropicSDKGateway) streamAttempt(ctx context.Context, request Request
 	for key, value := range g.protocol.AdvancedPayloadJSON {
 		opts = append(opts, option.WithJSONSet(key, value))
 	}
-	stream := g.client.Messages.NewStreaming(ctx, params, opts...)
+	responseCapture := newProviderResponseCapture()
+	streamCtx := withProviderResponseCapture(ctx, responseCapture)
+	stream := g.client.Messages.NewStreaming(streamCtx, params, opts...)
 	defer func() { _ = stream.Close() }()
 
 	state := newAnthropicSDKStreamState(llmCallID, yield)
@@ -225,7 +227,7 @@ func (g *anthropicSDKGateway) streamAttempt(ctx context.Context, request Request
 		if emitErr := g.emitDebugErrorChunk(llmCallID, err, yield); emitErr != nil {
 			return emitErr
 		}
-		if failErr := state.fail(anthropicSDKErrorToGateway(err, providerPayloadBytes)); failErr != nil && !errors.Is(failErr, errAnthropicStreamTerminated) {
+		if failErr := state.fail(anthropicSDKErrorToGateway(err, providerPayloadBytes, "messages", true, responseCapture, streamCtx)); failErr != nil && !errors.Is(failErr, errAnthropicStreamTerminated) {
 			return failErr
 		}
 		return nil
@@ -891,26 +893,41 @@ func anthropicSDKCostFromRaw(raw string) *Cost {
 	return parseResponsesCost(root)
 }
 
-func anthropicSDKErrorToGateway(err error, payloadBytes int) GatewayError {
+func anthropicSDKErrorToGateway(err error, payloadBytes int, apiMode string, streaming bool, responseCapture *providerResponseCapture, ctx context.Context) GatewayError {
 	if errors.Is(err, errAnthropicStreamTerminated) {
 		return GatewayError{ErrorClass: ErrorClassInternalStreamEnded, Message: err.Error()}
 	}
 	var apiErr *anthropic.Error
 	if errors.As(err, &apiErr) {
-		message, details := anthropicErrorMessageAndDetails(apiErr.DumpResponse(true), apiErr.StatusCode)
+		message, details := anthropicErrorMessageAndDetails([]byte(apiErr.RawJSON()), apiErr.StatusCode)
 		if details == nil {
 			details = map[string]any{}
+		}
+		details["provider_kind"] = "anthropic"
+		details["api_mode"] = apiMode
+		details["network_attempted"] = true
+		if streaming {
+			details["streaming"] = true
 		}
 		if errorType := strings.TrimSpace(string(apiErr.Type())); errorType != "" {
 			details["anthropic_error_type"] = errorType
 		}
+		if requestID := strings.TrimSpace(apiErr.RequestID); requestID != "" {
+			details["provider_request_id"] = requestID
+		} else if apiErr.Response != nil {
+			if requestID := sdkProviderRequestID(apiErr.Response.Header); requestID != "" {
+				details["provider_request_id"] = requestID
+			}
+		}
 		if apiErr.StatusCode == http.StatusRequestEntityTooLarge {
-			details["network_attempted"] = true
 			details = OversizeFailureDetails(payloadBytes, OversizePhaseProvider, details)
 		}
 		return GatewayError{ErrorClass: anthropicSDKErrorClass(apiErr, details), Message: message, Details: details}
 	}
-	return GatewayError{ErrorClass: ErrorClassProviderRetryable, Message: "Anthropic network error", Details: map[string]any{"reason": err.Error()}}
+	details := sdkTransportErrorDetails(err, "anthropic", apiMode, streaming, true)
+	details = mergeContextErrorDetails(details, err, ctx)
+	details = mergeProviderResponseCaptureDetails(details, responseCapture)
+	return GatewayError{ErrorClass: ErrorClassProviderRetryable, Message: "Anthropic network error", Details: details}
 }
 
 func anthropicSDKErrorClass(err *anthropic.Error, details map[string]any) string {

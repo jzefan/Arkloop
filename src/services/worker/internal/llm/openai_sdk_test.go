@@ -68,6 +68,38 @@ func TestOpenAISDKGateway_ChatCompletionsStreamsToolAndCost(t *testing.T) {
 	}
 }
 
+func TestOpenAISDKGateway_ChatCompletionsIgnoresSSECommentKeepalive(t *testing.T) {
+	t.Setenv("ARKLOOP_OUTBOUND_ALLOW_LOOPBACK_HTTP", "true")
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/chat/completions" {
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte(": PROCESSING\n\n" + openAISDKSSE([]string{
+			`{"id":"chatcmpl_1","object":"chat.completion.chunk","created":1,"model":"gpt","choices":[{"index":0,"delta":{"role":"assistant","content":"hi"},"finish_reason":"stop"}]}`,
+		})))
+	}))
+	defer server.Close()
+
+	gateway := NewOpenAIGatewaySDK(OpenAIGatewayConfig{Transport: TransportConfig{APIKey: "key", BaseURL: server.URL}, Protocol: OpenAIProtocolConfig{PrimaryKind: ProtocolKindOpenAIChatCompletions}})
+	var completed *StreamRunCompleted
+	var failed *StreamRunFailed
+	if err := gateway.Stream(context.Background(), Request{Model: "gpt", Messages: []Message{{Role: "user", Content: []ContentPart{{Text: "hello"}}}}}, func(event StreamEvent) error {
+		switch ev := event.(type) {
+		case StreamRunCompleted:
+			completed = &ev
+		case StreamRunFailed:
+			failed = &ev
+		}
+		return nil
+	}); err != nil {
+		t.Fatalf("stream: %v", err)
+	}
+	if failed != nil || completed == nil || completed.AssistantMessage == nil || VisibleMessageText(*completed.AssistantMessage) != "hi" {
+		t.Fatalf("unexpected terminal events failed=%#v completed=%#v", failed, completed)
+	}
+}
+
 func TestOpenAISDKGateway_ChatCompletionsCompletedMessageCarriesThinking(t *testing.T) {
 	t.Setenv("ARKLOOP_OUTBOUND_ALLOW_LOOPBACK_HTTP", "true")
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -171,6 +203,52 @@ func TestOpenAISDKGateway_ChatCompletionsPartialStreamFails(t *testing.T) {
 	}
 	if completed != nil || failed == nil || failed.Error.ErrorClass != ErrorClassProviderRetryable {
 		t.Fatalf("unexpected terminal events failed=%#v completed=%#v", failed, completed)
+	}
+}
+
+func TestOpenAISDKGateway_ChatCompletionsTruncatedJSONStreamHasDiagnosticDetails(t *testing.T) {
+	t.Setenv("ARKLOOP_OUTBOUND_ALLOW_LOOPBACK_HTTP", "true")
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/chat/completions" {
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Header().Set("X-Request-Id", "req_openai_tail_1")
+		_, _ = w.Write([]byte(openAISDKSSE([]string{`{"id":"chatcmpl_1","object":"chat.completion.chunk"`})))
+	}))
+	defer server.Close()
+
+	gateway := NewOpenAIGatewaySDK(OpenAIGatewayConfig{Transport: TransportConfig{APIKey: "key", BaseURL: server.URL}, Protocol: OpenAIProtocolConfig{PrimaryKind: ProtocolKindOpenAIChatCompletions}})
+	var failed *StreamRunFailed
+	if err := gateway.Stream(context.Background(), Request{Model: "gpt", Messages: []Message{{Role: "user", Content: []ContentPart{{Text: "hello"}}}}}, func(event StreamEvent) error {
+		if ev, ok := event.(StreamRunFailed); ok {
+			failed = &ev
+		}
+		return nil
+	}); err != nil {
+		t.Fatalf("stream: %v", err)
+	}
+	if failed == nil {
+		t.Fatalf("missing failure")
+	}
+	if failed.Error.ErrorClass != ErrorClassProviderRetryable || failed.Error.Message != "OpenAI network error" {
+		t.Fatalf("unexpected failure: %#v", failed.Error)
+	}
+	details := failed.Error.Details
+	reason, _ := details["reason"].(string)
+	errorType, _ := details["error_type"].(string)
+	if !strings.Contains(reason, "unexpected end of JSON input") || errorType == "" {
+		t.Fatalf("missing diagnostic reason/type: %#v", details)
+	}
+	if details["streaming"] != true || details["network_attempted"] != true || details["provider_kind"] != "openai" || details["api_mode"] != "chat_completions" || details["provider_response_parse_error"] != true {
+		t.Fatalf("missing stream diagnostic details: %#v", details)
+	}
+	if details["status_code"] != http.StatusOK || details["content_type"] != "text/event-stream" || details["provider_request_id"] != "req_openai_tail_1" {
+		t.Fatalf("missing response capture metadata: %#v", details)
+	}
+	tail, _ := details["provider_response_tail"].(string)
+	if !strings.Contains(tail, "chatcmpl_1") || !strings.Contains(tail, "chat.completion.chunk") || strings.Contains(tail, "HTTP/1.1") {
+		t.Fatalf("unexpected response tail: %#v", details)
 	}
 }
 
@@ -538,6 +616,7 @@ func TestOpenAISDKGateway_BadRequestInvalidRequestIsNonRetryable(t *testing.T) {
 	t.Setenv("ARKLOOP_OUTBOUND_ALLOW_LOOPBACK_HTTP", "true")
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("X-Request-Id", "req_openai_1")
 		w.WriteHeader(http.StatusBadRequest)
 		_, _ = w.Write([]byte(`{"error":{"message":"Error from provider (DeepSeek): The reasoning_content in the thinking mode must be passed back to the API.","type":"invalid_request_error"}}`))
 	}))
@@ -558,6 +637,19 @@ func TestOpenAISDKGateway_BadRequestInvalidRequestIsNonRetryable(t *testing.T) {
 	}
 	if failed.Error.ErrorClass != ErrorClassProviderNonRetryable {
 		t.Fatalf("expected non-retryable error, got %q", failed.Error.ErrorClass)
+	}
+	if !strings.Contains(failed.Error.Message, "reasoning_content") {
+		t.Fatalf("expected provider message, got %q", failed.Error.Message)
+	}
+	details := failed.Error.Details
+	if details["provider_kind"] != "openai" || details["api_mode"] != "chat_completions" || details["network_attempted"] != true || details["streaming"] != true {
+		t.Fatalf("missing provider diagnostics: %#v", details)
+	}
+	if details["openai_error_type"] != "invalid_request_error" || details["provider_request_id"] != "req_openai_1" {
+		t.Fatalf("missing OpenAI error details: %#v", details)
+	}
+	if raw, _ := details["provider_error_body"].(string); !strings.Contains(raw, "reasoning_content") || strings.Contains(raw, "HTTP/1.1") {
+		t.Fatalf("unexpected provider error body: %#v", details)
 	}
 }
 

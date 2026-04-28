@@ -1223,6 +1223,9 @@ func TestAgentLoopRetryableFailureEndsAsInterrupted(t *testing.T) {
 	if msg, _ := retryEv.DataJSON["message"].(string); msg != "provider overloaded" {
 		t.Fatalf("expected retry message 'provider overloaded', got %q", msg)
 	}
+	if llmCallID, _ := retryEv.DataJSON["llm_call_id"].(string); llmCallID != "llm-retry-1" {
+		t.Fatalf("expected retry llm_call_id 'llm-retry-1', got %q", llmCallID)
+	}
 	if details, ok := retryEv.DataJSON["details"]; !ok {
 		t.Fatal("expected retry details missing")
 	} else if d, _ := details.(map[string]any); d["reason"] != "cpu throttled" {
@@ -2877,6 +2880,7 @@ func (g *retryableFailureGateway) Stream(ctx context.Context, request llm.Reques
 	_ = request
 	g.calls++
 	return yield(llm.StreamRunFailed{
+		LlmCallID: "llm-retry-1",
 		Error: llm.GatewayError{
 			ErrorClass: llm.ErrorClassProviderRetryable,
 			Message:    "provider overloaded",

@@ -127,8 +127,10 @@ func (g *openAISDKGateway) chatCompletions(ctx context.Context, request Request,
 		return err
 	}
 
+	responseCapture := newProviderResponseCapture()
+	streamCtx := withProviderResponseCapture(ctx, responseCapture)
 	params := openai.ChatCompletionNewParams{Model: openai.ChatModel(request.Model)}
-	stream := g.client.Chat.Completions.NewStreaming(ctx, params, openAISDKPayloadOptions(payload)...)
+	stream := g.client.Chat.Completions.NewStreaming(streamCtx, params, openAISDKPayloadOptions(payload)...)
 	defer func() { _ = stream.Close() }()
 	state := newOpenAISDKChatState(llmCallID, yield)
 	for stream.Next() {
@@ -156,7 +158,7 @@ func (g *openAISDKGateway) chatCompletions(ctx context.Context, request Request,
 		if emitErr := g.emitDebugErrorChunk(llmCallID, "chat_completions", err, yield); emitErr != nil {
 			return emitErr
 		}
-		return state.fail(openAISDKErrorToGateway(err, "OpenAI request failed", payloadBytes))
+		return state.fail(openAISDKStreamErrorToGateway(err, "OpenAI request failed", payloadBytes, "chat_completions", responseCapture, streamCtx))
 	}
 	return state.complete()
 }
@@ -178,8 +180,10 @@ func (g *openAISDKGateway) responses(ctx context.Context, request Request, yield
 		return err
 	}
 
+	responseCapture := newProviderResponseCapture()
+	streamCtx := withProviderResponseCapture(ctx, responseCapture)
 	params := responses.ResponseNewParams{Model: responses.ResponsesModel(request.Model)}
-	stream := g.client.Responses.NewStreaming(ctx, params, openAISDKPayloadOptions(payload)...)
+	stream := g.client.Responses.NewStreaming(streamCtx, params, openAISDKPayloadOptions(payload)...)
 	defer func() { _ = stream.Close() }()
 	state := newOpenAISDKResponsesState(llmCallID, yield)
 	for stream.Next() {
@@ -210,7 +214,7 @@ func (g *openAISDKGateway) responses(ctx context.Context, request Request, yield
 		if emitErr := g.emitDebugErrorChunk(llmCallID, "responses", err, yield); emitErr != nil {
 			return emitErr
 		}
-		return state.fail(openAISDKErrorToGateway(err, "OpenAI responses request failed", payloadBytes))
+		return state.fail(openAISDKStreamErrorToGateway(err, "OpenAI responses request failed", payloadBytes, "responses", responseCapture, streamCtx))
 	}
 	return state.complete()
 }
@@ -614,14 +618,38 @@ func nestedAny(root map[string]any, key string, child string) any {
 func openAISDKErrorToGateway(err error, fallback string, payloadBytes int) GatewayError {
 	var apiErr *openai.Error
 	if errors.As(err, &apiErr) {
-		message, details := openAIErrorMessageAndDetails(apiErr.DumpResponse(true), apiErr.StatusCode, fallback)
+		message, details := openAIErrorMessageAndDetails([]byte(apiErr.RawJSON()), apiErr.StatusCode, fallback)
+		details["provider_kind"] = "openai"
+		details["network_attempted"] = true
+		if apiErr.Response != nil {
+			if requestID := sdkProviderRequestID(apiErr.Response.Header); requestID != "" {
+				details["provider_request_id"] = requestID
+			}
+		}
 		if apiErr.StatusCode == http.StatusRequestEntityTooLarge {
-			details["network_attempted"] = true
 			details = OversizeFailureDetails(payloadBytes, OversizePhaseProvider, details)
 		}
 		return GatewayError{ErrorClass: classifyOpenAIStatus(apiErr.StatusCode, details), Message: message, Details: details}
 	}
 	return GatewayError{ErrorClass: ErrorClassProviderRetryable, Message: "OpenAI network error", Details: map[string]any{"reason": err.Error()}}
+}
+
+func openAISDKStreamErrorToGateway(err error, fallback string, payloadBytes int, apiMode string, responseCapture *providerResponseCapture, ctx context.Context) GatewayError {
+	var apiErr *openai.Error
+	if errors.As(err, &apiErr) {
+		gatewayErr := openAISDKErrorToGateway(err, fallback, payloadBytes)
+		if gatewayErr.Details == nil {
+			gatewayErr.Details = map[string]any{}
+		}
+		gatewayErr.Details["api_mode"] = apiMode
+		gatewayErr.Details["network_attempted"] = true
+		gatewayErr.Details["streaming"] = true
+		return gatewayErr
+	}
+	details := sdkTransportErrorDetails(err, "openai", apiMode, true, true)
+	details = mergeContextErrorDetails(details, err, ctx)
+	details = mergeProviderResponseCaptureDetails(details, responseCapture)
+	return GatewayError{ErrorClass: ErrorClassProviderRetryable, Message: "OpenAI network error", Details: details}
 }
 
 func classifyOpenAIStatus(status int, details map[string]any) string {

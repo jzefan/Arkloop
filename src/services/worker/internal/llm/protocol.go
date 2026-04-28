@@ -1,9 +1,11 @@
 package llm
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/url"
@@ -21,6 +23,8 @@ const (
 	ProtocolKindOpenAIResponses       ProtocolKind = "openai_responses"
 	ProtocolKindAnthropicMessages     ProtocolKind = "anthropic_messages"
 	ProtocolKindGeminiGenerateContent ProtocolKind = "gemini_generate_content"
+
+	providerResponseTailMaxBytes = 4096
 )
 
 type TransportConfig struct {
@@ -77,6 +81,28 @@ type protocolConfigError struct {
 var errStreamIdleTimeout = errors.New("llm stream idle timeout")
 
 type streamActivityMarkerKey struct{}
+type providerResponseCaptureKey struct{}
+
+type providerResponseCapture struct {
+	mu          sync.Mutex
+	statusCode  int
+	contentType string
+	requestID   string
+	tail        []byte
+	seen        int64
+}
+
+type providerResponseTailBody struct {
+	body    io.ReadCloser
+	capture *providerResponseCapture
+}
+
+type sseKeepaliveFilterReadCloser struct {
+	body    io.ReadCloser
+	reader  *bufio.Reader
+	pending []byte
+	eof     bool
+}
 
 func (e protocolConfigError) Error() string {
 	return e.Message
@@ -154,10 +180,184 @@ func (t protocolValidatingTransport) RoundTrip(req *http.Request) (*http.Respons
 	for attempt := 0; attempt < attempts; attempt++ {
 		resp, err = t.base.RoundTrip(req)
 		if err == nil {
+			if capture := providerResponseCaptureFromContext(req.Context()); capture != nil && resp != nil {
+				capture.setResponse(resp)
+				if resp.Body != nil {
+					body := io.ReadCloser(&providerResponseTailBody{body: resp.Body, capture: capture})
+					if isEventStream(resp.Header.Get("Content-Type")) {
+						body = newSSEKeepaliveFilterReadCloser(body)
+					}
+					resp.Body = body
+				}
+			}
 			return resp, nil
 		}
 	}
 	return nil, err
+}
+
+func newProviderResponseCapture() *providerResponseCapture {
+	return &providerResponseCapture{}
+}
+
+func withProviderResponseCapture(ctx context.Context, capture *providerResponseCapture) context.Context {
+	if capture == nil {
+		return ctx
+	}
+	return context.WithValue(ctx, providerResponseCaptureKey{}, capture)
+}
+
+func providerResponseCaptureFromContext(ctx context.Context) *providerResponseCapture {
+	capture, _ := ctx.Value(providerResponseCaptureKey{}).(*providerResponseCapture)
+	return capture
+}
+
+func (c *providerResponseCapture) setResponse(resp *http.Response) {
+	if c == nil || resp == nil {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.statusCode = resp.StatusCode
+	c.contentType = strings.TrimSpace(resp.Header.Get("Content-Type"))
+	c.requestID = sdkProviderRequestID(resp.Header)
+}
+
+func (c *providerResponseCapture) appendBody(p []byte) {
+	if c == nil || len(p) == 0 {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.seen += int64(len(p))
+	c.tail = append(c.tail, p...)
+	if len(c.tail) > providerResponseTailMaxBytes {
+		c.tail = append([]byte(nil), c.tail[len(c.tail)-providerResponseTailMaxBytes:]...)
+	}
+}
+
+func (c *providerResponseCapture) details() map[string]any {
+	if c == nil {
+		return nil
+	}
+	c.mu.Lock()
+	statusCode := c.statusCode
+	contentType := c.contentType
+	requestID := c.requestID
+	seen := c.seen
+	tail := append([]byte(nil), c.tail...)
+	c.mu.Unlock()
+
+	details := map[string]any{}
+	if statusCode > 0 {
+		details["status_code"] = statusCode
+	}
+	if contentType != "" {
+		details["content_type"] = contentType
+	}
+	if requestID != "" {
+		details["provider_request_id"] = requestID
+	}
+	if len(tail) > 0 {
+		raw, truncated := truncateUTF8(string(tail), providerResponseTailMaxBytes)
+		details["provider_response_tail"] = raw
+		if seen > int64(len(tail)) || truncated {
+			details["provider_response_tail_truncated"] = true
+		}
+	}
+	if len(details) == 0 {
+		return nil
+	}
+	return details
+}
+
+func mergeProviderResponseCaptureDetails(details map[string]any, capture *providerResponseCapture) map[string]any {
+	captured := capture.details()
+	if len(captured) == 0 {
+		return details
+	}
+	if details == nil {
+		details = map[string]any{}
+	}
+	for key, value := range captured {
+		details[key] = value
+	}
+	return details
+}
+
+func (b *providerResponseTailBody) Read(p []byte) (int, error) {
+	n, err := b.body.Read(p)
+	if n > 0 {
+		b.capture.appendBody(p[:n])
+	}
+	return n, err
+}
+
+func (b *providerResponseTailBody) Close() error {
+	return b.body.Close()
+}
+
+func newSSEKeepaliveFilterReadCloser(body io.ReadCloser) io.ReadCloser {
+	return &sseKeepaliveFilterReadCloser{body: body, reader: bufio.NewReader(body)}
+}
+
+func (r *sseKeepaliveFilterReadCloser) Read(p []byte) (int, error) {
+	for len(r.pending) == 0 {
+		if err := r.readBlock(); err != nil {
+			return 0, err
+		}
+	}
+	n := copy(p, r.pending)
+	r.pending = r.pending[n:]
+	return n, nil
+}
+
+func (r *sseKeepaliveFilterReadCloser) readBlock() error {
+	if r.eof {
+		return io.EOF
+	}
+	var block [][]byte
+	hasData := false
+	for {
+		line, err := r.reader.ReadString('\n')
+		if line != "" {
+			cleaned := strings.TrimRight(line, "\r\n")
+			if cleaned == "" {
+				if hasData {
+					for _, item := range block {
+						r.pending = append(r.pending, item...)
+					}
+					r.pending = append(r.pending, line...)
+				}
+				return nil
+			}
+			name, _, hasColon := strings.Cut(cleaned, ":")
+			if hasColon && name == "" {
+				// SSE comments are keepalive frames; SDKs should not see them as empty JSON events.
+			} else if name == "data" {
+				hasData = true
+				block = append(block, []byte(line))
+			} else if name == "event" {
+				block = append(block, []byte(line))
+			}
+		}
+		if err != nil {
+			r.eof = true
+			if err == io.EOF && hasData {
+				for _, item := range block {
+					r.pending = append(r.pending, item...)
+				}
+				if len(r.pending) > 0 {
+					return nil
+				}
+			}
+			return err
+		}
+	}
+}
+
+func (r *sseKeepaliveFilterReadCloser) Close() error {
+	return r.body.Close()
 }
 
 func (t protocolTransport) endpoint(path string) string {

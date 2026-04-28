@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"io"
+	"net/http"
+	"strings"
 	"testing"
 	"time"
 )
@@ -141,6 +143,72 @@ func TestForEachSSEDataOnlyTimesOutWhenSilent(t *testing.T) {
 	}
 	if len(got) != 1 || got[0] != "first" {
 		t.Fatalf("unexpected streamed data before timeout: %#v", got)
+	}
+}
+
+func TestProviderResponseCaptureKeepsBoundedTail(t *testing.T) {
+	capture := newProviderResponseCapture()
+	capture.setResponse(&http.Response{
+		StatusCode: http.StatusOK,
+		Header: http.Header{
+			"Content-Type": {"text/event-stream"},
+			"X-Request-Id": {"req_tail_1"},
+		},
+	})
+
+	body := &providerResponseTailBody{
+		body:    io.NopCloser(strings.NewReader("prefix-" + strings.Repeat("x", providerResponseTailMaxBytes) + "tail")),
+		capture: capture,
+	}
+	if _, err := io.Copy(io.Discard, body); err != nil {
+		t.Fatalf("copy body: %v", err)
+	}
+	if err := body.Close(); err != nil {
+		t.Fatalf("close body: %v", err)
+	}
+
+	details := capture.details()
+	if details["status_code"] != http.StatusOK || details["content_type"] != "text/event-stream" || details["provider_request_id"] != "req_tail_1" {
+		t.Fatalf("missing response metadata: %#v", details)
+	}
+	tail, _ := details["provider_response_tail"].(string)
+	if !strings.HasSuffix(tail, "tail") || strings.Contains(tail, "prefix-") || len([]byte(tail)) > providerResponseTailMaxBytes {
+		t.Fatalf("unexpected bounded tail: %q", tail)
+	}
+	if details["provider_response_tail_truncated"] != true {
+		t.Fatalf("expected truncated tail flag: %#v", details)
+	}
+}
+
+func TestSSEKeepaliveFilterDropsCommentOnlyBlocks(t *testing.T) {
+	capture := newProviderResponseCapture()
+	rawBody := ": PROCESSING\n\ndata: {\"ok\":true}\n\n"
+	body := &providerResponseTailBody{body: io.NopCloser(strings.NewReader(rawBody)), capture: capture}
+	filtered := newSSEKeepaliveFilterReadCloser(body)
+
+	out, err := io.ReadAll(filtered)
+	if err != nil {
+		t.Fatalf("read filtered body: %v", err)
+	}
+	if string(out) != "data: {\"ok\":true}\n\n" {
+		t.Fatalf("unexpected filtered body: %q", out)
+	}
+	tail, _ := capture.details()["provider_response_tail"].(string)
+	if !strings.Contains(tail, ": PROCESSING") || !strings.Contains(tail, `{"ok":true}`) {
+		t.Fatalf("raw tail was not captured: %#v", capture.details())
+	}
+}
+
+func TestMergeContextErrorDetailsIncludesCause(t *testing.T) {
+	ctx, cancel := context.WithCancelCause(context.Background())
+	cancel(errStreamIdleTimeout)
+
+	details := mergeContextErrorDetails(map[string]any{}, context.Canceled, ctx)
+	if details["context_canceled"] != true || details["context_done"] != true || details["stream_idle_timeout"] != true {
+		t.Fatalf("missing context diagnostics: %#v", details)
+	}
+	if details["context_error"] != context.Canceled.Error() || details["context_cause"] != errStreamIdleTimeout.Error() {
+		t.Fatalf("unexpected context diagnostics: %#v", details)
 	}
 }
 
