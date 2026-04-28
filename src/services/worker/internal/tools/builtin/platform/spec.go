@@ -28,7 +28,7 @@ var AgentSpec = tools.AgentToolSpec{
 	Name:    toolName,
 	Version: "1",
 	Description: "Manage Arkloop platform resources: get/set settings, list/create agents and personas, " +
-		"manage skills, browse marketplace. Use for configuration and resource lifecycle operations.",
+		"manage skills, MCP servers, providers, API keys, and access controls. For account/platform admin use.",
 	SideEffects: true,
 	RiskLevel:   tools.RiskLevelHigh,
 }
@@ -36,7 +36,8 @@ var AgentSpec = tools.AgentToolSpec{
 var LlmSpec = llm.ToolSpec{
 	Name: toolName,
 	Description: sp(
-		"Platform management tool. Pass action and params object.\n" +
+		"Platform administration tool for managing Arkloop configuration. Available to account/platform admins. Use for configuring providers, personas, skills, MCP servers, and other platform settings.\n\n" +
+			"Pass action and params object.\n" +
 			"Settings: get_settings | set_setting{key,value} | configure_email{from,smtp_host} | test_email{to} | configure_smtp{name,from_addr,smtp_host,smtp_port,smtp_pass,tls_mode} | configure_captcha{site_key,secret_key} | configure_registration{mode} | configure_gateway{ip_mode,...} | update_styles{css}\n" +
 			"Providers: list_providers | add_provider{name,provider,api_key} | update_provider{id,...} | delete_provider{id} | list_models{provider_id} | configure_model{provider_id,model_id,config?}\n" +
 			"Agents: list_agents | create_agent{persona_key,display_name,prompt_md} | update_agent{id,...} | delete_agent{id} | get_agent{id}\n" +
