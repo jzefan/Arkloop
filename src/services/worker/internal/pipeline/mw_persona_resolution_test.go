@@ -236,11 +236,11 @@ func TestPersonaResolutionRestoresPlanModePromptAfterReset(t *testing.T) {
 			ThreadID: threadID,
 		},
 		InputJSON: map[string]any{
-			"persona_id": "test-persona",
-			"plan_mode":  true,
+			"persona_id":         "test-persona",
+			"collaboration_mode": "plan",
 		},
 	}
-	pipeline.ApplyPlanMode(rc)
+	pipeline.ApplyCollaborationMode(rc)
 
 	var gotRuntimePrompt string
 	h := pipeline.Build([]pipeline.RunMiddleware{mw}, func(_ context.Context, rc *pipeline.RunContext) error {
@@ -253,7 +253,7 @@ func TestPersonaResolutionRestoresPlanModePromptAfterReset(t *testing.T) {
 	if !rc.IsPlanMode {
 		t.Fatal("expected plan mode to remain active")
 	}
-	if !strings.Contains(gotRuntimePrompt, "[Plan Mode Active]") {
+	if !strings.Contains(gotRuntimePrompt, "<system-reminder>") {
 		t.Fatalf("expected plan mode prompt after persona reset, got %q", gotRuntimePrompt)
 	}
 	if !strings.Contains(gotRuntimePrompt, "plans/"+threadID.String()+".md") {

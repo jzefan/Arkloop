@@ -94,11 +94,14 @@ import {
   createRun,
   editMessage,
   forkThread,
+  getThread,
   listMessages,
   listRunEvents,
   listThreadRuns,
+  updateThreadCollaborationMode,
   uploadStagingAttachment,
   isApiError,
+  type CollaborationMode,
   type MessageContent,
   type MessageResponse,
   type RunReasoningMode,
@@ -152,7 +155,6 @@ import {
   readInputDraftAttachments,
   readThreadWorkFolder,
   readThreadReasoningMode,
-  readPlanModeFromStorage,
   writeInputDraftAttachments,
 } from '../storage'
 
@@ -714,11 +716,24 @@ export function ChatView() {
   const { accessToken, logout: onLoggedOut, me } = useAuth()
   const {
     threads, addThread: onThreadCreated,
+    upsertThread: onThreadUpserted,
     markRunning: onRunStarted, markIdle: onRunEnded,
+    updateCollaborationMode: onThreadCollaborationModeUpdated,
   } = useThreadList()
   const { appMode } = useAppModeUI()
   const { openSettings: onOpenSettings } = useSettingsUI()
   const { threadId } = useChatSession()
+  const currentThread = useMemo(
+    () => threads.find((thread) => thread.id === threadId) ?? null,
+    [threadId, threads],
+  )
+  const isPlanMode = currentThread?.collaboration_mode === 'plan'
+  const planModeUpdateRef = useRef<Promise<void> | null>(null)
+  const planModeRequestSeqRef = useRef(0)
+  const waitForPlanModeUpdate = useCallback(async () => {
+    const pending = planModeUpdateRef.current
+    if (pending) await pending
+  }, [])
   const {
     messages,
     setMessages,
@@ -1025,11 +1040,13 @@ export function ChatView() {
       })
       let loadedItems: MessageResponse[] | null = null
       try {
-        const [initialItems, runs] = await Promise.all([
+        const [thread, initialItems, runs] = await Promise.all([
+          getThread(accessToken, threadId),
           listMessages(accessToken, threadId),
           listThreadRuns(accessToken, threadId, 1),
         ])
         if (disposed || !isMessageSyncCurrent(syncVersion)) return
+        onThreadUpserted(thread)
 
         const latest = runs[0]
         let items = initialItems
@@ -1495,7 +1512,7 @@ export function ChatView() {
       disposed = true
     }
   // 只在 threadId 变化时重新加载，避免依赖 locationState 导致重复触发
-  }, [accessToken, threadId, setMetaBatch])
+  }, [accessToken, threadId, setMetaBatch, onThreadUpserted])
 
   // 切换 thread 时清理 SSE 和排队消息，并重置 pendingIncognito
   useEffect(() => {
@@ -1736,13 +1753,14 @@ export function ChatView() {
       }
 
       if (pendingIncognito && messages.length > 0) {
+        await waitForPlanModeUpdate()
         const lastMessageId = messages[messages.length - 1].id
         const forked = await forkThread(accessToken, threadId, lastMessageId, true)
         if (forked.id_mapping) migrateMessageMetadata(forked.id_mapping)
         onThreadCreated(forked)
         const uploaded = await uploadAttachments()
         const forkUserMessage = await createMessage(accessToken, forked.id, buildMessageRequest(text, uploaded))
-        const run = await createRun(accessToken, forked.id, personaKey, modelOverride, readThreadWorkFolder(threadId) ?? undefined, readThreadReasoningMode(threadId) !== 'off' ? readThreadReasoningMode(threadId) as RunReasoningMode : undefined, readPlanModeFromStorage())
+        const run = await createRun(accessToken, forked.id, personaKey, modelOverride, readThreadWorkFolder(threadId) ?? undefined, readThreadReasoningMode(threadId) !== 'off' ? readThreadReasoningMode(threadId) as RunReasoningMode : undefined)
         if (personaKey === SEARCH_PERSONA_KEY) addSearchThreadId(forked.id)
         attachments.forEach((attachment) => revokeDraftAttachment(attachment))
         chatInputRef.current?.clear()
@@ -1783,6 +1801,7 @@ export function ChatView() {
         })
         activateAnchor()
         const reasoningMode = readThreadReasoningMode(threadId)
+        await waitForPlanModeUpdate()
         const run = await editMessage(
           accessToken,
           threadId,
@@ -1793,7 +1812,6 @@ export function ChatView() {
           modelOverride,
           readThreadWorkFolder(threadId) ?? undefined,
           reasoningMode !== 'off' ? reasoningMode as RunReasoningMode : undefined,
-          readPlanModeFromStorage(),
         )
         if (personaKey === SEARCH_PERSONA_KEY) addSearchThreadId(threadId)
         noResponseMsgIdRef.current = replaceMessageId
@@ -1813,7 +1831,8 @@ export function ChatView() {
         injectionBlockedRunIdRef.current = null
         noResponseMsgIdRef.current = message.id
 
-        const run = await createRun(accessToken, threadId, personaKey, modelOverride, readThreadWorkFolder(threadId) ?? undefined, readThreadReasoningMode(threadId) !== 'off' ? readThreadReasoningMode(threadId) as RunReasoningMode : undefined, readPlanModeFromStorage())
+        await waitForPlanModeUpdate()
+        const run = await createRun(accessToken, threadId, personaKey, modelOverride, readThreadWorkFolder(threadId) ?? undefined, readThreadReasoningMode(threadId) !== 'off' ? readThreadReasoningMode(threadId) as RunReasoningMode : undefined)
         if (personaKey === SEARCH_PERSONA_KEY) addSearchThreadId(threadId)
         resetSearchSteps()
         setActiveRunId(run.run_id)
@@ -1854,6 +1873,7 @@ export function ChatView() {
     setUserEnterMessageId,
     t.copThinkingHints,
     threadId,
+    waitForPlanModeUpdate,
   ])
 
   const promoteHistoricalRunToHandoff = useCallback((runId: string, status: Exclude<MessageTerminalStatusRef, 'completed'>) => {
@@ -2307,6 +2327,30 @@ export function ChatView() {
     setIsSearchThread(personaKey === SEARCH_PERSONA_KEY)
   }, [])
 
+  const handleTogglePlanMode = useCallback(() => {
+    if (!threadId || appMode !== 'work') return
+    const previousMode: CollaborationMode = isPlanMode ? 'plan' : 'default'
+    const nextMode: CollaborationMode = isPlanMode ? 'default' : 'plan'
+    const requestSeq = ++planModeRequestSeqRef.current
+    onThreadCollaborationModeUpdated(threadId, nextMode)
+    let updatePromise: Promise<void>
+    updatePromise = updateThreadCollaborationMode(accessToken, threadId, nextMode).then((thread) => {
+      if (planModeRequestSeqRef.current === requestSeq) {
+        onThreadUpserted(thread)
+      }
+    }).catch((err) => {
+      if (planModeRequestSeqRef.current === requestSeq) {
+        onThreadCollaborationModeUpdated(threadId, previousMode)
+        setError(normalizeError(err))
+      }
+    }).finally(() => {
+      if (planModeUpdateRef.current === updatePromise) {
+        planModeUpdateRef.current = null
+      }
+    })
+    planModeUpdateRef.current = updatePromise
+  }, [accessToken, appMode, isPlanMode, onThreadCollaborationModeUpdated, onThreadUpserted, setError, threadId])
+
   const hasMessages = messages.length > 0
 
   const chatInputEl = useMemo(() => (
@@ -2333,8 +2377,10 @@ export function ChatView() {
       hasMessages={hasMessages}
       workThreadId={threadId}
       draftOwnerKey={me?.id}
+      isPlanMode={isPlanMode}
+      onTogglePlanMode={handleTogglePlanMode}
     />
-  ), [attachments, sending, isStreaming, canCancel, cancelSubmitting, appMode, isSearchThread, hasMessages, threadId, accessToken, me?.id, t.replyPlaceholder, handleSend, handleCancel, handleAttachFiles, handlePasteContent, handleRemoveAttachment, handleAsrError, handlePersonaChange, onOpenSettings])
+  ), [attachments, sending, isStreaming, canCancel, cancelSubmitting, appMode, isSearchThread, hasMessages, threadId, accessToken, me?.id, isPlanMode, t.replyPlaceholder, handleSend, handleCancel, handleAttachFiles, handlePasteContent, handleRemoveAttachment, handleAsrError, handlePersonaChange, handleTogglePlanMode, onOpenSettings])
 
   const renderLiveCopItems = (
     seg: Extract<AssistantTurnSegment, { type: 'cop' }>,

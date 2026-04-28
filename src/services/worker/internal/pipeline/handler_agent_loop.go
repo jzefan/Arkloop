@@ -553,8 +553,8 @@ func (w *eventWriter) Append(
 			return err
 		}
 	}
-	if ev.Type == "thread.plan_mode.updated" {
-		if err := w.applyThreadPlanModeEvent(ctx, ev); err != nil {
+	if ev.Type == "thread.collaboration_mode.updated" {
+		if err := w.applyThreadCollaborationModeEvent(ctx, ev); err != nil {
 			return err
 		}
 	}
@@ -770,28 +770,51 @@ func (w *eventWriter) Append(
 	return nil
 }
 
-func (w *eventWriter) applyThreadPlanModeEvent(ctx context.Context, ev events.RunEvent) error {
-	active, ok := ev.DataJSON["plan_mode"].(bool)
+func (w *eventWriter) applyThreadCollaborationModeEvent(ctx context.Context, ev events.RunEvent) error {
+	mode, ok := ev.DataJSON["collaboration_mode"].(string)
 	if !ok {
-		return fmt.Errorf("thread.plan_mode.updated missing plan_mode")
+		return fmt.Errorf("thread.collaboration_mode.updated missing collaboration_mode")
 	}
-	tag, err := w.tx.Exec(
+	mode, valid := NormalizeCollaborationMode(mode)
+	if !valid {
+		return fmt.Errorf("thread.collaboration_mode.updated invalid collaboration_mode")
+	}
+	var previous string
+	var revision int64
+	if err := w.tx.QueryRow(
 		ctx,
-		`UPDATE threads
-		    SET plan_mode = $3
+		`SELECT collaboration_mode
+		   FROM threads
 		  WHERE id = $1
 		    AND account_id = $2
 		    AND deleted_at IS NULL`,
 		w.run.ThreadID,
 		w.run.AccountID,
-		active,
-	)
-	if err != nil {
+	).Scan(&previous); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return fmt.Errorf("thread not found for collaboration mode update")
+		}
 		return err
 	}
-	if tag.RowsAffected() == 0 {
-		return fmt.Errorf("thread not found for plan mode update")
+	if err := w.tx.QueryRow(
+		ctx,
+		`UPDATE threads
+		    SET collaboration_mode = $3,
+		        collaboration_mode_revision = CASE WHEN collaboration_mode <> $3 THEN collaboration_mode_revision + 1 ELSE collaboration_mode_revision END,
+		        updated_at = CASE WHEN collaboration_mode <> $3 THEN now() ELSE updated_at END
+		  WHERE id = $1
+		    AND account_id = $2
+		    AND deleted_at IS NULL
+		  RETURNING collaboration_mode_revision`,
+		w.run.ThreadID,
+		w.run.AccountID,
+		mode,
+	).Scan(&revision); err != nil {
+		return err
 	}
+	ev.DataJSON["previous_collaboration_mode"] = previous
+	ev.DataJSON["collaboration_mode"] = mode
+	ev.DataJSON["collaboration_mode_revision"] = revision
 	return nil
 }
 

@@ -1507,7 +1507,7 @@ func TestDesktopInputLoaderAppliesPlanMode(t *testing.T) {
 			args: []any{runID, accountID, threadID},
 		},
 		{
-			sql:  `INSERT INTO run_events (run_id, seq, type, data_json) VALUES ($1, 1, 'run.started', '{"plan_mode":true}'::jsonb)`,
+			sql:  `INSERT INTO run_events (run_id, seq, type, data_json) VALUES ($1, 1, 'run.started', '{"collaboration_mode":"plan","collaboration_mode_revision":2}'::jsonb)`,
 			args: []any{runID},
 		},
 	} {
@@ -1528,8 +1528,8 @@ func TestDesktopInputLoaderAppliesPlanMode(t *testing.T) {
 	called := false
 	if err := loader(ctx, rc, func(_ context.Context, got *pipeline.RunContext) error {
 		called = true
-		if got.InputJSON["plan_mode"] != true {
-			t.Fatalf("unexpected plan_mode input: %#v", got.InputJSON["plan_mode"])
+		if got.InputJSON["collaboration_mode"] != "plan" {
+			t.Fatalf("unexpected collaboration_mode input: %#v", got.InputJSON["collaboration_mode"])
 		}
 		if !got.IsPlanMode {
 			t.Fatal("expected desktop plan mode to be active")
@@ -1578,11 +1578,11 @@ func TestDesktopPersonaResolutionRestoresPlanModePromptAfterReset(t *testing.T) 
 			ThreadID: threadID,
 		},
 		InputJSON: map[string]any{
-			"persona_id": "test-persona",
-			"plan_mode":  true,
+			"persona_id":         "test-persona",
+			"collaboration_mode": "plan",
 		},
 	}
-	pipeline.ApplyPlanMode(rc)
+	pipeline.ApplyCollaborationMode(rc)
 
 	var gotRuntimePrompt string
 	h := pipeline.Build([]pipeline.RunMiddleware{mw}, func(_ context.Context, got *pipeline.RunContext) error {

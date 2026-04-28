@@ -273,8 +273,11 @@ type RunContext struct {
 	EndReplyRequested bool // set by end_reply tool, agent loop reads to terminate run
 
 	// -- plan mode --
-	IsPlanMode   bool
-	PlanFilePath string
+	CollaborationMode         string
+	CollaborationModeRevision int64
+	IsPlanMode                bool
+	PlanFilePath              string
+	PlanModeExitReminder      bool
 
 	// -- Impression --
 	ImpressionRun bool
@@ -331,7 +334,19 @@ func (rc *RunContext) SetIsPlanMode(active bool) {
 	if rc == nil {
 		return
 	}
+	if !active && rc.IsPlanMode {
+		rc.PlanModeExitReminder = true
+	}
 	rc.IsPlanMode = active
+	if active {
+		rc.CollaborationMode = CollaborationModePlan
+		if rc.PlanFilePath == "" {
+			rc.PlanFilePath = "plans/" + rc.Run.ThreadID.String() + ".md"
+		}
+	} else {
+		rc.CollaborationMode = CollaborationModeDefault
+	}
+	SyncPlanModePrompt(rc)
 }
 
 // SetPlanFilePath implements tools/builtin/enter_plan_mode.PipelineBinding.
@@ -340,6 +355,7 @@ func (rc *RunContext) SetPlanFilePath(path string) {
 		return
 	}
 	rc.PlanFilePath = path
+	SyncPlanModePrompt(rc)
 }
 
 // PlanFilePathValue implements tools/builtin/exit_plan_mode.PipelineBinding.

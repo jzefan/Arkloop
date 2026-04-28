@@ -77,6 +77,11 @@ const (
 
 const ResumeUnavailableErrorClass = resumeUnavailableErrorClass
 
+const (
+	CollaborationModeDefault = "default"
+	CollaborationModePlan    = "plan"
+)
+
 // NewInputLoaderMiddleware 加载 run 的 inputJSON 和线程历史消息到 RunContext。
 func NewInputLoaderMiddleware(
 	runsRepo data.RunsRepository,
@@ -114,12 +119,12 @@ func NewInputLoaderMiddleware(
 		if rawWorkDir, ok := loaded.InputJSON["work_dir"].(string); ok {
 			rc.WorkDir = strings.TrimSpace(rawWorkDir)
 		}
-		ApplyPlanMode(rc)
+		ApplyCollaborationMode(rc)
 		emitTraceEvent(rc, "input_loader", "input_loader.loaded", map[string]any{
-			"run_kind":      strings.TrimSpace(stringValue(rc.InputJSON["run_kind"])),
-			"message_count": len(rc.Messages),
-			"history_limit": rc.ThreadMessageHistoryLimit,
-			"plan_mode":     rc.IsPlanMode,
+			"run_kind":           strings.TrimSpace(stringValue(rc.InputJSON["run_kind"])),
+			"message_count":      len(rc.Messages),
+			"history_limit":      rc.ThreadMessageHistoryLimit,
+			"collaboration_mode": rc.CollaborationMode,
 		})
 
 		return next(ctx, rc)
@@ -133,54 +138,105 @@ func stringValue(value any) string {
 	return ""
 }
 
-// detectPlanModeFromHistory recovers plan-mode state from message history by
-// finding the most recent enter_plan_mode / exit_plan_mode tool call.
-func detectPlanModeFromHistory(msgs []llm.Message) bool {
-	for i := len(msgs) - 1; i >= 0; i-- {
-		msg := msgs[i]
-		if msg.Role != "assistant" || len(msg.ToolCalls) == 0 {
-			continue
-		}
-		for j := len(msg.ToolCalls) - 1; j >= 0; j-- {
-			switch msg.ToolCalls[j].ToolName {
-			case "enter_plan_mode":
-				return true
-			case "exit_plan_mode":
-				return false
-			}
-		}
+func NormalizeCollaborationMode(value string) (string, bool) {
+	switch strings.TrimSpace(value) {
+	case "", CollaborationModeDefault:
+		return CollaborationModeDefault, true
+	case CollaborationModePlan:
+		return CollaborationModePlan, true
+	default:
+		return "", false
 	}
-	return false
 }
 
-// ApplyPlanMode restores plan-mode state after run input and message history are loaded.
-func ApplyPlanMode(rc *RunContext) {
+// ApplyCollaborationMode restores collaboration state from the run snapshot.
+func ApplyCollaborationMode(rc *RunContext) {
 	if rc == nil {
 		return
 	}
-	if planMode, ok := rc.InputJSON["plan_mode"].(bool); ok {
-		rc.IsPlanMode = planMode
-	} else {
-		rc.IsPlanMode = detectPlanModeFromHistory(rc.Messages)
+	mode := CollaborationModeDefault
+	if rawMode, ok := rc.InputJSON["collaboration_mode"].(string); ok {
+		if normalized, valid := NormalizeCollaborationMode(rawMode); valid {
+			mode = normalized
+		}
+	}
+	rc.CollaborationMode = mode
+	rc.IsPlanMode = mode == CollaborationModePlan
+	rc.PlanModeExitReminder = false
+	if rawRevision, ok := rc.InputJSON["collaboration_mode_revision"]; ok {
+		rc.CollaborationModeRevision = int64Value(rawRevision)
 	}
 	if rc.IsPlanMode && rc.PlanFilePath == "" {
-		rc.PlanFilePath = "plans/" + rc.Run.ThreadID.String() + ".md"
+		rc.PlanFilePath = planFilePath(rc.Run.ThreadID)
 	}
-	if !rc.IsPlanMode {
-		rc.RemovePromptSegment("plan_mode")
+	SyncPlanModePrompt(rc)
+}
+
+// ApplyPlanMode is kept as a narrow compatibility shim for older tests.
+func ApplyPlanMode(rc *RunContext) {
+	ApplyCollaborationMode(rc)
+}
+
+func int64Value(value any) int64 {
+	switch typed := value.(type) {
+	case int64:
+		return typed
+	case int:
+		return int64(typed)
+	case float64:
+		return int64(typed)
+	default:
+		return 0
+	}
+}
+
+func planFilePath(threadID uuid.UUID) string {
+	if threadID == uuid.Nil {
+		return ""
+	}
+	return "plans/" + threadID.String() + ".md"
+}
+
+func SyncPlanModePrompt(rc *RunContext) {
+	if rc == nil {
 		return
 	}
+	rc.RemovePromptSegment("plan_mode")
+	rc.RemovePromptSegment("plan_mode_exit")
 	if rc.IsPlanMode {
+		if rc.PlanFilePath == "" {
+			rc.PlanFilePath = planFilePath(rc.Run.ThreadID)
+		}
 		rc.UpsertPromptSegment(PromptSegment{
 			Name:      "plan_mode",
 			Target:    PromptTargetRuntimeTail,
 			Role:      "user",
 			Stability: PromptStabilityVolatileTail,
 			Text: "<system-reminder>\n" +
-				"Plan Mode 当前对这个 thread 生效。\n" +
-				"Plan 文件是 " + rc.PlanFilePath + "，它是本 thread 的方案草稿，也是此模式下唯一可以维护的文件。\n" +
-				"你可以读取代码、搜索、提问并逐步更新这个 Plan 文件；不要修改普通项目文件或执行会改变项目状态的命令。\n" +
-				"当方案已经准备好交给用户确认时，调用 exit_plan_mode 退出 Plan Mode。\n" +
+				"Plan Mode is active for this thread.\n\n" +
+				"The user does not want implementation yet. Do not modify ordinary project files, create commits, run mutating commands, or claim implementation is complete.\n\n" +
+				"You may read, search, inspect, ask clarifying questions, and maintain only this plan file:\n" +
+				rc.PlanFilePath + "\n\n" +
+				"Keep the plan file current as you learn. If the plan file does not exist, create it. If it exists, read it first and update or replace it as appropriate for the current request.\n\n" +
+				"When the plan is ready, call exit_plan_mode. Do not ask for plan approval in plain text; exit_plan_mode is the approval handoff.\n" +
+				"</system-reminder>",
+		})
+		return
+	}
+	if rc.PlanModeExitReminder {
+		if rc.PlanFilePath == "" {
+			rc.PlanFilePath = planFilePath(rc.Run.ThreadID)
+		}
+		rc.UpsertPromptSegment(PromptSegment{
+			Name:      "plan_mode_exit",
+			Target:    PromptTargetRuntimeTail,
+			Role:      "user",
+			Stability: PromptStabilityVolatileTail,
+			Text: "<system-reminder>\n" +
+				"Plan Mode has ended for this thread.\n\n" +
+				"Previous Plan Mode instructions are no longer active. You may now implement changes, run appropriate tools, and continue from the approved plan if it is relevant.\n\n" +
+				"The plan file for reference is:\n" +
+				rc.PlanFilePath + "\n" +
 				"</system-reminder>",
 		})
 	}
@@ -240,8 +296,11 @@ func loadRunInputs(
 		if rawReasoningMode, ok := dataJSON["reasoning_mode"].(string); ok && strings.TrimSpace(rawReasoningMode) != "" {
 			inputJSON["reasoning_mode"] = strings.TrimSpace(rawReasoningMode)
 		}
-		if rawPlanMode, ok := dataJSON["plan_mode"].(bool); ok {
-			inputJSON["plan_mode"] = rawPlanMode
+		if rawCollaborationMode, ok := dataJSON["collaboration_mode"].(string); ok && strings.TrimSpace(rawCollaborationMode) != "" {
+			inputJSON["collaboration_mode"] = strings.TrimSpace(rawCollaborationMode)
+		}
+		if rawRevision, ok := dataJSON["collaboration_mode_revision"]; ok {
+			inputJSON["collaboration_mode_revision"] = rawRevision
 		}
 		if rawTimeoutSeconds, ok := dataJSON["timeout_seconds"]; ok {
 			switch value := rawTimeoutSeconds.(type) {

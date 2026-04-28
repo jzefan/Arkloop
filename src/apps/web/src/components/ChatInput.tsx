@@ -3,7 +3,6 @@ import { ArrowUp, Mic, X, Check, Loader2 } from 'lucide-react'
 import type { FormEvent, KeyboardEvent, ClipboardEvent as ReactClipboardEvent } from 'react'
 import { listSelectablePersonas, type SelectablePersona, type UploadedThreadAttachment } from '../api'
 import { useLocale } from '../contexts/LocaleContext'
-import { usePlanModeUI } from '../contexts/app-ui'
 import { PastedContentModal } from './PastedContentModal'
 import type { SettingsTab } from './SettingsModal'
 import {
@@ -78,6 +77,8 @@ type Props = {
   hasMessages?: boolean
   workThreadId?: string
   draftOwnerKey?: string | null
+  isPlanMode?: boolean
+  onTogglePlanMode?: () => void
 }
 
 type TextareaSelection = {
@@ -175,6 +176,8 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
   hasMessages,
   workThreadId,
   draftOwnerKey,
+  isPlanMode = false,
+  onTogglePlanMode,
 }, ref) {
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -213,7 +216,6 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
   const onVoiceNotConfiguredRef = useLatest<(() => void) | undefined>(() => onOpenSettings?.('voice' as never))
 
   const { t } = useLocale()
-  const { isPlanMode, togglePlanMode } = usePlanModeUI()
 
   const [selectablePersonas, setSelectablePersonas] = useState<SelectablePersona[]>([])
   const [selectedPersonaKey, setSelectedPersonaKey] = useState(readSelectedPersonaKeyFromStorage)
@@ -557,7 +559,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
   const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Tab' && e.shiftKey && appMode === 'work') {
       e.preventDefault()
-      togglePlanMode()
+      onTogglePlanMode?.()
       return
     }
     if (!e.nativeEvent.isComposing && e.key === 'ArrowUp' && handleHistoryNavigation('up', e.currentTarget)) {
@@ -895,7 +897,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
             variant={variant}
             appMode={appMode}
             isPlanMode={isPlanMode}
-            onTogglePlanMode={togglePlanMode}
+            onTogglePlanMode={onTogglePlanMode}
             threadHasMessages={hasMessages}
             workThreadId={workThreadId}
             hideModelPicker={isWorkCompactInput}

@@ -243,6 +243,8 @@ CREATE INDEX ix_threads_deleted_at ON threads(deleted_at) WHERE deleted_at IS NO
 
 CREATE INDEX ix_threads_org_id ON threads(account_id);
 
+CREATE INDEX ix_threads_owner_activity ON threads(account_id, created_by_user_id, is_private, updated_at DESC, id DESC);
+
 CREATE UNIQUE INDEX ix_tool_provider_configs_platform_group_active
     ON tool_provider_configs (group_name)
     WHERE owner_kind = 'platform' AND is_active = 1;
@@ -1002,7 +1004,7 @@ CREATE TABLE runs (
     profile_ref         TEXT,
     workspace_ref       TEXT,
     created_at          TEXT NOT NULL DEFAULT (datetime('now'))
-);
+, updated_at TEXT);
 
 CREATE TABLE scheduled_jobs (
     id                  TEXT PRIMARY KEY,
@@ -1025,7 +1027,7 @@ CREATE TABLE scheduled_jobs (
     created_by_user_id  TEXT,
     created_at          TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at          TEXT NOT NULL DEFAULT (datetime('now'))
-, weekly_day INTEGER, fire_at DATETIME, cron_expr TEXT NOT NULL DEFAULT '', delete_after_run INTEGER NOT NULL DEFAULT 0, thinking INTEGER NOT NULL DEFAULT 0, timeout_seconds INTEGER NOT NULL DEFAULT 0, light_context INTEGER NOT NULL DEFAULT 0, tools_allow TEXT NOT NULL DEFAULT '');
+, weekly_day INTEGER, fire_at DATETIME, cron_expr TEXT NOT NULL DEFAULT '', delete_after_run INTEGER NOT NULL DEFAULT 0, timeout_seconds INTEGER NOT NULL DEFAULT 0, reasoning_mode TEXT NOT NULL DEFAULT '');
 
 CREATE TABLE "scheduled_triggers" (
     id                    TEXT PRIMARY KEY,
@@ -1037,7 +1039,7 @@ CREATE TABLE "scheduled_triggers" (
     interval_min          INTEGER NOT NULL DEFAULT 30,
     next_fire_at          TEXT NOT NULL,
     created_at            TEXT NOT NULL,
-    updated_at            TEXT NOT NULL, trigger_kind TEXT NOT NULL DEFAULT 'heartbeat', job_id TEXT,
+    updated_at            TEXT NOT NULL, trigger_kind TEXT NOT NULL DEFAULT 'heartbeat', job_id TEXT, cooldown_level INTEGER NOT NULL DEFAULT 0, last_user_msg_at TEXT, burst_start_at TEXT,
     UNIQUE (channel_id, channel_identity_id)
 );
 
@@ -1325,7 +1327,7 @@ CREATE TABLE "threads" (
     branched_from_message_id TEXT,
     title_locked             INTEGER NOT NULL DEFAULT 0,
     mode                     TEXT NOT NULL DEFAULT 'chat' CHECK (mode IN ('chat', 'work')),
-    created_at               TEXT NOT NULL DEFAULT (datetime('now')), next_message_seq INTEGER NOT NULL DEFAULT 1,
+    created_at               TEXT NOT NULL DEFAULT (datetime('now')), next_message_seq INTEGER NOT NULL DEFAULT 1, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, collaboration_mode TEXT NOT NULL DEFAULT 'default' CHECK (collaboration_mode IN ('default', 'plan')), collaboration_mode_revision INTEGER NOT NULL DEFAULT 0,
     UNIQUE (id, account_id)
 );
 
@@ -1483,4 +1485,3 @@ CREATE TABLE workspace_skill_enablements (
     updated_at         TEXT NOT NULL DEFAULT (datetime('now')),
     PRIMARY KEY (workspace_ref, skill_key)
 );
-

@@ -19,7 +19,6 @@ import {
   readSelectedReasoningMode,
   readInputDraftAttachments,
   readWorkFolder,
-  readPlanModeFromStorage,
   readDeveloperShowDebugPanel,
   writeInputDraftAttachments,
 } from '../storage'
@@ -159,6 +158,7 @@ export function WelcomePage() {
   const [showDebugPanel, setShowDebugPanel] = useState(() => readDeveloperShowDebugPanel())
   const chatInputRef = useRef<ChatInputHandle>(null)
   const [attachments, setAttachments] = useState<Attachment[]>([])
+  const [initialPlanMode, setInitialPlanMode] = useState(false)
   const attachmentsRef = useRef<Attachment[]>([])
   const skipAttachmentDraftPersistRef = useRef(false)
   const prevAttachmentDraftScopeRef = useRef<InputDraftScope | null>(null)
@@ -341,6 +341,11 @@ export function WelcomePage() {
     setError(normalizeError(err, t.requestFailed))
   }, [onLoggedOut, t.requestFailed])
 
+  const handleTogglePlanMode = useCallback(() => {
+    if (appMode !== 'work') return
+    setInitialPlanMode((prev) => !prev)
+  }, [appMode])
+
   const handleSubmit = async (e: FormEvent<HTMLFormElement>, personaKey: string, modelOverride?: string) => {
     e.preventDefault()
     const text = (chatInputRef.current?.getValue() ?? '').trim()
@@ -351,7 +356,11 @@ export function WelcomePage() {
 
     try {
       const title = deriveTitle(text, t.newChatTitle)
-      const thread = await createThread(accessToken, { title, is_private: isPrivateMode })
+      const thread = await createThread(accessToken, {
+        title,
+        is_private: isPrivateMode,
+        collaboration_mode: appMode === 'work' && initialPlanMode ? 'plan' : 'default',
+      })
       const uploaded = await Promise.all(
         attachments.map(async (attachment) => {
           if (attachment.uploaded) return attachment.uploaded
@@ -367,7 +376,6 @@ export function WelcomePage() {
         modelOverride,
         readWorkFolder() ?? undefined,
         readSelectedReasoningMode() !== 'off' ? readSelectedReasoningMode() as RunReasoningMode : undefined,
-        readPlanModeFromStorage(),
       )
 
       if (personaKey === SEARCH_PERSONA_KEY) addSearchThreadId(thread.id)
@@ -499,6 +507,8 @@ export function WelcomePage() {
             onOpenSettings={onOpenSettings}
             appMode={appMode}
             draftOwnerKey={me?.id}
+            isPlanMode={appMode === 'work' && initialPlanMode}
+            onTogglePlanMode={handleTogglePlanMode}
           />
           {/* incognito note: 平滑展开/收起 */}
           <div

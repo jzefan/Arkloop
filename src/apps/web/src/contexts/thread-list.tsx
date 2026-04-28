@@ -8,7 +8,7 @@ import {
   useState,
   type ReactNode,
 } from 'react'
-import { listThreads, type ThreadResponse } from '../api'
+import { listThreads, type CollaborationMode, type ThreadResponse } from '../api'
 import {
   readAppModeFromStorage,
   readThreadModes,
@@ -24,8 +24,10 @@ export interface ThreadListContextValue {
   isPrivateMode: boolean
   pendingIncognitoMode: boolean
   addThread: (thread: ThreadResponse) => void
+  upsertThread: (thread: ThreadResponse) => void
   removeThread: (threadId: string) => void
   updateTitle: (threadId: string, title: string) => void
+  updateCollaborationMode: (threadId: string, collaborationMode: CollaborationMode, revision?: number) => void
   markRunning: (threadId: string) => void
   markIdle: (threadId: string) => void
   togglePrivateMode: () => void
@@ -78,6 +80,17 @@ export function ThreadListProvider({ children }: { children: ReactNode }) {
     })
   }, [])
 
+  const upsertThread = useCallback((thread: ThreadResponse) => {
+    if (thread.is_private) {
+      setPrivateThreadIds((prev) => new Set(prev).add(thread.id))
+    }
+    setThreads((prev) => {
+      const idx = prev.findIndex((t) => t.id === thread.id)
+      if (idx < 0) return [thread, ...prev]
+      return prev.map((item, currentIndex) => (currentIndex === idx ? { ...item, ...thread } : item))
+    })
+  }, [])
+
   const removeThread = useCallback((threadId: string) => {
     setThreads((prev) => prev.filter((t) => t.id !== threadId))
   }, [])
@@ -85,6 +98,20 @@ export function ThreadListProvider({ children }: { children: ReactNode }) {
   const updateTitle = useCallback((threadId: string, title: string) => {
     setThreads((prev) =>
       prev.map((t) => (t.id === threadId ? { ...t, title } : t)),
+    )
+  }, [])
+
+  const updateCollaborationMode = useCallback((threadId: string, collaborationMode: CollaborationMode, revision?: number) => {
+    setThreads((prev) =>
+      prev.map((t) => {
+        if (t.id !== threadId) return t
+        if (revision !== undefined && revision <= (t.collaboration_mode_revision ?? 0)) return t
+        return {
+          ...t,
+          collaboration_mode: collaborationMode,
+          collaboration_mode_revision: revision ?? t.collaboration_mode_revision,
+        }
+      }),
     )
   }, [])
 
@@ -116,6 +143,7 @@ export function ThreadListProvider({ children }: { children: ReactNode }) {
       work: [],
     }
     for (const thread of threads) {
+      if (thread.is_private) continue
       const mode = threadModes[thread.id] ?? 'chat'
       grouped[mode].push(thread)
     }
@@ -134,8 +162,10 @@ export function ThreadListProvider({ children }: { children: ReactNode }) {
     isPrivateMode,
     pendingIncognitoMode,
     addThread,
+    upsertThread,
     removeThread,
     updateTitle,
+    updateCollaborationMode,
     markRunning,
     markIdle,
     togglePrivateMode,
@@ -148,8 +178,10 @@ export function ThreadListProvider({ children }: { children: ReactNode }) {
     isPrivateMode,
     pendingIncognitoMode,
     addThread,
+    upsertThread,
     removeThread,
     updateTitle,
+    updateCollaborationMode,
     markRunning,
     markIdle,
     togglePrivateMode,
