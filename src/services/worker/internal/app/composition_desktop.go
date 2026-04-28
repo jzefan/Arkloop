@@ -782,7 +782,12 @@ func (e *DesktopEngine) Execute(ctx context.Context, run data.Run, traceID strin
 		pipeline.NewTitleSummarizerMiddleware(e.db, nil, e.auxGateway, e.emitDebugEvents, e.routingLoader),
 		pipeline.NewContextCompactMiddleware(e.db, data.MessagesRepository{}, data.DesktopRunEventsRepository{}, e.auxGateway, e.emitDebugEvents, e.routingLoader),
 		pipeline.NewImpressionPrepareMiddleware(impStore, e.db, e.auxGateway, e.emitDebugEvents, e.routingLoader),
-		pipeline.NewStickerPrepareMiddleware(e.db, e.messageAttachmentStore),
+		pipeline.NewStickerPrepareMiddleware(e.db, e.messageAttachmentStore, pipeline.StickerPrepareConfig{
+			AuxGateway:          e.auxGateway,
+			EmitDebugEvents:     e.emitDebugEvents,
+			RoutingConfigLoader: e.routingLoader,
+			EventsRepo:          data.DesktopRunEventsRepository{},
+		}),
 		pipeline.NewHeartbeatPrepareMiddleware(),
 		pipeline.NewConditionalToolsMiddleware(),
 		pipeline.NewToolBuildMiddleware(),

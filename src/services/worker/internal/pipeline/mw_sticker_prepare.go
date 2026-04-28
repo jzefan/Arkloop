@@ -9,11 +9,20 @@ import (
 	"arkloop/services/shared/messagecontent"
 	"arkloop/services/worker/internal/data"
 	"arkloop/services/worker/internal/llm"
+	"arkloop/services/worker/internal/routing"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 )
 
-func NewStickerPrepareMiddleware(db data.DB, store MessageAttachmentStore) RunMiddleware {
+type StickerPrepareConfig struct {
+	AuxGateway          llm.Gateway
+	EmitDebugEvents     bool
+	RoutingConfigLoader *routing.ConfigLoader
+	EventsRepo          CompactRunEventAppender
+}
+
+func NewStickerPrepareMiddleware(db data.DB, store MessageAttachmentStore, cfg StickerPrepareConfig) RunMiddleware {
 	repo := data.AccountStickersRepository{}
 	cacheRepo := data.StickerDescriptionCacheRepository{}
 
@@ -35,8 +44,21 @@ func NewStickerPrepareMiddleware(db data.DB, store MessageAttachmentStore) RunMi
 		if sticker == nil || sticker.IsRegistered {
 			return nil
 		}
-		if strings.TrimSpace(sticker.PreviewStorageKey) == "" || !supportsImageInput(rc.SelectedRoute) {
+		if strings.TrimSpace(sticker.PreviewStorageKey) == "" {
 			return nil
+		}
+		if !stickerSelectedRouteSupportsVision(rc.SelectedRoute) {
+			if resolution, ok := resolveStickerToolVisionRoute(ctx, db, rc, cfg); ok {
+				rc.Gateway = resolution.Gateway
+				rc.SelectedRoute = resolution.Selected
+				rc.ContextWindowTokens = routing.RouteContextWindowTokens(resolution.Selected.Route)
+				if rc.Temperature == nil {
+					rc.Temperature = routing.RouteDefaultTemperature(resolution.Selected.Route)
+				}
+				rc.EstimateProviderRequestBytes = stickerProviderRequestEstimator(resolution.Selected, cfg, rc.LlmMaxResponseBytes)
+			} else {
+				return failStickerRegisterRun(ctx, rc, cfg.EventsRepo, stickerID)
+			}
 		}
 
 		imageBytes, contentType, err := store.GetWithContentType(ctx, sticker.PreviewStorageKey)
@@ -84,6 +106,122 @@ func NewStickerPrepareMiddleware(db data.DB, store MessageAttachmentStore) RunMi
 			return fmt.Errorf("mark sticker registered %s: %w", stickerID, err)
 		}
 		return nil
+	}
+}
+
+func stickerSelectedRouteSupportsVision(selected *routing.SelectedProviderRoute) bool {
+	caps, ok := routing.SelectedRouteCatalogModelCapabilities(selected)
+	return ok && caps.SupportsInputModality("image")
+}
+
+func resolveStickerToolVisionRoute(
+	ctx context.Context,
+	db data.DB,
+	rc *RunContext,
+	cfg StickerPrepareConfig,
+) (*accountToolRouteResolution, bool) {
+	if db == nil || rc == nil {
+		return nil, false
+	}
+	resolution, ok := resolveAccountToolRouteStrict(
+		ctx,
+		db,
+		rc.Run.AccountID,
+		cfg.AuxGateway,
+		cfg.EmitDebugEvents,
+		rc.LlmMaxResponseBytes,
+		cfg.RoutingConfigLoader,
+		rc.RoutingByokEnabled,
+	)
+	if !ok || resolution == nil || !stickerSelectedRouteSupportsVision(resolution.Selected) {
+		return nil, false
+	}
+	return resolution, true
+}
+
+func stickerProviderRequestEstimator(
+	selected *routing.SelectedProviderRoute,
+	cfg StickerPrepareConfig,
+	llmMaxResponseBytes int,
+) func(llm.Request) (int, error) {
+	if selected == nil || selected.Credential.ProviderKind == routing.ProviderKindStub {
+		return nil
+	}
+	resolved, err := ResolveGatewayConfigFromSelectedRoute(*selected, cfg.EmitDebugEvents, llmMaxResponseBytes)
+	if err != nil {
+		return nil
+	}
+	return func(req llm.Request) (int, error) {
+		return llm.EstimateProviderPayloadBytes(resolved, req)
+	}
+}
+
+func failStickerRegisterRun(
+	ctx context.Context,
+	rc *RunContext,
+	eventsRepo CompactRunEventAppender,
+	stickerID string,
+) error {
+	const (
+		errorClass = llm.ErrorClassConfigMissing
+		code       = "sticker.vision_model_unavailable"
+		message    = "sticker vision model is not configured"
+	)
+	details := map[string]any{
+		"sticker_id": strings.TrimSpace(stickerID),
+	}
+	if rc != nil && rc.SelectedRoute != nil {
+		details["selected_model"] = rc.SelectedRoute.Route.Model
+		details["selected_route_id"] = rc.SelectedRoute.Route.ID
+	}
+	if eventsRepo == nil || rc == nil || rc.DB == nil || rc.RunStatusDB == nil {
+		return fmt.Errorf("%s: %s", code, message)
+	}
+
+	if rc.ReleaseSlot != nil {
+		defer rc.ReleaseSlot()
+	}
+
+	failed := rc.Emitter.Emit("run.failed", map[string]any{
+		"error_class": errorClass,
+		"code":        code,
+		"message":     message,
+		"details":     details,
+	}, nil, StringPtr(errorClass))
+
+	tx, err := rc.DB.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	if _, err := eventsRepo.AppendRunEvent(ctx, tx, rc.Run.ID, failed); err != nil {
+		return err
+	}
+	if err := rc.RunStatusDB.UpdateRunTerminalStatus(ctx, tx, rc.Run.ID, data.TerminalStatusUpdate{Status: "failed"}); err != nil {
+		return err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return err
+	}
+
+	publishRunEvent(ctx, rc)
+	return nil
+}
+
+func publishRunEvent(ctx context.Context, rc *RunContext) {
+	if rc == nil {
+		return
+	}
+	channel := fmt.Sprintf("run_events:%s", rc.Run.ID.String())
+	if rc.EventBus != nil {
+		_ = rc.EventBus.Publish(ctx, channel, "")
+	} else if rc.Pool != nil {
+		_, _ = rc.Pool.Exec(ctx, "SELECT pg_notify($1, '')", channel)
+	}
+	if rc.BroadcastRDB != nil {
+		redisChannel := fmt.Sprintf("arkloop:sse:run_events:%s", rc.Run.ID.String())
+		_, _ = rc.BroadcastRDB.Publish(ctx, redisChannel, "").Result()
 	}
 }
 

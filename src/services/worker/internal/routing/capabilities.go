@@ -23,7 +23,31 @@ func RouteModelCapabilities(rule ProviderRouteRule) ModelCapabilities {
 	if len(rawCatalog) == 0 {
 		return inferModelCapabilities(rule.Model)
 	}
-	caps := ModelCapabilities{
+	caps := modelCapabilitiesFromCatalog(rawCatalog)
+	if len(caps.InputModalities) == 0 {
+		inferred := inferModelCapabilities(rule.Model)
+		caps.InputModalities = inferred.InputModalities
+	}
+	return caps
+}
+
+func RouteCatalogModelCapabilities(rule ProviderRouteRule) (ModelCapabilities, bool) {
+	rawCatalog := routeAvailableCatalog(rule)
+	if len(rawCatalog) == 0 {
+		return ModelCapabilities{}, false
+	}
+	return modelCapabilitiesFromCatalog(rawCatalog), true
+}
+
+func SelectedRouteCatalogModelCapabilities(selected *SelectedProviderRoute) (ModelCapabilities, bool) {
+	if selected == nil {
+		return ModelCapabilities{}, false
+	}
+	return RouteCatalogModelCapabilities(selected.Route)
+}
+
+func modelCapabilitiesFromCatalog(rawCatalog map[string]any) ModelCapabilities {
+	return ModelCapabilities{
 		ModelType:          normalizedString(rawCatalog["type"]),
 		ContextLength:      resolveContextLength(rawCatalog),
 		MaxOutputTokens:    normalizedPositiveInt(rawCatalog["max_output_tokens"]),
@@ -31,11 +55,6 @@ func RouteModelCapabilities(rule ProviderRouteRule) ModelCapabilities {
 		OutputModalities:   normalizeStringSlice(rawCatalog["output_modalities"]),
 		DefaultTemperature: normalizedPositiveFloat(rawCatalog["default_temperature"]),
 	}
-	if len(caps.InputModalities) == 0 {
-		inferred := inferModelCapabilities(rule.Model)
-		caps.InputModalities = inferred.InputModalities
-	}
-	return caps
 }
 
 func resolveContextLength(catalog map[string]any) int {

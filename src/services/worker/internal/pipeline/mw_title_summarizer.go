@@ -861,6 +861,50 @@ func resolveAccountToolRoute(
 	}, true
 }
 
+func resolveAccountToolRouteStrict(
+	ctx context.Context,
+	pool CompactPersistDB,
+	accountID uuid.UUID,
+	auxGateway llm.Gateway,
+	emitDebugEvents bool,
+	llmMaxResponseBytes int,
+	configLoader *routing.ConfigLoader,
+	byokEnabled bool,
+) (*accountToolRouteResolution, bool) {
+	var selector string
+	err := pool.QueryRow(ctx,
+		`SELECT value FROM account_entitlement_overrides
+		  WHERE account_id = $1 AND key = 'spawn.profile.tool'
+		    AND (expires_at IS NULL OR expires_at > CURRENT_TIMESTAMP)
+		  LIMIT 1`,
+		accountID,
+	).Scan(&selector)
+	selector = strings.TrimSpace(selector)
+	if err != nil || selector == "" || configLoader == nil {
+		return nil, false
+	}
+
+	aid := accountID
+	routingCfg, err := configLoader.Load(ctx, &aid)
+	if err != nil {
+		slog.Warn("tool_gateway: load routing config failed", "err", err.Error())
+		return nil, false
+	}
+	selected, err := resolveSelectedRouteBySelector(routingCfg, selector, map[string]any{}, byokEnabled)
+	if err != nil || selected == nil {
+		return nil, false
+	}
+	gw, err := gatewayFromSelectedRoute(*selected, auxGateway, emitDebugEvents, llmMaxResponseBytes)
+	if err != nil {
+		slog.Warn("tool_gateway: build failed", "selector", selector, "err", err.Error())
+		return nil, false
+	}
+	return &accountToolRouteResolution{
+		Selected: selected,
+		Gateway:  gw,
+	}, true
+}
+
 func buildSummarizeSystem(styleHint string) string {
 	base := "Generate a very short conversation title from the provided User prompt and Materials.\n" +
 		"Hard rules:\n" +
