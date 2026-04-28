@@ -1178,6 +1178,44 @@ func streamRunEvents(
 		cursor := afterSeq
 		lastSend := time.Now()
 
+		// catch-up batch：客户端落后超过阈值时，一次性打包全部缺失事件
+		if sseConfig.CatchUpThreshold > 0 {
+			latestSeq, err := runRepo.GetLatestSeq(r.Context(), runID)
+			if err != nil {
+				closeLog("get_latest_seq_error", cursor, err)
+				return
+			}
+			gap := latestSeq - cursor
+			if gap > int64(sseConfig.CatchUpThreshold) {
+				catchUpEvents, err := runRepo.ListEvents(r.Context(), runID, cursor, int(gap))
+				if err != nil {
+					closeLog("list_catchup_events_error", cursor, err)
+					return
+				}
+				if len(catchUpEvents) > 0 {
+					if sseTraceEnabled() {
+						slog.InfoContext(r.Context(), "sse_catch_up_batch",
+							"trace_id", traceID,
+							"run_id", runID.String(),
+							"after_seq", afterSeq,
+							"latest_seq", latestSeq,
+							"batch_size", len(catchUpEvents),
+						)
+					}
+					if err := writeSseCatchUpEvent(w, catchUpEvents); err != nil {
+						closeLog("write_catchup_event_error", cursor, err)
+						return
+					}
+					if canFlush {
+						flusher.Flush()
+					}
+					renewSSEWriteDeadline(w, heartbeatDuration)
+					cursor = catchUpEvents[len(catchUpEvents)-1].Seq
+					lastSend = time.Now()
+				}
+			}
+		}
+
 		for {
 			select {
 			case <-r.Context().Done():
@@ -1248,11 +1286,9 @@ func streamRunEvents(
 	}
 }
 
-// writeSseEvent writes a single RunEvent to the response stream in SSE format.
-func writeSseEvent(w nethttp.ResponseWriter, item data.RunEvent) error {
+func buildEventPayload(item data.RunEvent) map[string]any {
 	ts := item.TS.UTC()
 	millis := ts.Format("2006-01-02T15:04:05.999Z07:00")
-
 	payload := map[string]any{
 		"event_id": item.EventID.String(),
 		"run_id":   item.RunID.String(),
@@ -1270,13 +1306,33 @@ func writeSseEvent(w nethttp.ResponseWriter, item data.RunEvent) error {
 	if item.ErrorClass != nil {
 		payload["error_class"] = *item.ErrorClass
 	}
+	return payload
+}
 
-	dataBytes, err := json.Marshal(payload)
+// writeSseEvent writes a single RunEvent to the response stream in SSE format.
+func writeSseEvent(w nethttp.ResponseWriter, item data.RunEvent) error {
+	dataBytes, err := json.Marshal(buildEventPayload(item))
 	if err != nil {
 		return err
 	}
-
 	_, err = fmt.Fprintf(w, "id: %d\nevent: %s\ndata: %s\n\n", item.Seq, item.Type, dataBytes)
+	return err
+}
+
+// writeSseCatchUpEvent writes a batch of RunEvents as a single run.catch_up SSE frame.
+func writeSseCatchUpEvent(w nethttp.ResponseWriter, events []data.RunEvent) error {
+	if len(events) == 0 {
+		return nil
+	}
+	payloads := make([]map[string]any, 0, len(events))
+	for _, item := range events {
+		payloads = append(payloads, buildEventPayload(item))
+	}
+	dataBytes, err := json.Marshal(payloads)
+	if err != nil {
+		return err
+	}
+	_, err = fmt.Fprintf(w, "id: %d\nevent: run.catch_up\ndata: %s\n\n", events[len(events)-1].Seq, dataBytes)
 	return err
 }
 

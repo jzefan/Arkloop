@@ -47,8 +47,9 @@ const (
 	s3BucketEnv    = "ARKLOOP_S3_BUCKET"
 	s3RegionEnv    = "ARKLOOP_S3_REGION"
 
-	sseHeartbeatSecondsEnv = "ARKLOOP_SSE_HEARTBEAT_SECONDS"
-	sseBatchLimitEnv       = "ARKLOOP_SSE_BATCH_LIMIT"
+	sseHeartbeatSecondsEnv    = "ARKLOOP_SSE_HEARTBEAT_SECONDS"
+	sseBatchLimitEnv          = "ARKLOOP_SSE_BATCH_LIMIT"
+	sseCatchUpThresholdEnv    = "ARKLOOP_SSE_CATCH_UP_THRESHOLD"
 
 	bootstrapPlatformAdminEnv = "ARKLOOP_BOOTSTRAP_PLATFORM_ADMIN"
 
@@ -65,19 +66,22 @@ const (
 	turnstileSiteKeyEnv     = "ARKLOOP_TURNSTILE_SITE_KEY"
 	turnstileAllowedHostEnv = "ARKLOOP_TURNSTILE_ALLOWED_HOST"
 
-	defaultSSEHeartbeatSeconds = 15.0
-	defaultSSEBatchLimit       = 500
+	defaultSSEHeartbeatSeconds    = 15.0
+	defaultSSEBatchLimit          = 500
+	defaultSSECatchUpThreshold    = 50
 )
 
 type SSEConfig struct {
 	HeartbeatSeconds float64
 	BatchLimit       int
+	CatchUpThreshold int
 }
 
 func defaultSSEConfig() SSEConfig {
 	return SSEConfig{
 		HeartbeatSeconds: defaultSSEHeartbeatSeconds,
 		BatchLimit:       defaultSSEBatchLimit,
+		CatchUpThreshold: defaultSSECatchUpThreshold,
 	}
 }
 
@@ -280,6 +284,13 @@ func LoadConfigFromEnv() (Config, error) {
 			return Config{}, fmt.Errorf("%s: %w", sseBatchLimitEnv, err)
 		}
 		cfg.SSE.BatchLimit = v
+	}
+	if raw, ok := lookupEnv(sseCatchUpThresholdEnv); ok {
+		v, err := parsePositiveInt(raw)
+		if err != nil {
+			return Config{}, fmt.Errorf("%s: %w", sseCatchUpThresholdEnv, err)
+		}
+		cfg.SSE.CatchUpThreshold = v
 	}
 
 	if raw, ok := lookupEnv(bootstrapPlatformAdminEnv); ok {
