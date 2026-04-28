@@ -21,8 +21,12 @@ const AGENT_NAMES = new Set([
   'send_input', 'wait_agent', 'resume_agent', 'close_agent', 'interrupt_agent',
   'send_acp', 'wait_acp', 'close_acp', 'interrupt_acp',
 ])
-const FETCH_NAMES = new Set(['web_fetch'])
 const MUTATING_LSP = new Set(['rename'])
+
+function isWebFetchToolName(toolName: string): boolean {
+  const n = normalizeToolName(toolName).toLowerCase().replace(/-/g, '_')
+  return n === 'web_fetch' || n.startsWith('web_fetch.')
+}
 
 export function categoryForTool(toolName: string): CopSegmentCategory {
   const n = normalizeToolName(toolName)
@@ -34,7 +38,7 @@ export function categoryForTool(toolName: string): CopSegmentCategory {
   if (EXEC_NAMES.has(n)) return 'exec'
   if (EDIT_NAMES.has(n)) return 'edit'
   if (AGENT_NAMES.has(n)) return 'agent'
-  if (FETCH_NAMES.has(n)) return 'fetch'
+  if (isWebFetchToolName(toolName)) return 'fetch'
   return 'generic'
 }
 
@@ -229,6 +233,17 @@ function webSearchLiveTitle(args: Record<string, unknown>): string {
   return formatWebSearchTitle('Searching for', webSearchQueriesFromArguments(args) ?? []) ?? 'Searching'
 }
 
+function webFetchLiveTitle(args: Record<string, unknown>): string {
+  const url = typeof args.url === 'string' ? args.url.trim() : ''
+  if (!url) return 'Fetching page'
+  try {
+    const host = new URL(url).hostname.replace(/^www\./, '')
+    return host ? `Fetching ${truncate(host, 48)}` : 'Fetching page'
+  } catch {
+    return 'Fetching page'
+  }
+}
+
 function webSearchCompletedTitle(calls: ReadonlyArray<CallItem['call']>): string {
   const byQuery = formatWebSearchTitle('Searched for', uniqueWebSearchQueries(calls))
   if (byQuery) return byQuery
@@ -268,6 +283,7 @@ export function presentToProgressive(
   const dd = (displayDescription ?? '').trim()
   if (dd) return dd
   if (isWebSearchToolName(toolNameInput)) return webSearchLiveTitle(args)
+  if (isWebFetchToolName(toolNameInput)) return webFetchLiveTitle(args)
   const toolName = normalizeToolName(toolNameInput)
   switch (toolName) {
     case 'read_file': {
