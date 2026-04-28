@@ -1382,7 +1382,12 @@ func TestBuildReplayMessagesFiltersHeartbeatDecisionForNonHeartbeatRun(t *testin
 
 func TestBuildReplayMessagesPreservesThinkingParts(t *testing.T) {
 	toolCallsJSON, err := json.Marshal([]llm.ToolCall{
-		{ToolCallID: "call_1", ToolName: "echo", ArgumentsJSON: map[string]any{"text": "hi"}},
+		{
+			ToolCallID:         "call_1",
+			ToolName:           "echo",
+			ArgumentsJSON:      map[string]any{"text": "hi"},
+			DisplayDescription: "Echoing text",
+		},
 	})
 	if err != nil {
 		t.Fatalf("marshal tool calls: %v", err)
@@ -1422,6 +1427,9 @@ func TestBuildReplayMessagesPreservesThinkingParts(t *testing.T) {
 	}
 	if len(messages[0].ToolCalls) != 1 || messages[0].ToolCalls[0].ToolCallID != "call_1" {
 		t.Fatalf("expected replayed tool call preserved, got %#v", messages[0].ToolCalls)
+	}
+	if got := messages[0].ToolCalls[0].DisplayDescription; got != "Echoing text" {
+		t.Fatalf("expected replayed display description preserved, got %q", got)
 	}
 }
 

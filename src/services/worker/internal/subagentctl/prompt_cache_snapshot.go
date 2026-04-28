@@ -52,9 +52,10 @@ func cloneLLMMessages(src []llm.Message) []llm.Message {
 			out[i].ToolCalls = make([]llm.ToolCall, len(msg.ToolCalls))
 			for j, call := range msg.ToolCalls {
 				out[i].ToolCalls[j] = llm.ToolCall{
-					ToolCallID:    call.ToolCallID,
-					ToolName:      call.ToolName,
-					ArgumentsJSON: cloneSnapshotMap(call.ArgumentsJSON),
+					ToolCallID:         call.ToolCallID,
+					ToolName:           call.ToolName,
+					ArgumentsJSON:      cloneSnapshotMap(call.ArgumentsJSON),
+					DisplayDescription: call.DisplayDescription,
 				}
 			}
 		}

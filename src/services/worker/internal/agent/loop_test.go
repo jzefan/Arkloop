@@ -85,6 +85,24 @@ func TestAgentLoopRunsAuxGateway(t *testing.T) {
 	}
 }
 
+func TestCopyRequestPreservesToolCallDisplayDescription(t *testing.T) {
+	messages := []llm.Message{{
+		Role: "assistant",
+		ToolCalls: []llm.ToolCall{{
+			ToolCallID:         "call_1",
+			ToolName:           "exec_command",
+			ArgumentsJSON:      map[string]any{"command": "git status"},
+			DisplayDescription: "Checking status",
+		}},
+	}}
+	request := llm.Request{Model: "test-model"}
+
+	copied := copyRequest(request, messages)
+	if got := copied.Messages[0].ToolCalls[0].DisplayDescription; got != "Checking status" {
+		t.Fatalf("expected display description to survive request copy, got %q", got)
+	}
+}
+
 func TestAgentLoopExecutesToolCalls(t *testing.T) {
 	registry := tools.NewRegistry()
 	if err := registry.Register(builtin.EchoAgentSpec); err != nil {
@@ -460,6 +478,12 @@ func TestAgentLoopTelegramReactAndReplyKeepBothToolResultsInHistory(t *testing.T
 	assistant := second.Messages[1]
 	if len(assistant.ToolCalls) != 2 {
 		t.Fatalf("expected both tool calls preserved, got %#v", assistant.ToolCalls)
+	}
+	if got := assistant.ToolCalls[0].DisplayDescription; got != "Reacting to message" {
+		t.Fatalf("expected first tool display description preserved, got %q", got)
+	}
+	if got := assistant.ToolCalls[1].DisplayDescription; got != "Replying to message" {
+		t.Fatalf("expected second tool display description preserved, got %q", got)
 	}
 
 	reactResult := second.Messages[2]
@@ -2775,16 +2799,18 @@ func (g *telegramReactReplyCaptureGateway) Stream(ctx context.Context, request l
 	g.calls++
 	if g.calls == 1 {
 		if err := yield(llm.ToolCall{
-			ToolCallID:    "tg_react_1",
-			ToolName:      channeltelegram.ToolReact,
-			ArgumentsJSON: map[string]any{"emoji": "❤️", "message_id": "7625"},
+			ToolCallID:         "tg_react_1",
+			ToolName:           channeltelegram.ToolReact,
+			ArgumentsJSON:      map[string]any{"emoji": "❤️", "message_id": "7625"},
+			DisplayDescription: "Reacting to message",
 		}); err != nil {
 			return err
 		}
 		if err := yield(llm.ToolCall{
-			ToolCallID:    "tg_reply_1",
-			ToolName:      channeltelegram.ToolReply,
-			ArgumentsJSON: map[string]any{"reply_to_message_id": "7625"},
+			ToolCallID:         "tg_reply_1",
+			ToolName:           channeltelegram.ToolReply,
+			ArgumentsJSON:      map[string]any{"reply_to_message_id": "7625"},
+			DisplayDescription: "Replying to message",
 		}); err != nil {
 			return err
 		}

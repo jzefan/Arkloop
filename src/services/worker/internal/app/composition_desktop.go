@@ -3444,10 +3444,12 @@ func (w *desktopEventWriter) collectToolCall(dataJSON map[string]any) {
 		return
 	}
 	args, _ := dataJSON["arguments"].(map[string]any)
+	displayDescription, _ := dataJSON["display_description"].(string)
 	w.pendingToolCalls = append(w.pendingToolCalls, llm.ToolCall{
-		ToolCallID:    callID,
-		ToolName:      toolName,
-		ArgumentsJSON: args,
+		ToolCallID:         callID,
+		ToolName:           toolName,
+		ArgumentsJSON:      args,
+		DisplayDescription: strings.TrimSpace(displayDescription),
 	})
 }
 

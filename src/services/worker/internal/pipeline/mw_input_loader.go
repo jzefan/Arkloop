@@ -1041,11 +1041,15 @@ func replayAssistantMessage(msg rollout.AssistantMessage) (llm.Message, error) {
 		}
 		encodedToolCalls := make([]any, 0, len(toolCalls))
 		for _, call := range toolCalls {
-			encodedToolCalls = append(encodedToolCalls, map[string]any{
+			encodedCall := map[string]any{
 				"tool_call_id": call.ToolCallID,
 				"tool_name":    call.ToolName,
 				"arguments":    call.ArgumentsJSON,
-			})
+			}
+			if displayDescription := strings.TrimSpace(call.DisplayDescription); displayDescription != "" {
+				encodedCall["display_description"] = displayDescription
+			}
+			encodedToolCalls = append(encodedToolCalls, encodedCall)
 		}
 		raw["tool_calls"] = encodedToolCalls
 	}
