@@ -334,6 +334,12 @@ export const zh: LocaleStrings = {
   addFromGitHub: "从 GitHub 添加",
   learningMode: "学习辅导",
   planMode: "Plan",
+  planModePlaceholders: [
+    "先规划再编码，减少返工...",
+    "制定清晰计划，一步步实施...",
+    "想清楚需求，设计好方案再动手...",
+    "Plan 模式下，我先分析再执行...",
+  ],
   dragToAttach: "请拖动到此处",
   searchChatsPlaceholder: "搜索会话...",
   searchNoResults: "无匹配结果",

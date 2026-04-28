@@ -336,6 +336,12 @@ export const en: LocaleStrings = {
   addFromGitHub: "Add from GitHub",
   learningMode: "Learning Guide",
   planMode: "Plan",
+  planModePlaceholders: [
+    "Plan and decide before coding...",
+    "Let me design a clear plan, then execute step by step...",
+    "Think through the approach before writing code...",
+    "In Plan mode, I analyze first and build second...",
+  ],
   dragToAttach: "Drop files here",
   searchChatsPlaceholder: "Search chats...",
   searchNoResults: "No results",
