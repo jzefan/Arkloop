@@ -627,3 +627,87 @@ func TestAnthropicSDKGateway_QuirkRetryStripUnsignedThinking(t *testing.T) {
 		}
 	}
 }
+
+func TestAnthropicSDKGateway_QuirkRetryEchoEmptyTextOnThinking(t *testing.T) {
+	t.Setenv("ARKLOOP_OUTBOUND_ALLOW_LOOPBACK_HTTP", "true")
+	var attempts int
+	var bodies []map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		bodies = append(bodies, body)
+		attempts++
+		if attempts == 1 {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"error":{"type":"invalid_request_error","message":"The content in the thinking mode must be passed back to the API."}}`))
+			return
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte(anthropicSDKSSEBody([]string{
+			`{"type":"message_start","message":{"id":"msg_1","type":"message","role":"assistant","model":"claude","content":[],"stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":1,"output_tokens":0}}}`,
+			`{"type":"message_stop"}`,
+		})))
+	}))
+	defer server.Close()
+
+	gateway := NewAnthropicGatewaySDK(AnthropicGatewayConfig{
+		Transport: TransportConfig{APIKey: "key", BaseURL: server.URL},
+		Protocol:  AnthropicProtocolConfig{Version: "2023-06-01"},
+	})
+	request := Request{
+		Model: "claude-test",
+		Messages: []Message{
+			{Role: "user", Content: []ContentPart{{Text: "hi"}}},
+			{Role: "assistant", Content: []ContentPart{{Type: "thinking", Text: "signed", Signature: "sig_1"}}},
+			{Role: "user", Content: []ContentPart{{Text: "again"}}},
+		},
+	}
+	var completed bool
+	var learned []StreamQuirkLearned
+	if err := gateway.Stream(context.Background(), request, func(event StreamEvent) error {
+		switch ev := event.(type) {
+		case StreamRunCompleted:
+			completed = true
+		case StreamQuirkLearned:
+			learned = append(learned, ev)
+		}
+		return nil
+	}); err != nil {
+		t.Fatalf("Stream: %v", err)
+	}
+	if attempts != 2 {
+		t.Fatalf("expected retry, got attempts=%d", attempts)
+	}
+	if !completed {
+		t.Fatalf("missing completion after retry")
+	}
+	if !gateway.(*anthropicSDKGateway).quirks.Has(QuirkEchoEmptyTextOnThink) {
+		t.Fatalf("quirk not stored")
+	}
+	if len(learned) != 1 || learned[0].ProviderKind != "anthropic" || learned[0].QuirkID != string(QuirkEchoEmptyTextOnThink) {
+		t.Fatalf("expected one StreamQuirkLearned event, got %#v", learned)
+	}
+	secondMsgs, _ := bodies[1]["messages"].([]any)
+	var assistant map[string]any
+	for _, raw := range secondMsgs {
+		msg, _ := raw.(map[string]any)
+		if role, _ := msg["role"].(string); role == "assistant" {
+			assistant = msg
+			break
+		}
+	}
+	if assistant == nil {
+		t.Fatalf("retry payload missing assistant message: %#v", secondMsgs)
+	}
+	content, _ := assistant["content"].([]any)
+	if len(content) != 2 {
+		t.Fatalf("retry assistant content must include thinking plus empty text: %#v", content)
+	}
+	textBlock, _ := content[1].(map[string]any)
+	if textBlock["type"] != "text" || textBlock["text"] != "" {
+		t.Fatalf("retry payload missing empty text block: %#v", content)
+	}
+}
