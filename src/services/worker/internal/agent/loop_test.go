@@ -1311,6 +1311,73 @@ func TestAgentLoopStreamEndedAfterToolProgressRetries(t *testing.T) {
 	}
 }
 
+func TestAgentLoopEmptyCompletionRetries(t *testing.T) {
+	gateway := &scriptedTurnsGateway{turns: [][]llm.StreamEvent{
+		{
+			llm.StreamRunCompleted{
+				LlmCallID: "empty-1",
+				Usage:     &llm.Usage{OutputTokens: intPtr(2)},
+			},
+		},
+		{
+			llm.StreamMessageDelta{ContentDelta: "done", Role: "assistant"},
+			llm.StreamRunCompleted{},
+		},
+	}}
+	loop := NewLoop(gateway, nil)
+	emitter := events.NewEmitter("trace")
+
+	var got []events.RunEvent
+	err := loop.Run(
+		context.Background(),
+		RunContext{
+			RunID:               uuid.New(),
+			TraceID:             "trace",
+			InputJSON:           map[string]any{},
+			ReasoningIterations: 3,
+			LlmRetryMaxAttempts: 2,
+			LlmRetryBaseDelayMs: 1,
+			CancelSignal:        func() bool { return false },
+		},
+		llm.Request{Model: "stub"},
+		emitter,
+		func(ev events.RunEvent) error {
+			got = append(got, ev)
+			return nil
+		},
+	)
+	if err != nil {
+		t.Fatalf("loop.Run failed: %v", err)
+	}
+	if gateway.calls != 2 {
+		t.Fatalf("expected empty completion to be retried, got %d calls", gateway.calls)
+	}
+
+	retryCount := 0
+	for _, ev := range got {
+		if ev.Type != "run.llm.retry" {
+			continue
+		}
+		retryCount++
+		if msg, _ := ev.DataJSON["message"].(string); msg != "upstream stream completed without assistant content" {
+			t.Fatalf("unexpected retry message: %q", msg)
+		}
+		if llmCallID, _ := ev.DataJSON["llm_call_id"].(string); llmCallID != "empty-1" {
+			t.Fatalf("unexpected retry llm_call_id: %q", llmCallID)
+		}
+		details, _ := ev.DataJSON["details"].(map[string]any)
+		if details["reason"] != "empty_assistant_completion" {
+			t.Fatalf("unexpected retry details: %#v", details)
+		}
+	}
+	if retryCount != 1 {
+		t.Fatalf("expected 1 run.llm.retry, got %d", retryCount)
+	}
+	if got[len(got)-1].Type != "run.completed" {
+		t.Fatalf("expected final run.completed, got %s", got[len(got)-1].Type)
+	}
+}
+
 func TestAgentLoopPreflightOversizeRewritesBeforeFirstProviderRequest(t *testing.T) {
 	primary := &oversizeSuccessGateway{phase: llm.OversizePhasePreflight}
 	loop := NewLoop(primary, nil)
@@ -2280,8 +2347,8 @@ func TestAgentLoopIterHookOnlyRunsOnReasoningTurns(t *testing.T) {
 func TestAgentLoopSteeringConsumedBeforeCompletion(t *testing.T) {
 	gateway := &scriptedTurnsGateway{
 		turns: [][]llm.StreamEvent{
-			{llm.StreamRunCompleted{}},
-			{llm.StreamRunCompleted{}},
+			{llm.StreamMessageDelta{ContentDelta: "first turn", Role: "assistant"}, llm.StreamRunCompleted{}},
+			{llm.StreamMessageDelta{ContentDelta: "second turn", Role: "assistant"}, llm.StreamRunCompleted{}},
 		},
 	}
 	loop := NewLoop(gateway, buildEchoDispatcher(t))
@@ -2334,8 +2401,8 @@ func TestAgentLoopSteeringConsumedBeforeCompletion(t *testing.T) {
 func TestAgentLoopSteeringScannedBeforeInjection(t *testing.T) {
 	gateway := &scriptedTurnsGateway{
 		turns: [][]llm.StreamEvent{
-			{llm.StreamRunCompleted{}},
-			{llm.StreamRunCompleted{}},
+			{llm.StreamMessageDelta{ContentDelta: "first turn", Role: "assistant"}, llm.StreamRunCompleted{}},
+			{llm.StreamMessageDelta{ContentDelta: "second turn", Role: "assistant"}, llm.StreamRunCompleted{}},
 		},
 	}
 	loop := NewLoop(gateway, buildEchoDispatcher(t))
@@ -2381,7 +2448,7 @@ func TestAgentLoopSteeringOrderAndToolRounds(t *testing.T) {
 				llm.ToolCall{ToolCallID: "call-1", ToolName: "echo", ArgumentsJSON: map[string]any{"text": "a"}},
 				llm.StreamRunCompleted{},
 			},
-			{llm.StreamRunCompleted{}},
+			{llm.StreamMessageDelta{ContentDelta: "done", Role: "assistant"}, llm.StreamRunCompleted{}},
 		},
 	}
 	poll := makeSteeringPoll([]string{"first", "second"})
@@ -2429,7 +2496,7 @@ func TestAgentLoopToolRoundDrainsSteeringBeforeNextTurn(t *testing.T) {
 				llm.ToolCall{ToolCallID: "call-1", ToolName: "echo", ArgumentsJSON: map[string]any{"text": "trigger"}},
 				llm.StreamRunCompleted{},
 			},
-			{llm.StreamRunCompleted{}},
+			{llm.StreamMessageDelta{ContentDelta: "done", Role: "assistant"}, llm.StreamRunCompleted{}},
 		},
 	}
 	poll := makeSteeringPoll([]string{"after-tool"})
