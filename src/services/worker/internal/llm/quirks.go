@@ -11,6 +11,7 @@ const (
 	QuirkEchoReasoningContent  QuirkID = "echo_reasoning_content"
 	QuirkStripUnsignedThinking QuirkID = "strip_unsigned_thinking"
 	QuirkForceTempOneOnThink   QuirkID = "force_temp_one_on_thinking"
+	QuirkEchoEmptyTextOnThink  QuirkID = "echo_empty_text_on_thinking"
 )
 
 type Quirk struct {
@@ -122,6 +123,20 @@ var anthropicQuirks = []Quirk{
 		},
 		Apply: applyForceTempOneOnThinking,
 	},
+	{
+		ID: QuirkEchoEmptyTextOnThink,
+		Match: func(status int, rawBody string) bool {
+			if status != 400 {
+				return false
+			}
+			lower := strings.ToLower(rawBody)
+			return (strings.Contains(lower, "thinking mode") || strings.Contains(lower, "thinking_mode")) &&
+				strings.Contains(lower, "content") &&
+				strings.Contains(lower, "pass") &&
+				strings.Contains(lower, "back")
+		},
+		Apply: applyEchoEmptyTextOnThinking,
+	},
 }
 
 func applyEchoReasoningContent(payload map[string]any) {
@@ -157,6 +172,75 @@ func echoReasoningContentOnItem(item map[string]any) {
 		return
 	}
 	item["reasoning_content"] = ""
+}
+
+func applyEchoEmptyTextOnThinking(payload map[string]any) {
+	walkAssistantItems(payload["messages"], echoEmptyTextOnThinkingItem)
+}
+
+func echoEmptyTextOnThinkingItem(item map[string]any) {
+	switch content := item["content"].(type) {
+	case []map[string]any:
+		if !blocksHaveThinking(content) || blocksHaveText(content) {
+			return
+		}
+		item["content"] = append(content, map[string]any{"type": "text", "text": ""})
+	case []any:
+		if !rawBlocksHaveThinking(content) || rawBlocksHaveText(content) {
+			return
+		}
+		item["content"] = append(content, map[string]any{"type": "text", "text": ""})
+	}
+}
+
+func blocksHaveThinking(blocks []map[string]any) bool {
+	for _, block := range blocks {
+		if isThinkingBlock(block) {
+			return true
+		}
+	}
+	return false
+}
+
+func blocksHaveText(blocks []map[string]any) bool {
+	for _, block := range blocks {
+		if typ, _ := block["type"].(string); typ == "text" {
+			return true
+		}
+	}
+	return false
+}
+
+func rawBlocksHaveThinking(blocks []any) bool {
+	for _, raw := range blocks {
+		block, ok := raw.(map[string]any)
+		if ok && isThinkingBlock(block) {
+			return true
+		}
+	}
+	return false
+}
+
+func rawBlocksHaveText(blocks []any) bool {
+	for _, raw := range blocks {
+		block, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		if typ, _ := block["type"].(string); typ == "text" {
+			return true
+		}
+	}
+	return false
+}
+
+func isThinkingBlock(block map[string]any) bool {
+	switch typ, _ := block["type"].(string); typ {
+	case "thinking", "redacted_thinking":
+		return true
+	default:
+		return false
+	}
 }
 
 func applyStripUnsignedThinking(payload map[string]any) {

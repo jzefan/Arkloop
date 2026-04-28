@@ -81,6 +81,32 @@ func TestQuirkMatch_ForceTempOneOnThinking(t *testing.T) {
 	}
 }
 
+func TestQuirkMatch_EchoEmptyTextOnThinking(t *testing.T) {
+	q := anthropicQuirks[2]
+	if q.ID != QuirkEchoEmptyTextOnThink {
+		t.Fatalf("unexpected id %s", q.ID)
+	}
+	cases := []struct {
+		name   string
+		status int
+		body   string
+		want   bool
+	}{
+		{"deepseek_content_passback", 400, `{"error":{"message":"The content in the thinking mode must be passed back to the API."}}`, true},
+		{"deepseek_underscore_mode", 400, `content in thinking_mode must be passback`, true},
+		{"wrong_status", 500, `content in thinking mode must be passed back`, false},
+		{"missing_content", 400, `thinking must be passed back`, false},
+		{"missing_mode", 400, `content thinking block must be passed back`, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := q.Match(tc.status, tc.body); got != tc.want {
+				t.Fatalf("got %v want %v", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestQuirkApply_EchoReasoningContent(t *testing.T) {
 	payload := map[string]any{
 		"messages": []map[string]any{
@@ -133,6 +159,46 @@ func TestQuirkApply_StripUnsignedThinking(t *testing.T) {
 	}
 }
 
+func TestQuirkApply_EchoEmptyTextOnThinking(t *testing.T) {
+	payload := map[string]any{
+		"messages": []map[string]any{
+			{
+				"role": "assistant",
+				"content": []map[string]any{
+					{"type": "thinking", "thinking": "plan", "signature": "sig"},
+				},
+			},
+			{
+				"role": "assistant",
+				"content": []map[string]any{
+					{"type": "thinking", "thinking": "plan", "signature": "sig"},
+					{"type": "text", "text": "answer"},
+				},
+			},
+			{
+				"role": "user",
+				"content": []map[string]any{
+					{"type": "thinking", "thinking": "ignored"},
+				},
+			},
+		},
+	}
+	applyEchoEmptyTextOnThinking(payload)
+	msgs := payload["messages"].([]map[string]any)
+	first := msgs[0]["content"].([]map[string]any)
+	if len(first) != 2 || first[1]["type"] != "text" || first[1]["text"] != "" {
+		t.Fatalf("assistant thinking-only message must get empty text block: %#v", first)
+	}
+	second := msgs[1]["content"].([]map[string]any)
+	if len(second) != 2 {
+		t.Fatalf("assistant with text must not get duplicate empty text: %#v", second)
+	}
+	user := msgs[2]["content"].([]map[string]any)
+	if len(user) != 1 {
+		t.Fatalf("user message must not change: %#v", user)
+	}
+}
+
 func TestQuirkApply_ForceTempOneOnThinking(t *testing.T) {
 	temp := 0.7
 	payload := map[string]any{
@@ -160,7 +226,7 @@ func TestQuirkApply_ForceTempOneOnThinking(t *testing.T) {
 func TestQuirkStore_Concurrent(t *testing.T) {
 	store := NewQuirkStore()
 	var wg sync.WaitGroup
-	ids := []QuirkID{QuirkEchoReasoningContent, QuirkStripUnsignedThinking, QuirkForceTempOneOnThink}
+	ids := []QuirkID{QuirkEchoReasoningContent, QuirkStripUnsignedThinking, QuirkForceTempOneOnThink, QuirkEchoEmptyTextOnThink}
 	for _, id := range ids {
 		id := id
 		wg.Add(2)
@@ -208,5 +274,9 @@ func TestDetectQuirk(t *testing.T) {
 	id, ok = detectQuirk(400, `Invalid signature in thinking block`, anthropicQuirks)
 	if !ok || id != QuirkStripUnsignedThinking {
 		t.Fatalf("expected strip, got %s ok=%v", id, ok)
+	}
+	id, ok = detectQuirk(400, `content in thinking mode must be passed back`, anthropicQuirks)
+	if !ok || id != QuirkEchoEmptyTextOnThink {
+		t.Fatalf("expected anthropic echo empty text, got %s ok=%v", id, ok)
 	}
 }
