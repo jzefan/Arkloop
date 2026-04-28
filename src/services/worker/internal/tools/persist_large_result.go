@@ -3,18 +3,21 @@ package tools
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
+	"unicode/utf8"
 
 	"arkloop/services/worker/internal/tools/builtin/fileops"
 )
 
 const (
-	PersistThreshold    = 50 * 1024 // 50KB
-	PersistPreviewBytes = 2 * 1024  // 2KB
+	PersistThreshold   = 50 * 1024 // 50KB
+	PersistPreviewHead = 4 * 1024  // 4KB head
+	PersistPreviewTail = 4 * 1024  // 4KB tail
 )
 
 var validToolCallIDRe = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
@@ -76,7 +79,7 @@ func PersistLargeResult(
 		return result
 	}
 
-	preview := generatePreview(content, PersistPreviewBytes)
+	preview := generatePreview(content, PersistPreviewHead, PersistPreviewTail)
 	originalBytes := len(content)
 
 	newResult := make(map[string]any, len(metadataFields)+5)
@@ -89,7 +92,7 @@ func PersistLargeResult(
 	newResult["filepath"] = filePath
 	newResult["original_bytes"] = originalBytes
 	newResult["preview"] = preview
-	newResult["hint"] = "Full output saved. Read the file at the given path to access the complete content."
+	newResult["hint"] = "Full output saved. Use grep to search the file, or read with offset/limit to page through it. Do NOT read the entire file."
 
 	return ExecutionResult{
 		ResultJSON:   newResult,
@@ -101,14 +104,36 @@ func PersistLargeResult(
 	}
 }
 
-func generatePreview(raw []byte, budget int) string {
-	if len(raw) <= budget {
+func generatePreview(raw []byte, headBudget, tailBudget int) string {
+	totalBudget := headBudget + tailBudget
+	if len(raw) <= totalBudget {
 		return string(raw)
 	}
-	cut := make([]byte, budget)
-	copy(cut, raw[:budget])
-	if idx := bytes.LastIndexByte(cut, '\n'); idx > budget/2 {
-		cut = cut[:idx]
+
+	// head: first headBudget bytes, cut at newline boundary
+	head := make([]byte, headBudget)
+	copy(head, raw[:headBudget])
+	if idx := bytes.LastIndexByte(head, '\n'); idx > headBudget/2 {
+		head = head[:idx]
 	}
-	return string(cut) + "\n...[truncated]"
+	// ensure valid UTF-8: drop incomplete trailing rune
+	for len(head) > 0 && !utf8.Valid(head) {
+		_, size := utf8.DecodeLastRune(head)
+		head = head[:len(head)-size]
+	}
+
+	// tail: last tailBudget bytes, cut at newline boundary
+	tailStart := len(raw) - tailBudget
+	tail := raw[tailStart:]
+	if idx := bytes.IndexByte(tail, '\n'); idx >= 0 && idx < len(tail)/2 {
+		tail = tail[idx+1:]
+	}
+	// ensure valid UTF-8: drop incomplete leading rune
+	for len(tail) > 0 && !utf8.Valid(tail) {
+		_, size := utf8.DecodeRune(tail)
+		tail = tail[size:]
+	}
+
+	truncated := len(raw) - len(head) - len(tail)
+	return string(head) + fmt.Sprintf("\n...[%d bytes truncated]...\n", truncated) + string(tail)
 }

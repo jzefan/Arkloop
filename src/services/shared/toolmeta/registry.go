@@ -93,10 +93,10 @@ var registry = []ToolMeta{
 			WebSearchMaxQueriesLimit, WebSearchDefaultMaxResults, WebSearchMaxResultsLimit),
 	},
 	{
-		Name:           "web_fetch",
-		Group:          GroupWebFetch,
-		Label:          "Web fetch",
-		ShortDesc:      "fetch a web page and return its content as text",
+		Name:      "web_fetch",
+		Group:     GroupWebFetch,
+		Label:     "Web fetch",
+		ShortDesc: "fetch a web page and return its content as text",
 		LLMDescription: "fetch a web page and return its title and body as plain text. " +
 			"Use when search snippets are insufficient and a specific page likely contains deeper information. " +
 			"Prefer official or authoritative sources (official documentation, Wikipedia, reputable news sites). " +
@@ -147,12 +147,15 @@ var registry = []ToolMeta{
 			"  - Search files: Use glob (NOT find, fd, ls)\n" +
 			"  - Search content: Use grep (NOT grep, rg, ag)\n" +
 			"  - Fetch URLs: Use web_fetch (NOT curl, wget)\n" +
-			"Do NOT redirect command output to temporary files (e.g., \"git diff > /tmp/out.txt\") to work around output length limits. If a tool result is large, the system persists it automatically and provides a filepath you can read. " +
+			"Do NOT redirect command output to temporary files (e.g., \"git diff > /tmp/out.txt\") to work around output length limits. If a tool result is large, the system persists it automatically and provides a filepath — use grep to search it or read with offset/limit to page through it. Do NOT read the entire persisted file.\n" +
 			"Do NOT use shell redirection (>, >>, | tee) to write files — use write_file or edit. " +
 			"Avoid unnecessary sleep commands:\n" +
 			"  - Do not sleep between commands that can run immediately — just run them.\n" +
 			"  - Do not retry failing commands in a sleep loop — diagnose the root cause.\n" +
 			"  - If a command is long-running and you would like to be notified when it finishes — use run_in_background. No sleep needed.\n" +
+			"Avoid interactive flags in buffered mode: do not pass -i, --interactive, or similar interactive flags to commands in buffered mode — they will cause the command to hang. Use pty mode for interactive commands.\n" +
+			"Shell injection: when constructing commands that include variable data or user-provided strings, always quote them properly. Never pass unvalidated user input directly to shell commands. Use single quotes for literal strings, double quotes for strings containing variables.\n" +
+			"Error handling: when a command fails, read the error output first. Do not blindly retry the same command — diagnose the root cause, fix the issue, then retry. If a command fails after reasonable attempts, report the failure rather than continuing to retry.\n" +
 			"For git commands:\n" +
 			"  - Prefer to create a new commit rather than amending an existing commit.\n" +
 			"  - Before running destructive operations (e.g., git reset --hard, git push --force, git checkout --), consider whether there is a safer alternative that achieves the same goal.\n" +
@@ -219,6 +222,8 @@ var registry = []ToolMeta{
 			"The file_path parameter must be an absolute path, not a relative path. " +
 			"When you already know which part of the file you need, only read that part using offset and limit — this is important for larger files. " +
 			"Otherwise it's recommended to read the whole file by not providing offset and limit. " +
+			"For persisted tool output files (filepath from a tool result with \"persisted\": true): do NOT read the entire file — use grep to search for specific content, or read with offset/limit to page through sections. " +
+			"The preview already shows the first and last portions; the tail often contains the most relevant output. " +
 			"For message_attachment and remote_url: read image bytes and return textual understanding from prompt. " +
 			"Use prompt only for image sources. " +
 			"You must always read a file before editing or overwriting it — the edit and write_file tools require a prior read call and will error otherwise. " +
