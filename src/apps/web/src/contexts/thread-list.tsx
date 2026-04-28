@@ -69,11 +69,11 @@ export function ThreadListProvider({ children }: { children: ReactNode }) {
   const addThread = useCallback((thread: ThreadResponse) => {
     if (thread.is_private) {
       setPrivateThreadIds((prev) => new Set(prev).add(thread.id))
-      return
+    } else {
+      const mode = readAppModeFromStorage()
+      writeThreadMode(thread.id, mode)
+      setThreadModes((prev) => (prev[thread.id] === mode ? prev : { ...prev, [thread.id]: mode }))
     }
-    const mode = readAppModeFromStorage()
-    writeThreadMode(thread.id, mode)
-    setThreadModes((prev) => (prev[thread.id] === mode ? prev : { ...prev, [thread.id]: mode }))
     setThreads((prev) => {
       if (prev.some((t) => t.id === thread.id)) return prev
       return [thread, ...prev]
