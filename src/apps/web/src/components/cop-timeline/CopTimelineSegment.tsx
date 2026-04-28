@@ -31,6 +31,7 @@ export function CopTimelineSegment({
   onOpenSubAgent,
   accessToken,
   baseUrl,
+  typography = 'default',
 }: {
   segment: CopSubSegment
   pool: ResolvedPool
@@ -43,6 +44,7 @@ export function CopTimelineSegment({
   onOpenSubAgent?: (agent: SubAgentRef) => void
   accessToken?: string
   baseUrl?: string
+  typography?: 'default' | 'work'
 }) {
   const reduceMotion = useReducedMotion()
   const [expanded, setExpanded] = useState(defaultExpanded)
@@ -132,7 +134,7 @@ export function CopTimelineSegment({
           >
             {segment.items.map((item) => (
               <div key={itemTypeId(item)} style={{ position: 'relative', padding: '3px 0' }}>
-                {renderItem(item, pool, isLive, onOpenCodeExecution, activeCodeExecutionId, onOpenSubAgent, accessToken, baseUrl)}
+                {renderItem(item, pool, isLive, onOpenCodeExecution, activeCodeExecutionId, onOpenSubAgent, accessToken, baseUrl, typography)}
               </div>
             ))}
           </div>
@@ -140,7 +142,7 @@ export function CopTimelineSegment({
           segment.items.map((item, index) => (
             <div key={itemTypeId(item)} style={{ position: 'relative' }}>
               {editOnly ? (
-                renderItem(item, pool, isLive, onOpenCodeExecution, activeCodeExecutionId, onOpenSubAgent, accessToken, baseUrl)
+                renderItem(item, pool, isLive, onOpenCodeExecution, activeCodeExecutionId, onOpenSubAgent, accessToken, baseUrl, typography)
               ) : (
                 <CopTimelineUnifiedRow
                   isFirst={index === 0}
@@ -151,7 +153,7 @@ export function CopTimelineSegment({
                   paddingBottom={8}
                   horizontalMotion={false}
                 >
-                  {renderItem(item, pool, isLive, onOpenCodeExecution, activeCodeExecutionId, onOpenSubAgent, accessToken, baseUrl)}
+                  {renderItem(item, pool, isLive, onOpenCodeExecution, activeCodeExecutionId, onOpenSubAgent, accessToken, baseUrl, typography)}
                 </CopTimelineUnifiedRow>
               )}
             </div>
@@ -230,7 +232,7 @@ export function CopTimelineSegment({
                   key={itemTypeId(item)}
                   style={{ position: 'relative', padding: '3px 0' }}
                 >
-                  {renderItem(item, pool, isLive, onOpenCodeExecution, activeCodeExecutionId, onOpenSubAgent, accessToken, baseUrl)}
+                  {renderItem(item, pool, isLive, onOpenCodeExecution, activeCodeExecutionId, onOpenSubAgent, accessToken, baseUrl, typography)}
                 </div>
               ))}
             </div>
@@ -241,7 +243,7 @@ export function CopTimelineSegment({
                 style={{ position: 'relative' }}
               >
                 {editOnly ? (
-                  renderItem(item, pool, isLive, onOpenCodeExecution, activeCodeExecutionId, onOpenSubAgent, accessToken, baseUrl)
+                  renderItem(item, pool, isLive, onOpenCodeExecution, activeCodeExecutionId, onOpenSubAgent, accessToken, baseUrl, typography)
                 ) : (
                   <CopTimelineUnifiedRow
                     isFirst={index === 0}
@@ -252,7 +254,7 @@ export function CopTimelineSegment({
                     paddingBottom={8}
                     horizontalMotion={false}
                   >
-                    {renderItem(item, pool, isLive, onOpenCodeExecution, activeCodeExecutionId, onOpenSubAgent, accessToken, baseUrl)}
+                    {renderItem(item, pool, isLive, onOpenCodeExecution, activeCodeExecutionId, onOpenSubAgent, accessToken, baseUrl, typography)}
                   </CopTimelineUnifiedRow>
                 )}
               </div>
@@ -301,6 +303,7 @@ function renderItem(
   onOpenSubAgent?: (agent: SubAgentRef) => void,
   accessToken?: string,
   baseUrl?: string,
+  typography: 'default' | 'work' = 'default',
 ): React.ReactNode {
   if (item.kind === 'thinking') {
     return (
@@ -344,7 +347,7 @@ function renderItem(
 
   const subAgent = pool.subAgents.get(toolCallId)
   if (subAgent) {
-    return <SubAgentBlock sourceTool={subAgent.sourceTool} nickname={subAgent.nickname} personaId={subAgent.personaId} input={subAgent.input} output={subAgent.output} status={subAgent.status} error={subAgent.error} live={live} currentRunId={subAgent.currentRunId} accessToken={accessToken} baseUrl={baseUrl} onOpenPanel={onOpenSubAgent ? () => onOpenSubAgent(subAgent) : undefined} />
+    return <SubAgentBlock sourceTool={subAgent.sourceTool} nickname={subAgent.nickname} personaId={subAgent.personaId} input={subAgent.input} output={subAgent.output} status={subAgent.status} error={subAgent.error} live={live} currentRunId={subAgent.currentRunId} accessToken={accessToken} baseUrl={baseUrl} onOpenPanel={onOpenSubAgent ? () => onOpenSubAgent(subAgent) : undefined} typography={typography} />
   }
 
   const fetch = pool.webFetches.get(toolCallId)

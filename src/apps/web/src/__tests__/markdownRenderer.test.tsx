@@ -6,7 +6,15 @@ import { MarkdownRenderer } from '../components/MarkdownRenderer'
 import { LocaleProvider } from '../contexts/LocaleContext'
 import type { WebSource } from '../storage'
 
-function renderMarkdown(content: string, options?: { webSources?: WebSource[]; disableMath?: boolean; streaming?: boolean; accessToken?: string; runId?: string }): string {
+function renderMarkdown(content: string, options?: {
+  webSources?: WebSource[]
+  disableMath?: boolean
+  streaming?: boolean
+  accessToken?: string
+  runId?: string
+  compact?: boolean
+  typography?: 'default' | 'work'
+}): string {
   return renderToStaticMarkup(
     <LocaleProvider>
       <MarkdownRenderer
@@ -16,12 +24,30 @@ function renderMarkdown(content: string, options?: { webSources?: WebSource[]; d
         streaming={options?.streaming}
         accessToken={options?.accessToken}
         runId={options?.runId}
+        compact={options?.compact}
+        typography={options?.typography}
       />
     </LocaleProvider>,
   )
 }
 
 describe('MarkdownRenderer', () => {
+  it('默认字号应保持 Chat 旧行为', () => {
+    const html = renderMarkdown('# 一级标题\n\n正文\n\n- 列表项')
+
+    expect(html).toMatch(/<h1 style="[^"]*font-size:16\.5px/)
+    expect(html).toMatch(/<p style="[^"]*font-size:16\.5px/)
+    expect(html).toMatch(/<ul style="[^"]*font-size:16\.5px/)
+  })
+
+  it('Work 字号应只调整正文，不改变 Markdown 一级标题', () => {
+    const html = renderMarkdown('# 一级标题\n\n正文\n\n- 列表项', { typography: 'work' })
+
+    expect(html).toMatch(/<h1 style="[^"]*font-size:16\.5px/)
+    expect(html).toMatch(/<p style="[^"]*font-size:16px/)
+    expect(html).toMatch(/<ul style="[^"]*font-size:16px/)
+  })
+
   it('应解析大小写混合的 Web: 引用并关联到来源', () => {
     const html = renderMarkdown('参考 Web:1。', {
       webSources: [{ title: 'Example', url: 'https://example.com' }],

@@ -282,6 +282,7 @@ export function AssistantMessage({
             accessToken={accessToken}
             runId={message.run_id}
             onOpenDocument={onOpenDocument}
+            typography={isWorkMode ? 'work' : 'default'}
             trimTrailingMargin
           />
         </div>

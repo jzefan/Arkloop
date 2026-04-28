@@ -20,6 +20,7 @@ type Props = {
   accessToken?: string
   baseUrl?: string
   onOpenPanel?: () => void
+  typography?: 'default' | 'work'
 }
 
 type Status = Props['status']
@@ -49,6 +50,7 @@ export function SubAgentBlock({
   accessToken = '',
   baseUrl = '',
   onOpenPanel,
+  typography = 'default',
 }: Props) {
   const [expanded, setExpanded] = useState(false)
   const { t } = useLocale()
@@ -228,6 +230,7 @@ export function SubAgentBlock({
                     }}
                     isComplete={cop.isComplete}
                     live={!!(live || cop.isStreaming)}
+                    typography={typography}
                   />
                 </div>
               )}

@@ -173,6 +173,23 @@ describe('CopTimeline', () => {
       }
     })
 
+    it('only work typography adds the work root class', () => {
+      const props = {
+        segments: [],
+        pool: EMPTY_POOL,
+        isComplete: false,
+        live: true,
+        thinkingHint: 'Planning next moves',
+      } satisfies Parameters<typeof CopTimeline>[0]
+
+      const defaultHtml = renderTimeline(props)
+      const workHtml = renderTimeline({ ...props, typography: 'work' })
+
+      expect(defaultHtml).toContain('class="cop-timeline-root"')
+      expect(defaultHtml).not.toContain('cop-timeline-root--work')
+      expect(workHtml).toContain('class="cop-timeline-root cop-timeline-root--work"')
+    })
+
     it('non-empty pool with no segments still renders', () => {
       const pool = makePool({
         codeExecutions: new Map([['ce1', { id: 'ce1', code: 'echo hi' } as unknown as import('../storage').CodeExecutionRef]]),

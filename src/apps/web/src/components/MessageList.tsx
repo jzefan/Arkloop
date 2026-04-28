@@ -223,16 +223,17 @@ export const MessageList = memo(function MessageList({
               msgThinking != null &&
               msgThinking.thinkingText.trim() !== '' &&
               !turnHasCopThinkingItems(historicalTurn!) && (
-              <CopTimeline
-                key={`${msg.id}-legacy-thinking`}
-                segments={[]}
-                pool={EMPTY_POOL}
-                isComplete
-                thinkingOnly={{ markdown: msgThinking.thinkingText, live: false, durationSec: 0 }}
-                accessToken={accessToken}
-                baseUrl={baseUrl}
-              />
-            )}
+                <CopTimeline
+                  key={`${msg.id}-legacy-thinking`}
+                  segments={[]}
+                  pool={EMPTY_POOL}
+                  isComplete
+                  thinkingOnly={{ markdown: msgThinking.thinkingText, live: false, durationSec: 0 }}
+                  accessToken={accessToken}
+                  baseUrl={baseUrl}
+                  typography={isWorkMode ? 'work' : 'default'}
+                />
+              )}
             {historicalSegments.map((seg, si) =>
               seg.type === 'text' ? (
                 <MarkdownRenderer
@@ -243,6 +244,7 @@ export const MessageList = memo(function MessageList({
                   accessToken={accessToken}
                   runId={msg.run_id ?? undefined}
                   onOpenDocument={openDocumentPanel}
+                  typography={isWorkMode ? 'work' : 'default'}
                   trimTrailingMargin={
                     historicalSegments[si + 1] == null ||
                     historicalSegments[si + 1]?.type === 'cop'
@@ -317,6 +319,7 @@ export const MessageList = memo(function MessageList({
                       activeCodeExecutionId={codePanelExecutionId ?? undefined}
                       accessToken={accessToken}
                       baseUrl={baseUrl}
+                      typography={isWorkMode ? 'work' : 'default'}
                     />
                   )]
 
@@ -379,6 +382,7 @@ export const MessageList = memo(function MessageList({
               onOpenSubAgent={openAgentPanel}
               accessToken={accessToken}
               baseUrl={baseUrl}
+              typography={isWorkMode ? 'work' : 'default'}
             />
           </div>
         )}
