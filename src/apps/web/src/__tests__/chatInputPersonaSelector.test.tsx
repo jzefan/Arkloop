@@ -4,18 +4,25 @@ import { createRoot } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { ChatInput } from '../components/ChatInput'
+import { PersonaModelBar } from '../components/chat-input/PersonaModelBar'
 import { LocaleProvider } from '../contexts/LocaleContext'
 import { writeSelectedPersonaKeyToStorage } from '../storage'
-import { listSelectablePersonas } from '../api'
+import { listLlmProviders, listSelectablePersonas } from '../api'
 
 vi.mock('../api', async () => {
   const actual = await vi.importActual<typeof import('../api')>('../api')
   return {
     ...actual,
     listSelectablePersonas: vi.fn(),
+    listLlmProviders: vi.fn(),
     transcribeAudio: vi.fn(),
   }
 })
+
+vi.mock('@arkloop/shared/desktop', () => ({
+  isDesktop: () => true,
+  getDesktopApi: () => null,
+}))
 
 function flushMicrotasks(): Promise<void> {
   return Promise.resolve()
@@ -53,6 +60,7 @@ function findButtonByText(container: HTMLElement, text: string): HTMLButtonEleme
 
 describe('ChatInput persona selector', () => {
   const mockedListSelectablePersonas = vi.mocked(listSelectablePersonas)
+  const mockedListLlmProviders = vi.mocked(listLlmProviders)
   const actEnvironment = globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
   const originalActEnvironment = actEnvironment.IS_REACT_ACT_ENVIRONMENT
   const originalLocalStorage = globalThis.localStorage
@@ -67,6 +75,7 @@ describe('ChatInput persona selector', () => {
       { persona_key: 'normal', selector_name: 'Normal', selector_order: 1 },
       { persona_key: 'extended-search', selector_name: 'Search', selector_order: 2 },
     ])
+    mockedListLlmProviders.mockResolvedValue([])
     writeSelectedPersonaKeyToStorage('normal')
   })
 
@@ -194,6 +203,81 @@ describe('ChatInput persona selector', () => {
     })
 
     expect((textarea as HTMLTextAreaElement).value).toBe('')
+
+    act(() => {
+      root.unmount()
+    })
+    container.remove()
+  })
+
+  it('Work compact 单行输入框不渲染文件夹 Picker', async () => {
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const root = createRoot(container)
+
+    await act(async () => {
+      root.render(
+        <LocaleProvider>
+          <ChatInput
+            onSubmit={(event) => event.preventDefault()}
+            accessToken="token"
+            variant="chat"
+            appMode="work"
+            hasMessages={false}
+            messagesLoading={false}
+          />
+        </LocaleProvider>,
+      )
+    })
+    await act(async () => {
+      await flushMicrotasks()
+    })
+
+    expect(container.textContent).not.toContain('Work in a folder')
+
+    act(() => {
+      root.unmount()
+    })
+    container.remove()
+  })
+
+  it('消息仍在加载时不渲染 Work 文件夹 Picker', async () => {
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const root = createRoot(container)
+
+    const renderBar = async (threadMessagesLoading: boolean) => {
+      await act(async () => {
+        root.render(
+          <LocaleProvider>
+            <PersonaModelBar
+              personas={[]}
+              selectedPersonaKey="normal"
+              selectedModel={null}
+              isNonDefaultMode={false}
+              selectedPersona={null}
+              onModeSelect={() => undefined}
+              onDeactivateMode={() => undefined}
+              onModelChange={() => undefined}
+              thinkingEnabled="off"
+              onThinkingChange={() => undefined}
+              onFileInputClick={() => undefined}
+              appMode="work"
+              variant="chat"
+              threadHasMessages={false}
+              threadMessagesLoading={threadMessagesLoading}
+              hideModelPicker
+            />
+          </LocaleProvider>,
+        )
+      })
+    }
+
+    await renderBar(true)
+    expect(container.textContent).not.toContain('Work in a folder')
+
+    await renderBar(false)
+    expect(container.textContent).toContain('Work in a folder')
 
     act(() => {
       root.unmount()

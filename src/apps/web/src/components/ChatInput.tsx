@@ -75,6 +75,7 @@ type Props = {
   onOpenSettings?: (tab: SettingsTab) => void
   appMode?: AppMode
   hasMessages?: boolean
+  messagesLoading?: boolean
   workThreadId?: string
   draftOwnerKey?: string | null
   planMode?: boolean
@@ -174,6 +175,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
   onOpenSettings,
   appMode,
   hasMessages,
+  messagesLoading,
   workThreadId,
   draftOwnerKey,
   planMode,
@@ -980,7 +982,9 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
             isPlanMode={isPlanMode}
             onTogglePlanMode={handleTogglePlanMode}
             threadHasMessages={hasMessages}
+            threadMessagesLoading={messagesLoading}
             workThreadId={workThreadId}
+            hideWorkFolderPicker={isWorkCompactInput}
             hideModelPicker={isWorkCompactInput}
             onMenuOpenChange={handleMenuOpenChange}
           />
