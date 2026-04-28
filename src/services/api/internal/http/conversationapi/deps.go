@@ -9,6 +9,7 @@ import (
 type SSEConfig struct {
 	HeartbeatSeconds float64
 	BatchLimit       int
+	CatchUpThreshold int
 }
 
 type artifactStore interface {

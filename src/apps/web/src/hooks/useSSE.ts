@@ -39,6 +39,8 @@ export function useSSE(options: UseSSEOptions): UseSSEResult {
   const seenSeqsRef = useRef<Set<number>>(new Set())
   const cursorRef = useRef(0)
   const connectedRunIdRef = useRef('')
+  const lastStorageWriteRef = useRef(0)
+  const storageTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   // 构建 SSE URL
   const normalizedBaseUrl = baseUrl.replace(/\/$/, '')
@@ -53,8 +55,24 @@ export function useSSE(options: UseSSEOptions): UseSSEResult {
 
     if (typeof event.seq === 'number' && event.seq >= 0) {
       cursorRef.current = event.seq
-      writeLastSeqToStorage(runId, event.seq)
       setLastSeq(event.seq)
+
+      // 限频写入：避免 streaming/catch-up 时每条事件都写一次 localStorage
+      const now = Date.now()
+      if (now - lastStorageWriteRef.current > 1000) {
+        lastStorageWriteRef.current = now
+        writeLastSeqToStorage(runId, event.seq)
+        if (storageTimerRef.current) {
+          clearTimeout(storageTimerRef.current)
+          storageTimerRef.current = null
+        }
+      } else if (!storageTimerRef.current) {
+        storageTimerRef.current = setTimeout(() => {
+          storageTimerRef.current = null
+          lastStorageWriteRef.current = Date.now()
+          writeLastSeqToStorage(runId, cursorRef.current)
+        }, 1000)
+      }
     }
   }, [runId])
 
@@ -167,6 +185,19 @@ export function useSSE(options: UseSSEOptions): UseSSEResult {
       disconnect()
     }
   }, [disconnect])
+
+  // 卸载时 flush 待落盘的 seq
+  useEffect(() => {
+    return () => {
+      if (storageTimerRef.current) {
+        clearTimeout(storageTimerRef.current)
+        storageTimerRef.current = null
+      }
+      if (cursorRef.current > 0) {
+        writeLastSeqToStorage(runId, cursorRef.current)
+      }
+    }
+  }, [runId])
 
   return useMemo(() => ({
     events,
