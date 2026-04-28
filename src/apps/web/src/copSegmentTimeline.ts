@@ -52,6 +52,31 @@ function sortBySeq<T extends { seq?: number }>(items: T[]): T[] {
   return [...items].sort((a, b) => (a.seq ?? 0) - (b.seq ?? 0))
 }
 
+function pickCodeExecutionMode(args: Record<string, unknown>): CodeExecutionRef['mode'] | undefined {
+  const mode = args.mode
+  return mode === 'buffered' || mode === 'follow' || mode === 'stdin' || mode === 'pty'
+    ? mode
+    : undefined
+}
+
+function fallbackCodeExecutionFromCall(call: ReturnType<typeof copSegmentCalls>[number], seq: number): CodeExecutionRef | null {
+  if (call.toolName !== 'exec_command' && call.toolName !== 'python_execute') return null
+  const code = typeof call.arguments.command === 'string' ? call.arguments.command
+    : typeof call.arguments.code === 'string' ? call.arguments.code
+      : typeof call.arguments.cmd === 'string' ? call.arguments.cmd
+        : undefined
+  return {
+    id: call.toolCallId,
+    language: call.toolName === 'python_execute' ? 'python' : 'shell',
+    mode: call.toolName === 'exec_command' ? pickCodeExecutionMode(call.arguments) : undefined,
+    code,
+    displayDescription: call.displayDescription,
+    status: call.errorClass ? 'failed' : call.result === undefined ? 'running' : 'completed',
+    errorClass: call.errorClass,
+    seq,
+  }
+}
+
 function resolveGroupStatus(items: FileOpRef[]): ExploreGroupRef['status'] {
   if (items.some((item) => item.status === 'running')) return 'running'
   if (items.some((item) => item.status === 'failed')) return 'failed'
@@ -201,7 +226,16 @@ export function copTimelinePayloadForSegment(
   const calls = copSegmentCalls(segment)
   const ids = new Set(calls.map((c) => c.toolCallId))
 
-  const codeExecutions = sortBySeq((pools.codeExecutions ?? []).filter((x) => ids.has(x.id)))
+  const existingCodeExecutions = sortBySeq((pools.codeExecutions ?? []).filter((x) => ids.has(x.id)))
+  const existingCodeExecutionIds = new Set(existingCodeExecutions.map((item) => item.id))
+  const fallbackCodeExecutions = sortBySeq(
+    segment.items
+      .filter((item): item is Extract<CopSegment['items'][number], { kind: 'call' }> => item.kind === 'call')
+      .filter((item) => !existingCodeExecutionIds.has(item.call.toolCallId))
+      .map((item) => fallbackCodeExecutionFromCall(item.call, item.seq))
+      .filter((item): item is CodeExecutionRef => item != null),
+  )
+  const codeExecutions = sortBySeq([...existingCodeExecutions, ...fallbackCodeExecutions])
   const allFileOps = sortBySeq((pools.fileOps ?? []).filter((x) => ids.has(x.id)))
   const exploreFileOps = allFileOps.filter(isExploreFileOp)
   const fileOps = allFileOps.filter((op) => !isExploreFileOp(op))

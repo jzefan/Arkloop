@@ -17,6 +17,7 @@ import {
   applyWebFetchToolCall,
   applyWebFetchToolResult,
   applyCodeExecutionToolResult,
+  firstVisibleCodeExecutionToolCallIndex,
   isWebFetchToolName,
 } from '../runEventProcessing'
 import type { MessageResponse } from '../api'
@@ -135,6 +136,40 @@ describe('selectFreshRunEvents', () => {
 
     expect(result.fresh.map((item) => item.seq)).toEqual([1, 2])
     expect(result.nextProcessedCount).toBe(2)
+  })
+})
+
+describe('firstVisibleCodeExecutionToolCallIndex', () => {
+  it('同批存在执行调用和后续事件时返回执行调用位置', () => {
+    const events = [
+      makeRunEvent({
+        runId: 'run_1',
+        seq: 1,
+        type: 'tool.call',
+        data: { tool_name: 'exec_command', tool_call_id: 'call_exec', arguments: { command: 'sleep 1' } },
+      }),
+      makeRunEvent({
+        runId: 'run_1',
+        seq: 2,
+        type: 'tool.result',
+        data: { tool_name: 'exec_command', tool_call_id: 'call_exec', result: { exit_code: 0 } },
+      }),
+    ]
+
+    expect(firstVisibleCodeExecutionToolCallIndex(events)).toBe(0)
+  })
+
+  it('单独的执行调用不触发延后 drain', () => {
+    const events = [
+      makeRunEvent({
+        runId: 'run_1',
+        seq: 1,
+        type: 'tool.call',
+        data: { tool_name: 'exec_command', tool_call_id: 'call_exec', arguments: { command: 'sleep 1' } },
+      }),
+    ]
+
+    expect(firstVisibleCodeExecutionToolCallIndex(events)).toBe(-1)
   })
 })
 

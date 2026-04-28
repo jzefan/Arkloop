@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { canonicalToolName, pickLogicalToolName } from '@arkloop/shared'
 import { setThreadTodos } from '../todoDb'
 import { useAuth } from '../contexts/auth'
@@ -25,6 +25,7 @@ import {
   applyWebFetchToolResult,
   extractArtifacts,
   findAssistantMessageForRun,
+  firstVisibleCodeExecutionToolCallIndex,
   patchCodeExecutionList,
   selectFreshRunEvents,
 } from '../runEventProcessing'
@@ -70,12 +71,19 @@ export function useSseDispatch(params: {
 
   // Timer for contextCompactBar auto-hide
   const contextCompactHideTimerRef = useRef<number | null>(null)
+  const [deferredRunEventDrainTick, setDeferredRunEventDrainTick] = useState(0)
 
   const clearContextCompactHideTimer = useCallback(() => {
     if (contextCompactHideTimerRef.current != null) {
       clearTimeout(contextCompactHideTimerRef.current)
       contextCompactHideTimerRef.current = null
     }
+  }, [])
+
+  const scheduleDeferredRunEventDrain = useCallback(() => {
+    window.setTimeout(() => {
+      setDeferredRunEventDrainTick((value) => value + 1)
+    }, 0)
   }, [])
 
   // ── helpers ─────────────────────────────────���──────────────────────────────
@@ -173,11 +181,20 @@ export function useSseDispatch(params: {
       activeRunId: sseRunId,
       processedCount: run.processedEventCountRef.current,
     })
-    run.processedEventCountRef.current = nextProcessedCount
+    const pauseIndex = firstVisibleCodeExecutionToolCallIndex(fresh)
+    const freshToProcess = pauseIndex >= 0 ? fresh.slice(0, pauseIndex + 1) : fresh
+    const pausedAt = freshToProcess[freshToProcess.length - 1]
+    if (pauseIndex >= 0 && pausedAt) {
+      const rawIndex = run.sse.events.findIndex((event) => event.event_id === pausedAt.event_id)
+      run.processedEventCountRef.current = rawIndex >= 0 ? rawIndex + 1 : nextProcessedCount
+      scheduleDeferredRunEventDrain()
+    } else {
+      run.processedEventCountRef.current = nextProcessedCount
+    }
 
     let needsBumpSnapshot = false
 
-    for (const event of fresh) {
+    for (const event of freshToProcess) {
       const freezeCutoff = run.freezeCutoffRef.current
       if (
         freezeCutoff != null &&
@@ -851,7 +868,7 @@ export function useSseDispatch(params: {
     if (needsBumpSnapshot) stream.bumpSnapshot()
 
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [run.sse.events])
+  }, [run.sse.events, deferredRunEventDrainTick, scheduleDeferredRunEventDrain])
 
   // ── 401 SSE 错误登出 ──────────────────────────────────────────────────────
   useEffect(() => {

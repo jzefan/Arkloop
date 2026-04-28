@@ -35,6 +35,37 @@ describe('copTimelinePayloadForSegment', () => {
     expect(r.steps).toEqual([])
   })
 
+  it('执行池暂缺时从 exec tool.call 构造运行中项', () => {
+    const r = copTimelinePayloadForSegment(
+      {
+        type: 'cop',
+        title: 't',
+        items: [{
+          kind: 'call',
+          call: {
+            toolCallId: 'cmd_1',
+            toolName: 'exec_command',
+            arguments: { command: 'sleep 1', mode: 'buffered' },
+            displayDescription: 'Running sleeper',
+          },
+          seq: 4,
+        }],
+      },
+      { sources: [] },
+    )
+
+    expect(r.codeExecutions).toEqual([{
+      id: 'cmd_1',
+      language: 'shell',
+      mode: 'buffered',
+      code: 'sleep 1',
+      displayDescription: 'Running sleeper',
+      status: 'running',
+      errorClass: undefined,
+      seq: 4,
+    }])
+  })
+
   it('含 searching 步骤时附带 sources', () => {
     const r = copTimelinePayloadForSegment(
       {
