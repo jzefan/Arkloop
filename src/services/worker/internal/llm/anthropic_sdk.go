@@ -811,20 +811,35 @@ func (s *anthropicSDKStreamState) handleContentBlockStop(idx int) error {
 	if strings.TrimSpace(buffer.ID) == "" || strings.TrimSpace(buffer.Name) == "" {
 		return s.fail(GatewayError{ErrorClass: ErrorClassProviderNonRetryable, Message: "Anthropic tool_use input parse failed", Details: map[string]any{"reason": "content block missing tool_use id or name"}})
 	}
+	toolName := CanonicalToolName(buffer.Name)
 	argumentsJSON := map[string]any{}
 	rawArgs := strings.TrimSpace(buffer.JSON.String())
 	if rawArgs != "" {
 		var parsed any
 		if err := json.Unmarshal([]byte(rawArgs), &parsed); err != nil {
-			return s.fail(GatewayError{ErrorClass: ErrorClassProviderNonRetryable, Message: "Anthropic tool_use input parse failed", Details: map[string]any{"reason": err.Error()}})
+			if yieldErr := s.yield(ToolCall{ToolCallID: buffer.ID, ToolName: toolName, ArgumentsJSON: argumentsJSON}); yieldErr != nil {
+				return yieldErr
+			}
+			return s.yield(formatRepairToolResult(ParseWarning{
+				ToolCallID: buffer.ID,
+				ToolName:   toolName,
+				Message:    fmt.Sprintf("Anthropic tool_use input is not valid JSON. Arguments must be a valid JSON object. Raw: %s", truncateRaw(rawArgs, 200)),
+			}, s.llmCallID))
 		}
 		obj, ok := parsed.(map[string]any)
 		if !ok {
-			return s.fail(GatewayError{ErrorClass: ErrorClassProviderNonRetryable, Message: "Anthropic tool_use input parse failed", Details: map[string]any{"reason": "tool_use input must be a JSON object"}})
+			if yieldErr := s.yield(ToolCall{ToolCallID: buffer.ID, ToolName: toolName, ArgumentsJSON: argumentsJSON}); yieldErr != nil {
+				return yieldErr
+			}
+			return s.yield(formatRepairToolResult(ParseWarning{
+				ToolCallID: buffer.ID,
+				ToolName:   toolName,
+				Message:    fmt.Sprintf("Anthropic tool_use input must be a JSON object, got %T", parsed),
+			}, s.llmCallID))
 		}
 		argumentsJSON = obj
 	}
-	return s.yield(ToolCall{ToolCallID: buffer.ID, ToolName: CanonicalToolName(buffer.Name), ArgumentsJSON: argumentsJSON})
+	return s.yield(ToolCall{ToolCallID: buffer.ID, ToolName: toolName, ArgumentsJSON: argumentsJSON})
 }
 
 func (s *anthropicSDKStreamState) fail(gatewayErr GatewayError) error {
