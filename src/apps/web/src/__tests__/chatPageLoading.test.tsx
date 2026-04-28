@@ -21,6 +21,7 @@ import {
   createMessage,
   createRun,
   cancelRun,
+  provideInput,
   forkThread,
 } from '../api'
 import {
@@ -643,6 +644,7 @@ describe('ChatPage loading state', () => {
   const mockedCreateMessage = vi.mocked(createMessage)
   const mockedCreateRun = vi.mocked(createRun)
   const mockedCancelRun = vi.mocked(cancelRun)
+  const mockedProvideInput = vi.mocked(provideInput)
   const mockedForkThread = vi.mocked(forkThread)
   const mockedWriteMessageAssistantTurn = vi.mocked(writeMessageAssistantTurn)
   const mockedWriteMessageCodeExecutions = vi.mocked(writeMessageCodeExecutions)
@@ -675,6 +677,7 @@ describe('ChatPage loading state', () => {
     mockedCreateMessage.mockReset()
     mockedCreateRun.mockReset()
     mockedCancelRun.mockReset()
+    mockedProvideInput.mockReset()
     mockedForkThread.mockReset()
     chatInputDraftStore.clear()
     mockedReadMessageAssistantTurn.mockReturnValue(null)
@@ -733,6 +736,7 @@ describe('ChatPage loading state', () => {
     })
     mockedCreateRun.mockResolvedValue({ run_id: 'run-created', trace_id: 'trace-1' })
     mockedCancelRun.mockResolvedValue({ ok: true })
+    mockedProvideInput.mockResolvedValue({ ok: true })
     mockedReadMessageTerminalStatus.mockReturnValue(null)
   })
 
@@ -1562,7 +1566,7 @@ describe('ChatPage loading state', () => {
     container.remove()
   })
 
-  it('run.interrupted 后应把排队输入还原到输入框', async () => {
+  it('run.interrupted 后应保留 follow-up 队列', async () => {
     mockedListThreadRuns.mockResolvedValue([
       {
         run_id: 'run-1',
@@ -1664,7 +1668,9 @@ describe('ChatPage loading state', () => {
     if (!restoredInput) {
       throw new Error('restored chat input not rendered')
     }
-    expect(restoredInput.value).toBe('continue from here')
+    expect(restoredInput.value).toBe('')
+    expect(container.textContent).toContain('1 Queued')
+    expect(container.textContent).toContain('continue from here')
 
     act(() => {
       root.unmount()
@@ -1672,7 +1678,7 @@ describe('ChatPage loading state', () => {
     container.remove()
   })
 
-  it('manual cancel 应等待终态并保留排队输入', async () => {
+  it('manual cancel 应等待终态并保留 follow-up 队列', async () => {
     mockedListThreadRuns.mockResolvedValue([
       {
         run_id: 'run-cancel',
@@ -1806,8 +1812,142 @@ describe('ChatPage loading state', () => {
     if (!restoredInput) {
       throw new Error('restored input not rendered')
     }
-    expect(restoredInput.value).toBe('resume after cancel')
+    expect(restoredInput.value).toBe('')
+    expect(container.textContent).toContain('1 Queued')
+    expect(container.textContent).toContain('resume after cancel')
     expect(container.textContent).not.toContain('已停止生成')
+
+    act(() => {
+      root.unmount()
+    })
+    container.remove()
+  })
+
+  it('运行中 follow-up 队列支持编辑、删除和 send now', async () => {
+    mockedListThreadRuns.mockResolvedValue([
+      {
+        run_id: 'run-active',
+        status: 'running',
+        created_at: '2026-03-10T00:00:00Z',
+      },
+    ])
+    sseMock.state = 'connected'
+
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const root = createRoot(container)
+    const outletContext = buildOutletContext()
+
+    const renderTree = () => (
+      <LocaleProvider>
+        <MemoryRouter initialEntries={['/t/thread-1']}>
+          <Routes>
+            <Route element={<OutletShell context={outletContext} />}>
+              <Route path="/t/:threadId" element={<ChatPage />} />
+            </Route>
+          </Routes>
+        </MemoryRouter>
+      </LocaleProvider>
+    )
+
+    await act(async () => {
+      root.render(renderTree())
+    })
+    await act(async () => {
+      await flushMicrotasks()
+    })
+
+    const input = container.querySelector('input[aria-label="chat-input"]') as HTMLInputElement | null
+    const form = container.querySelector('form')
+    if (!input || !form) {
+      throw new Error('chat input mock not rendered')
+    }
+    const setInputValue = async (value: string) => {
+      await act(async () => {
+        const valueSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set
+        valueSetter?.call(input, value)
+        input.dispatchEvent(new Event('input', { bubbles: true }))
+      })
+    }
+    const submitInput = async () => {
+      await act(async () => {
+        form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
+        await flushMicrotasks()
+      })
+    }
+
+    await setInputValue('first follow up')
+    await submitInput()
+
+    expect(input.value).toBe('')
+    expect(container.textContent).toContain('1 Queued')
+    expect(container.textContent).toContain('first follow up')
+
+    const editButton = container.querySelector('button[aria-label="Edit queued prompt"]') as HTMLButtonElement | null
+    if (!editButton) {
+      throw new Error('edit queued prompt button not rendered')
+    }
+    await act(async () => {
+      editButton.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      await flushMicrotasks()
+    })
+    expect(input.value).toBe('first follow up')
+
+    await setInputValue('edited follow up')
+    await submitInput()
+    expect(input.value).toBe('')
+    expect(container.textContent).toContain('edited follow up')
+    expect(container.textContent).not.toContain('first follow up')
+
+    const deleteButton = container.querySelector('button[aria-label="Delete queued prompt"]') as HTMLButtonElement | null
+    if (!deleteButton) {
+      throw new Error('delete queued prompt button not rendered')
+    }
+    await act(async () => {
+      deleteButton.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      await flushMicrotasks()
+    })
+    expect(container.textContent).not.toContain('edited follow up')
+    expect(container.textContent).not.toContain('Queued')
+
+    await setInputValue('send immediately')
+    await submitInput()
+    const sendNowButton = container.querySelector('button[aria-label="Send queued prompt now"]') as HTMLButtonElement | null
+    if (!sendNowButton) {
+      throw new Error('send queued prompt now button not rendered')
+    }
+    await act(async () => {
+      sendNowButton.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      await flushMicrotasks()
+      await flushMicrotasks()
+    })
+
+    expect(mockedCancelRun).toHaveBeenCalledWith('token', 'run-active', 0)
+    expect(mockedProvideInput).not.toHaveBeenCalled()
+    expect(mockedCreateMessage).not.toHaveBeenCalled()
+    expect(container.textContent).toContain('send immediately')
+
+    sseMock.events = [
+      {
+        event_id: 'evt-cancelled',
+        run_id: 'run-active',
+        seq: 1,
+        ts: '2026-03-10T00:00:01Z',
+        type: 'run.cancelled',
+        data: {},
+      },
+    ]
+    await act(async () => {
+      root.render(renderTree())
+      await flushMicrotasks()
+      await flushMicrotasks()
+    })
+
+    expect(mockedCreateMessage).toHaveBeenCalledWith(
+      'token',
+      'thread-1',
+      expect.objectContaining({ content: 'send immediately' }),
+    )
 
     act(() => {
       root.unmount()

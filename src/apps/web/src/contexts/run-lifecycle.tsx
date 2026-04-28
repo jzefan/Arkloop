@@ -14,6 +14,7 @@ import { apiBaseUrl } from '@arkloop/shared/api'
 import type { UserInputRequest } from '../userInputTypes'
 import { useAuth } from './auth'
 import { useChatSession } from './chat-session'
+import type { QueuedPrompt } from '../queuedPrompts'
 
 // TODO: extract to shared types
 type ContextCompactBarState =
@@ -30,7 +31,7 @@ interface RunLifecycleContextValue {
   cancelSubmitting: boolean
   error: AppError | null
   injectionBlocked: string | null
-  queuedDraft: string | null
+  queuedPrompts: QueuedPrompt[]
   awaitingInput: boolean
   pendingUserInput: UserInputRequest | null
   checkInDraft: string
@@ -53,7 +54,7 @@ interface RunLifecycleContextValue {
   setCancelSubmitting: (v: boolean) => void
   setError: (err: AppError | null) => void
   setInjectionBlocked: (v: string | null) => void
-  setQueuedDraft: (v: string | null) => void
+  setQueuedPrompts: React.Dispatch<React.SetStateAction<QueuedPrompt[]>>
   setAwaitingInput: (v: boolean) => void
   setPendingUserInput: (v: UserInputRequest | null) => void
   setCheckInDraft: (v: string) => void
@@ -74,7 +75,6 @@ interface RunLifecycleContextValue {
   sseTerminalFallbackRunIdRef: React.RefObject<string | null>
   sseTerminalFallbackArmedRef: React.RefObject<boolean>
   noResponseMsgIdRef: React.RefObject<string | null>
-  pendingMessageRef: React.RefObject<string | null>
   seenFirstToolCallInRunRef: React.RefObject<boolean>
 }
 
@@ -89,7 +89,7 @@ export function RunLifecycleProvider({ children }: { children: ReactNode }) {
   const [cancelSubmitting, setCancelSubmitting] = useState(false)
   const [error, setError] = useState<AppError | null>(null)
   const [injectionBlocked, setInjectionBlocked] = useState<string | null>(null)
-  const [queuedDraft, setQueuedDraft] = useState<string | null>(null)
+  const [queuedPrompts, setQueuedPrompts] = useState<QueuedPrompt[]>([])
   const [awaitingInput, setAwaitingInput] = useState(false)
   const [pendingUserInput, setPendingUserInput] = useState<UserInputRequest | null>(null)
   const [checkInDraft, setCheckInDraft] = useState('')
@@ -113,7 +113,6 @@ export function RunLifecycleProvider({ children }: { children: ReactNode }) {
   const sseTerminalFallbackRunIdRef = useRef<string | null>(null)
   const sseTerminalFallbackArmedRef = useRef(false)
   const noResponseMsgIdRef = useRef<string | null>(null)
-  const pendingMessageRef = useRef<string | null>(null)
   const seenFirstToolCallInRunRef = useRef(false)
   const hasMountedRef = useRef(false)
 
@@ -170,7 +169,6 @@ export function RunLifecycleProvider({ children }: { children: ReactNode }) {
     setCancelSubmitting(false)
     setError(null)
     setInjectionBlocked(null)
-    setQueuedDraft(null)
     setAwaitingInput(false)
     setPendingUserInput(null)
     setCheckInDraft('')
@@ -280,7 +278,7 @@ export function RunLifecycleProvider({ children }: { children: ReactNode }) {
     setPendingUserInput(null)
     setCheckInDraft('')
     setCheckInSubmitting(false)
-    setQueuedDraft(null)
+    setQueuedPrompts([])
     setTerminalRunDisplayId(null)
     setTerminalRunHandoffStatus(null)
     setTerminalRunCoveredRunIds([])
@@ -288,7 +286,6 @@ export function RunLifecycleProvider({ children }: { children: ReactNode }) {
     clearContextCompactHideTimer()
     injectionBlockedRunIdRef.current = null
     seenFirstToolCallInRunRef.current = false
-    pendingMessageRef.current = null
     sse.disconnect()
     sse.clearEvents()
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -300,7 +297,7 @@ export function RunLifecycleProvider({ children }: { children: ReactNode }) {
     cancelSubmitting,
     error,
     injectionBlocked,
-    queuedDraft,
+    queuedPrompts,
     awaitingInput,
     pendingUserInput,
     checkInDraft,
@@ -320,7 +317,7 @@ export function RunLifecycleProvider({ children }: { children: ReactNode }) {
     setCancelSubmitting,
     setError,
     setInjectionBlocked,
-    setQueuedDraft,
+    setQueuedPrompts,
     setAwaitingInput,
     setPendingUserInput,
     setCheckInDraft,
@@ -340,7 +337,6 @@ export function RunLifecycleProvider({ children }: { children: ReactNode }) {
     sseTerminalFallbackRunIdRef,
     sseTerminalFallbackArmedRef,
     noResponseMsgIdRef,
-    pendingMessageRef,
     seenFirstToolCallInRunRef,
   }), [
     activeRunId,
@@ -348,7 +344,7 @@ export function RunLifecycleProvider({ children }: { children: ReactNode }) {
     cancelSubmitting,
     error,
     injectionBlocked,
-    queuedDraft,
+    queuedPrompts,
     awaitingInput,
     pendingUserInput,
     checkInDraft,
