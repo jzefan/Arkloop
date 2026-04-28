@@ -93,8 +93,9 @@ type providerResponseCapture struct {
 }
 
 type providerResponseTailBody struct {
-	body    io.ReadCloser
-	capture *providerResponseCapture
+	body         io.ReadCloser
+	capture      *providerResponseCapture
+	markActivity func()
 }
 
 type sseKeepaliveFilterReadCloser struct {
@@ -183,7 +184,7 @@ func (t protocolValidatingTransport) RoundTrip(req *http.Request) (*http.Respons
 			if capture := providerResponseCaptureFromContext(req.Context()); capture != nil && resp != nil {
 				capture.setResponse(resp)
 				if resp.Body != nil {
-					body := io.ReadCloser(&providerResponseTailBody{body: resp.Body, capture: capture})
+					body := io.ReadCloser(&providerResponseTailBody{body: resp.Body, capture: capture, markActivity: streamActivityMarker(req.Context())})
 					if isEventStream(resp.Header.Get("Content-Type")) {
 						body = newSSEKeepaliveFilterReadCloser(body)
 					}
@@ -289,6 +290,9 @@ func (b *providerResponseTailBody) Read(p []byte) (int, error) {
 	n, err := b.body.Read(p)
 	if n > 0 {
 		b.capture.appendBody(p[:n])
+		if b.markActivity != nil {
+			b.markActivity()
+		}
 	}
 	return n, err
 }
