@@ -144,7 +144,7 @@ export function AppLayout() {
   const { sidebarCollapsed, sidebarHiddenByWidth, toggleSidebar } = useSidebarUI()
   const { isSearchMode, searchOverlayOpen, exitSearchMode, closeSearchOverlay } = useSearchUI()
   const { appMode, availableAppModes, setAppMode } = useAppModeUI()
-  const { closeSettings } = useSettingsUI()
+  const { openSettings, closeSettings } = useSettingsUI()
   const { closeNotifications } = useNotificationsUI()
   const { queueSkillPrompt } = useSkillPromptUI()
   const { triggerTitleBarIncognitoClick } = useTitleBarIncognitoUI()
@@ -276,6 +276,7 @@ export function AppLayout() {
             appUpdateState={appUpdateState}
             onDownloadApp={handleDownloadApp}
             onInstallApp={handleInstallApp}
+            onOpenSettings={openSettings}
           />
         )}
 

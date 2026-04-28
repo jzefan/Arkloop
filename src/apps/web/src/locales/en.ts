@@ -360,6 +360,7 @@ export const en: LocaleStrings = {
   thisThreadIsIncognito: "This thread is incognito",
   toggleIncognito: "Toggle incognito",
   componentUpdatesAvailable: "Component updates available",
+  updateSkipped: "Update skipped",
   goToDownload: "Go to download",
   incognitoForkDivider:
     "From this point on, messages will not be saved and will be permanently deleted within 24 hours.",
@@ -1287,6 +1288,9 @@ export const en: LocaleStrings = {
     appUpdateChecking: "Checking for updates...",
     appUpdateAvailable: "Update available",
     appUpdateLatest: "Up to date",
+    appUpdateViewDetails: "View update details",
+    appUpdateSkipOnce: "Skip for now",
+    appUpdateSkipVersion: "Skip until next version",
     appUpdateDownloading: "Downloading",
     appUpdateReady: "Ready to install",
     appUpdateError: "Update failed",

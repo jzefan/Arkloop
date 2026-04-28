@@ -326,7 +326,7 @@ export function AppUIProvider({ children }: { children: ReactNode }) {
         channels: 'channels',
         connection: 'advanced',
         voice: 'advanced',
-        updates: 'advanced',
+        updates: 'about',
       }
       const section = keyMap[tab] ?? 'general'
       const sample = {

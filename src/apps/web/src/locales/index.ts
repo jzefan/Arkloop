@@ -340,6 +340,7 @@ export interface LocaleStrings {
   thisThreadIsIncognito: string;
   toggleIncognito: string;
   componentUpdatesAvailable: string;
+  updateSkipped: string;
   goToDownload: string;
   incognitoForkDivider: string;
   // mode switch
@@ -1209,6 +1210,9 @@ export interface LocaleStrings {
     appUpdateChecking: string;
     appUpdateAvailable: string;
     appUpdateLatest: string;
+    appUpdateViewDetails: string;
+    appUpdateSkipOnce: string;
+    appUpdateSkipVersion: string;
     appUpdateDownloading: string;
     appUpdateReady: string;
     appUpdateError: string;
