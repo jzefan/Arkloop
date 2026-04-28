@@ -3,6 +3,7 @@ package llm
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -234,6 +235,49 @@ func TestAnthropicHistoryPreservesDisplayDescriptionInToolArguments(t *testing.T
 	input := content[0]["input"].(map[string]any)
 	if input["display_description"] != "Checking status" {
 		t.Fatalf("anthropic input lost display_description: %#v", input)
+	}
+}
+
+func TestAnthropicMessagesDeduplicatesRepeatedToolResultBlocks(t *testing.T) {
+	_, messages, err := toAnthropicMessages([]Message{
+		{
+			Role: "assistant",
+			ToolCalls: []ToolCall{{
+				ToolCallID:    "call_1",
+				ToolName:      "read",
+				ArgumentsJSON: map[string]any{"path": "a.txt"},
+			}},
+		},
+		{
+			Role:    "tool",
+			Content: []ContentPart{{Type: "text", Text: `{"tool_call_id":"call_1","tool_name":"read","result":{"value":"stale"}}`}},
+		},
+		{
+			Role:    "tool",
+			Content: []ContentPart{{Type: "text", Text: `{"tool_call_id":"call_1","tool_name":"read","result":{"value":"fresh"}}`}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("toAnthropicMessages failed: %v", err)
+	}
+	if len(messages) != 2 {
+		t.Fatalf("unexpected messages: %#v", messages)
+	}
+	blocks, ok := messages[1]["content"].([]map[string]any)
+	if !ok {
+		t.Fatalf("tool result content was not block list: %#v", messages[1]["content"])
+	}
+	var results []map[string]any
+	for _, block := range blocks {
+		if block["type"] == "tool_result" {
+			results = append(results, block)
+		}
+	}
+	if len(results) != 1 {
+		t.Fatalf("expected one tool_result block, got %#v", results)
+	}
+	if got := results[0]["content"]; !strings.Contains(fmt.Sprint(got), "fresh") || strings.Contains(fmt.Sprint(got), "stale") {
+		t.Fatalf("expected latest tool_result content, got %#v", got)
 	}
 }
 
