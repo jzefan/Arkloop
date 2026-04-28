@@ -94,38 +94,55 @@ type ErrorCalloutProps = {
   requestFailedText: string
 }
 
+export type FormattedError = {
+  title: string
+  detailLines: string[]
+}
+
+export function formatErrorForDisplay(error: AppError, locale: Locale, requestFailedText: string): FormattedError {
+  const rawMessage = (error.message ?? '').trim()
+  const code = typeof error.code === 'string' ? error.code.trim() : ''
+  const traceId = typeof error.traceId === 'string' ? error.traceId.trim() : ''
+  const details = error.details
+  const labels = locale === 'zh'
+    ? { raw: '原始信息', code: '错误码', trace: 'Trace ID' }
+    : { raw: 'Raw message', code: 'Code', trace: 'Trace ID' }
+
+  let title: string
+  if (rawMessage && hasCjk(rawMessage)) {
+    title = rawMessage
+  } else if (code && FRIENDLY_ERROR_MESSAGES[code]) {
+    title = FRIENDLY_ERROR_MESSAGES[code][locale]
+  } else if (rawMessage && isNetworkErrorMessage(rawMessage)) {
+    title = locale === 'zh' ? '网络异常，请重试' : 'Network error. Please try again.'
+  } else {
+    title = requestFailedText
+  }
+
+  const detailLines: string[] = []
+  if (rawMessage && rawMessage !== title) detailLines.push(`${labels.raw}: ${rawMessage}`)
+  if (code) detailLines.push(`${labels.code}: ${code}`)
+  if (traceId) detailLines.push(`${labels.trace}: ${traceId}`)
+  if (details && Object.keys(details).length > 0) {
+    for (const [key, value] of Object.entries(details)) {
+      detailLines.push(`${key}: ${formatDetailValue(value)}`)
+    }
+  }
+
+  return { title, detailLines }
+}
+
 export function ErrorCallout({ error, locale, requestFailedText }: ErrorCalloutProps) {
   const [detailsOpen, setDetailsOpen] = useState(false)
 
-  const rawMessage = useMemo(() => (error.message ?? '').trim(), [error.message])
-  const code = useMemo(() => (typeof error.code === 'string' ? error.code.trim() : ''), [error.code])
-  const traceId = useMemo(() => (typeof error.traceId === 'string' ? error.traceId.trim() : ''), [error.traceId])
-
-  const title = useMemo(() => {
-    if (rawMessage && hasCjk(rawMessage)) return rawMessage
-    if (code && FRIENDLY_ERROR_MESSAGES[code]) {
-      return FRIENDLY_ERROR_MESSAGES[code][locale]
-    }
-    if (rawMessage && isNetworkErrorMessage(rawMessage)) {
-      return locale === 'zh' ? '网络异常，请重试' : 'Network error. Please try again.'
-    }
-    return requestFailedText
-  }, [code, locale, rawMessage, requestFailedText])
-
-  const details = useMemo(() => error.details, [error.details])
-
-  const showDetails = useMemo(() => {
-    if (code || traceId) return true
-    if (rawMessage && rawMessage !== title) return true
-    if (details && Object.keys(details).length > 0) return true
-    return false
-  }, [code, details, rawMessage, title, traceId])
+  const formatted = useMemo(() => formatErrorForDisplay(error, locale, requestFailedText), [error, locale, requestFailedText])
+  const showDetails = formatted.detailLines.length > 0
 
   const labels = useMemo(() => {
     if (locale === 'zh') {
-      return { details: '详情', raw: '原始信息', code: '错误码', trace: 'Trace ID' }
+      return { details: '详情' }
     }
-    return { details: 'Details', raw: 'Raw message', code: 'Code', trace: 'Trace ID' }
+    return { details: 'Details' }
   }, [locale])
 
   return (
@@ -138,7 +155,7 @@ export function ErrorCallout({ error, locale, requestFailedText }: ErrorCalloutP
     >
       <div className="flex items-start justify-between gap-3">
         <div className="font-medium" style={{ color: 'var(--c-error-text)' }}>
-          {title}
+          {formatted.title}
         </div>
         {showDetails && (
           <button
@@ -165,23 +182,11 @@ export function ErrorCallout({ error, locale, requestFailedText }: ErrorCalloutP
           className="mt-1.5 space-y-0.5 text-xs"
           style={{ color: 'var(--c-error-subtext)' }}
         >
-          {rawMessage && rawMessage !== title && (
-            <div className="break-words">
-              <span className="font-mono">{labels.raw}: </span>
-              <span>{rawMessage}</span>
+          {formatted.detailLines.map((line, index) => (
+            <div key={`${index}:${line}`} className="font-mono break-words">
+              {line}
             </div>
-          )}
-          {code && <div className="font-mono break-words">{labels.code}: {code}</div>}
-          {traceId && <div className="font-mono break-words">{labels.trace}: {traceId}</div>}
-          {details && Object.keys(details).length > 0 && (
-            <div className="mt-1 space-y-0.5">
-              {Object.entries(details).map(([k, v]) => (
-                <div key={k} className="font-mono break-words">
-                  {k}: {formatDetailValue(v)}
-                </div>
-              ))}
-            </div>
-          )}
+          ))}
         </div>
       )}
     </div>
