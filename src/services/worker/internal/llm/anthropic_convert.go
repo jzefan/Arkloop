@@ -102,10 +102,17 @@ func toAnthropicMessagesWithPlan(messages []Message, plan *PromptPlan) ([]map[st
 		}
 		filtered := make([]map[string]any, 0, len(pendingToolResults))
 		matchedToolUseIDs := map[string]struct{}{}
+		toolResultIndexByID := map[string]int{}
 		for _, block := range pendingToolResults {
 			id, _ := block["tool_use_id"].(string)
 			if _, ok := lastAssistantToolUseIDs[id]; ok {
-				filtered = append(filtered, block)
+				if prevIndex, exists := toolResultIndexByID[id]; exists {
+					filtered[prevIndex] = block
+					slog.Warn("anthropic_tool_result_duplicate", "tool_use_id", id)
+				} else {
+					toolResultIndexByID[id] = len(filtered)
+					filtered = append(filtered, block)
+				}
 				matchedToolUseIDs[id] = struct{}{}
 			} else {
 				prevRole := ""
