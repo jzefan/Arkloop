@@ -36,6 +36,7 @@ export function UserMessage({ message, onRetry, onEdit, accessToken, animateEnte
   const [userTextExpanded, setUserTextExpanded] = useState(false)
   const [userTextFullHeight, setUserTextFullHeight] = useState<number | null>(null)
   const [enterScale, setEnterScale] = useState(USER_PROMPT_ENTER_BASE_SCALE)
+  const [hovered, setHovered] = useState(false)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const userTextRef = useRef<HTMLDivElement>(null)
   const enterBubbleRef = useRef<HTMLDivElement>(null)
@@ -336,6 +337,8 @@ export function UserMessage({ message, onRetry, onEdit, accessToken, animateEnte
             <div
               ref={enterBubbleRef}
               className={[animateEnter ? 'user-prompt-bubble-enter' : '', 'user-prompt-bubble'].filter(Boolean).join(' ')}
+              onMouseEnter={() => setHovered(true)}
+              onMouseLeave={() => setHovered(false)}
               style={{
                 '--user-prompt-enter-scale': String(enterScale),
                 borderRadius: isWorkMode ? '12px 12px 12px 8px' : '12px',
@@ -345,6 +348,12 @@ export function UserMessage({ message, onRetry, onEdit, accessToken, animateEnte
                 lineHeight: 1.6,
                 letterSpacing: '-0.64px',
                 wordBreak: 'break-word',
+                background: hovered ? 'var(--c-bg-input)' : undefined,
+                borderWidth: hovered ? '0.5px' : undefined,
+                borderStyle: hovered ? 'solid' : undefined,
+                borderColor: hovered ? 'var(--c-input-border-color-focus)' : undefined,
+                boxShadow: hovered ? 'var(--c-input-shadow-focus)' : undefined,
+                transition: 'background-color 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease',
               } as CSSProperties}
             >
               <div
