@@ -182,8 +182,13 @@ func TestProviderResponseCaptureKeepsBoundedTail(t *testing.T) {
 
 func TestSSEKeepaliveFilterDropsCommentOnlyBlocks(t *testing.T) {
 	capture := newProviderResponseCapture()
+	activityCount := 0
 	rawBody := ": PROCESSING\n\ndata: {\"ok\":true}\n\n"
-	body := &providerResponseTailBody{body: io.NopCloser(strings.NewReader(rawBody)), capture: capture}
+	body := &providerResponseTailBody{
+		body:         io.NopCloser(strings.NewReader(rawBody)),
+		capture:      capture,
+		markActivity: func() { activityCount++ },
+	}
 	filtered := newSSEKeepaliveFilterReadCloser(body)
 
 	out, err := io.ReadAll(filtered)
@@ -196,6 +201,9 @@ func TestSSEKeepaliveFilterDropsCommentOnlyBlocks(t *testing.T) {
 	tail, _ := capture.details()["provider_response_tail"].(string)
 	if !strings.Contains(tail, ": PROCESSING") || !strings.Contains(tail, `{"ok":true}`) {
 		t.Fatalf("raw tail was not captured: %#v", capture.details())
+	}
+	if activityCount == 0 {
+		t.Fatalf("expected raw keepalive bytes to mark stream activity")
 	}
 }
 
