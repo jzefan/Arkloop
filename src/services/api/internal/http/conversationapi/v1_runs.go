@@ -117,12 +117,60 @@ type cancelRunRequest struct {
 	ClientCancelledAt *string `json:"client_cancelled_at"`
 }
 
+var errRunThreadNotFound = errors.New("thread not found")
+
 func formatUUIDPtr(value *uuid.UUID) *string {
 	if value == nil || *value == uuid.Nil {
 		return nil
 	}
 	formatted := value.String()
 	return &formatted
+}
+
+func resolveRunThreadPlanMode(
+	ctx context.Context,
+	threadRepo *data.ThreadRepository,
+	thread data.Thread,
+	override *bool,
+) (data.Thread, bool, error) {
+	if threadRepo == nil {
+		return thread, thread.PlanMode, nil
+	}
+	if override != nil {
+		updated, err := threadRepo.UpdateFields(ctx, thread.ID, data.ThreadUpdateFields{
+			SetPlanMode: true,
+			PlanMode:    *override,
+		})
+		if err != nil {
+			return data.Thread{}, false, err
+		}
+		if updated == nil {
+			return data.Thread{}, false, errRunThreadNotFound
+		}
+		return *updated, updated.PlanMode, nil
+	}
+	current, err := threadRepo.GetByID(ctx, thread.ID)
+	if err != nil {
+		return data.Thread{}, false, err
+	}
+	if current == nil {
+		return data.Thread{}, false, errRunThreadNotFound
+	}
+	return *current, current.PlanMode, nil
+}
+
+func setRunPlanMode(startedData map[string]any, jobData map[string]any, active bool) {
+	startedData["plan_mode"] = active
+	if jobData != nil {
+		jobData["plan_mode"] = active
+	}
+}
+
+func planModeOverride(body *createRunRequest) *bool {
+	if body == nil {
+		return nil
+	}
+	return body.PlanMode
 }
 
 type submitInputResponse struct {
@@ -252,10 +300,6 @@ func createThreadRun(
 			}
 			startedData["reasoning_mode"] = reasoningMode
 		}
-		if body != nil && body.PlanMode != nil {
-			startedData["plan_mode"] = *body.PlanMode
-		}
-
 		thread, err := threadRepo.GetByID(r.Context(), threadID)
 		if err != nil {
 			writeInternalError(w, traceID, err)
@@ -329,6 +373,24 @@ func createThreadRun(
 			writeInternalError(w, traceID, err)
 			return
 		}
+		txThreadRepo, err := data.NewThreadRepository(tx)
+		if err != nil {
+			writeInternalError(w, traceID, err)
+			return
+		}
+
+		currentThread, effectivePlanMode, err := resolveRunThreadPlanMode(r.Context(), txThreadRepo, *thread, planModeOverride(body))
+		if err != nil {
+			if errors.Is(err, errRunThreadNotFound) {
+				httpkit.WriteError(w, nethttp.StatusNotFound, "threads.not_found", "thread not found", traceID, nil)
+				return
+			}
+			writeInternalError(w, traceID, err)
+			return
+		}
+		thread = &currentThread
+		jobData := map[string]any{"source": "api"}
+		setRunPlanMode(startedData, jobData, effectivePlanMode)
 
 		run, _, err := runRepo.CreateRootRunWithClaimFrom(
 			r.Context(),
@@ -359,7 +421,7 @@ func createThreadRun(
 			run.ID,
 			traceID,
 			data.RunExecuteJobType,
-			map[string]any{"source": "api"},
+			jobData,
 			nil,
 		)
 		if err != nil {
@@ -368,10 +430,7 @@ func createThreadRun(
 		}
 
 		// Touch thread to update activity timestamp
-		txThreadRepo, err := data.NewThreadRepository(tx)
-		if err == nil {
-			_ = txThreadRepo.Touch(r.Context(), threadID)
-		}
+		_ = txThreadRepo.Touch(r.Context(), threadID)
 
 		if err := tx.Commit(r.Context()); err != nil {
 			writeInternalError(w, traceID, err)

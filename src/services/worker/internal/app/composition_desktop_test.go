@@ -1595,7 +1595,7 @@ func TestDesktopPersonaResolutionRestoresPlanModePromptAfterReset(t *testing.T) 
 	if !rc.IsPlanMode {
 		t.Fatal("expected plan mode to remain active")
 	}
-	if !strings.Contains(gotRuntimePrompt, "[Plan Mode Active]") {
+	if !strings.Contains(gotRuntimePrompt, "<system-reminder>") {
 		t.Fatalf("expected plan mode prompt after desktop persona reset, got %q", gotRuntimePrompt)
 	}
 	if !strings.Contains(gotRuntimePrompt, "plans/"+threadID.String()+".md") {

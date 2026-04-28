@@ -3236,6 +3236,11 @@ func (w *desktopEventWriter) append(ctx context.Context, runID uuid.UUID, ev eve
 			)
 		}
 	}
+	if ev.Type == "thread.plan_mode.updated" {
+		if err := w.applyThreadPlanModeEvent(ctx, tx, ev); err != nil {
+			return err
+		}
+	}
 
 	cancelTypes := []string{"run.cancel_requested", "run.cancelled"}
 	cancelType, err := w.eventsRepo.GetLatestEventType(ctx, tx, runID, cancelTypes)
@@ -3631,6 +3636,31 @@ func (w *desktopEventWriter) captureChannelToolCallOutput(dataJSON map[string]an
 	default:
 		return
 	}
+}
+
+func (w *desktopEventWriter) applyThreadPlanModeEvent(ctx context.Context, tx pgx.Tx, ev events.RunEvent) error {
+	active, ok := ev.DataJSON["plan_mode"].(bool)
+	if !ok {
+		return fmt.Errorf("thread.plan_mode.updated missing plan_mode")
+	}
+	tag, err := tx.Exec(
+		ctx,
+		`UPDATE threads
+		    SET plan_mode = $3
+		  WHERE id = $1
+		    AND account_id = $2
+		    AND deleted_at IS NULL`,
+		w.run.ThreadID,
+		w.run.AccountID,
+		active,
+	)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf("thread not found for plan mode update")
+	}
+	return nil
 }
 
 func (w *desktopEventWriter) maybeFlushResponseDraft(ctx context.Context, force bool) error {

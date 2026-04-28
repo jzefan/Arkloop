@@ -553,6 +553,11 @@ func (w *eventWriter) Append(
 			return err
 		}
 	}
+	if ev.Type == "thread.plan_mode.updated" {
+		if err := w.applyThreadPlanModeEvent(ctx, ev); err != nil {
+			return err
+		}
+	}
 
 	cancelType, err := eventsRepo.GetLatestEventType(ctx, w.tx, runID, cancelEvtTypes)
 	if err != nil {
@@ -761,6 +766,31 @@ func (w *eventWriter) Append(
 	now := time.Now()
 	if w.pendingEventsSinceCommit >= eventCommitBatchSize || now.Sub(w.lastCommitAt) >= eventCommitMaxInterval {
 		return w.commit(ctx)
+	}
+	return nil
+}
+
+func (w *eventWriter) applyThreadPlanModeEvent(ctx context.Context, ev events.RunEvent) error {
+	active, ok := ev.DataJSON["plan_mode"].(bool)
+	if !ok {
+		return fmt.Errorf("thread.plan_mode.updated missing plan_mode")
+	}
+	tag, err := w.tx.Exec(
+		ctx,
+		`UPDATE threads
+		    SET plan_mode = $3
+		  WHERE id = $1
+		    AND account_id = $2
+		    AND deleted_at IS NULL`,
+		w.run.ThreadID,
+		w.run.AccountID,
+		active,
+	)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf("thread not found for plan mode update")
 	}
 	return nil
 }

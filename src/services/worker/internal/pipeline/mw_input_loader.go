@@ -158,12 +158,17 @@ func ApplyPlanMode(rc *RunContext) {
 	if rc == nil {
 		return
 	}
-	rc.IsPlanMode = detectPlanModeFromHistory(rc.Messages)
-	if planMode, ok := rc.InputJSON["plan_mode"].(bool); ok && planMode && !rc.IsPlanMode {
-		rc.IsPlanMode = true
+	if planMode, ok := rc.InputJSON["plan_mode"].(bool); ok {
+		rc.IsPlanMode = planMode
+	} else {
+		rc.IsPlanMode = detectPlanModeFromHistory(rc.Messages)
 	}
 	if rc.IsPlanMode && rc.PlanFilePath == "" {
 		rc.PlanFilePath = "plans/" + rc.Run.ThreadID.String() + ".md"
+	}
+	if !rc.IsPlanMode {
+		rc.RemovePromptSegment("plan_mode")
+		return
 	}
 	if rc.IsPlanMode {
 		rc.UpsertPromptSegment(PromptSegment{
@@ -171,10 +176,12 @@ func ApplyPlanMode(rc *RunContext) {
 			Target:    PromptTargetRuntimeTail,
 			Role:      "user",
 			Stability: PromptStabilityVolatileTail,
-			Text: "[Plan Mode Active] 你当前处于 Plan Mode，只能使用只读工具" +
-				"（read, grep, glob, web_search, web_fetch, ask_user）。" +
-				"写工具（edit, write_file, document_write, exec_command, python_execute）被禁用。" +
-				"Plan 文件：" + rc.PlanFilePath + "。调用 exit_plan_mode 退出。",
+			Text: "<system-reminder>\n" +
+				"Plan Mode 当前对这个 thread 生效。\n" +
+				"Plan 文件是 " + rc.PlanFilePath + "，它是本 thread 的方案草稿，也是此模式下唯一可以维护的文件。\n" +
+				"你可以读取代码、搜索、提问并逐步更新这个 Plan 文件；不要修改普通项目文件或执行会改变项目状态的命令。\n" +
+				"当方案已经准备好交给用户确认时，调用 exit_plan_mode 退出 Plan Mode。\n" +
+				"</system-reminder>",
 		})
 	}
 }

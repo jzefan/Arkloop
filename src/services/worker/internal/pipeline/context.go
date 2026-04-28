@@ -2,6 +2,7 @@ package pipeline
 
 import (
 	"context"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -352,6 +353,27 @@ func (rc *RunContext) PlanFilePathValue() string {
 // IsPlanModeActive is consumed by write tools to enforce plan-mode read-only constraint.
 func (rc *RunContext) IsPlanModeActive() bool {
 	return rc != nil && rc.IsPlanMode
+}
+
+// PlanModeWritePathAllowed allows plan-mode maintenance only for the current thread plan file.
+func (rc *RunContext) PlanModeWritePathAllowed(path string) bool {
+	if rc == nil || rc.Run.ThreadID == uuid.Nil {
+		return false
+	}
+	raw := strings.TrimSpace(path)
+	if raw == "" || filepath.IsAbs(raw) {
+		return false
+	}
+	cleaned := filepath.ToSlash(filepath.Clean(raw))
+	if cleaned == "." || cleaned == ".." || strings.HasPrefix(cleaned, "../") {
+		return false
+	}
+	target := strings.TrimSpace(rc.PlanFilePath)
+	if target == "" {
+		target = "plans/" + rc.Run.ThreadID.String() + ".md"
+	}
+	target = filepath.ToSlash(filepath.Clean(target))
+	return cleaned == target
 }
 
 // IsHeartbeatRun implements tools/builtin/heartbeat_decision.PipelineBinding.
