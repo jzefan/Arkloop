@@ -1927,6 +1927,7 @@ func (l *Loop) runSingleTurn(
 			if err := flushVisibleAssistantTail(); err != nil {
 				return err
 			}
+			logStreamRunCompletedDebug(ctx, runCtx, turnIndex, typed, toolCalls)
 			completed = &typed
 			if typed.AssistantMessage != nil {
 				copy := *typed.AssistantMessage
@@ -2005,6 +2006,41 @@ func (l *Loop) runSingleTurn(
 		AssistantText:     strings.Join(assistantChunks, ""),
 		CompletedDataJSON: completedJSON,
 	}, nil
+}
+
+func logStreamRunCompletedDebug(ctx context.Context, runCtx RunContext, turnIndex int, completed llm.StreamRunCompleted, toolCalls []llm.ToolCall) {
+	thinkingPartCount := 0
+	visibleTextLen := 0
+	messageToolCallCount := 0
+	if completed.AssistantMessage != nil {
+		thinkingPartCount = countAssistantThinkingParts(completed.AssistantMessage.Content)
+		visibleTextLen = len(llm.VisibleMessageText(*completed.AssistantMessage))
+		messageToolCallCount = len(completed.AssistantMessage.ToolCalls)
+	}
+	toolCallCount := len(toolCalls)
+	if toolCallCount == 0 {
+		toolCallCount = messageToolCallCount
+	}
+	slog.DebugContext(ctx, "agent_loop_stream_completed_debug",
+		"run_id", runCtx.RunID.String(),
+		"turn_index", turnIndex,
+		"has_assistant_message", completed.AssistantMessage != nil,
+		"thinking_part_count", thinkingPartCount,
+		"visible_text_len", visibleTextLen,
+		"tool_call_count", toolCallCount,
+		"stream_thinking", runCtx.StreamThinking,
+	)
+}
+
+func countAssistantThinkingParts(parts []llm.ContentPart) int {
+	count := 0
+	for _, part := range parts {
+		switch part.Kind() {
+		case "thinking", "redacted_thinking":
+			count++
+		}
+	}
+	return count
 }
 
 func copyRequest(request llm.Request, messages []llm.Message) llm.Request {

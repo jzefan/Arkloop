@@ -117,7 +117,7 @@ func (g *geminiSDKGateway) Stream(ctx context.Context, request Request, yield fu
 		return err
 	}
 
-	state := newGeminiSDKStreamState(llmCallID, yield)
+	state := newGeminiSDKStreamState(ctx, llmCallID, yield)
 	for response, err := range g.client.Models.GenerateContentStream(ctx, request.Model, contents, config) {
 		if err != nil {
 			if emitErr := g.emitDebugErrorChunk(llmCallID, err, yield); emitErr != nil {
@@ -305,17 +305,22 @@ func base64StdDecode(data string) ([]byte, error) {
 }
 
 type geminiSDKStreamState struct {
-	llmCallID   string
-	yield       func(StreamEvent) error
-	usage       *Usage
-	emitted     bool
-	completed   bool
-	toolBuffers map[string]ToolCall
-	toolOrder   []string
+	ctx               context.Context
+	llmCallID         string
+	yield             func(StreamEvent) error
+	usage             *Usage
+	emitted           bool
+	completed         bool
+	contentPartCount  int
+	thinkingPartCount int
+	visibleTextLen    int
+	toolCallCount     int
+	toolBuffers       map[string]ToolCall
+	toolOrder         []string
 }
 
-func newGeminiSDKStreamState(id string, yield func(StreamEvent) error) *geminiSDKStreamState {
-	return &geminiSDKStreamState{llmCallID: id, yield: yield, toolBuffers: map[string]ToolCall{}}
+func newGeminiSDKStreamState(ctx context.Context, id string, yield func(StreamEvent) error) *geminiSDKStreamState {
+	return &geminiSDKStreamState{ctx: ctx, llmCallID: id, yield: yield, toolBuffers: map[string]ToolCall{}}
 }
 func (s *geminiSDKStreamState) handle(response *genai.GenerateContentResponse) error {
 	if response == nil {
@@ -340,12 +345,15 @@ func (s *geminiSDKStreamState) handle(response *genai.GenerateContentResponse) e
 				continue
 			}
 			if part.Text != "" {
+				s.contentPartCount++
 				if part.Thought {
+					s.thinkingPartCount++
 					ch := "thinking"
 					if err := s.yield(StreamMessageDelta{ContentDelta: part.Text, Role: "assistant", Channel: &ch}); err != nil {
 						return err
 					}
 				} else {
+					s.visibleTextLen += len(part.Text)
 					s.emitted = true
 					if err := s.yield(StreamMessageDelta{ContentDelta: part.Text, Role: "assistant"}); err != nil {
 						return err
@@ -374,6 +382,7 @@ func (s *geminiSDKStreamState) bufferToolCall(functionCall *genai.FunctionCall, 
 	}
 	if _, exists := s.toolBuffers[toolCallID]; !exists {
 		s.toolOrder = append(s.toolOrder, toolCallID)
+		s.toolCallCount++
 	}
 	s.toolBuffers[toolCallID] = ToolCall{ToolCallID: toolCallID, ToolName: CanonicalToolName(functionCall.Name), ArgumentsJSON: mapOrEmpty(functionCall.Args)}
 }
@@ -403,6 +412,15 @@ func (s *geminiSDKStreamState) complete() error {
 		return s.fail(GatewayError{ErrorClass: ErrorClassProviderRetryable, Message: "Gemini stream ended before tool call completion"})
 	}
 	if s.completed || s.emitted || s.usage != nil {
+		logProviderCompletionDebug(s.ctx, providerCompletionDebug{
+			ProviderKind:      "gemini",
+			APIMode:           "generate_content",
+			LlmCallID:         s.llmCallID,
+			ContentPartCount:  s.contentPartCount,
+			ThinkingPartCount: s.thinkingPartCount,
+			VisibleTextLen:    s.visibleTextLen,
+			ToolCallCount:     s.toolCallCount,
+		})
 		return s.yield(StreamRunCompleted{LlmCallID: s.llmCallID, Usage: s.usage})
 	}
 	return s.yield(StreamRunFailed{LlmCallID: s.llmCallID, Error: RetryableStreamEndedError()})

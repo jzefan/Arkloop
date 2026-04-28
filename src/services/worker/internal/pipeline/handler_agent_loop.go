@@ -87,6 +87,7 @@ func NewAgentLoopHandler(
 			selected.Route.Multiplier, selected.Route.CostPer1kInput, selected.Route.CostPer1kOutput,
 			selected.Route.CostPer1kCacheWrite, selected.Route.CostPer1kCacheRead,
 			policy,
+			rc.StreamThinking,
 			rc.ReleaseSlot,
 			rc.TelegramToolBoundaryFlush,
 			rc.TelegramProgressTracker,
@@ -279,6 +280,7 @@ type eventWriter struct {
 	costPer1kCacheRead  *float64
 	policy              creditpolicy.CreditDeductionPolicy
 	creditsPerUSD       float64
+	streamThinking      bool
 
 	tx                       pgx.Tx
 	pendingEventsSinceCommit int
@@ -321,11 +323,12 @@ type eventWriter struct {
 }
 
 type intermediateMessage struct {
-	Role        string
-	Content     string
-	ContentJSON json.RawMessage
-	ToolCallID  string // tool result only
-	Ordinal     int64
+	Role          string
+	Content       string
+	ContentJSON   json.RawMessage
+	ToolCallID    string // tool result only
+	ToolCallCount int
+	Ordinal       int64
 }
 
 type pendingTelegramProgressToolCall struct {
@@ -352,6 +355,7 @@ func newEventWriter(
 	costPer1kCacheWrite *float64,
 	costPer1kCacheRead *float64,
 	policy creditpolicy.CreditDeductionPolicy,
+	streamThinking bool,
 	releaseSlot func(),
 	telegramToolBoundaryFlush func(context.Context, string) error,
 	telegramProgressTracker *TelegramProgressTracker,
@@ -386,6 +390,7 @@ func newEventWriter(
 		costPer1kCacheWrite:       costPer1kCacheWrite,
 		costPer1kCacheRead:        costPer1kCacheRead,
 		policy:                    policy,
+		streamThinking:            streamThinking,
 		releaseSlot:               releaseSlot,
 		telegramToolBoundaryFlush: telegramToolBoundaryFlush,
 		telegramProgressTracker:   telegramProgressTracker,
@@ -503,6 +508,7 @@ func (w *eventWriter) insertStreamRemainder(
 	if err := w.ensureTx(ctx); err != nil {
 		return err
 	}
+	w.logAssistantMessagePersistDebug(ctx, "stream_remainder", assistantDebugCountsFromText(content), 0)
 	messageID, err := repo.InsertAssistantMessageWithMetadata(
 		ctx, w.tx, accountID, threadID, w.run.ID,
 		content, nil, false,
@@ -624,6 +630,7 @@ func (w *eventWriter) Append(
 	if assistantMessage, ok := assistantMessageFromEventData(ev.DataJSON); ok {
 		w.assistantMessage = &assistantMessage
 		w.assistantMessageFresh = true
+		w.logAssistantMessagePersistDebug(ctx, "event_assistant_message", assistantDebugCountsFromMessage(assistantMessage), 0)
 	}
 	flushChunk := ""
 	var pendingProgressCall *pendingTelegramProgressToolCall
@@ -959,6 +966,62 @@ func (w *eventWriter) AssistantOutputs() []string {
 	return out
 }
 
+type assistantDebugCounts struct {
+	HasAssistantMessage bool
+	ThinkingPartCount   int
+	VisibleTextLen      int
+	ToolCallCount       int
+}
+
+func assistantDebugCountsFromMessage(message llm.Message) assistantDebugCounts {
+	return assistantDebugCounts{
+		HasAssistantMessage: true,
+		ThinkingPartCount:   assistantThinkingPartCount(message.Content),
+		VisibleTextLen:      len(llm.VisibleMessageText(message)),
+		ToolCallCount:       len(message.ToolCalls),
+	}
+}
+
+func assistantDebugCountsFromText(text string) assistantDebugCounts {
+	return assistantDebugCounts{
+		HasAssistantMessage: false,
+		VisibleTextLen:      len(text),
+	}
+}
+
+func assistantDebugCountsFromStoredMessage(text string, contentJSON json.RawMessage, toolCallCount int) assistantDebugCounts {
+	counts := assistantDebugCountsFromText(text)
+	if restored, err := llm.AssistantMessageFromThreadContentJSON(contentJSON); err == nil && restored != nil {
+		counts = assistantDebugCountsFromMessage(*restored)
+	}
+	counts.ToolCallCount = toolCallCount
+	return counts
+}
+
+func assistantThinkingPartCount(parts []llm.ContentPart) int {
+	count := 0
+	for _, part := range parts {
+		switch part.Kind() {
+		case "thinking", "redacted_thinking":
+			count++
+		}
+	}
+	return count
+}
+
+func (w *eventWriter) logAssistantMessagePersistDebug(ctx context.Context, persistPath string, counts assistantDebugCounts, contentJSONLen int) {
+	slog.DebugContext(ctx, "assistant_message_persist_debug",
+		"run_id", w.run.ID.String(),
+		"persist_path", persistPath,
+		"has_assistant_message", counts.HasAssistantMessage,
+		"thinking_part_count", counts.ThinkingPartCount,
+		"visible_text_len", counts.VisibleTextLen,
+		"tool_call_count", counts.ToolCallCount,
+		"content_json_len", contentJSONLen,
+		"stream_thinking", w.streamThinking,
+	)
+}
+
 func (w *eventWriter) InsertAssistantMessage(
 	ctx context.Context,
 	repo data.MessagesRepository,
@@ -975,6 +1038,7 @@ func (w *eventWriter) InsertAssistantMessage(
 	if err != nil {
 		return uuid.Nil, err
 	}
+	w.logAssistantMessagePersistDebug(ctx, "final_assistant", assistantDebugCountsFromMessage(message), len(contentJSON))
 	messageID, err := repo.InsertAssistantMessage(ctx, w.tx, accountID, threadID, w.run.ID, content, contentJSON, hidden)
 	if err != nil {
 		return uuid.Nil, err
@@ -1007,6 +1071,7 @@ func (w *eventWriter) InsertAssistantMessageText(
 	if err != nil {
 		return uuid.Nil, err
 	}
+	w.logAssistantMessagePersistDebug(ctx, "final_text", assistantDebugCountsFromText(text), len(contentJSON))
 	messageID, err := repo.InsertAssistantMessage(ctx, w.tx, accountID, threadID, w.run.ID, text, contentJSON, hidden)
 	if err != nil {
 		return uuid.Nil, err
@@ -1130,10 +1195,11 @@ func (w *eventWriter) flushPendingToolCalls() {
 	}
 	baseOrdinal := int64(len(w.intermediateMessages)) + 1
 	w.intermediateMessages = append(w.intermediateMessages, intermediateMessage{
-		Role:        "assistant",
-		Content:     llm.VisibleMessageText(*msg),
-		ContentJSON: contentJSON,
-		Ordinal:     baseOrdinal,
+		Role:          "assistant",
+		Content:       llm.VisibleMessageText(*msg),
+		ContentJSON:   contentJSON,
+		ToolCallCount: len(filteredCalls),
+		Ordinal:       baseOrdinal,
 	})
 	for i := range filteredResults {
 		filteredResults[i].Ordinal = baseOrdinal + 1 + int64(i)
@@ -1197,6 +1263,10 @@ func (w *eventWriter) batchInsertIntermediateMessages(
 		threadSeq := startSeq + int64(i)
 		if msg.Ordinal > 0 {
 			threadSeq = startSeq + msg.Ordinal - 1
+		}
+		if msg.Role == "assistant" {
+			counts := assistantDebugCountsFromStoredMessage(msg.Content, contentJSON, msg.ToolCallCount)
+			w.logAssistantMessagePersistDebug(ctx, "intermediate_assistant", counts, len(contentJSON))
 		}
 		if _, err := repo.InsertIntermediateMessage(ctx, w.tx, accountID, threadID, threadSeq, msg.Role, msg.Content, contentJSON, metadataJSON, time.Now().UTC()); err != nil {
 			return err

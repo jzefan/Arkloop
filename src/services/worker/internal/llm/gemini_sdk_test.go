@@ -132,7 +132,7 @@ func TestGeminiSDKGateway_GenerateImageUsesSDKGatePath(t *testing.T) {
 }
 
 func TestGeminiSDKGateway_StreamFunctionCallIDFallback(t *testing.T) {
-	state := newGeminiSDKStreamState("llm_1", func(event StreamEvent) error { return nil })
+	state := newGeminiSDKStreamState(context.Background(), "llm_1", func(event StreamEvent) error { return nil })
 	var tool ToolCall
 	state.yield = func(event StreamEvent) error {
 		if ev, ok := event.(ToolCall); ok {
@@ -180,7 +180,7 @@ func TestGeminiSDKGateway_NormalizesVersionedBaseURL(t *testing.T) {
 
 func TestGeminiSDKStreamState_PromptFeedbackFailsRun(t *testing.T) {
 	var failed *StreamRunFailed
-	state := newGeminiSDKStreamState("llm_1", func(event StreamEvent) error {
+	state := newGeminiSDKStreamState(context.Background(), "llm_1", func(event StreamEvent) error {
 		if ev, ok := event.(StreamRunFailed); ok {
 			failed = &ev
 		}
@@ -196,7 +196,7 @@ func TestGeminiSDKStreamState_PromptFeedbackFailsRun(t *testing.T) {
 
 func TestGeminiSDKStreamState_BuffersToolCallsUntilTerminalFinish(t *testing.T) {
 	var tools []ToolCall
-	state := newGeminiSDKStreamState("llm_1", func(event StreamEvent) error {
+	state := newGeminiSDKStreamState(context.Background(), "llm_1", func(event StreamEvent) error {
 		if ev, ok := event.(ToolCall); ok {
 			tools = append(tools, ev)
 		}
@@ -218,7 +218,7 @@ func TestGeminiSDKStreamState_BuffersToolCallsUntilTerminalFinish(t *testing.T) 
 
 func TestGeminiSDKStreamState_UnfinishedToolCallFailsRun(t *testing.T) {
 	var failed *StreamRunFailed
-	state := newGeminiSDKStreamState("llm_1", func(event StreamEvent) error {
+	state := newGeminiSDKStreamState(context.Background(), "llm_1", func(event StreamEvent) error {
 		if ev, ok := event.(StreamRunFailed); ok {
 			failed = &ev
 		}
