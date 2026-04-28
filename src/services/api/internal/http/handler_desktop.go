@@ -41,12 +41,14 @@ import (
 type SSEConfig struct {
 	HeartbeatSeconds float64
 	BatchLimit       int
+	CatchUpThreshold int
 }
 
 func defaultSSEConfig() SSEConfig {
 	return SSEConfig{
 		HeartbeatSeconds: 1.0,
 		BatchLimit:       500,
+		CatchUpThreshold: 50,
 	}
 }
 
