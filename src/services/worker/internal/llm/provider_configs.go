@@ -7,6 +7,7 @@ import (
 
 const defaultAnthropicVersion = "2023-06-01"
 const defaultAnthropicMaxResponseBytes = 16 * 1024
+const anthropicMaxErrorBodyBytes = 4096
 const anthropicMaxDebugChunkBytes = 8192
 const defaultAnthropicMaxTokens = 32768
 const anthropicMaxCacheControlBlocks = 4

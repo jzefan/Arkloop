@@ -8,22 +8,38 @@ import (
 
 func anthropicErrorMessageAndDetails(body []byte, status int) (string, map[string]any) {
 	details := map[string]any{"status_code": status}
+	fallback := fmt.Sprintf("Anthropic request failed: status=%d", status)
+
+	if len(body) > 0 {
+		raw, truncated := truncateUTF8(string(body), anthropicMaxErrorBodyBytes)
+		details["provider_error_body"] = raw
+		if truncated {
+			details["provider_error_body_truncated"] = true
+		}
+	}
+
+	if len(body) == 0 {
+		return fallback, details
+	}
 
 	var parsed any
 	if err := json.Unmarshal(body, &parsed); err != nil {
-		// body is not JSON; include raw body in message for visibility
-		details["raw_body"] = string(body)
-		return fmt.Sprintf("Anthropic request failed: status=%d body=%q", status, string(body)), details
+		return fallback, details
 	}
 	root, ok := parsed.(map[string]any)
 	if !ok {
-		details["raw_body"] = string(body)
-		return fmt.Sprintf("Anthropic request failed: status=%d body=%q", status, string(body)), details
+		return fallback, details
 	}
 	errObj, ok := root["error"].(map[string]any)
+	if !ok && anthropicErrorObject(root) {
+		errObj = root
+		ok = true
+	}
 	if !ok {
-		details["raw_body"] = string(body)
-		return fmt.Sprintf("Anthropic request failed: status=%d body=%q", status, string(body)), details
+		if msg, ok := root["message"].(string); ok && strings.TrimSpace(msg) != "" {
+			return strings.TrimSpace(msg), details
+		}
+		return fallback, details
 	}
 	if errType, ok := errObj["type"].(string); ok && strings.TrimSpace(errType) != "" {
 		details["anthropic_error_type"] = strings.TrimSpace(errType)
@@ -31,8 +47,19 @@ func anthropicErrorMessageAndDetails(body []byte, status int) (string, map[strin
 	if msg, ok := errObj["message"].(string); ok && strings.TrimSpace(msg) != "" {
 		return strings.TrimSpace(msg), details
 	}
-	details["raw_body"] = string(body)
-	return fmt.Sprintf("Anthropic request failed: status=%d body=%q", status, string(body)), details
+	return fallback, details
+}
+
+func anthropicErrorObject(root map[string]any) bool {
+	if root == nil {
+		return false
+	}
+	for _, key := range []string{"type", "message"} {
+		if _, ok := root[key]; ok {
+			return true
+		}
+	}
+	return false
 }
 
 func parseAnthropicUsage(body []byte) *Usage {

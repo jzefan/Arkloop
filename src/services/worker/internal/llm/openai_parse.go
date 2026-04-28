@@ -1023,6 +1023,10 @@ func openAIErrorMessageAndDetails(body []byte, status int, fallback string) (str
 	}
 
 	errObj, ok := root["error"].(map[string]any)
+	if !ok && openAIErrorObject(root) {
+		errObj = root
+		ok = true
+	}
 	if !ok {
 		if msg, ok := root["message"].(string); ok && strings.TrimSpace(msg) != "" {
 			return strings.TrimSpace(msg), details
@@ -1080,6 +1084,18 @@ func openAIErrorMessageAndDetails(body []byte, status int, fallback string) (str
 	}
 
 	return fallback, details
+}
+
+func openAIErrorObject(root map[string]any) bool {
+	if root == nil {
+		return false
+	}
+	for _, key := range []string{"type", "code", "param", "message", "metadata"} {
+		if _, ok := root[key]; ok {
+			return true
+		}
+	}
+	return false
 }
 
 func isEventStream(contentType string) bool {

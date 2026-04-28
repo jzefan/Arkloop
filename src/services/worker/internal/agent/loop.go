@@ -1494,6 +1494,9 @@ func (l *Loop) runTurnWithRetry(
 		if msg, _ := last.DataJSON["message"].(string); msg != "" {
 			retryData["message"] = msg
 		}
+		if llmCallID, _ := last.DataJSON["llm_call_id"].(string); llmCallID != "" {
+			retryData["llm_call_id"] = llmCallID
+		}
 		if details, ok := last.DataJSON["details"]; ok && details != nil {
 			retryData["details"] = details
 		}

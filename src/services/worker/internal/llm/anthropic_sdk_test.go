@@ -310,6 +310,89 @@ func TestAnthropicSDKGateway_ProviderOversizeDetails(t *testing.T) {
 	}
 }
 
+func TestAnthropicSDKGateway_APIErrorHasDiagnosticDetails(t *testing.T) {
+	t.Setenv("ARKLOOP_OUTBOUND_ALLOW_LOOPBACK_HTTP", "true")
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Request-Id", "req_anthropic_1")
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"error":{"type":"context_length_exceeded","message":"too many tokens"}}`))
+	}))
+	defer server.Close()
+
+	gateway := NewAnthropicGatewaySDK(AnthropicGatewayConfig{Transport: TransportConfig{APIKey: "test-key", BaseURL: server.URL}, Protocol: AnthropicProtocolConfig{Version: "2023-06-01"}})
+	var failed *StreamRunFailed
+	err := gateway.Stream(context.Background(), Request{Model: "claude-test", Messages: []Message{{Role: "user", Content: []ContentPart{{Text: "hello"}}}}}, func(event StreamEvent) error {
+		if ev, ok := event.(StreamRunFailed); ok {
+			failed = &ev
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("Stream returned unexpected error: %v", err)
+	}
+	if failed == nil {
+		t.Fatalf("missing failure")
+	}
+	if failed.Error.ErrorClass != ErrorClassProviderNonRetryable || failed.Error.Message != "too many tokens" {
+		t.Fatalf("unexpected failure: %#v", failed.Error)
+	}
+	details := failed.Error.Details
+	if details["provider_kind"] != "anthropic" || details["api_mode"] != "messages" || details["network_attempted"] != true || details["streaming"] != true {
+		t.Fatalf("missing provider diagnostics: %#v", details)
+	}
+	if details["anthropic_error_type"] != "context_length_exceeded" || details["provider_request_id"] != "req_anthropic_1" {
+		t.Fatalf("missing Anthropic error details: %#v", details)
+	}
+	if raw, _ := details["provider_error_body"].(string); !strings.Contains(raw, "too many tokens") || strings.Contains(raw, "HTTP/1.1") {
+		t.Fatalf("unexpected provider error body: %#v", details)
+	}
+}
+
+func TestAnthropicSDKGateway_TruncatedJSONStreamHasDiagnosticDetails(t *testing.T) {
+	t.Setenv("ARKLOOP_OUTBOUND_ALLOW_LOOPBACK_HTTP", "true")
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Header().Set("Anthropic-Request-Id", "req_anthropic_tail_1")
+		_, _ = w.Write([]byte("event: message_start\ndata: {\"type\":\"message_start\",\"message\":\n\n"))
+	}))
+	defer server.Close()
+
+	gateway := NewAnthropicGatewaySDK(AnthropicGatewayConfig{Transport: TransportConfig{APIKey: "test-key", BaseURL: server.URL}, Protocol: AnthropicProtocolConfig{Version: "2023-06-01"}})
+	var failed *StreamRunFailed
+	err := gateway.Stream(context.Background(), Request{Model: "claude-test", Messages: []Message{{Role: "user", Content: []ContentPart{{Text: "hello"}}}}}, func(event StreamEvent) error {
+		if ev, ok := event.(StreamRunFailed); ok {
+			failed = &ev
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("Stream returned unexpected error: %v", err)
+	}
+	if failed == nil {
+		t.Fatalf("missing failure")
+	}
+	if failed.Error.ErrorClass != ErrorClassProviderRetryable || failed.Error.Message != "Anthropic network error" {
+		t.Fatalf("unexpected failure: %#v", failed.Error)
+	}
+	details := failed.Error.Details
+	reason, _ := details["reason"].(string)
+	errorType, _ := details["error_type"].(string)
+	if !strings.Contains(reason, "unexpected end of JSON input") || errorType == "" {
+		t.Fatalf("missing diagnostic reason/type: %#v", details)
+	}
+	if details["streaming"] != true || details["network_attempted"] != true || details["provider_kind"] != "anthropic" || details["api_mode"] != "messages" || details["provider_response_parse_error"] != true {
+		t.Fatalf("missing stream diagnostic details: %#v", details)
+	}
+	if details["status_code"] != http.StatusOK || details["content_type"] != "text/event-stream" || details["provider_request_id"] != "req_anthropic_tail_1" {
+		t.Fatalf("missing response capture metadata: %#v", details)
+	}
+	tail, _ := details["provider_response_tail"].(string)
+	if !strings.Contains(tail, "event: message_start") || !strings.Contains(tail, `"type":"message_start"`) || strings.Contains(tail, "HTTP/1.1") {
+		t.Fatalf("unexpected response tail: %#v", details)
+	}
+}
+
 func TestAnthropicSDKGateway_RequestOmitsToolResultCacheReferences(t *testing.T) {
 	t.Setenv("ARKLOOP_OUTBOUND_ALLOW_LOOPBACK_HTTP", "true")
 	var captured map[string]any
