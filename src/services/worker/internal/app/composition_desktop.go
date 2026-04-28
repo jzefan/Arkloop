@@ -2977,6 +2977,7 @@ func desktopAgentLoop(
 			telegramBoundaryFlush:   rc.TelegramToolBoundaryFlush,
 			telegramProgressTracker: rc.TelegramProgressTracker,
 			heartbeatRun:            pipeline.IsHeartbeatRunContext(rc),
+			streamThinking:          rc.StreamThinking,
 		}
 		personaID := ""
 		if rc.PersonaDefinition != nil {
@@ -3127,6 +3128,7 @@ type desktopEventWriter struct {
 	draftVisibleContent      string
 	draftUseVisible          bool
 	heartbeatRun             bool
+	streamThinking           bool
 	assistantOutputPersisted bool
 	intermediatePersisted    bool
 	pendingToolCalls         []llm.ToolCall
@@ -3135,11 +3137,12 @@ type desktopEventWriter struct {
 }
 
 type desktopIntermediateMessage struct {
-	Role        string
-	Content     string
-	ContentJSON json.RawMessage
-	ToolCallID  string
-	Ordinal     int64
+	Role          string
+	Content       string
+	ContentJSON   json.RawMessage
+	ToolCallID    string
+	ToolCallCount int
+	Ordinal       int64
 }
 
 type pendingDesktopTelegramProgressCall struct {
@@ -3284,6 +3287,7 @@ func (w *desktopEventWriter) append(ctx context.Context, runID uuid.UUID, ev eve
 	if assistantMessage, ok := desktopAssistantMessageFromEventData(ev.DataJSON); ok {
 		w.assistantMessage = &assistantMessage
 		w.assistantMessageFresh = true
+		w.logAssistantMessagePersistDebug(ctx, "event_assistant_message", desktopAssistantDebugCountsFromMessage(assistantMessage), 0)
 	}
 	flushChunk := ""
 	var pendingProgressCall *pendingDesktopTelegramProgressCall
@@ -3500,10 +3504,11 @@ func (w *desktopEventWriter) flushPendingToolCalls() {
 	}
 	baseOrdinal := int64(len(w.intermediateMessages)) + 1
 	w.intermediateMessages = append(w.intermediateMessages, desktopIntermediateMessage{
-		Role:        "assistant",
-		Content:     llm.VisibleMessageText(*msg),
-		ContentJSON: contentJSON,
-		Ordinal:     baseOrdinal,
+		Role:          "assistant",
+		Content:       llm.VisibleMessageText(*msg),
+		ContentJSON:   contentJSON,
+		ToolCallCount: len(filteredCalls),
+		Ordinal:       baseOrdinal,
 	})
 	for i := range filteredResults {
 		filteredResults[i].Ordinal = baseOrdinal + 1 + int64(i)
@@ -3605,6 +3610,62 @@ func (w *desktopEventWriter) visibleAssistantOutputs() []string {
 		return nil
 	}
 	return out
+}
+
+type desktopAssistantDebugCounts struct {
+	HasAssistantMessage bool
+	ThinkingPartCount   int
+	VisibleTextLen      int
+	ToolCallCount       int
+}
+
+func desktopAssistantDebugCountsFromMessage(message llm.Message) desktopAssistantDebugCounts {
+	return desktopAssistantDebugCounts{
+		HasAssistantMessage: true,
+		ThinkingPartCount:   desktopAssistantThinkingPartCount(message.Content),
+		VisibleTextLen:      len(llm.VisibleMessageText(message)),
+		ToolCallCount:       len(message.ToolCalls),
+	}
+}
+
+func desktopAssistantDebugCountsFromText(text string) desktopAssistantDebugCounts {
+	return desktopAssistantDebugCounts{
+		HasAssistantMessage: false,
+		VisibleTextLen:      len(text),
+	}
+}
+
+func desktopAssistantDebugCountsFromStoredMessage(text string, contentJSON json.RawMessage, toolCallCount int) desktopAssistantDebugCounts {
+	counts := desktopAssistantDebugCountsFromText(text)
+	if restored, err := llm.AssistantMessageFromThreadContentJSON(contentJSON); err == nil && restored != nil {
+		counts = desktopAssistantDebugCountsFromMessage(*restored)
+	}
+	counts.ToolCallCount = toolCallCount
+	return counts
+}
+
+func desktopAssistantThinkingPartCount(parts []llm.ContentPart) int {
+	count := 0
+	for _, part := range parts {
+		switch part.Kind() {
+		case "thinking", "redacted_thinking":
+			count++
+		}
+	}
+	return count
+}
+
+func (w *desktopEventWriter) logAssistantMessagePersistDebug(ctx context.Context, persistPath string, counts desktopAssistantDebugCounts, contentJSONLen int) {
+	slog.DebugContext(ctx, "assistant_message_persist_debug",
+		"run_id", w.run.ID.String(),
+		"persist_path", persistPath,
+		"has_assistant_message", counts.HasAssistantMessage,
+		"thinking_part_count", counts.ThinkingPartCount,
+		"visible_text_len", counts.VisibleTextLen,
+		"tool_call_count", counts.ToolCallCount,
+		"content_json_len", contentJSONLen,
+		"stream_thinking", w.streamThinking,
+	)
 }
 
 func (w *desktopEventWriter) captureAssistantTurnOutput() {
@@ -3886,6 +3947,7 @@ func (w *desktopEventWriter) persistCompletedAssistantOutputInTx(ctx context.Con
 	if err != nil {
 		return err
 	}
+	w.logAssistantMessagePersistDebug(ctx, "final_assistant", desktopAssistantDebugCountsFromMessage(message), len(contentJSON))
 	metadata := map[string]any{
 		"completion_state": "complete",
 		"finish_reason":    "completed",
@@ -3992,18 +4054,25 @@ func desktopPersistFinalAssistantOutput(
 			if hasStreamedChunks {
 				if strings.TrimSpace(remainderCleanOutput) != "" {
 					metadata["stream_chunk"] = true
+					w.logAssistantMessagePersistDebug(ctx, "stream_remainder", desktopAssistantDebugCountsFromText(remainderCleanOutput), 0)
 					persistErr = persistDesktopStreamChunkMessageWithMetadata(ctx, db, rc.Run, remainderCleanOutput, metadata)
 				}
 			} else if strings.TrimSpace(fullCleanOutput) != "" {
-				persistErr = desktopInsertAssistantMessage(ctx, db, rc.Run, llm.Message{
+				message := llm.Message{
 					Role:    "assistant",
 					Content: []llm.TextPart{{Text: fullCleanOutput}},
-				}, metadata)
+				}
+				contentJSON, buildErr := llm.BuildAssistantThreadContentJSON(message)
+				if buildErr == nil {
+					w.logAssistantMessagePersistDebug(ctx, "final_text", desktopAssistantDebugCountsFromText(fullCleanOutput), len(contentJSON))
+				}
+				persistErr = desktopInsertAssistantMessage(ctx, db, rc.Run, message, metadata)
 			}
 		} else if hasStreamedChunks {
 			remainder := w.telegramStreamRemainder()
 			if strings.TrimSpace(remainder) != "" {
 				metadata["stream_chunk"] = true
+				w.logAssistantMessagePersistDebug(ctx, "stream_remainder", desktopAssistantDebugCountsFromText(remainder), 0)
 				persistErr = persistDesktopStreamChunkMessageWithMetadata(ctx, db, rc.Run, remainder, metadata)
 			}
 		} else {
@@ -4013,6 +4082,10 @@ func desktopPersistFinalAssistantOutput(
 					Role:    "assistant",
 					Content: []llm.TextPart{{Text: content}},
 				}
+			}
+			contentJSON, buildErr := llm.BuildAssistantThreadContentJSON(message)
+			if buildErr == nil {
+				w.logAssistantMessagePersistDebug(ctx, "final_assistant", desktopAssistantDebugCountsFromMessage(message), len(contentJSON))
 			}
 			persistErr = desktopInsertAssistantMessage(ctx, db, rc.Run, message, metadata)
 		}
@@ -4109,6 +4182,10 @@ func (w *desktopEventWriter) insertIntermediateMessagesInTx(
 		threadSeq := startSeq + int64(i)
 		if msg.Ordinal > 0 {
 			threadSeq = startSeq + msg.Ordinal - 1
+		}
+		if msg.Role == "assistant" {
+			counts := desktopAssistantDebugCountsFromStoredMessage(msg.Content, contentJSON, msg.ToolCallCount)
+			w.logAssistantMessagePersistDebug(ctx, "intermediate_assistant", counts, len(contentJSON))
 		}
 		if _, err := repo.InsertIntermediateMessage(ctx, tx, accountID, threadID, threadSeq, msg.Role, msg.Content, contentJSON, metadataJSON, time.Now().UTC()); err != nil {
 			return err

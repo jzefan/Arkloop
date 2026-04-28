@@ -933,13 +933,7 @@ func BuildAssistantThreadContentJSON(message Message) (json.RawMessage, error) {
 	payload := map[string]any{
 		"parts": content.Parts,
 	}
-	if needsAssistantStateEnvelope(message) {
-		state := map[string]any{
-			"content": partsToJSON(message.Content),
-		}
-		if message.Phase != nil && strings.TrimSpace(*message.Phase) != "" {
-			state["phase"] = strings.TrimSpace(*message.Phase)
-		}
+	if state := assistantStatePayload(message); state != nil {
 		payload["assistant_state"] = state
 	}
 	raw, err := json.Marshal(payload)
@@ -982,6 +976,9 @@ func BuildIntermediateAssistantContentJSON(message Message, toolCalls []ToolCall
 			tcItems = append(tcItems, tc.ToDataJSON())
 		}
 		payload["tool_calls"] = tcItems
+	}
+	if state := assistantStatePayload(message); state != nil {
+		payload["assistant_state"] = state
 	}
 
 	raw, err := json.Marshal(payload)
@@ -1034,6 +1031,19 @@ func needsAssistantStateEnvelope(message Message) bool {
 		}
 	}
 	return false
+}
+
+func assistantStatePayload(message Message) map[string]any {
+	if !needsAssistantStateEnvelope(message) {
+		return nil
+	}
+	state := map[string]any{
+		"content": partsToJSON(message.Content),
+	}
+	if message.Phase != nil && strings.TrimSpace(*message.Phase) != "" {
+		state["phase"] = strings.TrimSpace(*message.Phase)
+	}
+	return state
 }
 
 func contentPartsFromJSON(raw any) ([]ContentPart, error) {

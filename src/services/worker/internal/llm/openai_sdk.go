@@ -133,7 +133,7 @@ func (g *openAISDKGateway) chatCompletions(ctx context.Context, request Request,
 	params := openai.ChatCompletionNewParams{Model: openai.ChatModel(request.Model)}
 	stream := g.client.Chat.Completions.NewStreaming(streamCtx, params, openAISDKPayloadOptions(payload)...)
 	defer func() { _ = stream.Close() }()
-	state := newOpenAISDKChatState(llmCallID, yield)
+	state := newOpenAISDKChatState(ctx, llmCallID, yield)
 	for stream.Next() {
 		if markActivity != nil {
 			markActivity()
@@ -186,7 +186,7 @@ func (g *openAISDKGateway) responses(ctx context.Context, request Request, yield
 	params := responses.ResponseNewParams{Model: responses.ResponsesModel(request.Model)}
 	stream := g.client.Responses.NewStreaming(streamCtx, params, openAISDKPayloadOptions(payload)...)
 	defer func() { _ = stream.Close() }()
-	state := newOpenAISDKResponsesState(llmCallID, yield)
+	state := newOpenAISDKResponsesState(ctx, llmCallID, yield)
 	for stream.Next() {
 		if markActivity != nil {
 			markActivity()
@@ -327,6 +327,7 @@ func openAISDKDetectQuirk(err error) (QuirkID, bool) {
 }
 
 type openAISDKChatState struct {
+	ctx             context.Context
 	llmCallID       string
 	yield           func(StreamEvent) error
 	toolBuffer      *openAIChatToolCallBuffer
@@ -342,8 +343,8 @@ type openAISDKChatState struct {
 	finished        bool
 }
 
-func newOpenAISDKChatState(id string, yield func(StreamEvent) error) *openAISDKChatState {
-	return &openAISDKChatState{llmCallID: id, yield: yield, toolBuffer: newOpenAIChatToolCallBuffer()}
+func newOpenAISDKChatState(ctx context.Context, id string, yield func(StreamEvent) error) *openAISDKChatState {
+	return &openAISDKChatState{ctx: ctx, llmCallID: id, yield: yield, toolBuffer: newOpenAIChatToolCallBuffer()}
 }
 func (s *openAISDKChatState) handle(chunk openai.ChatCompletionChunk) error {
 	if raw := chunk.RawJSON(); raw != "" {
@@ -467,6 +468,12 @@ func (s *openAISDKChatState) complete() error {
 		return s.yield(StreamRunFailed{LlmCallID: s.llmCallID, Error: RetryableStreamEndedError(), Usage: s.usage, Cost: s.cost})
 	}
 	assistantMessage := s.assistantMessage()
+	logProviderCompletionDebug(s.ctx, providerCompletionDebug{
+		ProviderKind:     "openai",
+		APIMode:          "chat_completions",
+		LlmCallID:        s.llmCallID,
+		AssistantMessage: &assistantMessage,
+	})
 	return s.yield(StreamRunCompleted{LlmCallID: s.llmCallID, Usage: s.usage, Cost: s.cost, AssistantMessage: &assistantMessage})
 }
 func (s *openAISDKChatState) assistantMessage() Message {
@@ -481,6 +488,7 @@ func (s *openAISDKChatState) assistantMessage() Message {
 }
 
 type openAISDKResponsesState struct {
+	ctx                context.Context
 	llmCallID          string
 	yield              func(StreamEvent) error
 	thinking           strings.Builder
@@ -490,8 +498,8 @@ type openAISDKResponsesState struct {
 	toolBufferByItemID map[string]*openAIResponsesToolBuffer
 }
 
-func newOpenAISDKResponsesState(id string, yield func(StreamEvent) error) *openAISDKResponsesState {
-	return &openAISDKResponsesState{llmCallID: id, yield: yield, toolBuffers: map[int]*openAIResponsesToolBuffer{}, toolBufferByItemID: map[string]*openAIResponsesToolBuffer{}}
+func newOpenAISDKResponsesState(ctx context.Context, id string, yield func(StreamEvent) error) *openAISDKResponsesState {
+	return &openAISDKResponsesState{ctx: ctx, llmCallID: id, yield: yield, toolBuffers: map[int]*openAIResponsesToolBuffer{}, toolBufferByItemID: map[string]*openAIResponsesToolBuffer{}}
 }
 func (s *openAISDKResponsesState) handle(event responses.ResponseStreamEventUnion) error {
 	var root map[string]any
@@ -550,6 +558,13 @@ func (s *openAISDKResponsesState) handle(event responses.ResponseStreamEventUnio
 			}
 		}
 		s.completed = true
+		logProviderCompletionDebug(s.ctx, providerCompletionDebug{
+			ProviderKind:     "openai",
+			APIMode:          "responses",
+			LlmCallID:        s.llmCallID,
+			AssistantMessage: &assistantMessage,
+			ToolCallCount:    len(toolCalls),
+		})
 		return s.yield(StreamRunCompleted{LlmCallID: s.llmCallID, Usage: usage, Cost: cost, AssistantMessage: &assistantMessage})
 	}
 	if typ == "response.failed" || typ == "response.error" || typ == "error" {

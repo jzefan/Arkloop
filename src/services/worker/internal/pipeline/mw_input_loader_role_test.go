@@ -206,6 +206,36 @@ func TestBuildMessagePartsRestoresAssistantThinkingState(t *testing.T) {
 	}
 }
 
+func TestBuildMessagePartsRestoresIntermediateAssistantThinkingState(t *testing.T) {
+	message := llm.Message{Role: "assistant", Content: []llm.ContentPart{
+		{Type: "thinking", Text: "reason before tool", Signature: "sig_tool"},
+		{Text: "using tool"},
+	}}
+	contentJSON, err := llm.BuildIntermediateAssistantContentJSON(message, []llm.ToolCall{{
+		ToolCallID:    "call_1",
+		ToolName:      "web_search",
+		ArgumentsJSON: map[string]any{"query": "arkloop"},
+	}})
+	if err != nil {
+		t.Fatalf("BuildIntermediateAssistantContentJSON failed: %v", err)
+	}
+	parts, err := BuildMessageParts(context.Background(), nil, data.ThreadMessage{
+		Role:        "assistant",
+		Content:     "using tool",
+		ContentJSON: contentJSON,
+	})
+	if err != nil {
+		t.Fatalf("BuildMessageParts failed: %v", err)
+	}
+	if len(parts) != 2 || parts[0].Kind() != "thinking" || parts[0].Signature != "sig_tool" {
+		t.Fatalf("expected intermediate assistant thinking restored, got %#v", parts)
+	}
+	toolCalls := parseToolCallsFromContentJSON(contentJSON)
+	if len(toolCalls) != 1 || toolCalls[0].ToolCallID != "call_1" {
+		t.Fatalf("expected intermediate assistant tool call restored, got %#v", toolCalls)
+	}
+}
+
 func TestBuildMessagePartsWithOptionsLazyImagesKeepsAttachmentReference(t *testing.T) {
 	contentJSON, err := (messagecontent.Content{Parts: []messagecontent.Part{{
 		Type: messagecontent.PartTypeImage,

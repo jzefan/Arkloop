@@ -199,7 +199,7 @@ func (g *anthropicSDKGateway) streamAttempt(ctx context.Context, request Request
 	stream := g.client.Messages.NewStreaming(streamCtx, params, opts...)
 	defer func() { _ = stream.Close() }()
 
-	state := newAnthropicSDKStreamState(llmCallID, yield)
+	state := newAnthropicSDKStreamState(ctx, llmCallID, yield)
 	for stream.Next() {
 		if markActivity != nil {
 			markActivity()
@@ -664,6 +664,7 @@ func anthropicSDKThinking(payload map[string]any) anthropic.ThinkingConfigParamU
 }
 
 type anthropicSDKStreamState struct {
+	ctx             context.Context
 	llmCallID       string
 	yield           func(StreamEvent) error
 	usage           *Usage
@@ -673,8 +674,9 @@ type anthropicSDKStreamState struct {
 	completed       bool
 }
 
-func newAnthropicSDKStreamState(llmCallID string, yield func(StreamEvent) error) *anthropicSDKStreamState {
+func newAnthropicSDKStreamState(ctx context.Context, llmCallID string, yield func(StreamEvent) error) *anthropicSDKStreamState {
 	return &anthropicSDKStreamState{
+		ctx:             ctx,
 		llmCallID:       llmCallID,
 		yield:           yield,
 		toolBuffers:     map[int]*anthropicToolUseBuffer{},
@@ -858,6 +860,12 @@ func (s *anthropicSDKStreamState) complete() error {
 		return s.yield(StreamRunFailed{LlmCallID: s.llmCallID, Error: streamErr, Usage: s.usage, Cost: s.cost})
 	}
 	assistantMessage := Message{Role: "assistant", Content: anthropicAssistantMessageParts(s.assistantBlocks)}
+	logProviderCompletionDebug(s.ctx, providerCompletionDebug{
+		ProviderKind:     "anthropic",
+		APIMode:          "messages",
+		LlmCallID:        s.llmCallID,
+		AssistantMessage: &assistantMessage,
+	})
 	return s.yield(StreamRunCompleted{LlmCallID: s.llmCallID, Usage: s.usage, Cost: s.cost, AssistantMessage: &assistantMessage})
 }
 

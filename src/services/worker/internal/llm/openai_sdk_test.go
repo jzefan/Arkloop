@@ -378,7 +378,7 @@ func TestOpenAISDKGateway_ResponsesSpecificToolChoiceShape(t *testing.T) {
 
 func TestOpenAISDKResponsesState_ToolDeltaAndCompletedFallback(t *testing.T) {
 	var events []StreamEvent
-	state := newOpenAISDKResponsesState("llm_1", func(event StreamEvent) error {
+	state := newOpenAISDKResponsesState(context.Background(), "llm_1", func(event StreamEvent) error {
 		events = append(events, event)
 		return nil
 	})
@@ -422,7 +422,7 @@ func TestOpenAISDKResponsesState_ToolDeltaAndCompletedFallback(t *testing.T) {
 
 func TestOpenAISDKResponsesState_ErrorEvent(t *testing.T) {
 	var failed *StreamRunFailed
-	state := newOpenAISDKResponsesState("llm_1", func(event StreamEvent) error {
+	state := newOpenAISDKResponsesState(context.Background(), "llm_1", func(event StreamEvent) error {
 		if ev, ok := event.(StreamRunFailed); ok {
 			failed = &ev
 		}
@@ -443,7 +443,7 @@ func TestOpenAISDKResponsesState_ErrorEvent(t *testing.T) {
 func TestOpenAISDKResponsesState_CompletedOnlyEmitsVisibleTextDelta(t *testing.T) {
 	var deltas []string
 	var completed *StreamRunCompleted
-	state := newOpenAISDKResponsesState("llm_1", func(event StreamEvent) error {
+	state := newOpenAISDKResponsesState(context.Background(), "llm_1", func(event StreamEvent) error {
 		switch ev := event.(type) {
 		case StreamMessageDelta:
 			if ev.Channel == nil {
@@ -474,7 +474,7 @@ func TestOpenAISDKResponsesState_CompletedMessageCarriesReasoningDelta(t *testin
 	var thinkingDeltas []string
 	var completed *StreamRunCompleted
 	var toolCalls []ToolCall
-	state := newOpenAISDKResponsesState("llm_1", func(event StreamEvent) error {
+	state := newOpenAISDKResponsesState(context.Background(), "llm_1", func(event StreamEvent) error {
 		switch ev := event.(type) {
 		case StreamMessageDelta:
 			if ev.Channel != nil && *ev.Channel == "thinking" {
