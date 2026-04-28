@@ -36,7 +36,9 @@ type Props = {
   isPlanMode?: boolean
   onTogglePlanMode?: () => void
   threadHasMessages?: boolean
+  threadMessagesLoading?: boolean
   workThreadId?: string
+  hideWorkFolderPicker?: boolean
   hideModelPicker?: boolean
   onMenuOpenChange?: (open: boolean) => void
 }
@@ -60,7 +62,9 @@ export function PersonaModelBar({
   isPlanMode,
   onTogglePlanMode,
   threadHasMessages,
+  threadMessagesLoading,
   workThreadId,
+  hideWorkFolderPicker,
   hideModelPicker,
   onMenuOpenChange,
 }: Props) {
@@ -75,6 +79,7 @@ export function PersonaModelBar({
   const [workFolder, setWorkFolder] = useState<string | null>(() => readWorkFolder())
   const [recentFolders, setRecentFolders] = useState<string[]>(() => readWorkRecentFolders())
   const isWorkMode = appMode === 'work'
+  const showWorkFolderPicker = isWorkMode && isDesktop() && !hideWorkFolderPicker && !threadMessagesLoading && !threadHasMessages
 
   // close plus menu on outside click
   useEffect(() => {
@@ -113,6 +118,12 @@ export function PersonaModelBar({
     onMenuOpenChange?.(folderMenuOpen)
   }, [folderMenuOpen, onMenuOpenChange])
 
+  useEffect(() => {
+    if (!showWorkFolderPicker && folderMenuOpen) {
+      setFolderMenuOpen(false)
+    }
+  }, [folderMenuOpen, showWorkFolderPicker])
+
   const handleSelectFolder = useCallback(async (path?: string) => {
     let folder = path
     if (!folder) {
@@ -134,8 +145,8 @@ export function PersonaModelBar({
 
   return (
     <>
-      {/* work folder picker -- desktop only, hidden once thread has messages */}
-      {isWorkMode && isDesktop() && !threadHasMessages && (
+      {/* work folder picker -- desktop only, hidden in compact input or once thread has messages */}
+      {showWorkFolderPicker && (
         <div
           className="relative -ml-1.5"
           style={{
