@@ -40,6 +40,22 @@ describe('copSubSegment web search titles', () => {
     expect(aggregateMainTitle([openSegment], true, false)).not.toContain('web_search')
   })
 
+  it('live adaptive title 使用抓取语义和域名，不裸露 web_fetch', () => {
+    const segments = buildSubSegments([
+      toolCall('wf1', 'web_fetch', 1, { url: 'https://www.example.com/docs/page' }),
+    ])
+    const openSegment = {
+      ...segments[0]!,
+      status: 'open' as const,
+      title: 'Fetching...',
+    }
+
+    expect(categoryForTool('web_fetch')).toBe('fetch')
+    expect(presentToProgressive('web_fetch', { url: 'https://www.example.com/docs/page' })).toBe('Fetching example.com')
+    expect(aggregateMainTitle([openSegment], true, false)).toBe('Fetching example.com...')
+    expect(aggregateMainTitle([openSegment], true, false)).not.toContain('web_fetch')
+  })
+
   it('完成态保留搜索标题，不退化成 step completed', () => {
     const segments = buildSubSegments([
       toolCall('ws1', 'web_search', 1, { query: 'rust crate niche' }),
