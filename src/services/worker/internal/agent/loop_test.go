@@ -164,7 +164,7 @@ func TestToolResultFromExecutionPreservesAttachmentKey(t *testing.T) {
 		},
 	}
 
-	got := toolResultFromExecution(toolCallID, toolName, result)
+	got := toolResultFromExecution(toolCallID, toolName, "", result)
 	if got.ToolCallID != toolCallID {
 		t.Fatalf("unexpected tool call id: %q", got.ToolCallID)
 	}

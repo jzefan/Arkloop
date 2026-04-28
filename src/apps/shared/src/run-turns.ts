@@ -24,6 +24,7 @@ export type TurnSegment =
       toolCallId: string
       toolName: string
       argsJSON: Record<string, unknown>
+      displayDescription?: string
     }
   | {
       kind: 'tool_result'
@@ -63,6 +64,7 @@ export type LlmTurn = {
     toolCallId: string
     toolName: string
     argsJSON: Record<string, unknown>
+    displayDescription?: string
     resultJSON?: Record<string, unknown>
     errorClass?: string
   }>
@@ -676,16 +678,21 @@ export function buildTurns(events: RunEventRaw[]): LlmTurn[] {
       const toolCallId = String(data.tool_call_id ?? '')
       const toolName = pickLogicalToolName(data, event.tool_name)
       const argsJSON = (data.arguments as Record<string, unknown>) ?? {}
+      const displayDescription = typeof data.display_description === 'string' && data.display_description.trim() !== ''
+        ? data.display_description.trim()
+        : undefined
       currentState.turn.toolCalls.push({
         toolCallId,
         toolName,
         argsJSON,
+        displayDescription,
       })
       currentState.turn.segments.push({
         kind: 'tool_call',
         toolCallId,
         toolName,
         argsJSON,
+        displayDescription,
       })
       if (toolCallId) toolNameByCallID.set(toolCallId, toolName)
       continue

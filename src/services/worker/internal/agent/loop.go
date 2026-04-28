@@ -159,7 +159,6 @@ func (l *Loop) Run(
 		return yield(emitter.Emit("run.failed", reasoningIterationsExceededError(runCtx.ReasoningIterations).ToJSON(), nil, stringPtr(ErrorClassAgentReasoningIterationsExceeded)))
 	}
 
-
 	messages := append([]llm.Message{}, request.Messages...)
 	webSourceCount := 0
 	seenToolResultKeys := map[string]toolResultDedupInfo{}
@@ -3128,6 +3127,9 @@ func prepareToolCallStart(
 	}
 	if raw, ok := ev.DataJSON["tool_name"].(string); ok && strings.TrimSpace(raw) != "" {
 		call.ToolName = llm.CanonicalToolName(raw)
+	}
+	if raw, ok := ev.DataJSON["display_description"].(string); ok && strings.TrimSpace(raw) != "" {
+		call.DisplayDescription = strings.TrimSpace(raw)
 	}
 	return call, ev
 }

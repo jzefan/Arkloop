@@ -1126,6 +1126,9 @@ function parseTurnToolCallRef(raw: unknown): TurnToolCallRef | null {
     toolName: o.toolName,
     arguments: { ...(o.arguments as Record<string, unknown>) },
   }
+  if (typeof o.displayDescription === 'string' && o.displayDescription.trim() !== '') {
+    rec.displayDescription = o.displayDescription.trim()
+  }
   rec.result = o.result
   if (typeof o.errorClass === 'string' && o.errorClass.trim() !== '') rec.errorClass = o.errorClass
   return rec
