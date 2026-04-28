@@ -142,6 +142,8 @@ type ContentPart struct {
 	ExtractedText string
 	Data          []byte
 	TrustSource   string // "system" | "user" | "tool" | "memory" | "file" | "mcp" | ""
+
+	modelInputImage *preparedModelInputImage
 }
 
 type TextPart = ContentPart
@@ -465,6 +467,8 @@ type Request struct {
 	Metadata         map[string]any
 	ExperimentalJSON map[string]any
 	ReasoningMode    string // "auto" | "enabled" | "disabled" | "none" | "minimal" | "low" | "medium" | "high" | "xhigh" (accepts aliases like "off"/"max")
+
+	modelInputImagesPrepared bool
 }
 
 // PromptCachePlanMarkers 是 plan-time marker 布局概览，由 agent 层基于 MessageCachePlan 计算。

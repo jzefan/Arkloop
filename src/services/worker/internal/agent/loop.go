@@ -220,6 +220,7 @@ func (l *Loop) Run(
 		if promptCacheState != nil {
 			prepareTurnRequestPromptCache(&turnRequest, runCtx, promptCacheState)
 		}
+		llm.PrepareRequestModelInputImages(&turnRequest)
 		// computePromptCacheBreak 纯计算：得出 break info 与 stats，并将 state 推进到当前轮
 		var breakInfo promptCacheBreakInfo
 		var requestStats llm.RequestStats

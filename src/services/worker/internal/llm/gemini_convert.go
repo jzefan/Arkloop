@@ -1,7 +1,6 @@
 package llm
 
 import (
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -111,7 +110,7 @@ func toGeminiContents(messages []Message) (systemInstruction map[string]any, con
 				if cp.Kind() != "image" || cp.Attachment == nil || len(cp.Data) == 0 {
 					continue
 				}
-				mimeType, data, imageErr := modelInputImage(cp)
+				mimeType, encoded, imageErr := modelInputImageBase64(cp)
 				if imageErr != nil {
 					err = imageErr
 					return
@@ -119,7 +118,7 @@ func toGeminiContents(messages []Message) (systemInstruction map[string]any, con
 				pendingToolParts = append(pendingToolParts, map[string]any{
 					"inlineData": map[string]any{
 						"mimeType": mimeType,
-						"data":     base64.StdEncoding.EncodeToString(data),
+						"data":     encoded,
 					},
 				})
 			}
@@ -182,14 +181,14 @@ func geminiUserParts(content []ContentPart) ([]map[string]any, error) {
 				parts = append(parts, map[string]any{"text": t})
 			}
 		case "image":
-			mimeType, data, err := modelInputImage(p)
+			mimeType, encoded, err := modelInputImageBase64(p)
 			if err != nil {
 				return nil, fmt.Errorf("image part missing data")
 			}
 			parts = append(parts, map[string]any{
 				"inlineData": map[string]any{
 					"mimeType": mimeType,
-					"data":     base64.StdEncoding.EncodeToString(data),
+					"data":     encoded,
 				},
 			})
 		}

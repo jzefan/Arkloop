@@ -2,7 +2,6 @@ package llm
 
 import (
 	"crypto/sha256"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"sort"
@@ -53,10 +52,10 @@ func ComputeRequestStats(req Request) RequestStats {
 				continue
 			}
 			stats.ImagePartCount++
-			if _, data, err := modelInputImage(part); err == nil {
-				stats.Base64ImageBytes += base64.StdEncoding.EncodedLen(len(data))
+			if size, err := modelInputImageBase64Size(part); err == nil {
+				stats.Base64ImageBytes += size
 			} else if len(part.Data) > 0 {
-				stats.Base64ImageBytes += base64.StdEncoding.EncodedLen(len(part.Data))
+				stats.Base64ImageBytes += base64EncodedLen(len(part.Data))
 			}
 		}
 	}
@@ -74,6 +73,10 @@ func ComputeRequestStats(req Request) RequestStats {
 
 	stats.AbstractRequestBytes = EstimateRequestJSONBytes(req)
 	return stats
+}
+
+func base64EncodedLen(n int) int {
+	return (n + 2) / 3 * 4
 }
 
 func EstimateRequestJSONBytes(req Request) int {

@@ -86,6 +86,67 @@ func TestPartDataURLAnnotatesAttachmentKeyImage(t *testing.T) {
 	}
 }
 
+func TestPrepareRequestModelInputImagesReusesPreparedImage(t *testing.T) {
+	req := Request{
+		Model: "gpt",
+		Messages: []Message{{
+			Role: "user",
+			Content: []ContentPart{{
+				Type: "image",
+				Attachment: &messagecontent.AttachmentRef{
+					Key:      "attachments/acc/thread/image.jpg",
+					Filename: "image.jpg",
+					MimeType: "image/png",
+				},
+				Data: makeVisionTestPNG(t, 220, 130),
+			}},
+		}},
+	}
+
+	PrepareRequestModelInputImages(&req)
+	part := req.Messages[0].Content[0]
+	if part.modelInputImage == nil {
+		t.Fatal("expected prepared image")
+	}
+	prepared := part.modelInputImage
+	if !strings.HasPrefix(prepared.DataURL, "data:image/jpeg;base64,") {
+		t.Fatalf("unexpected data url prefix: %q", prepared.DataURL[:24])
+	}
+
+	req.Messages[0].Content[0].Data = nil
+	PrepareRequestModelInputImages(&req)
+	if req.Messages[0].Content[0].modelInputImage != prepared {
+		t.Fatal("prepared image should remain scoped to the request")
+	}
+
+	stats := ComputeRequestStats(req)
+	if stats.ImagePartCount != 1 {
+		t.Fatalf("unexpected image count: %d", stats.ImagePartCount)
+	}
+	if stats.Base64ImageBytes != prepared.Base64ImageBytes {
+		t.Fatalf("unexpected base64 bytes: got %d want %d", stats.Base64ImageBytes, prepared.Base64ImageBytes)
+	}
+
+	chatMessages, err := toOpenAIChatMessages(req.Messages)
+	if err != nil {
+		t.Fatalf("toOpenAIChatMessages failed: %v", err)
+	}
+	chatContent := chatMessages[0]["content"].([]map[string]any)
+	chatImage := chatContent[1]["image_url"].(map[string]any)
+	if got := chatImage["url"]; got != prepared.DataURL {
+		t.Fatalf("chat payload did not reuse prepared data url")
+	}
+
+	responsesInput, err := toOpenAIResponsesInput(req.Messages)
+	if err != nil {
+		t.Fatalf("toOpenAIResponsesInput failed: %v", err)
+	}
+	responsesContent := responsesInput[0]["content"].([]map[string]any)
+	if got := responsesContent[1]["image_url"]; got != prepared.DataURL {
+		t.Fatalf("responses payload did not reuse prepared data url")
+	}
+}
+
 func TestToAnthropicMessagesAnnotatesUserImage(t *testing.T) {
 	_, messages, err := toAnthropicMessages([]Message{
 		{
