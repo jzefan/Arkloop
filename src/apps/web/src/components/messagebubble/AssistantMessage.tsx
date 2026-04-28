@@ -14,14 +14,12 @@ import { isDesktop } from '@arkloop/shared/desktop'
 import { isDocumentArtifact, isArtifactReferenced, getDomain } from './utils'
 import { messageTextContent } from '../../messageContent'
 import { CopyIconButton } from '../CopyIconButton'
-import { RefreshIconButton } from '../RefreshIconButton'
 import { ActionIconButton } from '../ActionIconButton'
 
 type Props = {
   message: MessageResponse
   /** 与 ChatPage 中「正在流式且为最后一条助手气泡」对齐；未分段正文用 */
   streamMarkdown?: boolean
-  onRetry?: () => void
   onFork?: () => void
   onShare?: () => void
   shareState?: 'idle' | 'sharing' | 'shared'
@@ -66,7 +64,6 @@ function renderBrowserScreenshots(browserActions?: BrowserActionRef[], accessTok
 
 export function AssistantActionBar({
   textToCopy,
-  onRetry,
   onFork,
   onShare,
   shareState,
@@ -76,7 +73,6 @@ export function AssistantActionBar({
   isLast,
 }: {
   textToCopy: string
-  onRetry?: () => void
   onFork?: () => void
   onShare?: () => void
   shareState?: 'idle' | 'sharing' | 'shared'
@@ -100,12 +96,6 @@ export function AssistantActionBar({
           hoverBackground="var(--c-bg-deep)"
           className="flex h-9 w-9 items-center justify-center rounded-[7px] text-[var(--c-text-secondary)] opacity-60 transition-[opacity,color] duration-[60ms] hover:opacity-100 hover:text-[var(--c-text-primary)] cursor-pointer border-none bg-transparent"
           resetDelay={1500}
-        />
-        <RefreshIconButton
-          onRefresh={onRetry!}
-          disabled={!onRetry}
-          size={16}
-          className={`flex h-9 w-9 items-center justify-center rounded-[7px] text-[var(--c-text-secondary)] transition-[opacity,color] duration-[60ms] border-none bg-transparent ${onRetry ? 'opacity-60 hover:opacity-100 hover:text-[var(--c-text-primary)] cursor-pointer' : 'opacity-25 cursor-default'}`}
         />
         {!isDesktop() && (
           <div style={{ position: 'relative', display: 'inline-flex' }}>
@@ -207,7 +197,6 @@ export function AssistantActionBar({
 export function AssistantMessage({
   message,
   streamMarkdown = false,
-  onRetry,
   onFork,
   onShare,
   shareState,
@@ -295,7 +284,6 @@ export function AssistantMessage({
         {!suppressActionBar && (
           <AssistantActionBar
             textToCopy={textForCopy}
-            onRetry={onRetry}
             onFork={onFork}
             onShare={onShare}
             shareState={shareState}

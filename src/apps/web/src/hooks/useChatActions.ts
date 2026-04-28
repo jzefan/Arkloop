@@ -10,14 +10,12 @@ import { useRunLifecycle } from '../contexts/run-lifecycle'
 import { useStream } from '../contexts/stream'
 import {
   cancelRun,
-  continueThread,
   createMessage,
   createRun,
   editMessage,
   forkThread,
   isApiError,
   provideInput,
-  retryThread,
   type MessageContent,
   type MessageResponse,
   type RunReasoningMode,
@@ -29,7 +27,6 @@ import {
   migrateMessageMetadata,
   readSelectedModelFromStorage,
   readSelectedPersonaKeyFromStorage,
-  readPlanModeFromStorage,
   readThreadWorkFolder,
   readThreadReasoningMode,
   SEARCH_PERSONA_KEY,
@@ -76,13 +73,10 @@ export function useChatActions({ scrollToBottom }: UseChatActionsDeps) {
     freezeCutoffRef,
     lastVisibleNonTerminalSeqRef,
     noResponseMsgIdRef,
-    replaceOnCancelRef,
     pendingMessageRef,
     setTerminalRunDisplayId,
     setTerminalRunHandoffStatus,
     setTerminalRunCoveredRunIds,
-    terminalRunDisplayId,
-    terminalRunCoveredRunIds,
   } = useRunLifecycle()
   const {
     resetLiveState,
@@ -123,7 +117,7 @@ export function useChatActions({ scrollToBottom }: UseChatActionsDeps) {
       setUserEnterMessageId(message.id)
       setMessages((prev) => [...prev, message])
       noResponseMsgIdRef.current = message.id
-      const run = await createRun(accessToken, threadId, personaKey, modelOverride, readThreadWorkFolder(threadId) ?? undefined, readThreadReasoningMode(threadId) !== 'off' ? readThreadReasoningMode(threadId) as RunReasoningMode : undefined, readPlanModeFromStorage())
+      const run = await createRun(accessToken, threadId, personaKey, modelOverride, readThreadWorkFolder(threadId) ?? undefined, readThreadReasoningMode(threadId) !== 'off' ? readThreadReasoningMode(threadId) as RunReasoningMode : undefined)
       if (personaKey === SEARCH_PERSONA_KEY) addSearchThreadId(threadId)
       resetSearchSteps()
       setActiveRunId(run.run_id)
@@ -215,7 +209,6 @@ export function useChatActions({ scrollToBottom }: UseChatActionsDeps) {
         modelOverride,
         readThreadWorkFolder(threadId) ?? undefined,
         reasoningMode !== 'off' ? reasoningMode as RunReasoningMode : undefined,
-        readPlanModeFromStorage(),
       )
       invalidateMessageSync()
       setMessages((prev) => {
@@ -260,8 +253,9 @@ export function useChatActions({ scrollToBottom }: UseChatActionsDeps) {
     threadId,
   ])
 
-  const handleRetry = useCallback(async () => {
-    if (isStreaming || sending || !threadId) return
+  const handleRetryUserMessage = useCallback(async (message: MessageResponse) => {
+    if (message.role !== 'user' || isStreaming || sending || !threadId) return
+    const personaKey = readSelectedPersonaKeyFromStorage()
     const modelOverride = readSelectedModelFromStorage() ?? undefined
     setSending(true)
     setPendingThinking(true)
@@ -275,27 +269,29 @@ export function useChatActions({ scrollToBottom }: UseChatActionsDeps) {
     setTerminalRunHandoffStatus(null)
     setTerminalRunCoveredRunIds([])
     try {
-      const run = await retryThread(accessToken, threadId, modelOverride)
-      invalidateMessageSync()
-      setMessages((prev) => {
-        const coveredRunIds = new Set(terminalRunCoveredRunIds)
-        const next = prev.filter((message) => {
-          if (message.role !== 'assistant') return true
-          if (terminalRunDisplayId && message.run_id === terminalRunDisplayId) return false
-          if (message.run_id && coveredRunIds.has(message.run_id)) return false
-          return true
-        })
-        if (next.length !== prev.length) return next
-        const lastAssistantIndex = prev.map((message) => message.role).lastIndexOf('assistant')
-        if (lastAssistantIndex === -1) return prev
-        return prev.filter((_, index) => index !== lastAssistantIndex)
-      })
+      const forked = await forkThread(accessToken, threadId, message.id)
+      if (forked.id_mapping) migrateMessageMetadata(forked.id_mapping)
+      onThreadCreated(forked)
+      const mappedUserMessageId = forked.id_mapping?.find((pair) => pair.old_id === message.id)?.new_id
+      const reasoningMode = readThreadReasoningMode(threadId)
+      const run = await createRun(
+        accessToken,
+        forked.id,
+        personaKey,
+        modelOverride,
+        readThreadWorkFolder(threadId) ?? undefined,
+        reasoningMode !== 'off' ? reasoningMode as RunReasoningMode : undefined,
+      )
+      if (personaKey === SEARCH_PERSONA_KEY) addSearchThreadId(forked.id)
       resetSearchSteps()
-      setPendingThinking(true)
-      setThinkingHint(t.copThinkingHints[Math.floor(Math.random() * t.copThinkingHints.length)])
-      setActiveRunId(run.run_id)
-      onRunStarted(threadId)
-      scrollToBottom()
+      navigate(`/t/${forked.id}`, {
+        state: {
+          initialRunId: run.run_id,
+          userEnterMessageId: mappedUserMessageId,
+        },
+        replace: false,
+      })
+      onRunStarted(forked.id)
     } catch (err) {
       if (isApiError(err) && err.status === 401) {
         onLoggedOut()
@@ -308,67 +304,19 @@ export function useChatActions({ scrollToBottom }: UseChatActionsDeps) {
   }, [
     accessToken,
     injectionBlockedRunIdRef,
-    invalidateMessageSync,
     isStreaming,
+    navigate,
     onLoggedOut,
+    onThreadCreated,
     onRunStarted,
     resetLiveState,
     resetSearchSteps,
-    scrollToBottom,
     sending,
-    setActiveRunId,
     setError,
     setInjectionBlocked,
-    setMessages,
     setPendingThinking,
     setSending,
-    setTerminalRunDisplayId,
-    setTerminalRunHandoffStatus,
     setTerminalRunCoveredRunIds,
-    setThinkingHint,
-    t.copThinkingHints,
-    terminalRunCoveredRunIds,
-    terminalRunDisplayId,
-    threadId,
-  ])
-
-  const handleContinue = useCallback(async (runId: string) => {
-    if (isStreaming || sending || !threadId || !runId) return
-    setSending(true)
-    setPendingThinking(true)
-    setThinkingHint(t.copThinkingHints[Math.floor(Math.random() * t.copThinkingHints.length)])
-    setError(null)
-    setInjectionBlocked(null)
-    injectionBlockedRunIdRef.current = null
-    try {
-      const run = await continueThread(accessToken, threadId, runId)
-      setTerminalRunDisplayId(run.run_id)
-      setTerminalRunHandoffStatus('running')
-      setActiveRunId(run.run_id)
-      onRunStarted(threadId)
-      scrollToBottom()
-    } catch (err) {
-      if (isApiError(err) && err.status === 401) {
-        onLoggedOut()
-        return
-      }
-      setError(normalizeError(err))
-    } finally {
-      setSending(false)
-    }
-  }, [
-    accessToken,
-    injectionBlockedRunIdRef,
-    isStreaming,
-    onLoggedOut,
-    onRunStarted,
-    scrollToBottom,
-    sending,
-    setActiveRunId,
-    setError,
-    setInjectionBlocked,
-    setPendingThinking,
-    setSending,
     setTerminalRunDisplayId,
     setTerminalRunHandoffStatus,
     setThinkingHint,
@@ -476,10 +424,7 @@ export function useChatActions({ scrollToBottom }: UseChatActionsDeps) {
     const cancelBoundary = Math.max(0, lastVisibleNonTerminalSeqRef.current)
     freezeCutoffRef.current = cancelBoundary
 
-    if (noResponseMsgIdRef.current) {
-      replaceOnCancelRef.current = noResponseMsgIdRef.current
-      noResponseMsgIdRef.current = null
-    }
+    noResponseMsgIdRef.current = null
 
     setCancelSubmitting(true)
     setError(null)
@@ -506,7 +451,6 @@ export function useChatActions({ scrollToBottom }: UseChatActionsDeps) {
     freezeCutoffRef,
     lastVisibleNonTerminalSeqRef,
     noResponseMsgIdRef,
-    replaceOnCancelRef,
     setCancelSubmitting,
     setError,
     setInjectionBlocked,
@@ -515,8 +459,7 @@ export function useChatActions({ scrollToBottom }: UseChatActionsDeps) {
   return {
     sendMessage,
     handleEditMessage,
-    handleRetry,
-    handleContinue,
+    handleRetryUserMessage,
     handleFork,
     handleCancel,
     handleCheckInSubmit,

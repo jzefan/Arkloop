@@ -74,7 +74,6 @@ interface RunLifecycleContextValue {
   sseTerminalFallbackRunIdRef: React.RefObject<string | null>
   sseTerminalFallbackArmedRef: React.RefObject<boolean>
   noResponseMsgIdRef: React.RefObject<string | null>
-  replaceOnCancelRef: React.RefObject<string | null>
   pendingMessageRef: React.RefObject<string | null>
   seenFirstToolCallInRunRef: React.RefObject<boolean>
 }
@@ -114,7 +113,6 @@ export function RunLifecycleProvider({ children }: { children: ReactNode }) {
   const sseTerminalFallbackRunIdRef = useRef<string | null>(null)
   const sseTerminalFallbackArmedRef = useRef(false)
   const noResponseMsgIdRef = useRef<string | null>(null)
-  const replaceOnCancelRef = useRef<string | null>(null)
   const pendingMessageRef = useRef<string | null>(null)
   const seenFirstToolCallInRunRef = useRef(false)
   const hasMountedRef = useRef(false)
@@ -291,7 +289,6 @@ export function RunLifecycleProvider({ children }: { children: ReactNode }) {
     injectionBlockedRunIdRef.current = null
     seenFirstToolCallInRunRef.current = false
     pendingMessageRef.current = null
-    replaceOnCancelRef.current = null
     sse.disconnect()
     sse.clearEvents()
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -343,7 +340,6 @@ export function RunLifecycleProvider({ children }: { children: ReactNode }) {
     sseTerminalFallbackRunIdRef,
     sseTerminalFallbackArmedRef,
     noResponseMsgIdRef,
-    replaceOnCancelRef,
     pendingMessageRef,
     seenFirstToolCallInRunRef,
   }), [

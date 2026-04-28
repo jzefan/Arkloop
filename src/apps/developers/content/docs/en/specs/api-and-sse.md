@@ -109,7 +109,6 @@ A Run transforms "Input Message + Persona Configuration + Routing Strategy" into
 - `GET /v1/runs/{id}` -- SSE event stream (`Content-Type: text/event-stream`)
 - `POST /v1/runs/{id}/cancel` -- Cancel
 - `POST /v1/runs/{id}/input` -- Submit user input (Human-in-the-loop)
-- `POST /v1/runs/{id}/retry` -- Retry
 
 SSE Conventions:
 - Events monotonically increase by `seq`
