@@ -33,6 +33,26 @@ type Props = {
   beforeNavigateToThread?: () => void
 }
 
+type SidebarThreadListEntry = {
+  thread: ThreadResponse
+  section: 'starred' | 'regular'
+}
+
+const sidebarThreadItemSizeCache = new WeakMap<HTMLElement, { key: string; height: number }>()
+
+function measureSidebarThreadItem(el: HTMLElement, field: 'offsetHeight' | 'offsetWidth'): number {
+  if (field === 'offsetWidth') return 0
+
+  const kind = (el.firstElementChild as HTMLElement | null)?.dataset.sidebarThreadItem ?? 'thread'
+  const key = `${el.dataset.index ?? ''}:${kind}`
+  const cached = sidebarThreadItemSizeCache.get(el)
+  if (cached?.key === key) return cached.height
+
+  const height = el.offsetHeight
+  sidebarThreadItemSizeCache.set(el, { key, height })
+  return height
+}
+
 function threadTitle(thread: ThreadResponse, untitled: string): string {
   const title = (thread.title ?? '').trim()
   return title.length > 0 ? title : untitled
@@ -78,11 +98,12 @@ const SidebarThreadItem = memo(function SidebarThreadItem({
   return (
     <div
       key={`${thread.id}-${section}`}
+      data-sidebar-thread-item="thread"
       className={[
-        'group relative flex w-full items-center rounded-[6px]',
+        'group relative isolate flex w-full items-center rounded-[6px] before:pointer-events-none before:absolute before:inset-x-0 before:inset-y-px before:-z-10 before:rounded-[6px] before:content-[""]',
         isActive || isMenuOpen
-          ? 'bg-[var(--c-bg-deep)]'
-          : 'hover:bg-[var(--c-bg-deep)]',
+          ? 'before:bg-[var(--c-bg-deep)]'
+          : 'hover:before:bg-[var(--c-bg-deep)]',
       ].join(' ')}
     >
       {isEditing ? (
@@ -204,7 +225,7 @@ const SidebarThreadList = memo(function SidebarThreadList({
   })
 
   const allThreads = useMemo(() => {
-    const result: { thread: ThreadResponse; section: 'starred' | 'regular' }[] = []
+    const result: SidebarThreadListEntry[] = []
     for (const thread of starredThreads) {
       result.push({ thread, section: 'starred' as const })
     }
@@ -217,9 +238,13 @@ const SidebarThreadList = memo(function SidebarThreadList({
     return result
   }, [starredThreads, regularThreads])
 
-  const itemContent = useCallback((_index: number, item: { thread: ThreadResponse; section: 'starred' | 'regular' }) => {
+  const computeItemKey = useCallback((_index: number, item: SidebarThreadListEntry) => {
+    return `${item.section}:${item.thread.id}`
+  }, [])
+
+  const itemContent = useCallback((_index: number, item: SidebarThreadListEntry) => {
     if (item.thread.id === '__separator__') {
-      return <div className="my-1 mx-2 h-px bg-[var(--c-border-subtle)]" />
+      return <div data-sidebar-thread-item="separator" className="my-1 mx-2 h-px bg-[var(--c-border-subtle)]" />
     }
     const thread = item.thread
     const section = item.section
@@ -248,8 +273,11 @@ const SidebarThreadList = memo(function SidebarThreadList({
   return (
     <Virtuoso
       data={allThreads}
+      computeItemKey={computeItemKey}
       itemContent={itemContent}
-      style={{ height: '100%' }}
+      itemSize={measureSidebarThreadItem}
+      skipAnimationFrameInResizeObserver
+      style={{ height: '100%', contain: 'layout paint style' }}
     />
   )
 })

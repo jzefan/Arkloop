@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef } from 'react'
 import type { AssistantTurnUi } from '../assistantTurnSegments'
 
 // fallback reserved space before the input area is measured
@@ -7,6 +7,8 @@ export const SCROLL_BOTTOM_PAD = 160
 // top offset when pinning user prompt — clears the top gradient overlay (h-10 = 40px)
 const SCROLL_TOP_OFFSET = 48
 const ANCHOR_SCROLL_MAX_MONITOR_FRAMES = 24
+const LAYOUT_SCROLL_WIDTH_EPSILON = 0.5
+const resizeObserverBlockSizeCache = new WeakMap<Element, number>()
 
 type ViewportAnchor = {
   element: HTMLElement | null
@@ -15,16 +17,26 @@ type ViewportAnchor = {
   path: number[] | null
 }
 
+function hasResizeObserverBlockChange(entry: ResizeObserverEntry): boolean {
+  const borderBoxSize = Array.isArray(entry.borderBoxSize) ? entry.borderBoxSize[0] : entry.borderBoxSize
+  const blockSize = borderBoxSize?.blockSize
+    ?? entry.contentRect?.height
+    ?? (entry.target instanceof HTMLElement ? entry.target.getBoundingClientRect().height : 0)
+  const previous = resizeObserverBlockSizeCache.get(entry.target)
+  resizeObserverBlockSizeCache.set(entry.target, blockSize)
+  return previous == null || Math.abs(blockSize - previous) > 0.5
+}
+
 interface UseScrollPinOptions {
   messagesLoading?: boolean
   messages?: readonly unknown[]
   liveAssistantTurn?: AssistantTurnUi | null
   liveRunUiVisible?: boolean
   topLevelCodeExecutionsLength?: number
+  promptPinningDisabled?: boolean
 }
 
 export interface ScrollPinResult {
-  isAtBottom: boolean
   bottomRef: React.RefObject<HTMLDivElement | null>
   scrollContainerRef: React.RefObject<HTMLDivElement | null>
   lastUserMsgRef: React.RefObject<HTMLDivElement | null>
@@ -43,6 +55,8 @@ export interface ScrollPinResult {
   activateAnchor: () => void
   syncBottomState: (el: HTMLDivElement) => void
   stabilizeDocumentPanelScroll: (trigger?: HTMLElement | null) => void
+  subscribeIsAtBottom: (listener: () => void) => () => void
+  getIsAtBottomSnapshot: () => boolean
 }
 
 export function useScrollPin(options: UseScrollPinOptions = {}): ScrollPinResult {
@@ -52,6 +66,7 @@ export function useScrollPin(options: UseScrollPinOptions = {}): ScrollPinResult
     liveAssistantTurn = null,
     liveRunUiVisible = false,
     topLevelCodeExecutionsLength = 0,
+    promptPinningDisabled = false,
   } = options
   const bottomRef = useRef<HTMLDivElement>(null)
   const scrollContainerRef = useRef<HTMLDivElement>(null)
@@ -65,7 +80,7 @@ export function useScrollPin(options: UseScrollPinOptions = {}): ScrollPinResult
   const documentPanelScrollFrameRef = useRef<number | null>(null)
   const localExpansionActiveUntilRef = useRef(0)
   const isAtBottomRef = useRef(true)
-  const [isAtBottom, setIsAtBottom] = useState(true)
+  const isAtBottomListenersRef = useRef(new Set<() => void>())
 
   // anchor state (imperative, not React state — avoid re-renders on every scroll)
   const isAnchoredRef = useRef(false)
@@ -74,6 +89,7 @@ export function useScrollPin(options: UseScrollPinOptions = {}): ScrollPinResult
   const programmaticScrollDepthRef = useRef(0)
   const lastUserScrollTopRef = useRef(0)
   const lastObservedScrollTopRef = useRef(0)
+  const lastContainerInlineSizeRef = useRef(0)
   // tracks whether streaming is active — only follow scroll during streaming
   const liveStreamActiveRef = useRef(false)
   const followLiveOutputRef = useRef(false)
@@ -97,6 +113,23 @@ export function useScrollPin(options: UseScrollPinOptions = {}): ScrollPinResult
     lastObservedScrollTopRef.current = container.scrollTop
   }, [])
 
+  const subscribeIsAtBottom = useCallback((listener: () => void) => {
+    isAtBottomListenersRef.current.add(listener)
+    return () => {
+      isAtBottomListenersRef.current.delete(listener)
+    }
+  }, [])
+
+  const getIsAtBottomSnapshot = useCallback(() => isAtBottomRef.current, [])
+
+  const setAtBottomState = useCallback((atBottom: boolean) => {
+    if (isAtBottomRef.current === atBottom) return
+    isAtBottomRef.current = atBottom
+    for (const listener of isAtBottomListenersRef.current) {
+      listener()
+    }
+  }, [])
+
   const syncBottomState = useCallback((el: HTMLDivElement) => {
     const physicallyAtBottom = el.scrollHeight - el.scrollTop - el.clientHeight <= 80
     const anchoredViewLocked =
@@ -104,15 +137,21 @@ export function useScrollPin(options: UseScrollPinOptions = {}): ScrollPinResult
       !userScrolledUpRef.current &&
       !followLiveOutputRef.current
     const atBottom = physicallyAtBottom || anchoredViewLocked
-    isAtBottomRef.current = atBottom
-    setIsAtBottom(atBottom)
-  }, [])
+    setAtBottomState(atBottom)
+  }, [setAtBottomState])
 
   const syncBottomStateFromContainer = useCallback(() => {
     const container = scrollContainerRef.current
     if (!container) return
     syncBottomState(container)
   }, [syncBottomState])
+
+  const isLayoutWidthScroll = useCallback((container: HTMLDivElement) => {
+    const width = container.clientWidth
+    const previousWidth = lastContainerInlineSizeRef.current
+    lastContainerInlineSizeRef.current = width
+    return previousWidth > 0 && Math.abs(width - previousWidth) > LAYOUT_SCROLL_WIDTH_EPSILON
+  }, [])
 
   const isLocalExpansionActive = useCallback(() => performance.now() < localExpansionActiveUntilRef.current, [])
 
@@ -372,20 +411,19 @@ export function useScrollPin(options: UseScrollPinOptions = {}): ScrollPinResult
         turnOffset: currentAnchor.turnOffset ?? anchor.turnOffset,
         path: currentAnchor.path ?? anchor.path,
       }
+      programmaticScrollDepthRef.current++
+      container.scrollTop += delta
+      rememberScrollTop(container)
+      syncBottomState(container)
+      if (shouldPreserveViewport()) {
+        captureViewportAnchor()
+      }
       requestAnimationFrame(() => {
+        programmaticScrollDepthRef.current--
         const freshContainer = scrollContainerRef.current
         if (!freshContainer) return
-        programmaticScrollDepthRef.current++
-        freshContainer.scrollTop += delta
         rememberScrollTop(freshContainer)
-        requestAnimationFrame(() => {
-          programmaticScrollDepthRef.current--
-          rememberScrollTop(freshContainer)
-          syncBottomState(freshContainer)
-          if (shouldPreserveViewport()) {
-            captureViewportAnchor()
-          }
-        })
+        syncBottomState(freshContainer)
       })
       return
     }
@@ -407,20 +445,19 @@ export function useScrollPin(options: UseScrollPinOptions = {}): ScrollPinResult
       turnOffset: anchor.turnOffset,
       path: anchor.path,
     }
+    programmaticScrollDepthRef.current++
+    container.scrollTop = targetScrollTop
+    rememberScrollTop(container)
+    syncBottomState(container)
+    if (shouldPreserveViewport()) {
+      captureViewportAnchor()
+    }
     requestAnimationFrame(() => {
+      programmaticScrollDepthRef.current--
       const freshContainer = scrollContainerRef.current
       if (!freshContainer) return
-      programmaticScrollDepthRef.current++
-      freshContainer.scrollTop = targetScrollTop
       rememberScrollTop(freshContainer)
-      requestAnimationFrame(() => {
-        programmaticScrollDepthRef.current--
-        rememberScrollTop(freshContainer)
-        syncBottomState(freshContainer)
-        if (shouldPreserveViewport()) {
-          captureViewportAnchor()
-        }
-      })
+      syncBottomState(freshContainer)
     })
   }, [captureViewportAnchor, contentRoot, findViewportAnchor, offsetInContainer, rememberScrollTop, resolvePathFromRoot, shouldPreserveViewport, syncBottomState])
 
@@ -513,8 +550,7 @@ export function useScrollPin(options: UseScrollPinOptions = {}): ScrollPinResult
     }
 
     programmaticScrollDepthRef.current++
-    isAtBottomRef.current = true
-    setIsAtBottom(true)
+    setAtBottomState(true)
     container.scrollTo({ top: targetScroll, behavior: 'smooth' })
     rememberScrollTop(container)
 
@@ -548,7 +584,7 @@ export function useScrollPin(options: UseScrollPinOptions = {}): ScrollPinResult
     }
 
     anchorScrollMonitorFrameRef.current = requestAnimationFrame(tick)
-  }, [anchorScrollTop, prefersReducedMotion, rememberScrollTop, scrollToAnchor, syncBottomState])
+  }, [anchorScrollTop, prefersReducedMotion, rememberScrollTop, scrollToAnchor, setAtBottomState, syncBottomState])
 
   const collapseSpacer = useCallback(() => {
     isAnchoredRef.current = false
@@ -559,16 +595,32 @@ export function useScrollPin(options: UseScrollPinOptions = {}): ScrollPinResult
     if (spacerRef.current) spacerRef.current.style.height = '0px'
   }, [])
 
+  // scroll-to-bottom button: collapse spacer and scroll to actual bottom
+  const scrollToBottom = useCallback(() => {
+    collapseSpacer()
+    followLiveOutputRef.current = true
+    viewportAnchorRef.current = null
+    requestAnimationFrame(() => {
+      const behavior: ScrollBehavior = liveStreamActiveRef.current ? 'instant' : 'smooth'
+      scrollViewportToBottom(behavior)
+      setAtBottomState(true)
+    })
+  }, [collapseSpacer, scrollViewportToBottom, setAtBottomState])
+
   // activate anchor on the current lastUserMsg turn
   const activateAnchor = useCallback(() => {
+    if (promptPinningDisabled) {
+      scrollToBottom()
+      return
+    }
+
     anchorActivationPendingRef.current = true
     isAnchoredRef.current = true
     userScrolledUpRef.current = false
     spacerRatchetRef.current = 0
     followLiveOutputRef.current = false
     viewportAnchorRef.current = null
-    isAtBottomRef.current = true
-    setIsAtBottom(true)
+    setAtBottomState(true)
     const finishActivation = (remainingFrames: number) => {
       if (!anchorActivationPendingRef.current) return
       const turn = lastUserMsgRef.current
@@ -593,8 +645,7 @@ export function useScrollPin(options: UseScrollPinOptions = {}): ScrollPinResult
       spacerRatchetRef.current = 0
       followLiveOutputRef.current = false
       viewportAnchorRef.current = null
-      isAtBottomRef.current = true
-      setIsAtBottom(true)
+      setAtBottomState(true)
 
       recalcSpacer()
       animateAnchorIntoPlace()
@@ -605,20 +656,21 @@ export function useScrollPin(options: UseScrollPinOptions = {}): ScrollPinResult
         finishActivation(6)
       })
     })
-  }, [animateAnchorIntoPlace, recalcSpacer, syncBottomStateFromContainer])
+  }, [animateAnchorIntoPlace, promptPinningDisabled, recalcSpacer, scrollToBottom, setAtBottomState, syncBottomStateFromContainer])
 
-  // scroll-to-bottom button: collapse spacer and scroll to actual bottom
-  const scrollToBottom = useCallback(() => {
-    collapseSpacer()
-    followLiveOutputRef.current = true
-    viewportAnchorRef.current = null
+  const stickToBottomAfterLayoutScroll = useCallback((container: HTMLDivElement) => {
+    programmaticScrollDepthRef.current++
+    container.scrollTop = maxScrollTop(container)
+    rememberScrollTop(container)
+    setAtBottomState(true)
     requestAnimationFrame(() => {
-      const behavior: ScrollBehavior = liveStreamActiveRef.current ? 'instant' : 'smooth'
-      scrollViewportToBottom(behavior)
-      isAtBottomRef.current = true
-      setIsAtBottom(true)
+      programmaticScrollDepthRef.current = Math.max(0, programmaticScrollDepthRef.current - 1)
+      const freshContainer = scrollContainerRef.current
+      if (!freshContainer) return
+      rememberScrollTop(freshContainer)
+      syncBottomState(freshContainer)
     })
-  }, [collapseSpacer, scrollViewportToBottom])
+  }, [maxScrollTop, rememberScrollTop, setAtBottomState, syncBottomState])
 
   // scroll handler: ratchet logic
   const handleScrollContainerScroll = useCallback(() => {
@@ -626,17 +678,35 @@ export function useScrollPin(options: UseScrollPinOptions = {}): ScrollPinResult
     if (!el) return
     const previousScrollTop = lastObservedScrollTopRef.current
     const currentScrollTop = el.scrollTop
+    const layoutWidthScroll = isLayoutWidthScroll(el)
+
+    // ignore programmatic scrolls
+    if (programmaticScrollDepthRef.current > 0) {
+      rememberScrollTop(el)
+      return
+    }
+
+    if (layoutWidthScroll) {
+      if (followLiveOutputRef.current || isAtBottomRef.current) {
+        stickToBottomAfterLayoutScroll(el)
+        return
+      }
+      syncBottomState(el)
+      rememberScrollTop(el)
+      if (shouldPreserveViewport()) {
+        captureViewportAnchor()
+      }
+      return
+    }
+
     syncBottomState(el)
     rememberScrollTop(el)
 
-    // ignore programmatic scrolls
-    if (programmaticScrollDepthRef.current > 0) return
     if (anchorActivationPendingRef.current) return
     const userScrolledUp = currentScrollTop < previousScrollTop - 0.5
     if (followLiveOutputRef.current && userScrolledUp) {
       followLiveOutputRef.current = false
-      isAtBottomRef.current = false
-      setIsAtBottom(false)
+      setAtBottomState(false)
     }
     if (!isAtBottomRef.current) {
       followLiveOutputRef.current = false
@@ -679,8 +749,7 @@ export function useScrollPin(options: UseScrollPinOptions = {}): ScrollPinResult
     } else {
       if (currentScrollTop > previousScrollTop + 0.5) {
         followLiveOutputRef.current = false
-        isAtBottomRef.current = false
-        setIsAtBottom(false)
+        setAtBottomState(false)
         collapseSpacer()
         captureViewportAnchor()
         return
@@ -694,7 +763,7 @@ export function useScrollPin(options: UseScrollPinOptions = {}): ScrollPinResult
         syncBottomState(el)
       }
     }
-  }, [syncBottomState, rememberScrollTop, captureViewportAnchor, collapseSpacer, offsetInContainer, shouldPreserveViewport])
+  }, [syncBottomState, rememberScrollTop, isLayoutWidthScroll, stickToBottomAfterLayoutScroll, shouldPreserveViewport, captureViewportAnchor, setAtBottomState, collapseSpacer, offsetInContainer])
 
   const stabilizeDocumentPanelScroll = useCallback((trigger?: HTMLElement | null) => {
     const container = scrollContainerRef.current
@@ -762,7 +831,7 @@ export function useScrollPin(options: UseScrollPinOptions = {}): ScrollPinResult
     const viewportH = container.clientHeight
     const turnH = turn.getBoundingClientRect().height
 
-    if (turnH > viewportH * 0.5) {
+    if (!promptPinningDisabled && turnH > viewportH * 0.5) {
       // long turn: pin user prompt to top with spacer
       isAnchoredRef.current = true
       userScrolledUpRef.current = false
@@ -784,7 +853,12 @@ export function useScrollPin(options: UseScrollPinOptions = {}): ScrollPinResult
       rememberScrollTop(container)
       syncBottomState(container)
     }
-  }, [messagesLoading, recalcSpacer, collapseSpacer, offsetInContainer, rememberScrollTop, syncBottomState])
+  }, [messagesLoading, promptPinningDisabled, recalcSpacer, collapseSpacer, offsetInContainer, rememberScrollTop, syncBottomState])
+
+  useEffect(() => {
+    if (!promptPinningDisabled) return
+    collapseSpacer()
+  }, [collapseSpacer, promptPinningDisabled])
 
   useLayoutEffect(() => {
     if (messagesLoading) return
@@ -796,6 +870,7 @@ export function useScrollPin(options: UseScrollPinOptions = {}): ScrollPinResult
   useLayoutEffect(() => {
     const container = scrollContainerRef.current
     if (!container) return
+    lastContainerInlineSizeRef.current = container.clientWidth
     const previous = container.style.overflowAnchor
     container.style.overflowAnchor = 'none'
     return () => {
@@ -848,7 +923,8 @@ export function useScrollPin(options: UseScrollPinOptions = {}): ScrollPinResult
   useEffect(() => {
     const turn = lastUserMsgRef.current
     if (!turn || typeof ResizeObserver === 'undefined') return
-    const ro = new ResizeObserver(() => {
+    const ro = new ResizeObserver((entries) => {
+      if (!entries.some(hasResizeObserverBlockChange)) return
       if (anchorActivationPendingRef.current || isAnchorAnimating()) return
       if (isAnchoredRef.current) {
         recalcSpacer()
@@ -878,7 +954,8 @@ export function useScrollPin(options: UseScrollPinOptions = {}): ScrollPinResult
   useEffect(() => {
     const root = contentRoot()
     if (!root || typeof ResizeObserver === 'undefined') return
-    const ro = new ResizeObserver(() => {
+    const ro = new ResizeObserver((entries) => {
+      if (!entries.some(hasResizeObserverBlockChange)) return
       if (anchorActivationPendingRef.current || isAnchorAnimating()) return
       if (isAnchoredRef.current) {
         recalcSpacer()
@@ -989,7 +1066,6 @@ export function useScrollPin(options: UseScrollPinOptions = {}): ScrollPinResult
   }, [])
 
   return {
-    isAtBottom,
     bottomRef,
     scrollContainerRef,
     lastUserMsgRef,
@@ -1008,5 +1084,7 @@ export function useScrollPin(options: UseScrollPinOptions = {}): ScrollPinResult
     activateAnchor,
     syncBottomState,
     stabilizeDocumentPanelScroll,
+    subscribeIsAtBottom,
+    getIsAtBottomSnapshot,
   }
 }

@@ -64,6 +64,7 @@ type SidebarUIContextValue = Pick<
   AppUIContextValue,
   'sidebarCollapsed' | 'sidebarHiddenByWidth' | 'rightPanelOpen' | 'toggleSidebar' | 'setRightPanelOpen'
 >
+type RightPanelActionsContextValue = Pick<AppUIContextValue, 'setRightPanelOpen'>
 
 type SearchUIContextValue = Pick<
   AppUIContextValue,
@@ -77,6 +78,7 @@ type TitleBarIncognitoUIContextValue = Pick<AppUIContextValue, 'setTitleBarIncog
 
 const AppUIContext = createContext<AppUIContextValue | null>(null)
 const SidebarUIContext = createContext<SidebarUIContextValue | null>(null)
+const RightPanelActionsContext = createContext<RightPanelActionsContextValue | null>(null)
 const SearchUIContext = createContext<SearchUIContextValue | null>(null)
 const SettingsUIContext = createContext<SettingsUIContextValue | null>(null)
 const NotificationsUIContext = createContext<NotificationsUIContextValue | null>(null)
@@ -106,6 +108,13 @@ function AppUIProviders({
       value.toggleSidebar,
       value.setRightPanelOpen,
     ],
+  )
+
+  const rightPanelActionsValue = useMemo<RightPanelActionsContextValue>(
+    () => ({
+      setRightPanelOpen: value.setRightPanelOpen,
+    }),
+    [value.setRightPanelOpen],
   )
 
   const searchValue = useMemo<SearchUIContextValue>(
@@ -189,21 +198,23 @@ function AppUIProviders({
 
   return (
     <AppUIContext.Provider value={value}>
-      <SidebarUIContext.Provider value={sidebarValue}>
-        <SearchUIContext.Provider value={searchValue}>
-          <SettingsUIContext.Provider value={settingsValue}>
-            <NotificationsUIContext.Provider value={notificationsValue}>
-              <AppModeUIContext.Provider value={appModeValue}>
-                <SkillPromptUIContext.Provider value={skillPromptValue}>
-                  <TitleBarIncognitoUIContext.Provider value={titleBarIncognitoValue}>
-                    {children}
-                  </TitleBarIncognitoUIContext.Provider>
-                </SkillPromptUIContext.Provider>
-              </AppModeUIContext.Provider>
-            </NotificationsUIContext.Provider>
-          </SettingsUIContext.Provider>
-        </SearchUIContext.Provider>
-      </SidebarUIContext.Provider>
+      <RightPanelActionsContext.Provider value={rightPanelActionsValue}>
+        <SidebarUIContext.Provider value={sidebarValue}>
+          <SearchUIContext.Provider value={searchValue}>
+            <SettingsUIContext.Provider value={settingsValue}>
+              <NotificationsUIContext.Provider value={notificationsValue}>
+                <AppModeUIContext.Provider value={appModeValue}>
+                  <SkillPromptUIContext.Provider value={skillPromptValue}>
+                    <TitleBarIncognitoUIContext.Provider value={titleBarIncognitoValue}>
+                      {children}
+                    </TitleBarIncognitoUIContext.Provider>
+                  </SkillPromptUIContext.Provider>
+                </AppModeUIContext.Provider>
+              </NotificationsUIContext.Provider>
+            </SettingsUIContext.Provider>
+          </SearchUIContext.Provider>
+        </SidebarUIContext.Provider>
+      </RightPanelActionsContext.Provider>
     </AppUIContext.Provider>
   )
 }
@@ -217,6 +228,7 @@ export function AppUIProvider({ children }: { children: ReactNode }) {
 
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => window.innerWidth < 1200)
   const [sidebarHiddenByWidth, setSidebarHiddenByWidth] = useState(() => window.innerWidth < 560)
+  const sidebarCollapsedRef = useRef(sidebarCollapsed)
   const autoCollapsedByWidthRef = useRef(window.innerWidth < 1200)
   const manualSidebarCollapsedRef = useRef<boolean | null>(null)
   const [rightPanelOpen, setRightPanelOpen] = useState(false)
@@ -259,11 +271,12 @@ export function AppUIProvider({ children }: { children: ReactNode }) {
   }, [usesHashRouting])
 
   const toggleSidebar = useCallback((source: 'sidebar' | 'titlebar' = 'sidebar') => {
-    const nextCollapsed = !sidebarCollapsed
+    const collapsed = sidebarCollapsedRef.current
+    const nextCollapsed = !collapsed
     if (isPerfDebugEnabled() && typeof performance !== 'undefined') {
       const sample = {
         source,
-        collapsed: sidebarCollapsed,
+        collapsed,
         nextCollapsed,
         appMode,
         pathname: location.pathname,
@@ -281,8 +294,9 @@ export function AppUIProvider({ children }: { children: ReactNode }) {
       }))
     }
     manualSidebarCollapsedRef.current = nextCollapsed
+    sidebarCollapsedRef.current = nextCollapsed
     setSidebarCollapsed(nextCollapsed)
-  }, [appMode, location.pathname, sidebarCollapsed])
+  }, [appMode, location.pathname])
 
   const enterSearchMode = useCallback(() => {
     pushSearchModeState()
@@ -392,6 +406,10 @@ export function AppUIProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     isSearchModeRef.current = isSearchMode
   }, [isSearchMode])
+
+  useEffect(() => {
+    sidebarCollapsedRef.current = sidebarCollapsed
+  }, [sidebarCollapsed])
 
   useEffect(() => {
     const lifecycle = sidebarLifecycleRef.current
@@ -620,6 +638,12 @@ export function useAppUI(): AppUIContextValue {
 export function useSidebarUI(): SidebarUIContextValue {
   const ctx = useContext(SidebarUIContext)
   if (!ctx) throw new Error('useSidebarUI must be used within AppUIProvider')
+  return ctx
+}
+
+export function useRightPanelActions(): RightPanelActionsContextValue {
+  const ctx = useContext(RightPanelActionsContext)
+  if (!ctx) throw new Error('useRightPanelActions must be used within AppUIProvider')
   return ctx
 }
 

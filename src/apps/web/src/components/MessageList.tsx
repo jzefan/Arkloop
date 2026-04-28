@@ -311,6 +311,7 @@ export const MessageList = memo(function MessageList({
                       isComplete={entryComplete}
                       live={segmentLive}
                       headerOverride={timelineTitleOverride}
+                      compactNarrativeEnd={idx < lastTurnStartIdx}
                       onOpenCodeExecution={openCodePanel}
                       onOpenSubAgent={openAgentPanel}
                       activeCodeExecutionId={codePanelExecutionId ?? undefined}

@@ -1423,6 +1423,47 @@ describe('ChatPage loading state', () => {
     container.remove()
   })
 
+  it('重新进入 thread 时 running run 应恢复 pending 状态句', async () => {
+    const mathRandomSpy = vi.spyOn(Math, 'random').mockReturnValue(0)
+    mockedListThreadRuns.mockResolvedValue([
+      {
+        run_id: 'run-pending',
+        status: 'running',
+        created_at: '2026-03-10T00:00:02Z',
+        resume_from_run_id: null,
+      },
+    ])
+
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const root = createRoot(container)
+
+    await act(async () => {
+      root.render(
+        <LocaleProvider>
+          <MemoryRouter initialEntries={['/t/thread-1']}>
+            <Routes>
+              <Route element={<OutletShell context={buildOutletContext()} />}>
+                <Route path="/t/:threadId" element={<ChatPage />} />
+              </Route>
+            </Routes>
+          </MemoryRouter>
+        </LocaleProvider>,
+      )
+      await flushMicrotasks()
+      await flushMicrotasks()
+    })
+
+    expect(container.textContent ?? '').toContain('Finding the right words')
+    expect(container.textContent ?? '').toContain('streaming')
+
+    act(() => {
+      root.unmount()
+    })
+    container.remove()
+    mathRandomSpy.mockRestore()
+  })
+
   it('reload 时应优先使用同 run 的 replay 终态而不是过期 running handoff', async () => {
     mockedListMessages.mockResolvedValue([
       {
