@@ -1080,40 +1080,54 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                 <Loader2 size={14} className="animate-spin" style={{ color: 'var(--c-accent-send-text)' }} />
               </div>
             ) : isStreaming && canCancel && !isEditingQueuedPrompt ? (
-              <button
-                type="button"
-                onClick={onCancel}
-                disabled={cancelSubmitting}
-                className="flex h-full w-full items-center justify-center rounded-lg border border-[var(--c-border)] bg-[var(--c-bg-input)] transition-[opacity,transform,background-color] duration-[140ms] hover:bg-[var(--c-bg-sub)] active:scale-[0.97] active:opacity-[0.82] disabled:cursor-not-allowed disabled:opacity-50"
-                style={{
-                  position: 'absolute',
-                  inset: 0,
-                }}
-              >
-                <span
-                  aria-hidden="true"
+              showSendButton ? (
+                <button
+                  type="submit"
+                  disabled={!draft.trim() && attachments.length === 0}
+                  className="flex h-full w-full items-center justify-center rounded-lg bg-[var(--c-accent-send)] text-[var(--c-accent-send-text)] hover:bg-[var(--c-accent-send-hover)] active:opacity-[0.75] active:scale-[0.93] disabled:cursor-not-allowed"
                   style={{
-                    width: '14px',
-                    height: '14px',
-                    borderRadius: '999px',
-                    border: '1.3px solid #1A1A19',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    flexShrink: 0,
+                    position: 'absolute',
+                    inset: 0,
+                  }}
+                >
+                  <ArrowUp size={17} />
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={onCancel}
+                  disabled={cancelSubmitting}
+                  className="flex h-full w-full items-center justify-center rounded-lg border border-[var(--c-border)] bg-[var(--c-bg-input)] transition-[opacity,transform,background-color] duration-[140ms] hover:bg-[var(--c-bg-sub)] active:scale-[0.97] active:opacity-[0.82] disabled:cursor-not-allowed disabled:opacity-50"
+                  style={{
+                    position: 'absolute',
+                    inset: 0,
                   }}
                 >
                   <span
+                    aria-hidden="true"
                     style={{
-                      width: '5px',
-                      height: '5px',
-                      borderRadius: '1px',
-                      background: '#1A1A19',
+                      width: '14px',
+                      height: '14px',
+                      borderRadius: '999px',
+                      border: '1.3px solid #1A1A19',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
                       flexShrink: 0,
                     }}
-                  />
-                </span>
-              </button>
+                  >
+                    <span
+                      style={{
+                        width: '5px',
+                        height: '5px',
+                        borderRadius: '1px',
+                        background: '#1A1A19',
+                        flexShrink: 0,
+                      }}
+                    />
+                  </span>
+                </button>
+              )
             ) : (
               <>
                 <button
