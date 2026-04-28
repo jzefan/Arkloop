@@ -168,6 +168,45 @@ func TestAutoMigrate(t *testing.T) {
 	}
 }
 
+func TestRepairMissingColumnsMigratesOldPlanMode(t *testing.T) {
+	t.Parallel()
+	pool := openTestDB(t)
+	ctx := context.Background()
+
+	if _, err := pool.Exec(ctx, `CREATE TABLE scheduled_triggers (id TEXT PRIMARY KEY)`); err != nil {
+		t.Fatalf("create scheduled_triggers: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `CREATE TABLE threads (id TEXT PRIMARY KEY, plan_mode BOOLEAN NOT NULL DEFAULT 0)`); err != nil {
+		t.Fatalf("create old threads: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO threads (id, plan_mode) VALUES ('default-thread', 0), ('plan-thread', 1)`); err != nil {
+		t.Fatalf("seed old threads: %v", err)
+	}
+
+	if err := repairMissingColumns(ctx, pool.Unwrap()); err != nil {
+		t.Fatalf("repair missing columns: %v", err)
+	}
+
+	columns, err := sqliteTableColumns(ctx, pool.Unwrap(), "threads")
+	if err != nil {
+		t.Fatalf("load threads columns: %v", err)
+	}
+	if !hasSQLiteColumns(columns, "collaboration_mode", "collaboration_mode_revision") {
+		t.Fatalf("threads columns = %v, want collaboration mode columns", columns)
+	}
+
+	var defaultMode, planMode string
+	if err := pool.QueryRow(ctx, `SELECT collaboration_mode FROM threads WHERE id = 'default-thread'`).Scan(&defaultMode); err != nil {
+		t.Fatalf("query default mode: %v", err)
+	}
+	if err := pool.QueryRow(ctx, `SELECT collaboration_mode FROM threads WHERE id = 'plan-thread'`).Scan(&planMode); err != nil {
+		t.Fatalf("query plan mode: %v", err)
+	}
+	if defaultMode != "default" || planMode != "plan" {
+		t.Fatalf("collaboration modes = default:%q plan:%q, want default/plan", defaultMode, planMode)
+	}
+}
+
 func TestMigrations_UpDown(t *testing.T) {
 	t.Parallel()
 	pool := openTestDB(t)
