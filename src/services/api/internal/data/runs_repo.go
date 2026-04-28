@@ -86,7 +86,7 @@ func (r *RunEventRepository) CreateRunWithStartedEvent(
 	startedType string,
 	startedData map[string]any,
 ) (Run, RunEvent, error) {
-	return r.createRunWithStartedEvent(ctx, accountID, threadID, createdByUserID, startedType, startedData)
+	return r.createRunWithStartedEvent(ctx, accountID, threadID, createdByUserID, startedType, startedData, nil)
 }
 
 func (r *RunEventRepository) createRunWithStartedEvent(
@@ -96,6 +96,7 @@ func (r *RunEventRepository) createRunWithStartedEvent(
 	createdByUserID *uuid.UUID,
 	startedType string,
 	startedData map[string]any,
+	resumeFromRunID *uuid.UUID,
 ) (Run, RunEvent, error) {
 	if ctx == nil {
 		ctx = context.Background()
@@ -124,7 +125,7 @@ func (r *RunEventRepository) createRunWithStartedEvent(
 		accountID,
 		threadID,
 		createdByUserID,
-		nil,
+		resumeFromRunID,
 	).Scan(
 		&run.ID, &run.AccountID, &run.ThreadID, &run.CreatedByUserID, &run.Status, &run.CreatedAt,
 		&run.ParentRunID, &run.ResumeFromRunID, &run.StatusUpdatedAt, &run.CompletedAt, &run.FailedAt,
@@ -162,6 +163,18 @@ func (r *RunEventRepository) CreateRootRunWithClaimFrom(
 	startedType string,
 	startedData map[string]any,
 ) (Run, RunEvent, error) {
+	return r.CreateRootRunWithClaimAndResumeFrom(ctx, accountID, threadID, createdByUserID, startedType, startedData, nil)
+}
+
+func (r *RunEventRepository) CreateRootRunWithClaimAndResumeFrom(
+	ctx context.Context,
+	accountID uuid.UUID,
+	threadID uuid.UUID,
+	createdByUserID *uuid.UUID,
+	startedType string,
+	startedData map[string]any,
+	resumeFromRunID *uuid.UUID,
+) (Run, RunEvent, error) {
 	if err := r.LockThreadRow(ctx, threadID); err != nil {
 		return Run{}, RunEvent{}, err
 	}
@@ -191,7 +204,7 @@ func (r *RunEventRepository) CreateRootRunWithClaimFrom(
 		return Run{}, RunEvent{}, err
 	}
 	startedData = applyContinuationMetadata(startedData)
-	return r.createRunWithStartedEvent(ctx, accountID, threadID, createdByUserID, startedType, startedData)
+	return r.createRunWithStartedEvent(ctx, accountID, threadID, createdByUserID, startedType, startedData, resumeFromRunID)
 }
 
 type threadTailMessage struct {

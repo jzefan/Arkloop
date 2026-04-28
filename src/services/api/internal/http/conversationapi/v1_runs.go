@@ -74,13 +74,14 @@ const (
 var runTerminalEventTypes = []string{"run.completed", "run.failed", "run.cancelled", "run.interrupted"}
 
 type createRunRequest struct {
-	RouteID        *string `json:"route_id"`
-	PersonaID      *string `json:"persona_id"`
-	OutputRouteID  *string `json:"output_route_id"`
-	OutputModelKey *string `json:"output_model_key"`
-	Model          *string `json:"model"`
-	WorkDir        *string `json:"work_dir"`
-	ReasoningMode  *string `json:"reasoning_mode"`
+	RouteID         *string `json:"route_id"`
+	PersonaID       *string `json:"persona_id"`
+	OutputRouteID   *string `json:"output_route_id"`
+	OutputModelKey  *string `json:"output_model_key"`
+	Model           *string `json:"model"`
+	WorkDir         *string `json:"work_dir"`
+	ReasoningMode   *string `json:"reasoning_mode"`
+	ResumeFromRunID *string `json:"resume_from_run_id"`
 }
 
 type createRunResponse struct {
@@ -233,6 +234,7 @@ func createThreadRun(
 		startedData := map[string]any{}
 		outputRouteID := ""
 		outputModelKey := ""
+		var requestedResumeFromRunID *uuid.UUID
 
 		if body != nil && body.RouteID != nil {
 			routeID := strings.TrimSpace(*body.RouteID)
@@ -284,6 +286,14 @@ func createThreadRun(
 				return
 			}
 			startedData["reasoning_mode"] = reasoningMode
+		}
+		if body != nil && body.ResumeFromRunID != nil {
+			resumeFromRunID, err := uuid.Parse(strings.TrimSpace(*body.ResumeFromRunID))
+			if err != nil || resumeFromRunID == uuid.Nil {
+				httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "request validation failed", traceID, nil)
+				return
+			}
+			requestedResumeFromRunID = &resumeFromRunID
 		}
 		thread, err := threadRepo.GetByID(r.Context(), threadID)
 		if err != nil {
@@ -377,13 +387,32 @@ func createThreadRun(
 		jobData := map[string]any{"source": "api"}
 		setRunCollaborationMode(startedData, jobData, collaborationMode, collaborationModeRevision)
 
-		run, _, err := runRepo.CreateRootRunWithClaimFrom(
+		var resumeFromRunID *uuid.UUID
+		if requestedResumeFromRunID != nil {
+			sourceRun, err := runRepo.GetRunForAccount(r.Context(), thread.AccountID, *requestedResumeFromRunID)
+			if err != nil {
+				writeInternalError(w, traceID, err)
+				return
+			}
+			if sourceRun == nil || sourceRun.ThreadID != thread.ID {
+				httpkit.WriteError(w, nethttp.StatusNotFound, "runs.not_found", "run not found", traceID, nil)
+				return
+			}
+			if !isResumableRunStatus(sourceRun.Status) {
+				httpkit.WriteError(w, nethttp.StatusConflict, "runs.not_resumable", "run is not resumable", traceID, nil)
+				return
+			}
+			resumeFromRunID = requestedResumeFromRunID
+		}
+
+		run, _, err := runRepo.CreateRootRunWithClaimAndResumeFrom(
 			r.Context(),
 			thread.AccountID,
 			thread.ID,
 			&actor.UserID,
 			"run.started",
 			startedData,
+			resumeFromRunID,
 		)
 		if err != nil {
 			if errors.Is(err, data.ErrThreadBusy) {
@@ -454,6 +483,15 @@ func normalizeRunReasoningMode(value string) string {
 		return "xhigh"
 	default:
 		return ""
+	}
+}
+
+func isResumableRunStatus(status string) bool {
+	switch strings.TrimSpace(status) {
+	case "cancelled", "failed", "interrupted":
+		return true
+	default:
+		return false
 	}
 }
 
