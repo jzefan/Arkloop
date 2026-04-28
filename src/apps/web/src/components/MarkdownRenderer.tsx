@@ -542,7 +542,7 @@ function WithCitations({ children, prefix }: { children: ReactNode; prefix: stri
 
 function buildMarkdownComponents(compact: boolean): Components {
   const paragraphFontSize = compact ? '13.5px' : '16.5px'
-  const heading1FontSize = compact ? '20px' : '24px'
+  const heading1FontSize = paragraphFontSize
   const heading2FontSize = compact ? '17px' : '20px'
   const heading3FontSize = compact ? '15px' : '17px'
   const heading4FontSize = compact ? '15px' : '17px'
