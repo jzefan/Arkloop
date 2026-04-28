@@ -675,11 +675,16 @@ button:not(:disabled) {
   --c-cop-row-hover-fg: var(--c-text-primary);
   --c-cop-row-subtle-fg: var(--c-text-tertiary);
   --c-cop-row-weight: var(--c-fw-400);
-  --c-cop-row-font-size: 16.5px;
-  --c-cop-row-line-height: 26.4px;
+  --c-cop-row-font-size: 14px;
+  --c-cop-row-line-height: 20px;
   --c-cop-think-label-size: var(--c-cop-row-font-size);
   --c-cop-think-label-lh: var(--c-cop-row-line-height);
   --c-cop-think-card-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+}
+
+.cop-timeline-root--work {
+  --c-cop-row-font-size: 14px;
+  --c-cop-row-line-height: 20px;
 }
 
 .cop-timeline-root .shell-exec-trigger > span:first-of-type {
@@ -850,6 +855,17 @@ button:not(:disabled) {
 }
 .cop-timeline-root .cop-thinking-output-md--timeline-plain .md-content a {
   color: var(--c-text-tertiary) !important;
+}
+.cop-timeline-root--work .cop-thinking-output-md--timeline-plain .md-content,
+.cop-timeline-root--work .cop-thinking-output-md--timeline-plain .md-content p,
+.cop-timeline-root--work .cop-thinking-output-md--timeline-plain .md-content li,
+.cop-timeline-root--work .cop-thinking-output-md--timeline-plain .md-content ul,
+.cop-timeline-root--work .cop-thinking-output-md--timeline-plain .md-content ol,
+.cop-timeline-root--work .cop-thinking-output-md--timeline-plain .md-content td,
+.cop-timeline-root--work .cop-thinking-output-md--timeline-plain .md-content th,
+.cop-timeline-root--work .cop-thinking-output-md--timeline-plain .md-content h1 {
+  font-size: var(--c-cop-row-font-size) !important;
+  line-height: var(--c-cop-row-line-height) !important;
 }
 
 .cop-timeline-root .cop-thinking-preview-scroll {

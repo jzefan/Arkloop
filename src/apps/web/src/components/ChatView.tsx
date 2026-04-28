@@ -331,6 +331,7 @@ const LiveRunPane = memo(function LiveRunPane({
                       thinkingHint={thinkingHint}
                       accessToken={accessToken}
                       baseUrl={baseUrl}
+                      typography={isWorkMode ? 'work' : 'default'}
                     />,
                   ]}
             </Fragment>
@@ -354,6 +355,7 @@ const LiveRunPane = memo(function LiveRunPane({
                 accessToken={accessToken}
                 runId={activeRunId ?? undefined}
                 onOpenDocument={onOpenDocument}
+                typography={isWorkMode ? 'work' : 'default'}
                 trimTrailingMargin={
                   liveSegments[si + 1] == null ||
                   liveSegments[si + 1]?.type === 'cop'
@@ -402,6 +404,7 @@ const LiveRunPane = memo(function LiveRunPane({
             activeCodeExecutionId={codePanelExecutionId ?? undefined}
             accessToken={accessToken}
             baseUrl={baseUrl}
+            typography={isWorkMode ? 'work' : 'default'}
           />
         </div>
       )}
@@ -632,7 +635,6 @@ export const ChatView = memo(function ChatView() {
     threads, addThread: onThreadCreated,
     upsertThread: onThreadUpserted,
     markRunning: onRunStarted, markIdle: onRunEnded,
-    updateCollaborationMode: onThreadCollaborationModeUpdated,
   } = useThreadList()
   const { appMode } = useAppModeUI()
   const { openSettings: onOpenSettings } = useSettingsUI()
@@ -2198,6 +2200,7 @@ export const ChatView = memo(function ChatView() {
           activeCodeExecutionId={codePanelExecution?.id}
           accessToken={accessToken}
           baseUrl={baseUrl}
+          typography={appMode === 'work' ? 'work' : 'default'}
         />
       ) : null,
       ...liveWidgets.map((entry) => (

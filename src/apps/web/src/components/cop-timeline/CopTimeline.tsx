@@ -40,6 +40,7 @@ export function CopTimeline({
   onOpenSubAgent,
   accessToken,
   baseUrl,
+  typography = 'default',
 }: {
   segments: CopSubSegment[]
   pool: ResolvedPool
@@ -55,6 +56,7 @@ export function CopTimeline({
   onOpenSubAgent?: (agent: SubAgentRef) => void
   accessToken?: string
   baseUrl?: string
+  typography?: 'default' | 'work'
 }) {
   const { t } = useLocale()
   const reduceMotion = useReducedMotion()
@@ -190,7 +192,7 @@ export function CopTimeline({
   // exec-only: 没有非 exec 内容，直接平铺
   if (!hasNonExecBody && execCallItems.length > 0) {
     return (
-      <div className="cop-timeline-root" style={{ maxWidth: '663px' }}>
+      <div className={`cop-timeline-root${typography === 'work' ? ' cop-timeline-root--work' : ''}`} style={{ maxWidth: '663px' }}>
         {renderExecItems()}
       </div>
     )
@@ -202,7 +204,7 @@ export function CopTimeline({
   }
 
   return (
-    <div className="cop-timeline-root" style={{ maxWidth: '663px' }}>
+    <div className={`cop-timeline-root${typography === 'work' ? ' cop-timeline-root--work' : ''}`} style={{ maxWidth: '663px' }}>
       {hasNonExecBody && (
         <>
           <button
@@ -319,6 +321,7 @@ export function CopTimeline({
                   onOpenSubAgent={onOpenSubAgent}
                   accessToken={accessToken}
                   baseUrl={baseUrl}
+                  typography={typography}
                 />
               ) : (
                 nonExecSegments.map((seg, index) => {
@@ -348,6 +351,7 @@ export function CopTimeline({
                       onOpenSubAgent={onOpenSubAgent}
                       accessToken={accessToken}
                       baseUrl={baseUrl}
+                      typography={typography}
                     />
                   </CopTimelineUnifiedRow>
                 )

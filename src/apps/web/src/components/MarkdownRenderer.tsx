@@ -540,15 +540,19 @@ function WithCitations({ children, prefix }: { children: ReactNode; prefix: stri
   return <>{processChildren(children, prefix)}</>
 }
 
-function buildMarkdownComponents(compact: boolean): Components {
-  const paragraphFontSize = compact ? '13.5px' : '16.5px'
-  const heading1FontSize = paragraphFontSize
+type TypographyMode = 'default' | 'work'
+
+function buildMarkdownComponents(compact: boolean, typography: TypographyMode): Components {
+  const defaultBodyFontSize = compact ? '13.5px' : '16.5px'
+  const workBodyFontSize = '16px'
+  const paragraphFontSize = typography === 'work' ? workBodyFontSize : defaultBodyFontSize
+  const heading1FontSize = defaultBodyFontSize
   const heading2FontSize = compact ? '17px' : '20px'
   const heading3FontSize = compact ? '15px' : '17px'
   const heading4FontSize = compact ? '15px' : '17px'
   const heading5FontSize = compact ? '13px' : '14px'
   const heading6FontSize = compact ? '13px' : '14px'
-  const listFontSize = compact ? '13.5px' : '16.5px'
+  const listFontSize = typography === 'work' ? workBodyFontSize : defaultBodyFontSize
 
   return {
     pre: ({ children }) => {
@@ -691,11 +695,12 @@ type Props = {
   runId?: string
   onOpenDocument?: (artifact: ArtifactRef, options?: { trigger?: HTMLElement | null; artifacts?: ArtifactRef[]; runId?: string }) => void
   compact?: boolean
+  typography?: TypographyMode
   /** 下一兄弟为 COP 等块时去掉末段底距，避免正文→COP 过大缝隙 */
   trimTrailingMargin?: boolean
 }
 
-export const MarkdownRenderer = memo(function MarkdownRenderer({ content, disableMath, streaming = false, webSources, artifacts, accessToken, runId, onOpenDocument, compact = false, trimTrailingMargin = false }: Props) {
+export const MarkdownRenderer = memo(function MarkdownRenderer({ content, disableMath, streaming = false, webSources, artifacts, accessToken, runId, onOpenDocument, compact = false, typography = 'default', trimTrailingMargin = false }: Props) {
   const sourceCount = webSources?.length ?? 0
   const artifactCount = artifacts?.length ?? 0
   const shouldThrottleStreamingMath = streaming && !disableMath && containsLikelyMath(content)
@@ -761,13 +766,14 @@ export const MarkdownRenderer = memo(function MarkdownRenderer({ content, disabl
     const structuredContent = normalizeCollapsedPipeTables(renderContent)
     return effectiveDisableMath ? structuredContent : normalizeLatexDelimiters(structuredContent)
   }, [effectiveDisableMath, renderContent])
-  const mdComponents = useMemo(() => buildMarkdownComponents(compact), [compact])
+  const mdComponents = useMemo(() => buildMarkdownComponents(compact, typography), [compact, typography])
 
   useEffect(() => {
     recordPerfCount('markdown_render', 1, {
       length: content.length,
       renderLength: renderContent.length,
       compact,
+      typography,
       disableMath: !!disableMath,
       streaming,
       throttledMath: shouldThrottleStreamingMath,
@@ -776,10 +782,11 @@ export const MarkdownRenderer = memo(function MarkdownRenderer({ content, disabl
     })
     recordPerfValue('markdown_content_length', content.length, 'chars', {
       compact,
+      typography,
       disableMath: !!disableMath,
       streaming,
     })
-  }, [artifactCount, compact, content.length, disableMath, renderContent.length, shouldThrottleStreamingMath, sourceCount, streaming])
+  }, [artifactCount, compact, content.length, disableMath, renderContent.length, shouldThrottleStreamingMath, sourceCount, streaming, typography])
 
   return (
     <ArtifactsContext.Provider value={artifactsValue}>
