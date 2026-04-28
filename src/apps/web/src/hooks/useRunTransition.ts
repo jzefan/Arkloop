@@ -27,6 +27,7 @@ type PersistRunDataOptions = {
   persistThinking?: boolean
   persistAssistantTurn?: boolean
   cacheAssistantTurn?: boolean
+  clearThreadHandoff?: boolean
 }
 
 export function useRunTransition() {
@@ -193,7 +194,7 @@ export function useRunTransition() {
       ...runData,
       terminalStatus: runData.terminalStatus === 'running' ? null : runData.terminalStatus,
     }, runEvents, options)
-    if (threadId) {
+    if (threadId && options?.clearThreadHandoff !== false) {
       clearThreadRunHandoff(threadId)
     }
   }, [persistRunDataToMessageState, threadId])

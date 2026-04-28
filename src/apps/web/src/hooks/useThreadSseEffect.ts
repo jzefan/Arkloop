@@ -31,6 +31,7 @@ import {
   firstVisibleCodeExecutionToolCallIndex,
 } from '../runEventProcessing'
 import {
+  assistantTurnPlainText,
   foldAssistantTurnEvent,
   requestAssistantTurnThinkingBreak,
 } from '../assistantTurnSegments'
@@ -51,6 +52,7 @@ import { getInjectionBlockMessage, shouldSuppressLiveRunEventAfterInjectionBlock
 import { isACPDelegateEventData } from '@arkloop/shared'
 import type { RequestedSchema } from '../userInputTypes'
 import { noteShowWidgetDelta } from '../streamDebug'
+import type { MessageResponse } from '../api'
 
 type UseThreadSseEffectDeps = {
   drainQueuedPromptRef: RefObject<(() => void) | null>
@@ -135,6 +137,7 @@ export function useThreadSseEffect({
   } = useStream()
   const {
     refreshMessages,
+    upsertLocalTerminalMessage,
   } = useMessageStore()
   const {
     resetAssistantTurnLive,
@@ -173,6 +176,43 @@ export function useThreadSseEffect({
       setDeferredRunEventDrainTick((value) => value + 1)
     }, 0)
   }, [])
+
+  const materializeTerminalRunMessage = useCallback((
+    runId: string,
+    terminalStatus: 'completed' | 'cancelled' | 'failed' | 'interrupted',
+    runCache: TerminalRunCache,
+    runEvents: MsgRunEvent[],
+  ): MessageResponse | null => {
+    if (!threadId) return null
+    if (!hasRecoverableRunOutput({
+      assistantTurn: runCache.handoffAssistantTurn,
+      searchSteps: runCache.pendingSearchSteps,
+      widgets: runCache.runWidgets,
+      codeExecutions: runCache.runCodeExecs,
+      subAgents: runCache.runSubAgents,
+      fileOps: runCache.runFileOps,
+      webFetches: runCache.runWebFetches,
+    })) {
+      return null
+    }
+    const lastEvent = runEvents[runEvents.length - 1]
+    const message: MessageResponse = {
+      id: `local-terminal-run:${runId}`,
+      account_id: '',
+      thread_id: threadId,
+      created_by_user_id: '',
+      role: 'assistant',
+      content: assistantTurnPlainText(runCache.handoffAssistantTurn),
+      created_at: lastEvent?.ts ?? new Date().toISOString(),
+      run_id: runId,
+    }
+    upsertLocalTerminalMessage(message)
+    persistRunDataToMessage(message.id, {
+      ...runCache,
+      terminalStatus,
+    }, runEvents, { clearThreadHandoff: false })
+    return message
+  }, [persistRunDataToMessage, threadId, upsertLocalTerminalMessage])
 
   // SSE 事件处理
   useEffect(() => {
@@ -740,7 +780,7 @@ export function useThreadSseEffect({
           ...runCache,
           pendingSearchSteps: runSearchSteps.length > 0 ? runSearchSteps : runCache.pendingSearchSteps,
         }
-        if (hasRecoverableRunOutput({
+        const completedHasRecoverableOutput = hasRecoverableRunOutput({
           assistantTurn: completedRunCache.handoffAssistantTurn,
           searchSteps: completedRunCache.pendingSearchSteps,
           widgets: completedRunCache.runWidgets,
@@ -748,15 +788,22 @@ export function useThreadSseEffect({
           subAgents: completedRunCache.runSubAgents,
           fileOps: completedRunCache.runFileOps,
           webFetches: completedRunCache.runWebFetches,
-        })) {
+        })
+        const localCompletedAssistant = completedHasRecoverableOutput
+          ? materializeTerminalRunMessage(completedRunId, 'completed', completedRunCache, runEventsForMessage)
+          : null
+        if (completedHasRecoverableOutput) {
           persistThreadRunHandoff(completedRunId, completedRunCache)
+        }
+        if (localCompletedAssistant) {
+          releaseCompletedHandoffToHistory()
         }
         setAwaitingInput(false)
         setPendingUserInput(null)
         setCheckInDraft('')
         if (threadId) onRunEnded(threadId)
         refreshCredits()
-        void refreshMessages({ requiredCompletedRunId: completedRunId })
+        void refreshMessages({ requiredCompletedRunId: completedHasRecoverableOutput ? completedRunId : undefined })
           .then((items) => {
             const completedAssistant = findAssistantMessageForRun(items, completedRunId)
             if (completedAssistant) {
@@ -769,8 +816,10 @@ export function useThreadSseEffect({
               markTerminalRunHistory(completedAssistant.id, false)
               releaseCompletedHandoffToHistory()
             }
-            if (!drainForcedQueuedPromptRef.current?.({ runId: completedRunId, status: 'completed' })) {
-              drainQueuedPromptRef.current?.()
+            if (completedAssistant || localCompletedAssistant || !completedHasRecoverableOutput) {
+              if (!drainForcedQueuedPromptRef.current?.({ runId: completedRunId, status: 'completed' })) {
+                drainQueuedPromptRef.current?.()
+              }
             }
           })
           .catch((err) => console.error('persist run data failed', err))
@@ -803,22 +852,36 @@ export function useThreadSseEffect({
         if (runId) {
           persistThreadRunHandoff(runId, runCache)
         }
+        const runHasRecoverableOutput = hasRecoverableRunOutput({
+          assistantTurn: runCache.handoffAssistantTurn,
+          searchSteps: runSearchSteps.length > 0 ? runSearchSteps : runCache.pendingSearchSteps,
+          widgets: runCache.runWidgets,
+          codeExecutions: runCache.runCodeExecs,
+          subAgents: runCache.runSubAgents,
+          fileOps: runCache.runFileOps,
+          webFetches: runCache.runWebFetches,
+        })
+        const localAssistant = runHasRecoverableOutput
+          ? materializeTerminalRunMessage(runId, 'cancelled', runCache, runEventsForMessage)
+          : null
         resetTerminalRunState({
           preserveSearchSteps: true,
-          handoffRunCache: runCache,
+          handoffRunCache: runHasRecoverableOutput && !localAssistant ? runCache : undefined,
         })
         if (!blockedByInjection) {
           setError(null)
         }
         if (runId) {
-          void refreshMessages({ requiredCompletedRunId: runId })
+          void refreshMessages({ requiredCompletedRunId: runHasRecoverableOutput ? runId : undefined })
             .then((items) => {
               const assistant = findAssistantMessageForRun(items, runId)
               if (assistant) {
                 persistRunDataToMessage(assistant.id, runCache, runEventsForMessage)
                 markTerminalRunHistory(assistant.id, false)
               }
-              drainForcedQueuedPromptRef.current?.({ runId, status: 'cancelled' })
+              if (assistant || localAssistant || !runHasRecoverableOutput) {
+                drainForcedQueuedPromptRef.current?.({ runId, status: 'cancelled' })
+              }
             })
             .catch((err) => console.error('persist run data failed', err))
         }
@@ -846,9 +909,21 @@ export function useThreadSseEffect({
         if (runId) {
           persistThreadRunHandoff(runId, runCache)
         }
+        const runHasRecoverableOutput = hasRecoverableRunOutput({
+          assistantTurn: runCache.handoffAssistantTurn,
+          searchSteps: runCache.pendingSearchSteps,
+          widgets: runCache.runWidgets,
+          codeExecutions: runCache.runCodeExecs,
+          subAgents: runCache.runSubAgents,
+          fileOps: runCache.runFileOps,
+          webFetches: runCache.runWebFetches,
+        })
+        const localAssistant = runHasRecoverableOutput
+          ? materializeTerminalRunMessage(runId, 'failed', runCache, runEventsForMessage)
+          : null
         resetTerminalRunState({
           preserveSearchSteps: true,
-          handoffRunCache: runCache,
+          handoffRunCache: runHasRecoverableOutput && !localAssistant ? runCache : undefined,
         })
         const obj = event.data as { message?: unknown; error_class?: unknown; code?: unknown; details?: unknown }
         const errorClass = typeof obj?.error_class === 'string' ? obj.error_class : undefined
@@ -866,13 +941,15 @@ export function useThreadSseEffect({
           })
         }
         if (runId) {
-          void refreshMessages({ requiredCompletedRunId: runId })
+          void refreshMessages({ requiredCompletedRunId: runHasRecoverableOutput ? runId : undefined })
             .then((items) => {
               const assistant = findAssistantMessageForRun(items, runId)
               if (assistant) {
                 persistRunDataToMessage(assistant.id, runCache, runEventsForMessage)
               }
-              drainForcedQueuedPromptRef.current?.({ runId, status: 'failed' })
+              if (assistant || localAssistant || !runHasRecoverableOutput) {
+                drainForcedQueuedPromptRef.current?.({ runId, status: 'failed' })
+              }
             })
             .catch((err) => console.error('persist run data failed', err))
         }
@@ -900,9 +977,21 @@ export function useThreadSseEffect({
         if (runId) {
           persistThreadRunHandoff(runId, runCache)
         }
+        const runHasRecoverableOutput = hasRecoverableRunOutput({
+          assistantTurn: runCache.handoffAssistantTurn,
+          searchSteps: runCache.pendingSearchSteps,
+          widgets: runCache.runWidgets,
+          codeExecutions: runCache.runCodeExecs,
+          subAgents: runCache.runSubAgents,
+          fileOps: runCache.runFileOps,
+          webFetches: runCache.runWebFetches,
+        })
+        const localAssistant = runHasRecoverableOutput
+          ? materializeTerminalRunMessage(runId, 'interrupted', runCache, runEventsForMessage)
+          : null
         resetTerminalRunState({
           preserveSearchSteps: true,
-          handoffRunCache: runCache,
+          handoffRunCache: runHasRecoverableOutput && !localAssistant ? runCache : undefined,
         })
         const obj = event.data as { message?: unknown; error_class?: unknown; code?: unknown; details?: unknown }
         const errorClass = typeof obj?.error_class === 'string' ? obj.error_class : undefined
@@ -916,20 +1005,22 @@ export function useThreadSseEffect({
           details,
         })
         if (event.run_id) {
-          void refreshMessages({ requiredCompletedRunId: runId! })
+          void refreshMessages({ requiredCompletedRunId: runHasRecoverableOutput ? runId! : undefined })
             .then((items) => {
               const assistant = findAssistantMessageForRun(items, runId!)
               if (assistant) {
                 persistRunDataToMessage(assistant.id, runCache, runEventsForMessage)
               }
-              drainForcedQueuedPromptRef.current?.({ runId: runId!, status: 'interrupted' })
+              if (assistant || localAssistant || !runHasRecoverableOutput) {
+                drainForcedQueuedPromptRef.current?.({ runId: runId!, status: 'interrupted' })
+              }
             })
             .catch((err) => console.error('persist run data failed', err))
         }
         continue
       }
     }
-  }, [sseRunId, activeRunId, armCompletedTitleTail, clearCompletedTitleTail, clearContextCompactHideTimer, clearLiveRunSecurityArtifacts, completedTitleTailRunId, deferredRunEventDrainTick, scheduleDeferredRunEventDrain, persistThreadRunHandoff, refreshMessages, refreshCredits, resetSearchSteps, sse.events, appendSegmentContent, endSegmentStream, addSegment, flushSegmentsRefToState]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [sseRunId, activeRunId, armCompletedTitleTail, clearCompletedTitleTail, clearContextCompactHideTimer, clearLiveRunSecurityArtifacts, completedTitleTailRunId, deferredRunEventDrainTick, scheduleDeferredRunEventDrain, materializeTerminalRunMessage, persistThreadRunHandoff, refreshMessages, refreshCredits, resetSearchSteps, sse.events, appendSegmentContent, endSegmentStream, addSegment, flushSegmentsRefToState]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // 401 SSE 错误时登出
   useEffect(() => {

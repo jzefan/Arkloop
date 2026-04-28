@@ -25,6 +25,7 @@ interface MessageStoreContextValue {
   attachmentsRef: React.RefObject<Attachment[]>
 
   setMessages: (msgs: MessageResponse[] | ((prev: MessageResponse[]) => MessageResponse[])) => void
+  upsertLocalTerminalMessage: (message: MessageResponse) => void
   setMessagesLoading: (v: boolean) => void
   setAttachments: (v: Attachment[] | ((prev: Attachment[]) => Attachment[])) => void
   addAttachment: (a: Attachment) => void
@@ -41,6 +42,47 @@ interface MessageStoreContextValue {
 
 const Ctx = createContext<MessageStoreContextValue | null>(null)
 
+const LOCAL_TERMINAL_MESSAGE_PREFIX = 'local-terminal-run:'
+
+export function isLocalTerminalMessage(message: Pick<MessageResponse, 'id'>): boolean {
+  return message.id.startsWith(LOCAL_TERMINAL_MESSAGE_PREFIX)
+}
+
+function insertMessageByCreatedAt(messages: MessageResponse[], message: MessageResponse): MessageResponse[] {
+  if (messages.some((item) => item.id === message.id)) return messages
+  const messageTime = Date.parse(message.created_at)
+  if (!Number.isFinite(messageTime)) return [...messages, message]
+  const index = messages.findIndex((item) => {
+    const itemTime = Date.parse(item.created_at)
+    return Number.isFinite(itemTime) && itemTime > messageTime
+  })
+  if (index < 0) return [...messages, message]
+  return [...messages.slice(0, index), message, ...messages.slice(index)]
+}
+
+function mergeLocalTerminalMessages(
+  remoteMessages: MessageResponse[],
+  localMessages: Map<string, MessageResponse>,
+): MessageResponse[] {
+  const remoteRunIds = new Set<string>()
+  for (const message of remoteMessages) {
+    if (isLocalTerminalMessage(message)) continue
+    if (message.role === 'assistant' && message.run_id) remoteRunIds.add(message.run_id)
+  }
+  for (const [id, message] of localMessages) {
+    if (message.run_id && remoteRunIds.has(message.run_id)) {
+      localMessages.delete(id)
+    }
+  }
+
+  let merged = remoteMessages.filter((message) => !isLocalTerminalMessage(message))
+  for (const message of localMessages.values()) {
+    if (message.run_id && remoteRunIds.has(message.run_id)) continue
+    merged = insertMessageByCreatedAt(merged, message)
+  }
+  return merged
+}
+
 export function MessageStoreProvider({ children }: { children: ReactNode }) {
   const { threadId } = useChatSession()
   return (
@@ -53,7 +95,7 @@ export function MessageStoreProvider({ children }: { children: ReactNode }) {
 function MessageStoreProviderContent({ children, threadId }: { children: ReactNode; threadId: string | null }) {
   const { accessToken } = useAuth()
 
-  const [messages, setMessages] = useState<MessageResponse[]>([])
+  const [messages, setMessagesState] = useState<MessageResponse[]>([])
   const [messagesLoading, setMessagesLoading] = useState(true)
   const [attachments, setAttachments] = useState<Attachment[]>([])
   const [userEnterMessageId, setUserEnterMessageId] = useState<string | null>(null)
@@ -61,6 +103,7 @@ function MessageStoreProviderContent({ children, threadId }: { children: ReactNo
 
   const sendMessageRef = useRef<((text: string) => void) | null>(null)
   const attachmentsRef = useRef<Attachment[]>(attachments)
+  const localTerminalMessagesRef = useRef<Map<string, MessageResponse>>(new Map())
   useEffect(() => { attachmentsRef.current = attachments }, [attachments])
 
   const messageSyncVersionRef = useRef(0)
@@ -86,17 +129,25 @@ function MessageStoreProviderContent({ children, threadId }: { children: ReactNo
     messageSyncVersionRef.current += 1
   }, [])
 
+  const setMessages = useCallback((value: MessageResponse[] | ((prev: MessageResponse[]) => MessageResponse[])) => {
+    setMessagesState((prev) => {
+      const next = typeof value === 'function' ? value(prev) : value
+      return next
+    })
+  }, [])
+
+  const upsertLocalTerminalMessage = useCallback((message: MessageResponse) => {
+    localTerminalMessagesRef.current.set(message.id, message)
+    setMessages((prev) => mergeLocalTerminalMessages(prev, localTerminalMessagesRef.current))
+  }, [setMessages])
+
   const readConsistentMessages = useCallback(async (requiredCompletedRunId?: string): Promise<MessageResponse[]> => {
     if (!threadId) return []
     let items = await listMessages(accessToken, threadId)
+    items = mergeLocalTerminalMessages(items, localTerminalMessagesRef.current)
     if (requiredCompletedRunId && !findAssistantMessageForRun(items, requiredCompletedRunId)) {
       const retriedItems = await listMessages(accessToken, threadId)
-      if (
-        findAssistantMessageForRun(retriedItems, requiredCompletedRunId) ||
-        retriedItems.length > items.length
-      ) {
-        items = retriedItems
-      }
+      items = mergeLocalTerminalMessages(retriedItems, localTerminalMessagesRef.current)
     }
     return items
   }, [accessToken, threadId])
@@ -122,6 +173,7 @@ function MessageStoreProviderContent({ children, threadId }: { children: ReactNo
     sendMessageRef,
     attachmentsRef,
     setMessages,
+    upsertLocalTerminalMessage,
     setMessagesLoading,
     setAttachments,
     addAttachment,
@@ -142,6 +194,8 @@ function MessageStoreProviderContent({ children, threadId }: { children: ReactNo
     pendingIncognito,
     addAttachment,
     removeAttachment,
+    setMessages,
+    upsertLocalTerminalMessage,
     beginMessageSync,
     isMessageSyncCurrent,
     invalidateMessageSync,
