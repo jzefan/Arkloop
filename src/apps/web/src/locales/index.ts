@@ -320,6 +320,7 @@ export interface LocaleStrings {
   addFromGitHub: string;
   learningMode: string;
   planMode: string;
+  planModePlaceholders: string[];
   dragToAttach: string;
   // chats search modal
   searchChatsPlaceholder: string;

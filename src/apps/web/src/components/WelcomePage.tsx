@@ -341,7 +341,7 @@ export function WelcomePage() {
     setError(normalizeError(err, t.requestFailed))
   }, [onLoggedOut, t.requestFailed])
 
-  const handleTogglePlanMode = useCallback(() => {
+  const handleTogglePlanMode = useCallback(async (_currentMode: boolean) => {
     if (appMode !== 'work') return
     setInitialPlanMode((prev) => !prev)
   }, [appMode])
@@ -507,7 +507,7 @@ export function WelcomePage() {
             onOpenSettings={onOpenSettings}
             appMode={appMode}
             draftOwnerKey={me?.id}
-            isPlanMode={appMode === 'work' && initialPlanMode}
+            planMode={appMode === 'work' && initialPlanMode}
             onTogglePlanMode={handleTogglePlanMode}
           />
           {/* incognito note: 平滑展开/收起 */}

@@ -77,8 +77,8 @@ type Props = {
   hasMessages?: boolean
   workThreadId?: string
   draftOwnerKey?: string | null
-  isPlanMode?: boolean
-  onTogglePlanMode?: () => void
+  planMode?: boolean
+  onTogglePlanMode?: (currentMode: boolean) => Promise<void>
 }
 
 type TextareaSelection = {
@@ -176,8 +176,8 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
   hasMessages,
   workThreadId,
   draftOwnerKey,
-  isPlanMode = false,
-  onTogglePlanMode,
+  planMode,
+  onTogglePlanMode: onTogglePlanModeProp,
 }, ref) {
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -223,6 +223,10 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
   const [collapsingGrid, setCollapsingGrid] = useState(false)
   const [pastedModalAttachment, setPastedModalAttachment] = useState<Attachment | null>(null)
   const [chipExiting, setChipExiting] = useState(false)
+  const [planPlaceholderIndex, setPlanPlaceholderIndex] = useState(0)
+  const [typewriterText, setTypewriterText] = useState('')
+  const [isPlanMode, setIsPlanMode] = useState(planMode ?? false)
+  const isPlanModeRef = useLatest(isPlanMode)
   const [workCompactInputWraps, setWorkCompactInputWraps] = useState(false)
   const [selectedModel, setSelectedModel] = useState<string | null>(readSelectedModelFromStorage)
   const compactTextareaWidthRef = useRef<number | null>(null)
@@ -325,8 +329,19 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
     writeSelectedReasoningMode(mode)
   }, [workThreadId])
 
+  const handleMenuOpenChange = useCallback((open: boolean) => {
+    const el = textareaRef.current
+    if (!el) return
+    if (open) {
+      el.blur()
+    } else {
+      el.focus()
+    }
+  }, [])
+
   const isNonDefaultMode = selectedPersonaKey !== DEFAULT_PERSONA_KEY && selectedPersonaKey !== WORK_PERSONA_KEY
   const showSendButton = draft.trim().length > 0 || attachments.length > 0
+  const resolvedPlaceholder = typewriterText
   const isWelcomeInput = variant === 'welcome'
   const isWorkChat = variant === 'chat' && appMode === 'work'
   const hasAttachments = attachments.length > 0
@@ -515,6 +530,73 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
     return () => cancelAnimationFrame(id)
   }, [persistSelectedPersona, appMode, selectedPersonaKey])
 
+  // sync local isPlanMode from planMode prop (thread navigation, SSE updates)
+  useEffect(() => {
+    if (planMode !== undefined) {
+      setIsPlanMode(planMode)
+    }
+  }, [planMode])
+
+  const handleTogglePlanMode = useCallback(() => {
+    if (appMode !== 'work') return
+    const prev = isPlanModeRef.current
+    setIsPlanMode(!prev)
+    onTogglePlanModeProp?.(prev)?.catch(() => {
+      setIsPlanMode(prev)
+    })
+  }, [appMode, onTogglePlanModeProp, isPlanModeRef])
+
+  // reset cycle index on Plan mode enter
+  useEffect(() => {
+    if (appMode === 'work' && isPlanMode) {
+      setPlanPlaceholderIndex(0)
+    }
+  }, [appMode, isPlanMode])
+
+  // derive current typewriter target from Plan mode state + cycling index
+  const typewriterTarget = useMemo(() => {
+    if (appMode === 'work' && isPlanMode) {
+      return t.planModePlaceholders[planPlaceholderIndex] ?? ''
+    }
+    return placeholder
+  }, [appMode, isPlanMode, planPlaceholderIndex, t.planModePlaceholders, placeholder])
+
+  // typewriter: clears text, then types out target one char every 45ms
+  const typewriterTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  useEffect(() => {
+    const target = typewriterTarget
+    if (!target) {
+      setTypewriterText('')
+      return
+    }
+    let i = 0
+    setTypewriterText('')
+    const tick = () => {
+      i++
+      if (i > target.length) return
+      setTypewriterText(target.slice(0, i))
+      typewriterTimerRef.current = setTimeout(tick, 45)
+    }
+    typewriterTimerRef.current = setTimeout(tick, 45)
+    return () => {
+      if (typewriterTimerRef.current !== null) {
+        clearTimeout(typewriterTimerRef.current)
+        typewriterTimerRef.current = null
+      }
+    }
+  }, [typewriterTarget])
+
+  // cycle to next Plan mode placeholder after typing completes + 3s pause
+  useEffect(() => {
+    if (!(appMode === 'work' && isPlanMode)) return
+    const target = t.planModePlaceholders[planPlaceholderIndex] ?? ''
+    if (!target || typewriterText.length < target.length) return
+    const timer = setTimeout(() => {
+      setPlanPlaceholderIndex((prev) => (prev + 1) % t.planModePlaceholders.length)
+    }, 3000)
+    return () => clearTimeout(timer)
+  }, [typewriterText, appMode, isPlanMode, planPlaceholderIndex, t.planModePlaceholders])
+
   const applyHistoryValue = (value: string, cursor: 'start' | 'end') => {
     skipDraftPersistRef.current = true
     setDraft(value)
@@ -559,7 +641,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
   const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Tab' && e.shiftKey && appMode === 'work') {
       e.preventDefault()
-      onTogglePlanMode?.()
+      handleTogglePlanMode()
       return
     }
     if (!e.nativeEvent.isComposing && e.key === 'ArrowUp' && handleHistoryNavigation('up', e.currentTarget)) {
@@ -851,7 +933,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
               onPaste={handleTextareaPaste}
               onFocus={() => setFocused(true)}
               onBlur={() => setFocused(false)}
-              placeholder={placeholder}
+              placeholder={resolvedPlaceholder}
               disabled={disabled}
               minRows={1}
               maxHeight={300}
@@ -883,7 +965,6 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
             personas={personas}
             selectedPersonaKey={selectedPersonaKey}
             selectedModel={selectedModel}
-            chipExiting={chipExiting}
             isNonDefaultMode={isNonDefaultMode}
             selectedPersona={selectedPersona}
             onModeSelect={handleModeSelect}
@@ -897,10 +978,11 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
             variant={variant}
             appMode={appMode}
             isPlanMode={isPlanMode}
-            onTogglePlanMode={onTogglePlanMode}
+            onTogglePlanMode={handleTogglePlanMode}
             threadHasMessages={hasMessages}
             workThreadId={workThreadId}
             hideModelPicker={isWorkCompactInput}
+            onMenuOpenChange={handleMenuOpenChange}
           />
 
           {isWorkCompactInput && (
@@ -924,7 +1006,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                   onPaste={handleTextareaPaste}
                   onFocus={() => setFocused(true)}
                   onBlur={() => setFocused(false)}
-                  placeholder={placeholder}
+                  placeholder={resolvedPlaceholder}
                   disabled={disabled}
                   minRows={1}
                   maxHeight={300}

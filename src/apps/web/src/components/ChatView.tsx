@@ -641,7 +641,6 @@ export const ChatView = memo(function ChatView() {
     () => threads.find((thread) => thread.id === threadId) ?? null,
     [threadId, threads],
   )
-  const isPlanMode = currentThread?.collaboration_mode === 'plan'
   const planModeUpdateRef = useRef<Promise<void> | null>(null)
   const planModeRequestSeqRef = useRef(0)
   const waitForPlanModeUpdate = useCallback(async () => {
@@ -2058,20 +2057,18 @@ export const ChatView = memo(function ChatView() {
     setIsSearchThread(personaKey === SEARCH_PERSONA_KEY)
   }, [])
 
-  const handleTogglePlanMode = useCallback(() => {
+  const handleTogglePlanMode = useCallback(async (currentMode: boolean) => {
     if (!threadId || appMode !== 'work') return
-    const previousMode: CollaborationMode = isPlanMode ? 'plan' : 'default'
-    const nextMode: CollaborationMode = isPlanMode ? 'default' : 'plan'
+    const nextMode: CollaborationMode = currentMode ? 'default' : 'plan'
     const requestSeq = ++planModeRequestSeqRef.current
-    onThreadCollaborationModeUpdated(threadId, nextMode)
     const updatePromise: Promise<void> = updateThreadCollaborationMode(accessToken, threadId, nextMode).then((thread) => {
       if (planModeRequestSeqRef.current === requestSeq) {
         onThreadUpserted(thread)
       }
     }).catch((err) => {
       if (planModeRequestSeqRef.current === requestSeq) {
-        onThreadCollaborationModeUpdated(threadId, previousMode)
         setError(normalizeError(err))
+        throw err
       }
     }).finally(() => {
       if (planModeUpdateRef.current === updatePromise) {
@@ -2079,7 +2076,8 @@ export const ChatView = memo(function ChatView() {
       }
     })
     planModeUpdateRef.current = updatePromise
-  }, [accessToken, appMode, isPlanMode, onThreadCollaborationModeUpdated, onThreadUpserted, setError, threadId])
+    await updatePromise
+  }, [accessToken, appMode, onThreadUpserted, setError, threadId])
 
   const hasMessages = messages.length > 0
   const inputHorizontalPadding = appMode === 'work'
@@ -2110,10 +2108,10 @@ export const ChatView = memo(function ChatView() {
       hasMessages={hasMessages}
       workThreadId={threadId}
       draftOwnerKey={me?.id}
-      isPlanMode={isPlanMode}
+      planMode={currentThread?.collaboration_mode === 'plan'}
       onTogglePlanMode={handleTogglePlanMode}
     />
-  ), [attachments, sending, isStreaming, canCancel, cancelSubmitting, appMode, isSearchThread, hasMessages, threadId, accessToken, me?.id, isPlanMode, t.replyPlaceholder, handleSend, handleCancel, handleAttachFiles, handlePasteContent, handleRemoveAttachment, handleAsrError, handlePersonaChange, handleTogglePlanMode, onOpenSettings])
+  ), [attachments, sending, isStreaming, canCancel, cancelSubmitting, appMode, isSearchThread, hasMessages, threadId, accessToken, me?.id, t.replyPlaceholder, handleSend, handleCancel, handleAttachFiles, handlePasteContent, handleRemoveAttachment, handleAsrError, handlePersonaChange, onOpenSettings])
 
   const renderLiveCopItems = (
     seg: Extract<AssistantTurnSegment, { type: 'cop' }>,
