@@ -16,6 +16,7 @@ type Config struct {
 	ScaleDownThreshold int     // queue depth per worker to trigger scale-down
 	ScaleIntervalSecs  float64 // how often to evaluate scaling
 	ScaleCooldownSecs  float64 // min time between scale decisions
+	IdleReserveWorkers int     // extra idle workers to keep above in-flight jobs
 }
 
 func DefaultConfig() Config {
@@ -31,6 +32,7 @@ func DefaultConfig() Config {
 		ScaleDownThreshold: 1,
 		ScaleIntervalSecs:  5,
 		ScaleCooldownSecs:  30,
+		IdleReserveWorkers: 0,
 	}
 }
 
@@ -49,6 +51,9 @@ func (c Config) Validate() error {
 	}
 	if len(c.QueueJobTypes) == 0 {
 		return fmt.Errorf("queue_job_types must not be empty")
+	}
+	if c.IdleReserveWorkers < 0 {
+		return fmt.Errorf("idle_reserve_workers must be non-negative")
 	}
 	return nil
 }

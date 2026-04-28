@@ -7,6 +7,7 @@ import (
 	"os"
 	"testing"
 
+	"arkloop/services/worker/internal/app"
 	"arkloop/services/worker/internal/consumer"
 
 	"github.com/google/uuid"
@@ -93,5 +94,23 @@ func TestDesktopWorkerConcurrencyDefaults(t *testing.T) {
 	}
 	if got := desktopWorkerConcurrency(); got != 8 {
 		t.Fatalf("expected desktop worker concurrency respect env, got %d", got)
+	}
+}
+
+func TestDesktopConsumerConfigUsesIdleReserve(t *testing.T) {
+	cfg := app.DefaultConfig()
+
+	got := desktopConsumerConfig(cfg, 4)
+	if got.Concurrency != 4 {
+		t.Fatalf("expected concurrency 4, got %d", got.Concurrency)
+	}
+	if got.IdleReserveWorkers != desktopIdleReserveWorkers {
+		t.Fatalf("expected idle reserve %d, got %d", desktopIdleReserveWorkers, got.IdleReserveWorkers)
+	}
+	if got.MinConcurrency != 2 {
+		t.Fatalf("expected min concurrency 2, got %d", got.MinConcurrency)
+	}
+	if got.MaxConcurrency != desktopWorkerConcurrencyHardMax {
+		t.Fatalf("expected max concurrency %d, got %d", desktopWorkerConcurrencyHardMax, got.MaxConcurrency)
 	}
 }

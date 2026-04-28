@@ -27,11 +27,12 @@ type Loop struct {
 	logger   *slog.Logger
 	notifier WorkNotifier
 
-	// targetWorkers is the desired number of running goroutines. Accessed only
-	// via atomic operations. mu protects scaleCooldown exclusively.
+	// targetWorkers is the desired number of running goroutines.
+	// Accessed only via atomic operations; mu protects scaleCooldown.
 	targetWorkers atomic.Int32
 	mu            sync.Mutex
 	scaleCooldown time.Time
+	scaleRequests chan struct{}
 }
 
 func NewLoop(
@@ -88,12 +89,13 @@ func NewLoop(
 	}
 
 	l := &Loop{
-		queue:    queueClient,
-		handler:  handler,
-		locker:   locker,
-		config:   config,
-		logger:   logger,
-		notifier: notifier,
+		queue:         queueClient,
+		handler:       handler,
+		locker:        locker,
+		config:        config,
+		logger:        logger,
+		notifier:      notifier,
+		scaleRequests: make(chan struct{}, 1),
 	}
 	l.targetWorkers.Store(int32(initial))
 	return l, nil
@@ -154,22 +156,18 @@ func (l *Loop) Run(ctx context.Context) error {
 		interval := time.Duration(l.config.ScaleIntervalSecs * float64(time.Second))
 		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
+		scaleWake := l.nextScaleWake()
 		for {
 			select {
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				active := int(activeWorkers.Load())
-				newTarget := l.evaluateScaling(ctx, active)
-				oldTarget := int(l.targetWorkers.Swap(int32(newTarget)))
-				// Spawn workers for any growth in target.
-				// Use the delta between old and new target, not activeWorkers,
-				// because self-exiting workers decrement activeWorkers asynchronously.
-				delta := newTarget - oldTarget
-				for i := 0; i < delta; i++ {
-					spawnWorker()
-				}
-				// Scale-down: existing goroutines self-exit on next iteration check.
+				l.applyScaling(ctx, int(activeWorkers.Load()), spawnWorker)
+			case <-l.scaleRequests:
+				l.applyScaling(ctx, int(activeWorkers.Load()), spawnWorker)
+			case <-scaleWake:
+				scaleWake = l.nextScaleWake()
+				l.applyScaling(ctx, int(activeWorkers.Load()), spawnWorker)
 			}
 		}
 	}()
@@ -180,7 +178,37 @@ func (l *Loop) Run(ctx context.Context) error {
 	return nil
 }
 
-// evaluateScaling computes the new target worker count based on queue depth.
+func (l *Loop) applyScaling(ctx context.Context, active int, spawnWorker func()) {
+	newTarget := l.evaluateScaling(ctx, active)
+	oldTarget := int(l.targetWorkers.Swap(int32(newTarget)))
+	// Spawn workers for any growth in target.
+	// Use the delta between old and new target, not activeWorkers,
+	// because self-exiting workers decrement activeWorkers asynchronously.
+	delta := newTarget - oldTarget
+	for i := 0; i < delta; i++ {
+		spawnWorker()
+	}
+	// Scale-down: existing goroutines self-exit on next iteration check.
+}
+
+func (l *Loop) nextScaleWake() <-chan struct{} {
+	if !l.idleReserveEnabled() || l.notifier == nil {
+		return nil
+	}
+	return l.notifier.Wake()
+}
+
+func (l *Loop) requestScaling() {
+	if !l.idleReserveEnabled() {
+		return
+	}
+	select {
+	case l.scaleRequests <- struct{}{}:
+	default:
+	}
+}
+
+// evaluateScaling computes the new target worker count from queue stats.
 // mu protects scaleCooldown to prevent concurrent scale decisions.
 func (l *Loop) evaluateScaling(ctx context.Context, active int) int {
 	current := int(l.targetWorkers.Load())
@@ -192,6 +220,14 @@ func (l *Loop) evaluateScaling(ctx context.Context, active int) int {
 	if err != nil {
 		l.logger.Error("queue stats query failed", "error", err.Error())
 		return current
+	}
+
+	if l.idleReserveEnabled() {
+		next := clampWorkerTarget(stats.InFlight+l.config.IdleReserveWorkers, l.config.MinConcurrency, l.config.MaxConcurrency)
+		if next != current {
+			logWorkerScale(l.logger, current, next, stats, l.config.IdleReserveWorkers)
+		}
+		return next
 	}
 
 	now := time.Now()
@@ -232,6 +268,35 @@ func (l *Loop) evaluateScaling(ctx context.Context, active int) int {
 	}
 
 	return current
+}
+
+func (l *Loop) idleReserveEnabled() bool {
+	return l.config.IdleReserveWorkers > 0
+}
+
+func clampWorkerTarget(target, minWorkers, maxWorkers int) int {
+	if target < minWorkers {
+		return minWorkers
+	}
+	if target > maxWorkers {
+		return maxWorkers
+	}
+	return target
+}
+
+func logWorkerScale(logger *slog.Logger, from, to int, stats queue.QueueStats, idleReserve int) {
+	message := "scaling up workers"
+	if to < from {
+		message = "scaling down workers"
+	}
+	logger.Info(message,
+		"from", from,
+		"to", to,
+		"ready_depth", stats.ReadyDepth,
+		"in_flight", stats.InFlight,
+		"idle_reserve", idleReserve,
+		"oldest_ready_age", stats.OldestReadyAge,
+	)
 }
 
 func (l *Loop) gatherQueueStats(ctx context.Context, active int) (queue.QueueStats, error) {
@@ -289,7 +354,9 @@ func (l *Loop) RunOnce(ctx context.Context) (bool, error) {
 		return false, nil
 	}
 
+	l.requestScaling()
 	l.processLease(ctx, *lease)
+	l.requestScaling()
 	return true, nil
 }
 

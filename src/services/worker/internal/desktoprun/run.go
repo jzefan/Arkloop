@@ -112,19 +112,7 @@ func RunDesktop(ctx context.Context) error {
 		cq,
 		handler,
 		consumer.NewLocalRunLocker(),
-		consumer.Config{
-			Concurrency:        concurrency,
-			PollSeconds:        cfg.PollSeconds,
-			LeaseSeconds:       cfg.LeaseSeconds,
-			HeartbeatSeconds:   cfg.HeartbeatSeconds,
-			QueueJobTypes:      cfg.QueueJobTypes,
-			MinConcurrency:     2,
-			MaxConcurrency:     desktopWorkerConcurrencyHardMax,
-			ScaleUpThreshold:   3,
-			ScaleDownThreshold: 1,
-			ScaleIntervalSecs:  5,
-			ScaleCooldownSecs:  30,
-		},
+		desktopConsumerConfig(cfg, concurrency),
 		logger,
 		notifier,
 	)
@@ -141,6 +129,24 @@ func RunDesktop(ctx context.Context) error {
 }
 
 const desktopWorkerConcurrencyHardMax = 32
+const desktopIdleReserveWorkers = 2
+
+func desktopConsumerConfig(cfg app.Config, concurrency int) consumer.Config {
+	return consumer.Config{
+		Concurrency:        concurrency,
+		PollSeconds:        cfg.PollSeconds,
+		LeaseSeconds:       cfg.LeaseSeconds,
+		HeartbeatSeconds:   cfg.HeartbeatSeconds,
+		QueueJobTypes:      cfg.QueueJobTypes,
+		MinConcurrency:     2,
+		MaxConcurrency:     desktopWorkerConcurrencyHardMax,
+		ScaleUpThreshold:   3,
+		ScaleDownThreshold: 1,
+		ScaleIntervalSecs:  5,
+		ScaleCooldownSecs:  30,
+		IdleReserveWorkers: desktopIdleReserveWorkers,
+	}
+}
 
 // desktopWorkerConcurrency 默认 2，可通过 ARKLOOP_DESKTOP_WORKER_CONCURRENCY 调整（上限 32）。
 func desktopWorkerConcurrency() int {
