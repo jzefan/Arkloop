@@ -10,23 +10,17 @@ const ToolName = "exit_plan_mode"
 var AgentSpec = tools.AgentToolSpec{
 	Name:        ToolName,
 	Version:     "1",
-	Description: "退出 Plan Mode 并将最终 plan 写入 workspace。仅在已向用户呈现 plan 并获得确认后调用。",
+	Description: "退出 Plan Mode。当前 thread 的 plan 文件保持为最终方案草稿。",
 	RiskLevel:   tools.RiskLevelLow,
 	SideEffects: true,
 }
 
 var LlmSpec = llm.ToolSpec{
 	Name:        ToolName,
-	Description: strPtr("退出 Plan Mode。将 plan 内容写入 workspace 的 plan 文件并恢复写工具。plan 参数为最终 plan 的 markdown 内容。"),
+	Description: strPtr("退出 Plan Mode。调用前应已将当前方案维护在本 thread 的 plan 文件中。"),
 	JSONSchema: map[string]any{
-		"type": "object",
-		"properties": map[string]any{
-			"plan": map[string]any{
-				"type":        "string",
-				"description": "最终 plan 内容（markdown），将被写入 workspace 的 plan 文件。",
-			},
-		},
-		"required":             []string{"plan"},
+		"type":                 "object",
+		"properties":           map[string]any{},
 		"additionalProperties": false,
 	},
 }

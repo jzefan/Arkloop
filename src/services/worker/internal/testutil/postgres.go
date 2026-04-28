@@ -255,6 +255,7 @@ func initRunsSchema(t *testing.T, dsn string) error {
 			created_by_user_id UUID        NULL,
 			project_id         UUID        NULL,
 			is_private         BOOLEAN     NOT NULL DEFAULT FALSE,
+			plan_mode          BOOLEAN     NOT NULL DEFAULT FALSE,
 			expires_at         TIMESTAMPTZ NULL,
 			deleted_at         TIMESTAMPTZ NULL,
 			next_message_seq   BIGINT      NOT NULL DEFAULT 1,

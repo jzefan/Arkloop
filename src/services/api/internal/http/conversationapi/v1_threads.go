@@ -25,11 +25,13 @@ type createThreadRequest struct {
 	Title     *string      `json:"title"`
 	IsPrivate bool         `json:"is_private"`
 	ProjectID optionalUUID `json:"project_id"`
+	PlanMode  *bool        `json:"plan_mode"`
 }
 
 type updateThreadRequest struct {
 	Title     optionalString `json:"title"`
 	ProjectID optionalUUID   `json:"project_id"`
+	PlanMode  optionalBool   `json:"plan_mode"`
 }
 
 type threadResponse struct {
@@ -42,6 +44,7 @@ type threadResponse struct {
 	UpdatedAt       string  `json:"updated_at"`
 	ActiveRunID     *string `json:"active_run_id"`
 	IsPrivate       bool    `json:"is_private"`
+	PlanMode        bool    `json:"plan_mode"`
 	ParentThreadID  *string `json:"parent_thread_id,omitempty"`
 }
 
@@ -70,8 +73,18 @@ type optionalUUID struct {
 	Value   *uuid.UUID
 }
 
+type optionalBool struct {
+	Present bool
+	Value   bool
+}
+
 func isTitleOnlyThreadUpdate(body updateThreadRequest) bool {
-	return body.Title.Present && !body.ProjectID.Present
+	return body.Title.Present && !body.ProjectID.Present && !body.PlanMode.Present
+}
+
+func (b *optionalBool) UnmarshalJSON(raw []byte) error {
+	b.Present = true
+	return json.Unmarshal(raw, &b.Value)
 }
 
 func (u *optionalUUID) UnmarshalJSON(raw []byte) error {
@@ -188,6 +201,19 @@ func createThread(
 		if err != nil {
 			writeInternalError(w, traceID, err)
 			return
+		}
+		if body.PlanMode != nil {
+			updated, err := txThreadRepo.UpdateFields(r.Context(), thread.ID, data.ThreadUpdateFields{
+				SetPlanMode: true,
+				PlanMode:    *body.PlanMode,
+			})
+			if err != nil {
+				writeInternalError(w, traceID, err)
+				return
+			}
+			if updated != nil {
+				thread = *updated
+			}
 		}
 		if err := tx.Commit(r.Context()); err != nil {
 			writeInternalError(w, traceID, err)
@@ -338,7 +364,7 @@ func patchThread(
 			httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "request validation failed", traceID, nil)
 			return
 		}
-		if !body.Title.Present && !body.ProjectID.Present {
+		if !body.Title.Present && !body.ProjectID.Present && !body.PlanMode.Present {
 			httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "request validation failed", traceID, nil)
 			return
 		}
@@ -358,6 +384,8 @@ func patchThread(
 			TitleLocked:    body.Title.Present,
 			SetProjectID:   body.ProjectID.Present,
 			ProjectID:      body.ProjectID.Value,
+			SetPlanMode:    body.PlanMode.Present,
+			PlanMode:       body.PlanMode.Value,
 		}
 
 		if isTitleOnlyThreadUpdate(body) {
@@ -992,6 +1020,7 @@ func toThreadResponse(thread data.Thread) threadResponse {
 		UpdatedAt:       thread.UpdatedAt.UTC().Format(time.RFC3339Nano),
 		ActiveRunID:     nil,
 		IsPrivate:       thread.IsPrivate,
+		PlanMode:        thread.PlanMode,
 		ParentThreadID:  parentThreadID,
 	}
 }
