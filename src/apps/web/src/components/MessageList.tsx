@@ -8,7 +8,7 @@ import { IncognitoDivider } from './IncognitoDivider'
 import { useLocale } from '../contexts/LocaleContext'
 import { useChatSession } from '../contexts/chat-session'
 import { useRunLifecycle } from '../contexts/run-lifecycle'
-import { useMessageStore } from '../contexts/message-store'
+import { isLocalTerminalMessage, useMessageStore } from '../contexts/message-store'
 import { useMessageMeta } from '../contexts/message-meta'
 import { useStream } from '../contexts/stream'
 import { usePanels } from '../contexts/panels'
@@ -169,6 +169,7 @@ export const MessageList = memo(function MessageList({
   const renderMessage = (msg: import('../api').MessageResponse, idx: number) => {
     const hideTerminalRunMessage =
       msg.role === 'assistant' &&
+      !isLocalTerminalMessage(msg) &&
       (
         (hasCurrentRunHandoffUi && terminalRunDisplayId != null && msg.run_id === terminalRunDisplayId) ||
         (msg.run_id != null && coveredRunIdsForHistory.has(msg.run_id))

@@ -1831,6 +1831,15 @@ describe('ChatPage loading state', () => {
         created_at: '2026-03-10T00:00:00Z',
       },
     ])
+    mockedCreateMessage.mockResolvedValue({
+      id: 'msg-created',
+      role: 'user',
+      content: 'send immediately',
+      account_id: 'acc-1',
+      thread_id: 'thread-1',
+      created_by_user_id: 'user-1',
+      created_at: '2026-03-10T00:00:02Z',
+    })
     sseMock.state = 'connected'
 
     const container = document.createElement('div')
@@ -1957,6 +1966,132 @@ describe('ChatPage loading state', () => {
       undefined,
       { resumeFromRunId: 'run-active' },
     )
+
+    act(() => {
+      root.unmount()
+    })
+    container.remove()
+  })
+
+  it('send now 应先固化 cancelled partial assistant 再启动新 run', async () => {
+    const userMessage = {
+      id: 'msg-1',
+      role: 'user' as const,
+      content: 'hello',
+      account_id: 'acc-1',
+      thread_id: 'thread-1',
+      created_by_user_id: 'user-1',
+      created_at: '2026-03-10T00:00:00Z',
+    }
+    mockedListMessages.mockResolvedValue([userMessage])
+    mockedListThreadRuns.mockResolvedValue([
+      {
+        run_id: 'run-active',
+        status: 'running',
+        created_at: '2026-03-10T00:00:00Z',
+      },
+    ])
+    mockedCreateMessage.mockResolvedValue({
+      id: 'msg-created',
+      role: 'user',
+      content: 'send immediately',
+      account_id: 'acc-1',
+      thread_id: 'thread-1',
+      created_by_user_id: 'user-1',
+      created_at: '2026-03-10T00:00:02Z',
+    })
+    sseMock.state = 'connected'
+
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const root = createRoot(container)
+    const outletContext = buildOutletContext()
+
+    const renderTree = () => (
+      <LocaleProvider>
+        <MemoryRouter initialEntries={['/t/thread-1']}>
+          <Routes>
+            <Route element={<OutletShell context={outletContext} />}>
+              <Route path="/t/:threadId" element={<ChatPage />} />
+            </Route>
+          </Routes>
+        </MemoryRouter>
+      </LocaleProvider>
+    )
+
+    await act(async () => {
+      root.render(renderTree())
+      await flushMicrotasks()
+    })
+
+    const input = container.querySelector('input[aria-label="chat-input"]') as HTMLInputElement | null
+    const form = container.querySelector('form')
+    if (!input || !form) {
+      throw new Error('chat input mock not rendered')
+    }
+    await act(async () => {
+      const valueSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set
+      valueSetter?.call(input, 'send immediately')
+      input.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    await act(async () => {
+      form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
+      await flushMicrotasks()
+    })
+
+    const sendNowButton = container.querySelector('button[aria-label="Send queued prompt now"]') as HTMLButtonElement | null
+    if (!sendNowButton) {
+      throw new Error('send queued prompt now button not rendered')
+    }
+    await act(async () => {
+      sendNowButton.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      await flushMicrotasks()
+    })
+
+    sseMock.events = [
+      {
+        event_id: 'evt-delta',
+        run_id: 'run-active',
+        seq: 1,
+        ts: '2026-03-10T00:00:00Z',
+        type: 'message.delta',
+        data: {
+          role: 'assistant',
+          content_delta: '半截回复',
+        },
+      },
+      {
+        event_id: 'evt-cancelled',
+        run_id: 'run-active',
+        seq: 2,
+        ts: '2026-03-10T00:00:01Z',
+        type: 'run.cancelled',
+        data: {},
+      },
+    ]
+    await act(async () => {
+      root.render(renderTree())
+      await flushMicrotasks()
+      await flushMicrotasks()
+    })
+
+    expect(mockedCreateMessage).toHaveBeenCalledWith(
+      'token',
+      'thread-1',
+      expect.objectContaining({ content: 'send immediately' }),
+    )
+    expect(mockedCreateRun).toHaveBeenLastCalledWith(
+      'token',
+      'thread-1',
+      'default',
+      undefined,
+      undefined,
+      undefined,
+      { resumeFromRunId: 'run-active' },
+    )
+    expect(container.textContent).toContain('半截回复')
+    expect(container.textContent).toContain('send immediately')
+    expect(countMatches(container.textContent ?? '', '半截回复')).toBe(1)
 
     act(() => {
       root.unmount()
@@ -2995,7 +3130,7 @@ describe('ChatPage loading state', () => {
     container.remove()
   })
 
-  it('run.interrupted 后当前 run 应继续保留 handoff 结构而不是落入 compact summary', async () => {
+  it('run.interrupted 后应固化为历史 assistant turn 而不是落入 compact summary', async () => {
     mockedListMessages
       .mockResolvedValueOnce([
         {
@@ -3178,7 +3313,7 @@ describe('ChatPage loading state', () => {
     const text = container.textContent ?? ''
     expect(text).toContain('我要先')
     expect(text).toContain('再继续')
-    expect(container.querySelector('[data-testid="current-run-handoff"]')).not.toBeNull()
+    expect(container.querySelector('[data-testid="current-run-handoff"]')).toBeNull()
     expect(text).not.toContain('2 steps completed')
     expect(text.indexOf('我要先')).toBeGreaterThanOrEqual(0)
     expect(text.indexOf('pwd')).toBeGreaterThan(text.indexOf('我要先'))
@@ -3315,7 +3450,7 @@ describe('ChatPage loading state', () => {
     container.remove()
   })
 
-  it('run.cancelled 后应保留 handoff 的展开态与 thinking，并写入 assistant turn 持久化', async () => {
+  it('run.cancelled 后应固化展开态与 thinking，并写入 assistant turn 持久化', async () => {
     mockedListMessages
       .mockResolvedValueOnce([
         {
@@ -3541,7 +3676,7 @@ describe('ChatPage loading state', () => {
     })
 
     const text = container.textContent ?? ''
-    expect(container.querySelector('[data-testid="current-run-handoff"]')).not.toBeNull()
+    expect(container.querySelector('[data-testid="current-run-handoff"]')).toBeNull()
     expect(text).toContain('Thought')
     expect(text).toContain('thinking:先想一下')
     expect(text).toContain('我要先')
@@ -3796,7 +3931,7 @@ describe('ChatPage loading state', () => {
     secondContainer.remove()
   })
 
-  it('run.cancelled 落入历史消息后不应默认保留展开态', async () => {
+  it('run.cancelled 固化为历史消息后不应继续占用 current handoff', async () => {
     mockedListMessages
       .mockResolvedValueOnce([
         {
@@ -3910,7 +4045,7 @@ describe('ChatPage loading state', () => {
       await flushMicrotasks()
     })
 
-    expect(container.querySelector('[data-testid="current-run-handoff"]')).not.toBeNull()
+    expect(container.querySelector('[data-testid="current-run-handoff"]')).toBeNull()
     expect(container.textContent).toContain('thinking:先想一下')
 
     sseMock.state = 'idle'
@@ -3922,9 +4057,8 @@ describe('ChatPage loading state', () => {
       await flushMicrotasks()
     })
 
-    expect(container.querySelector('[data-testid="current-run-handoff"]')).not.toBeNull()
-    const handoffEl = container.querySelector('[data-testid="current-run-handoff"]') as HTMLElement
-    expect(handoffEl.textContent).toContain('thinking:先想一下')
+    expect(container.querySelector('[data-testid="current-run-handoff"]')).toBeNull()
+    expect(container.textContent).toContain('thinking:先想一下')
 
     act(() => {
       root.unmount()
@@ -4276,7 +4410,7 @@ describe('ChatPage loading state', () => {
     container.remove()
   })
 
-  it('run.cancelled 的 handoff 会在下一次 run 创建后立即清掉', async () => {
+  it('run.cancelled 的历史输出不会在下一次 run 创建后丢失', async () => {
     mockedListThreadRuns.mockResolvedValue([
       {
         run_id: 'run-cancel-next',
@@ -4384,7 +4518,7 @@ describe('ChatPage loading state', () => {
       await flushMicrotasks()
     })
 
-    expect(container.querySelector('[data-testid="current-run-handoff"]')).not.toBeNull()
+    expect(container.querySelector('[data-testid="current-run-handoff"]')).toBeNull()
     expect(container.textContent).toContain('先想一下')
 
     mockedListMessages.mockResolvedValue([
@@ -4535,7 +4669,7 @@ describe('ChatPage loading state', () => {
     container.remove()
   })
 
-  it('run.completed handoff 不应继续把最后一个 cop 当作 live', async () => {
+  it('run.completed 历史输出不应继续把最后一个 cop 当作 live', async () => {
     let resolveRefresh: ((value: Awaited<ReturnType<typeof listMessages>>) => void) | null = null
     mockedListMessages
       .mockResolvedValueOnce([
@@ -4632,7 +4766,7 @@ describe('ChatPage loading state', () => {
       await flushMicrotasks()
     })
 
-    expect(container.querySelector('[data-testid="current-run-handoff"]')).not.toBeNull()
+    expect(container.querySelector('[data-testid="current-run-handoff"]')).toBeNull()
     expect(container.querySelector('[data-live="true"]')).toBeNull()
     expect(container.querySelector('[data-live="false"]')).not.toBeNull()
 
