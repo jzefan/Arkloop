@@ -54,7 +54,7 @@ import { noteShowWidgetDelta } from '../streamDebug'
 
 type UseThreadSseEffectDeps = {
   drainQueuedPromptRef: RefObject<(() => void) | null>
-  drainForcedQueuedPromptRef: RefObject<(() => boolean) | null>
+  drainForcedQueuedPromptRef: RefObject<((terminal: { runId: string; status: 'completed' | 'cancelled' | 'failed' | 'interrupted' }) => boolean) | null>
 }
 
 export function useThreadSseEffect({
@@ -769,7 +769,9 @@ export function useThreadSseEffect({
               markTerminalRunHistory(completedAssistant.id, false)
               releaseCompletedHandoffToHistory()
             }
-            drainQueuedPromptRef.current?.()
+            if (!drainForcedQueuedPromptRef.current?.({ runId: completedRunId, status: 'completed' })) {
+              drainQueuedPromptRef.current?.()
+            }
           })
           .catch((err) => console.error('persist run data failed', err))
         continue
@@ -816,7 +818,7 @@ export function useThreadSseEffect({
                 persistRunDataToMessage(assistant.id, runCache, runEventsForMessage)
                 markTerminalRunHistory(assistant.id, false)
               }
-              drainForcedQueuedPromptRef.current?.()
+              drainForcedQueuedPromptRef.current?.({ runId, status: 'cancelled' })
             })
             .catch((err) => console.error('persist run data failed', err))
         }
@@ -870,7 +872,7 @@ export function useThreadSseEffect({
               if (assistant) {
                 persistRunDataToMessage(assistant.id, runCache, runEventsForMessage)
               }
-              drainForcedQueuedPromptRef.current?.()
+              drainForcedQueuedPromptRef.current?.({ runId, status: 'failed' })
             })
             .catch((err) => console.error('persist run data failed', err))
         }
@@ -920,7 +922,7 @@ export function useThreadSseEffect({
               if (assistant) {
                 persistRunDataToMessage(assistant.id, runCache, runEventsForMessage)
               }
-              drainForcedQueuedPromptRef.current?.()
+              drainForcedQueuedPromptRef.current?.({ runId: runId!, status: 'interrupted' })
             })
             .catch((err) => console.error('persist run data failed', err))
         }

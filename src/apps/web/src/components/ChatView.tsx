@@ -924,8 +924,8 @@ export const ChatView = memo(function ChatView() {
     resetSearchStepsState()
   }, [resetSearchStepsState])
   const drainQueuedPromptRef = useRef<(() => void) | null>(null)
-  const drainForcedQueuedPromptRef = useRef<(() => boolean) | null>(null)
-  const forcedQueuedPromptRef = useRef<QueuedPrompt | null>(null)
+  const drainForcedQueuedPromptRef = useRef<((terminal: { runId: string; status: 'completed' | 'cancelled' | 'failed' | 'interrupted' }) => boolean) | null>(null)
+  const forcedQueuedPromptRef = useRef<{ prompt: QueuedPrompt; resumeFromRunId: string } | null>(null)
   const queuedPromptsRef = useRef<QueuedPrompt[]>(queuedPrompts)
   queuedPromptsRef.current = queuedPrompts
   const [editingQueuedPromptId, setEditingQueuedPromptId] = useState<string | null>(null)
@@ -1757,7 +1757,7 @@ export const ChatView = memo(function ChatView() {
     }
   }, [editingQueuedPromptId, setQueuedPrompts])
 
-  const runQueuedPrompt = useCallback(async (prompt: QueuedPrompt) => {
+  const runQueuedPrompt = useCallback(async (prompt: QueuedPrompt, options?: { resumeFromRunId?: string }) => {
     if (!threadId) return
     const hint = chooseThinkingHint(t.copThinkingHints)
     setSending(true)
@@ -1779,6 +1779,7 @@ export const ChatView = memo(function ChatView() {
         prompt.modelOverride,
         prompt.workDir,
         prompt.reasoningMode,
+        { resumeFromRunId: options?.resumeFromRunId },
       )
       writeRunThinkingHint(run.run_id, hint)
       if (prompt.personaKey === SEARCH_PERSONA_KEY) addSearchThreadId(threadId)
@@ -1818,19 +1819,21 @@ export const ChatView = memo(function ChatView() {
   ])
 
   const drainNextQueuedPrompt = useCallback(() => {
-    if (drainForcedQueuedPromptRef.current?.()) return
     const next = queuedPromptsRef.current[0]
     if (!next) return
     setQueuedPrompts((prev) => prev.filter((item) => item.id !== next.id))
     void runQueuedPrompt(next)
   }, [runQueuedPrompt, setQueuedPrompts])
 
-  const drainForcedQueuedPrompt = useCallback(() => {
+  const drainForcedQueuedPrompt = useCallback((terminal: { runId: string; status: 'completed' | 'cancelled' | 'failed' | 'interrupted' }) => {
     const next = forcedQueuedPromptRef.current
     if (!next) return false
+    if (next.resumeFromRunId !== terminal.runId) return false
     forcedQueuedPromptRef.current = null
-    setQueuedPrompts((prev) => prev.filter((item) => item.id !== next.id))
-    void runQueuedPrompt(next)
+    setQueuedPrompts((prev) => prev.filter((item) => item.id !== next.prompt.id))
+    void runQueuedPrompt(next.prompt, {
+      resumeFromRunId: isInterruptedRunStatus(terminal.status) ? next.resumeFromRunId : undefined,
+    })
     return true
   }, [runQueuedPrompt, setQueuedPrompts])
 
@@ -1893,7 +1896,7 @@ export const ChatView = memo(function ChatView() {
     }
     if (cancelSubmitting) return
 
-    forcedQueuedPromptRef.current = item
+    forcedQueuedPromptRef.current = { prompt: item, resumeFromRunId: activeRunId }
     const cancelBoundary = Math.max(0, lastVisibleNonTerminalSeqRef.current)
     freezeCutoffRef.current = cancelBoundary
     noResponseMsgIdRef.current = null

@@ -869,6 +869,10 @@ export type RunReasoningMode =
   | 'max'
   | 'xhigh'
 
+export type CreateRunOptions = {
+  resumeFromRunId?: string | null
+}
+
 export async function createRun(
   accessToken: string,
   threadId: string,
@@ -876,8 +880,10 @@ export async function createRun(
   modelOverride?: string,
   workDir?: string,
   reasoningMode?: RunReasoningMode,
+  options?: CreateRunOptions,
 ): Promise<CreateRunResponse> {
-  const hasBody = personaId || modelOverride || workDir || reasoningMode
+  const resumeFromRunId = options?.resumeFromRunId?.trim()
+  const hasBody = personaId || modelOverride || workDir || reasoningMode || resumeFromRunId
   return await apiFetch<CreateRunResponse>(`/v1/threads/${threadId}/runs`, {
     method: 'POST',
     accessToken,
@@ -887,6 +893,7 @@ export async function createRun(
           ...(modelOverride ? { model: modelOverride } : {}),
           ...(workDir ? { work_dir: workDir } : {}),
           ...(reasoningMode ? { reasoning_mode: reasoningMode } : {}),
+          ...(resumeFromRunId ? { resume_from_run_id: resumeFromRunId } : {}),
         })
       : undefined,
   })
