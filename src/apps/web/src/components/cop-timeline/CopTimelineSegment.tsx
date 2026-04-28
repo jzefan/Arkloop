@@ -17,7 +17,6 @@ import { timelineStepDisplayLabel } from './types'
 import { SourceListCard } from './SourceList'
 import { QueryPill } from './utils'
 
-const EXPLORE_PREVIEW_COUNT = 2
 const EXPLORE_BOTTOM_PAD = 10
 
 export function CopTimelineSegment({
@@ -50,41 +49,21 @@ export function CopTimelineSegment({
   const [hovered, setHovered] = useState(false)
   const [viewportAnimating, setViewportAnimating] = useState(false)
   const contentRef = useRef<HTMLDivElement | null>(null)
-  const itemRefs = useRef(new Map<string, HTMLDivElement>())
 
   // Sync expanded state when defaultExpanded prop changes (e.g. new segment appears)
   useEffect(() => {
     setExpanded(defaultExpanded)
   }, [defaultExpanded])
 
-  const isExplore = segment.category === 'explore'
   const isOpen = segment.status === 'open'
-  const showPreview = isExplore && isOpen && expanded
-  const itemCount = segment.items.length
-
-  const [metrics, setMetrics] = useState({ fullHeight: 0, previewHeight: 0, previewOffset: 0 })
+  const [contentHeight, setContentHeight] = useState(0)
 
   const measure = useCallback(() => {
     const el = contentRef.current
     if (!el) return
-    const fullHeight = el.scrollHeight
-    let previewHeight = fullHeight
-    let previewOffset = 0
-    if (showPreview) {
-      const previewCount = Math.min(EXPLORE_PREVIEW_COUNT, itemCount)
-      if (previewCount > 0) {
-        const firstPreview = segment.items.at(-previewCount)
-        const firstNode = firstPreview ? itemRefs.current.get(firstPreviewTypeId(firstPreview)) : undefined
-        previewOffset = firstNode ? firstNode.offsetTop : 0
-        previewHeight = Math.max(0, fullHeight - previewOffset)
-      }
-    }
-    setMetrics((prev) =>
-      prev.fullHeight === fullHeight && prev.previewHeight === previewHeight && prev.previewOffset === previewOffset
-        ? prev
-        : { fullHeight, previewHeight, previewOffset },
-    )
-  }, [showPreview, itemCount, segment.items])
+    const nextHeight = el.scrollHeight
+    setContentHeight((prev) => prev === nextHeight ? prev : nextHeight)
+  }, [])
 
   useLayoutEffect(() => { measure() }, [measure])
 
@@ -97,17 +76,11 @@ export function CopTimelineSegment({
     return () => ro.disconnect()
   }, [measure])
 
-  const displayMode: 'full' | 'preview' | 'closed' =
-    !expanded ? 'closed' : showPreview ? 'preview' : 'full'
+  const displayMode: 'full' | 'closed' = expanded ? 'full' : 'closed'
 
-  const viewportHeight = displayMode === 'full'
-    ? metrics.fullHeight
-    : displayMode === 'preview'
-      ? metrics.previewHeight
-      : 0
+  const viewportHeight = displayMode === 'full' ? contentHeight : 0
 
   const viewportTargetHeight = displayMode === 'full' && !viewportAnimating ? 'auto' : viewportHeight
-  const contentY = displayMode === 'preview' ? -metrics.previewOffset : 0
   const viewportTransition = reduceMotion
     ? { duration: 0 }
     : { duration: 0.24, ease: [0.4, 0, 0.2, 1] as const }
@@ -235,8 +208,6 @@ export function CopTimelineSegment({
         <motion.div
           ref={contentRef}
           initial={false}
-          animate={{ y: contentY }}
-          transition={viewportTransition}
           style={{
             position: 'relative',
             paddingTop: 6,
@@ -257,11 +228,6 @@ export function CopTimelineSegment({
               {segment.items.map((item) => (
                 <div
                   key={itemTypeId(item)}
-                  ref={(node) => {
-                    const id = itemTypeId(item)
-                    if (node) itemRefs.current.set(id, node)
-                    else itemRefs.current.delete(id)
-                  }}
                   style={{ position: 'relative', padding: '3px 0' }}
                 >
                   {renderItem(item, pool, isLive, onOpenCodeExecution, activeCodeExecutionId, onOpenSubAgent, accessToken, baseUrl)}
@@ -272,11 +238,6 @@ export function CopTimelineSegment({
             segment.items.map((item, index) => (
               <div
                 key={itemTypeId(item)}
-                ref={(node) => {
-                  const id = itemTypeId(item)
-                  if (node) itemRefs.current.set(id, node)
-                  else itemRefs.current.delete(id)
-                }}
                 style={{ position: 'relative' }}
               >
                 {editOnly ? (
@@ -306,10 +267,6 @@ export function CopTimelineSegment({
 function itemTypeId(item: CopSubSegment['items'][number]): string {
   if (item.kind === 'call') return item.call.toolCallId
   return `${item.kind}-${item.seq}`
-}
-
-function firstPreviewTypeId(item: CopSubSegment['items'][number]): string {
-  return itemTypeId(item)
 }
 
 function itemDotColor(item: CopSubSegment['items'][number]): string {
