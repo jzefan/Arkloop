@@ -192,7 +192,7 @@ func toAnthropicMessagesWithPlan(messages []Message, plan *PromptPlan) ([]map[st
 					"type":  "tool_use",
 					"id":    call.ToolCallID,
 					"name":  call.ToolName,
-					"input": mapOrEmpty(call.ArgumentsJSON),
+					"input": toolCallArgumentsForModel(call),
 				})
 			}
 			lastToolUseAssistantIdx = len(out)

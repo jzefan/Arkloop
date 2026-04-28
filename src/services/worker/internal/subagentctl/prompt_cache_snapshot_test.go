@@ -43,3 +43,22 @@ func TestClonePromptCacheSnapshotPreservesEmptySchemaObjects(t *testing.T) {
 		}
 	}
 }
+
+func TestClonePromptCacheSnapshotPreservesToolCallDisplayDescription(t *testing.T) {
+	src := &PromptCacheSnapshot{
+		BaseMessages: []llm.Message{{
+			Role: "assistant",
+			ToolCalls: []llm.ToolCall{{
+				ToolCallID:         "call_1",
+				ToolName:           "exec_command",
+				ArgumentsJSON:      map[string]any{"command": "git status"},
+				DisplayDescription: "Checking status",
+			}},
+		}},
+	}
+
+	cloned := ClonePromptCacheSnapshot(src)
+	if got := cloned.BaseMessages[0].ToolCalls[0].DisplayDescription; got != "Checking status" {
+		t.Fatalf("expected display description to survive clone, got %q", got)
+	}
+}

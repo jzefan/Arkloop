@@ -42,6 +42,23 @@ func CanonicalToolCall(call ToolCall) ToolCall {
 	return call
 }
 
+func toolCallArgumentsForModel(call ToolCall) map[string]any {
+	args := make(map[string]any, len(call.ArgumentsJSON)+1)
+	for key, value := range call.ArgumentsJSON {
+		if key == "display_description" {
+			if s, ok := value.(string); ok && strings.TrimSpace(s) != "" {
+				args[key] = strings.TrimSpace(s)
+			}
+			continue
+		}
+		args[key] = value
+	}
+	if displayDescription := strings.TrimSpace(call.DisplayDescription); displayDescription != "" {
+		args["display_description"] = displayDescription
+	}
+	return args
+}
+
 func CanonicalToolCalls(calls []ToolCall) []ToolCall {
 	if len(calls) == 0 {
 		return nil

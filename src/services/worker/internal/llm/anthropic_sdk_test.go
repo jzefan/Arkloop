@@ -214,6 +214,29 @@ func TestAnthropicSDKGateway_ReplaysRecoveredThinkingSignature(t *testing.T) {
 	}
 }
 
+func TestAnthropicHistoryPreservesDisplayDescriptionInToolArguments(t *testing.T) {
+	_, messages, err := toAnthropicMessagesWithPlan([]Message{{
+		Role: "assistant",
+		ToolCalls: []ToolCall{{
+			ToolCallID:         "call_1",
+			ToolName:           "exec_command",
+			ArgumentsJSON:      map[string]any{"command": "git status"},
+			DisplayDescription: "Checking status",
+		}},
+	}, {
+		Role:    "tool",
+		Content: []ContentPart{{Text: `{"tool_call_id":"call_1","tool_name":"exec_command","result":{"ok":true}}`}},
+	}}, nil)
+	if err != nil {
+		t.Fatalf("toAnthropicMessagesWithPlan: %v", err)
+	}
+	content := messages[0]["content"].([]map[string]any)
+	input := content[0]["input"].(map[string]any)
+	if input["display_description"] != "Checking status" {
+		t.Fatalf("anthropic input lost display_description: %#v", input)
+	}
+}
+
 func TestAnthropicSDKGateway_ReplaysUnsignedThinkingViaRawMessages(t *testing.T) {
 	_, messages, err := toAnthropicMessagesWithPlan([]Message{{
 		Role: "assistant",

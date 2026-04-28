@@ -77,7 +77,12 @@ func TestGeminiSDKGateway_StreamRequestAndEvents(t *testing.T) {
 }
 
 func TestGeminiSDKGateway_ReplaysToolCallID(t *testing.T) {
-	call := ToolCall{ToolCallID: "call_123", ToolName: "echo", ArgumentsJSON: map[string]any{"text": "hi"}}
+	call := ToolCall{
+		ToolCallID:         "call_123",
+		ToolName:           "exec_command",
+		ArgumentsJSON:      map[string]any{"command": "git status"},
+		DisplayDescription: "Checking status",
+	}
 	result := Message{Role: "tool", Content: []ContentPart{{Text: `{"tool_call_id":"call_123","tool_name":"echo","result":{"ok":true}}`}}}
 	_, contents, err := toGeminiContents([]Message{{Role: "assistant", ToolCalls: []ToolCall{call}}, result})
 	if err != nil {
@@ -96,6 +101,9 @@ func TestGeminiSDKGateway_ReplaysToolCallID(t *testing.T) {
 	}
 	if got := assistant.Parts[0].FunctionCall.ID; got != "call_123" {
 		t.Fatalf("function call id lost: %q", got)
+	}
+	if got := assistant.Parts[0].FunctionCall.Args["display_description"]; got != "Checking status" {
+		t.Fatalf("gemini args lost display_description: %#v", assistant.Parts[0].FunctionCall.Args)
 	}
 	if got := toolResult.Parts[0].FunctionResponse.ID; got != "call_123" {
 		t.Fatalf("function response id lost: %q", got)

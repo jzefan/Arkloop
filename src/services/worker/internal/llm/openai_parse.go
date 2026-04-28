@@ -197,7 +197,7 @@ func toOpenAIResponsesAssistantItems(message Message, index int) ([]map[string]a
 	}
 	for callIndex, call := range message.ToolCalls {
 		call = CanonicalToolCall(call)
-		argumentsJSON, err := stablejson.Encode(mapOrEmpty(call.ArgumentsJSON))
+		argumentsJSON, err := stablejson.Encode(toolCallArgumentsForModel(call))
 		if err != nil {
 			argumentsJSON = "{}"
 		}
@@ -332,7 +332,7 @@ func toOpenAIAssistantToolCalls(calls []ToolCall) []map[string]any {
 	out := make([]map[string]any, 0, len(calls))
 	for _, call := range calls {
 		call = CanonicalToolCall(call)
-		argumentsJSON, err := stablejson.Encode(mapOrEmpty(call.ArgumentsJSON))
+		argumentsJSON, err := stablejson.Encode(toolCallArgumentsForModel(call))
 		if err != nil {
 			argumentsJSON = "{}"
 		}

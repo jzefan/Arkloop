@@ -141,7 +141,7 @@ func toGeminiContents(messages []Message) (systemInstruction map[string]any, con
 					"functionCall": map[string]any{
 						"id":   call.ToolCallID,
 						"name": call.ToolName,
-						"args": mapOrEmpty(call.ArgumentsJSON),
+						"args": toolCallArgumentsForModel(call),
 					},
 				})
 			}

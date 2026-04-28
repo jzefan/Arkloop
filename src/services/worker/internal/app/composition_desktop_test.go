@@ -2368,9 +2368,10 @@ func TestDesktopEventWriterPersistsCanonicalToolNames(t *testing.T) {
 	}
 
 	writer.collectToolCall(map[string]any{
-		"tool_call_id": "call_1",
-		"tool_name":    "web_fetch.jina",
-		"arguments":    map[string]any{"url": "https://example.com"},
+		"tool_call_id":        "call_1",
+		"tool_name":           "web_fetch.jina",
+		"arguments":           map[string]any{"url": "https://example.com"},
+		"display_description": "Fetching page",
 	})
 	writer.collectToolResult(map[string]any{
 		"tool_call_id": "call_1",
@@ -2389,6 +2390,9 @@ func TestDesktopEventWriterPersistsCanonicalToolNames(t *testing.T) {
 	}
 	if !strings.Contains(assistantJSON, `"tool_name":"web_fetch"`) {
 		t.Fatalf("expected assistant intermediate message to keep canonical tool name, got %s", assistantJSON)
+	}
+	if !strings.Contains(assistantJSON, `"display_description":"Fetching page"`) {
+		t.Fatalf("expected assistant intermediate message to keep display description, got %s", assistantJSON)
 	}
 
 	toolContent := writer.intermediateMessages[1].Content

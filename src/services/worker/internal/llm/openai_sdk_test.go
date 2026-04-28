@@ -678,6 +678,40 @@ func TestOpenAIResponsesInputUsesResponsesFunctionCallIDForProviderAgnosticToolC
 	}
 }
 
+func TestOpenAIHistoryPreservesDisplayDescriptionInToolArguments(t *testing.T) {
+	call := ToolCall{
+		ToolCallID:         "call_1",
+		ToolName:           "exec_command",
+		ArgumentsJSON:      map[string]any{"command": "git status"},
+		DisplayDescription: "Checking status",
+	}
+	messages, err := toOpenAIChatMessages([]Message{{Role: "assistant", ToolCalls: []ToolCall{call}}})
+	if err != nil {
+		t.Fatalf("toOpenAIChatMessages: %v", err)
+	}
+	toolCalls := messages[0]["tool_calls"].([]map[string]any)
+	function := toolCalls[0]["function"].(map[string]any)
+	var chatArgs map[string]any
+	if err := json.Unmarshal([]byte(function["arguments"].(string)), &chatArgs); err != nil {
+		t.Fatalf("chat arguments json: %v", err)
+	}
+	if chatArgs["display_description"] != "Checking status" {
+		t.Fatalf("chat arguments lost display_description: %#v", chatArgs)
+	}
+
+	input, err := toOpenAIResponsesInput([]Message{{Role: "assistant", ToolCalls: []ToolCall{call}}})
+	if err != nil {
+		t.Fatalf("toOpenAIResponsesInput: %v", err)
+	}
+	var responsesArgs map[string]any
+	if err := json.Unmarshal([]byte(input[0]["arguments"].(string)), &responsesArgs); err != nil {
+		t.Fatalf("responses arguments json: %v", err)
+	}
+	if responsesArgs["display_description"] != "Checking status" {
+		t.Fatalf("responses arguments lost display_description: %#v", responsesArgs)
+	}
+}
+
 func TestOpenAIChatMessagesCarryAssistantThinkingAsReasoningContent(t *testing.T) {
 	messages, err := toOpenAIChatMessages([]Message{{
 		Role: "assistant",

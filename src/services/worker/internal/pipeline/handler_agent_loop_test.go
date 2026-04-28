@@ -430,9 +430,10 @@ func TestEventWriterFlushPendingToolCallsDoesNotPersistProviderToolNames(t *test
 	}
 
 	w.collectToolCall(map[string]any{
-		"tool_call_id": "call_1",
-		"tool_name":    "web_search.tavily",
-		"arguments":    map[string]any{"query": "hello"},
+		"tool_call_id":        "call_1",
+		"tool_name":           "web_search.tavily",
+		"arguments":           map[string]any{"query": "hello"},
+		"display_description": "Searching web",
 	})
 	w.collectToolResult(map[string]any{
 		"tool_call_id": "call_1",
@@ -451,6 +452,9 @@ func TestEventWriterFlushPendingToolCallsDoesNotPersistProviderToolNames(t *test
 	}
 	if !strings.Contains(assistantJSON, `"tool_name":"web_search"`) {
 		t.Fatalf("expected assistant intermediate message to keep canonical tool name, got %s", assistantJSON)
+	}
+	if !strings.Contains(assistantJSON, `"display_description":"Searching web"`) {
+		t.Fatalf("expected assistant intermediate message to keep display description, got %s", assistantJSON)
 	}
 
 	toolContent := w.intermediateMessages[1].Content
