@@ -1,11 +1,10 @@
-import { useState, useCallback, useEffect, useRef, type ReactNode } from 'react'
+import { useState, useCallback, useEffect, useRef } from 'react'
 import {
   Globe,
   Search,
   Loader2,
   Eye,
   EyeOff,
-  Zap,
   Key,
   Link,
 } from 'lucide-react'
@@ -14,6 +13,7 @@ import { listToolProviders } from '../../api-admin'
 import { getDesktopAccessToken, getDesktopApi } from '@arkloop/shared/desktop'
 import type { ConnectorsConfig, FetchProvider, SearchProvider } from '@arkloop/shared/desktop'
 import { useToast } from '@arkloop/shared'
+import { ProviderSelectCard } from './ProviderSelectCard'
 
 // ---------------------------------------------------------------------------
 // Shared styles — all colours use CSS variables so they adapt to dark/light
@@ -52,91 +52,6 @@ function StatusBadge({ variant, t }: { variant: BadgeVariant; t: BadgeT }) {
     <span className={`inline-flex items-center rounded-md px-2 py-0.5 text-xs font-medium ${s.cls}`}>
       {s.label(t)}
     </span>
-  )
-}
-
-// ---------------------------------------------------------------------------
-// Animated expand panel (grid-template-rows trick — no height guessing)
-// ---------------------------------------------------------------------------
-
-function ExpandPanel({ open, children }: { open: boolean; children: React.ReactNode }) {
-  return (
-    <div
-      className="overflow-hidden transition-[grid-template-rows] duration-200 ease-in-out"
-      style={{ display: 'grid', gridTemplateRows: open ? '1fr' : '0fr' }}
-    >
-      <div className="overflow-hidden">
-        <div className="border-t border-[var(--c-border-subtle)] px-4 pb-4 pt-3">
-          {children}
-        </div>
-      </div>
-    </div>
-  )
-}
-
-// ---------------------------------------------------------------------------
-// Provider card
-// ---------------------------------------------------------------------------
-
-interface ProviderCardProps {
-  icon: React.ReactNode
-  title: string
-  description: string
-  badge: BadgeVariant
-  selected: boolean
-  onSelect: () => void
-  children?: React.ReactNode
-  status?: ReactNode
-  t: BadgeT
-}
-
-function ProviderCard({ icon, title, description, badge, selected, onSelect, children, status, t }: ProviderCardProps) {
-  return (
-    <div
-      className="rounded-xl transition-[border-color] duration-150"
-      style={{
-        border: selected
-          ? '1.5px solid var(--c-accent)'
-          : '1px solid var(--c-border-subtle)',
-        background: 'var(--c-bg-menu)',
-      }}
-    >
-      <button
-        type="button"
-        onClick={onSelect}
-        className="flex w-full items-start gap-3 rounded-xl p-4 text-left transition-colors duration-100 hover:bg-[var(--c-bg-deep)]/40"
-      >
-        {/* Icon — no background box, colour follows selection state via CSS variable */}
-        <div
-          className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center transition-colors duration-150"
-          style={{ color: selected ? 'var(--c-accent)' : 'var(--c-text-muted)' }}
-        >
-          {icon}
-        </div>
-
-        {/* Text */}
-        <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="text-sm font-medium text-[var(--c-text-heading)]">{title}</span>
-            <StatusBadge variant={badge} t={t} />
-          </div>
-          <p className="mt-0.5 text-xs leading-relaxed text-[var(--c-text-muted)]">{description}</p>
-          {status && <div className="mt-1">{status}</div>}
-        </div>
-
-        {/* Radio knob */}
-        <div
-          className="mt-0.5 h-4 w-4 shrink-0 rounded-full transition-[border-width,border-color] duration-150"
-          style={{
-            border: selected ? '5px solid var(--c-accent)' : '1.5px solid var(--c-border-subtle)',
-          }}
-        />
-      </button>
-
-      <ExpandPanel open={!!(selected && children)}>
-        {children}
-      </ExpandPanel>
-    </div>
   )
 }
 
@@ -354,15 +269,13 @@ export function SearchFetchSettings() {
 
       {/* ── Fetch ── */}
       <Section icon={<Globe size={16} />} title={ds.fetchConnectorTitle} subtitle={ds.fetchConnectorDesc}>
-        <ProviderCard
-          icon={<Zap size={14} />}
+        <ProviderSelectCard
           title={ds.fetchProviderJina}
           description={ds.fetchProviderJinaDesc}
-          badge={config.fetch.jinaApiKey ? 'configured' : 'free'}
+          badge={<StatusBadge variant={config.fetch.jinaApiKey ? 'configured' : 'free'} t={badgeT} />}
           selected={fetchP === 'jina'}
           onSelect={() => patchFetch({ provider: 'jina' as FetchProvider })}
           status={<RuntimeStatusLabel state={fetchRuntimeStatus.jina.runtime_state} reason={fetchRuntimeStatus.jina.runtime_reason} />}
-          t={badgeT}
         >
           <div>
             <label className={labelCls}><span className="flex items-center gap-1.5"><Key size={11} />{ds.apiKeyOptionalLabel}</span></label>
@@ -372,28 +285,24 @@ export function SearchFetchSettings() {
               placeholder="jina_..."
             />
           </div>
-        </ProviderCard>
+        </ProviderSelectCard>
 
-        <ProviderCard
-          icon={<Globe size={14} />}
+        <ProviderSelectCard
           title={ds.fetchProviderBasic}
           description={ds.fetchProviderBasicDesc}
-          badge="always"
+          badge={<StatusBadge variant="always" t={badgeT} />}
           selected={fetchP === 'basic'}
           onSelect={() => patchFetch({ provider: 'basic' as FetchProvider })}
           status={<RuntimeStatusLabel state={fetchRuntimeStatus.basic.runtime_state} reason={fetchRuntimeStatus.basic.runtime_reason} />}
-          t={badgeT}
         />
 
-        <ProviderCard
-          icon={<Link size={14} />}
+        <ProviderSelectCard
           title={ds.fetchProviderFirecrawl}
           description={ds.fetchProviderFirecrawlDesc}
-          badge={fetchP === 'firecrawl' ? (config.fetch.firecrawlApiKey ? 'configured' : 'missing') : 'missing'}
+          badge={<StatusBadge variant={fetchP === 'firecrawl' ? (config.fetch.firecrawlApiKey ? 'configured' : 'missing') : 'missing'} t={badgeT} />}
           selected={fetchP === 'firecrawl'}
           onSelect={() => patchFetch({ provider: 'firecrawl' as FetchProvider })}
           status={<RuntimeStatusLabel state={fetchRuntimeStatus.firecrawl.runtime_state} reason={fetchRuntimeStatus.firecrawl.runtime_reason} />}
-          t={badgeT}
         >
           <div className="space-y-3">
             <div>
@@ -412,33 +321,29 @@ export function SearchFetchSettings() {
               />
             </div>
           </div>
-        </ProviderCard>
+        </ProviderSelectCard>
       </Section>
 
       <div className="border-t border-[var(--c-border-subtle)]" />
 
       {/* ── Search ── */}
       <Section icon={<Search size={16} />} title={ds.searchConnectorTitle} subtitle={ds.searchConnectorDesc}>
-        <ProviderCard
-          icon={<Zap size={14} />}
+        <ProviderSelectCard
           title={ds.searchProviderDuckduckgo}
           description={ds.searchProviderDuckduckgoDesc}
-          badge="free"
+          badge={<StatusBadge variant="free" t={badgeT} />}
           selected={searchP === 'duckduckgo'}
           onSelect={() => patchSearch({ provider: 'duckduckgo' as SearchProvider })}
           status={<RuntimeStatusLabel state={searchRuntimeStatus.duckduckgo.runtime_state} reason={searchRuntimeStatus.duckduckgo.runtime_reason} />}
-          t={badgeT}
         />
 
-        <ProviderCard
-          icon={<Search size={14} />}
+        <ProviderSelectCard
           title={ds.searchProviderTavily}
           description={ds.searchProviderTavilyDesc}
-          badge={searchP === 'tavily' ? (config.search.tavilyApiKey ? 'configured' : 'missing') : 'missing'}
+          badge={<StatusBadge variant={searchP === 'tavily' ? (config.search.tavilyApiKey ? 'configured' : 'missing') : 'missing'} t={badgeT} />}
           selected={searchP === 'tavily'}
           onSelect={() => patchSearch({ provider: 'tavily' as SearchProvider })}
           status={<RuntimeStatusLabel state={searchRuntimeStatus.tavily.runtime_state} reason={searchRuntimeStatus.tavily.runtime_reason} />}
-          t={badgeT}
         >
           <div>
             <label className={labelCls}><span className="flex items-center gap-1.5"><Key size={11} />{ds.apiKeyLabel}</span></label>
@@ -448,17 +353,15 @@ export function SearchFetchSettings() {
               placeholder="tvly-..."
             />
           </div>
-        </ProviderCard>
+        </ProviderSelectCard>
 
-        <ProviderCard
-          icon={<Globe size={14} />}
+        <ProviderSelectCard
           title={ds.searchProviderSearxng}
           description={ds.searchProviderSearxngDesc}
-          badge={searchP === 'searxng' ? (config.search.searxngBaseUrl ? 'configured' : 'missing') : 'missing'}
+          badge={<StatusBadge variant={searchP === 'searxng' ? (config.search.searxngBaseUrl ? 'configured' : 'missing') : 'missing'} t={badgeT} />}
           selected={searchP === 'searxng'}
           onSelect={() => patchSearch({ provider: 'searxng' as SearchProvider })}
           status={<RuntimeStatusLabel state={searchRuntimeStatus.searxng.runtime_state} reason={searchRuntimeStatus.searxng.runtime_reason} />}
-          t={badgeT}
         >
           <div>
             <label className={labelCls}><span className="flex items-center gap-1.5"><Link size={11} />{ds.baseUrlLabel}</span></label>
@@ -467,7 +370,7 @@ export function SearchFetchSettings() {
               onChange={(e) => patchSearch({ searxngBaseUrl: e.target.value || undefined })}
             />
           </div>
-        </ProviderCard>
+        </ProviderSelectCard>
       </Section>
     </div>
   )

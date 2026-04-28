@@ -3,15 +3,11 @@ import {
   CheckCircle,
   ChevronDown,
   ChevronRight,
-  Cloud,
-  HardDrive,
   RefreshCw,
   RotateCcw,
-  Server,
   Wifi,
   XCircle,
 } from 'lucide-react'
-import type { LucideIcon } from 'lucide-react'
 import { ErrorCallout } from '@arkloop/shared'
 import { getDesktopApi } from '@arkloop/shared/desktop'
 import type {
@@ -23,15 +19,6 @@ import type {
 import { useLocale } from '../contexts/LocaleContext'
 import { SettingsSelect } from './settings/_SettingsSelect'
 
-type ModeCardProps = {
-  mode: ConnectionMode
-  icon: LucideIcon
-  label: string
-  desc: string
-  selected: boolean
-  onSelect: () => void
-}
-
 type Props = {
   initialConfig?: DesktopConfig | null
 }
@@ -40,43 +27,6 @@ const DEFAULT_RUNTIME: SidecarRuntime = {
   status: 'stopped',
   port: null,
   portMode: 'auto',
-}
-
-function ModeCard({ icon: Icon, label, desc, selected, onSelect }: ModeCardProps) {
-  return (
-    <button
-      type="button"
-      onClick={onSelect}
-      className="flex items-start gap-3 rounded-xl p-4 text-left transition-colors"
-      style={{
-        border: selected
-          ? '1.5px solid var(--c-accent)'
-          : '1px solid var(--c-border-subtle)',
-        background: selected ? 'var(--c-bg-deep)' : 'var(--c-bg-page)',
-      }}
-    >
-      <div
-        className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg"
-        style={{
-          background: selected ? 'var(--c-accent)' : 'var(--c-bg-sub)',
-          color: selected ? 'var(--c-accent-fg)' : 'var(--c-text-secondary)',
-        }}
-      >
-        <Icon size={18} />
-      </div>
-      <div className="min-w-0 flex-1">
-        <div className="text-sm font-medium text-[var(--c-text-heading)]">{label}</div>
-        <div className="mt-0.5 text-xs text-[var(--c-text-muted)]">{desc}</div>
-      </div>
-      <div
-        className="mt-1 h-4 w-4 shrink-0 rounded-full"
-        style={{
-          border: selected ? '5px solid var(--c-accent)' : '1.5px solid var(--c-border-subtle)',
-          background: selected ? 'var(--c-accent-fg)' : 'transparent',
-        }}
-      />
-    </button>
-  )
 }
 
 function StatusBadge({ status, t }: { status: SidecarRuntime['status']; t: Record<string, string> }) {
@@ -303,35 +253,6 @@ export function ConnectionSettingsContent({ initialConfig = null }: Props) {
 
   return (
     <div className="flex flex-col gap-6">
-      <div className="flex flex-col gap-2">
-        <span className="text-sm font-medium text-[var(--c-text-heading)]">{ct.title}</span>
-        <div className="flex flex-col gap-2">
-          <ModeCard
-            mode="local"
-            icon={HardDrive}
-            label={ct.local}
-            desc={ct.localDesc}
-            selected={mode === 'local'}
-            onSelect={() => setMode('local')}
-          />
-          <ModeCard
-            mode="saas"
-            icon={Cloud}
-            label={ct.saas}
-            desc={ct.saasDesc}
-            selected={mode === 'saas'}
-            onSelect={() => setMode('saas')}
-          />
-          <ModeCard
-            mode="self-hosted"
-            icon={Server}
-            label={ct.selfHosted}
-            desc={ct.selfHostedDesc}
-            selected={mode === 'self-hosted'}
-            onSelect={() => setMode('self-hosted')}
-          />
-        </div>
-      </div>
 
       {mode === 'local' && (
         <div className="flex flex-col gap-3">

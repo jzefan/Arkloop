@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef, useLayoutEffect } from 'react'
 import { FileText, RefreshCw, Settings, AlertTriangle, Brain, Check, ChevronRight } from 'lucide-react'
 import { PillToggle, Modal } from '@arkloop/shared'
-import { TabBar } from '@arkloop/shared/components/prompt-injection'
+import { ProviderSelectCard } from './ProviderSelectCard'
 import { SpinnerIcon } from '@arkloop/shared/components/auth-ui'
 import { useLocale } from '../../contexts/LocaleContext'
 import { getDesktopApi } from '@arkloop/shared/desktop'
@@ -24,6 +24,8 @@ const memoryUiActionState = {
   rebuildingSnapshot: false,
   rebuildingImpression: false,
 }
+
+let memoryConfigCache: MemoryConfig | null = null
 
 function statusDotColor(s: HealthStatus): string {
   switch (s) {
@@ -592,14 +594,13 @@ export function MemorySettings({ accessToken }: Props) {
   const { t } = useLocale()
   const ds = t.desktopSettings
 
-  const [memConfig, setMemConfigState] = useState<MemoryConfig | null>(null)
+  const [memConfig, setMemConfigState] = useState<MemoryConfig | null>(() => memoryConfigCache)
   const [snapshot, setSnapshot] = useState<string>('')
   const [hits, setHits] = useState<SnapshotHit[]>([])
-  const [loading, setLoading] = useState(true)
+  const [loading, setLoading] = useState(() => !memoryConfigCache)
   const [rebuilding, setRebuilding] = useState(memoryUiActionState.rebuildingSnapshot)
   const [configModalOpen, setConfigModalOpen] = useState(false)
   const [configModalProvider, setConfigModalProvider] = useState<'openviking' | 'nowledge'>('openviking')
-  const [viewTab, setViewTab] = useState<'openviking' | 'nowledge'>('openviking')
   const [switching, setSwitching] = useState(false)
   const [errorsModalOpen, setErrorsModalOpen] = useState(false)
   const [memoryErrors, setMemoryErrors] = useState<MemoryErrorEvent[]>([])
@@ -714,11 +715,8 @@ export function MemorySettings({ accessToken }: Props) {
     if (!quiet) setLoading(true)
     try {
       const cfg = await memoryApi.getConfig()
+      memoryConfigCache = cfg
       setMemConfigState(cfg)
-      // viewTab 跟随激活后端
-      if (cfg.provider === 'openviking' || cfg.provider === 'nowledge') {
-        setViewTab(cfg.provider)
-      }
       if (!quiet) setLoading(false)
       void probeHealth(cfg)
       if (accessToken) {
@@ -813,6 +811,7 @@ export function MemorySettings({ accessToken }: Props) {
   const saveConfig = useCallback(async (next: MemoryConfig) => {
     if (!memoryApi) return
     await memoryApi.setConfig(next)
+    memoryConfigCache = next
     setMemConfigState(next)
     void probeHealth(next)
     void loadData(true)
@@ -964,140 +963,78 @@ export function MemorySettings({ accessToken }: Props) {
           )}
 
           {/* 向量记忆后端选择 */}
-          <div
-            className="rounded-xl"
-            style={{ border: '1px solid var(--c-border-subtle)', background: 'var(--c-bg-menu)' }}
-          >
-            <div className="border-b border-[var(--c-border-subtle)] px-3 py-2">
-              <style>{`
-                .memory-tab-bar [data-tab="${activeProvider}"]::before {
-                  content: '';
-                  display: inline-block;
-                  width: 6px;
-                  height: 6px;
-                  border-radius: 50%;
-                  background: #22c55e;
-                  margin-right: 5px;
-                  vertical-align: middle;
-                }
-              `}</style>
-              <div className="memory-tab-bar">
-                <TabBar
-                  key={activeProvider}
-                  tabs={[
-                    { key: 'openviking', label: ds.memoryProviderOpenviking },
-                    { key: 'nowledge', label: ds.memoryNowledgeProvider },
-                  ]}
-                  active={viewTab}
-                  onChange={setViewTab}
-                />
+          <div className="flex flex-col gap-3">
+            <div className="flex gap-3">
+              <ProviderSelectCard
+                title={ds.memoryNowledgeProvider}
+                description={ds.memoryNowledgeProviderDesc}
+                selected={activeProvider === 'nowledge'}
+                onSelect={() => {
+                  if (!memConfig || activeProvider === 'nowledge') return
+                  setSwitching(true)
+                  void (async () => {
+                    let baseUrl = memConfig.nowledge?.baseUrl ?? ''
+                    if (!baseUrl) {
+                      try {
+                        const res = await fetch('http://127.0.0.1:14242/health', { signal: AbortSignal.timeout(3000) })
+                        if (res.ok) baseUrl = 'http://127.0.0.1:14242'
+                      } catch { /* 未检测到 */ }
+                    }
+                    const next: MemoryConfig = {
+                      ...memConfig,
+                      provider: 'nowledge',
+                      nowledge: { ...memConfig.nowledge, baseUrl: baseUrl || memConfig.nowledge?.baseUrl },
+                    }
+                    await saveConfig(next)
+                  })().finally(() => setSwitching(false))
+                }}
+                disabled={switching}
+              />
+              <ProviderSelectCard
+                title={ds.memoryProviderOpenviking}
+                description={ds.memoryOpenvikingProviderDesc}
+                selected={activeProvider === 'openviking'}
+                onSelect={() => {
+                  if (!memConfig || activeProvider === 'openviking') return
+                  setSwitching(true)
+                  void saveConfig({ ...memConfig, provider: 'openviking' }).finally(() => setSwitching(false))
+                }}
+                disabled={switching}
+              />
+            </div>
+            {(activeProvider === 'openviking' || activeProvider === 'nowledge') && (
+              <div className="flex items-center gap-2">
+                {activeProvider === 'openviking' && memoryErrors.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => setErrorsModalOpen(true)}
+                    className={secondaryButtonSmCls}
+                    style={{ border: '0.5px solid var(--c-status-warning-text)', color: 'var(--c-status-warning-text)' }}
+                  >
+                    <AlertTriangle size={14} />
+                    {ds.memoryRecentErrors}
+                  </button>
+                )}
+                <div className="flex items-center gap-1.5">
+                  <div className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: statusDotColor(health) }} />
+                  <span className="text-xs" style={{ color: health === 'ok' ? 'var(--c-text-muted)' : statusDotColor(health) }}>
+                    {healthLabel}
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setConfigModalProvider(activeProvider === 'nowledge' ? 'nowledge' : 'openviking')
+                    setConfigModalOpen(true)
+                  }}
+                  className={secondaryButtonSmCls}
+                  style={secondaryButtonBorderStyle}
+                >
+                  <Settings size={14} />
+                  {ds.memoryConfigureButton}
+                </button>
               </div>
-            </div>
-
-            <div className="px-4 py-4">
-              {viewTab === 'openviking' && (
-                <div className="flex items-center gap-2">
-                  {activeProvider === 'openviking' ? (
-                    <>
-                      {memoryErrors.length > 0 && (
-                        <button
-                          type="button"
-                          onClick={() => setErrorsModalOpen(true)}
-                          className={secondaryButtonSmCls}
-                          style={{ border: '0.5px solid var(--c-status-warning-text)', color: 'var(--c-status-warning-text)' }}
-                        >
-                          <AlertTriangle size={14} />
-                          {ds.memoryRecentErrors}
-                        </button>
-                      )}
-                      <div className="flex items-center gap-1.5">
-                        <div className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: statusDotColor(health) }} />
-                        <span className="text-xs" style={{ color: health === 'ok' ? 'var(--c-text-muted)' : statusDotColor(health) }}>
-                          {healthLabel}
-                        </span>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => { setConfigModalProvider('openviking'); setConfigModalOpen(true) }}
-                        className={secondaryButtonSmCls}
-                        style={secondaryButtonBorderStyle}
-                      >
-                        <Settings size={14} />
-                        {ds.memoryConfigureButton}
-                      </button>
-                    </>
-                  ) : (
-                    <button
-                      type="button"
-                      disabled={switching}
-                      onClick={() => {
-                        if (!memConfig) return
-                        setSwitching(true)
-                        void saveConfig({ ...memConfig, provider: 'openviking' }).finally(() => setSwitching(false))
-                      }}
-                      className={secondaryButtonSmCls}
-                      style={secondaryButtonBorderStyle}
-                    >
-                      {switching ? <SpinnerIcon /> : null}
-                      {ds.memoryActivate}
-                    </button>
-                  )}
-                </div>
-              )}
-
-              {viewTab === 'nowledge' && (
-                <div className="flex items-center gap-2">
-                  {activeProvider === 'nowledge' ? (
-                    <>
-                      <div className="flex items-center gap-1.5">
-                        <div className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: statusDotColor(health) }} />
-                        <span className="text-xs" style={{ color: health === 'ok' ? 'var(--c-text-muted)' : statusDotColor(health) }}>
-                          {healthLabel}
-                        </span>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => { setConfigModalProvider('nowledge'); setConfigModalOpen(true) }}
-                        className={secondaryButtonSmCls}
-                        style={secondaryButtonBorderStyle}
-                      >
-                        <Settings size={14} />
-                        {ds.memoryConfigureButton}
-                      </button>
-                    </>
-                  ) : (
-                    <button
-                      type="button"
-                      disabled={switching}
-                      onClick={() => {
-                        if (!memConfig) return
-                        setSwitching(true)
-                        void (async () => {
-                          let baseUrl = memConfig.nowledge?.baseUrl ?? ''
-                          if (!baseUrl) {
-                            try {
-                              const res = await fetch('http://127.0.0.1:14242/health', { signal: AbortSignal.timeout(3000) })
-                              if (res.ok) baseUrl = 'http://127.0.0.1:14242'
-                            } catch { /* 未检测到 */ }
-                          }
-                          const next: MemoryConfig = {
-                            ...memConfig,
-                            provider: 'nowledge',
-                            nowledge: { ...memConfig.nowledge, baseUrl: baseUrl || memConfig.nowledge?.baseUrl },
-                          }
-                          await saveConfig(next)
-                        })().finally(() => setSwitching(false))
-                      }}
-                      className={secondaryButtonSmCls}
-                      style={secondaryButtonBorderStyle}
-                    >
-                      {switching ? <SpinnerIcon /> : null}
-                      {ds.memoryActivate}
-                    </button>
-                  )}
-                </div>
-              )}
-            </div>
+            )}
           </div>
         </>
       )}
@@ -1108,7 +1045,7 @@ export function MemorySettings({ accessToken }: Props) {
         accessToken={accessToken}
         memConfig={memConfig}
         provider={configModalProvider}
-        onConfigSaved={(cfg) => { setMemConfigState(cfg); void probeHealth(cfg); void loadData(true) }}
+        onConfigSaved={(cfg) => { memoryConfigCache = cfg; setMemConfigState(cfg); void probeHealth(cfg); void loadData(true) }}
       />
 
       <Modal open={errorsModalOpen} onClose={() => setErrorsModalOpen(false)} title={ds.memoryErrorsModalTitle} width="520px">
