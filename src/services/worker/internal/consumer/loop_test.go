@@ -235,6 +235,132 @@ func TestEvaluateScalingScalesDownWhenIdle(t *testing.T) {
 	}
 }
 
+func TestEvaluateScalingUsesIdleReserveTarget(t *testing.T) {
+	fakeQueue := &stubQueue{}
+	handler := &stubHandler{}
+	loop := newLoopForTest(t, fakeQueue, handler, nil, Config{
+		Concurrency:        1,
+		PollSeconds:        0,
+		LeaseSeconds:       30,
+		HeartbeatSeconds:   0,
+		QueueJobTypes:      []string{queue.RunExecuteJobType},
+		MinConcurrency:     1,
+		MaxConcurrency:     8,
+		ScaleIntervalSecs:  1,
+		ScaleCooldownSecs:  10,
+		IdleReserveWorkers: 2,
+	})
+	fakeQueue.stats = queue.QueueStats{
+		ReadyDepth: 0,
+		InFlight:   3,
+	}
+	loop.targetWorkers.Store(1)
+	loop.scaleCooldown = time.Now().Add(30 * time.Second)
+
+	next := loop.evaluateScaling(context.Background(), 1)
+	if next != 5 {
+		t.Fatalf("expected target 5, got %d", next)
+	}
+}
+
+func TestEvaluateScalingClampsIdleReserveTarget(t *testing.T) {
+	fakeQueue := &stubQueue{}
+	handler := &stubHandler{}
+	loop := newLoopForTest(t, fakeQueue, handler, nil, Config{
+		Concurrency:        3,
+		PollSeconds:        0,
+		LeaseSeconds:       30,
+		HeartbeatSeconds:   0,
+		QueueJobTypes:      []string{queue.RunExecuteJobType},
+		MinConcurrency:     3,
+		MaxConcurrency:     8,
+		ScaleIntervalSecs:  1,
+		ScaleCooldownSecs:  1,
+		IdleReserveWorkers: 2,
+	})
+
+	fakeQueue.stats = queue.QueueStats{InFlight: 0}
+	loop.targetWorkers.Store(6)
+	if next := loop.evaluateScaling(context.Background(), 6); next != 3 {
+		t.Fatalf("expected min-clamped target 3, got %d", next)
+	}
+
+	fakeQueue.stats = queue.QueueStats{InFlight: 12}
+	loop.targetWorkers.Store(3)
+	if next := loop.evaluateScaling(context.Background(), 3); next != 8 {
+		t.Fatalf("expected max-clamped target 8, got %d", next)
+	}
+}
+
+func TestRunScalesOnLeaseWithoutWaitingForTick(t *testing.T) {
+	lease := queue.JobLease{
+		JobID:       uuid.New(),
+		JobType:     queue.RunExecuteJobType,
+		PayloadJSON: map[string]any{"type": queue.RunExecuteJobType, "run_id": uuid.New().String()},
+		LeaseToken:  uuid.New(),
+	}
+	fakeQueue := &scalingLeaseQueue{
+		lease:       lease,
+		secondLease: make(chan struct{}),
+	}
+	handler := &scalingBlockingHandler{
+		started: make(chan struct{}),
+		release: make(chan struct{}),
+	}
+	logger := slog.Default()
+	loop, err := NewLoop(fakeQueue, handler, nil, Config{
+		Concurrency:        1,
+		PollSeconds:        60,
+		LeaseSeconds:       30,
+		HeartbeatSeconds:   0,
+		QueueJobTypes:      []string{queue.RunExecuteJobType},
+		MinConcurrency:     1,
+		MaxConcurrency:     3,
+		ScaleIntervalSecs:  3600,
+		ScaleCooldownSecs:  3600,
+		IdleReserveWorkers: 1,
+	}, logger, nil)
+	if err != nil {
+		t.Fatalf("NewLoop failed: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		done <- loop.Run(ctx)
+	}()
+
+	releaseOnce := sync.Once{}
+	cleanup := func() {
+		releaseOnce.Do(func() { close(handler.release) })
+		cancel()
+		select {
+		case err := <-done:
+			if err != nil {
+				t.Fatalf("Run returned error: %v", err)
+			}
+		case <-time.After(3 * time.Second):
+			t.Fatal("Run did not exit")
+		}
+	}
+	defer cleanup()
+
+	select {
+	case <-handler.started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("handler did not start")
+	}
+
+	select {
+	case <-fakeQueue.secondLease:
+	case <-time.After(2 * time.Second):
+		t.Fatal("expected a reserve worker to lease before scale tick")
+	}
+	if got := int(loop.targetWorkers.Load()); got != 2 {
+		t.Fatalf("expected target workers 2 after lease scale request, got %d", got)
+	}
+}
+
 func TestLeaseLostWaitsForHandlerBeforeUnlock(t *testing.T) {
 	exitGate := make(chan struct{})
 	lease := queue.JobLease{
@@ -500,6 +626,88 @@ func (s *stubQueue) QueueDepth(_ context.Context, _ []string) (int, error) { ret
 
 func (s *stubQueue) QueueStats(_ context.Context, _ []string) (queue.QueueStats, error) {
 	return s.stats, nil
+}
+
+type scalingLeaseQueue struct {
+	mu          sync.Mutex
+	lease       queue.JobLease
+	leased      bool
+	inFlight    int
+	leaseCalls  int
+	secondLease chan struct{}
+	secondOnce  sync.Once
+}
+
+func (q *scalingLeaseQueue) EnqueueRun(
+	_ context.Context,
+	_ uuid.UUID,
+	_ uuid.UUID,
+	_ string,
+	_ string,
+	_ map[string]any,
+	_ *time.Time,
+) (uuid.UUID, error) {
+	return uuid.New(), nil
+}
+
+func (q *scalingLeaseQueue) Lease(_ context.Context, _ int, _ []string) (*queue.JobLease, error) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	q.leaseCalls++
+	if q.leaseCalls >= 2 {
+		q.secondOnce.Do(func() { close(q.secondLease) })
+	}
+	if q.leased {
+		return nil, nil
+	}
+	q.leased = true
+	q.inFlight = 1
+	copied := q.lease
+	return &copied, nil
+}
+
+func (q *scalingLeaseQueue) Heartbeat(_ context.Context, _ queue.JobLease, _ int) error {
+	return nil
+}
+
+func (q *scalingLeaseQueue) Ack(_ context.Context, _ queue.JobLease) error {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	q.inFlight = 0
+	return nil
+}
+
+func (q *scalingLeaseQueue) Nack(_ context.Context, _ queue.JobLease, _ *int) error {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	q.inFlight = 0
+	return nil
+}
+
+func (q *scalingLeaseQueue) QueueDepth(_ context.Context, _ []string) (int, error) {
+	return 0, nil
+}
+
+func (q *scalingLeaseQueue) QueueStats(_ context.Context, _ []string) (queue.QueueStats, error) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	return queue.QueueStats{InFlight: q.inFlight}, nil
+}
+
+type scalingBlockingHandler struct {
+	started chan struct{}
+	release chan struct{}
+	once    sync.Once
+}
+
+func (h *scalingBlockingHandler) Handle(ctx context.Context, _ queue.JobLease) error {
+	h.once.Do(func() { close(h.started) })
+	select {
+	case <-h.release:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 type stubHandler struct {
