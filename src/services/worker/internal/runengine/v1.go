@@ -831,7 +831,7 @@ func buildPipeline(
 	mws = append(mws, pipeline.NewScheduledJobPrepareMiddleware())
 	mws = append(mws, buildCapabilityLayer(deps, promptInjection, eventsRepo)...)
 	mws = append(mws, buildRoutingLayer(deps, runsRepo, eventsRepo, messagesRepo, resolver, releaseSlot)...)
-	mws = append(mws, buildToolFinalizeLayer(deps)...)
+	mws = append(mws, buildToolFinalizeLayer(deps, eventsRepo)...)
 	mws = append(mws, buildDeliveryLayer(deps)...)
 	return mws
 }
@@ -973,10 +973,15 @@ func buildRoutingLayer(
 	}
 }
 
-func buildToolFinalizeLayer(deps EngineV1Deps) []pipeline.RunMiddleware {
+func buildToolFinalizeLayer(deps EngineV1Deps, eventsRepo data.RunEventsRepository) []pipeline.RunMiddleware {
 	return []pipeline.RunMiddleware{
 		pipeline.NewImpressionPrepareMiddleware(pipeline.NewPgxImpressionStore(deps.DBPool), deps.DBPool, deps.AuxGateway, deps.EmitDebugEvents, deps.RoutingConfigLoader),
-		pipeline.NewStickerPrepareMiddleware(deps.DBPool, deps.MessageAttachmentStore),
+		pipeline.NewStickerPrepareMiddleware(deps.DBPool, deps.MessageAttachmentStore, pipeline.StickerPrepareConfig{
+			AuxGateway:          deps.AuxGateway,
+			EmitDebugEvents:     deps.EmitDebugEvents,
+			RoutingConfigLoader: deps.RoutingConfigLoader,
+			EventsRepo:          eventsRepo,
+		}),
 		pipeline.NewHeartbeatPrepareMiddleware(),
 		pipeline.NewConditionalToolsMiddleware(),
 		pipeline.NewToolDescriptionOverrideMiddleware(deps.ToolDescriptionOverridesRepo),

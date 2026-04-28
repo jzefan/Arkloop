@@ -269,6 +269,7 @@ func TestStickerPrepareMiddleware_SkipsLLMWithoutPreview(t *testing.T) {
 			},
 		},
 		fakeStickerAttachmentStore{},
+		StickerPrepareConfig{},
 	)
 	nextCalled := false
 	err := mw(context.Background(), &RunContext{
@@ -286,7 +287,7 @@ func TestStickerPrepareMiddleware_SkipsLLMWithoutPreview(t *testing.T) {
 	}
 }
 
-func TestStickerPrepareMiddleware_SkipsLLMWithoutVisionRoute(t *testing.T) {
+func TestStickerPrepareMiddleware_FailsWithoutVisionRoute(t *testing.T) {
 	mw := NewStickerPrepareMiddleware(
 		fakeStickerPrepareDB{
 			row: fakeStickerPrepareRow{
@@ -299,23 +300,97 @@ func TestStickerPrepareMiddleware_SkipsLLMWithoutVisionRoute(t *testing.T) {
 			},
 		},
 		fakeStickerAttachmentStore{},
+		StickerPrepareConfig{},
 	)
 	nextCalled := false
 	err := mw(context.Background(), &RunContext{
 		Run:       data.Run{AccountID: uuid.New()},
 		InputJSON: map[string]any{"run_kind": "sticker_register", "sticker_id": "hash"},
 		SelectedRoute: &routing.SelectedProviderRoute{
-			Route: routing.ProviderRouteRule{Model: "gpt-3.5-turbo"},
+			Route: routing.ProviderRouteRule{Model: "gpt-4o"},
 		},
 	}, func(ctx context.Context, rc *RunContext) error {
 		nextCalled = true
 		return nil
 	})
-	if err != nil {
-		t.Fatalf("middleware returned error: %v", err)
+	if err == nil {
+		t.Fatal("expected missing vision model error")
 	}
 	if nextCalled {
 		t.Fatal("expected middleware to skip builder LLM path")
+	}
+}
+
+func TestStickerPrepareMiddleware_FallsBackToToolVisionRoute(t *testing.T) {
+	accountID := uuid.New()
+	toolCfg := routing.ProviderRoutingConfig{
+		Credentials: []routing.ProviderCredential{
+			{ID: "tool-cred-id", Name: "tool-cred", OwnerKind: routing.CredentialScopePlatform, ProviderKind: routing.ProviderKindStub},
+		},
+		Routes: []routing.ProviderRouteRule{
+			{
+				ID:           "tool-route",
+				CredentialID: "tool-cred-id",
+				Model:        "tool-vision",
+				AdvancedJSON: map[string]any{
+					"available_catalog": map[string]any{
+						"input_modalities": []any{"text", "image"},
+					},
+				},
+			},
+		},
+	}
+	mw := NewStickerPrepareMiddleware(
+		fakeStickerPrepareDB{
+			row: fakeStickerPrepareRow{
+				sticker: &data.AccountSticker{
+					AccountID:         accountID,
+					ContentHash:       "hash",
+					StorageKey:        "raw.webp",
+					PreviewStorageKey: "preview.jpg",
+				},
+			},
+			toolSelector: "tool-cred^tool-vision",
+		},
+		fakeStickerAttachmentStore{
+			bytes: []byte("image"),
+			mime:  "image/jpeg",
+		},
+		StickerPrepareConfig{
+			RoutingConfigLoader: routing.NewConfigLoader(nil, toolCfg),
+		},
+	)
+
+	nextCalled := false
+	err := mw(context.Background(), &RunContext{
+		Run:       data.Run{AccountID: accountID},
+		InputJSON: map[string]any{"run_kind": "sticker_register", "sticker_id": "hash"},
+		SelectedRoute: &routing.SelectedProviderRoute{
+			Route: routing.ProviderRouteRule{
+				ID:    "main-route",
+				Model: "text-main",
+				AdvancedJSON: map[string]any{
+					"available_catalog": map[string]any{
+						"input_modalities": []any{"text"},
+					},
+				},
+			},
+		},
+	}, func(ctx context.Context, rc *RunContext) error {
+		nextCalled = true
+		if rc.SelectedRoute == nil || rc.SelectedRoute.Route.Model != "tool-vision" {
+			t.Fatalf("expected tool vision route, got %#v", rc.SelectedRoute)
+		}
+		if len(rc.Messages) != 1 || len(rc.Messages[0].Content) != 2 {
+			t.Fatalf("expected sticker preview message, got %#v", rc.Messages)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("middleware returned error: %v", err)
+	}
+	if !nextCalled {
+		t.Fatal("expected builder LLM path")
 	}
 }
 
@@ -335,6 +410,7 @@ func TestStickerPrepareMiddleware_ClearsToolAllowlist(t *testing.T) {
 			bytes: []byte("image"),
 			mime:  "image/jpeg",
 		},
+		StickerPrepareConfig{},
 	)
 
 	rc := &RunContext{
@@ -382,6 +458,7 @@ func TestStickerPrepareMiddleware_PropagatesPersistenceErrors(t *testing.T) {
 			bytes: []byte("image"),
 			mime:  "image/jpeg",
 		},
+		StickerPrepareConfig{},
 	)
 	err := mw(context.Background(), &RunContext{
 		Run:       data.Run{AccountID: uuid.New()},
@@ -428,8 +505,9 @@ func (fakeStickerListErrorDB) QueryRow(context.Context, string, ...any) pgx.Row 
 }
 
 type fakeStickerPrepareDB struct {
-	row     fakeStickerPrepareRow
-	execErr error
+	row          fakeStickerPrepareRow
+	toolSelector string
+	execErr      error
 }
 
 func (db fakeStickerPrepareDB) Exec(context.Context, string, ...any) (pgconn.CommandTag, error) {
@@ -440,7 +518,10 @@ func (db fakeStickerPrepareDB) Query(context.Context, string, ...any) (pgx.Rows,
 	return nil, nil
 }
 
-func (db fakeStickerPrepareDB) QueryRow(context.Context, string, ...any) pgx.Row {
+func (db fakeStickerPrepareDB) QueryRow(_ context.Context, sql string, _ ...any) pgx.Row {
+	if strings.Contains(sql, "account_entitlement_overrides") {
+		return fakeStringRow{value: db.toolSelector}
+	}
 	return db.row
 }
 
@@ -451,6 +532,29 @@ func (db fakeStickerPrepareDB) BeginTx(context.Context, pgx.TxOptions) (pgx.Tx, 
 type fakeStickerPrepareRow struct {
 	sticker *data.AccountSticker
 	err     error
+}
+
+type fakeStringRow struct {
+	value string
+	err   error
+}
+
+func (r fakeStringRow) Scan(dest ...any) error {
+	if r.err != nil {
+		return r.err
+	}
+	if strings.TrimSpace(r.value) == "" {
+		return pgx.ErrNoRows
+	}
+	if len(dest) != 1 {
+		return errors.New("unexpected scan target count")
+	}
+	target, ok := dest[0].(*string)
+	if !ok {
+		return errors.New("unexpected scan target")
+	}
+	*target = r.value
+	return nil
 }
 
 func (r fakeStickerPrepareRow) Scan(dest ...any) error {
