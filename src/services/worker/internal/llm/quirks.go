@@ -184,13 +184,42 @@ func echoEmptyTextOnThinkingItem(item map[string]any) {
 		if !blocksHaveThinking(content) || blocksHaveText(content) {
 			return
 		}
-		item["content"] = append(content, map[string]any{"type": "text", "text": ""})
+		item["content"] = insertEmptyTextBeforeToolUse(content)
 	case []any:
 		if !rawBlocksHaveThinking(content) || rawBlocksHaveText(content) {
 			return
 		}
-		item["content"] = append(content, map[string]any{"type": "text", "text": ""})
+		item["content"] = insertRawEmptyTextBeforeToolUse(content)
 	}
+}
+
+func insertEmptyTextBeforeToolUse(blocks []map[string]any) []map[string]any {
+	text := map[string]any{"type": "text", "text": ""}
+	for i, block := range blocks {
+		if typ, _ := block["type"].(string); typ == "tool_use" {
+			out := make([]map[string]any, 0, len(blocks)+1)
+			out = append(out, blocks[:i]...)
+			out = append(out, text)
+			return append(out, blocks[i:]...)
+		}
+	}
+	return append(blocks, text)
+}
+
+func insertRawEmptyTextBeforeToolUse(blocks []any) []any {
+	text := map[string]any{"type": "text", "text": ""}
+	for i, raw := range blocks {
+		block, ok := raw.(map[string]any)
+		if ok {
+			if typ, _ := block["type"].(string); typ == "tool_use" {
+				out := make([]any, 0, len(blocks)+1)
+				out = append(out, blocks[:i]...)
+				out = append(out, text)
+				return append(out, blocks[i:]...)
+			}
+		}
+	}
+	return append(blocks, text)
 }
 
 func blocksHaveThinking(blocks []map[string]any) bool {
