@@ -2,8 +2,10 @@ package pipeline
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
+	"arkloop/services/shared/messagecontent"
 	"arkloop/services/worker/internal/llm"
 )
 
@@ -91,4 +93,69 @@ func TestNewChannelGroupContextTrimMiddleware_preservesReplacementPrefix(t *test
 	if got := rc.Messages[0].Role; got != "system" {
 		t.Fatalf("expected replacement to stay as system block, got %q", got)
 	}
+}
+
+func TestNewChannelGroupContextTrimMiddleware_materializesOnlyKeptLazyImages(t *testing.T) {
+	t.Setenv("ARKLOOP_CHANNEL_GROUP_KEEP_IMAGE_TAIL", "1")
+	store := &groupTrimAttachmentStore{
+		data: map[string][]byte{
+			"attachments/old.png":    []byte("old"),
+			"attachments/mid.png":    []byte("mid"),
+			"attachments/latest.png": []byte("latest"),
+		},
+		mimeType: "image/png",
+	}
+	mw := NewChannelGroupContextTrimMiddleware(GroupContextTrimDeps{AttachmentStore: store})
+	rc := &RunContext{
+		ChannelContext: &ChannelContext{ConversationType: "supergroup"},
+		Messages: []llm.Message{
+			{Role: "user", Content: []llm.ContentPart{lazyImagePart("attachments/old.png")}},
+			{Role: "user", Content: []llm.ContentPart{lazyImagePart("attachments/mid.png")}},
+			{Role: "user", Content: []llm.ContentPart{lazyImagePart("attachments/latest.png")}},
+		},
+	}
+
+	if err := mw(context.Background(), rc, func(context.Context, *RunContext) error { return nil }); err != nil {
+		t.Fatal(err)
+	}
+	if len(store.keys) != 1 || store.keys[0] != "attachments/latest.png" {
+		t.Fatalf("expected only latest image materialized, got %#v", store.keys)
+	}
+	if got := rc.Messages[0].Content[0].Kind(); got != messagecontent.PartTypeText {
+		t.Fatalf("expected old image to be stripped, got %q", got)
+	}
+	latest := rc.Messages[2].Content[0]
+	if latest.Kind() != messagecontent.PartTypeImage || string(latest.Data) != "latest" {
+		t.Fatalf("expected latest image data materialized, got %#v", latest)
+	}
+}
+
+func lazyImagePart(key string) llm.ContentPart {
+	return llm.ContentPart{
+		Type: messagecontent.PartTypeImage,
+		Attachment: &messagecontent.AttachmentRef{
+			Key:      key,
+			MimeType: "image/png",
+		},
+	}
+}
+
+type groupTrimAttachmentStore struct {
+	data     map[string][]byte
+	mimeType string
+	keys     []string
+}
+
+func (s *groupTrimAttachmentStore) Get(ctx context.Context, key string) ([]byte, error) {
+	data, _, err := s.GetWithContentType(ctx, key)
+	return data, err
+}
+
+func (s *groupTrimAttachmentStore) GetWithContentType(_ context.Context, key string) ([]byte, string, error) {
+	s.keys = append(s.keys, key)
+	data, ok := s.data[key]
+	if !ok {
+		return nil, "", fmt.Errorf("attachment not found: %s", key)
+	}
+	return append([]byte(nil), data...), s.mimeType, nil
 }

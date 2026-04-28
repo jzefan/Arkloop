@@ -25,6 +25,17 @@ type MessageAttachmentStore interface {
 	GetWithContentType(ctx context.Context, key string) ([]byte, string, error)
 }
 
+type MessagePartBuildOptions struct {
+	LazyImages bool
+}
+
+func resolveMessagePartBuildOptions(opts ...MessagePartBuildOptions) MessagePartBuildOptions {
+	if len(opts) == 0 {
+		return MessagePartBuildOptions{}
+	}
+	return opts[0]
+}
+
 type runFirstEventLoader interface {
 	FirstEventData(ctx context.Context, tx pgx.Tx, runID uuid.UUID) (string, map[string]any, error)
 }
@@ -136,6 +147,20 @@ func stringValue(value any) string {
 		return raw
 	}
 	return ""
+}
+
+func shouldLazyLoadChannelImages(inputJSON map[string]any, jobPayload map[string]any) bool {
+	for _, payload := range []map[string]any{jobPayload, inputJSON} {
+		delivery, ok := payload["channel_delivery"].(map[string]any)
+		if !ok || len(delivery) == 0 {
+			continue
+		}
+		conversationType, _ := delivery["conversation_type"].(string)
+		if IsTelegramGroupLikeConversation(conversationType) {
+			return true
+		}
+	}
+	return false
 }
 
 func NormalizeCollaborationMode(value string) (string, bool) {
@@ -358,6 +383,7 @@ func loadRunInputs(
 		attachmentStore,
 		upperBoundMessageID,
 		messageLimit,
+		MessagePartBuildOptions{LazyImages: shouldLazyLoadChannelImages(inputJSON, jobPayload)},
 	)
 	if err != nil {
 		return nil, err
@@ -1161,6 +1187,10 @@ func canonicalizeToolMessageParts(parts []llm.ContentPart) []llm.ContentPart {
 }
 
 func BuildMessageParts(ctx context.Context, store MessageAttachmentStore, msg data.ThreadMessage) ([]llm.ContentPart, error) {
+	return BuildMessagePartsWithOptions(ctx, store, msg, MessagePartBuildOptions{})
+}
+
+func BuildMessagePartsWithOptions(ctx context.Context, store MessageAttachmentStore, msg data.ThreadMessage, opts MessagePartBuildOptions) ([]llm.ContentPart, error) {
 	fallbackContent := msg.Content
 	if msg.Role == "assistant" {
 		if restored, err := llm.AssistantMessageFromThreadContentJSON(msg.ContentJSON); err == nil && restored != nil {
@@ -1200,6 +1230,14 @@ func BuildMessageParts(ctx context.Context, store MessageAttachmentStore, msg da
 		case messagecontent.PartTypeImage:
 			if part.Attachment == nil {
 				return nil, fmt.Errorf("message image attachment is required")
+			}
+			if opts.LazyImages {
+				attachment := *part.Attachment
+				parts = append(parts, llm.ContentPart{
+					Type:       messagecontent.PartTypeImage,
+					Attachment: &attachment,
+				})
+				continue
 			}
 			if store == nil {
 				return nil, fmt.Errorf("message attachment store not configured")

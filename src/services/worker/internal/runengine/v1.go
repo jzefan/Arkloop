@@ -967,6 +967,7 @@ func buildRoutingLayer(
 			MessagesRepo:    messagesRepo,
 			EventsRepo:      eventsRepo,
 			EmitDebugEvents: deps.EmitDebugEvents,
+			AttachmentStore: deps.MessageAttachmentStore,
 		}),
 		pipeline.NewTitleSummarizerMiddleware(deps.DBPool, deps.RunLimiterRDB, deps.AuxGateway, deps.EmitDebugEvents, deps.RoutingConfigLoader),
 		pipeline.NewContextCompactMiddleware(deps.DBPool, messagesRepo, eventsRepo, deps.AuxGateway, deps.EmitDebugEvents, deps.RoutingConfigLoader),
