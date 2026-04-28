@@ -89,6 +89,14 @@ func NewRuntimeContextMiddleware() RunMiddleware {
 			Stability:     PromptStabilityStablePrefix,
 			CacheEligible: true,
 		})
+		rc.UpsertPromptSegment(PromptSegment{
+			Name:          "runtime.first_turn",
+			Target:        PromptTargetSystemPrefix,
+			Role:          "system",
+			Text:          buildFirstTurnGuidanceBlock(),
+			Stability:     PromptStabilityStablePrefix,
+			CacheEligible: true,
+		})
 		return next(ctx, rc)
 	}
 }
@@ -243,6 +251,18 @@ Each tool call and its result count as one or more conversation turns. Minimize 
 
 When a tool result includes "persisted": true, the full output has been saved to disk and only a preview is shown inline. Use the filepath field with read (with offset/limit) or grep to work with the persisted content efficiently. Do not re-read the entire persisted file unless you need all of it.
 </conversation_mechanics>`
+}
+
+func buildFirstTurnGuidanceBlock() string {
+	return `<first_turn_guidance>
+On your very first response in a new conversation:
+1. Read the user's message carefully and understand their intent before taking action.
+2. If the task is clear and specific, proceed directly — do not ask unnecessary clarifying questions.
+3. If the task is ambiguous or underspecified, state your interpretation and proceed — only ask when the task has genuinely conflicting interpretations.
+4. Do not explore codebase areas unrelated to the task — focus on what the user asked for.
+5. When you do start working, prefer reading files before editing them. Understand existing code before modifying it.
+6. Batch your initial exploration: if you need to understand multiple files, read them in parallel rather than one at a time.
+</first_turn_guidance>`
 }
 
 func buildRuntimeContextBlock(ctx context.Context, rc *RunContext) string {
