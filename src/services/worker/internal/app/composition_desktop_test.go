@@ -1997,6 +1997,256 @@ func TestDesktopEventWriterFinalizeCancelledIfRequested(t *testing.T) {
 	}
 }
 
+func TestDesktopCancelledRunPersistsVisiblePartialFromEvents(t *testing.T) {
+	ctx := context.Background()
+
+	sqlitePool, err := sqliteadapter.AutoMigrate(ctx, filepath.Join(t.TempDir(), "desktop.db"))
+	if err != nil {
+		t.Fatalf("auto migrate sqlite: %v", err)
+	}
+	defer sqlitePool.Close()
+
+	db := sqlitepgx.New(sqlitePool.Unwrap())
+	accountID := uuid.New()
+	userID := uuid.New()
+	threadID := uuid.New()
+	runID := uuid.New()
+	seedDesktopRunBindingAccount(t, db, accountID, userID)
+	seedDesktopRunBindingThread(t, db, accountID, threadID, nil, &userID)
+	seedDesktopRunBindingRun(t, db, accountID, threadID, &userID, runID)
+
+	tx, err := db.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		t.Fatalf("begin tx: %v", err)
+	}
+	emitter := events.NewEmitter("desktop-cancel-visible")
+	visibleSeq, err := (data.DesktopRunEventsRepository{}).AppendRunEvent(ctx, tx, runID, emitter.Emit("message.delta", map[string]any{
+		"role":          "assistant",
+		"content_delta": "seen partial",
+	}, nil, nil))
+	if err != nil {
+		t.Fatalf("append visible delta: %v", err)
+	}
+	if _, err := (data.DesktopRunEventsRepository{}).AppendRunEvent(ctx, tx, runID, emitter.Emit("message.delta", map[string]any{
+		"role":          "assistant",
+		"content_delta": " unseen tail",
+	}, nil, nil)); err != nil {
+		t.Fatalf("append unseen delta: %v", err)
+	}
+	if _, err := (data.DesktopRunEventsRepository{}).AppendRunEvent(ctx, tx, runID, emitter.Emit("run.cancel_requested", map[string]any{
+		"visible_seq_cutoff": visibleSeq,
+	}, nil, nil)); err != nil {
+		t.Fatalf("append cancel requested: %v", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatalf("commit seed events: %v", err)
+	}
+
+	run := data.Run{ID: runID, AccountID: accountID, ThreadID: threadID}
+	writer := &desktopEventWriter{
+		db:         db,
+		run:        run,
+		traceID:    "desktop-cancel-visible",
+		runsRepo:   data.DesktopRunsRepository{},
+		eventsRepo: data.DesktopRunEventsRepository{},
+		usageRepo:  data.UsageRecordsRepository{},
+	}
+	stopped, err := writer.finalizeCancelledIfRequested(ctx)
+	if err != nil {
+		t.Fatalf("finalizeCancelledIfRequested: %v", err)
+	}
+	if !stopped {
+		t.Fatal("expected cancellation to stop processing")
+	}
+	rc := &pipeline.RunContext{Run: run, Emitter: emitter}
+	if err := desktopPersistFinalAssistantOutput(ctx, db, rc, writer, data.DesktopRunsRepository{}, data.DesktopRunEventsRepository{}); err != nil {
+		t.Fatalf("desktopPersistFinalAssistantOutput: %v", err)
+	}
+
+	var content string
+	var rawMetadata string
+	if err := db.QueryRow(ctx,
+		`SELECT content, metadata_json
+		   FROM messages
+		  WHERE thread_id = $1 AND role = 'assistant' AND hidden = FALSE
+		  ORDER BY thread_seq DESC
+		  LIMIT 1`,
+		threadID,
+	).Scan(&content, &rawMetadata); err != nil {
+		t.Fatalf("select persisted assistant: %v", err)
+	}
+	if content != "seen partial" {
+		t.Fatalf("expected only visible partial to persist, got %q", content)
+	}
+	if !strings.Contains(rawMetadata, `"completion_state":"incomplete"`) || !strings.Contains(rawMetadata, `"finish_reason":"cancelled"`) {
+		t.Fatalf("unexpected metadata: %s", rawMetadata)
+	}
+	if !strings.Contains(rawMetadata, runID.String()) {
+		t.Fatalf("expected metadata to include run id, got %s", rawMetadata)
+	}
+}
+
+func TestDesktopCancelledRunPersistsIntermediateToolHistory(t *testing.T) {
+	ctx := context.Background()
+
+	sqlitePool, err := sqliteadapter.AutoMigrate(ctx, filepath.Join(t.TempDir(), "desktop.db"))
+	if err != nil {
+		t.Fatalf("auto migrate sqlite: %v", err)
+	}
+	defer sqlitePool.Close()
+
+	db := sqlitepgx.New(sqlitePool.Unwrap())
+	accountID := uuid.New()
+	userID := uuid.New()
+	threadID := uuid.New()
+	runID := uuid.New()
+	seedDesktopRunBindingAccount(t, db, accountID, userID)
+	seedDesktopRunBindingThread(t, db, accountID, threadID, nil, &userID)
+	seedDesktopRunBindingRun(t, db, accountID, threadID, &userID, runID)
+
+	run := data.Run{ID: runID, AccountID: accountID, ThreadID: threadID}
+	writer := &desktopEventWriter{
+		db:         db,
+		run:        run,
+		traceID:    "desktop-cancel-tools",
+		runsRepo:   data.DesktopRunsRepository{},
+		eventsRepo: data.DesktopRunEventsRepository{},
+		usageRepo:  data.UsageRecordsRepository{},
+	}
+	emitter := events.NewEmitter("desktop-cancel-tools")
+	for _, ev := range []events.RunEvent{
+		emitter.Emit("message.delta", map[string]any{
+			"role":          "assistant",
+			"content_delta": "checking",
+		}, nil, nil),
+		emitter.Emit("tool.call", map[string]any{
+			"tool_call_id": "call_1",
+			"tool_name":    "read",
+			"arguments": map[string]any{
+				"path": "main.go",
+			},
+		}, nil, nil),
+		emitter.Emit("tool.result", map[string]any{
+			"tool_call_id": "call_1",
+			"tool_name":    "read",
+			"result": map[string]any{
+				"content": "package main",
+			},
+		}, nil, nil),
+	} {
+		if err := writer.append(ctx, runID, ev, ""); err != nil {
+			t.Fatalf("append %s: %v", ev.Type, err)
+		}
+	}
+
+	var cutoff int64
+	if err := db.QueryRow(ctx, `SELECT MAX(seq) FROM run_events WHERE run_id = $1`, runID).Scan(&cutoff); err != nil {
+		t.Fatalf("select cutoff: %v", err)
+	}
+	tx, err := db.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		t.Fatalf("begin cancel tx: %v", err)
+	}
+	if _, err := (data.DesktopRunEventsRepository{}).AppendRunEvent(ctx, tx, runID, emitter.Emit("run.cancel_requested", map[string]any{
+		"visible_seq_cutoff": cutoff,
+	}, nil, nil)); err != nil {
+		t.Fatalf("append cancel requested: %v", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatalf("commit cancel requested: %v", err)
+	}
+
+	stopped, err := writer.finalizeCancelledIfRequested(ctx)
+	if err != nil {
+		t.Fatalf("finalizeCancelledIfRequested: %v", err)
+	}
+	if !stopped {
+		t.Fatal("expected cancellation to stop processing")
+	}
+	rc := &pipeline.RunContext{Run: run, Emitter: emitter}
+	if err := desktopPersistFinalAssistantOutput(ctx, db, rc, writer, data.DesktopRunsRepository{}, data.DesktopRunEventsRepository{}); err != nil {
+		t.Fatalf("desktopPersistFinalAssistantOutput: %v", err)
+	}
+
+	tx, err = db.BeginTx(ctx, pgx.TxOptions{AccessMode: pgx.ReadOnly})
+	if err != nil {
+		t.Fatalf("begin read tx: %v", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }() //nolint:errcheck
+	messages, err := (data.MessagesRepository{}).ListByThread(ctx, tx, accountID, threadID, 20)
+	if err != nil {
+		t.Fatalf("list thread messages: %v", err)
+	}
+	roles := make([]string, 0, len(messages))
+	for _, msg := range messages {
+		roles = append(roles, msg.Role)
+	}
+	wantRoles := []string{"assistant", "tool", "assistant"}
+	if !slices.Equal(roles, wantRoles) {
+		t.Fatalf("unexpected persisted roles: got %#v want %#v", roles, wantRoles)
+	}
+	if len(messages[0].ContentJSON) == 0 || !strings.Contains(string(messages[0].ContentJSON), `"tool_calls"`) {
+		t.Fatalf("expected intermediate assistant tool call content, got %s", string(messages[0].ContentJSON))
+	}
+	if messages[2].Content != "checking" {
+		t.Fatalf("expected final partial assistant content, got %q", messages[2].Content)
+	}
+}
+
+func TestDesktopFailedRunPersistsPartialOutput(t *testing.T) {
+	ctx := context.Background()
+
+	sqlitePool, err := sqliteadapter.AutoMigrate(ctx, filepath.Join(t.TempDir(), "desktop.db"))
+	if err != nil {
+		t.Fatalf("auto migrate sqlite: %v", err)
+	}
+	defer sqlitePool.Close()
+
+	db := sqlitepgx.New(sqlitePool.Unwrap())
+	accountID := uuid.New()
+	userID := uuid.New()
+	threadID := uuid.New()
+	runID := uuid.New()
+	seedDesktopRunBindingAccount(t, db, accountID, userID)
+	seedDesktopRunBindingThread(t, db, accountID, threadID, nil, &userID)
+	seedDesktopRunBindingRun(t, db, accountID, threadID, &userID, runID)
+
+	run := data.Run{ID: runID, AccountID: accountID, ThreadID: threadID}
+	writer := &desktopEventWriter{
+		db:                   db,
+		run:                  run,
+		traceID:              "desktop-failed-partial",
+		runsRepo:             data.DesktopRunsRepository{},
+		eventsRepo:           data.DesktopRunEventsRepository{},
+		usageRepo:            data.UsageRecordsRepository{},
+		terminalStatus:       "failed",
+		visibleAssistantText: "partial before error",
+	}
+	rc := &pipeline.RunContext{Run: run, Emitter: events.NewEmitter("desktop-failed-partial")}
+	if err := desktopPersistFinalAssistantOutput(ctx, db, rc, writer, data.DesktopRunsRepository{}, data.DesktopRunEventsRepository{}); err != nil {
+		t.Fatalf("desktopPersistFinalAssistantOutput: %v", err)
+	}
+
+	var content string
+	var rawMetadata string
+	if err := db.QueryRow(ctx,
+		`SELECT content, metadata_json
+		   FROM messages
+		  WHERE thread_id = $1 AND role = 'assistant' AND hidden = FALSE
+		  ORDER BY thread_seq DESC
+		  LIMIT 1`,
+		threadID,
+	).Scan(&content, &rawMetadata); err != nil {
+		t.Fatalf("select persisted assistant: %v", err)
+	}
+	if content != "partial before error" {
+		t.Fatalf("expected failed partial output, got %q", content)
+	}
+	if !strings.Contains(rawMetadata, `"completion_state":"incomplete"`) || !strings.Contains(rawMetadata, `"finish_reason":"failed"`) {
+		t.Fatalf("unexpected metadata: %s", rawMetadata)
+	}
+}
+
 func TestDesktopCompletedRunPublishesAfterAssistantMessagePersisted(t *testing.T) {
 	ctx := context.Background()
 

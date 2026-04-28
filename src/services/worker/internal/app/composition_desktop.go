@@ -3543,6 +3543,7 @@ func (w *desktopEventWriter) publishRunEvents(ctx context.Context) {
 }
 
 func (w *desktopEventWriter) transitionCancelled(ctx context.Context, tx pgx.Tx, runID uuid.UUID) ([]uuid.UUID, error) {
+	w.flushPendingToolCalls()
 	emitter := events.NewEmitter(w.traceID)
 	cancelled := emitter.Emit("run.cancelled", map[string]any{}, nil, nil)
 	if _, err := w.eventsRepo.AppendRunEvent(ctx, tx, runID, cancelled); err != nil {
@@ -3576,11 +3577,11 @@ func (w *desktopEventWriter) transitionCancelled(ctx context.Context, tx pgx.Tx,
 }
 
 func (w *desktopEventWriter) visibleAssistantOutput() string {
-	if len(w.visibleAssistantTexts) > 0 {
-		return strings.Join(w.visibleAssistantTexts, "")
-	}
 	if strings.TrimSpace(w.visibleAssistantText) != "" {
 		return strings.TrimSpace(w.visibleAssistantText)
+	}
+	if len(w.visibleAssistantTexts) > 0 {
+		return strings.Join(w.visibleAssistantTexts, "")
 	}
 	return strings.Join(w.assistantDeltas, "")
 }
@@ -3735,11 +3736,20 @@ func (w *desktopEventWriter) finalizeCancelledIfRequested(ctx context.Context) (
 	}
 	switch cancelType {
 	case "run.cancelled":
+		if err := w.hydrateCancelledVisibleOutputInTx(ctx, tx, w.run.ID); err != nil {
+			return false, err
+		}
+		w.flushPendingToolCalls()
+		w.terminalUserMessage = ""
+		w.terminalStatus = "cancelled"
 		if err := tx.Commit(ctx); err != nil {
 			return false, err
 		}
 		return true, nil
 	case "run.cancel_requested":
+		if err := w.hydrateCancelledVisibleOutputInTx(ctx, tx, w.run.ID); err != nil {
+			return false, err
+		}
 		nextRunIDs, err := w.transitionCancelled(ctx, tx, w.run.ID)
 		if err != nil {
 			return false, err
@@ -3753,6 +3763,20 @@ func (w *desktopEventWriter) finalizeCancelledIfRequested(ctx context.Context) (
 	default:
 		return false, nil
 	}
+}
+
+func (w *desktopEventWriter) hydrateCancelledVisibleOutputInTx(ctx context.Context, tx pgx.Tx, runID uuid.UUID) error {
+	visibleOutput, err := loadDesktopVisibleAssistantOutput(ctx, tx, runID)
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(visibleOutput) == "" {
+		return nil
+	}
+	w.visibleAssistantText = visibleOutput
+	w.draftVisibleContent = visibleOutput
+	w.draftUseVisible = true
+	return nil
 }
 
 func (w *desktopEventWriter) enqueueProjectedRuns(ctx context.Context, runIDs []uuid.UUID) {
@@ -3931,7 +3955,7 @@ func desktopPersistFinalAssistantOutput(
 
 	content := w.persistableAssistantOutput()
 	hasStreamedChunks := w.telegramBoundaryFlush != nil && w.telegramSentOutputCount > 0
-	shouldPersistAssistantOutput := (w.completed || w.terminalStatus == "cancelled" || w.terminalStatus == "interrupted") && strings.TrimSpace(content) != ""
+	shouldPersistAssistantOutput := (w.completed || w.terminalStatus == "cancelled" || w.terminalStatus == "failed" || w.terminalStatus == "interrupted") && strings.TrimSpace(content) != ""
 	if !shouldPersistAssistantOutput || pipeline.ShouldSuppressHeartbeatOutput(rc, content) {
 		return nil
 	}
@@ -3944,7 +3968,7 @@ func desktopPersistFinalAssistantOutput(
 	}
 	cleanOutputs, deliverySegments := pipeline.PrepareStickerDeliveryOutputs(stickerSourceOutputs)
 
-	if w.completed && w.terminalStatus == "completed" && len(w.intermediateMessages) > 0 && !w.intermediatePersisted {
+	if len(w.intermediateMessages) > 0 && !w.intermediatePersisted {
 		if err := w.batchInsertIntermediateMessages(ctx, db, rc.Run.AccountID, rc.Run.ThreadID, rc.Run.ID); err != nil {
 			slog.ErrorContext(ctx, "desktop: persist intermediate messages failed", "run_id", rc.Run.ID, "err", err.Error())
 		} else {
@@ -3982,7 +4006,14 @@ func desktopPersistFinalAssistantOutput(
 				persistErr = persistDesktopStreamChunkMessageWithMetadata(ctx, db, rc.Run, remainder, metadata)
 			}
 		} else {
-			persistErr = desktopInsertAssistantMessage(ctx, db, rc.Run, w.finalAssistantMessage(), metadata)
+			message := w.finalAssistantMessage()
+			if !w.completed {
+				message = llm.Message{
+					Role:    "assistant",
+					Content: []llm.TextPart{{Text: content}},
+				}
+			}
+			persistErr = desktopInsertAssistantMessage(ctx, db, rc.Run, message, metadata)
 		}
 	}
 	if persistErr != nil {
