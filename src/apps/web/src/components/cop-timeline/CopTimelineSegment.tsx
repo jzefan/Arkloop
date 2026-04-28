@@ -203,9 +203,9 @@ export function CopTimelineSegment({
           background: 'transparent',
           cursor: 'pointer',
           color: hovered ? 'var(--c-cop-row-hover-fg)' : 'var(--c-cop-row-fg)',
-          fontSize: 13,
+          fontSize: 14,
           fontWeight: 400,
-          lineHeight: '18px',
+          lineHeight: '20px',
           transition: 'color 0.15s ease',
         }}
       >
@@ -401,7 +401,7 @@ function renderItem(
   if (step) {
     return (
       <div>
-        <div style={{ fontSize: '13px', color: 'var(--c-cop-row-fg)', lineHeight: '18px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+        <div style={{ fontSize: '14px', color: 'var(--c-cop-row-fg)', lineHeight: '20px', display: 'flex', alignItems: 'center', gap: '6px' }}>
           <TypewriterText text={timelineStepDisplayLabel(step)} className={step.status === 'active' ? 'thinking-shimmer-dim' : undefined} live={live} />
         </div>
         {step.kind === 'searching' && step.queries && step.queries.length > 0 && (
@@ -417,7 +417,7 @@ function renderItem(
   // Fallback: render tool name + status
   const hasError = typeof call.errorClass === 'string' && call.errorClass !== ''
   return (
-    <div style={{ fontSize: '13px', color: 'var(--c-cop-row-fg)', lineHeight: '18px' }}>
+    <div style={{ fontSize: '14px', color: 'var(--c-cop-row-fg)', lineHeight: '20px' }}>
       <TypewriterText text={call.toolName} live={live && !hasError && call.result === undefined} />
     </div>
   )

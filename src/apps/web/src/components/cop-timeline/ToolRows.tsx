@@ -12,9 +12,9 @@ const MONO = 'ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospac
 const EXPLORE_VIEWPORT_BOTTOM_PAD = 10
 const TIMELINE_ROW_TITLE_STYLE = {
   color: 'var(--c-cop-row-fg, var(--c-text-secondary))',
-  fontSize: 13,
+  fontSize: 14,
   fontWeight: 400,
-  lineHeight: '18px',
+  lineHeight: '20px',
 } as const
 
 const LocalExpansionScrollContext = createContext<((trigger?: HTMLElement | null) => void) | null>(null)
@@ -352,9 +352,9 @@ export function ExploreTimelineRow({ group, live, segmentLive, headerVariant = '
               paddingBlock: 1,
               marginBlock: -1,
               color: 'inherit',
-              fontSize: '13px',
+              fontSize: '14px',
               fontWeight: 400,
-              lineHeight: '18px',
+              lineHeight: '20px',
             }}
           >
             <TypewriterText text={group.label} live={live && group.status === 'running'} className={live && group.status === 'running' ? 'thinking-shimmer-dim' : undefined} />
@@ -468,9 +468,9 @@ export function EditTimelineSegment({ op, attachedThinkingRows }: { op: FileOpRe
             background: 'transparent',
             cursor: 'pointer',
             color: hovered ? 'var(--c-cop-row-hover-fg, var(--c-cop-row-fg))' : 'var(--c-cop-row-fg)',
-            fontSize: 13,
+            fontSize: 14,
             fontWeight: 400,
-            lineHeight: '18px',
+            lineHeight: '20px',
             transition: 'color 0.15s ease',
           }}
         >

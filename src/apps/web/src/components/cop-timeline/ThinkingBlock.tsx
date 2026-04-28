@@ -98,7 +98,7 @@ export function CopThoughtSummaryRow({ markdown, live, thoughtDurationSeconds, s
     : ''
   const thoughtLabel = thoughtDurationSeconds > 0 ? t.copTimelineThoughtForSeconds(thoughtDurationSeconds) : t.copTimelineThinkingDoneNoDuration
   const currentLabel = live ? liveLabel : thoughtLabel
-  const shouldAnimateLabel = currentLabel !== ''
+  const shouldAnimateLabel = live && currentLabel !== ''
 
   useEffect(() => {
     if (!live || !startedAtMs) {
