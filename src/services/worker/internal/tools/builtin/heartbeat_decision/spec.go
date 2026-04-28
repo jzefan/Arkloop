@@ -11,7 +11,7 @@ const ToolName = "heartbeat_decision"
 var AgentSpec = tools.AgentToolSpec{
 	Name:        ToolName,
 	Version:     "1",
-	Description: "Use only in heartbeat runs: declare intent to reply or stay silent.",
+	Description: "Use only in heartbeat runs: decide whether to speak or skip this check.",
 	RiskLevel:   tools.RiskLevelLow,
 	SideEffects: true,
 }
@@ -19,7 +19,7 @@ var AgentSpec = tools.AgentToolSpec{
 // Spec 是 heartbeat_decision 工具的 LLM schema 定义。
 var Spec = llm.ToolSpec{
 	Name:        ToolName,
-	Description: strPtr("Use only in heartbeat runs: declare intent to reply or stay silent."),
+	Description: strPtr("Use only in heartbeat runs: decide whether to speak or skip this check."),
 	JSONSchema: map[string]any{
 		"type":                 "object",
 		"additionalProperties": false,
@@ -27,7 +27,7 @@ var Spec = llm.ToolSpec{
 		"properties": map[string]any{
 			"reply": map[string]any{
 				"type":        "boolean",
-				"description": "true = send a reply to the user this heartbeat; false = silent, run ends immediately.",
+				"description": "true = speak now, your message will be sent; false = skip this check, nothing happens.",
 			},
 		},
 	},
@@ -39,7 +39,7 @@ func strPtr(s string) *string { return &s }
 func SystemProtocolSnippet() string {
 	return "You are in an LLM heartbeat turn. This is a two-phase process:\n" +
 		"Phase 1 (this turn): call `" + ToolName + "` exactly once. Do NOT output any text before the tool call — any text produced before the call is invisible to the user and wastes tokens.\n" +
-		"  - reply=false → run ends immediately, no output.\n" +
+		"  - reply=false → skip this check, nothing is sent, turn ends.\n" +
 		"  - reply=true → you proceed to Phase 2 with full tool access.\n" +
 		"Phase 2 (after reply=true): all your tools are unlocked. " +
 		"Use them freely to compose your reply to the user."
