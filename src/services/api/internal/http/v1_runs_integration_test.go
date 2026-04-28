@@ -633,7 +633,7 @@ func TestRunsCreateListGetCancelAndEnqueue(t *testing.T) {
 	}
 }
 
-func TestRunsCreateAutoResumesInterruptedRootRun(t *testing.T) {
+func TestRunsCreateDoesNotAutoResumeInterruptedRootRunWithNewInput(t *testing.T) {
 	db := setupTestDatabase(t, "api_go_runs_resume")
 
 	ctx := context.Background()
@@ -803,8 +803,8 @@ func TestRunsCreateAutoResumesInterruptedRootRun(t *testing.T) {
 	if parentRunID != nil {
 		t.Fatalf("expected resumed thread run to stay a root run, got parent_run_id=%s", *parentRunID)
 	}
-	if resumeFromRunID == nil || *resumeFromRunID != firstRunID {
-		t.Fatalf("unexpected resume_from_run_id: %#v want %s", resumeFromRunID, firstRunID)
+	if resumeFromRunID != nil {
+		t.Fatalf("did not expect resume_from_run_id for ordinary follow-up, got %s", *resumeFromRunID)
 	}
 
 	var resumedStartedJSON []byte
@@ -818,14 +818,14 @@ func TestRunsCreateAutoResumesInterruptedRootRun(t *testing.T) {
 	if err := json.Unmarshal(resumedStartedJSON, &resumedStartedData); err != nil {
 		t.Fatalf("decode resumed started json: %v", err)
 	}
-	if resumedStartedData["continuation_source"] != "user_followup" {
+	if resumedStartedData["continuation_source"] != "none" {
 		t.Fatalf("unexpected resumed continuation_source: %#v", resumedStartedData["continuation_source"])
 	}
-	if loop, ok := resumedStartedData["continuation_loop"].(bool); !ok || !loop {
+	if loop, ok := resumedStartedData["continuation_loop"].(bool); !ok || loop {
 		t.Fatalf("unexpected resumed continuation_loop: %#v", resumedStartedData["continuation_loop"])
 	}
-	if resp, ok := resumedStartedData["continuation_response"].(bool); !ok || !resp {
-		t.Fatalf("unexpected resumed continuation_response: %#v", resumedStartedData["continuation_response"])
+	if _, ok := resumedStartedData["continuation_response"]; ok {
+		t.Fatalf("did not expect continuation_response, got %#v", resumedStartedData["continuation_response"])
 	}
 }
 
@@ -1014,7 +1014,7 @@ func TestRunsCreateDoesNotAutoResumeWithoutNewUserInput(t *testing.T) {
 	}
 }
 
-func TestRunsCreateAutoResumesWithVisibleFollowupAfterThreadReplacement(t *testing.T) {
+func TestRunsCreateDoesNotAutoResumeWithVisibleFollowupAfterThreadReplacement(t *testing.T) {
 	db := setupTestDatabase(t, "api_go_runs_resume_with_snapshot")
 
 	ctx := context.Background()
@@ -1208,8 +1208,8 @@ func TestRunsCreateAutoResumesWithVisibleFollowupAfterThreadReplacement(t *testi
 	if parentRunID != nil {
 		t.Fatalf("expected resumed thread run to stay a root run, got parent_run_id=%s", *parentRunID)
 	}
-	if resumeFromRunID == nil || *resumeFromRunID != firstRunID {
-		t.Fatalf("unexpected resume_from_run_id: %#v want %s", resumeFromRunID, firstRunID)
+	if resumeFromRunID != nil {
+		t.Fatalf("did not expect resume_from_run_id for ordinary follow-up, got %s", *resumeFromRunID)
 	}
 
 	var resumedStartedJSON []byte
@@ -1223,14 +1223,14 @@ func TestRunsCreateAutoResumesWithVisibleFollowupAfterThreadReplacement(t *testi
 	if err := json.Unmarshal(resumedStartedJSON, &resumedStartedData); err != nil {
 		t.Fatalf("decode resumed started json: %v", err)
 	}
-	if resumedStartedData["continuation_source"] != "user_followup" {
+	if resumedStartedData["continuation_source"] != "none" {
 		t.Fatalf("unexpected resumed continuation_source: %#v", resumedStartedData["continuation_source"])
 	}
-	if loop, ok := resumedStartedData["continuation_loop"].(bool); !ok || !loop {
+	if loop, ok := resumedStartedData["continuation_loop"].(bool); !ok || loop {
 		t.Fatalf("unexpected resumed continuation_loop: %#v", resumedStartedData["continuation_loop"])
 	}
-	if resp, ok := resumedStartedData["continuation_response"].(bool); !ok || !resp {
-		t.Fatalf("unexpected resumed continuation_response: %#v", resumedStartedData["continuation_response"])
+	if _, ok := resumedStartedData["continuation_response"]; ok {
+		t.Fatalf("did not expect continuation_response, got %#v", resumedStartedData["continuation_response"])
 	}
 }
 

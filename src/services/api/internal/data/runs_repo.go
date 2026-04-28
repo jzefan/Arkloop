@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"arkloop/services/shared/runkind"
-	"arkloop/services/shared/runresume"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -87,7 +86,7 @@ func (r *RunEventRepository) CreateRunWithStartedEvent(
 	startedType string,
 	startedData map[string]any,
 ) (Run, RunEvent, error) {
-	return r.createRunWithStartedEvent(ctx, accountID, threadID, createdByUserID, startedType, startedData, nil)
+	return r.createRunWithStartedEvent(ctx, accountID, threadID, createdByUserID, startedType, startedData)
 }
 
 func (r *RunEventRepository) createRunWithStartedEvent(
@@ -97,7 +96,6 @@ func (r *RunEventRepository) createRunWithStartedEvent(
 	createdByUserID *uuid.UUID,
 	startedType string,
 	startedData map[string]any,
-	resumeFromRunID *uuid.UUID,
 ) (Run, RunEvent, error) {
 	if ctx == nil {
 		ctx = context.Background()
@@ -126,7 +124,7 @@ func (r *RunEventRepository) createRunWithStartedEvent(
 		accountID,
 		threadID,
 		createdByUserID,
-		resumeFromRunID,
+		nil,
 	).Scan(
 		&run.ID, &run.AccountID, &run.ThreadID, &run.CreatedByUserID, &run.Status, &run.CreatedAt,
 		&run.ParentRunID, &run.ResumeFromRunID, &run.StatusUpdatedAt, &run.CompletedAt, &run.FailedAt,
@@ -154,34 +152,6 @@ func (r *RunEventRepository) CreateRootRunWithClaim(
 	startedData map[string]any,
 ) (Run, RunEvent, error) {
 	return r.CreateRootRunWithClaimFrom(ctx, accountID, threadID, createdByUserID, startedType, startedData)
-}
-
-func (r *RunEventRepository) CreateRootRunWithResume(
-	ctx context.Context,
-	accountID uuid.UUID,
-	threadID uuid.UUID,
-	createdByUserID *uuid.UUID,
-	startedType string,
-	startedData map[string]any,
-	resumeFromRunID uuid.UUID,
-) (Run, RunEvent, error) {
-	if resumeFromRunID == uuid.Nil {
-		return Run{}, RunEvent{}, fmt.Errorf("resume_from_run_id must not be empty")
-	}
-	if err := r.LockThreadRow(ctx, threadID); err != nil {
-		return Run{}, RunEvent{}, err
-	}
-	if active, err := r.GetActiveRootRunForThread(ctx, threadID); err != nil {
-		return Run{}, RunEvent{}, err
-	} else if active != nil {
-		return Run{}, RunEvent{}, ErrThreadBusy
-	}
-	startedData, _, err := r.withThreadTailMessage(ctx, threadID, startedData)
-	if err != nil {
-		return Run{}, RunEvent{}, err
-	}
-	startedData = applyContinuationMetadata(startedData, &resumeFromRunID)
-	return r.createRunWithStartedEvent(ctx, accountID, threadID, createdByUserID, startedType, startedData, &resumeFromRunID)
 }
 
 func (r *RunEventRepository) CreateRootRunWithClaimFrom(
@@ -216,55 +186,17 @@ func (r *RunEventRepository) CreateRootRunWithClaimFrom(
 			return Run{}, RunEvent{}, ErrThreadBusy
 		}
 	}
-	startedData, latestThreadMessage, err := r.withThreadTailMessage(ctx, threadID, startedData)
+	startedData, _, err := r.withThreadTailMessage(ctx, threadID, startedData)
 	if err != nil {
 		return Run{}, RunEvent{}, err
 	}
-	latestRootRun, err := r.GetLatestRootRunForThread(ctx, threadID)
-	if err != nil {
-		return Run{}, RunEvent{}, err
-	}
-	latestRootRunStartedData, err := r.firstEventData(ctx, latestRootRun)
-	if err != nil {
-		return Run{}, RunEvent{}, err
-	}
-	resumeFromRunID := shouldResumeFromRun(
-		latestRootRun,
-		latestThreadMessage,
-		threadTailMessageIDFromData(latestRootRunStartedData),
-		runKindFromData(latestRootRunStartedData),
-	)
-	startedData = applyContinuationMetadata(startedData, resumeFromRunID)
-	return r.createRunWithStartedEvent(ctx, accountID, threadID, createdByUserID, startedType, startedData, resumeFromRunID)
+	startedData = applyContinuationMetadata(startedData)
+	return r.createRunWithStartedEvent(ctx, accountID, threadID, createdByUserID, startedType, startedData)
 }
 
 type threadTailMessage struct {
 	ID   uuid.UUID
 	Role string
-}
-
-func shouldResumeFromRun(run *Run, latestMessage *threadTailMessage, previousTailMessageID string, previousRunKind string) *uuid.UUID {
-	if run == nil || latestMessage == nil {
-		return nil
-	}
-	if latestMessage.Role != "user" {
-		return nil
-	}
-	if strings.TrimSpace(previousTailMessageID) == "" {
-		return nil
-	}
-	if latestMessage.ID.String() == previousTailMessageID {
-		return nil
-	}
-	if strings.EqualFold(strings.TrimSpace(previousRunKind), runkind.Heartbeat) {
-		return nil
-	}
-	switch run.Status {
-	case "interrupted", "cancelled":
-		return &run.ID
-	default:
-		return nil
-	}
 }
 
 func threadTailMessageIDFromData(data map[string]any) string {
@@ -325,19 +257,13 @@ func (r *RunEventRepository) hasOutboundForRun(ctx context.Context, runID uuid.U
 	return exists, nil
 }
 
-func applyContinuationMetadata(data map[string]any, resumeFromRunID *uuid.UUID) map[string]any {
+func applyContinuationMetadata(data map[string]any) map[string]any {
 	if data == nil {
 		data = map[string]any{}
 	}
-	if resumeFromRunID == nil {
-		data["continuation_source"] = "none"
-		data["continuation_loop"] = false
-		delete(data, "continuation_response")
-		return data
-	}
-	data["continuation_source"] = "user_followup"
-	data["continuation_loop"] = true
-	data["continuation_response"] = true
+	data["continuation_source"] = "none"
+	data["continuation_loop"] = false
+	delete(data, "continuation_response")
 	return data
 }
 
@@ -698,23 +624,6 @@ func (r *RunEventRepository) GetLatestEventType(
 		return "", err
 	}
 	return eventType, nil
-}
-
-func (r *RunEventRepository) HasRecoverableAssistantOutput(
-	ctx context.Context,
-	runID uuid.UUID,
-) (bool, error) {
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	if runID == uuid.Nil {
-		return false, fmt.Errorf("run_id must not be empty")
-	}
-	eventType, err := r.GetLatestEventType(ctx, runID, runresume.RecoverableEventTypeNames())
-	if err != nil {
-		return false, err
-	}
-	return strings.TrimSpace(eventType) != "", nil
 }
 
 func (r *RunEventRepository) RequestCancel(

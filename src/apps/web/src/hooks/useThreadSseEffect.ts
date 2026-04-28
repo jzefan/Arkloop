@@ -97,7 +97,6 @@ export function useThreadSseEffect({
     sseTerminalFallbackRunIdRef,
     sseTerminalFallbackArmedRef,
     noResponseMsgIdRef,
-    replaceOnCancelRef,
     pendingMessageRef,
     seenFirstToolCallInRunRef,
   } = useRunLifecycle()
@@ -719,7 +718,6 @@ export function useThreadSseEffect({
         const completedRunId = event.run_id
         injectionBlockedRunIdRef.current = null
         noResponseMsgIdRef.current = null
-        replaceOnCancelRef.current = null
         setPreserveLiveRunUi(true)
         setTerminalRunDisplayId(completedRunId)
         setTerminalRunHandoffStatus('completed')

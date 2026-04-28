@@ -1026,37 +1026,6 @@ export async function provideInput(
   })
 }
 
-export type RetryThreadResponse = {
-  run_id: string
-  trace_id: string
-}
-
-export type ContinueThreadResponse = RetryThreadResponse
-
-export async function retryThread(
-  accessToken: string,
-  threadId: string,
-  modelOverride?: string,
-): Promise<RetryThreadResponse> {
-  return await apiFetch<RetryThreadResponse>(`/v1/threads/${threadId}:retry`, {
-    method: 'POST',
-    accessToken,
-    body: modelOverride ? JSON.stringify({ model: modelOverride }) : undefined,
-  })
-}
-
-export async function continueThread(
-  accessToken: string,
-  threadId: string,
-  runId: string,
-): Promise<ContinueThreadResponse> {
-  return await apiFetch<ContinueThreadResponse>(`/v1/threads/${threadId}:continue`, {
-    method: 'POST',
-    accessToken,
-    body: JSON.stringify({ run_id: runId }),
-  })
-}
-
 // Credits API
 
 export type CreditTransaction = {

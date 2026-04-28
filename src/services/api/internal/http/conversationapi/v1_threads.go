@@ -774,8 +774,6 @@ func threadEntry(
 	listMessages := listThreadMessages(authService, membershipRepo, threadRepo, messageRepo, auditWriter, apiKeysRepo, flagService)
 	createRun := createThreadRun(authService, membershipRepo, threadRepo, auditWriter, pool, apiKeysRepo, runLimiter, entSvc, rdb)
 	listRuns := listThreadRuns(authService, membershipRepo, threadRepo, runRepo, auditWriter, apiKeysRepo)
-	retry := retryThread(authService, membershipRepo, threadRepo, messageRepo, auditWriter, pool, apiKeysRepo)
-	continueRun := continueThread(authService, membershipRepo, threadRepo, auditWriter, pool, apiKeysRepo)
 	editMessage := editThreadMessage(authService, membershipRepo, threadRepo, messageRepo, auditWriter, pool, apiKeysRepo)
 	share := shareEntry(authService, membershipRepo, threadRepo, threadShareRepo, messageRepo, auditWriter, apiKeysRepo, flagService)
 	report := reportEntry(authService, membershipRepo, threadRepo, threadReportRepo, auditWriter, apiKeysRepo, flagService)
@@ -807,21 +805,8 @@ func threadEntry(
 
 		if hasAction {
 			switch actionPart {
-			case "retry":
-				if r.Method != nethttp.MethodPost {
-					httpkit.WriteMethodNotAllowed(w, r)
-					return
-				}
-				retry(w, r, threadID)
 			case "star":
 				handleThreadStar(w, r, traceID, authService, membershipRepo, threadRepo, threadStarRepo, apiKeysRepo, auditWriter, threadID)
-			case "continue":
-				if r.Method != nethttp.MethodPost {
-					httpkit.WriteMethodNotAllowed(w, r)
-					return
-				}
-				continueRun(w, r, threadID)
-				return
 			case "share":
 				share(w, r, threadID)
 			case "report":

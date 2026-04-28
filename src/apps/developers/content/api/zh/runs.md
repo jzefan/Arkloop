@@ -203,15 +203,3 @@ data: {"seq":99,"type":"run.completed","data":{}}
 | `run.cancelled` | Run 已取消 |
 
 详见 [API & SSE 规范](/docs/specs/api-and-sse)。
-
----
-
-## Retry（重试上一轮对话）
-
-```http
-POST /v1/threads/{thread_id}:retry
-```
-
-删除最后一条 Assistant 消息并重新创建 Run。
-
-**响应** — 同创建 Run。

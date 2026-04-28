@@ -203,15 +203,3 @@ data: {"seq":99,"type":"run.completed","data":{}}
 | `run.cancelled` | Run cancelled |
 
 For more details, see [API & SSE Specification](/en/docs/specs/api-and-sse).
-
----
-
-## Retry (Retry the previous round of conversation)
-
-```http
-POST /v1/threads/{thread_id}:retry
-```
-
-Deletes the last Assistant message and recreates the Run.
-
-**Response** — Same as Create Run.

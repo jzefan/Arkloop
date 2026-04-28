@@ -46,11 +46,9 @@ export interface LocaleStrings {
   sessionExpired: string;
   runInterrupted: string;
   sseReconnectNotice: string;
-  sseReconnectFailed: string;
-  failedRunRetryTitle: string;
+  failedRunTitle: string;
   retryAction: string;
   resetAction: string;
-  runCancelled: string;
   logout: string;
   language: string;
   appearance: string;

@@ -6,10 +6,6 @@ button:not(:disabled) {
   cursor: pointer;
 }
 
-.failed-run-retry-button:hover:not(:disabled) {
-  background: var(--c-bg-card-hover);
-}
-
 .button-secondary:hover:not(:disabled) {
   background: var(--c-bg-deep);
 }

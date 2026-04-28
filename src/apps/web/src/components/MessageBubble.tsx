@@ -56,7 +56,6 @@ export const MessageBubble = memo(function MessageBubble({ message, streamAssist
     <AssistantMessage
       message={message}
       streamMarkdown={streamAssistantMarkdown}
-      onRetry={onRetry}
       onFork={onFork}
       onShare={onShare}
       shareState={shareState}

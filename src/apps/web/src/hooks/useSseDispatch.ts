@@ -673,7 +673,6 @@ export function useSseDispatch(params: {
         const completedRunId = event.run_id
         run.injectionBlockedRunIdRef.current = null
         run.noResponseMsgIdRef.current = null
-        run.replaceOnCancelRef.current = null
         stream.setPreserveLiveRunUi(true)
         run.setTerminalRunDisplayId(completedRunId)
         run.setTerminalRunHandoffStatus('completed')
