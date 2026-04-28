@@ -321,8 +321,8 @@ CREATE UNIQUE INDEX ux_llm_routes_credential_default
     ON llm_routes (credential_id)
     WHERE is_default = 1;
 
-CREATE UNIQUE INDEX ux_llm_routes_credential_model_lower
-    ON llm_routes (credential_id, lower(model));
+CREATE UNIQUE INDEX ux_llm_routes_credential_model
+    ON llm_routes (credential_id, model);
 
 CREATE UNIQUE INDEX ux_llm_routes_route_key
     ON llm_routes (lower(route_key))

@@ -389,7 +389,7 @@ func (c ProviderRoutingConfig) GetHighestPriorityRouteByCredentialAndModel(name 
 		return ProviderRouteRule{}, ProviderCredential{}, false
 	}
 	return c.pickBestRoute(func(route ProviderRouteRule) bool {
-		return route.CredentialID == credIDByName && strings.EqualFold(route.Model, model)
+		return route.CredentialID == credIDByName && route.Model == model
 	}, inputJSON)
 }
 
@@ -398,7 +398,7 @@ func (c ProviderRoutingConfig) GetHighestPriorityRouteByModel(model string, inpu
 		return ProviderRouteRule{}, ProviderCredential{}, false
 	}
 	return c.pickBestRoute(func(route ProviderRouteRule) bool {
-		return strings.EqualFold(route.Model, model)
+		return route.Model == model
 	}, inputJSON)
 }
 

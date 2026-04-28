@@ -632,7 +632,7 @@ func (s *Service) ListAvailableModels(ctx context.Context, accountID, providerID
 		if modelID == "" {
 			continue
 		}
-		configured[strings.ToLower(modelID)] = struct{}{}
+		configured[modelID] = struct{}{}
 	}
 	cacheKey := makeAvailableModelsCacheKey(accountID, providerID, scope, userID)
 	models, err := s.availableModelsCache.getOrLoad(ctx, cacheKey, func(ctx context.Context) ([]AvailableModel, error) {
@@ -644,7 +644,7 @@ func (s *Service) ListAvailableModels(ctx context.Context, accountID, providerID
 	for idx := range models {
 		modelID := CanonicalModelIdentifier(provider.Provider, models[idx].ID)
 		models[idx].ID = modelID
-		_, models[idx].Configured = configured[strings.ToLower(modelID)]
+		_, models[idx].Configured = configured[modelID]
 	}
 	return models, nil
 }

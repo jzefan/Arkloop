@@ -106,4 +106,39 @@ describe('ProvidersSettings', () => {
 
     expect(listAvailableModels).toHaveBeenCalledTimes(1)
   })
+
+  it('available models 拉取失败时只露出 Error 入口，详情放进弹层', async () => {
+    listAvailableModels.mockRejectedValueOnce(new Error('provider request failed'))
+    const { ProvidersSettings, LocaleProvider } = await loadSubject()
+
+    await act(async () => {
+      root!.render(
+        <LocaleProvider>
+          <ProvidersSettings accessToken="token" />
+        </LocaleProvider>,
+      )
+    })
+    await flushEffects()
+
+    const importButton = container.querySelector('button.button-secondary')
+    expect(importButton).toBeTruthy()
+
+    await act(async () => {
+      importButton!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+    await flushEffects()
+
+    expect(container.textContent).toContain('Error')
+    expect(container.textContent).not.toContain('provider request failed')
+
+    const errorButton = Array.from(container.querySelectorAll('button')).find((button) => button.textContent === 'Error')
+    expect(errorButton).toBeTruthy()
+
+    await act(async () => {
+      errorButton!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+    await flushEffects()
+
+    expect(document.body.textContent).toContain('provider request failed')
+  })
 })

@@ -306,24 +306,14 @@ func (r *LlmRoutesRepository) SetDefaultByCredential(ctx context.Context, accoun
 		return nil, err
 	}
 
-	query := fmt.Sprintf(`WITH updated AS (
-			UPDATE llm_routes
-			SET is_default = (id = $2)
-			WHERE credential_id = $1 AND %s
-			RETURNING id, project_id, credential_id, model, priority, is_default, show_in_picker, tags, when_json, advanced_json, multiplier, cost_per_1k_input, cost_per_1k_output, cost_per_1k_cache_write, cost_per_1k_cache_read, created_at
-		)
-		SELECT id, project_id, credential_id, model, priority, is_default, show_in_picker, tags, when_json, advanced_json, multiplier, cost_per_1k_input, cost_per_1k_output, cost_per_1k_cache_write, cost_per_1k_cache_read, created_at
-		FROM updated
-		WHERE id = $2`, where)
+	query := fmt.Sprintf(`UPDATE llm_routes
+		SET is_default = (id = $2)
+		WHERE credential_id = $1 AND %s`, where)
 	fullArgs := append([]any{credentialID, routeID}, args...)
-	route, err := scanLlmRoute(r.db.QueryRow(ctx, query, fullArgs...))
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, nil
-		}
+	if _, err := r.db.Exec(ctx, query, fullArgs...); err != nil {
 		return nil, err
 	}
-	return &route, nil
+	return r.getByIDAndCredential(ctx, accountID, credentialID, routeID, scope)
 }
 
 func (r *LlmRoutesRepository) PromoteHighestPriorityToDefault(ctx context.Context, accountID, credentialID uuid.UUID, scope string) (*LlmRoute, error) {
@@ -338,23 +328,48 @@ func (r *LlmRoutesRepository) PromoteHighestPriorityToDefault(ctx context.Contex
 		return nil, err
 	}
 
-	query := fmt.Sprintf(`WITH candidate AS (
-			SELECT id
-			FROM llm_routes
-			WHERE credential_id = $1 AND %s
-			ORDER BY priority DESC, created_at ASC, id ASC
-			LIMIT 1
-		), updated AS (
-			UPDATE llm_routes
-			SET is_default = (id = (SELECT id FROM candidate))
-			WHERE credential_id = $1 AND %s
-			RETURNING id, project_id, credential_id, model, priority, is_default, show_in_picker, tags, when_json, advanced_json, multiplier, cost_per_1k_input, cost_per_1k_output, cost_per_1k_cache_write, cost_per_1k_cache_read, created_at
-		)
-		SELECT id, project_id, credential_id, model, priority, is_default, show_in_picker, tags, when_json, advanced_json, multiplier, cost_per_1k_input, cost_per_1k_output, cost_per_1k_cache_write, cost_per_1k_cache_read, created_at
-		FROM updated
-		WHERE id = (SELECT id FROM candidate)`, where, where)
+	candidateQuery := fmt.Sprintf(`SELECT id
+		FROM llm_routes
+		WHERE credential_id = $1 AND %s
+		ORDER BY priority DESC, created_at ASC, id ASC
+		LIMIT 1`, where)
 	fullArgs := append([]any{credentialID}, args...)
-	route, err := scanLlmRoute(r.db.QueryRow(ctx, query, fullArgs...))
+	var candidateID uuid.UUID
+	err = r.db.QueryRow(ctx, candidateQuery, fullArgs...).Scan(&candidateID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+
+	updateWhere, updateScopeArgs, err := llmRouteScopeClause(accountID, scope, 3)
+	if err != nil {
+		return nil, err
+	}
+	updateQuery := fmt.Sprintf(`UPDATE llm_routes
+		SET is_default = (id = $2)
+		WHERE credential_id = $1 AND %s`, updateWhere)
+	updateArgs := append([]any{credentialID, candidateID}, updateScopeArgs...)
+	if _, err := r.db.Exec(ctx, updateQuery, updateArgs...); err != nil {
+		return nil, err
+	}
+	return r.getByIDAndCredential(ctx, accountID, credentialID, candidateID, scope)
+}
+
+func (r *LlmRoutesRepository) getByIDAndCredential(ctx context.Context, accountID, credentialID, routeID uuid.UUID, scope string) (*LlmRoute, error) {
+	query := `SELECT id, project_id, credential_id, model, priority, is_default, show_in_picker, tags, when_json, advanced_json, multiplier, cost_per_1k_input, cost_per_1k_output, cost_per_1k_cache_write, cost_per_1k_cache_read, created_at
+		 FROM llm_routes
+		 WHERE id = $1 AND credential_id = $2`
+	args := []any{routeID, credentialID}
+	var err error
+	query, args, err = appendLlmRouteScopeFilter(query, args, accountID, scope)
+	if err != nil {
+		return nil, err
+	}
+	query += ` LIMIT 1`
+
+	route, err := scanLlmRoute(r.db.QueryRow(ctx, query, args...))
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil
@@ -530,7 +545,7 @@ func mapLlmRouteWriteError(err error, credentialID uuid.UUID, model string) erro
 	var pgErr *pgconn.PgError
 	if errors.As(err, &pgErr) && pgErr.Code == "23505" {
 		switch pgErr.ConstraintName {
-		case "ux_llm_routes_credential_model_lower":
+		case "ux_llm_routes_credential_model":
 			return LlmRouteModelConflictError{CredentialID: credentialID, Model: model}
 		case "ux_llm_routes_credential_default":
 			return LlmRouteModelConflictError{CredentialID: credentialID, Model: model}
@@ -553,7 +568,7 @@ func sqliteLlmRouteUniqueConflict(err error, credentialID uuid.UUID, model strin
 		return nil
 	}
 	switch {
-	case strings.Contains(msg, "ux_llm_routes_credential_model_lower"):
+	case strings.Contains(msg, "ux_llm_routes_credential_model"):
 		return LlmRouteModelConflictError{CredentialID: credentialID, Model: model}
 	case strings.Contains(msg, "ux_llm_routes_credential_default"):
 		return LlmRouteModelConflictError{CredentialID: credentialID, Model: model}

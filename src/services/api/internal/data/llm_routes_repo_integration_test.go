@@ -204,19 +204,31 @@ func TestLlmRoutesPromoteHighestPriorityToDefault(t *testing.T) {
 	}
 }
 
-func TestLlmRoutesCreateDuplicateModelConflict(t *testing.T) {
+func TestLlmRoutesCreateExactDuplicateModelConflict(t *testing.T) {
 	routesRepo, credentialsRepo, orgRepo, ctx := setupLlmRoutesTestRepos(t)
 	accountID, credentialID := createLlmRouteTestCredential(t, ctx, orgRepo, credentialsRepo, "duplicate-model")
 
 	if _, err := routesRepo.Create(ctx, CreateLlmRouteParams{AccountID: accountID, Scope: LlmRouteScopeUser, CredentialID: credentialID, Model: "gpt-4o", IsDefault: true}); err != nil {
 		t.Fatalf("create first route: %v", err)
 	}
-	_, err := routesRepo.Create(ctx, CreateLlmRouteParams{AccountID: accountID, Scope: LlmRouteScopeUser, CredentialID: credentialID, Model: "GPT-4O"})
+	_, err := routesRepo.Create(ctx, CreateLlmRouteParams{AccountID: accountID, Scope: LlmRouteScopeUser, CredentialID: credentialID, Model: "gpt-4o"})
 	if err == nil {
 		t.Fatal("expected conflict error")
 	}
 	var conflictErr LlmRouteModelConflictError
 	if !errors.As(err, &conflictErr) {
 		t.Fatalf("expected LlmRouteModelConflictError, got %T %v", err, err)
+	}
+}
+
+func TestLlmRoutesCreateCaseVariantModel(t *testing.T) {
+	routesRepo, credentialsRepo, orgRepo, ctx := setupLlmRoutesTestRepos(t)
+	accountID, credentialID := createLlmRouteTestCredential(t, ctx, orgRepo, credentialsRepo, "case-variant-model")
+
+	if _, err := routesRepo.Create(ctx, CreateLlmRouteParams{AccountID: accountID, Scope: LlmRouteScopeUser, CredentialID: credentialID, Model: "MiMo-V2.5-Pro", IsDefault: true}); err != nil {
+		t.Fatalf("create first route: %v", err)
+	}
+	if _, err := routesRepo.Create(ctx, CreateLlmRouteParams{AccountID: accountID, Scope: LlmRouteScopeUser, CredentialID: credentialID, Model: "mimo-v2.5-pro"}); err != nil {
+		t.Fatalf("create case variant route: %v", err)
 	}
 }
