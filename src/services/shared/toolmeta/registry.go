@@ -667,10 +667,14 @@ var registry = []ToolMeta{
 		Label:     "Todo write",
 		ShortDesc: "manage a structured todo list for the current run",
 		LLMDescription: "create and update a structured todo list for the current run. " +
-			"Each call fully replaces the list. " +
-			"Use to track multi-step plans: start with all items pending, update status as work progresses. " +
-			"status must be one of: pending, in_progress, completed, cancelled. " +
-			"Only one item should be in_progress at a time.",
+			"Each call fully replaces the list — include ALL items, not just new ones. " +
+			"Use proactively for complex multi-step tasks (3+ distinct steps), non-trivial tasks requiring planning, or when the user provides multiple tasks. " +
+			"Do NOT use for single straightforward tasks, trivial one-step operations, or purely conversational questions. " +
+			"Start with all items as pending, mark one as in_progress before beginning work on it, mark it completed when done. " +
+			"Only ONE item should be in_progress at a time. " +
+			"Mark tasks as completed as soon as you finish them — do not batch completions. " +
+			"Status workflow: pending → in_progress → completed (or cancelled). " +
+			"Use clear, specific subjects in imperative form (e.g., \"Fix authentication bug\" not \"auth\").",
 	},
 }
 
