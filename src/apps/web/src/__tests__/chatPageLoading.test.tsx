@@ -21,8 +21,7 @@ import {
   createMessage,
   createRun,
   cancelRun,
-  continueThread,
-  retryThread,
+  forkThread,
 } from '../api'
 import {
   readMessageTerminalStatus,
@@ -67,9 +66,7 @@ vi.mock('../api', async () => {
     createMessage: vi.fn(),
     createRun: vi.fn(),
     cancelRun: vi.fn(),
-    continueThread: vi.fn(),
     provideInput: vi.fn(),
-    retryThread: vi.fn(),
     editMessage: vi.fn(),
     forkThread: vi.fn(),
     getThread: vi.fn(),
@@ -194,13 +191,20 @@ vi.mock('../components/MessageBubble', () => ({
     message,
     contentOverride,
     animateUserEnter,
+    onRetry,
   }: {
-    message: { content: string }
+    message: { content: string; role?: string }
     contentOverride?: string
     animateUserEnter?: boolean
+    onRetry?: () => void
   }) => (
     <div className={animateUserEnter ? 'user-prompt-bubble-enter' : undefined}>
       {contentOverride ?? message.content}
+      {message.role === 'user' && onRetry && (
+        <button type="button" aria-label="retry-user-message" onClick={onRetry}>
+          retry-user
+        </button>
+      )}
     </div>
   ),
 }))
@@ -639,8 +643,7 @@ describe('ChatPage loading state', () => {
   const mockedCreateMessage = vi.mocked(createMessage)
   const mockedCreateRun = vi.mocked(createRun)
   const mockedCancelRun = vi.mocked(cancelRun)
-  const mockedContinueThread = vi.mocked(continueThread)
-  const mockedRetryThread = vi.mocked(retryThread)
+  const mockedForkThread = vi.mocked(forkThread)
   const mockedWriteMessageAssistantTurn = vi.mocked(writeMessageAssistantTurn)
   const mockedWriteMessageCodeExecutions = vi.mocked(writeMessageCodeExecutions)
   const mockedWriteMessageSearchSteps = vi.mocked(writeMessageSearchSteps)
@@ -664,6 +667,15 @@ describe('ChatPage loading state', () => {
   beforeEach(() => {
     vi.useRealTimers()
     vi.clearAllMocks()
+    mockedListMessages.mockReset()
+    mockedListRunEvents.mockReset()
+    mockedListStarredThreadIds.mockReset()
+    mockedListThreadRuns.mockReset()
+    mockedGetThread.mockReset()
+    mockedCreateMessage.mockReset()
+    mockedCreateRun.mockReset()
+    mockedCancelRun.mockReset()
+    mockedForkThread.mockReset()
     chatInputDraftStore.clear()
     mockedReadMessageAssistantTurn.mockReturnValue(null)
     mockedReadMessageTerminalStatus.mockReturnValue(null)
@@ -721,8 +733,6 @@ describe('ChatPage loading state', () => {
     })
     mockedCreateRun.mockResolvedValue({ run_id: 'run-created', trace_id: 'trace-1' })
     mockedCancelRun.mockResolvedValue({ ok: true })
-    mockedContinueThread.mockResolvedValue({ run_id: 'run-continued', trace_id: 'trace-continue' })
-    mockedRetryThread.mockResolvedValue({ run_id: 'run-retried', trace_id: 'trace-retry' })
     mockedReadMessageTerminalStatus.mockReturnValue(null)
   })
 
@@ -986,7 +996,7 @@ describe('ChatPage loading state', () => {
       await flushMicrotasks()
     })
 
-    expect(container.textContent).toContain('出了点问题，本次运行未能完成')
+    expect(container.textContent).toContain('模型服务商请求失败')
 
     act(() => {
       root.unmount()
@@ -994,7 +1004,7 @@ describe('ChatPage loading state', () => {
     container.remove()
   })
 
-  it('重新进入 thread 时若 failed run 尚未落库 assistant 消息也应恢复 handoff 并显示继续', async () => {
+  it('重新进入 thread 时若 failed run 尚未落库 assistant 消息也应恢复 handoff 且不显示终止态操作', async () => {
     mockedListMessages.mockResolvedValue([
       {
         id: 'msg-1',
@@ -1083,7 +1093,6 @@ describe('ChatPage loading state', () => {
 
     expect(container.querySelector('[data-testid="current-run-handoff"]')).not.toBeNull()
     expect(container.textContent).toContain('先想一下')
-    expect(container.querySelector('.failed-run-retry-button')?.textContent).toBe('继续')
 
     act(() => {
       root.unmount()
@@ -1091,8 +1100,7 @@ describe('ChatPage loading state', () => {
     container.remove()
   })
 
-  it('continue 后应保留当前 handoff 并在同一块中继续追加新输出', async () => {
-    const mathRandomSpy = vi.spyOn(Math, 'random').mockReturnValue(0)
+  it('failed handoff 后用户新输入按普通消息追加', async () => {
     mockedListMessages.mockResolvedValue([
       {
         id: 'msg-1',
@@ -1136,7 +1144,6 @@ describe('ChatPage loading state', () => {
         },
       },
     ] as never)
-    sseMock.state = 'connected'
 
     const container = document.createElement('div')
     document.body.appendChild(container)
@@ -1182,73 +1189,28 @@ describe('ChatPage loading state', () => {
       await flushMicrotasks()
     })
 
-    const actionButton = container.querySelector('.failed-run-retry-button')
     expect(container.querySelector('[data-testid="current-run-handoff"]')).not.toBeNull()
     expect(container.textContent).toContain('先想一下')
-    expect(actionButton?.textContent).toBe('继续')
 
     await act(async () => {
-      actionButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      const input = container.querySelector('input[aria-label="chat-input"]') as HTMLInputElement | null
+      if (!input) throw new Error('input missing')
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set?.call(input, 'continue')
+      input.dispatchEvent(new Event('input', { bubbles: true }))
+      const form = input.closest('form')
+      form?.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
       await flushMicrotasks()
     })
 
-    expect(mockedContinueThread).toHaveBeenCalledWith('token', 'thread-1', 'run-failed-handoff')
-    expect(mockedWriteThreadRunHandoff).toHaveBeenCalledWith(
-      'thread-1',
-      expect.objectContaining({
-        runId: 'run-failed-handoff',
-        status: 'failed',
-        coveredRunIds: ['run-failed-handoff'],
-      }),
-    )
-    expect(mockedClearThreadRunHandoff).not.toHaveBeenCalledWith('thread-1')
-    expect(container.querySelector('[data-testid="current-run-handoff"]')).not.toBeNull()
-    expect(container.textContent).toContain('先想一下')
-    expect(container.querySelector('.failed-run-retry-button')).toBeNull()
-
-    sseMock.events = [
-      {
-        event_id: 'evt-3',
-        run_id: 'run-continued',
-        seq: 1,
-        ts: '2026-03-10T00:00:02Z',
-        type: 'message.delta',
-        data: {
-          role: 'assistant',
-          channel: 'thinking',
-          content_delta: '继续执行',
-        },
-      },
-    ]
-
-    await act(async () => {
-      root.render(renderTree())
-      await flushMicrotasks()
-      await flushMicrotasks()
-      await flushAnimationFrames(12)
-    })
-
-    const continuedHandoff = container.querySelector('[data-testid="current-run-handoff"]')
-    expect(continuedHandoff).not.toBeNull()
-    const handoffText = continuedHandoff?.textContent ?? ''
-    expect(handoffText).toContain('thinking:先想一下')
-    expect(handoffText).toContain('thinking:继续执行')
-    expect(mockedWriteThreadRunHandoff).toHaveBeenCalledWith(
-      'thread-1',
-      expect.objectContaining({
-        runId: 'run-continued',
-        status: 'running',
-      }),
-    )
+    expect(mockedCreateMessage).toHaveBeenCalledWith('token', 'thread-1', expect.objectContaining({ content: 'continue' }))
 
     act(() => {
       root.unmount()
     })
     container.remove()
-    mathRandomSpy.mockRestore()
   })
 
-  it('已完成的 continue 链应继续隐藏被接管的旧 assistant message', async () => {
+  it('历史 assistant message 的 coveredRunIds 仍应隐藏被覆盖输出', async () => {
     mockedListMessages.mockResolvedValue([
       {
         id: 'msg-1',
@@ -1314,7 +1276,7 @@ describe('ChatPage loading state', () => {
     container.remove()
   })
 
-  it('continue 请求后 reload 应把旧 handoff 接到新 running run 上', async () => {
+  it('reload 时不应把 resumed run 接到旧 handoff 上', async () => {
     mockedListMessages.mockResolvedValue([
       {
         id: 'msg-1',
@@ -1378,16 +1340,9 @@ describe('ChatPage loading state', () => {
       await flushMicrotasks()
     })
 
-    expect(container.querySelector('[data-testid="current-run-handoff"]')).not.toBeNull()
-    expect(container.textContent).toContain('先想一下')
-    expect(mockedWriteThreadRunHandoff).toHaveBeenCalledWith(
-      'thread-1',
-      expect.objectContaining({
-        runId: 'run-continued',
-        status: 'running',
-        coveredRunIds: ['run-old'],
-      }),
-    )
+    expect(container.querySelector('[data-testid="current-run-handoff"]')).toBeNull()
+    expect(container.textContent).not.toContain('先想一下')
+    expect(mockedClearThreadRunHandoff).toHaveBeenCalledWith('thread-1')
 
     act(() => {
       root.unmount()
@@ -1559,7 +1514,6 @@ describe('ChatPage loading state', () => {
     expect(container.querySelector('[data-testid="current-run-handoff"]')).not.toBeNull()
     expect(container.textContent).toContain('更新后的思考')
     expect(container.textContent).not.toContain('过期内容')
-    expect(container.querySelector('.failed-run-retry-button')?.textContent).toBe('继续')
 
     act(() => {
       root.unmount()
@@ -2301,17 +2255,13 @@ describe('ChatPage loading state', () => {
       await flushMicrotasks()
     })
 
-    expect(container.querySelector('.failed-run-retry-button')).toBeNull()
-    expect(mockedRetryThread).not.toHaveBeenCalled()
-
     act(() => {
       root.unmount()
     })
     container.remove()
   })
 
-  it('cancelled 且有 assistant 消息时应显示继续并调用 continue 接口', async () => {
-    const mathRandomSpy = vi.spyOn(Math, 'random').mockReturnValue(0)
+  it('cancelled 且有 assistant 消息时只保留输出状态', async () => {
     mockedReadMessageTerminalStatus.mockReturnValue('cancelled')
     mockedListMessages.mockResolvedValue([
       {
@@ -2382,27 +2332,15 @@ describe('ChatPage loading state', () => {
       await flushMicrotasks()
     })
 
-    const actionButton = container.querySelector('.failed-run-retry-button')
-    expect(actionButton?.textContent).toBe('继续')
-
-    await act(async () => {
-      actionButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
-      await flushMicrotasks()
-    })
-
-    expect(container.textContent).toContain('Finding the right words')
-    expect(mockedContinueThread).toHaveBeenCalledWith('token', 'thread-1', 'run-cancelled-output')
-    expect(mockedRetryThread).not.toHaveBeenCalled()
+    expect(container.textContent).toContain('半截输出')
 
     act(() => {
       root.unmount()
     })
     container.remove()
-    mathRandomSpy.mockRestore()
   })
 
-  it('failed 且有可恢复输出时应显示继续并调用 continue 接口', async () => {
-    const mathRandomSpy = vi.spyOn(Math, 'random').mockReturnValue(0)
+  it('failed 且有可恢复输出时显示输入区错误提示', async () => {
     mockedReadMessageTerminalStatus.mockReturnValue('failed')
     mockedListMessages.mockResolvedValue([
       {
@@ -2429,6 +2367,13 @@ describe('ChatPage loading state', () => {
     mockedReadSelectedModelFromStorage.mockReturnValue('openai^gpt-5')
     mockedReadThreadWorkFolder.mockReturnValue('/workspace/demo')
     mockedReadThreadThinkingEnabled.mockReturnValue('high')
+    mockedListThreadRuns.mockResolvedValue([
+      {
+        run_id: 'run-failed-output',
+        status: 'failed',
+        created_at: '2026-03-10T00:00:01Z',
+      },
+    ])
 
     const container = document.createElement('div')
     document.body.appendChild(container)
@@ -2470,31 +2415,15 @@ describe('ChatPage loading state', () => {
       await flushMicrotasks()
     })
 
-    const actionButton = container.querySelector('.failed-run-retry-button')
-    expect(actionButton?.textContent).toBe('继续')
-
-    await act(async () => {
-      actionButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
-      await flushMicrotasks()
-    })
-
-    expect(container.textContent).toContain('Finding the right words')
-    expect(mockedContinueThread).toHaveBeenCalledWith(
-      'token',
-      'thread-1',
-      'run-failed-output',
-    )
-    expect(mockedRetryThread).not.toHaveBeenCalled()
+    expect(container.textContent).toContain('出了点问题，本次运行未能完成')
 
     act(() => {
       root.unmount()
     })
     container.remove()
-    mathRandomSpy.mockRestore()
   })
 
-  it('failed 且无可恢复输出时重试应带上当前选择的 model', async () => {
-    const mathRandomSpy = vi.spyOn(Math, 'random').mockReturnValue(0)
+  it('failed 且无可恢复输出时显示输入区错误提示', async () => {
     mockedReadMessageTerminalStatus.mockReturnValue('failed')
     mockedListMessages.mockResolvedValue([
       {
@@ -2521,6 +2450,13 @@ describe('ChatPage loading state', () => {
     mockedReadSelectedModelFromStorage.mockReturnValue('openai^gpt-5')
     mockedReadThreadWorkFolder.mockReturnValue('/workspace/demo')
     mockedReadThreadThinkingEnabled.mockReturnValue('high')
+    mockedListThreadRuns.mockResolvedValue([
+      {
+        run_id: 'run-failed-empty',
+        status: 'failed',
+        created_at: '2026-03-10T00:00:01Z',
+      },
+    ])
 
     const container = document.createElement('div')
     document.body.appendChild(container)
@@ -2562,25 +2498,90 @@ describe('ChatPage loading state', () => {
       await flushMicrotasks()
     })
 
-    const actionButton = container.querySelector('.failed-run-retry-button')
-    expect(actionButton?.textContent).toBe('重试')
-
-    await act(async () => {
-      actionButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
-      await flushMicrotasks()
-    })
-
-    expect(mockedRetryThread).toHaveBeenCalledWith(
-      'token',
-      'thread-1',
-      'openai^gpt-5',
-    )
+    expect(container.textContent).toContain('出了点问题，本次运行未能完成')
 
     act(() => {
       root.unmount()
     })
     container.remove()
-    mathRandomSpy.mockRestore()
+  })
+
+  it('user prompt 的 Retry 应从该 prompt fork 并创建新 run', async () => {
+    mockedListMessages.mockResolvedValue([
+      {
+        id: 'msg-1',
+        role: 'user',
+        content: 'hello',
+        account_id: 'acc-1',
+        thread_id: 'thread-1',
+        created_by_user_id: 'user-1',
+        created_at: '2026-03-10T00:00:00Z',
+      },
+      {
+        id: 'msg-2',
+        role: 'assistant',
+        content: 'answer',
+        account_id: 'acc-1',
+        thread_id: 'thread-1',
+        created_by_user_id: 'user-1',
+        created_at: '2026-03-10T00:00:01Z',
+      },
+    ])
+    mockedForkThread.mockResolvedValue({
+      id: 'thread-fork',
+      title: 'hello',
+      account_id: 'acc-1',
+      created_by_user_id: 'user-1',
+      mode: 'chat',
+      project_id: 'proj-1',
+      active_run_id: null,
+      collaboration_mode: 'default',
+      collaboration_mode_revision: 0,
+      is_private: false,
+      title_locked: false,
+      hidden: false,
+      created_at: '2026-03-10T00:00:00Z',
+      updated_at: '2026-03-10T00:00:00Z',
+      id_mapping: [{ old_id: 'msg-1', new_id: 'msg-1-fork' }],
+    })
+
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const root = createRoot(container)
+    const outletContext = buildOutletContext()
+
+    await act(async () => {
+      root.render(
+        <LocaleProvider>
+          <MemoryRouter initialEntries={['/t/thread-1']}>
+            <Routes>
+              <Route element={<OutletShell context={outletContext} />}>
+                <Route path="/t/:threadId" element={<ChatPage />} />
+              </Route>
+            </Routes>
+          </MemoryRouter>
+        </LocaleProvider>,
+      )
+      await flushMicrotasks()
+    })
+
+    const retryButton = container.querySelector('button[aria-label="retry-user-message"]')
+    expect(retryButton).toBeDefined()
+
+    await act(async () => {
+      retryButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      await flushMicrotasks()
+    })
+
+    expect(mockedForkThread).toHaveBeenCalledWith('token', 'thread-1', 'msg-1')
+    expect(mockedCreateRun.mock.calls.at(-1)?.[1]).toBe('thread-fork')
+    expect(outletContext.onThreadCreated).toHaveBeenCalledWith(expect.objectContaining({ id: 'thread-fork' }))
+    expect(outletContext.onRunStarted).toHaveBeenCalledWith('thread-fork')
+
+    act(() => {
+      root.unmount()
+    })
+    container.remove()
   })
 
   it('run.completed 后应把显示权交回历史消息，同时保留完成态的折叠结构', async () => {
@@ -2775,7 +2776,6 @@ describe('ChatPage loading state', () => {
     expect(text.indexOf('我要先')).toBeGreaterThanOrEqual(0)
     expect(scrollIntoViewMock.mock.calls.some(([opts]) => (opts as { behavior?: string } | undefined)?.behavior === 'smooth')).toBe(false)
     expect(scrollIntoViewMock.mock.calls.some(([opts]) => (opts as { behavior?: string } | undefined)?.behavior === 'instant')).toBe(false)
-    expect(mockedGetThread).not.toHaveBeenCalled()
 
     sseMock.events = [
       ...sseMock.events,
@@ -3383,7 +3383,7 @@ describe('ChatPage loading state', () => {
     container.remove()
   })
 
-  it('cancel 后在消息刷新前重开 thread 仍应恢复 handoff 与重试入口', async () => {
+  it('cancel 后在消息刷新前重开 thread 仍应恢复 handoff 且不显示重试入口', async () => {
     let resolveSecondMessages: ((value: Awaited<ReturnType<typeof listMessages>>) => void) | null = null
     mockedListMessages
       .mockResolvedValueOnce([
@@ -3565,7 +3565,6 @@ describe('ChatPage loading state', () => {
     const text = secondContainer.textContent ?? ''
     expect(secondContainer.querySelector('[data-testid="current-run-handoff"]')).not.toBeNull()
     expect(text).toContain('半截回复')
-    expect(text).toMatch(/Stopped|已停止|运行已取消|Run was cancelled/)
 
     if (!resolveSecondMessages) {
       throw new Error('second listMessages resolver missing')
@@ -4196,6 +4195,38 @@ describe('ChatPage loading state', () => {
     })
 
     expect(container.querySelector('[data-testid="current-run-handoff"]')).not.toBeNull()
+    expect(container.textContent).toContain('先想一下')
+
+    mockedListMessages.mockResolvedValue([
+      {
+        id: 'msg-1',
+        role: 'user',
+        content: 'hello',
+        account_id: 'acc-1',
+        thread_id: 'thread-1',
+        created_by_user_id: 'user-1',
+        created_at: '2026-03-10T00:00:00Z',
+      },
+      {
+        id: 'msg-cancelled-assistant',
+        role: 'assistant',
+        content: '先想一下',
+        account_id: 'acc-1',
+        thread_id: 'thread-1',
+        created_by_user_id: 'user-1',
+        created_at: '2026-03-10T00:00:02Z',
+        run_id: 'run-cancel-next',
+      },
+      {
+        id: 'msg-next-user',
+        role: 'user',
+        content: 'resume after cancel',
+        account_id: 'acc-1',
+        thread_id: 'thread-1',
+        created_by_user_id: 'user-1',
+        created_at: '2026-03-10T00:00:03Z',
+      },
+    ])
 
     await act(async () => {
       const valueSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set
@@ -4211,6 +4242,7 @@ describe('ChatPage loading state', () => {
 
     expect(mockedCreateMessage).toHaveBeenCalled()
     expect(container.querySelector('[data-testid="current-run-handoff"]')).toBeNull()
+    expect(container.textContent).toContain('先想一下')
 
     act(() => {
       root.unmount()
@@ -4304,15 +4336,8 @@ describe('ChatPage loading state', () => {
     expect(handoff?.textContent).toContain('完成输出')
     const actionBar = handoff?.nextElementSibling as HTMLElement | null
     const actionButtons = actionBar?.querySelectorAll('button') ?? []
-    expect(actionButtons.length).toBeGreaterThanOrEqual(2)
+    expect(actionButtons.length).toBeGreaterThanOrEqual(1)
     expect(actionButtons[0]?.disabled).toBe(false)
-    expect(actionButtons[1]?.disabled).toBe(false)
-
-    await act(async () => {
-      actionButtons[1]?.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
-      await flushMicrotasks()
-    })
-    expect(mockedRetryThread).toHaveBeenCalledWith('token', 'thread-1', undefined)
 
     act(() => {
       root.unmount()

@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo, memo, Fragment, type ComponentProps } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { motion } from 'framer-motion'
-import { ArrowDown, Info, X } from 'lucide-react'
-import { AutoResizeTextarea, Button, DebugTrigger } from '@arkloop/shared'
+import { ArrowDown, X } from 'lucide-react'
+import { AutoResizeTextarea, DebugTrigger } from '@arkloop/shared'
 import { ChatInput, type ChatInputHandle } from './ChatInput'
 import { RunDetailPanel } from './RunDetailPanel'
 import type { CodeExecution } from './CodeExecutionCard'
@@ -19,7 +19,7 @@ import { ArtifactStreamBlock, type StreamingArtifactEntry } from './ArtifactStre
 import { WidgetBlock } from './WidgetBlock'
 import UserInputCard from './UserInputCard'
 import { resolveMessageSourcesForRender } from './chatSourceResolver'
-import { ErrorCallout, type AppError } from './ErrorCallout'
+import { RunErrorNotice, type AppError } from './ErrorCallout'
 import { ShareModal } from './ShareModal'
 import { SourcesPanel } from './SourcesPanel'
 import { CodeExecutionPanel } from './CodeExecutionPanel'
@@ -47,10 +47,8 @@ import {
 import { getThreadTodos, setThreadTodos, clearThreadTodos } from '../todoDb'
 import {
   buildAssistantTurnFromRunEvents,
-  assistantTurnPlainText,
   copSegmentCalls,
   createEmptyAssistantTurnFoldState,
-  snapshotAssistantTurn,
   type AssistantTurnSegment,
   type AssistantTurnUi,
 } from '../assistantTurnSegments'
@@ -82,7 +80,6 @@ import {
   finalizeSearchSteps,
   patchLegacySearchSteps,
   liveTurnHasThinkingSegment,
-  collectCompletedWidgets,
   buildStreamingArtifactsFromHandoff,
   resolveCopHeaderOverride,
 } from '../lib/chat-helpers'
@@ -92,7 +89,6 @@ import { buildDraftAttachmentRecords, restoreAttachmentFromDraftRecord } from '.
 import {
   createMessage,
   createRun,
-  editMessage,
   forkThread,
   getThread,
   listMessages,
@@ -102,7 +98,6 @@ import {
   uploadStagingAttachment,
   isApiError,
   type CollaborationMode,
-  type MessageContent,
   type MessageResponse,
   type RunReasoningMode,
 } from '../api'
@@ -163,155 +158,26 @@ const documentPanelWidth = 560
 const chatContentPadding = { panelClosed: '60px', panelOpen: '40px' } as const
 const chatInputPadding = { panelClosed: '60px', panelOpen: '40px', work: '14px' } as const
 
+function errorNoticeKey(error: AppError): string {
+  let details = ''
+  try {
+    details = JSON.stringify(error.details ?? null)
+  } catch {
+    details = String(error.details ?? '')
+  }
+  return [error.message ?? '', error.code ?? '', error.traceId ?? '', details].join('\u001f')
+}
+
+function isInterruptedRunStatus(status: string | null | undefined): boolean {
+  return status === 'cancelled' || status === 'interrupted' || status === 'failed'
+}
+
 function isSameDraftDomain(left: InputDraftScope | null, right: InputDraftScope): boolean {
   if (!left) return false
   return left.page === right.page
     && (left.threadId ?? null) === (right.threadId ?? null)
     && left.appMode === right.appMode
     && !!left.searchMode === !!right.searchMode
-}
-
-function FailedRunRetryCard({
-  title,
-  actionLabel,
-  onRetry,
-  error,
-  isWorkMode,
-}: {
-  title: string
-  actionLabel?: string
-  onRetry?: () => void
-  error?: AppError | null
-  isWorkMode?: boolean
-}) {
-  const [open, setOpen] = useState(false)
-  const [popoverStyle, setPopoverStyle] = useState<{ position: 'fixed'; left: string; top?: string; bottom?: string; width: string; zIndex: number } | null>(null)
-  const badgeRef = useRef<HTMLButtonElement>(null)
-  const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const hasErrorDetails = error && (error.code || error.traceId || error.details)
-
-  const openPopover = () => {
-    if (closeTimerRef.current) clearTimeout(closeTimerRef.current)
-    if (!badgeRef.current || !hasErrorDetails) return
-    const rect = badgeRef.current.getBoundingClientRect()
-    const popoverWidth = 380
-    let left = rect.left
-    if (left + popoverWidth > window.innerWidth - 8) left = window.innerWidth - popoverWidth - 8
-    left = Math.max(8, left)
-    const spaceBelow = window.innerHeight - rect.bottom
-    const style: typeof popoverStyle = { position: 'fixed', left: `${left}px`, width: `${popoverWidth}px`, zIndex: 1000 }
-    if (spaceBelow >= 260 || rect.top < 260) {
-      style.top = `${rect.bottom + 6}px`
-    } else {
-      style.bottom = `${window.innerHeight - rect.top + 6}px`
-    }
-    setPopoverStyle(style)
-    setOpen(true)
-  }
-
-  const scheduleClose = () => {
-    closeTimerRef.current = setTimeout(() => setOpen(false), 150)
-  }
-
-  const cancelClose = () => {
-    if (closeTimerRef.current) clearTimeout(closeTimerRef.current)
-  }
-
-  useEffect(() => () => { if (closeTimerRef.current) clearTimeout(closeTimerRef.current) }, [])
-
-  return (
-    <div
-      className={`mt-3 flex w-full ${isWorkMode ? '' : 'max-w-[756px]'} items-center justify-between gap-3 rounded-2xl px-4 py-4`}
-      style={{ background: 'var(--c-bg-sub)', border: '0.75px solid var(--c-border)' }}
-    >
-      <div className="flex min-w-0 items-center gap-2 text-[var(--c-text-secondary)]">
-        <Info size={16} className="shrink-0 text-[var(--c-text-tertiary)]" />
-        <span className="truncate text-[14px]">{title}</span>
-        {hasErrorDetails && (
-          <button
-            ref={badgeRef}
-            onMouseEnter={openPopover}
-            onMouseLeave={scheduleClose}
-            style={{
-              display: 'inline-flex',
-              alignItems: 'center',
-              padding: '1px 6px',
-              borderRadius: '4px',
-              background: open ? 'var(--c-bg-page)' : 'var(--c-bg-deep)',
-              border: 'none',
-              fontSize: '11.5px',
-              color: 'var(--c-text-muted)',
-              cursor: 'default',
-              lineHeight: '1.5',
-              fontFamily: 'inherit',
-              transition: 'background 120ms',
-              flexShrink: 0,
-            }}
-          >
-            {error.code || 'error'}
-          </button>
-        )}
-      </div>
-      {actionLabel && (
-        <Button
-          variant="outline"
-          size="md"
-          onClick={onRetry}
-          disabled={!onRetry}
-          className="failed-run-retry-button shrink-0"
-        >
-          {actionLabel}
-        </Button>
-      )}
-
-      {open && popoverStyle && error && (
-        <div
-          style={{
-            ...popoverStyle,
-            background: 'var(--c-bg-page)',
-            border: '0.5px solid var(--c-border-mid)',
-            borderRadius: '12px',
-            boxShadow: '0 8px 32px rgba(0,0,0,0.18)',
-            padding: '14px',
-            overflow: 'hidden',
-            animation: 'failedRunPopoverIn 150ms ease-out',
-          }}
-          onMouseEnter={cancelClose}
-          onMouseLeave={scheduleClose}
-        >
-          <style>{`
-            @keyframes failedRunPopoverIn {
-              from { opacity: 0; transform: translateY(-4px) scale(0.97); }
-              to { opacity: 1; transform: translateY(0) scale(1); }
-            }
-          `}</style>
-          <div style={{ fontSize: '14px', fontWeight: 600, color: 'var(--c-text-primary)', marginBottom: '8px', lineHeight: 1.4 }}>
-            {error.message}
-          </div>
-          {error.code && (
-            <div style={{ fontSize: '12px', color: 'var(--c-text-muted)', marginBottom: '4px', fontFamily: 'monospace' }}>
-              {error.code}
-            </div>
-          )}
-          {error.traceId && (
-            <div style={{ fontSize: '12px', color: 'var(--c-text-muted)', marginBottom: '4px', fontFamily: 'monospace' }}>
-              trace: {error.traceId}
-            </div>
-          )}
-          {error.details && Object.keys(error.details).length > 0 && (
-            <div style={{ marginTop: '8px', paddingTop: '8px', borderTop: '0.5px solid var(--c-border-subtle)' }}>
-              {Object.entries(error.details).map(([key, value]) => (
-                <div key={key} style={{ fontSize: '12px', color: 'var(--c-text-secondary)', marginBottom: '3px', lineHeight: 1.5 }}>
-                  <span style={{ color: 'var(--c-text-muted)', fontFamily: 'monospace' }}>{key}:</span>{' '}
-                  <span style={{ fontFamily: 'monospace', wordBreak: 'break-all' }}>{typeof value === 'string' ? value : JSON.stringify(value)}</span>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
-    </div>
-  )
 }
 
 type LocationState = {
@@ -358,27 +224,13 @@ type LiveRunPaneProps = {
   checkInSubmitting: boolean
   onCheckInDraftChange: (value: string) => void
   onCheckInSubmit: () => void
-  terminalSseError: AppError | null
-  failedRunError: AppError | null
   pendingIncognito: boolean
   incognitoDividerText: string
   onIncognitoDividerComplete: () => void
   terminalRunHandoffStatus: LiveRunHandoffStatus
   terminalRunDisplayId: string | null
-  terminalRunHasOutput: boolean
-  failedRunRetryTitle: string
-  runInterruptedLabel: string
-  runCancelledLabel: string
-  actionLabelForTerminalRun: (params: {
-    status: LiveRunHandoffStatus
-    hasOutput: boolean
-  }) => string | undefined
-  actionHandlerForTerminalRun: (params: {
-    runId: string | null | undefined
-    status: LiveRunHandoffStatus
-    hasOutput: boolean
-  }) => (() => void) | undefined
-  onRetry: () => void
+  showRunEvents: boolean
+  setRunDetailPanelRunId: (runId: string | null) => void
   onOpenDocument: (artifact: ArtifactRef, options?: { trigger?: HTMLElement | null; artifacts?: ArtifactRef[]; runId?: string }) => void
   onOpenCodeExecution: (ce: CodeExecution) => void
   onOpenSubAgent: (agent: SubAgentRef) => void
@@ -386,8 +238,6 @@ type LiveRunPaneProps = {
   renderLiveCopItems: (seg: CopSegment, si: number) => React.ReactNode[]
   renderLiveCopSegment: (seg: CopSegment, si: number, key?: string) => React.ReactNode
   bottomRef: React.RefObject<HTMLDivElement | null>
-  messages: MessageResponse[]
-  isWorkMode?: boolean
 }
 
 const LiveRunPane = memo(function LiveRunPane({
@@ -419,20 +269,13 @@ const LiveRunPane = memo(function LiveRunPane({
   checkInSubmitting,
   onCheckInDraftChange,
   onCheckInSubmit,
-  terminalSseError,
-  failedRunError,
   pendingIncognito,
   incognitoDividerText,
   onIncognitoDividerComplete,
   terminalRunHandoffStatus,
   terminalRunDisplayId,
-  terminalRunHasOutput,
-  failedRunRetryTitle,
-  runInterruptedLabel,
-  runCancelledLabel,
-  actionLabelForTerminalRun,
-  actionHandlerForTerminalRun,
-  onRetry,
+  showRunEvents,
+  setRunDetailPanelRunId,
   onOpenDocument,
   onOpenCodeExecution,
   onOpenSubAgent,
@@ -440,13 +283,24 @@ const LiveRunPane = memo(function LiveRunPane({
   renderLiveCopItems,
   renderLiveCopSegment,
   bottomRef,
-  messages,
-  isWorkMode,
 }: LiveRunPaneProps) {
-  const completedAssistantText =
-    terminalRunHandoffStatus === 'completed' && liveAssistantTurn
-      ? assistantTurnPlainText(liveAssistantTurn)
-      : ''
+  const terminalActionText = assistantTurnActionText(liveAssistantTurn)
+  const terminalActionRunId = terminalRunDisplayId ?? activeRunId
+  const terminalActionStatus =
+    terminalRunHandoffStatus === 'completed' ||
+    terminalRunHandoffStatus === 'cancelled' ||
+    terminalRunHandoffStatus === 'failed' ||
+    terminalRunHandoffStatus === 'interrupted'
+  const terminalActionHasContent =
+    terminalActionText.trim() !== '' ||
+    (liveAssistantTurn?.segments.length ?? 0) > 0 ||
+    allStreamItemsForUi.length > 0 ||
+    dedupedTopLevelCodeExecutions.length > 0 ||
+    topLevelSubAgents.length > 0 ||
+    topLevelFileOps.length > 0 ||
+    topLevelWebFetches.length > 0 ||
+    visibleStreamingWidgets.length > 0 ||
+    visibleStreamingArtifacts.length > 0
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
@@ -502,11 +356,11 @@ const LiveRunPane = memo(function LiveRunPane({
         </div>
       )}
 
-      {completedAssistantText.trim() !== '' && (
+      {terminalActionStatus && terminalActionHasContent && (
         <div style={{ maxWidth: '663px' }}>
           <AssistantActionBar
-            textToCopy={completedAssistantText}
-            onRetry={onRetry}
+            textToCopy={terminalActionText}
+            onViewRunDetail={showRunEvents && terminalActionRunId ? () => setRunDetailPanelRunId(terminalActionRunId) : undefined}
             isLast
           />
         </div>
@@ -607,8 +461,6 @@ const LiveRunPane = memo(function LiveRunPane({
         </div>
       )}
 
-      {terminalSseError && <ErrorCallout error={terminalSseError} />}
-
       {pendingIncognito && (
         <IncognitoDivider
           text={incognitoDividerText}
@@ -616,22 +468,6 @@ const LiveRunPane = memo(function LiveRunPane({
         />
       )}
 
-      {(terminalRunHandoffStatus === 'failed' || terminalRunHandoffStatus === 'interrupted' || terminalRunHandoffStatus === 'cancelled') && terminalRunDisplayId && !messages.some((msg) => msg.role === 'assistant' && msg.run_id === terminalRunDisplayId) && (
-        <FailedRunRetryCard
-          title={terminalRunHandoffStatus === 'interrupted' ? runInterruptedLabel : terminalRunHandoffStatus === 'cancelled' ? runCancelledLabel : failedRunRetryTitle}
-          actionLabel={actionLabelForTerminalRun({
-            status: terminalRunHandoffStatus,
-            hasOutput: terminalRunHasOutput,
-          })}
-          onRetry={actionHandlerForTerminalRun({
-            runId: terminalRunDisplayId,
-            status: terminalRunHandoffStatus,
-            hasOutput: terminalRunHasOutput,
-          })}
-          error={terminalRunHandoffStatus === 'failed' ? failedRunError : undefined}
-          isWorkMode={isWorkMode}
-        />
-      )}
       {/* reserve action bar height to prevent text from touching input area during streaming */}
       <div style={{ height: '36px' }} />
       <div ref={bottomRef} />
@@ -687,6 +523,28 @@ function liveCopCreateArtifactCallIds(turn: AssistantTurnUi | null): Set<string>
     }
   }
   return ids
+}
+
+function assistantTurnActionText(turn: AssistantTurnUi | null): string {
+  if (!turn) return ''
+  const parts: string[] = []
+  for (const segment of turn.segments) {
+    if (segment.type === 'text') {
+      const text = segment.content.trim()
+      if (text) parts.push(text)
+      continue
+    }
+    for (const item of segment.items) {
+      if (item.kind === 'thinking' || item.kind === 'assistant_text') {
+        const text = item.content.trim()
+        if (text) parts.push(text)
+        continue
+      }
+      const label = item.call.displayDescription?.trim() || item.call.toolName.trim()
+      if (label) parts.push(label)
+    }
+  }
+  return parts.join('\n')
 }
 
 function LiveTurnMarkdown({
@@ -747,6 +605,7 @@ export function ChatView() {
     beginMessageSync,
     isMessageSyncCurrent,
     invalidateMessageSync,
+    readConsistentMessages,
   } = useMessageStore()
   const {
     activeRunId,
@@ -774,7 +633,6 @@ export function ChatView() {
     setTerminalRunDisplayId,
     terminalRunHandoffStatus,
     setTerminalRunHandoffStatus,
-    terminalRunCoveredRunIds,
     setTerminalRunCoveredRunIds,
     markTerminalRunHistory: markTerminalRunHistoryState,
     clearCompletedTitleTail: clearCompletedTitleTailState,
@@ -787,12 +645,10 @@ export function ChatView() {
     sseTerminalFallbackRunIdRef,
     sseTerminalFallbackArmedRef,
     noResponseMsgIdRef,
-    replaceOnCancelRef,
     pendingMessageRef,
     seenFirstToolCallInRunRef,
   } = useRunLifecycle()
   const {
-    getMeta,
     setMetaBatch,
     primeMetaBatch,
     clearAll: clearAllMeta,
@@ -818,7 +674,6 @@ export function ChatView() {
     setStreamingArtifacts,
     streamingArtifactsRef,
     setSegments,
-    segmentsRef,
     activeSegmentIdRef,
     pendingThinking,
     setPendingThinking,
@@ -862,6 +717,7 @@ export function ChatView() {
   const [isSearchThread, setIsSearchThread] = useState(
     () => locationState?.isSearch === true || isSearchThreadId(threadId ?? ''),
   )
+  const [dismissedInputErrorKey, setDismissedInputErrorKey] = useState<string | null>(null)
 
   const { messageSourcesMap } = useMessageMetaCompat()
 
@@ -925,7 +781,8 @@ export function ChatView() {
       preserveLiveRunUi &&
       terminalRunHandoffStatus !== 'completed' &&
       terminalRunHandoffStatus !== 'cancelled' &&
-      terminalRunHandoffStatus !== 'failed'
+      terminalRunHandoffStatus !== 'failed' &&
+      terminalRunHandoffStatus !== 'interrupted'
     )
   const showPendingThinkingShell =
     pendingThinking &&
@@ -1002,8 +859,7 @@ export function ChatView() {
   const {
     sendMessage,
     handleEditMessage,
-    handleRetry,
-    handleContinue,
+    handleRetryUserMessage,
     handleFork,
     handleCancel,
     handleCheckInSubmit,
@@ -1064,7 +920,7 @@ export function ChatView() {
           ? { message: t.runInterrupted }
           : null
         let failedError = latest?.status === 'failed'
-          ? { message: t.failedRunRetryTitle }
+          ? { message: t.failedRunTitle }
           : null
 
         // 加载各消息缓存的 web 来源
@@ -1126,7 +982,7 @@ export function ChatView() {
               interruptedError = interruptedErrorFromRunEvents(cachedRunEvents, t.runInterrupted)
             }
             if (latest?.status === 'failed' && latest.run_id && msg.run_id === latest.run_id) {
-              failedError = failedErrorFromRunEvents(cachedRunEvents, t.failedRunRetryTitle)
+              failedError = failedErrorFromRunEvents(cachedRunEvents, t.failedRunTitle)
               if (failedError) {
                 failedErrorMap.set(msg.id, failedError)
               }
@@ -1199,7 +1055,7 @@ export function ChatView() {
               interruptedError = interruptedErrorFromRunEvents(replayEvents, t.runInterrupted)
             }
             if (latest.status === 'failed') {
-              failedError = failedErrorFromRunEvents(replayEvents, t.failedRunRetryTitle)
+              failedError = failedErrorFromRunEvents(replayEvents, t.failedRunTitle)
               if (failedError && lastAssistant) {
                 failedErrorMap.set(lastAssistant.id, failedError)
               }
@@ -1398,21 +1254,6 @@ export function ChatView() {
                 status: latestTerminalHandoffStatus,
               }
             : cachedThreadHandoff
-        const adoptedRunningContinueHandoff =
-          effectiveCachedThreadHandoff &&
-          latest &&
-          effectiveCachedThreadHandoff.status !== 'running' &&
-          effectiveCachedThreadHandoff.runId !== latest.run_id &&
-          latest.resume_from_run_id === effectiveCachedThreadHandoff.runId &&
-          (latest.status === 'running' || latest.status === 'cancelling')
-            ? {
-                ...effectiveCachedThreadHandoff,
-                runId: latest.run_id,
-                status: 'running' as const,
-                coveredRunIds: [...effectiveCachedThreadHandoff.coveredRunIds, effectiveCachedThreadHandoff.runId]
-                  .filter((value, index, arr) => value.trim() !== '' && arr.indexOf(value) === index),
-              }
-            : null
         const shouldPreferReplayThreadHandoff =
           !!replayThreadHandoff &&
           !!latest &&
@@ -1427,17 +1268,9 @@ export function ChatView() {
           ) &&
           (
             !latest ||
-            latest.run_id === effectiveCachedThreadHandoff.runId ||
-            adoptedRunningContinueHandoff != null
+            latest.run_id === effectiveCachedThreadHandoff.runId
           )
         if (
-          adoptedRunningContinueHandoff
-        ) {
-          restoreThreadHandoffUi(adoptedRunningContinueHandoff, {
-            displayRunId: adoptedRunningContinueHandoff.runId,
-            status: 'running',
-          })
-        } else if (
           shouldPreferReplayThreadHandoff &&
           replayThreadHandoff
         ) {
@@ -1471,7 +1304,7 @@ export function ChatView() {
         } else {
           const shouldResumeActiveRunFromHandoff =
             shouldRestoreThreadHandoff &&
-            (effectiveCachedThreadHandoff?.status === 'running' || adoptedRunningContinueHandoff != null) &&
+            effectiveCachedThreadHandoff?.status === 'running' &&
             (latest?.status === 'running' || latest?.status === 'cancelling')
           const isActiveRun =
             shouldResumeActiveRunFromHandoff ||
@@ -1713,13 +1546,31 @@ export function ChatView() {
   const handleSend = useCallback(async (e: React.FormEvent<HTMLFormElement>, personaKey: string, modelOverride?: string) => {
     e.preventDefault()
     if (sending || !threadId) return
+    const terminalRunIdToSync =
+      terminalRunDisplayId &&
+      terminalRunHandoffStatus !== 'running' &&
+      terminalRunHandoffStatus != null
+        ? terminalRunDisplayId
+        : undefined
     markTerminalRunHistory(null)
-    clearThreadRunHandoff(threadId)
+    if (!terminalRunIdToSync) {
+      clearThreadRunHandoff(threadId)
+    }
 
     const draft = chatInputRef.current?.getValue() ?? ''
     const attachments = attachmentsRef.current
     const pendingIncognito = pendingIncognitoRef.current
     const messages = messagesRef.current
+    const lastAssistantTerminalStatus = (() => {
+      for (let index = messages.length - 1; index >= 0; index -= 1) {
+        const item = messages[index]
+        if (item.role === 'assistant') return readMessageTerminalStatus(item.id)
+      }
+      return null
+    })()
+    const shouldPinNewPrompt =
+      !isInterruptedRunStatus(terminalRunHandoffStatus) &&
+      !isInterruptedRunStatus(lastAssistantTerminalStatus)
 
     if (isStreaming) {
       const text = draft.trim()
@@ -1778,66 +1629,37 @@ export function ChatView() {
         return
       }
 
-      const replaceMessageId = replaceOnCancelRef.current
-      replaceOnCancelRef.current = null
-
-      if (replaceMessageId && attachments.length === 0) {
-        attachments.forEach((attachment) => revokeDraftAttachment(attachment))
-        chatInputRef.current?.clear()
-        setAttachments([])
-        injectionBlockedRunIdRef.current = null
-        invalidateMessageSync()
-        const originalMsg = messages.find((m) => m.id === replaceMessageId)
-        const nonTextParts = originalMsg?.content_json?.parts?.filter((p) => p.type !== 'text') ?? []
-        const replacedContentJson: MessageContent | undefined = originalMsg?.content_json
-          ? { parts: [{ type: 'text', text }, ...nonTextParts] }
-          : undefined
-        setMessages((prev) => {
-          const idx = prev.findIndex((m) => m.id === replaceMessageId)
-          if (idx === -1) return prev
-          return prev.slice(0, idx + 1).map((m, i) =>
-            i === idx ? { ...m, content: text, content_json: replacedContentJson ?? m.content_json } : m,
-          )
-        })
-        activateAnchor()
-        const reasoningMode = readThreadReasoningMode(threadId)
-        await waitForPlanModeUpdate()
-        const run = await editMessage(
-          accessToken,
-          threadId,
-          replaceMessageId,
-          text,
-          replacedContentJson,
-          personaKey,
-          modelOverride,
-          readThreadWorkFolder(threadId) ?? undefined,
-          reasoningMode !== 'off' ? reasoningMode as RunReasoningMode : undefined,
-        )
-        if (personaKey === SEARCH_PERSONA_KEY) addSearchThreadId(threadId)
-        noResponseMsgIdRef.current = replaceMessageId
-        resetSearchSteps()
-        setActiveRunId(run.run_id)
-        onRunStarted(threadId)
-      } else {
-        const uploaded = await uploadAttachments()
-        const message = await createMessage(accessToken, threadId, buildMessageRequest(text, uploaded))
-        invalidateMessageSync()
-        setUserEnterMessageId(message.id)
-        setMessages((prev) => [...prev, message])
-        activateAnchor()
-        attachments.forEach((attachment) => revokeDraftAttachment(attachment))
-        chatInputRef.current?.clear()
-        setAttachments([])
-        injectionBlockedRunIdRef.current = null
-        noResponseMsgIdRef.current = message.id
-
-        await waitForPlanModeUpdate()
-        const run = await createRun(accessToken, threadId, personaKey, modelOverride, readThreadWorkFolder(threadId) ?? undefined, readThreadReasoningMode(threadId) !== 'off' ? readThreadReasoningMode(threadId) as RunReasoningMode : undefined)
-        if (personaKey === SEARCH_PERSONA_KEY) addSearchThreadId(threadId)
-        resetSearchSteps()
-        setActiveRunId(run.run_id)
-        onRunStarted(threadId)
+      const uploaded = await uploadAttachments()
+      const message = await createMessage(accessToken, threadId, buildMessageRequest(text, uploaded))
+      invalidateMessageSync()
+      const syncedMessages = terminalRunIdToSync
+        ? await readConsistentMessages(terminalRunIdToSync)
+        : null
+      setUserEnterMessageId(message.id)
+      setMessages((prev) => {
+        const base = syncedMessages && syncedMessages.length > 0 ? syncedMessages : prev
+        return base.some((item) => item.id === message.id) ? base : [...base, message]
+      })
+      if (terminalRunIdToSync && syncedMessages?.some((item) => item.role === 'assistant' && item.run_id === terminalRunIdToSync)) {
+        clearThreadRunHandoff(threadId)
       }
+      if (shouldPinNewPrompt) {
+        activateAnchor()
+      } else {
+        scrollToBottom()
+      }
+      attachments.forEach((attachment) => revokeDraftAttachment(attachment))
+      chatInputRef.current?.clear()
+      setAttachments([])
+      injectionBlockedRunIdRef.current = null
+      noResponseMsgIdRef.current = message.id
+
+      await waitForPlanModeUpdate()
+      const run = await createRun(accessToken, threadId, personaKey, modelOverride, readThreadWorkFolder(threadId) ?? undefined, readThreadReasoningMode(threadId) !== 'off' ? readThreadReasoningMode(threadId) as RunReasoningMode : undefined)
+      if (personaKey === SEARCH_PERSONA_KEY) addSearchThreadId(threadId)
+      resetSearchSteps()
+      setActiveRunId(run.run_id)
+      onRunStarted(threadId)
     } catch (err) {
       setPendingThinking(false)
       if (isApiError(err) && err.status === 401) {
@@ -1852,14 +1674,18 @@ export function ChatView() {
     accessToken,
     invalidateMessageSync,
     isStreaming,
+    terminalRunDisplayId,
+    terminalRunHandoffStatus,
     markTerminalRunHistory,
     navigate,
     onLoggedOut,
     onRunStarted,
     onThreadCreated,
+    readConsistentMessages,
     resetSearchSteps,
     revokeDraftAttachment,
     activateAnchor,
+    scrollToBottom,
     sending,
     setActiveRunId,
     setAttachments,
@@ -1876,177 +1702,17 @@ export function ChatView() {
     waitForPlanModeUpdate,
   ])
 
-  const promoteHistoricalRunToHandoff = useCallback((runId: string, status: Exclude<MessageTerminalStatusRef, 'completed'>) => {
-    const coveredRunIds = [...terminalRunCoveredRunIds, runId]
-      .filter((value, index, arr) => value.trim() !== '' && arr.indexOf(value) === index)
-    const assistantMessage = [...messages].reverse().find((msg) => msg.role === 'assistant' && msg.run_id === runId)
-    if (!assistantMessage) {
-      setTerminalRunCoveredRunIds(coveredRunIds)
-      if (threadId) {
-        const handoffAssistantTurn = snapshotAssistantTurn(assistantTurnFoldStateRef.current)
-        persistThreadRunHandoff(runId, {
-          terminalStatus: status,
-          coveredRunIds,
-          runAssistantTurn: handoffAssistantTurn,
-          handoffAssistantTurn,
-          runSources: [...currentRunSourcesRef.current],
-          runArtifacts: [...currentRunArtifactsRef.current],
-          runWidgets: collectCompletedWidgets(streamingArtifactsRef.current),
-          runCodeExecs: [...currentRunCodeExecutionsRef.current],
-          runBrowserActions: [...currentRunBrowserActionsRef.current],
-          runSubAgents: [...currentRunSubAgentsRef.current],
-          runFileOps: [...currentRunFileOpsRef.current],
-          runWebFetches: [...currentRunWebFetchesRef.current],
-          pendingSearchSteps: searchStepsRef.current,
-        })
-      }
-      return
-    }
-    const cachedMeta = getMeta(assistantMessage.id)
-    const assistantTurn =
-      cachedMeta?.assistantTurn ??
-      readMessageAssistantTurn(assistantMessage.id) ??
-      (assistantMessage.content.trim() !== ''
-        ? { segments: [{ type: 'text' as const, content: assistantMessage.content }] }
-        : null)
-    const sources = cachedMeta?.sources ?? readMessageSources(assistantMessage.id) ?? []
-    const artifacts = cachedMeta?.artifacts ?? readMessageArtifacts(assistantMessage.id) ?? []
-    const widgets = cachedMeta?.widgets ?? readMessageWidgets(assistantMessage.id) ?? []
-    const codeExecutions = cachedMeta?.codeExecutions ?? readMessageCodeExecutions(assistantMessage.id) ?? []
-    const browserActions = cachedMeta?.browserActions ?? readMessageBrowserActions(assistantMessage.id) ?? []
-    const subAgents = cachedMeta?.subAgents ?? readMessageSubAgents(assistantMessage.id) ?? []
-    const fileOps = cachedMeta?.fileOps ?? readMessageFileOps(assistantMessage.id) ?? []
-    const webFetches = cachedMeta?.webFetches ?? readMessageWebFetches(assistantMessage.id) ?? []
-    const recoveredSearchSteps = cachedMeta?.searchSteps ?? readMessageSearchSteps(assistantMessage.id) ?? []
-
-    setPreserveLiveRunUi(true)
-    setTerminalRunDisplayId(runId)
-    setTerminalRunHandoffStatus(status)
-    setTerminalRunCoveredRunIds(coveredRunIds)
-    assistantTurnFoldStateRef.current = createEmptyAssistantTurnFoldState()
-    assistantTurnFoldStateRef.current.segments = (assistantTurn?.segments ?? []).map((segment: AssistantTurnSegment) => structuredClone(segment))
-    setLiveAssistantTurn(assistantTurn)
-    setSegments([])
-    activeSegmentIdRef.current = null
-    currentRunSourcesRef.current = [...sources]
-    currentRunArtifactsRef.current = [...artifacts]
-    currentRunCodeExecutionsRef.current = [...codeExecutions]
-    currentRunBrowserActionsRef.current = [...browserActions]
-    currentRunSubAgentsRef.current = [...subAgents]
-    currentRunFileOpsRef.current = [...fileOps]
-    currentRunWebFetchesRef.current = [...webFetches]
-    setTopLevelCodeExecutions(codeExecutions)
-    setTopLevelSubAgents(subAgents)
-    setTopLevelFileOps(fileOps)
-    setTopLevelWebFetches(webFetches)
-    const streamingEntries = buildStreamingArtifactsFromHandoff({
-      runId,
-      status,
-      coveredRunIds,
-      assistantTurn,
-      sources,
-      artifacts,
-      widgets,
-      codeExecutions,
-      browserActions,
-      subAgents,
-      fileOps,
-      webFetches,
-      searchSteps: recoveredSearchSteps,
-    })
-    streamingArtifactsRef.current = streamingEntries
-    setStreamingArtifacts(streamingEntries)
-    searchStepsRef.current = recoveredSearchSteps
-    setSearchSteps(recoveredSearchSteps)
-    if (threadId) {
-      persistThreadRunHandoff(runId, {
-        terminalStatus: status,
-        coveredRunIds,
-        runAssistantTurn: assistantTurn ?? { segments: [] },
-        handoffAssistantTurn: assistantTurn ?? { segments: [] },
-        runSources: sources,
-        runArtifacts: artifacts,
-        runWidgets: widgets,
-        runCodeExecs: codeExecutions,
-        runBrowserActions: browserActions,
-        runSubAgents: subAgents,
-        runFileOps: fileOps,
-        runWebFetches: webFetches,
-        pendingSearchSteps: recoveredSearchSteps,
-      })
-    }
-  }, [
-    activeSegmentIdRef,
-    assistantTurnFoldStateRef,
-    currentRunArtifactsRef,
-    currentRunBrowserActionsRef,
-    currentRunCodeExecutionsRef,
-    currentRunFileOpsRef,
-    currentRunSourcesRef,
-    currentRunSubAgentsRef,
-    currentRunWebFetchesRef,
-    messages,
-    getMeta,
-    searchStepsRef,
-    setLiveAssistantTurn,
-    setPreserveLiveRunUi,
-    setSearchSteps,
-    setSegments,
-    setStreamingArtifacts,
-    setTerminalRunCoveredRunIds,
-    setTerminalRunDisplayId,
-    setTerminalRunHandoffStatus,
-    setTopLevelCodeExecutions,
-    setTopLevelFileOps,
-    setTopLevelSubAgents,
-    setTopLevelWebFetches,
-    streamingArtifactsRef,
-    terminalRunCoveredRunIds,
-    threadId,
-    persistThreadRunHandoff,
-  ])
-
-  const actionLabelForTerminalRun = useCallback((params: {
-    status: LiveRunHandoffStatus
-    hasOutput: boolean
-  }) => {
-    if (isStreaming || sending) return undefined
-    if (params.status === 'cancelled' || params.status === 'interrupted' || params.status === 'failed') {
-      return params.hasOutput ? t.continueBtn : t.retryAction
-    }
-    return undefined
-  }, [isStreaming, sending, t.continueBtn, t.retryAction])
-
-  const actionHandlerForTerminalRun = useCallback((params: {
-    runId: string | null | undefined
-    status: LiveRunHandoffStatus
-    hasOutput: boolean
-  }) => {
-    if (isStreaming || sending) return undefined
-    if (
-      (params.status === 'cancelled' || params.status === 'interrupted' || params.status === 'failed') &&
-      params.hasOutput &&
-      params.runId
-    ) {
-      return () => {
-        const terminalStatus = params.status
-        if (terminalStatus !== 'cancelled' && terminalStatus !== 'interrupted' && terminalStatus !== 'failed') {
-          return
-        }
-        promoteHistoricalRunToHandoff(params.runId!, terminalStatus)
-        void handleContinue(params.runId!)
-      }
-    }
-    if (params.status === 'cancelled' || params.status === 'interrupted' || params.status === 'failed') {
-      return handleRetry
-    }
-    return undefined
-  }, [isStreaming, sending, handleContinue, handleRetry, promoteHistoricalRunToHandoff])
-
   const terminalSseError = useMemo(() => {
     if (!sse.error) return null
     return normalizeError(sse.error)
   }, [sse.error])
+  const inputError = error ?? terminalSseError
+  const inputErrorKey = useMemo(() => (inputError ? errorNoticeKey(inputError) : null), [inputError])
+  const showInputError = !!inputError && inputErrorKey !== dismissedInputErrorKey
+
+  useEffect(() => {
+    if (!inputError) setDismissedInputErrorKey(null)
+  }, [inputError])
 
   const lastUserMsgIdx = useMemo(() => {
     for (let i = messages.length - 1; i >= 0; i--) {
@@ -2250,28 +1916,6 @@ export function ChatView() {
     if (copTimelineStreamHiddenIds.size === 0) return allStreamItems
     return allStreamItems.filter((e) => !copTimelineStreamHiddenIds.has(e.id))
   }, [allStreamItems, copTimelineStreamHiddenIds])
-  const terminalRunHasOutput = useMemo(() => {
-    if (segmentsRef.current.some((segment) => segment.content.trim() !== '')) {
-      return true
-    }
-    return hasRecoverableRunOutput({
-      assistantTurn: liveAssistantTurn,
-      searchSteps,
-      streamingArtifacts,
-      codeExecutions: topLevelCodeExecutions,
-      subAgents: topLevelSubAgents,
-      fileOps: topLevelFileOps,
-      webFetches: topLevelWebFetches,
-    })
-  }, [
-    liveAssistantTurn,
-    searchSteps,
-    streamingArtifacts,
-    topLevelCodeExecutions,
-    topLevelSubAgents,
-    topLevelFileOps,
-    topLevelWebFetches,
-  ])
 
   const shareModalEl = useMemo(() => {
     if (!threadId) return null
@@ -2311,7 +1955,7 @@ export function ChatView() {
       ...params,
       labels: {
         stopped: t.connection.stopped,
-        failed: t.failedRunRetryTitle,
+        failed: t.failedRunTitle,
         liveProgress: t.copTimelineLiveProgress,
         thinking: t.copThinkingInlineTitle,
       },
@@ -2352,6 +1996,9 @@ export function ChatView() {
   }, [accessToken, appMode, isPlanMode, onThreadCollaborationModeUpdated, onThreadUpserted, setError, threadId])
 
   const hasMessages = messages.length > 0
+  const inputHorizontalPadding = appMode === 'work'
+    ? (isPanelOpen ? chatContentPadding.panelOpen : chatContentPadding.panelClosed)
+    : (isPanelOpen ? chatInputPadding.panelOpen : chatInputPadding.panelClosed)
 
   const chatInputEl = useMemo(() => (
     <ChatInput
@@ -2582,8 +2229,6 @@ export function ChatView() {
                     checkInSubmitting={checkInSubmitting}
                     onCheckInDraftChange={setCheckInDraft}
                     onCheckInSubmit={() => void handleCheckInSubmit()}
-                    terminalSseError={terminalSseError}
-                    failedRunError={error}
                     pendingIncognito={pendingIncognito}
                     incognitoDividerText={t.incognitoForkDivider}
                     onIncognitoDividerComplete={() => {
@@ -2593,13 +2238,8 @@ export function ChatView() {
                     }}
                     terminalRunHandoffStatus={terminalRunHandoffStatus}
                     terminalRunDisplayId={terminalRunDisplayId}
-                    terminalRunHasOutput={terminalRunHasOutput}
-                    failedRunRetryTitle={t.failedRunRetryTitle}
-                    runInterruptedLabel={t.runInterrupted}
-                    runCancelledLabel={t.runCancelled}
-                    actionLabelForTerminalRun={actionLabelForTerminalRun}
-                    actionHandlerForTerminalRun={actionHandlerForTerminalRun}
-                    onRetry={handleRetry}
+                    showRunEvents={showRunEvents}
+                    setRunDetailPanelRunId={setRunDetailPanelRunId}
                     onOpenDocument={openDocumentPanel}
                     onOpenCodeExecution={openCodePanel}
                     onOpenSubAgent={openAgentPanelState}
@@ -2607,15 +2247,11 @@ export function ChatView() {
                     renderLiveCopItems={renderLiveCopItems}
                     renderLiveCopSegment={renderLiveCopSegment}
                     bottomRef={bottomRef}
-                    messages={messages}
-                    isWorkMode={appMode === 'work'}
                   />
                 }
                 showRunEvents={showRunEvents}
                 currentRunCopHeaderOverride={currentRunCopHeaderOverride}
-                actionLabelForTerminalRun={actionLabelForTerminalRun}
-                actionHandlerForTerminalRun={actionHandlerForTerminalRun}
-                handleRetry={handleRetry}
+                handleRetryUserMessage={handleRetryUserMessage}
                 handleEditMessage={handleEditMessage}
                 handleFork={handleFork}
                 handleArtifactAction={handleArtifactAction}
@@ -2625,7 +2261,6 @@ export function ChatView() {
                 sourcePanelMessageId={sourcePanelMessageId}
                 setRunDetailPanelRunId={setRunDetailPanelRunId}
                 clearUserEnterAnimation={clearUserEnterAnimation}
-                failedRunError={error}
                 />
               </CopTimelineLocalExpansionProvider>
 
@@ -2638,7 +2273,18 @@ export function ChatView() {
       {/* 输入区域 */}
       <div
         ref={inputAreaRef}
-        style={{ maxWidth: appMode === 'work' ? 1000 : 1200, margin: '0 auto', padding: `12px ${appMode === 'work' ? (isPanelOpen ? chatContentPadding.panelOpen : chatContentPadding.panelClosed) : isPanelOpen ? chatInputPadding.panelOpen : chatInputPadding.panelClosed} 8px`, position: 'absolute', bottom: 0, left: 0, right: 0, zIndex: 10, background: 'linear-gradient(to bottom, transparent 0%, var(--c-bg-page) 24px)' }}
+        style={{
+          '--chat-input-horizontal-padding': inputHorizontalPadding,
+          maxWidth: appMode === 'work' ? 1000 : 1200,
+          margin: '0 auto',
+          padding: '12px var(--chat-input-horizontal-padding) 8px',
+          position: 'absolute',
+          bottom: 0,
+          left: 0,
+          right: 0,
+          zIndex: 10,
+          background: 'linear-gradient(to bottom, transparent 0%, var(--c-bg-page) 24px)',
+        } as React.CSSProperties}
         className="flex w-full flex-col items-center gap-2"
       >
         {/* 滚动到底部按钮：始终锚定在输入框顶边正上方 */}
@@ -2667,6 +2313,29 @@ export function ChatView() {
         >
           <ArrowDown size={16} className={liveRunUiActive && !isAtBottom ? 'arrow-breathe' : ''} />
         </button>
+        {showInputError && inputError && (
+          <div
+            className="pointer-events-none absolute"
+            style={{
+              left: 'var(--chat-input-horizontal-padding)',
+              right: 'var(--chat-input-horizontal-padding)',
+              bottom: 'calc(100% + 4px)',
+              zIndex: 30,
+            }}
+          >
+            <div
+              className="pointer-events-auto w-full"
+              style={{ maxWidth: appMode === 'work' ? undefined : '720px', margin: '0 auto' }}
+            >
+              <RunErrorNotice
+                error={inputError}
+                onDismiss={() => {
+                  if (inputErrorKey) setDismissedInputErrorKey(inputErrorKey)
+                }}
+              />
+            </div>
+          </div>
+        )}
         {queuedDraft && (
           <div
             className="flex w-full max-w-[756px] items-center gap-2 rounded-xl px-3 py-2"
