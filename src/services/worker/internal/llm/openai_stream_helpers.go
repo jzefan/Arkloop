@@ -99,9 +99,9 @@ func (b *openAIChatToolCallBuffer) Add(delta openAIChatCompletionToolDelta, fall
 	}
 }
 
-func (b *openAIChatToolCallBuffer) Drain() ([]ToolCall, error) {
+func (b *openAIChatToolCallBuffer) Drain() ([]ToolCall, []ParseWarning, error) {
 	if len(b.calls) == 0 {
-		return nil, nil
+		return nil, nil, nil
 	}
 
 	indexes := make([]int, 0, len(b.calls))
@@ -111,16 +111,17 @@ func (b *openAIChatToolCallBuffer) Drain() ([]ToolCall, error) {
 	sort.Ints(indexes)
 
 	toolCalls := make([]ToolCall, 0, len(indexes))
+	var warnings []ParseWarning
 	for _, idx := range indexes {
 		item := b.calls[idx]
 		if item == nil {
 			continue
 		}
 		if strings.TrimSpace(item.ID) == "" {
-			return nil, fmt.Errorf("tool_calls[%d] missing id", idx)
+			return nil, nil, fmt.Errorf("tool_calls[%d] missing id", idx)
 		}
 		if strings.TrimSpace(item.Name) == "" {
-			return nil, fmt.Errorf("tool_calls[%d] missing function.name", idx)
+			return nil, nil, fmt.Errorf("tool_calls[%d] missing function.name", idx)
 		}
 
 		argumentsJSON := map[string]any{}
@@ -128,11 +129,31 @@ func (b *openAIChatToolCallBuffer) Drain() ([]ToolCall, error) {
 		if joinedArgs != "" {
 			var parsedArgs any
 			if err := json.Unmarshal([]byte(joinedArgs), &parsedArgs); err != nil {
-				return nil, fmt.Errorf("%w: tool_calls[%d].function.arguments is not valid JSON", errOpenAIToolCallArguments, idx)
+				warnings = append(warnings, ParseWarning{
+					ToolCallID: item.ID,
+					ToolName:   CanonicalToolName(item.Name),
+					Message:    fmt.Sprintf("tool_calls[%d].function.arguments is not valid JSON. Arguments must be a valid JSON object. Raw: %s", idx, truncateRaw(joinedArgs, 200)),
+				})
+				toolCalls = append(toolCalls, ToolCall{
+					ToolCallID:    item.ID,
+					ToolName:      CanonicalToolName(item.Name),
+					ArgumentsJSON: argumentsJSON,
+				})
+				continue
 			}
 			obj, ok := parsedArgs.(map[string]any)
 			if !ok {
-				return nil, fmt.Errorf("%w: tool_calls[%d].function.arguments must be a JSON object", errOpenAIToolCallArguments, idx)
+				warnings = append(warnings, ParseWarning{
+					ToolCallID: item.ID,
+					ToolName:   CanonicalToolName(item.Name),
+					Message:    fmt.Sprintf("tool_calls[%d].function.arguments must be a JSON object, got %T", idx, parsedArgs),
+				})
+				toolCalls = append(toolCalls, ToolCall{
+					ToolCallID:    item.ID,
+					ToolName:      CanonicalToolName(item.Name),
+					ArgumentsJSON: argumentsJSON,
+				})
+				continue
 			}
 			argumentsJSON = obj
 		}
@@ -145,7 +166,7 @@ func (b *openAIChatToolCallBuffer) Drain() ([]ToolCall, error) {
 	}
 
 	b.calls = map[int]*openAIChatToolCallAccum{}
-	return toolCalls, nil
+	return toolCalls, warnings, nil
 }
 
 func openAIChatEmptyStreamFailure(emittedAnyOutput bool, choiceChunkCount int, sawRoleDelta bool, finishReasonSeen bool) (string, string) {

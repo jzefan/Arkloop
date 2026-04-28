@@ -429,13 +429,19 @@ func (s *openAISDKChatState) handle(chunk openai.ChatCompletionChunk) error {
 	return nil
 }
 func (s *openAISDKChatState) drainTools() error {
-	calls, err := s.toolBuffer.Drain()
+	calls, warnings, err := s.toolBuffer.Drain()
 	if err != nil {
 		return s.yield(openAIParseFailure(err, "OpenAI response parse failed", "OpenAI tool_call arguments parse failed", s.llmCallID))
 	}
 	for _, call := range calls {
 		s.emittedTool = true
 		if err := s.yield(call); err != nil {
+			return err
+		}
+	}
+	for _, w := range warnings {
+		s.emittedTool = true
+		if err := s.yield(formatRepairToolResult(w, s.llmCallID)); err != nil {
 			return err
 		}
 	}
@@ -512,15 +518,17 @@ func (s *openAISDKResponsesState) handle(event responses.ResponseStreamEventUnio
 	}
 	if typ == "response.completed" {
 		respObj, _ := root["response"].(map[string]any)
-		assistantMessage, toolCalls, usage, cost, err := parseOpenAIResponsesAssistantResponse(respObj)
+		assistantMessage, toolCalls, usage, cost, warnings, err := parseOpenAIResponsesAssistantResponse(respObj)
 		if err != nil {
 			return s.yield(openAIParseFailure(err, "OpenAI responses response parse failed", "OpenAI responses tool_call arguments parse failed", s.llmCallID))
 		}
 		if len(toolCalls) == 0 && len(s.toolBuffers) > 0 {
-			toolCalls, err = openAIResponsesBufferedToolCalls(s.toolBuffers)
+			var bufferedWarnings []ParseWarning
+			toolCalls, bufferedWarnings, err = openAIResponsesBufferedToolCalls(s.toolBuffers)
 			if err != nil {
 				return s.yield(openAIParseFailure(err, "OpenAI responses response parse failed", "OpenAI responses tool_call arguments parse failed", s.llmCallID))
 			}
+			warnings = append(warnings, bufferedWarnings...)
 		}
 		s.applyStreamedThinking(&assistantMessage)
 		if !s.emittedVisibleText {
@@ -533,6 +541,11 @@ func (s *openAISDKResponsesState) handle(event responses.ResponseStreamEventUnio
 		}
 		for _, call := range toolCalls {
 			if err := s.yield(call); err != nil {
+				return err
+			}
+		}
+		for _, w := range warnings {
+			if err := s.yield(formatRepairToolResult(w, s.llmCallID)); err != nil {
 				return err
 			}
 		}

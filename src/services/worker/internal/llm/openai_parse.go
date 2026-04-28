@@ -13,13 +13,42 @@ import (
 	"arkloop/services/worker/internal/stablejson"
 )
 
-func parseOpenAIChatCompletion(body []byte) (string, []ToolCall, *Usage, *Cost, error) {
+type ParseWarning struct {
+	ToolCallID string
+	ToolName   string
+	Message    string
+}
+
+func truncateRaw(s string, maxLen int) string {
+	if len(s) <= maxLen {
+		return s
+	}
+	return s[:maxLen] + "..."
+}
+
+func formatRepairToolResult(w ParseWarning, llmCallID string) StreamToolResult {
+	return StreamToolResult{
+		ToolCallID: w.ToolCallID,
+		ToolName:   w.ToolName,
+		ResultJSON: map[string]any{
+			"error":    w.Message,
+			"is_error": true,
+			"hint":     "Your tool call had malformed JSON arguments. Please retry with a valid JSON object for the arguments field.",
+		},
+		Error: &GatewayError{
+			ErrorClass: ErrorClassToolFormatRepair,
+			Message:    w.Message,
+		},
+	}
+}
+
+func parseOpenAIChatCompletion(body []byte) (string, []ToolCall, *Usage, *Cost, []ParseWarning, error) {
 	var parsed openAIChatCompletionResponse
 	if err := json.Unmarshal(body, &parsed); err != nil {
-		return "", nil, nil, nil, err
+		return "", nil, nil, nil, nil, err
 	}
 	if len(parsed.Choices) == 0 {
-		return "", nil, nil, nil, fmt.Errorf("response missing choices")
+		return "", nil, nil, nil, nil, fmt.Errorf("response missing choices")
 	}
 
 	message := parsed.Choices[0].Message
@@ -29,15 +58,16 @@ func parseOpenAIChatCompletion(body []byte) (string, []ToolCall, *Usage, *Cost, 
 	}
 
 	toolCalls := make([]ToolCall, 0, len(message.ToolCalls))
+	var warnings []ParseWarning
 	for idx, raw := range message.ToolCalls {
 		toolCallID := strings.TrimSpace(raw.ID)
 		if toolCallID == "" {
-			return "", nil, nil, nil, fmt.Errorf("tool_calls[%d] missing id", idx)
+			return "", nil, nil, nil, nil, fmt.Errorf("tool_calls[%d] missing id", idx)
 		}
 
 		toolName := strings.TrimSpace(raw.Function.Name)
 		if toolName == "" {
-			return "", nil, nil, nil, fmt.Errorf("tool_calls[%d] missing function.name", idx)
+			return "", nil, nil, nil, nil, fmt.Errorf("tool_calls[%d] missing function.name", idx)
 		}
 
 		argumentsJSON := map[string]any{}
@@ -45,11 +75,31 @@ func parseOpenAIChatCompletion(body []byte) (string, []ToolCall, *Usage, *Cost, 
 		if arguments != "" {
 			var parsedArgs any
 			if err := json.Unmarshal([]byte(arguments), &parsedArgs); err != nil {
-				return "", nil, nil, nil, fmt.Errorf("%w: tool_calls[%d].function.arguments is not valid JSON", errOpenAIToolCallArguments, idx)
+				warnings = append(warnings, ParseWarning{
+					ToolCallID: toolCallID,
+					ToolName:   CanonicalToolName(toolName),
+					Message:    fmt.Sprintf("tool_calls[%d].function.arguments is not valid JSON. Arguments must be a valid JSON object. Raw: %s", idx, truncateRaw(arguments, 200)),
+				})
+				toolCalls = append(toolCalls, ToolCall{
+					ToolCallID:    toolCallID,
+					ToolName:      CanonicalToolName(toolName),
+					ArgumentsJSON: argumentsJSON,
+				})
+				continue
 			}
 			obj, ok := parsedArgs.(map[string]any)
 			if !ok {
-				return "", nil, nil, nil, fmt.Errorf("%w: tool_calls[%d].function.arguments must be a JSON object", errOpenAIToolCallArguments, idx)
+				warnings = append(warnings, ParseWarning{
+					ToolCallID: toolCallID,
+					ToolName:   CanonicalToolName(toolName),
+					Message:    fmt.Sprintf("tool_calls[%d].function.arguments must be a JSON object, got %T", idx, parsedArgs),
+				})
+				toolCalls = append(toolCalls, ToolCall{
+					ToolCallID:    toolCallID,
+					ToolName:      CanonicalToolName(toolName),
+					ArgumentsJSON: argumentsJSON,
+				})
+				continue
 			}
 			argumentsJSON = obj
 		}
@@ -72,7 +122,7 @@ func parseOpenAIChatCompletion(body []byte) (string, []ToolCall, *Usage, *Cost, 
 		cost = costFromFloat64(parsed.Usage.Cost)
 	}
 
-	return content, toolCalls, usage, cost, nil
+	return content, toolCalls, usage, cost, warnings, nil
 }
 
 func toOpenAIResponsesInput(messages []Message) ([]map[string]any, error) {
@@ -590,9 +640,9 @@ func openAIResponsesToolArgumentsDelta(
 	}
 }
 
-func openAIResponsesBufferedToolCalls(toolBuffers map[int]*openAIResponsesToolBuffer) ([]ToolCall, error) {
+func openAIResponsesBufferedToolCalls(toolBuffers map[int]*openAIResponsesToolBuffer) ([]ToolCall, []ParseWarning, error) {
 	if len(toolBuffers) == 0 {
-		return nil, nil
+		return nil, nil, nil
 	}
 	indexes := make([]int, 0, len(toolBuffers))
 	for index := range toolBuffers {
@@ -632,27 +682,27 @@ func stringValueFromAny(value any) string {
 	return text
 }
 
-func parseOpenAIResponses(body []byte) (string, []ToolCall, *Usage, *Cost, error) {
+func parseOpenAIResponses(body []byte) (string, []ToolCall, *Usage, *Cost, []ParseWarning, error) {
 	var parsed any
 	if err := json.Unmarshal(body, &parsed); err != nil {
-		return "", nil, nil, nil, err
+		return "", nil, nil, nil, nil, err
 	}
 	root, ok := parsed.(map[string]any)
 	if !ok {
-		return "", nil, nil, nil, fmt.Errorf("response root is not an object")
+		return "", nil, nil, nil, nil, fmt.Errorf("response root is not an object")
 	}
 	return parseOpenAIResponsesRoot(root)
 }
 
-func parseOpenAIResponsesRoot(root map[string]any) (string, []ToolCall, *Usage, *Cost, error) {
-	message, toolCalls, usage, cost, err := parseOpenAIResponsesAssistantResponse(root)
+func parseOpenAIResponsesRoot(root map[string]any) (string, []ToolCall, *Usage, *Cost, []ParseWarning, error) {
+	message, toolCalls, usage, cost, warnings, err := parseOpenAIResponsesAssistantResponse(root)
 	if err != nil {
-		return "", nil, nil, nil, err
+		return "", nil, nil, nil, nil, err
 	}
-	return VisibleMessageText(message), toolCalls, usage, cost, nil
+	return VisibleMessageText(message), toolCalls, usage, cost, warnings, nil
 }
 
-func parseOpenAIResponsesAssistantResponse(root map[string]any) (Message, []ToolCall, *Usage, *Cost, error) {
+func parseOpenAIResponsesAssistantResponse(root map[string]any) (Message, []ToolCall, *Usage, *Cost, []ParseWarning, error) {
 	var contentBuilder strings.Builder
 	hasTopLevelText := false
 	if rawOutputText, ok := root["output_text"].(string); ok {
@@ -665,12 +715,13 @@ func parseOpenAIResponsesAssistantResponse(root map[string]any) (Message, []Tool
 	rawOutput, ok := root["output"].([]any)
 	if !ok {
 		if contentBuilder.Len() > 0 {
-			return Message{Role: "assistant", Content: []TextPart{{Text: contentBuilder.String()}}}, nil, nil, nil, nil
+			return Message{Role: "assistant", Content: []TextPart{{Text: contentBuilder.String()}}}, nil, nil, nil, nil, nil
 		}
-		return Message{}, nil, nil, nil, fmt.Errorf("response missing output")
+		return Message{}, nil, nil, nil, nil, fmt.Errorf("response missing output")
 	}
 
 	toolCalls := []ToolCall{}
+	var warnings []ParseWarning
 	assistantMessage := Message{Role: "assistant"}
 	for idx, rawItem := range rawOutput {
 		item, ok := rawItem.(map[string]any)
@@ -723,7 +774,7 @@ func parseOpenAIResponsesAssistantResponse(root map[string]any) (Message, []Tool
 		}
 		toolCallID = strings.TrimSpace(toolCallID)
 		if toolCallID == "" {
-			return Message{}, nil, nil, nil, fmt.Errorf("output[%d] missing function_call.id", idx)
+			return Message{}, nil, nil, nil, nil, fmt.Errorf("output[%d] missing function_call.id", idx)
 		}
 
 		toolName, _ := item["name"].(string)
@@ -732,7 +783,7 @@ func parseOpenAIResponsesAssistantResponse(root map[string]any) (Message, []Tool
 		}
 		toolName = CanonicalToolName(toolName)
 		if toolName == "" {
-			return Message{}, nil, nil, nil, fmt.Errorf("output[%d] missing function_call.name", idx)
+			return Message{}, nil, nil, nil, nil, fmt.Errorf("output[%d] missing function_call.name", idx)
 		}
 
 		argumentsJSON := map[string]any{}
@@ -745,16 +796,46 @@ func parseOpenAIResponsesAssistantResponse(root map[string]any) (Message, []Tool
 				if arguments != "" {
 					var parsedArgs any
 					if err := json.Unmarshal([]byte(arguments), &parsedArgs); err != nil {
-						return Message{}, nil, nil, nil, fmt.Errorf("%w: output[%d].arguments is not valid JSON", errOpenAIToolCallArguments, idx)
+						warnings = append(warnings, ParseWarning{
+							ToolCallID: toolCallID,
+							ToolName:   CanonicalToolName(toolName),
+							Message:    fmt.Sprintf("output[%d].arguments is not valid JSON. Arguments must be a valid JSON object. Raw: %s", idx, truncateRaw(arguments, 200)),
+						})
+						toolCalls = append(toolCalls, ToolCall{
+							ToolCallID:    toolCallID,
+							ToolName:      CanonicalToolName(toolName),
+							ArgumentsJSON: argumentsJSON,
+						})
+						continue
 					}
 					obj, ok := parsedArgs.(map[string]any)
 					if !ok {
-						return Message{}, nil, nil, nil, fmt.Errorf("%w: output[%d].arguments must be a JSON object", errOpenAIToolCallArguments, idx)
+						warnings = append(warnings, ParseWarning{
+							ToolCallID: toolCallID,
+							ToolName:   CanonicalToolName(toolName),
+							Message:    fmt.Sprintf("output[%d].arguments must be a JSON object, got %T", idx, parsedArgs),
+						})
+						toolCalls = append(toolCalls, ToolCall{
+							ToolCallID:    toolCallID,
+							ToolName:      CanonicalToolName(toolName),
+							ArgumentsJSON: argumentsJSON,
+						})
+						continue
 					}
 					argumentsJSON = obj
 				}
 			default:
-				return Message{}, nil, nil, nil, fmt.Errorf("%w: output[%d].arguments unsupported type", errOpenAIToolCallArguments, idx)
+				warnings = append(warnings, ParseWarning{
+					ToolCallID: toolCallID,
+					ToolName:   CanonicalToolName(toolName),
+					Message:    fmt.Sprintf("output[%d].arguments unsupported type %T", idx, casted),
+				})
+				toolCalls = append(toolCalls, ToolCall{
+					ToolCallID:    toolCallID,
+					ToolName:      CanonicalToolName(toolName),
+					ArgumentsJSON: argumentsJSON,
+				})
+				continue
 			}
 		}
 
@@ -775,7 +856,7 @@ func parseOpenAIResponsesAssistantResponse(root map[string]any) (Message, []Tool
 	if len(assistantMessage.Content) == 0 && strings.TrimSpace(contentBuilder.String()) != "" {
 		assistantMessage.Content = []TextPart{{Text: contentBuilder.String()}}
 	}
-	return assistantMessage, toolCalls, usage, cost, nil
+	return assistantMessage, toolCalls, usage, cost, warnings, nil
 }
 
 func openAIResponsesReasoningItemText(item map[string]any) string {
@@ -833,8 +914,9 @@ func openAIResponsesTextValue(values ...any) string {
 	return ""
 }
 
-func openAIResponsesToolCalls(output []any) ([]ToolCall, error) {
+func openAIResponsesToolCalls(output []any) ([]ToolCall, []ParseWarning, error) {
 	toolCalls := []ToolCall{}
+	var warnings []ParseWarning
 	for idx, rawItem := range output {
 		item, ok := rawItem.(map[string]any)
 		if !ok {
@@ -850,7 +932,7 @@ func openAIResponsesToolCalls(output []any) ([]ToolCall, error) {
 		}
 		toolCallID = strings.TrimSpace(toolCallID)
 		if toolCallID == "" {
-			return nil, fmt.Errorf("output[%d] missing function_call.id", idx)
+			return nil, nil, fmt.Errorf("output[%d] missing function_call.id", idx)
 		}
 
 		toolName, _ := item["name"].(string)
@@ -859,7 +941,7 @@ func openAIResponsesToolCalls(output []any) ([]ToolCall, error) {
 		}
 		toolName = CanonicalToolName(toolName)
 		if toolName == "" {
-			return nil, fmt.Errorf("output[%d] missing function_call.name", idx)
+			return nil, nil, fmt.Errorf("output[%d] missing function_call.name", idx)
 		}
 
 		argumentsJSON := map[string]any{}
@@ -872,16 +954,46 @@ func openAIResponsesToolCalls(output []any) ([]ToolCall, error) {
 				if arguments != "" {
 					var parsedArgs any
 					if err := json.Unmarshal([]byte(arguments), &parsedArgs); err != nil {
-						return nil, fmt.Errorf("%w: output[%d].arguments is not valid JSON", errOpenAIToolCallArguments, idx)
+						warnings = append(warnings, ParseWarning{
+							ToolCallID: toolCallID,
+							ToolName:   CanonicalToolName(toolName),
+							Message:    fmt.Sprintf("output[%d].arguments is not valid JSON. Arguments must be a valid JSON object. Raw: %s", idx, truncateRaw(arguments, 200)),
+						})
+						toolCalls = append(toolCalls, ToolCall{
+							ToolCallID:    toolCallID,
+							ToolName:      CanonicalToolName(toolName),
+							ArgumentsJSON: argumentsJSON,
+						})
+						continue
 					}
 					obj, ok := parsedArgs.(map[string]any)
 					if !ok {
-						return nil, fmt.Errorf("%w: output[%d].arguments must be a JSON object", errOpenAIToolCallArguments, idx)
+						warnings = append(warnings, ParseWarning{
+							ToolCallID: toolCallID,
+							ToolName:   CanonicalToolName(toolName),
+							Message:    fmt.Sprintf("output[%d].arguments must be a JSON object, got %T", idx, parsedArgs),
+						})
+						toolCalls = append(toolCalls, ToolCall{
+							ToolCallID:    toolCallID,
+							ToolName:      CanonicalToolName(toolName),
+							ArgumentsJSON: argumentsJSON,
+						})
+						continue
 					}
 					argumentsJSON = obj
 				}
 			default:
-				return nil, fmt.Errorf("%w: output[%d].arguments unsupported type", errOpenAIToolCallArguments, idx)
+				warnings = append(warnings, ParseWarning{
+					ToolCallID: toolCallID,
+					ToolName:   CanonicalToolName(toolName),
+					Message:    fmt.Sprintf("output[%d].arguments unsupported type %T", idx, casted),
+				})
+				toolCalls = append(toolCalls, ToolCall{
+					ToolCallID:    toolCallID,
+					ToolName:      CanonicalToolName(toolName),
+					ArgumentsJSON: argumentsJSON,
+				})
+				continue
 			}
 		}
 
@@ -891,7 +1003,7 @@ func openAIResponsesToolCalls(output []any) ([]ToolCall, error) {
 			ArgumentsJSON: argumentsJSON,
 		})
 	}
-	return toolCalls, nil
+	return toolCalls, warnings, nil
 }
 
 func openAIResponsesDeltaText(event map[string]any) string {

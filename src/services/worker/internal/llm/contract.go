@@ -23,6 +23,9 @@ const (
 	ErrorClassRuntimePolicyDenied = "runtime_policy.denied"
 	ErrorClassProviderFailed      = "external_provider.failed"
 	ErrorClassPlatformError       = "internal_platform.error"
+
+	// 工具调用格式修复: 模型生成了无效 JSON 参数，注入错误结果让模型自行修正
+	ErrorClassToolFormatRepair = "tool.format_repair"
 )
 
 const (

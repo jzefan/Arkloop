@@ -516,7 +516,7 @@ func TestOpenAISDKResponsesState_CompletedMessageCarriesReasoningDelta(t *testin
 }
 
 func TestParseOpenAIResponsesAssistantResponseCarriesReasoningItem(t *testing.T) {
-	message, _, _, _, err := parseOpenAIResponsesAssistantResponse(map[string]any{
+	message, _, _, _, _, err := parseOpenAIResponsesAssistantResponse(map[string]any{
 		"output": []any{
 			map[string]any{
 				"type": "reasoning",
