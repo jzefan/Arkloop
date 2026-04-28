@@ -148,6 +148,25 @@ func TestPickBestRoute_HigherPriorityWins(t *testing.T) {
 	}
 }
 
+func TestPickBestRoute_ModelMatchIsCaseSensitive(t *testing.T) {
+	cfg := ProviderRoutingConfig{
+		Credentials: []ProviderCredential{
+			{ID: "cred-a", Name: "my-cred", OwnerKind: CredentialScopePlatform, ProviderKind: ProviderKindStub, AdvancedJSON: map[string]any{}},
+		},
+		Routes: []ProviderRouteRule{
+			{ID: "upper", Model: "MiMo-V2.5-Pro", CredentialID: "cred-a", When: map[string]any{}, Priority: 10},
+			{ID: "lower", Model: "mimo-v2.5-pro", CredentialID: "cred-a", When: map[string]any{}, Priority: 1},
+		},
+	}
+	route, _, ok := cfg.GetHighestPriorityRouteByModel("mimo-v2.5-pro", map[string]any{})
+	if !ok {
+		t.Fatal("expected route")
+	}
+	if route.ID != "lower" {
+		t.Fatalf("expected lower route, got %q", route.ID)
+	}
+}
+
 func TestPickBestRoute_AccountScopedTiebreaker(t *testing.T) {
 	cfg := ProviderRoutingConfig{
 		Credentials: []ProviderCredential{

@@ -159,7 +159,7 @@ func matchProviderRouteBySelector(providers []Provider, selector string) (provid
 				continue
 			}
 			for _, route := range provider.Models {
-				if strings.EqualFold(route.Model, modelName) {
+				if route.Model == modelName {
 					return providerRouteMatch{provider: provider, route: route}, true, nil
 				}
 			}
@@ -171,7 +171,7 @@ func matchProviderRouteBySelector(providers []Provider, selector string) (provid
 				continue
 			}
 			for _, route := range provider.Models {
-				if strings.EqualFold(route.Model, modelName) {
+				if route.Model == modelName {
 					legacy = append(legacy, providerRouteMatch{provider: provider, route: route})
 				}
 			}
@@ -188,7 +188,7 @@ func matchProviderRouteBySelector(providers []Provider, selector string) (provid
 	var matches []providerRouteMatch
 	for _, provider := range providers {
 		for _, route := range provider.Models {
-			if strings.EqualFold(route.Model, selector) {
+			if route.Model == selector {
 				matches = append(matches, providerRouteMatch{provider: provider, route: route})
 			}
 		}

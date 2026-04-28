@@ -65,6 +65,34 @@ func TestMatchProviderRouteBySelectorSupportsLegacyProviderSelector(t *testing.T
 	}
 }
 
+func TestMatchProviderRouteBySelectorRequiresExactModelCase(t *testing.T) {
+	credID := uuid.New()
+	providers := []Provider{
+		{
+			Credential: data.LlmCredential{
+				ID:       credID,
+				Name:     "moonshot",
+				Provider: "openai",
+			},
+			Models: []data.LlmRoute{
+				{CredentialID: credID, Model: "MiMo-V2.5-Pro"},
+				{CredentialID: credID, Model: "mimo-v2.5-pro"},
+			},
+		},
+	}
+
+	match, ok, err := matchProviderRouteBySelector(providers, "moonshot^mimo-v2.5-pro")
+	if err != nil {
+		t.Fatalf("matchProviderRouteBySelector() error = %v", err)
+	}
+	if !ok {
+		t.Fatal("expected exact-case model match")
+	}
+	if match.route.Model != "mimo-v2.5-pro" {
+		t.Fatalf("unexpected model %q", match.route.Model)
+	}
+}
+
 func TestInferKnownEmbeddingDimension(t *testing.T) {
 	dimension := inferKnownEmbeddingDimension("openai/text-embedding-3-small")
 	if dimension != 1536 {

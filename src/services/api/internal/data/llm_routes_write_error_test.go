@@ -9,7 +9,7 @@ import (
 
 func TestMapLlmRouteWriteError_sqliteUniqueModel(t *testing.T) {
 	cred := uuid.MustParse("daf76e8d-f87c-4ac1-8d20-fc1ab65b0049")
-	err := errors.New(`constraint failed: UNIQUE constraint failed: index 'ux_llm_routes_credential_model_lower' (2067)`)
+	err := errors.New(`constraint failed: UNIQUE constraint failed: index 'ux_llm_routes_credential_model' (2067)`)
 	got := mapLlmRouteWriteError(err, cred, "gpt-4o")
 	var conflict LlmRouteModelConflictError
 	if !errors.As(got, &conflict) {

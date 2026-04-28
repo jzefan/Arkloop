@@ -452,6 +452,43 @@ func TestLlmProvidersModelAdvancedJSONValidation(t *testing.T) {
 	assertErrorEnvelope(t, resp, nethttp.StatusUnprocessableEntity, "validation.error")
 }
 
+func TestLlmProvidersCreateCaseVariantModels(t *testing.T) {
+	env := setupLlmProvidersTestEnv(t)
+
+	createProviderResp := doJSON(env.handler, nethttp.MethodPost, "/v1/llm-providers?scope=user", map[string]any{
+		"name":     "moonshot",
+		"provider": "openai",
+		"api_key":  "sk-moonshot-123456",
+	}, authHeader(env.adminToken))
+	if createProviderResp.Code != nethttp.StatusCreated {
+		t.Fatalf("create provider: %d %s", createProviderResp.Code, createProviderResp.Body.String())
+	}
+	provider := decodeJSONBody[llmProviderResponse](t, createProviderResp.Body.Bytes())
+
+	createUpperResp := doJSON(env.handler, nethttp.MethodPost, "/v1/llm-providers/"+provider.ID+"/models?scope=user", map[string]any{
+		"model": "MiMo-V2.5-Pro",
+	}, authHeader(env.adminToken))
+	if createUpperResp.Code != nethttp.StatusCreated {
+		t.Fatalf("create upper model: %d %s", createUpperResp.Code, createUpperResp.Body.String())
+	}
+
+	createLowerResp := doJSON(env.handler, nethttp.MethodPost, "/v1/llm-providers/"+provider.ID+"/models?scope=user", map[string]any{
+		"model": "mimo-v2.5-pro",
+	}, authHeader(env.adminToken))
+	if createLowerResp.Code != nethttp.StatusCreated {
+		t.Fatalf("create lower model: %d %s", createLowerResp.Code, createLowerResp.Body.String())
+	}
+
+	listResp := doJSON(env.handler, nethttp.MethodGet, "/v1/llm-providers?scope=user", nil, authHeader(env.adminToken))
+	if listResp.Code != nethttp.StatusOK {
+		t.Fatalf("list providers: %d %s", listResp.Code, listResp.Body.String())
+	}
+	providers := decodeJSONBody[[]llmProviderResponse](t, listResp.Body.Bytes())
+	if len(providers) != 1 || len(providers[0].Models) != 2 {
+		t.Fatalf("unexpected provider models: %#v", providers)
+	}
+}
+
 func TestLlmProvidersAvailableModelsUpstreamRequestFailure(t *testing.T) {
 	env := setupLlmProvidersTestEnv(t)
 	upstream := httptest.NewServer(nethttp.HandlerFunc(func(w nethttp.ResponseWriter, r *nethttp.Request) {

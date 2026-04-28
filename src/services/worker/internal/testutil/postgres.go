@@ -247,7 +247,7 @@ func initRunsSchema(t *testing.T, dsn string) error {
 			cost_per_1k_cache_read  DOUBLE PRECISION NULL,
 			created_at          TIMESTAMPTZ NOT NULL DEFAULT now()
 		)`,
-		`CREATE UNIQUE INDEX ux_llm_routes_credential_model_lower ON llm_routes (credential_id, lower(model))`,
+		`CREATE UNIQUE INDEX ux_llm_routes_credential_model ON llm_routes (credential_id, model)`,
 		`CREATE UNIQUE INDEX ux_llm_routes_credential_default ON llm_routes (credential_id) WHERE is_default = TRUE`,
 		`CREATE TABLE threads (
 			id                 UUID        PRIMARY KEY DEFAULT gen_random_uuid(),

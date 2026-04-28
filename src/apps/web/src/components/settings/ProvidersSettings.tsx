@@ -95,6 +95,64 @@ import { settingsInputCls } from './_SettingsInput'
 
 const INPUT_CLS = settingsInputCls('sm')
 
+type ProviderActionError = {
+  message: string
+  code?: string
+  traceId?: string
+  details?: unknown
+}
+
+class AvailableModelsLoadError extends Error {
+  readonly displayError: ProviderActionError
+
+  constructor(displayError: ProviderActionError) {
+    super(displayError.message)
+    this.name = 'AvailableModelsLoadError'
+    this.displayError = displayError
+  }
+}
+
+function providerActionErrorFromUnknown(error: unknown, fallback: string): ProviderActionError {
+  if (isApiError(error)) {
+    return {
+      message: error.message || fallback,
+      code: error.code,
+      traceId: error.traceId,
+      details: error.details,
+    }
+  }
+  if (error instanceof Error) {
+    return { message: error.message || fallback }
+  }
+  return { message: fallback }
+}
+
+function formatProviderDetail(value: unknown): string {
+  if (value == null) return String(value)
+  if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') return String(value)
+  try {
+    return JSON.stringify(value)
+  } catch {
+    return String(value)
+  }
+}
+
+function formatProviderActionError(error: ProviderActionError): string {
+  const lines = [error.message]
+  if (error.code) lines.push(`code: ${error.code}`)
+  if (error.traceId) lines.push(`trace_id: ${error.traceId}`)
+  if (error.details && typeof error.details === 'object') {
+    for (const [key, value] of Object.entries(error.details)) {
+      lines.push(`${key}: ${formatProviderDetail(value)}`)
+    }
+  }
+  return lines.join('\n')
+}
+
+function isAvailableModelsLoadError(error: unknown): error is AvailableModelsLoadError {
+  return error instanceof AvailableModelsLoadError
+}
+
 function VendorDropdown({
   value,
   onChange,
@@ -536,11 +594,11 @@ function ModelsSection({ provider, accessToken, onChanged, p }: {
   const { t } = useLocale()
   const [available, setAvailable] = useState<AvailableModel[] | null>(null)
   const [loadingAvailable, setLoadingAvailable] = useState(false)
-  const [availableError, setAvailableError] = useState('')
+  const [availableError, setAvailableError] = useState<ProviderActionError | null>(null)
   const [importing, setImporting] = useState(false)
   const [deletingAll, setDeletingAll] = useState(false)
   const [creatingModel, setCreatingModel] = useState(false)
-  const [err, setErr] = useState('')
+  const [actionError, setActionError] = useState<ProviderActionError | null>(null)
   const [search, setSearch] = useState('')
   const [editingModel, setEditingModel] = useState<LlmProviderModel | null>(null)
   const [hasLoadedAvailable, setHasLoadedAvailable] = useState(false)
@@ -552,21 +610,20 @@ function ModelsSection({ provider, accessToken, onChanged, p }: {
     setSearch('')
     setEditingModel(null)
     setCreatingModel(false)
-    setErr('')
-    setAvailableError('')
+    setActionError(null)
+    setAvailableError(null)
     setShowDeleteAllConfirm(false)
   }, [provider.id])
 
   const loadAvailable = useCallback(async () => {
     setLoadingAvailable(true)
-    setAvailableError('')
+    setAvailableError(null)
     try {
       const res = await listAvailableModels(accessToken, provider.id)
       setAvailable(res.models)
       setHasLoadedAvailable(true)
     } catch (e) {
-      const message = isApiError(e) ? e.message : t.models.availableFetchFailed
-      setAvailableError(message)
+      setAvailableError(providerActionErrorFromUnknown(e, t.models.availableFetchFailed))
     } finally {
       setLoadingAvailable(false)
     }
@@ -575,16 +632,16 @@ function ModelsSection({ provider, accessToken, onChanged, p }: {
   const ensureAvailableLoaded = useCallback(async (): Promise<AvailableModel[]> => {
     if (available !== null) return available
     setLoadingAvailable(true)
-    setAvailableError('')
+    setAvailableError(null)
     try {
       const res = await listAvailableModels(accessToken, provider.id)
       setAvailable(res.models)
       setHasLoadedAvailable(true)
       return res.models
     } catch (e) {
-      const message = isApiError(e) ? e.message : t.models.availableFetchFailed
-      setAvailableError(message)
-      throw e
+      const displayError = providerActionErrorFromUnknown(e, t.models.availableFetchFailed)
+      setAvailableError(displayError)
+      throw new AvailableModelsLoadError(displayError)
     } finally {
       setLoadingAvailable(false)
     }
@@ -592,17 +649,16 @@ function ModelsSection({ provider, accessToken, onChanged, p }: {
 
   const handleImportAll = async () => {
     setImporting(true)
-    setErr('')
+    setActionError(null)
     try {
       const source = await ensureAvailableLoaded()
       const unconfigured = source.filter((am) => !am.configured)
-      const byLowerId = new Map<string, AvailableModel>()
+      const byId = new Map<string, AvailableModel>()
       for (const am of unconfigured) {
-        const k = am.id.toLowerCase()
-        if (!byLowerId.has(k)) byLowerId.set(k, am)
+        if (!byId.has(am.id)) byId.set(am.id, am)
       }
-      const toImport = [...byLowerId.values()]
-      const embeddingIds = new Set(toImport.filter((am) => am.type === 'embedding').map((am) => am.id.toLowerCase()))
+      const toImport = [...byId.values()]
+      const embeddingIds = new Set(toImport.filter((am) => am.type === 'embedding').map((am) => am.id))
       const created: LlmProviderModel[] = []
       for (const am of toImport) {
         const isEmb = am.type === 'embedding'
@@ -619,7 +675,7 @@ function ModelsSection({ provider, accessToken, onChanged, p }: {
           throw e
         }
       }
-      const toEnable = created.filter((pm) => pm.model.toLowerCase().includes('gpt-4o-mini') && !embeddingIds.has(pm.model.toLowerCase()))
+      const toEnable = created.filter((pm) => pm.model.toLowerCase().includes('gpt-4o-mini') && !embeddingIds.has(pm.model))
       if (toEnable.length > 0) {
         try {
           await patchProviderModel(accessToken, provider.id, toEnable[0].id, { show_in_picker: true, is_default: true })
@@ -629,7 +685,8 @@ function ModelsSection({ provider, accessToken, onChanged, p }: {
       onChanged()
       await loadAvailable()
     } catch (e) {
-      setErr(isApiError(e) ? e.message : p.saveFailed)
+      if (isAvailableModelsLoadError(e)) return
+      setActionError(providerActionErrorFromUnknown(e, p.saveFailed))
     } finally {
       setImporting(false)
     }
@@ -640,19 +697,25 @@ function ModelsSection({ provider, accessToken, onChanged, p }: {
       await deleteProviderModel(accessToken, provider.id, modelId)
       onChanged()
     } catch (e) {
-      setErr(isApiError(e) ? e.message : p.saveFailed)
+      setActionError(providerActionErrorFromUnknown(e, p.saveFailed))
     }
   }, [accessToken, provider.id, onChanged, p.saveFailed])
 
   const handleDeleteAll = async () => {
     setDeletingAll(true)
-    setErr('')
+    setActionError(null)
     let failed = 0
+    let firstError: ProviderActionError | null = null
     for (const pm of provider.models) {
-      try { await deleteProviderModel(accessToken, provider.id, pm.id) } catch { failed++ }
+      try {
+        await deleteProviderModel(accessToken, provider.id, pm.id)
+      } catch (e) {
+        failed++
+        if (!firstError) firstError = providerActionErrorFromUnknown(e, p.saveFailed)
+      }
     }
     setDeletingAll(false)
-    if (failed > 0) setErr(`${failed} model(s) failed to delete`)
+    if (failed > 0) setActionError(firstError ?? { message: p.saveFailed })
     onChanged()
     setAvailable(null)
     setHasLoadedAvailable(false)
@@ -663,7 +726,7 @@ function ModelsSection({ provider, accessToken, onChanged, p }: {
       await patchProviderModel(accessToken, provider.id, modelId, { show_in_picker: !current })
       onChanged()
     } catch (e) {
-      setErr(isApiError(e) ? e.message : p.saveFailed)
+      setActionError(providerActionErrorFromUnknown(e, p.saveFailed))
     }
   }, [accessToken, provider.id, onChanged, p.saveFailed])
 
@@ -687,6 +750,7 @@ function ModelsSection({ provider, accessToken, onChanged, p }: {
   const unconfiguredCount = available?.filter((am) => !am.configured).length ?? 0
   const importDisabled = importing || loadingAvailable || (hasLoadedAvailable && unconfiguredCount === 0)
   const deleteAllDisabled = deletingAll || provider.models.length === 0
+  const sectionError = availableError ?? actionError
   const filteredModels = search.trim()
     ? provider.models.filter((pm) => pm.model.toLowerCase().includes(search.trim().toLowerCase()))
     : provider.models
@@ -733,10 +797,18 @@ function ModelsSection({ provider, accessToken, onChanged, p }: {
             className="button-secondary inline-flex h-8 items-center justify-center gap-1.5 rounded-lg px-3 text-sm font-medium text-[var(--c-text-secondary)] transition-colors disabled:cursor-not-allowed disabled:opacity-40"
             style={secondaryButtonBorderStyle}
           >
-            {loadingAvailable || importing ? <Loader2 size={12} className="animate-spin" /> : <Download size={12} />}
+            {loadingAvailable || importing
+              ? <Loader2 size={12} className="animate-spin" />
+              : (
+                  <>
+                    {availableError && <X size={12} className="text-[var(--c-status-error-text)]" />}
+                    <Download size={12} />
+                  </>
+                )}
             {unconfiguredCount > 0 && !importing && !loadingAvailable && `${p.importAll ?? 'Import all'} (${unconfiguredCount})`}
             {(loadingAvailable || importing) && (p.importing ?? '...')}
           </button>
+          {sectionError && <ErrorDetailsButton error={sectionError} />}
           <ModelTestButton
             accessToken={accessToken}
             provider={provider}
@@ -749,8 +821,6 @@ function ModelsSection({ provider, accessToken, onChanged, p }: {
         </div>
       </div>
 
-      {err && <p className="mt-2 text-xs text-[var(--c-status-error-text)]">{err}</p>}
-      {availableError && <p className="mt-2 text-xs text-[var(--c-status-error-text)]">{availableError}</p>}
       {hasLoadedAvailable && !loadingAvailable && !availableError && available !== null && available.length === 0 && (
         <p className="mt-2 text-xs text-[var(--c-text-muted)]">{t.models.noModelsAvailable}</p>
       )}
@@ -937,6 +1007,42 @@ function LabelField({ label, children }: { label: string; children: React.ReactN
   )
 }
 
+function ErrorDetailsButton({ error }: { error: ProviderActionError }) {
+  const [open, setOpen] = useState(false)
+
+  return (
+    <div className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="inline-flex h-8 shrink-0 items-center gap-1 rounded-lg px-2.5 text-xs text-[var(--c-status-error-text)] transition-colors hover:bg-[var(--c-bg-sub)]"
+        style={secondaryButtonBorderStyle}
+      >
+        Error
+      </button>
+      {open && (
+        <>
+          <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
+          <div
+            className="dropdown-menu absolute right-0 top-[calc(100%+6px)] z-50 max-w-[360px] min-w-[240px]"
+            style={{
+              border: '0.5px solid var(--c-border-subtle)',
+              borderRadius: '10px',
+              padding: '12px',
+              background: 'var(--c-bg-menu)',
+              boxShadow: 'var(--c-dropdown-shadow)',
+              maxHeight: '180px',
+              overflowY: 'auto',
+            }}
+          >
+            <pre className="whitespace-pre-wrap break-all text-xs text-[var(--c-text-secondary)]">{formatProviderActionError(error)}</pre>
+          </div>
+        </>
+      )}
+    </div>
+  )
+}
+
 function ModelTestButton({ accessToken, provider, label, searchPlaceholder }: {
   accessToken: string
   provider: LlmProvider
@@ -946,8 +1052,7 @@ function ModelTestButton({ accessToken, provider, label, searchPlaceholder }: {
   const [open, setOpen] = useState(false)
   const [search, setSearch] = useState('')
   const [testing, setTesting] = useState<string | null>(null)
-  const [result, setResult] = useState<{ modelId: string; success: boolean; latency?: number; error?: string } | null>(null)
-  const [showError, setShowError] = useState(false)
+  const [result, setResult] = useState<{ modelId: string; success: boolean; latency?: number; error?: ProviderActionError } | null>(null)
 
   const pickerModels = useMemo(
     () => provider.models.filter((m) => m.show_in_picker),
@@ -965,9 +1070,14 @@ function ModelTestButton({ accessToken, provider, label, searchPlaceholder }: {
     setOpen(false)
     try {
       const res = await testLlmProviderModel(accessToken, provider.id, model.id)
-      setResult({ modelId: model.id, success: res.success, latency: res.latency_ms ?? undefined, error: res.error ?? undefined })
+      setResult({
+        modelId: model.id,
+        success: res.success,
+        latency: res.latency_ms ?? undefined,
+        error: res.error ? { message: res.error } : undefined,
+      })
     } catch (e) {
-      setResult({ modelId: model.id, success: false, error: isApiError(e) ? e.message : 'Unknown error' })
+      setResult({ modelId: model.id, success: false, error: providerActionErrorFromUnknown(e, 'Unknown error') })
     } finally {
       setTesting(null)
     }
@@ -995,35 +1105,7 @@ function ModelTestButton({ accessToken, provider, label, searchPlaceholder }: {
         {label}
       </button>
       {result && !result.success && !testing && (
-        <div className="relative">
-          <button
-            type="button"
-            onClick={() => setShowError((v) => !v)}
-            className="inline-flex h-8 shrink-0 items-center gap-1 rounded-lg px-2.5 text-xs text-[var(--c-status-error-text)] transition-colors hover:bg-[var(--c-bg-sub)]"
-            style={secondaryButtonBorderStyle}
-          >
-            Error
-          </button>
-          {showError && (
-            <>
-              <div className="fixed inset-0 z-40" onClick={() => setShowError(false)} />
-              <div
-                className="dropdown-menu absolute right-0 top-[calc(100%+6px)] z-50 max-w-[320px] min-w-[200px]"
-                style={{
-                  border: '0.5px solid var(--c-border-subtle)',
-                  borderRadius: '10px',
-                  padding: '12px',
-                  background: 'var(--c-bg-menu)',
-                  boxShadow: 'var(--c-dropdown-shadow)',
-                  maxHeight: '160px',
-                  overflowY: 'auto',
-                }}
-              >
-                <pre className="whitespace-pre-wrap break-all text-xs text-[var(--c-text-secondary)]">{result?.error ?? ''}</pre>
-              </div>
-            </>
-          )}
-        </div>
+        <ErrorDetailsButton error={result.error ?? { message: 'Unknown error' }} />
       )}
       {open && (
         <>
