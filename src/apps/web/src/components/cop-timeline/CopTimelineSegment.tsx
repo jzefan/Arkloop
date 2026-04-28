@@ -26,6 +26,7 @@ export function CopTimelineSegment({
   isLive,
   defaultExpanded,
   hideHeader,
+  compactNarrativeEnd = false,
   onOpenCodeExecution,
   activeCodeExecutionId,
   onOpenSubAgent,
@@ -37,6 +38,7 @@ export function CopTimelineSegment({
   isLive: boolean
   defaultExpanded: boolean
   hideHeader?: boolean
+  compactNarrativeEnd?: boolean
   onOpenCodeExecution?: (ce: CodeExecution) => void
   activeCodeExecutionId?: string
   onOpenSubAgent?: (agent: SubAgentRef) => void
@@ -117,6 +119,7 @@ export function CopTimelineSegment({
 
   const editOnly = segment.category === 'edit' && segment.items.every(i => i.kind === 'call')
   const exploreCard = segment.category === 'explore'
+  const endsWithNarrative = compactNarrativeEnd && !exploreCard && segment.items.at(-1)?.kind === 'assistant_text'
 
   const headerLabel = segment.title
   const headerLive = isOpen && isLive
@@ -143,7 +146,7 @@ export function CopTimelineSegment({
 
   if (hideHeader) {
     return (
-      <div style={{ position: 'relative', paddingTop: 6, paddingLeft: editOnly || exploreCard ? 0 : COP_TIMELINE_CONTENT_PADDING_LEFT_PX, paddingBottom: EXPLORE_BOTTOM_PAD }}>
+      <div style={{ position: 'relative', paddingTop: 6, paddingLeft: editOnly || exploreCard ? 0 : COP_TIMELINE_CONTENT_PADDING_LEFT_PX, paddingBottom: endsWithNarrative ? 0 : EXPLORE_BOTTOM_PAD }}>
         {exploreCard ? (
           <div
             style={{
@@ -238,7 +241,7 @@ export function CopTimelineSegment({
             position: 'relative',
             paddingTop: 6,
             paddingLeft: editOnly || exploreCard ? 0 : COP_TIMELINE_CONTENT_PADDING_LEFT_PX,
-            paddingBottom: EXPLORE_BOTTOM_PAD,
+            paddingBottom: endsWithNarrative ? 0 : EXPLORE_BOTTOM_PAD,
           }}
         >
           {exploreCard ? (

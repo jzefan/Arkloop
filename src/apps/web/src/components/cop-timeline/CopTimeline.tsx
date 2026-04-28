@@ -34,6 +34,7 @@ export function CopTimeline({
   isComplete,
   live,
   shimmer,
+  compactNarrativeEnd = false,
   onOpenCodeExecution,
   activeCodeExecutionId,
   onOpenSubAgent,
@@ -48,6 +49,7 @@ export function CopTimeline({
   isComplete: boolean
   live?: boolean
   shimmer?: boolean
+  compactNarrativeEnd?: boolean
   onOpenCodeExecution?: (ce: CodeExecution) => void
   activeCodeExecutionId?: string
   onOpenSubAgent?: (agent: SubAgentRef) => void
@@ -311,6 +313,7 @@ export function CopTimeline({
                   isLive={!!live && nonExecSegments[0]!.status === 'open'}
                   defaultExpanded={true}
                   hideHeader
+                  compactNarrativeEnd={compactNarrativeEnd}
                   onOpenCodeExecution={onOpenCodeExecution}
                   activeCodeExecutionId={activeCodeExecutionId}
                   onOpenSubAgent={onOpenSubAgent}
@@ -339,6 +342,7 @@ export function CopTimeline({
                       pool={pool}
                       isLive={!!live && seg.status === 'open'}
                       defaultExpanded={isLast && (!isComplete || seg.status === 'open')}
+                      compactNarrativeEnd={compactNarrativeEnd}
                       onOpenCodeExecution={onOpenCodeExecution}
                       activeCodeExecutionId={activeCodeExecutionId}
                       onOpenSubAgent={onOpenSubAgent}

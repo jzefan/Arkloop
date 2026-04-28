@@ -26,6 +26,7 @@ type HarnessProps = {
   metrics: HarnessMetrics
   messages: unknown[]
   liveRunUiVisible?: boolean
+  promptPinningDisabled?: boolean
   onReady: (api: ScrollPinResult) => void
   onScrollIntoView?: (behavior: ScrollBehavior | undefined) => void
   onContainerScrollTo?: (behavior: ScrollBehavior | undefined, top: number) => void
@@ -49,6 +50,7 @@ function ScrollPinHarness({
   metrics,
   messages,
   liveRunUiVisible = false,
+  promptPinningDisabled = false,
   onReady,
   onScrollIntoView,
   onContainerScrollTo,
@@ -56,6 +58,7 @@ function ScrollPinHarness({
   const api = useScrollPin({
     messages,
     liveRunUiVisible,
+    promptPinningDisabled,
   })
   const {
     bottomRef,
@@ -373,6 +376,54 @@ describe('useScrollPin', () => {
     expect(scrollContainer.scrollTop).toBe(552)
     expect(readyApi.isAtBottomRef.current).toBe(true)
     expect(prompt.getBoundingClientRect().top).toBe(48)
+
+    act(() => {
+      root.unmount()
+    })
+  })
+
+  it('禁用用户消息置顶时，发送后应正常滚到底部', async () => {
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const root = createRoot(container)
+    let api: ScrollPinResult | null = null
+    let scrollBehavior: ScrollBehavior | undefined
+    const metrics = {
+      clientHeight: 400,
+      scrollHeight: 1400,
+      turnHeight: 120,
+      turnOffset: 560,
+      headerOffset: 600,
+      bottomOffset: 1400,
+    }
+
+    await act(async () => {
+      root.render(
+        <ScrollPinHarness
+          metrics={metrics}
+          messages={[{ id: 'user-1' }]}
+          promptPinningDisabled
+          onReady={(value) => { api = value }}
+          onContainerScrollTo={(behavior) => { scrollBehavior = behavior }}
+        />,
+      )
+    })
+
+    const readyApi = requireApi(api)
+    const scrollContainer = requireContainer(readyApi)
+    const prompt = requireLastUserPrompt(readyApi)
+
+    act(() => {
+      readyApi.activateAnchor()
+    })
+    await act(async () => {
+      await flushAnimationFrames(2)
+    })
+
+    expect(scrollBehavior).toBe('smooth')
+    expect(scrollContainer.scrollTop).toBe(1000)
+    expect(readyApi.isAtBottomRef.current).toBe(true)
+    expect(prompt.getBoundingClientRect().top).toBe(-400)
 
     act(() => {
       root.unmount()

@@ -27,6 +27,7 @@ const CUSTOM_BODY_FONT_KEY = 'arkloop:web:custom-body-font'
 const INPUT_DRAFT_TEXT_PREFIX = 'arkloop:web:input_draft_text'
 const INPUT_DRAFT_ATTACHMENTS_PREFIX = 'arkloop:web:input_draft_attachments'
 const INPUT_HISTORY_PREFIX = 'arkloop:web:input_history'
+const RUN_THINKING_HINT_PREFIX = 'arkloop:web:run_thinking_hint'
 const INPUT_DRAFT_TTL_MS = 30 * 24 * 60 * 60 * 1000
 const INPUT_HISTORY_MAX_ITEMS = 500
 const DRAFT_STORAGE_EVICTION_PREFIXES = [
@@ -46,6 +47,7 @@ const DRAFT_STORAGE_EVICTION_PREFIXES = [
   'arkloop:web:msg_thinking:',
   'arkloop:web:msg_terminal_status:',
   'arkloop:web:thread_run_handoff:',
+  'arkloop:web:run_thinking_hint:',
   'arkloop:sse:last_seq:',
 ] as const
 const EPHEMERAL_CACHE_INDEX_KEY = 'arkloop:web:ephemeral_cache_index'
@@ -401,6 +403,10 @@ function lastSeqStorageKey(runId: string): string {
   return `arkloop:sse:last_seq:${runId}`
 }
 
+function runThinkingHintKey(runId: string): string {
+  return `${RUN_THINKING_HINT_PREFIX}:${runId}`
+}
+
 export function readActiveThreadIdFromStorage(): string | null {
   if (!canUseLocalStorage()) return null
   try {
@@ -457,6 +463,32 @@ export function clearLastSeqInStorage(runId: string): void {
   if (!runId || !canUseLocalStorage()) return
   try {
     removeEphemeralStorageItem(lastSeqStorageKey(runId))
+  } catch {
+    // 忽略存储失败
+  }
+}
+
+export function readRunThinkingHint(runId: string): string | null {
+  if (!runId || !canUseLocalStorage()) return null
+  try {
+    const raw = localStorage.getItem(runThinkingHintKey(runId))
+    if (!raw) return null
+    const hint = raw.trim()
+    return hint ? hint : null
+  } catch {
+    return null
+  }
+}
+
+export function writeRunThinkingHint(runId: string, hint: string): void {
+  if (!runId || !canUseLocalStorage()) return
+  const normalized = hint.trim()
+  try {
+    if (!normalized) {
+      removeEphemeralStorageItem(runThinkingHintKey(runId))
+      return
+    }
+    writeEphemeralStorageItem(runThinkingHintKey(runId), normalized)
   } catch {
     // 忽略存储失败
   }

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback, useMemo, memo, Fragment, type ComponentProps } from 'react'
+import React, { useState, useEffect, useRef, useCallback, useMemo, useSyncExternalStore, memo, Fragment, type ComponentProps } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import { ArrowDown, X } from 'lucide-react'
@@ -151,6 +151,8 @@ import {
   readThreadWorkFolder,
   readThreadReasoningMode,
   writeInputDraftAttachments,
+  readRunThinkingHint,
+  writeRunThinkingHint,
 } from '../storage'
 
 const sidePanelWidth = 360
@@ -170,6 +172,11 @@ function errorNoticeKey(error: AppError): string {
 
 function isInterruptedRunStatus(status: string | null | undefined): boolean {
   return status === 'cancelled' || status === 'interrupted' || status === 'failed'
+}
+
+function chooseThinkingHint(hints: readonly string[]): string {
+  if (hints.length === 0) return ''
+  return hints[Math.floor(Math.random() * hints.length)] ?? hints[0] ?? ''
 }
 
 function isSameDraftDomain(left: InputDraftScope | null, right: InputDraftScope): boolean {
@@ -196,6 +203,7 @@ type DocumentPanelState = {
 }
 
 type LiveRunPaneProps = {
+  isWorkMode: boolean
   showPendingThinkingShell: boolean
   preserveLiveRunUi: boolean
   leadingLiveCop: CopSegment | null
@@ -241,6 +249,7 @@ type LiveRunPaneProps = {
 }
 
 const LiveRunPane = memo(function LiveRunPane({
+  isWorkMode,
   showPendingThinkingShell,
   preserveLiveRunUi,
   leadingLiveCop,
@@ -301,11 +310,12 @@ const LiveRunPane = memo(function LiveRunPane({
     topLevelWebFetches.length > 0 ||
     visibleStreamingWidgets.length > 0 ||
     visibleStreamingArtifacts.length > 0
+  const liveContentMaxWidth = isWorkMode ? undefined : '663px'
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
       {(showPendingThinkingShell || liveSegments.length > 0) && (
-        <div data-testid={preserveLiveRunUi ? 'current-run-handoff' : undefined} style={{ display: 'flex', flexDirection: 'column', gap: 0, maxWidth: '663px' }}>
+        <div data-testid={preserveLiveRunUi ? 'current-run-handoff' : undefined} style={{ display: 'flex', flexDirection: 'column', gap: 0, maxWidth: liveContentMaxWidth }}>
           {(showPendingThinkingShell || leadingLiveCop) && (
             <Fragment key="cop-leading">
               {leadingLiveCop
@@ -357,7 +367,7 @@ const LiveRunPane = memo(function LiveRunPane({
       )}
 
       {terminalActionStatus && terminalActionHasContent && (
-        <div style={{ maxWidth: '663px' }}>
+        <div style={{ maxWidth: liveContentMaxWidth }}>
           <AssistantActionBar
             textToCopy={terminalActionText}
             onViewRunDetail={showRunEvents && terminalActionRunId ? () => setRunDetailPanelRunId(terminalActionRunId) : undefined}
@@ -370,7 +380,7 @@ const LiveRunPane = memo(function LiveRunPane({
         liveAssistantTurn == null &&
         allStreamItemsForUi.length === 0 &&
         (dedupedTopLevelCodeExecutions.length > 0 || topLevelSubAgents.length > 0 || topLevelFileOps.length > 0 || topLevelWebFetches.length > 0) && (
-        <div style={{ maxWidth: '663px' }}>
+        <div style={{ maxWidth: liveContentMaxWidth }}>
           <CopTimeline
             segments={buildFallbackSegments({
               codeExecutions: dedupedTopLevelCodeExecutions,
@@ -570,7 +580,53 @@ function LiveTurnMarkdown({
   return <MarkdownRenderer content={displayed} streaming={!typewriterDone} {...rest} />
 }
 
-export function ChatView() {
+const ScrollToBottomButton = memo(function ScrollToBottomButton({
+  onScrollToBottom,
+  liveRunUiActive,
+  subscribeIsAtBottom,
+  getIsAtBottomSnapshot,
+}: {
+  onScrollToBottom: () => void
+  liveRunUiActive: boolean
+  subscribeIsAtBottom: (listener: () => void) => () => void
+  getIsAtBottomSnapshot: () => boolean
+}) {
+  const isAtBottom = useSyncExternalStore(
+    subscribeIsAtBottom,
+    getIsAtBottomSnapshot,
+    getIsAtBottomSnapshot,
+  )
+
+  return (
+    <button
+      onClick={onScrollToBottom}
+      style={{
+        position: 'absolute',
+        top: 0,
+        left: '50%',
+        transform: 'translate(-50%, calc(-100% - 8px))',
+        zIndex: 1,
+        opacity: isAtBottom ? 0 : 1,
+        pointerEvents: isAtBottom ? 'none' : 'auto',
+        transition: 'opacity 200ms ease',
+        width: 36,
+        height: 36,
+        borderRadius: '50%',
+        border: '0.5px solid var(--c-border)',
+        background: 'var(--c-bg-sidebar)',
+        color: 'var(--c-text-secondary)',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        cursor: 'pointer',
+      }}
+    >
+      <ArrowDown size={16} className={liveRunUiActive && !isAtBottom ? 'arrow-breathe' : ''} />
+    </button>
+  )
+})
+
+export const ChatView = memo(function ChatView() {
   const { accessToken, logout: onLoggedOut, me } = useAuth()
   const {
     threads, addThread: onThreadCreated,
@@ -790,7 +846,6 @@ export function ChatView() {
     (sending || activeRunId != null)
 
   const {
-    isAtBottom,
     bottomRef,
     scrollContainerRef,
     lastUserMsgRef,
@@ -803,12 +858,15 @@ export function ChatView() {
     scrollToBottom,
     activateAnchor,
     spacerRef,
+    subscribeIsAtBottom,
+    getIsAtBottomSnapshot,
   } = useScrollPin({
     messagesLoading,
     messages,
     liveAssistantTurn,
     liveRunUiVisible,
     topLevelCodeExecutionsLength: topLevelCodeExecutions.length,
+    promptPinningDisabled: appMode === 'work',
   })
 
   const { resetAssistantTurnLive, captureTerminalRunCache, persistThreadRunHandoff } = useRunTransition()
@@ -1296,10 +1354,11 @@ export function ChatView() {
           locationState?.initialRunId &&
           (!latest || (latest.run_id === locationState.initialRunId && (latest.status === 'running' || latest.status === 'cancelling')))
         ) {
+          const hint = readRunThinkingHint(locationState.initialRunId) ?? chooseThinkingHint(t.copThinkingHints)
           setActiveRunId(locationState.initialRunId)
           setPendingThinking(true)
-          const hints = t.copThinkingHints
-          setThinkingHint(hints[Math.floor(Math.random() * hints.length)])
+          setThinkingHint(hint)
+          writeRunThinkingHint(locationState.initialRunId, hint)
           if (threadId) onRunStarted(threadId)
         } else {
           const shouldResumeActiveRunFromHandoff =
@@ -1310,8 +1369,33 @@ export function ChatView() {
             shouldResumeActiveRunFromHandoff ||
             (!shouldRestoreThreadHandoff && (latest?.status === 'running' || latest?.status === 'cancelling'))
           setActiveRunId(isActiveRun ? latest.run_id : null)
-          if (isActiveRun && threadId) onRunStarted(threadId)
-          else if (threadId) onRunEnded(threadId)
+          if (isActiveRun && latest) {
+            const restoredRunHasVisibleUi =
+              shouldResumeActiveRunFromHandoff &&
+              !!effectiveCachedThreadHandoff &&
+              hasRecoverableRunOutput({
+                assistantTurn: effectiveCachedThreadHandoff.assistantTurn ?? null,
+                searchSteps: effectiveCachedThreadHandoff.searchSteps,
+                widgets: effectiveCachedThreadHandoff.widgets,
+                codeExecutions: effectiveCachedThreadHandoff.codeExecutions,
+                subAgents: effectiveCachedThreadHandoff.subAgents,
+                fileOps: effectiveCachedThreadHandoff.fileOps,
+                webFetches: effectiveCachedThreadHandoff.webFetches,
+              })
+            const latestRunAlreadyHasAssistant = latestAssistant != null
+            if (!restoredRunHasVisibleUi && !latestRunAlreadyHasAssistant) {
+              const hint = readRunThinkingHint(latest.run_id) ?? chooseThinkingHint(t.copThinkingHints)
+              setPendingThinking(true)
+              setThinkingHint(hint)
+              writeRunThinkingHint(latest.run_id, hint)
+            } else {
+              setPendingThinking(false)
+            }
+            if (threadId) onRunStarted(threadId)
+          } else {
+            setPendingThinking(false)
+            if (threadId) onRunEnded(threadId)
+          }
         }
       } catch (err) {
         if (isApiError(err) && err.status === 401) {
@@ -1585,9 +1669,10 @@ export function ChatView() {
     const text = draft.trim()
     if (!text && attachments.length === 0) return
 
+    const hint = chooseThinkingHint(t.copThinkingHints)
     setSending(true)
     setPendingThinking(true)
-    setThinkingHint(t.copThinkingHints[Math.floor(Math.random() * t.copThinkingHints.length)])
+    setThinkingHint(hint)
     setError(null)
     setInjectionBlocked(null)
     injectionBlockedRunIdRef.current = null
@@ -1612,6 +1697,7 @@ export function ChatView() {
         const uploaded = await uploadAttachments()
         const forkUserMessage = await createMessage(accessToken, forked.id, buildMessageRequest(text, uploaded))
         const run = await createRun(accessToken, forked.id, personaKey, modelOverride, readThreadWorkFolder(threadId) ?? undefined, readThreadReasoningMode(threadId) !== 'off' ? readThreadReasoningMode(threadId) as RunReasoningMode : undefined)
+        writeRunThinkingHint(run.run_id, hint)
         if (personaKey === SEARCH_PERSONA_KEY) addSearchThreadId(forked.id)
         attachments.forEach((attachment) => revokeDraftAttachment(attachment))
         chatInputRef.current?.clear()
@@ -1656,6 +1742,7 @@ export function ChatView() {
 
       await waitForPlanModeUpdate()
       const run = await createRun(accessToken, threadId, personaKey, modelOverride, readThreadWorkFolder(threadId) ?? undefined, readThreadReasoningMode(threadId) !== 'off' ? readThreadReasoningMode(threadId) as RunReasoningMode : undefined)
+      writeRunThinkingHint(run.run_id, hint)
       if (personaKey === SEARCH_PERSONA_KEY) addSearchThreadId(threadId)
       resetSearchSteps()
       setActiveRunId(run.run_id)
@@ -1977,8 +2064,7 @@ export function ChatView() {
     const nextMode: CollaborationMode = isPlanMode ? 'default' : 'plan'
     const requestSeq = ++planModeRequestSeqRef.current
     onThreadCollaborationModeUpdated(threadId, nextMode)
-    let updatePromise: Promise<void>
-    updatePromise = updateThreadCollaborationMode(accessToken, threadId, nextMode).then((thread) => {
+    const updatePromise: Promise<void> = updateThreadCollaborationMode(accessToken, threadId, nextMode).then((thread) => {
       if (planModeRequestSeqRef.current === requestSeq) {
         onThreadUpserted(thread)
       }
@@ -2170,6 +2256,7 @@ export function ChatView() {
             ref={scrollContainerRef}
             onScroll={handleScrollContainerScroll}
             className="chat-scroll-hidden relative flex-1 min-h-0 overflow-y-auto bg-[var(--c-bg-page)] [scrollbar-gutter:stable]"
+            style={{ contain: 'layout paint style' }}
           >
         <div
           style={{
@@ -2201,6 +2288,7 @@ export function ChatView() {
                 lastUserPromptRef={lastUserPromptRef}
                 lastTurnChildren={
                   <LiveRunPane
+                    isWorkMode={appMode === 'work'}
                     showPendingThinkingShell={showPendingThinkingShell}
                     preserveLiveRunUi={preserveLiveRunUi}
                     leadingLiveCop={leadingLiveCop}
@@ -2288,31 +2376,12 @@ export function ChatView() {
         className="flex w-full flex-col items-center gap-2"
       >
         {/* 滚动到底部按钮：始终锚定在输入框顶边正上方 */}
-        <button
-          onClick={scrollToBottom}
-          style={{
-            position: 'absolute',
-            top: 0,
-            left: '50%',
-            transform: 'translate(-50%, calc(-100% - 8px))',
-            zIndex: 1,
-            opacity: isAtBottom ? 0 : 1,
-            pointerEvents: isAtBottom ? 'none' : 'auto',
-            transition: 'opacity 200ms ease',
-            width: 36,
-            height: 36,
-            borderRadius: '50%',
-            border: '0.5px solid var(--c-border)',
-            background: 'var(--c-bg-sidebar)',
-            color: 'var(--c-text-secondary)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            cursor: 'pointer',
-          }}
-        >
-          <ArrowDown size={16} className={liveRunUiActive && !isAtBottom ? 'arrow-breathe' : ''} />
-        </button>
+        <ScrollToBottomButton
+          onScrollToBottom={scrollToBottom}
+          liveRunUiActive={liveRunUiActive}
+          subscribeIsAtBottom={subscribeIsAtBottom}
+          getIsAtBottomSnapshot={getIsAtBottomSnapshot}
+        />
         {showInputError && inputError && (
           <div
             className="pointer-events-none absolute"
@@ -2415,4 +2484,4 @@ export function ChatView() {
       {showDebugPanel && <DebugTrigger />}
     </div>
   )
-}
+})

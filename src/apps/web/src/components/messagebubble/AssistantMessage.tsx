@@ -87,7 +87,11 @@ export function AssistantActionBar({
   return (
     <div
       className={isLast ? '' : 'pointer-events-none opacity-0 group-hover/turn:pointer-events-auto group-hover/turn:opacity-100 transition-[opacity] duration-[180ms] ease-out'}
-      style={{ marginTop: '4px', marginLeft: '-6px' }}
+      style={{
+        marginTop: '4px',
+        marginLeft: '-6px',
+        ...(!isLast ? { transform: 'translateY(-8px)' } : {}),
+      }}
     >
       <div style={{ display: 'flex', alignItems: 'center', gap: '3px' }}>
         <CopyIconButton

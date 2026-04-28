@@ -9,7 +9,7 @@ import {
 } from 'react'
 import type { CodeExecution } from '../components/CodeExecutionCard'
 import type { ArtifactRef, SubAgentRef } from '../storage'
-import { useSidebarUI } from './app-ui'
+import { useRightPanelActions } from './app-ui'
 
 export type DocumentPanelState = {
   artifact: ArtifactRef
@@ -52,7 +52,7 @@ const defaultShareModal: ShareModalState = {
 }
 
 export function PanelProvider({ children }: { children: ReactNode }) {
-  const { setRightPanelOpen } = useSidebarUI()
+  const { setRightPanelOpen } = useRightPanelActions()
 
   const [activePanel, setActivePanel] = useState<ActivePanel>(null)
   const [shareModal, setShareModal] = useState<ShareModalState>(defaultShareModal)
