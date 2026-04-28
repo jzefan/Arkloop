@@ -705,7 +705,16 @@ func TestAnthropicSDKGateway_QuirkRetryEchoEmptyTextOnThinking(t *testing.T) {
 		Model: "claude-test",
 		Messages: []Message{
 			{Role: "user", Content: []ContentPart{{Text: "hi"}}},
-			{Role: "assistant", Content: []ContentPart{{Type: "thinking", Text: "signed", Signature: "sig_1"}}},
+			{
+				Role:    "assistant",
+				Content: []ContentPart{{Type: "thinking", Text: "signed", Signature: "sig_1"}},
+				ToolCalls: []ToolCall{{
+					ToolCallID:    "toolu_1",
+					ToolName:      "echo",
+					ArgumentsJSON: map[string]any{"text": "hi"},
+				}},
+			},
+			{Role: "tool", Content: []ContentPart{{Text: `{"tool_call_id":"toolu_1","tool_name":"echo","result":"ok"}`}}},
 			{Role: "user", Content: []ContentPart{{Text: "again"}}},
 		},
 	}
@@ -736,10 +745,12 @@ func TestAnthropicSDKGateway_QuirkRetryEchoEmptyTextOnThinking(t *testing.T) {
 	}
 	secondMsgs, _ := bodies[1]["messages"].([]any)
 	var assistant map[string]any
-	for _, raw := range secondMsgs {
+	assistantIndex := -1
+	for i, raw := range secondMsgs {
 		msg, _ := raw.(map[string]any)
 		if role, _ := msg["role"].(string); role == "assistant" {
 			assistant = msg
+			assistantIndex = i
 			break
 		}
 	}
@@ -747,11 +758,30 @@ func TestAnthropicSDKGateway_QuirkRetryEchoEmptyTextOnThinking(t *testing.T) {
 		t.Fatalf("retry payload missing assistant message: %#v", secondMsgs)
 	}
 	content, _ := assistant["content"].([]any)
-	if len(content) != 2 {
-		t.Fatalf("retry assistant content must include thinking plus empty text: %#v", content)
+	if len(content) != 3 {
+		t.Fatalf("retry assistant content must include thinking, empty text, and tool_use: %#v", content)
 	}
 	textBlock, _ := content[1].(map[string]any)
 	if textBlock["type"] != "text" || textBlock["text"] != "" {
 		t.Fatalf("retry payload missing empty text block: %#v", content)
+	}
+	toolUse, _ := content[2].(map[string]any)
+	if toolUse["type"] != "tool_use" || toolUse["id"] != "toolu_1" {
+		t.Fatalf("retry payload must keep tool_use at assistant tail: %#v", content)
+	}
+	if assistantIndex+1 >= len(secondMsgs) {
+		t.Fatalf("retry payload missing user tool_result after assistant: %#v", secondMsgs)
+	}
+	nextUser, _ := secondMsgs[assistantIndex+1].(map[string]any)
+	if nextUser["role"] != "user" {
+		t.Fatalf("retry payload next message must be user tool_result: %#v", secondMsgs)
+	}
+	nextContent, _ := nextUser["content"].([]any)
+	if len(nextContent) != 1 {
+		t.Fatalf("retry payload next user must only contain tool_result: %#v", nextUser)
+	}
+	toolResult, _ := nextContent[0].(map[string]any)
+	if toolResult["type"] != "tool_result" || toolResult["tool_use_id"] != "toolu_1" {
+		t.Fatalf("retry payload next user must keep matching tool_result: %#v", nextUser)
 	}
 }

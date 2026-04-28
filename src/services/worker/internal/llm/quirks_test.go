@@ -181,6 +181,21 @@ func TestQuirkApply_EchoEmptyTextOnThinking(t *testing.T) {
 					{"type": "thinking", "thinking": "ignored"},
 				},
 			},
+			{
+				"role": "assistant",
+				"content": []map[string]any{
+					{"type": "thinking", "thinking": "plan", "signature": "sig"},
+					{"type": "tool_use", "id": "toolu_1", "name": "read", "input": map[string]any{}},
+					{"type": "tool_use", "id": "toolu_2", "name": "write", "input": map[string]any{}},
+				},
+			},
+			{
+				"role": "assistant",
+				"content": []any{
+					map[string]any{"type": "thinking", "thinking": "plan", "signature": "sig"},
+					map[string]any{"type": "tool_use", "id": "toolu_3", "name": "read", "input": map[string]any{}},
+				},
+			},
 		},
 	}
 	applyEchoEmptyTextOnThinking(payload)
@@ -196,6 +211,22 @@ func TestQuirkApply_EchoEmptyTextOnThinking(t *testing.T) {
 	user := msgs[2]["content"].([]map[string]any)
 	if len(user) != 1 {
 		t.Fatalf("user message must not change: %#v", user)
+	}
+	withTools := msgs[3]["content"].([]map[string]any)
+	if len(withTools) != 4 {
+		t.Fatalf("assistant with tool_use must keep all blocks: %#v", withTools)
+	}
+	if withTools[0]["type"] != "thinking" || withTools[1]["type"] != "text" || withTools[1]["text"] != "" || withTools[2]["type"] != "tool_use" || withTools[3]["type"] != "tool_use" {
+		t.Fatalf("empty text must be inserted before first tool_use: %#v", withTools)
+	}
+	rawWithTools := msgs[4]["content"].([]any)
+	if len(rawWithTools) != 3 {
+		t.Fatalf("raw assistant with tool_use must keep all blocks: %#v", rawWithTools)
+	}
+	rawText, _ := rawWithTools[1].(map[string]any)
+	rawTool, _ := rawWithTools[2].(map[string]any)
+	if rawText["type"] != "text" || rawText["text"] != "" || rawTool["type"] != "tool_use" {
+		t.Fatalf("raw empty text must be inserted before first tool_use: %#v", rawWithTools)
 	}
 }
 
