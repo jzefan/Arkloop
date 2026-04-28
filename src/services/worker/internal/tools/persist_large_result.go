@@ -13,7 +13,7 @@ import (
 )
 
 const (
-	PersistThreshold    = 16 * 1024 // 16KB
+	PersistThreshold    = 50 * 1024 // 50KB
 	PersistPreviewBytes = 2 * 1024  // 2KB
 )
 

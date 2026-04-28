@@ -130,13 +130,26 @@ func TestCompressResult_NestedMap(t *testing.T) {
 	}
 }
 
-func TestShouldBypassResultCompression_GenerativeUIBootstrapTools(t *testing.T) {
-	for _, toolName := range []string{"visualize_read_me", "artifact_guidelines", "arkloop_help"} {
+func TestShouldBypassResultCompression_AllBypassedTools(t *testing.T) {
+	bypassed := []string{
+		"visualize_read_me", "artifact_guidelines", "arkloop_help",
+		"read", "read_file", "notebook_read", "memory_read",
+	}
+	for _, toolName := range bypassed {
 		if !ShouldBypassResultCompression(toolName) {
 			t.Fatalf("expected compression bypass for %s", toolName)
 		}
 		if !ShouldBypassResultSummarization(toolName) {
 			t.Fatalf("expected summarization bypass for %s", toolName)
+		}
+	}
+	nonBypassed := []string{"exec_command", "write", "edit", "grep", "glob", "webfetch", "memory_write"}
+	for _, toolName := range nonBypassed {
+		if ShouldBypassResultCompression(toolName) {
+			t.Fatalf("unexpected compression bypass for %s", toolName)
+		}
+		if ShouldBypassResultSummarization(toolName) {
+			t.Fatalf("unexpected summarization bypass for %s", toolName)
 		}
 	}
 }

@@ -19,7 +19,7 @@ const (
 	// CompressTargetBytes is the maximum ResultJSON size (in bytes) we want to
 	// send to the LLM. Kept separate from MaxOutputBytes (raw truncation limit)
 	// so that CompressResult triggers independently of executor-level limits.
-	CompressTargetBytes = 4 * 1024
+	CompressTargetBytes = 50 * 1024
 )
 
 func resolveOutputLimit(limits PerToolSoftLimits, toolName string) int {

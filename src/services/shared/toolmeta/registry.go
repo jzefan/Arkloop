@@ -86,7 +86,10 @@ var registry = []ToolMeta{
 		LLMDescription: fmt.Sprintf(
 			"search the web and return title, URL, and snippet for each result. "+
 				"Use the queries array (up to %d) to run independent searches in one call; use the scalar query field for a single question. "+
-				"max_results per query defaults to %d (max %d).",
+				"max_results per query defaults to %d (max %d). "+
+				"Use web_search for finding up-to-date information, documentation, current events, and facts beyond your knowledge cutoff. "+
+				"Use web_fetch to follow specific URLs from search results for deeper information. "+
+				"Do not use web_search for questions answerable from training data, for file operations, or for running code.",
 			WebSearchMaxQueriesLimit, WebSearchDefaultMaxResults, WebSearchMaxResultsLimit),
 	},
 	{
@@ -94,7 +97,14 @@ var registry = []ToolMeta{
 		Group:          GroupWebFetch,
 		Label:          "Web fetch",
 		ShortDesc:      "fetch a web page and return its content as text",
-		LLMDescription: "fetch a web page and return its title and body as plain text. Use when search snippets are insufficient and a specific page likely contains deeper information. Prefer official or authoritative sources. Batch-callable; do not re-fetch the same URL.",
+		LLMDescription: "fetch a web page and return its title and body as plain text. " +
+			"Use when search snippets are insufficient and a specific page likely contains deeper information. " +
+			"Prefer official or authoritative sources (official documentation, Wikipedia, reputable news sites). " +
+			"Do not fetch the same URL multiple times in a single conversation — the result is cached for 15 minutes. " +
+			"If a URL redirects to a different host, the tool will inform you and provide the redirect URL; make a new WebFetch call with the redirect URL. " +
+			"The URL must be a fully-formed valid URL. HTTP URLs are automatically upgraded to HTTPS. " +
+			"This tool is read-only and does not modify any files. " +
+			"Do not use web_fetch for file operations, code execution, or tasks that other dedicated tools handle.",
 	},
 	// ── sandbox ──
 	{
@@ -122,12 +132,34 @@ var registry = []ToolMeta{
 			"Use follow for long-running output-only processes, stdin for non-PTY processes that need later input, and pty only for real terminal-style interaction. " +
 			"The backend returns a process_ref only for follow/stdin/pty modes. Continue those processes with continue_process, terminate them with terminate_process, and resize only pty processes with resize_process. " +
 			"When you only need to change directories, prefer the cwd parameter instead of prefixing the command with cd &&. " +
-			"Do not use this tool for file operations or code search. Specifically:\n" +
-				"- Do NOT use cat, head, tail, less, or more — use the read tool instead.\n" +
-				"- Do NOT use sed, awk, or echo to modify files — use edit or write_file instead.\n" +
-				"- Do NOT use grep, rg, or ag to search code — use the grep tool instead.\n" +
-				"- Do NOT use find or fd to locate files — use the glob tool instead.\n" +
-				"Using dedicated tools ensures consistent output formatting, proper file tracking, and token efficiency. " +
+			"Always quote file paths that contain spaces with double quotes (e.g., cd \"path with spaces/file.txt\"). " +
+			"Try to maintain your current working directory throughout the session by using absolute paths and avoiding usage of cd. You may use cd if the user explicitly requests it. " +
+			"You may specify an optional timeout in milliseconds (up to 1800000ms / 30 minutes). By default, the command will timeout after 120000ms (2 minutes). " +
+			"When issuing multiple commands:\n" +
+			"  - If the commands are independent and can run in parallel, make multiple exec_command tool calls in a single message.\n" +
+			"  - If the commands depend on each other and must run sequentially, use a single exec_command call with '&&' to chain them together.\n" +
+			"  - Use ';' only when you need to run commands sequentially but don't care if earlier commands fail.\n" +
+			"  - DO NOT use newlines to separate commands (newlines are ok in quoted strings).\n" +
+			"IMPORTANT: Avoid using this tool for file operations or code search. Use the appropriate dedicated tool:\n" +
+			"  - Read files: Use read (NOT cat, head, tail, less, more)\n" +
+			"  - Edit files: Use edit (NOT sed, awk)\n" +
+			"  - Write files: Use write_file (NOT echo >, cat <<EOF, tee, or shell redirects)\n" +
+			"  - Search files: Use glob (NOT find, fd, ls)\n" +
+			"  - Search content: Use grep (NOT grep, rg, ag)\n" +
+			"  - Fetch URLs: Use web_fetch (NOT curl, wget)\n" +
+			"Do NOT redirect command output to temporary files (e.g., \"git diff > /tmp/out.txt\") to work around output length limits. If a tool result is large, the system persists it automatically and provides a filepath you can read. " +
+			"Do NOT use shell redirection (>, >>, | tee) to write files — use write_file or edit. " +
+			"Avoid unnecessary sleep commands:\n" +
+			"  - Do not sleep between commands that can run immediately — just run them.\n" +
+			"  - Do not retry failing commands in a sleep loop — diagnose the root cause.\n" +
+			"  - If a command is long-running and you would like to be notified when it finishes — use run_in_background. No sleep needed.\n" +
+			"For git commands:\n" +
+			"  - Prefer to create a new commit rather than amending an existing commit.\n" +
+			"  - Before running destructive operations (e.g., git reset --hard, git push --force, git checkout --), consider whether there is a safer alternative that achieves the same goal.\n" +
+			"  - Never skip hooks (--no-verify) or bypass signing (--no-gpg-sign) unless the user has explicitly asked for it. If a hook fails, investigate and fix the underlying issue.\n" +
+			"  - CRITICAL: Always create NEW commits rather than amending, unless the user explicitly requests a git amend. When a pre-commit hook fails, the commit did NOT happen — so --amend would modify the PREVIOUS commit, which may destroy work.\n" +
+			"  - When staging files, prefer adding specific files by name rather than using \"git add -A\" or \"git add .\", which can accidentally include sensitive files or large binaries.\n" +
+			"  - NEVER commit changes unless the user explicitly asks you to.\n" +
 			"Working files go to /workspace/; final user-visible files go to /tmp/output/ (auto-uploaded as artifacts). " +
 			"Two distinct reference formats — use the correct one:\n" +
 			"  • /tmp/output/ files appear in result.artifacts → reference as artifact:<key>\n" +
@@ -184,8 +216,13 @@ var registry = []ToolMeta{
 		ShortDesc: "read files or image sources and return textual output",
 		LLMDescription: "read content from source.kind=file_path, message_attachment, or remote_url. " +
 			"For file_path: return file content with line numbers using offset and limit. Default limit is 2000 lines; files larger than 256 KB are rejected. " +
+			"The file_path parameter must be an absolute path, not a relative path. " +
+			"When you already know which part of the file you need, only read that part using offset and limit — this is important for larger files. " +
+			"Otherwise it's recommended to read the whole file by not providing offset and limit. " +
 			"For message_attachment and remote_url: read image bytes and return textual understanding from prompt. " +
-			"Use prompt only for image sources. Always read a file before editing it.",
+			"Use prompt only for image sources. " +
+			"You must always read a file before editing or overwriting it — the edit and write_file tools require a prior read call and will error otherwise. " +
+			"If you read a file that exists but has empty contents you will receive a system reminder warning in place of file contents.",
 	},
 	{
 		Name:      "write_file",
@@ -195,7 +232,9 @@ var registry = []ToolMeta{
 		LLMDescription: "create a new file or overwrite an existing file with the provided content. " +
 			"Parent directories are created automatically. " +
 			"When overwriting an existing file, you must read it first with source.kind=file_path; omitting it will return an error. " +
-			"Prefer edit over write_file when making targeted changes to existing files.",
+			"Prefer edit over write_file when making targeted changes to existing files — edit only sends the diff while write_file replaces the entire file. " +
+			"NEVER create documentation files (*.md) or README files unless explicitly requested by the user. " +
+			"Only use this tool to create new files or for complete rewrites of existing files.",
 	},
 	{
 		Name:      "edit",
@@ -206,7 +245,12 @@ var registry = []ToolMeta{
 			"old_string must match exactly once — include enough surrounding context (3-5 lines before and after) to ensure uniqueness. " +
 			"Set replace_all=true to replace all occurrences of old_string instead of requiring uniqueness. " +
 			"To create a new file: set old_string to empty. To delete content: set new_string to empty. " +
-			"You must call read with source.kind=file_path before editing an existing file (old_string non-empty); omitting it will return an error.",
+			"You must call read with source.kind=file_path before editing an existing file (old_string non-empty); omitting it will return an error. " +
+			"When editing text from read output, preserve the exact indentation (tabs/spaces) as it appears after the line number prefix. Never include any part of the line number prefix in old_string or new_string. " +
+			"ALWAYS prefer editing existing files in the codebase. NEVER write new files unless explicitly required. " +
+			"Use the smallest old_string that clearly identifies the target — usually 2-4 adjacent lines is sufficient. " +
+			"Use replace_all for renaming variables or replacing all occurrences of a string across the file. " +
+			"Prefer edit over write_file for modifying existing files — it only sends the diff and avoids overwriting unrelated content.",
 	},
 	{
 		Name:      "glob",
@@ -216,7 +260,9 @@ var registry = []ToolMeta{
 		LLMDescription: "find files matching a glob pattern and return their paths. " +
 			"Uses ripgrep when available for speed; falls back to Go filepath walk. " +
 			"Results are sorted by path length (shortest first). Maximum 1000 results. " +
-			"Patterns like **/*.go, src/**/*.ts, *.md are supported.",
+			"Patterns like **/*.go, src/**/*.ts, *.md are supported. " +
+			"Use glob to discover files before reading them. " +
+			"Do not use exec_command with find, fd, or ls for file search — use glob instead for consistent output and proper file tracking.",
 	},
 	{
 		Name:      "grep",
@@ -230,7 +276,9 @@ var registry = []ToolMeta{
 			"Supports pagination via limit (default 200, max 1000) and offset. " +
 			"In content mode, context_lines (0-10) adds surrounding lines; when omitted, auto-context is applied based on match count. " +
 			"Set case_sensitive=false for case-insensitive matching. Set multiline=true for cross-line pattern matching. " +
-			"Use file_type to filter by ripgrep file types (comma-separated, e.g. 'go,ts').",
+			"Use file_type to filter by ripgrep file types (comma-separated, e.g. 'go,ts'). " +
+			"Use grep to identify relevant files before reading them — search first, then read only the files that match. " +
+			"Do not use exec_command with grep, rg, or ag for code search — use grep instead for consistent output and proper file tracking.",
 	},
 	// ── memory ──
 	{
