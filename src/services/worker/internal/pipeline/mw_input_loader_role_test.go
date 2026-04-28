@@ -57,8 +57,8 @@ func TestLoadRunInputsIncludesRoleFromFirstEvent(t *testing.T) {
 	}
 }
 
-func TestLoadRunInputsIncludesPlanModeFromFirstEvent(t *testing.T) {
-	db := testutil.SetupPostgresDatabase(t, "pipeline_input_loader_plan_mode")
+func TestLoadRunInputsIncludesCollaborationModeFromFirstEvent(t *testing.T) {
+	db := testutil.SetupPostgresDatabase(t, "pipeline_input_loader_collaboration_mode")
 	pool, err := pgxpool.New(context.Background(), db.DSN)
 	if err != nil {
 		t.Fatalf("pgxpool.New: %v", err)
@@ -75,7 +75,7 @@ func TestLoadRunInputsIncludesPlanModeFromFirstEvent(t *testing.T) {
 	if _, err := pool.Exec(context.Background(), `INSERT INTO runs (id, account_id, thread_id, status) VALUES ($1, $2, $3, 'running')`, runID, accountID, threadID); err != nil {
 		t.Fatalf("insert run: %v", err)
 	}
-	if _, err := pool.Exec(context.Background(), `INSERT INTO run_events (run_id, seq, type, data_json) VALUES ($1, 1, 'run.started', '{"plan_mode":true}'::jsonb)`, runID); err != nil {
+	if _, err := pool.Exec(context.Background(), `INSERT INTO run_events (run_id, seq, type, data_json) VALUES ($1, 1, 'run.started', '{"collaboration_mode":"plan","collaboration_mode_revision":2}'::jsonb)`, runID); err != nil {
 		t.Fatalf("insert run event: %v", err)
 	}
 
@@ -83,12 +83,15 @@ func TestLoadRunInputsIncludesPlanModeFromFirstEvent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("loadRunInputs failed: %v", err)
 	}
-	if got := loaded.InputJSON["plan_mode"]; got != true {
-		t.Fatalf("unexpected plan_mode: %#v", got)
+	if got := loaded.InputJSON["collaboration_mode"]; got != "plan" {
+		t.Fatalf("unexpected collaboration_mode: %#v", got)
+	}
+	if got := loaded.InputJSON["collaboration_mode_revision"]; got != float64(2) {
+		t.Fatalf("unexpected collaboration_mode_revision: %#v", got)
 	}
 }
 
-func TestApplyPlanModeKeepsMessagesAndIDsAligned(t *testing.T) {
+func TestApplyCollaborationModeKeepsMessagesAndIDsAligned(t *testing.T) {
 	messageID := uuid.New()
 	threadID := uuid.New()
 	rc := &RunContext{
@@ -96,7 +99,7 @@ func TestApplyPlanModeKeepsMessagesAndIDsAligned(t *testing.T) {
 			ThreadID: threadID,
 		},
 		InputJSON: map[string]any{
-			"plan_mode": true,
+			"collaboration_mode": "plan",
 		},
 		Messages: []llm.Message{{
 			Role:    "user",
@@ -105,7 +108,7 @@ func TestApplyPlanModeKeepsMessagesAndIDsAligned(t *testing.T) {
 		ThreadMessageIDs: []uuid.UUID{messageID},
 	}
 
-	ApplyPlanMode(rc)
+	ApplyCollaborationMode(rc)
 
 	if !rc.IsPlanMode {
 		t.Fatal("expected plan mode to be active")

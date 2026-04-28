@@ -44,7 +44,6 @@ type createMessageRequest struct {
 	Model         *string         `json:"model"`
 	WorkDir       *string         `json:"work_dir"`
 	ReasoningMode *string         `json:"reasoning_mode"`
-	PlanMode      *bool           `json:"plan_mode"`
 }
 
 type messageResponse struct {

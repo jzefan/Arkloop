@@ -17,7 +17,6 @@ const LOCALE_KEY = 'arkloop:web:locale'
 const THEME_KEY = 'arkloop:web:theme'
 const SELECTED_PERSONA_KEY = 'arkloop:web:selected_persona_key'
 const APP_MODE_KEY = 'arkloop:web:app_mode'
-const PLAN_MODE_KEY = 'arkloop:web:plan_mode'
 const SELECTED_MODEL_KEY = 'arkloop:web:selected_model'
 const SELECTED_THINKING_KEY = 'arkloop:web:selected_thinking'
 const FONT_SETTINGS_KEY = 'arkloop:web:font-settings'
@@ -521,24 +520,6 @@ export function writeAppModeToStorage(mode: AppMode): void {
   if (!canUseLocalStorage()) return
   try {
     localStorage.setItem(APP_MODE_KEY, mode)
-  } catch {
-    // 忽略存储失败
-  }
-}
-
-export function readPlanModeFromStorage(): boolean {
-  if (!canUseLocalStorage()) return false
-  try {
-    return localStorage.getItem(PLAN_MODE_KEY) === 'true'
-  } catch {
-    return false
-  }
-}
-
-export function writePlanModeToStorage(active: boolean): void {
-  if (!canUseLocalStorage()) return
-  try {
-    localStorage.setItem(PLAN_MODE_KEY, String(active))
   } catch {
     // 忽略存储失败
   }

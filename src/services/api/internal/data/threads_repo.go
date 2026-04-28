@@ -19,16 +19,33 @@ type Thread struct {
 	CreatedAt       time.Time
 	UpdatedAt       time.Time
 	// R15: 软删除 + Phase 5 project 预留
-	DeletedAt *time.Time
-	ProjectID *uuid.UUID
-	IsPrivate bool
-	PlanMode  bool
-	ExpiresAt *time.Time
+	DeletedAt                 *time.Time
+	ProjectID                 *uuid.UUID
+	IsPrivate                 bool
+	CollaborationMode         string
+	CollaborationModeRevision int64
+	ExpiresAt                 *time.Time
 	// Fork 溯源
 	ParentThreadID        *uuid.UUID
 	BranchedFromMessageID *uuid.UUID
 	// 用户手动命名后置 true，阻止 Worker 自动标题覆盖
 	TitleLocked bool
+}
+
+const (
+	ThreadCollaborationModeDefault = "default"
+	ThreadCollaborationModePlan    = "plan"
+)
+
+func NormalizeThreadCollaborationMode(value string) (string, bool) {
+	switch strings.TrimSpace(value) {
+	case "", ThreadCollaborationModeDefault:
+		return ThreadCollaborationModeDefault, true
+	case ThreadCollaborationModePlan:
+		return ThreadCollaborationModePlan, true
+	default:
+		return "", false
+	}
 }
 
 type ThreadWithActiveRun struct {
@@ -83,14 +100,14 @@ func (r *ThreadRepository) Create(
 		ctx,
 		`INSERT INTO threads (account_id, created_by_user_id, project_id, title, is_private, expires_at, updated_at)
 		 VALUES ($1, $2, $3, $4, $5, CASE WHEN $5 THEN now() + INTERVAL '24 hours' ELSE NULL END, now())
-		 RETURNING id, account_id, created_by_user_id, title, created_at, updated_at, deleted_at, project_id, is_private, plan_mode, expires_at, parent_thread_id, branched_from_message_id, title_locked`,
+		 RETURNING id, account_id, created_by_user_id, title, created_at, updated_at, deleted_at, project_id, is_private, collaboration_mode, collaboration_mode_revision, expires_at, parent_thread_id, branched_from_message_id, title_locked`,
 		accountID,
 		createdByUserID,
 		projectID,
 		title,
 		isPrivate,
 	).Scan(&thread.ID, &thread.AccountID, &thread.CreatedByUserID, &thread.Title, &thread.CreatedAt, &thread.UpdatedAt,
-		&thread.DeletedAt, &thread.ProjectID, &thread.IsPrivate, &thread.PlanMode, &thread.ExpiresAt,
+		&thread.DeletedAt, &thread.ProjectID, &thread.IsPrivate, &thread.CollaborationMode, &thread.CollaborationModeRevision, &thread.ExpiresAt,
 		&thread.ParentThreadID, &thread.BranchedFromMessageID, &thread.TitleLocked)
 	if err != nil {
 		return Thread{}, err
@@ -106,14 +123,14 @@ func (r *ThreadRepository) GetByID(ctx context.Context, threadID uuid.UUID) (*Th
 	var thread Thread
 	err := r.db.QueryRow(
 		ctx,
-		`SELECT id, account_id, created_by_user_id, title, created_at, updated_at, deleted_at, project_id, is_private, plan_mode, expires_at, parent_thread_id, branched_from_message_id, title_locked
+		`SELECT id, account_id, created_by_user_id, title, created_at, updated_at, deleted_at, project_id, is_private, collaboration_mode, collaboration_mode_revision, expires_at, parent_thread_id, branched_from_message_id, title_locked
 		 FROM threads
 		 WHERE id = $1
 		   AND deleted_at IS NULL
 		 LIMIT 1`,
 		threadID,
 	).Scan(&thread.ID, &thread.AccountID, &thread.CreatedByUserID, &thread.Title, &thread.CreatedAt, &thread.UpdatedAt,
-		&thread.DeletedAt, &thread.ProjectID, &thread.IsPrivate, &thread.PlanMode, &thread.ExpiresAt,
+		&thread.DeletedAt, &thread.ProjectID, &thread.IsPrivate, &thread.CollaborationMode, &thread.CollaborationModeRevision, &thread.ExpiresAt,
 		&thread.ParentThreadID, &thread.BranchedFromMessageID, &thread.TitleLocked)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -149,7 +166,7 @@ func (r *ThreadRepository) ListByOwner(
 	}
 
 	sql := `SELECT t.id, t.account_id, t.created_by_user_id, t.title, t.created_at, t.updated_at,
-		       t.deleted_at, t.project_id, t.is_private, t.plan_mode, t.expires_at,
+		       t.deleted_at, t.project_id, t.is_private, t.collaboration_mode, t.collaboration_mode_revision, t.expires_at,
 		       t.parent_thread_id, t.branched_from_message_id, t.title_locked, r.id AS active_run_id
 		FROM threads t
 		LEFT JOIN LATERAL (
@@ -188,7 +205,7 @@ func (r *ThreadRepository) ListByOwner(
 		var item ThreadWithActiveRun
 		if err := rows.Scan(
 			&item.ID, &item.AccountID, &item.CreatedByUserID, &item.Title, &item.CreatedAt, &item.UpdatedAt,
-			&item.DeletedAt, &item.ProjectID, &item.IsPrivate, &item.PlanMode, &item.ExpiresAt,
+			&item.DeletedAt, &item.ProjectID, &item.IsPrivate, &item.CollaborationMode, &item.CollaborationModeRevision, &item.ExpiresAt,
 			&item.ParentThreadID, &item.BranchedFromMessageID, &item.TitleLocked, &item.ActiveRunID,
 		); err != nil {
 			return nil, err
@@ -225,11 +242,11 @@ func (r *ThreadRepository) UpdateTitle(ctx context.Context, threadID uuid.UUID, 
 		     updated_at = now()
 		 WHERE id = $2
 		   AND deleted_at IS NULL
-		 RETURNING id, account_id, created_by_user_id, title, created_at, updated_at, deleted_at, project_id, is_private, plan_mode, expires_at, parent_thread_id, branched_from_message_id, title_locked`,
+		 RETURNING id, account_id, created_by_user_id, title, created_at, updated_at, deleted_at, project_id, is_private, collaboration_mode, collaboration_mode_revision, expires_at, parent_thread_id, branched_from_message_id, title_locked`,
 		title,
 		threadID,
 	).Scan(&thread.ID, &thread.AccountID, &thread.CreatedByUserID, &thread.Title, &thread.CreatedAt, &thread.UpdatedAt,
-		&thread.DeletedAt, &thread.ProjectID, &thread.IsPrivate, &thread.PlanMode, &thread.ExpiresAt,
+		&thread.DeletedAt, &thread.ProjectID, &thread.IsPrivate, &thread.CollaborationMode, &thread.CollaborationModeRevision, &thread.ExpiresAt,
 		&thread.ParentThreadID, &thread.BranchedFromMessageID, &thread.TitleLocked)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -255,11 +272,11 @@ func (r *ThreadRepository) UpdateOwner(ctx context.Context, threadID uuid.UUID, 
 		 SET created_by_user_id = $2
 		 WHERE id = $1
 		   AND deleted_at IS NULL
-		 RETURNING id, account_id, created_by_user_id, title, created_at, updated_at, deleted_at, project_id, is_private, plan_mode, expires_at, parent_thread_id, branched_from_message_id, title_locked`,
+		 RETURNING id, account_id, created_by_user_id, title, created_at, updated_at, deleted_at, project_id, is_private, collaboration_mode, collaboration_mode_revision, expires_at, parent_thread_id, branched_from_message_id, title_locked`,
 		threadID,
 		ownerUserID,
 	).Scan(&thread.ID, &thread.AccountID, &thread.CreatedByUserID, &thread.Title, &thread.CreatedAt, &thread.UpdatedAt,
-		&thread.DeletedAt, &thread.ProjectID, &thread.IsPrivate, &thread.PlanMode, &thread.ExpiresAt,
+		&thread.DeletedAt, &thread.ProjectID, &thread.IsPrivate, &thread.CollaborationMode, &thread.CollaborationModeRevision, &thread.ExpiresAt,
 		&thread.ParentThreadID, &thread.BranchedFromMessageID, &thread.TitleLocked)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -273,14 +290,14 @@ func (r *ThreadRepository) UpdateOwner(ctx context.Context, threadID uuid.UUID, 
 // ThreadUpdateFields 描述 PATCH 操作中要更新的字段集合。
 // Set* 为 true 才写对应列，允许单独或同时更新。
 type ThreadUpdateFields struct {
-	SetTitle       bool
-	Title          *string
-	SetProjectID   bool
-	ProjectID      *uuid.UUID
-	SetTitleLocked bool
-	TitleLocked    bool
-	SetPlanMode    bool
-	PlanMode       bool
+	SetTitle             bool
+	Title                *string
+	SetProjectID         bool
+	ProjectID            *uuid.UUID
+	SetTitleLocked       bool
+	TitleLocked          bool
+	SetCollaborationMode bool
+	CollaborationMode    string
 }
 
 // UpdateFields 原子更新 thread 的一个或多个字段，单条 SQL 保证原子性。
@@ -292,8 +309,15 @@ func (r *ThreadRepository) UpdateFields(ctx context.Context, threadID uuid.UUID,
 	if threadID == uuid.Nil {
 		return nil, fmt.Errorf("thread_id must not be empty")
 	}
-	if !params.SetTitle && !params.SetProjectID && !params.SetTitleLocked && !params.SetPlanMode {
+	if !params.SetTitle && !params.SetProjectID && !params.SetTitleLocked && !params.SetCollaborationMode {
 		return nil, fmt.Errorf("no fields to update")
+	}
+	if params.SetCollaborationMode {
+		normalized, ok := NormalizeThreadCollaborationMode(params.CollaborationMode)
+		if !ok {
+			return nil, fmt.Errorf("invalid collaboration_mode")
+		}
+		params.CollaborationMode = normalized
 	}
 
 	var thread Thread
@@ -303,18 +327,19 @@ func (r *ThreadRepository) UpdateFields(ctx context.Context, threadID uuid.UUID,
 		 SET title           = CASE WHEN $2 THEN $3 ELSE title END,
 		     project_id      = CASE WHEN $4 THEN $5 ELSE project_id END,
 		     title_locked    = CASE WHEN $6 THEN $7 ELSE title_locked END,
-		     plan_mode       = CASE WHEN $8 THEN $9 ELSE plan_mode END,
-		     updated_at      = CASE WHEN $2 THEN now() ELSE updated_at END
+		     collaboration_mode = CASE WHEN $8 THEN $9 ELSE collaboration_mode END,
+		     collaboration_mode_revision = CASE WHEN $8 AND collaboration_mode <> $9 THEN collaboration_mode_revision + 1 ELSE collaboration_mode_revision END,
+		     updated_at      = CASE WHEN $2 OR ($8 AND collaboration_mode <> $9) THEN now() ELSE updated_at END
 		 WHERE id = $1
 		   AND deleted_at IS NULL
-		 RETURNING id, account_id, created_by_user_id, title, created_at, updated_at, deleted_at, project_id, is_private, plan_mode, expires_at, parent_thread_id, branched_from_message_id, title_locked`,
+		 RETURNING id, account_id, created_by_user_id, title, created_at, updated_at, deleted_at, project_id, is_private, collaboration_mode, collaboration_mode_revision, expires_at, parent_thread_id, branched_from_message_id, title_locked`,
 		threadID,
 		params.SetTitle, params.Title,
 		params.SetProjectID, params.ProjectID,
 		params.SetTitleLocked, params.TitleLocked,
-		params.SetPlanMode, params.PlanMode,
+		params.SetCollaborationMode, params.CollaborationMode,
 	).Scan(&thread.ID, &thread.AccountID, &thread.CreatedByUserID, &thread.Title, &thread.CreatedAt, &thread.UpdatedAt,
-		&thread.DeletedAt, &thread.ProjectID, &thread.IsPrivate, &thread.PlanMode, &thread.ExpiresAt,
+		&thread.DeletedAt, &thread.ProjectID, &thread.IsPrivate, &thread.CollaborationMode, &thread.CollaborationModeRevision, &thread.ExpiresAt,
 		&thread.ParentThreadID, &thread.BranchedFromMessageID, &thread.TitleLocked)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -346,8 +371,15 @@ func (r *ThreadRepository) UpdateFieldsOwned(
 	if ownerUserID == uuid.Nil {
 		return nil, fmt.Errorf("owner_user_id must not be empty")
 	}
-	if !params.SetTitle && !params.SetProjectID && !params.SetTitleLocked && !params.SetPlanMode {
+	if !params.SetTitle && !params.SetProjectID && !params.SetTitleLocked && !params.SetCollaborationMode {
 		return nil, fmt.Errorf("no fields to update")
+	}
+	if params.SetCollaborationMode {
+		normalized, ok := NormalizeThreadCollaborationMode(params.CollaborationMode)
+		if !ok {
+			return nil, fmt.Errorf("invalid collaboration_mode")
+		}
+		params.CollaborationMode = normalized
 	}
 
 	var thread Thread
@@ -357,22 +389,23 @@ func (r *ThreadRepository) UpdateFieldsOwned(
 		 SET title           = CASE WHEN $4 THEN $5 ELSE title END,
 		     project_id      = CASE WHEN $6 THEN $7 ELSE project_id END,
 		     title_locked    = CASE WHEN $8 THEN $9 ELSE title_locked END,
-		     plan_mode       = CASE WHEN $10 THEN $11 ELSE plan_mode END,
-		     updated_at      = CASE WHEN $4 THEN now() ELSE updated_at END
+		     collaboration_mode = CASE WHEN $10 THEN $11 ELSE collaboration_mode END,
+		     collaboration_mode_revision = CASE WHEN $10 AND collaboration_mode <> $11 THEN collaboration_mode_revision + 1 ELSE collaboration_mode_revision END,
+		     updated_at      = CASE WHEN $4 OR ($10 AND collaboration_mode <> $11) THEN now() ELSE updated_at END
 		 WHERE id = $1
 		   AND account_id = $2
 		   AND created_by_user_id = $3
 		   AND deleted_at IS NULL
-		 RETURNING id, account_id, created_by_user_id, title, created_at, updated_at, deleted_at, project_id, is_private, plan_mode, expires_at, parent_thread_id, branched_from_message_id, title_locked`,
+		 RETURNING id, account_id, created_by_user_id, title, created_at, updated_at, deleted_at, project_id, is_private, collaboration_mode, collaboration_mode_revision, expires_at, parent_thread_id, branched_from_message_id, title_locked`,
 		threadID,
 		accountID,
 		ownerUserID,
 		params.SetTitle, params.Title,
 		params.SetProjectID, params.ProjectID,
 		params.SetTitleLocked, params.TitleLocked,
-		params.SetPlanMode, params.PlanMode,
+		params.SetCollaborationMode, params.CollaborationMode,
 	).Scan(&thread.ID, &thread.AccountID, &thread.CreatedByUserID, &thread.Title, &thread.CreatedAt, &thread.UpdatedAt,
-		&thread.DeletedAt, &thread.ProjectID, &thread.IsPrivate, &thread.PlanMode, &thread.ExpiresAt,
+		&thread.DeletedAt, &thread.ProjectID, &thread.IsPrivate, &thread.CollaborationMode, &thread.CollaborationModeRevision, &thread.ExpiresAt,
 		&thread.ParentThreadID, &thread.BranchedFromMessageID, &thread.TitleLocked)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -433,12 +466,12 @@ func (r *ThreadRepository) DeleteOwnedReturning(
 		   AND account_id = $2
 		   AND created_by_user_id = $3
 		   AND deleted_at IS NULL
-		 RETURNING id, account_id, created_by_user_id, title, created_at, updated_at, deleted_at, project_id, is_private, plan_mode, expires_at, parent_thread_id, branched_from_message_id, title_locked`,
+		 RETURNING id, account_id, created_by_user_id, title, created_at, updated_at, deleted_at, project_id, is_private, collaboration_mode, collaboration_mode_revision, expires_at, parent_thread_id, branched_from_message_id, title_locked`,
 		threadID,
 		accountID,
 		ownerUserID,
 	).Scan(&thread.ID, &thread.AccountID, &thread.CreatedByUserID, &thread.Title, &thread.CreatedAt, &thread.UpdatedAt,
-		&thread.DeletedAt, &thread.ProjectID, &thread.IsPrivate, &thread.PlanMode, &thread.ExpiresAt,
+		&thread.DeletedAt, &thread.ProjectID, &thread.IsPrivate, &thread.CollaborationMode, &thread.CollaborationModeRevision, &thread.ExpiresAt,
 		&thread.ParentThreadID, &thread.BranchedFromMessageID, &thread.TitleLocked)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -479,7 +512,7 @@ func (r *ThreadRepository) SearchByQuery(
 		ctx,
 		`SELECT DISTINCT ON (t.updated_at, t.id)
 		        t.id, t.account_id, t.created_by_user_id, t.title, t.created_at, t.updated_at,
-		        t.deleted_at, t.project_id, t.is_private, t.plan_mode, t.expires_at,
+		        t.deleted_at, t.project_id, t.is_private, t.collaboration_mode, t.collaboration_mode_revision, t.expires_at,
 		        t.parent_thread_id, t.branched_from_message_id, t.title_locked, r.id AS active_run_id
 		 FROM threads t
 		 LEFT JOIN messages m
@@ -514,7 +547,7 @@ func (r *ThreadRepository) SearchByQuery(
 		var item ThreadWithActiveRun
 		if err := rows.Scan(
 			&item.ID, &item.AccountID, &item.CreatedByUserID, &item.Title, &item.CreatedAt, &item.UpdatedAt,
-			&item.DeletedAt, &item.ProjectID, &item.IsPrivate, &item.PlanMode, &item.ExpiresAt,
+			&item.DeletedAt, &item.ProjectID, &item.IsPrivate, &item.CollaborationMode, &item.CollaborationModeRevision, &item.ExpiresAt,
 			&item.ParentThreadID, &item.BranchedFromMessageID, &item.TitleLocked, &item.ActiveRunID,
 		); err != nil {
 			return nil, err
@@ -569,17 +602,17 @@ func (r *ThreadRepository) Fork(
 	var thread Thread
 	err := r.db.QueryRow(
 		ctx,
-		`INSERT INTO threads (account_id, created_by_user_id, project_id, title, is_private, expires_at, updated_at, parent_thread_id, branched_from_message_id)
-		 SELECT $1, $2, project_id, title, $3, CASE WHEN $3 THEN now() + INTERVAL '24 hours' ELSE NULL END, now(), $4, $5
+		`INSERT INTO threads (account_id, created_by_user_id, project_id, title, is_private, expires_at, updated_at, parent_thread_id, branched_from_message_id, collaboration_mode)
+		 SELECT $1, $2, project_id, title, $3, CASE WHEN $3 THEN now() + INTERVAL '24 hours' ELSE NULL END, now(), $4, $5, collaboration_mode
 		 FROM threads WHERE id = $4 AND deleted_at IS NULL
-		 RETURNING id, account_id, created_by_user_id, title, created_at, updated_at, deleted_at, project_id, is_private, plan_mode, expires_at, parent_thread_id, branched_from_message_id, title_locked`,
+		 RETURNING id, account_id, created_by_user_id, title, created_at, updated_at, deleted_at, project_id, is_private, collaboration_mode, collaboration_mode_revision, expires_at, parent_thread_id, branched_from_message_id, title_locked`,
 		accountID,
 		createdByUserID,
 		isPrivate,
 		parentThreadID,
 		branchFromMessageID,
 	).Scan(&thread.ID, &thread.AccountID, &thread.CreatedByUserID, &thread.Title, &thread.CreatedAt, &thread.UpdatedAt,
-		&thread.DeletedAt, &thread.ProjectID, &thread.IsPrivate, &thread.PlanMode, &thread.ExpiresAt,
+		&thread.DeletedAt, &thread.ProjectID, &thread.IsPrivate, &thread.CollaborationMode, &thread.CollaborationModeRevision, &thread.ExpiresAt,
 		&thread.ParentThreadID, &thread.BranchedFromMessageID, &thread.TitleLocked)
 	if err != nil {
 		return Thread{}, err

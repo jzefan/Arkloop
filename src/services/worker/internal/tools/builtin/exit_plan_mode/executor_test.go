@@ -2,6 +2,8 @@ package exit_plan_mode
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"arkloop/services/worker/internal/events"
@@ -29,13 +31,23 @@ func (b *bindingStub) IsPlanModeActive() bool {
 
 func TestExitPlanModeDoesNotRequirePlanArgument(t *testing.T) {
 	threadID := uuid.New()
+	workDir := t.TempDir()
+	planPath := "plans/" + threadID.String() + ".md"
+	if err := os.MkdirAll(filepath.Join(workDir, "plans"), 0o755); err != nil {
+		t.Fatalf("mkdir plan dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(workDir, planPath), []byte("1. inspect\n2. implement\n"), 0o644); err != nil {
+		t.Fatalf("write plan file: %v", err)
+	}
 	binding := &bindingStub{
 		active: true,
-		path:   "plans/" + threadID.String() + ".md",
+		path:   planPath,
 	}
 
 	result := New().Execute(context.Background(), ToolName, map[string]any{}, tools.ExecutionContext{
 		ThreadID:   &threadID,
+		RunID:      uuid.New(),
+		WorkDir:    workDir,
 		Emitter:    events.NewEmitter("trace"),
 		PipelineRC: binding,
 	}, "call_1")
@@ -46,10 +58,10 @@ func TestExitPlanModeDoesNotRequirePlanArgument(t *testing.T) {
 	if binding.active {
 		t.Fatal("expected binding to exit plan mode")
 	}
-	if len(result.Events) != 1 || result.Events[0].Type != "thread.plan_mode.updated" {
-		t.Fatalf("expected thread.plan_mode.updated event, got %#v", result.Events)
+	if len(result.Events) != 1 || result.Events[0].Type != "thread.collaboration_mode.updated" {
+		t.Fatalf("expected thread.collaboration_mode.updated event, got %#v", result.Events)
 	}
-	if got, _ := result.Events[0].DataJSON["plan_mode"].(bool); got {
-		t.Fatalf("event plan_mode = %#v, want false", result.Events[0].DataJSON["plan_mode"])
+	if got, _ := result.Events[0].DataJSON["collaboration_mode"].(string); got != "default" {
+		t.Fatalf("event collaboration_mode = %#v, want default", result.Events[0].DataJSON["collaboration_mode"])
 	}
 }

@@ -520,9 +520,11 @@ export type CreateThreadRequest = {
   is_private?: boolean
   mode?: ThreadMode
   project_id?: string
+  collaboration_mode?: CollaborationMode
 }
 
 export type ThreadMode = 'chat' | 'work'
+export type CollaborationMode = 'default' | 'plan'
 
 export type ThreadResponse = {
   id: string
@@ -534,6 +536,8 @@ export type ThreadResponse = {
   created_at: string
   active_run_id: string | null
   is_private: boolean
+  collaboration_mode: CollaborationMode
+  collaboration_mode_revision: number
   title_locked?: boolean
   hidden?: boolean
   updated_at?: string
@@ -698,6 +702,18 @@ export async function updateThreadTitle(
   })
 }
 
+export async function updateThreadCollaborationMode(
+  accessToken: string,
+  threadId: string,
+  collaborationMode: CollaborationMode,
+): Promise<ThreadResponse> {
+  return await apiFetch<ThreadResponse>(`/v1/threads/${threadId}`, {
+    method: 'PATCH',
+    accessToken,
+    body: JSON.stringify({ collaboration_mode: collaborationMode }),
+  })
+}
+
 export async function deleteThread(accessToken: string, threadId: string): Promise<void> {
   await apiFetch<void>(`/v1/threads/${threadId}`, {
     method: 'DELETE',
@@ -818,7 +834,6 @@ export async function editMessage(
   modelOverride?: string,
   workDir?: string,
   reasoningMode?: RunReasoningMode,
-  planMode?: boolean,
 ): Promise<CreateRunResponse> {
   return await apiFetch<CreateRunResponse>(`/v1/threads/${threadId}/messages/${messageId}`, {
     method: 'PATCH',
@@ -830,7 +845,6 @@ export async function editMessage(
       ...(modelOverride ? { model: modelOverride } : {}),
       ...(workDir ? { work_dir: workDir } : {}),
       ...(reasoningMode ? { reasoning_mode: reasoningMode } : {}),
-      ...(planMode ? { plan_mode: planMode } : {}),
     }),
   })
 }
@@ -862,9 +876,8 @@ export async function createRun(
   modelOverride?: string,
   workDir?: string,
   reasoningMode?: RunReasoningMode,
-  planMode?: boolean,
 ): Promise<CreateRunResponse> {
-  const hasBody = personaId || modelOverride || workDir || reasoningMode || planMode
+  const hasBody = personaId || modelOverride || workDir || reasoningMode
   return await apiFetch<CreateRunResponse>(`/v1/threads/${threadId}/runs`, {
     method: 'POST',
     accessToken,
@@ -874,7 +887,6 @@ export async function createRun(
           ...(modelOverride ? { model: modelOverride } : {}),
           ...(workDir ? { work_dir: workDir } : {}),
           ...(reasoningMode ? { reasoning_mode: reasoningMode } : {}),
-          ...(planMode ? { plan_mode: planMode } : {}),
         })
       : undefined,
   })

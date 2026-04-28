@@ -81,7 +81,6 @@ type createRunRequest struct {
 	Model          *string `json:"model"`
 	WorkDir        *string `json:"work_dir"`
 	ReasoningMode  *string `json:"reasoning_mode"`
-	PlanMode       *bool   `json:"plan_mode"`
 }
 
 type createRunResponse struct {
@@ -127,50 +126,36 @@ func formatUUIDPtr(value *uuid.UUID) *string {
 	return &formatted
 }
 
-func resolveRunThreadPlanMode(
+func resolveRunThreadCollaborationMode(
 	ctx context.Context,
 	threadRepo *data.ThreadRepository,
 	thread data.Thread,
-	override *bool,
-) (data.Thread, bool, error) {
+) (data.Thread, string, int64, error) {
 	if threadRepo == nil {
-		return thread, thread.PlanMode, nil
-	}
-	if override != nil {
-		updated, err := threadRepo.UpdateFields(ctx, thread.ID, data.ThreadUpdateFields{
-			SetPlanMode: true,
-			PlanMode:    *override,
-		})
-		if err != nil {
-			return data.Thread{}, false, err
-		}
-		if updated == nil {
-			return data.Thread{}, false, errRunThreadNotFound
-		}
-		return *updated, updated.PlanMode, nil
+		return thread, thread.CollaborationMode, thread.CollaborationModeRevision, nil
 	}
 	current, err := threadRepo.GetByID(ctx, thread.ID)
 	if err != nil {
-		return data.Thread{}, false, err
+		return data.Thread{}, "", 0, err
 	}
 	if current == nil {
-		return data.Thread{}, false, errRunThreadNotFound
+		return data.Thread{}, "", 0, errRunThreadNotFound
 	}
-	return *current, current.PlanMode, nil
+	return *current, current.CollaborationMode, current.CollaborationModeRevision, nil
 }
 
-func setRunPlanMode(startedData map[string]any, jobData map[string]any, active bool) {
-	startedData["plan_mode"] = active
+func setRunCollaborationMode(startedData map[string]any, jobData map[string]any, mode string, revision int64) {
+	if normalized, ok := data.NormalizeThreadCollaborationMode(mode); ok {
+		mode = normalized
+	} else {
+		mode = data.ThreadCollaborationModeDefault
+	}
+	startedData["collaboration_mode"] = mode
+	startedData["collaboration_mode_revision"] = revision
 	if jobData != nil {
-		jobData["plan_mode"] = active
+		jobData["collaboration_mode"] = mode
+		jobData["collaboration_mode_revision"] = revision
 	}
-}
-
-func planModeOverride(body *createRunRequest) *bool {
-	if body == nil {
-		return nil
-	}
-	return body.PlanMode
 }
 
 type submitInputResponse struct {
@@ -379,7 +364,7 @@ func createThreadRun(
 			return
 		}
 
-		currentThread, effectivePlanMode, err := resolveRunThreadPlanMode(r.Context(), txThreadRepo, *thread, planModeOverride(body))
+		currentThread, collaborationMode, collaborationModeRevision, err := resolveRunThreadCollaborationMode(r.Context(), txThreadRepo, *thread)
 		if err != nil {
 			if errors.Is(err, errRunThreadNotFound) {
 				httpkit.WriteError(w, nethttp.StatusNotFound, "threads.not_found", "thread not found", traceID, nil)
@@ -390,7 +375,7 @@ func createThreadRun(
 		}
 		thread = &currentThread
 		jobData := map[string]any{"source": "api"}
-		setRunPlanMode(startedData, jobData, effectivePlanMode)
+		setRunCollaborationMode(startedData, jobData, collaborationMode, collaborationModeRevision)
 
 		run, _, err := runRepo.CreateRootRunWithClaimFrom(
 			r.Context(),

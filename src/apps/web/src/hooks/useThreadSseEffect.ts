@@ -66,6 +66,7 @@ export function useThreadSseEffect({
   const {
     markIdle: onRunEnded,
     updateTitle: onThreadTitleUpdated,
+    updateCollaborationMode: onThreadCollaborationModeUpdated,
   } = useThreadList()
   const { refreshCredits } = useCredits()
   const {
@@ -654,6 +655,17 @@ export function useThreadSseEffect({
         if (tid && title) onThreadTitleUpdated(tid, title)
         if (event.run_id && event.run_id === completedTitleTailRunId) {
           clearCompletedTitleTail()
+        }
+        continue
+      }
+
+      if (event.type === 'thread.collaboration_mode.updated') {
+        const obj = event.data as { thread_id?: unknown; collaboration_mode?: unknown; collaboration_mode_revision?: unknown }
+        const tid = typeof obj.thread_id === 'string' ? obj.thread_id : threadId
+        const collaborationMode = obj.collaboration_mode === 'plan' ? 'plan' : obj.collaboration_mode === 'default' ? 'default' : null
+        const revision = typeof obj.collaboration_mode_revision === 'number' ? obj.collaboration_mode_revision : undefined
+        if (tid && collaborationMode) {
+          onThreadCollaborationModeUpdated(tid, collaborationMode, revision)
         }
         continue
       }

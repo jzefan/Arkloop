@@ -22,30 +22,31 @@ import (
 )
 
 type createThreadRequest struct {
-	Title     *string      `json:"title"`
-	IsPrivate bool         `json:"is_private"`
-	ProjectID optionalUUID `json:"project_id"`
-	PlanMode  *bool        `json:"plan_mode"`
+	Title             *string      `json:"title"`
+	IsPrivate         bool         `json:"is_private"`
+	ProjectID         optionalUUID `json:"project_id"`
+	CollaborationMode *string      `json:"collaboration_mode"`
 }
 
 type updateThreadRequest struct {
-	Title     optionalString `json:"title"`
-	ProjectID optionalUUID   `json:"project_id"`
-	PlanMode  optionalBool   `json:"plan_mode"`
+	Title             optionalString `json:"title"`
+	ProjectID         optionalUUID   `json:"project_id"`
+	CollaborationMode optionalString `json:"collaboration_mode"`
 }
 
 type threadResponse struct {
-	ID              string  `json:"id"`
-	AccountID       string  `json:"account_id"`
-	CreatedByUserID *string `json:"created_by_user_id"`
-	Title           *string `json:"title"`
-	ProjectID       *string `json:"project_id,omitempty"`
-	CreatedAt       string  `json:"created_at"`
-	UpdatedAt       string  `json:"updated_at"`
-	ActiveRunID     *string `json:"active_run_id"`
-	IsPrivate       bool    `json:"is_private"`
-	PlanMode        bool    `json:"plan_mode"`
-	ParentThreadID  *string `json:"parent_thread_id,omitempty"`
+	ID                        string  `json:"id"`
+	AccountID                 string  `json:"account_id"`
+	CreatedByUserID           *string `json:"created_by_user_id"`
+	Title                     *string `json:"title"`
+	ProjectID                 *string `json:"project_id,omitempty"`
+	CreatedAt                 string  `json:"created_at"`
+	UpdatedAt                 string  `json:"updated_at"`
+	ActiveRunID               *string `json:"active_run_id"`
+	IsPrivate                 bool    `json:"is_private"`
+	CollaborationMode         string  `json:"collaboration_mode"`
+	CollaborationModeRevision int64   `json:"collaboration_mode_revision"`
+	ParentThreadID            *string `json:"parent_thread_id,omitempty"`
 }
 
 type optionalString struct {
@@ -73,18 +74,8 @@ type optionalUUID struct {
 	Value   *uuid.UUID
 }
 
-type optionalBool struct {
-	Present bool
-	Value   bool
-}
-
 func isTitleOnlyThreadUpdate(body updateThreadRequest) bool {
-	return body.Title.Present && !body.ProjectID.Present && !body.PlanMode.Present
-}
-
-func (b *optionalBool) UnmarshalJSON(raw []byte) error {
-	b.Present = true
-	return json.Unmarshal(raw, &b.Value)
+	return body.Title.Present && !body.ProjectID.Present && !body.CollaborationMode.Present
 }
 
 func (u *optionalUUID) UnmarshalJSON(raw []byte) error {
@@ -157,6 +148,15 @@ func createThread(
 			httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "request validation failed", traceID, nil)
 			return
 		}
+		initialCollaborationMode := data.ThreadCollaborationModeDefault
+		if body.CollaborationMode != nil {
+			normalized, ok := data.NormalizeThreadCollaborationMode(*body.CollaborationMode)
+			if !ok {
+				httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "request validation failed", traceID, nil)
+				return
+			}
+			initialCollaborationMode = normalized
+		}
 
 		tx, err := pool.BeginTx(r.Context(), pgx.TxOptions{})
 		if err != nil {
@@ -202,10 +202,10 @@ func createThread(
 			writeInternalError(w, traceID, err)
 			return
 		}
-		if body.PlanMode != nil {
+		if initialCollaborationMode != data.ThreadCollaborationModeDefault {
 			updated, err := txThreadRepo.UpdateFields(r.Context(), thread.ID, data.ThreadUpdateFields{
-				SetPlanMode: true,
-				PlanMode:    *body.PlanMode,
+				SetCollaborationMode: true,
+				CollaborationMode:    initialCollaborationMode,
 			})
 			if err != nil {
 				writeInternalError(w, traceID, err)
@@ -364,7 +364,7 @@ func patchThread(
 			httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "request validation failed", traceID, nil)
 			return
 		}
-		if !body.Title.Present && !body.ProjectID.Present && !body.PlanMode.Present {
+		if !body.Title.Present && !body.ProjectID.Present && !body.CollaborationMode.Present {
 			httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "request validation failed", traceID, nil)
 			return
 		}
@@ -376,16 +376,29 @@ func patchThread(
 			httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "request validation failed", traceID, nil)
 			return
 		}
+		collaborationMode := ""
+		if body.CollaborationMode.Present {
+			if body.CollaborationMode.Value == nil {
+				httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "request validation failed", traceID, nil)
+				return
+			}
+			normalized, ok := data.NormalizeThreadCollaborationMode(*body.CollaborationMode.Value)
+			if !ok {
+				httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "request validation failed", traceID, nil)
+				return
+			}
+			collaborationMode = normalized
+		}
 
 		params := data.ThreadUpdateFields{
-			SetTitle:       body.Title.Present,
-			Title:          body.Title.Value,
-			SetTitleLocked: body.Title.Present,
-			TitleLocked:    body.Title.Present,
-			SetProjectID:   body.ProjectID.Present,
-			ProjectID:      body.ProjectID.Value,
-			SetPlanMode:    body.PlanMode.Present,
-			PlanMode:       body.PlanMode.Value,
+			SetTitle:             body.Title.Present,
+			Title:                body.Title.Value,
+			SetTitleLocked:       body.Title.Present,
+			TitleLocked:          body.Title.Present,
+			SetProjectID:         body.ProjectID.Present,
+			ProjectID:            body.ProjectID.Value,
+			SetCollaborationMode: body.CollaborationMode.Present,
+			CollaborationMode:    collaborationMode,
 		}
 
 		if isTitleOnlyThreadUpdate(body) {
@@ -1011,17 +1024,18 @@ func toThreadResponse(thread data.Thread) threadResponse {
 		parentThreadID = &value
 	}
 	return threadResponse{
-		ID:              thread.ID.String(),
-		AccountID:       thread.AccountID.String(),
-		CreatedByUserID: createdByUserID,
-		Title:           thread.Title,
-		ProjectID:       projectID,
-		CreatedAt:       thread.CreatedAt.UTC().Format(time.RFC3339Nano),
-		UpdatedAt:       thread.UpdatedAt.UTC().Format(time.RFC3339Nano),
-		ActiveRunID:     nil,
-		IsPrivate:       thread.IsPrivate,
-		PlanMode:        thread.PlanMode,
-		ParentThreadID:  parentThreadID,
+		ID:                        thread.ID.String(),
+		AccountID:                 thread.AccountID.String(),
+		CreatedByUserID:           createdByUserID,
+		Title:                     thread.Title,
+		ProjectID:                 projectID,
+		CreatedAt:                 thread.CreatedAt.UTC().Format(time.RFC3339Nano),
+		UpdatedAt:                 thread.UpdatedAt.UTC().Format(time.RFC3339Nano),
+		ActiveRunID:               nil,
+		IsPrivate:                 thread.IsPrivate,
+		CollaborationMode:         thread.CollaborationMode,
+		CollaborationModeRevision: thread.CollaborationModeRevision,
+		ParentThreadID:            parentThreadID,
 	}
 }
 

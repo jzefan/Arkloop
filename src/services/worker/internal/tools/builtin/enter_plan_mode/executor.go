@@ -12,6 +12,7 @@ import (
 type PipelineBinding interface {
 	SetIsPlanMode(active bool)
 	SetPlanFilePath(path string)
+	IsPlanModeActive() bool
 }
 
 type executor struct{}
@@ -59,6 +60,16 @@ func (executor) Execute(
 		}
 	}
 	planPath := fmt.Sprintf("plans/%s.md", execCtx.ThreadID.String())
+	if binding.IsPlanModeActive() {
+		binding.SetPlanFilePath(planPath)
+		return tools.ExecutionResult{
+			ResultJSON: map[string]any{
+				"status":         "already_in_plan",
+				"plan_file_path": planPath,
+			},
+			DurationMs: int(time.Since(started).Milliseconds()),
+		}
+	}
 
 	binding.SetIsPlanMode(true)
 	binding.SetPlanFilePath(planPath)
@@ -68,11 +79,13 @@ func (executor) Execute(
 		"可以读取代码、搜索、提问并修订 Plan 文件；不要修改普通项目文件或执行会改变项目状态的命令。\n" +
 		"当方案已经准备好交给用户确认时，调用 exit_plan_mode 退出。"
 
-	event := execCtx.Emitter.Emit("thread.plan_mode.updated", map[string]any{
-		"thread_id":      execCtx.ThreadID.String(),
-		"plan_mode":      true,
-		"plan_file_path": planPath,
-		"source":         "tool",
+	event := execCtx.Emitter.Emit("thread.collaboration_mode.updated", map[string]any{
+		"thread_id":                   execCtx.ThreadID.String(),
+		"run_id":                      execCtx.RunID.String(),
+		"previous_collaboration_mode": "default",
+		"collaboration_mode":          "plan",
+		"plan_file_path":              planPath,
+		"source":                      "model",
 	}, nil, nil)
 
 	return tools.ExecutionResult{

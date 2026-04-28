@@ -1220,13 +1220,13 @@ func desktopInputLoader(
 		rc.Messages = loaded.Messages
 		rc.ThreadMessageIDs = loaded.ThreadMessageIDs
 		rc.ThreadContextFrontier = append([]pipeline.FrontierNode(nil), loaded.ThreadContextFrontier...)
-		pipeline.ApplyPlanMode(rc)
+		pipeline.ApplyCollaborationMode(rc)
 		if rc.Tracer != nil {
 			rc.Tracer.Event("input_loader", "input_loader.loaded", map[string]any{
-				"run_kind":      strings.TrimSpace(desktopStringValue(loaded.InputJSON["run_kind"])),
-				"message_count": len(rc.Messages),
-				"history_limit": rc.ThreadMessageHistoryLimit,
-				"plan_mode":     rc.IsPlanMode,
+				"run_kind":           strings.TrimSpace(desktopStringValue(loaded.InputJSON["run_kind"])),
+				"message_count":      len(rc.Messages),
+				"history_limit":      rc.ThreadMessageHistoryLimit,
+				"collaboration_mode": rc.CollaborationMode,
 			})
 		}
 
@@ -2734,7 +2734,7 @@ func desktopPersonaResolution(
 				rc.ResultSummarizer = fallback.ResultSummarizer
 			}
 		}
-		pipeline.ApplyPlanMode(rc)
+		pipeline.SyncPlanModePrompt(rc)
 
 		return next(ctx, rc)
 	}
@@ -3236,8 +3236,8 @@ func (w *desktopEventWriter) append(ctx context.Context, runID uuid.UUID, ev eve
 			)
 		}
 	}
-	if ev.Type == "thread.plan_mode.updated" {
-		if err := w.applyThreadPlanModeEvent(ctx, tx, ev); err != nil {
+	if ev.Type == "thread.collaboration_mode.updated" {
+		if err := w.applyThreadCollaborationModeEvent(ctx, tx, ev); err != nil {
 			return err
 		}
 	}
@@ -3638,28 +3638,51 @@ func (w *desktopEventWriter) captureChannelToolCallOutput(dataJSON map[string]an
 	}
 }
 
-func (w *desktopEventWriter) applyThreadPlanModeEvent(ctx context.Context, tx pgx.Tx, ev events.RunEvent) error {
-	active, ok := ev.DataJSON["plan_mode"].(bool)
+func (w *desktopEventWriter) applyThreadCollaborationModeEvent(ctx context.Context, tx pgx.Tx, ev events.RunEvent) error {
+	mode, ok := ev.DataJSON["collaboration_mode"].(string)
 	if !ok {
-		return fmt.Errorf("thread.plan_mode.updated missing plan_mode")
+		return fmt.Errorf("thread.collaboration_mode.updated missing collaboration_mode")
 	}
-	tag, err := tx.Exec(
+	mode, valid := pipeline.NormalizeCollaborationMode(mode)
+	if !valid {
+		return fmt.Errorf("thread.collaboration_mode.updated invalid collaboration_mode")
+	}
+	var previous string
+	var revision int64
+	if err := tx.QueryRow(
 		ctx,
-		`UPDATE threads
-		    SET plan_mode = $3
+		`SELECT collaboration_mode
+		   FROM threads
 		  WHERE id = $1
 		    AND account_id = $2
 		    AND deleted_at IS NULL`,
 		w.run.ThreadID,
 		w.run.AccountID,
-		active,
-	)
-	if err != nil {
+	).Scan(&previous); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return fmt.Errorf("thread not found for collaboration mode update")
+		}
 		return err
 	}
-	if tag.RowsAffected() == 0 {
-		return fmt.Errorf("thread not found for plan mode update")
+	if err := tx.QueryRow(
+		ctx,
+		`UPDATE threads
+		    SET collaboration_mode = $3,
+		        collaboration_mode_revision = CASE WHEN collaboration_mode <> $3 THEN collaboration_mode_revision + 1 ELSE collaboration_mode_revision END,
+		        updated_at = CASE WHEN collaboration_mode <> $3 THEN CURRENT_TIMESTAMP ELSE updated_at END
+		  WHERE id = $1
+		    AND account_id = $2
+		    AND deleted_at IS NULL
+		  RETURNING collaboration_mode_revision`,
+		w.run.ThreadID,
+		w.run.AccountID,
+		mode,
+	).Scan(&revision); err != nil {
+		return err
 	}
+	ev.DataJSON["previous_collaboration_mode"] = previous
+	ev.DataJSON["collaboration_mode"] = mode
+	ev.DataJSON["collaboration_mode_revision"] = revision
 	return nil
 }
 
