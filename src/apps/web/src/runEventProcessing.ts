@@ -563,6 +563,15 @@ export function buildMessageCodeExecutionsFromRunEvents(events: RunEvent[]): Cod
   return executions
 }
 
+export function firstVisibleCodeExecutionToolCallIndex(events: RunEvent[]): number {
+  return events.findIndex((event, index) => {
+    if (index >= events.length - 1) return false
+    if (event.type !== 'tool.call') return false
+    if (isACPDelegateEventData(event.data)) return false
+    return CODE_EXECUTION_TOOL_NAMES.has(pickToolName(event.data))
+  })
+}
+
 export function patchCodeExecutionList(
   executions: CodeExecutionRef[],
   target: CodeExecutionRef,

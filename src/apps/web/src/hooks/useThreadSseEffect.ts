@@ -1,4 +1,4 @@
-import { useEffect, useRef, useCallback } from 'react'
+import { useEffect, useRef, useCallback, useState } from 'react'
 import { canonicalToolName, pickLogicalToolName } from '@arkloop/shared'
 import { setThreadTodos } from '../todoDb'
 import { useAuth } from '../contexts/auth'
@@ -28,6 +28,7 @@ import {
   applyWebFetchToolResult,
   isWebFetchToolName,
   extractArtifacts,
+  firstVisibleCodeExecutionToolCallIndex,
 } from '../runEventProcessing'
 import {
   foldAssistantTurnEvent,
@@ -158,6 +159,7 @@ export function useThreadSseEffect({
   }, [armCompletedTitleTailState])
 
   const contextCompactHideTimerRef = useRef<number | null>(null)
+  const [deferredRunEventDrainTick, setDeferredRunEventDrainTick] = useState(0)
   const clearContextCompactHideTimer = useCallback(() => {
     if (contextCompactHideTimerRef.current != null) {
       clearTimeout(contextCompactHideTimerRef.current)
@@ -168,6 +170,12 @@ export function useThreadSseEffect({
   useEffect(() => {
     return () => { clearContextCompactHideTimer() }
   }, [clearContextCompactHideTimer])
+
+  const scheduleDeferredRunEventDrain = useCallback(() => {
+    window.setTimeout(() => {
+      setDeferredRunEventDrainTick((value) => value + 1)
+    }, 0)
+  }, [])
 
   // SSE 事件处理
   useEffect(() => {
@@ -233,8 +241,17 @@ export function useThreadSseEffect({
       activeRunId: sseRunId,
       processedCount: processedEventCountRef.current,
     })
-    processedEventCountRef.current = nextProcessedCount
-    for (const event of fresh) {
+    const pauseIndex = firstVisibleCodeExecutionToolCallIndex(fresh)
+    const freshToProcess = pauseIndex >= 0 ? fresh.slice(0, pauseIndex + 1) : fresh
+    const pausedAt = freshToProcess[freshToProcess.length - 1]
+    if (pauseIndex >= 0 && pausedAt) {
+      const rawIndex = sse.events.findIndex((event) => event.event_id === pausedAt.event_id)
+      processedEventCountRef.current = rawIndex >= 0 ? rawIndex + 1 : nextProcessedCount
+      scheduleDeferredRunEventDrain()
+    } else {
+      processedEventCountRef.current = nextProcessedCount
+    }
+    for (const event of freshToProcess) {
       const freezeCutoff = freezeCutoffRef.current
       if (
         freezeCutoff != null &&
@@ -915,7 +932,7 @@ export function useThreadSseEffect({
         continue
       }
     }
-  }, [sseRunId, activeRunId, armCompletedTitleTail, clearCompletedTitleTail, clearContextCompactHideTimer, clearLiveRunSecurityArtifacts, clearQueuedDraft, completedTitleTailRunId, persistThreadRunHandoff, refreshMessages, refreshCredits, resetSearchSteps, restoreQueuedDraftToInput, sse.events, appendSegmentContent, endSegmentStream, addSegment, flushSegmentsRefToState]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [sseRunId, activeRunId, armCompletedTitleTail, clearCompletedTitleTail, clearContextCompactHideTimer, clearLiveRunSecurityArtifacts, clearQueuedDraft, completedTitleTailRunId, deferredRunEventDrainTick, scheduleDeferredRunEventDrain, persistThreadRunHandoff, refreshMessages, refreshCredits, resetSearchSteps, restoreQueuedDraftToInput, sse.events, appendSegmentContent, endSegmentStream, addSegment, flushSegmentsRefToState]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // 401 SSE 错误时登出
   useEffect(() => {
