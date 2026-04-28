@@ -21,7 +21,6 @@ type Props = {
   personas: SelectablePersona[]
   selectedPersonaKey: string
   selectedModel: string | null
-  chipExiting: boolean
   isNonDefaultMode: boolean
   selectedPersona: SelectablePersona | null
   onModeSelect: (personaKey: string) => void
@@ -39,13 +38,13 @@ type Props = {
   threadHasMessages?: boolean
   workThreadId?: string
   hideModelPicker?: boolean
+  onMenuOpenChange?: (open: boolean) => void
 }
 
 export function PersonaModelBar({
   personas,
   selectedPersonaKey,
   selectedModel,
-  chipExiting,
   isNonDefaultMode,
   selectedPersona,
   onModeSelect,
@@ -63,6 +62,7 @@ export function PersonaModelBar({
   threadHasMessages,
   workThreadId,
   hideModelPicker,
+  onMenuOpenChange,
 }: Props) {
   const { t } = useLocale()
   const menuRef = useRef<HTMLDivElement>(null)
@@ -103,6 +103,15 @@ export function PersonaModelBar({
     document.addEventListener('mousedown', handler)
     return () => document.removeEventListener('mousedown', handler)
   }, [folderMenuOpen])
+
+  // notify parent of menu open/close state changes (for focus management)
+  useEffect(() => {
+    onMenuOpenChange?.(menuOpen)
+  }, [menuOpen, onMenuOpenChange])
+
+  useEffect(() => {
+    onMenuOpenChange?.(folderMenuOpen)
+  }, [folderMenuOpen, onMenuOpenChange])
 
   const handleSelectFolder = useCallback(async (path?: string) => {
     let folder = path
@@ -324,7 +333,7 @@ export function PersonaModelBar({
                           {icon}
                           {persona.selector_name}
                         </span>
-                        {(isActive || (chipExiting && selectedPersonaKey === persona.persona_key)) && (
+                        {isActive && (
                           <Check size={13} style={{ color: '#4691F6', flexShrink: 0 }} />
                         )}
                       </button>
@@ -385,7 +394,7 @@ export function PersonaModelBar({
       )}
 
       {/* active mode chip */}
-      {(isNonDefaultMode || chipExiting) && (
+      {isNonDefaultMode && (
         <button
           type="button"
           onClick={onDeactivateMode}
@@ -401,9 +410,6 @@ export function PersonaModelBar({
             flexShrink: 0,
             marginLeft: '4px',
             cursor: 'pointer',
-            animation: chipExiting
-              ? 'chip-exit 0.12s cubic-bezier(0.4, 0, 1, 1) both'
-              : 'chip-enter 0.14s cubic-bezier(0.16, 1, 0.3, 1) both',
           }}
         >
           {selectedPersonaKey === LEARNING_PERSONA_KEY && (
