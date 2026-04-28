@@ -1,4 +1,4 @@
-import { forwardRef, useCallback, useEffect, useRef, useState } from 'react'
+import { forwardRef, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ChevronLeft, ChevronRight, PanelLeftClose, PanelLeftOpen, Glasses, ArrowUp } from 'lucide-react'
 import { isDesktop } from '@arkloop/shared/desktop'
 import type { AppUpdaterState } from '@arkloop/shared/desktop'
@@ -7,8 +7,10 @@ import { Button } from '@arkloop/shared'
 import { ModeSwitch } from './ModeSwitch'
 import { useLocale } from '../contexts/LocaleContext'
 import type { AppMode } from '../storage'
+import type { SettingsTab } from './SettingsModal'
 import { openExternal } from '../openExternal'
 import { beginPerfTrace, endPerfTrace } from '../perfDebug'
+import { secondaryButtonSmCls, secondaryButtonBorderStyle } from './buttonStyles'
 
 export const DESKTOP_TITLEBAR_HEIGHT = 44
 
@@ -26,6 +28,7 @@ type Props = {
   onCheckAppUpdate?: () => void
   onDownloadApp?: () => void
   onInstallApp?: () => void
+  onOpenSettings?: (tab?: SettingsTab | 'voice') => void
 }
 
 export function DesktopTitleBar({
@@ -42,6 +45,7 @@ export function DesktopTitleBar({
   onCheckAppUpdate,
   onDownloadApp,
   onInstallApp,
+  onOpenSettings,
 }: Props) {
   const { t } = useLocale()
   const sidebarToggleTrace = useRef<ReturnType<typeof beginPerfTrace>>(null)
@@ -49,6 +53,20 @@ export function DesktopTitleBar({
   const popoverRef = useRef<HTMLDivElement>(null)
   const [updatePopoverOpen, setUpdatePopoverOpen] = useState(false)
   const [updatePopoverPosition, setUpdatePopoverPosition] = useState<{ top: number; right: number }>({ top: 50, right: 12 })
+
+  // 检查是否跳过了当前版本
+  const isVersionSkipped = useMemo(() => {
+    try {
+      // sessionStorage: 本次会话内跳过
+      if (sessionStorage.getItem('arkloop:skip_update_once')) return true
+      // localStorage: 永久跳过当前版本
+      const skippedVersion = localStorage.getItem('arkloop:skip_version')
+      if (!skippedVersion || !appUpdateState?.latestVersion) return false
+      return skippedVersion === appUpdateState.latestVersion
+    } catch {
+      return false
+    }
+  }, [appUpdateState?.latestVersion])
 
   const togglePopover = useCallback(() => {
     setUpdatePopoverOpen((prev) => {
@@ -172,11 +190,15 @@ export function DesktopTitleBar({
           <button
             ref={updateBtnRef}
             onClick={togglePopover}
-            title={t.componentUpdatesAvailable}
-            className="relative flex h-8 w-8 items-center justify-center rounded-md text-[var(--c-accent)] transition-colors hover:bg-[var(--c-bg-deep)]"
+            title={isVersionSkipped ? t.updateSkipped : t.componentUpdatesAvailable}
+            className={`relative flex h-8 w-8 items-center justify-center rounded-md transition-colors hover:bg-[var(--c-bg-deep)] ${
+              isVersionSkipped ? 'text-[var(--c-text-muted)]' : 'text-[var(--c-accent)]'
+            }`}
           >
             <ArrowUp size={16} />
-            <span className="absolute right-1 top-1 h-2 w-2 rounded-full bg-[var(--c-accent)]" />
+            {!isVersionSkipped && (
+              <span className="absolute right-1 top-1 h-2 w-2 rounded-full bg-[var(--c-accent)]" />
+            )}
           </button>
         )}
         {updatePopoverOpen && <UpdatePopover
@@ -185,6 +207,8 @@ export function DesktopTitleBar({
           state={appUpdateState ?? null}
           onDownload={onDownloadApp}
           onInstall={onInstallApp}
+          onOpenSettings={onOpenSettings}
+          onClose={() => setUpdatePopoverOpen(false)}
         />}
       </div>
     </div>
@@ -198,28 +222,55 @@ type UpdatePopoverProps = {
   state: AppUpdaterState | null
   onDownload?: () => void
   onInstall?: () => void
+  onOpenSettings?: (tab?: SettingsTab | 'voice') => void
+  onClose?: () => void
 }
 
 const UpdatePopover = forwardRef<HTMLDivElement, UpdatePopoverProps>(function UpdatePopover(
-  { position, state, onDownload, onInstall },
+  { position, state, onDownload, onInstall, onOpenSettings, onClose },
   ref,
 ) {
   const { t } = useLocale()
   const ds = (t as unknown as Record<string, unknown>).desktopSettings as Record<string, string> | undefined
   const isMac = navigator.platform.toLowerCase().includes('mac')
 
-  const phase = state?.phase ?? 'idle'
+  const phase = state?.phase === 'unsupported' ? 'not-available' : (state?.phase ?? 'idle')
+
+  const handleSkipOnce = useCallback(() => {
+    try { sessionStorage.setItem('arkloop:skip_update_once', '1') } catch {}
+    onClose?.()
+  }, [onClose])
+
+  const handleSkipVersion = useCallback(() => {
+    if (state?.latestVersion) {
+      try { localStorage.setItem('arkloop:skip_version', state.latestVersion) } catch {}
+    }
+    onClose?.()
+  }, [onClose, state?.latestVersion])
 
   const renderContent = () => {
     switch (phase) {
       case 'idle':
       case 'not-available':
         return (
-          <div>
-            <p className="text-sm text-[var(--c-text-secondary)]">{ds?.appUpdateLatest ?? 'Up to date'}</p>
-            <p className="mt-0.5 text-xs text-[var(--c-text-muted)]">
-              {ds?.appUpdateTitle ?? 'Desktop App'} v{state?.currentVersion ?? ''}
-            </p>
+          <div className="flex flex-col gap-3">
+            <div>
+              <p className="text-sm text-[var(--c-text-secondary)]">{ds?.appUpdateLatest ?? 'Up to date'}</p>
+              <p className="mt-0.5 text-xs text-[var(--c-text-muted)]">
+                {ds?.appUpdateTitle ?? 'Desktop App'} v{state?.currentVersion ?? ''}
+              </p>
+            </div>
+            <Button variant="primary" size="md" onClick={() => onOpenSettings?.('updates')}>
+              {ds?.appUpdateViewDetails ?? 'View update details'}
+            </Button>
+            <div className="flex gap-2">
+              <button type="button" className={`${secondaryButtonSmCls} flex-1`} style={secondaryButtonBorderStyle} onClick={handleSkipOnce}>
+                {ds?.appUpdateSkipOnce ?? 'Skip for now'}
+              </button>
+              <button type="button" className={`${secondaryButtonSmCls} flex-1`} style={secondaryButtonBorderStyle} onClick={handleSkipVersion}>
+                {ds?.appUpdateSkipVersion ?? 'Skip until next version'}
+              </button>
+            </div>
           </div>
         )
 
@@ -256,6 +307,14 @@ const UpdatePopover = forwardRef<HTMLDivElement, UpdatePopoverProps>(function Up
                 {ds?.appUpdateDownload ?? 'Download'}
               </Button>
             )}
+            <div className="flex gap-2">
+              <button type="button" className={`${secondaryButtonSmCls} flex-1`} style={secondaryButtonBorderStyle} onClick={handleSkipOnce}>
+                {ds?.appUpdateSkipOnce ?? 'Skip for now'}
+              </button>
+              <button type="button" className={`${secondaryButtonSmCls} flex-1`} style={secondaryButtonBorderStyle} onClick={handleSkipVersion}>
+                {ds?.appUpdateSkipVersion ?? 'Skip until next version'}
+              </button>
+            </div>
           </div>
         )
 
@@ -283,9 +342,6 @@ const UpdatePopover = forwardRef<HTMLDivElement, UpdatePopoverProps>(function Up
             {state?.error ?? (ds?.appUpdateError ?? 'Update failed')}
           </p>
         )
-
-      case 'unsupported':
-        return <p className="text-sm text-[var(--c-text-tertiary)]">{ds?.appUpdateUnsupported ?? 'Available in packaged builds only'}</p>
 
       default:
         return null
