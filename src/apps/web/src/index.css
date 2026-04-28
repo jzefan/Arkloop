@@ -675,8 +675,10 @@ button:not(:disabled) {
   --c-cop-row-hover-fg: var(--c-text-primary);
   --c-cop-row-subtle-fg: var(--c-text-tertiary);
   --c-cop-row-weight: var(--c-fw-400);
-  --c-cop-think-label-size: 14px;
-  --c-cop-think-label-lh: 20px;
+  --c-cop-row-font-size: 16.5px;
+  --c-cop-row-line-height: 26.4px;
+  --c-cop-think-label-size: var(--c-cop-row-font-size);
+  --c-cop-think-label-lh: var(--c-cop-row-line-height);
   --c-cop-think-card-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
 }
 
@@ -810,8 +812,8 @@ button:not(:disabled) {
   color: var(--c-text-tertiary) !important;
 }
 .cop-timeline-root .cop-thinking-output-md--timeline-plain .md-content h1 {
-  font-size: 14.5px !important;
-  line-height: 19.5px !important;
+  font-size: 13px !important;
+  line-height: 17.5px !important;
   letter-spacing: -0.025em !important;
   word-spacing: -0.12em !important;
   color: var(--c-text-secondary) !important;
@@ -903,8 +905,8 @@ button:not(:disabled) {
   border: none;
 }
 .cop-timeline-root .cop-thinking-card-trigger-label {
-  font-size: 14px;
-  line-height: 20px;
+  font-size: var(--c-cop-row-font-size);
+  line-height: var(--c-cop-row-line-height);
   font-weight: 400;
   color: var(--c-cop-row-fg);
 }

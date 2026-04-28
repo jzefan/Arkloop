@@ -219,9 +219,9 @@ export function CopTimeline({
               border: 'none',
               cursor: 'pointer',
               color: hovered ? 'var(--c-cop-row-hover-fg)' : 'var(--c-cop-row-fg)',
-              fontSize: '14px',
+              fontSize: 'var(--c-cop-row-font-size)',
               fontWeight: 400,
-              lineHeight: '20px',
+              lineHeight: 'var(--c-cop-row-line-height)',
               transition: 'color 0.15s ease',
               maxWidth: '100%',
               minWidth: 0,
@@ -291,9 +291,9 @@ export function CopTimeline({
                       >
                         <div
                           style={{
-                            fontSize: '14px',
+                            fontSize: 'var(--c-cop-row-font-size)',
                             color: 'var(--c-cop-row-fg)',
-                            lineHeight: '20px',
+                            lineHeight: 'var(--c-cop-row-line-height)',
                             paddingTop: '3px',
                           }}
                         >

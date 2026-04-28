@@ -217,11 +217,11 @@ export function ExecutionCard({ variant, toolName, label, displayDescription, co
         }}
       >
         <span style={{
-          fontSize: '14px',
+          fontSize: 'var(--c-cop-row-font-size, var(--c-font-size-base))',
           whiteSpace: 'nowrap',
           overflow: 'hidden',
           textOverflow: 'ellipsis',
-          lineHeight: '20px',
+          lineHeight: 'var(--c-cop-row-line-height, 20px)',
           color: triggerHovered ? 'var(--c-cop-row-hover-fg, var(--c-text-primary))' : 'var(--c-cop-row-fg, var(--c-text-secondary))',
           fontWeight: 'var(--c-cop-row-weight, 400)',
           opacity: 1,
