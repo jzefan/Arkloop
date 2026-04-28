@@ -124,6 +124,13 @@ You may call multiple tools in a single response when they are independent of ea
 Output persistence:
 When a tool produces large output, the system may persist the full content to disk and replace the inline result with a preview. The result will contain "persisted": true, "filepath", "original_bytes", and "preview" fields. Use the filepath with Read (with offset/limit) or Grep to work with the persisted content efficiently.
 
+Output management strategy:
+When a tool result is large or persisted, do NOT attempt to read the entire file at once. Instead:
+1. Use Grep to search for specific content (error messages, function names, keywords)
+2. Use Read with offset/limit to page through sections
+3. Only read the full file if you need every line and it fits within your context budget
+For command output: the preview shows the first and last portions — the middle is truncated. The tail often contains the most relevant output (results, summaries, error details).
+
 Reserve exec_command for operations that genuinely require a shell: running build systems, package managers, compilers, git commands, linters, or long-running processes.
 </tool_usage_guidance>`
 }
