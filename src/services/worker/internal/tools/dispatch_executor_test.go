@@ -125,6 +125,27 @@ func TestDispatchingExecutorResolvesLlmNameToProvider(t *testing.T) {
 	}
 }
 
+func TestDispatchingExecutorFallbackDisplayDescriptionDoesNotCopyCommand(t *testing.T) {
+	dispatch := NewDispatchingExecutor(nil, nil)
+	emit := events.NewEmitter("trace")
+
+	event := dispatch.ToolCallEvent(
+		emit,
+		"exec_command",
+		map[string]any{"command": "cd /tmp && git status --short"},
+		"call1",
+		"",
+	)
+
+	got, _ := event.DataJSON["display_description"].(string)
+	if got != "Running command" {
+		t.Fatalf("unexpected display_description: %q", got)
+	}
+	if strings.Contains(got, "git status") || strings.Contains(got, "cd /tmp") {
+		t.Fatalf("display_description copied raw command: %q", got)
+	}
+}
+
 func TestDispatchingExecutorBindsDuckduckgoProviderName(t *testing.T) {
 	registry := NewRegistry()
 	if err := registry.Register(AgentToolSpec{

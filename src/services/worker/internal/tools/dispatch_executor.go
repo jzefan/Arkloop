@@ -219,7 +219,7 @@ func (e *DispatchingExecutor) ToolCallEvent(
 	displayDescription string,
 ) events.RunEvent {
 	if strings.TrimSpace(displayDescription) == "" {
-		displayDescription = fallbackDisplayDescription(args)
+		displayDescription = fallbackDisplayDescription(toolName)
 	}
 	identity := e.resolveToolIdentity(toolName)
 	if e.policyEnforcer == nil {
@@ -509,28 +509,15 @@ func durationMs(started time.Time) int {
 	return millis
 }
 
-func fallbackDisplayDescription(args map[string]any) string {
-	if args == nil {
+func fallbackDisplayDescription(toolName string) string {
+	switch llm.CanonicalToolName(toolName) {
+	case "exec_command":
+		return "Running command"
+	case "python_execute":
+		return "Running Python"
+	case "browser":
+		return "Using browser"
+	default:
 		return ""
 	}
-	raw := ""
-	for _, key := range []string{"command", "cmd", "code"} {
-		v, ok := args[key].(string)
-		if !ok {
-			continue
-		}
-		trimmed := strings.TrimSpace(v)
-		if trimmed != "" {
-			raw = trimmed
-			break
-		}
-	}
-	if raw == "" {
-		return ""
-	}
-	firstLine := strings.TrimSpace(strings.SplitN(raw, "\n", 2)[0])
-	if len(firstLine) > 72 {
-		firstLine = firstLine[:72]
-	}
-	return firstLine
 }
