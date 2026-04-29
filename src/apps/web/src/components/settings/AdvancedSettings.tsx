@@ -18,12 +18,15 @@ import {
   type LucideIcon,
 } from 'lucide-react'
 import { getDesktopApi } from '@arkloop/shared/desktop'
-import { Modal, TabBar, formatDateTime, useTimeZone, useToast } from '@arkloop/shared'
+import { Modal, PillToggle, TabBar, formatDateTime, useTimeZone, useToast } from '@arkloop/shared'
 import type {
+  AgentImportDiscovery,
   DesktopExportSection,
   DesktopLogEntry,
   DesktopLogLevel,
   DesktopLogQuery,
+  ImportItemKey,
+  ImportSourceKind,
 } from '@arkloop/shared/desktop'
 import type { MeDailyUsageItem, MeHourlyUsageItem, MeModelUsageItem, MeUsageSummary } from '../../api'
 import { getMyDailyUsage, getMyHourlyUsage, getMyUsage, getMyUsageByModel } from '../../api'
@@ -56,6 +59,8 @@ const EMPTY_USAGE_STATE: UsageState = {
   byModel: [],
 }
 
+type AgentImportSelectionState = Partial<Record<ImportSourceKind, Record<ImportItemKey, boolean>>>
+
 const DESKTOP_EXPORT_SECTIONS: DesktopExportSection[] = [
   'settings',
   'providers',
@@ -65,6 +70,25 @@ const DESKTOP_EXPORT_SECTIONS: DesktopExportSection[] = [
   'mcp',
   'themes',
 ]
+
+const AGENT_IMPORT_ITEM_KEYS = ['identity', 'skills', 'mcp', 'providers'] as const
+const AGENT_IMPORT_SOURCE_ORDER: ImportSourceKind[] = ['openclaw', 'hermes']
+
+function createDefaultAgentImportSelection(): Record<ImportItemKey, boolean> {
+  return {
+    identity: true,
+    skills: true,
+    mcp: true,
+    providers: true,
+  }
+}
+
+function createAgentImportSelections(sources: AgentImportDiscovery[]): AgentImportSelectionState {
+  return sources.reduce<AgentImportSelectionState>((acc, source) => {
+    acc[source.kind] = createDefaultAgentImportSelection()
+    return acc
+  }, {})
+}
 
 function formatUsd(value: number) {
   return `$${value.toFixed(4)}`
@@ -93,6 +117,38 @@ function primaryBtnCls(disabled?: boolean) {
     'transition-[filter] duration-150 hover:[filter:brightness(1.12)] active:[filter:brightness(0.95)]',
     disabled ? 'cursor-not-allowed opacity-50' : '',
   ].join(' ')
+}
+
+function AgentImportSourceIcon({ source }: { source: ImportSourceKind }) {
+  if (source === 'hermes') {
+    return (
+      <svg viewBox="0 0 64 64" aria-hidden="true" className="block h-4 w-4">
+        <path d="M30 10h4v44h-4z" fill="currentColor" opacity="0.9" />
+        <path d="M30 18c-7-5-15-5-20-1 6-1 13 0 19 5zM34 18c7-5 15-5 20-1-6-1-13 0-19 5z" fill="currentColor" opacity="0.72" />
+        <path d="M30 24c-5-3-11-3-16 0 5-1 10 0 15 4zM34 24c5-3 11-3 16 0-5-1-10 0-15 4z" fill="currentColor" opacity="0.48" />
+        <path d="M32 49c-10-4-13-12-5-17-8 3-10 11-3 16m8 1c10-4 13-12 5-17 8 3 10 11 3 16" fill="none" stroke="currentColor" strokeWidth="2.8" strokeLinecap="round" />
+        <circle cx="32" cy="10" r="4" fill="currentColor" />
+      </svg>
+    )
+  }
+
+  return (
+    <svg viewBox="0 0 120 120" aria-hidden="true" className="block h-4 w-4">
+      <path d="M60 12c-25 0-43 18-43 43 0 19 12 35 28 42v10h10v-7c3 1 7 1 10 0v7h10V97c16-7 28-23 28-42 0-25-18-43-43-43Z" fill="currentColor" opacity="0.9" />
+      <path d="M23 47C9 43 1 51 7 62c6 10 17 6 22-7 2-5-1-8-6-8Zm74 0c14-4 22 4 16 15-6 10-17 6-22-7-2-5 1-8 6-8Z" fill="currentColor" opacity="0.72" />
+      <circle cx="45" cy="36" r="5" fill="var(--c-bg-page)" />
+      <circle cx="75" cy="36" r="5" fill="var(--c-bg-page)" />
+    </svg>
+  )
+}
+
+function AgentImportButtonContent({ source, label }: { source: ImportSourceKind; label: string }) {
+  return (
+    <>
+      <AgentImportSourceIcon source={source} />
+      <span className="min-w-0 truncate">{label}</span>
+    </>
+  )
 }
 
 function getDateStringInTimeZone(value: string | Date, timeZone: string): string {
@@ -898,6 +954,7 @@ function UsagePane({
 function DataPane({ onReloadOverview }: { onReloadOverview: () => Promise<void> }) {
   const { t } = useLocale()
   const ds = t.desktopSettings
+  const ob = t.onboarding
   const api = getDesktopApi()
   const { addToast } = useToast()
   const { customThemeId, customThemes, saveCustomTheme, setActiveCustomTheme } = useAppearance()
@@ -905,6 +962,11 @@ function DataPane({ onReloadOverview }: { onReloadOverview: () => Promise<void> 
   const [actionError, setActionError] = useState('')
   const [exportDialogOpen, setExportDialogOpen] = useState(false)
   const [selectedSections, setSelectedSections] = useState<DesktopExportSection[]>(DESKTOP_EXPORT_SECTIONS)
+  const [agentImportSources, setAgentImportSources] = useState<AgentImportDiscovery[]>([])
+  const [selectedAgentImport, setSelectedAgentImport] = useState<ImportSourceKind | null>(null)
+  const [agentImportSelections, setAgentImportSelections] = useState<AgentImportSelectionState>({})
+  const [agentImporting, setAgentImporting] = useState(false)
+  const [agentImportError, setAgentImportError] = useState('')
 
   const exportOptions = [
     { key: 'settings' as const, label: ds.advancedExportSettings },
@@ -923,6 +985,26 @@ function DataPane({ onReloadOverview }: { onReloadOverview: () => Promise<void> 
         : [...prev, section]
     ))
   }, [])
+
+  useEffect(() => {
+    const detectImports = api?.onboarding.detectImports
+    if (!detectImports) return
+    let cancelled = false
+
+    void detectImports().then((sources) => {
+      if (cancelled) return
+      setAgentImportSources(sources)
+      setAgentImportSelections(createAgentImportSelections(sources))
+    }).catch(() => {
+      if (cancelled) return
+      setAgentImportSources([])
+      setAgentImportSelections({})
+    })
+
+    return () => {
+      cancelled = true
+    }
+  }, [api])
 
   const handleChoose = useCallback(async () => {
     if (!api?.advanced) return
@@ -994,44 +1076,234 @@ function DataPane({ onReloadOverview }: { onReloadOverview: () => Promise<void> 
     }
   }, [api, addToast, ds.advancedImportCanceled, ds.advancedImportDone, onReloadOverview, saveCustomTheme, setActiveCustomTheme, t.requestFailed])
 
+  const selectedAgentImportSource = selectedAgentImport
+    ? agentImportSources.find((source) => source.kind === selectedAgentImport) ?? null
+    : null
+
+  const visibleAgentImportSources = AGENT_IMPORT_SOURCE_ORDER
+    .map((kind) => agentImportSources.find((source) => source.kind === kind))
+    .filter((source): source is AgentImportDiscovery => Boolean(source))
+
+  const handleAgentImportItemToggle = useCallback((source: ImportSourceKind, item: ImportItemKey) => {
+    setAgentImportSelections((current) => {
+      const currentSource = current[source] ?? createDefaultAgentImportSelection()
+      return {
+        ...current,
+        [source]: {
+          ...currentSource,
+          [item]: !currentSource[item],
+        },
+      }
+    })
+  }, [])
+
+  const handleAgentImportBack = useCallback(() => {
+    setAgentImportError('')
+    setSelectedAgentImport(null)
+  }, [])
+
+  const handleAgentImportSelected = useCallback(async () => {
+    if (!selectedAgentImportSource || !api?.onboarding.applyImport || agentImporting) return
+    const selection = agentImportSelections[selectedAgentImportSource.kind] ?? createDefaultAgentImportSelection()
+    setAgentImportError('')
+    setAgentImporting(true)
+    try {
+      const result = await api.onboarding.applyImport({
+        source: selectedAgentImportSource.kind,
+        selection,
+      })
+      if (!result.ok) {
+        throw new Error(result.errors[0] ?? t.requestFailed)
+      }
+      addToast(ds.advancedImportDone, 'success')
+      setSelectedAgentImport(null)
+      await onReloadOverview()
+    } catch (err) {
+      setAgentImportError(err instanceof Error ? err.message : t.requestFailed)
+    } finally {
+      setAgentImporting(false)
+    }
+  }, [addToast, agentImportSelections, agentImporting, api, ds.advancedImportDone, onReloadOverview, selectedAgentImportSource, t.requestFailed])
+
   const busy = actionLoading !== null
+
+  if (selectedAgentImportSource) {
+    const selection = agentImportSelections[selectedAgentImportSource.kind] ?? createDefaultAgentImportSelection()
+    const importRows = AGENT_IMPORT_ITEM_KEYS.map((itemKey) => {
+      const title = {
+        identity: ob.importAgentIdentity,
+        skills: ob.importSkills,
+        mcp: ob.importMcpServers,
+        providers: ob.importLlmProviders,
+      }[itemKey]
+      const desc = {
+        identity: selectedAgentImportSource.kind === 'hermes'
+          ? ob.importAgentIdentityHermesDesc
+          : ob.importAgentIdentityOpenClawDesc,
+        skills: ob.importSkillsDesc(selectedAgentImportSource.skillsCount),
+        mcp: ob.importMcpServersDesc(selectedAgentImportSource.mcpServers.join(', ')),
+        providers: ob.importLlmProvidersDesc(selectedAgentImportSource.llmProviders.join(', ')),
+      }[itemKey]
+
+      return (
+        <div
+          key={itemKey}
+          role="button"
+          tabIndex={0}
+          onClick={() => {
+            if (!agentImporting) handleAgentImportItemToggle(selectedAgentImportSource.kind, itemKey)
+          }}
+          onKeyDown={(event) => {
+            if (agentImporting) return
+            if (event.key === 'Enter' || event.key === ' ') {
+              event.preventDefault()
+              handleAgentImportItemToggle(selectedAgentImportSource.kind, itemKey)
+            }
+          }}
+          className="flex cursor-pointer items-center gap-3 rounded-[10px] bg-[var(--c-bg-menu)] p-3.5 transition-colors hover:bg-[var(--c-bg-deep)]"
+          style={{
+            border: '0.5px solid var(--c-border-subtle)',
+          }}
+        >
+          <div className="min-w-0 flex-1">
+            <div
+              className="text-[13px] font-medium"
+              style={{ color: selection[itemKey] ? 'var(--c-text-primary)' : 'var(--c-text-secondary)' }}
+            >
+              {title}
+            </div>
+            <div className="mt-0.5 truncate text-[11px] text-[var(--c-placeholder)]">{desc}</div>
+          </div>
+          <span
+            onClick={(event) => event.stopPropagation()}
+            onKeyDown={(event) => event.stopPropagation()}
+          >
+            <PillToggle
+              checked={selection[itemKey]}
+              onChange={() => handleAgentImportItemToggle(selectedAgentImportSource.kind, itemKey)}
+              disabled={agentImporting}
+            />
+          </span>
+        </div>
+      )
+    })
+
+    return (
+      <div className="flex w-full max-w-xl min-w-0 flex-col gap-4 overflow-hidden">
+        <div className="min-w-0">
+          <div className="min-w-0 text-lg font-medium text-[var(--c-text-heading)] [overflow-wrap:anywhere]">
+            {ob.importFrom(selectedAgentImportSource.name)}
+          </div>
+          <div className="mt-1 min-w-0 text-[13px] text-[var(--c-placeholder)] [overflow-wrap:anywhere]">
+            {ob.importDetectedAt(selectedAgentImportSource.sourcePath)}
+          </div>
+        </div>
+
+        <div className="flex flex-col gap-2">{importRows}</div>
+
+        {agentImportError && (
+          <p className="text-sm" style={{ color: 'var(--c-status-error)' }}>{agentImportError}</p>
+        )}
+
+        <div className="flex flex-wrap items-center gap-2.5">
+          <button
+            type="button"
+            onClick={() => void handleAgentImportSelected()}
+            disabled={agentImporting}
+            className={primaryBtnCls(agentImporting)}
+            style={{
+              background: 'var(--c-btn-bg)',
+              color: 'var(--c-btn-text)',
+            }}
+          >
+            {agentImporting ? (
+              <>
+                <Loader2 size={14} className="animate-spin" />
+                <span>{ob.importSelected}</span>
+              </>
+            ) : (
+              <AgentImportButtonContent
+                source={selectedAgentImportSource.kind}
+                label={ob.importSelected}
+              />
+            )}
+          </button>
+          <button
+            type="button"
+            onClick={handleAgentImportBack}
+            disabled={agentImporting}
+            className={actionBtnCls(agentImporting)}
+            style={{ border: '0.5px solid var(--c-border-subtle)' }}
+          >
+            {ob.back}
+          </button>
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div className="flex flex-col gap-6">
       <SettingsSectionHeader title={ds.advancedData} description={ds.advancedDataDesc} />
 
       <SettingsSection>
-        <div className="flex flex-wrap gap-3">
-          <button
-            type="button"
-            onClick={() => void handleChoose()}
-            disabled={busy}
-            className={actionBtnCls(busy)}
-            style={{ border: '0.5px solid var(--c-border-subtle)' }}
-          >
-            <FolderOpen size={14} />
-            <span>{ds.advancedChooseFolder}</span>
-          </button>
-          <button
-            type="button"
-            onClick={() => setExportDialogOpen(true)}
-            disabled={busy}
-            className={actionBtnCls(busy)}
-            style={{ border: '0.5px solid var(--c-border-subtle)' }}
-          >
-            <Download size={14} />
-            <span>{ds.advancedExport}</span>
-          </button>
-          <button
-            type="button"
-            onClick={() => void handleImport()}
-            disabled={busy}
-            className={actionBtnCls(busy)}
-            style={{ border: '0.5px solid var(--c-border-subtle)' }}
-          >
-            <Import size={14} />
-            <span>{ds.advancedImport}</span>
-          </button>
+        <div className="flex flex-col gap-3">
+          <div className="flex flex-wrap gap-3">
+            <button
+              type="button"
+              onClick={() => void handleChoose()}
+              disabled={busy}
+              className={actionBtnCls(busy)}
+              style={{ border: '0.5px solid var(--c-border-subtle)' }}
+            >
+              <FolderOpen size={14} />
+              <span>{ds.advancedChooseFolder}</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setExportDialogOpen(true)}
+              disabled={busy}
+              className={actionBtnCls(busy)}
+              style={{ border: '0.5px solid var(--c-border-subtle)' }}
+            >
+              <Download size={14} />
+              <span>{ds.advancedExport}</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => void handleImport()}
+              disabled={busy}
+              className={actionBtnCls(busy)}
+              style={{ border: '0.5px solid var(--c-border-subtle)' }}
+            >
+              <Import size={14} />
+              <span>{ds.advancedImport}</span>
+            </button>
+          </div>
+          {visibleAgentImportSources.length > 0 && (
+            <div className="flex flex-wrap gap-3">
+              {visibleAgentImportSources.map((source) => (
+                <button
+                  key={source.kind}
+                  type="button"
+                  onClick={() => {
+                    setAgentImportError('')
+                    setSelectedAgentImport(source.kind)
+                  }}
+                  disabled={busy}
+                  className={primaryBtnCls(busy)}
+                  style={{
+                    background: 'var(--c-btn-bg)',
+                    color: 'var(--c-btn-text)',
+                    maxWidth: '100%',
+                    overflow: 'hidden',
+                  }}
+                >
+                  <AgentImportButtonContent source={source.kind} label={ob.importFrom(source.name)} />
+                </button>
+              ))}
+            </div>
+          )}
         </div>
         {actionError && <p className="mt-2 text-sm" style={{ color: 'var(--c-status-error)' }}>{actionError}</p>}
       </SettingsSection>
