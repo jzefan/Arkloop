@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { FontSettings } from './FontSettings'
 import { ThemePresetPicker } from './ThemePresetPicker'
 import { ThemeColorEditor } from './ThemeColorEditor'
-import { ThemeModePicker } from './AppearanceSettings'
+import { ThemeModePicker, SidebarGroupingPicker } from './AppearanceSettings'
 
 export function DesktopAppearanceSettings() {
   const [showColorEditor, setShowColorEditor] = useState(false)
@@ -15,6 +15,7 @@ export function DesktopAppearanceSettings() {
         <ThemeColorEditor onClose={() => setShowColorEditor(false)} />
       )}
       <FontSettings />
+      <SidebarGroupingPicker />
     </div>
   )
 }

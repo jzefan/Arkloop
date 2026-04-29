@@ -20,11 +20,12 @@ export interface LocaleStrings {
   connectionFailed: string;
   retryConnection: string;
   enterprisePlan: string;
-  // sidebar view mode
-  sidebarViewMode: string;
-  sidebarViewModeProject: string;
-  sidebarViewModeGtd: string;
-  sidebarViewModeDesc: string;
+  // sidebar grouping
+  sidebarGrouping: string;
+  sidebarGroupingDesc: string;
+  sidebarGroupingNormal: string;
+  sidebarGroupingGtd: string;
+  folderMore: string;
   // GTD buckets
   gtdInbox: string;
   gtdTodo: string;
@@ -37,6 +38,9 @@ export interface LocaleStrings {
   // pin
   pinThread: string;
   unpinThread: string;
+  pinnedSection: string;
+  dragToPin: string;
+  letGo: string;
   // project view
   projectUnassigned: string;
   // settings nav
@@ -1504,6 +1508,7 @@ export interface LocaleStrings {
     localProviderVerified: string;
     localProviderFailed: string;
     localProviderSkip: string;
+    localProviderSkipConfig: string;
     localImportModels: string;
     localImportModelsDesc: string;
     localSelectModels: string;
@@ -1536,6 +1541,21 @@ export interface LocaleStrings {
     localModulesCrawlerDesc: string;
     localModulesBrowserTitle: string;
     localModulesBrowserDesc: string;
+    importTitle: string;
+    importDesc: string;
+    importDetectedAt: (path: string) => string;
+    importAgentIdentity: string;
+    importAgentIdentityHermesDesc: string;
+    importAgentIdentityOpenClawDesc: string;
+    importSkills: string;
+    importSkillsDesc: (count: number) => string;
+    importMcpServers: string;
+    importMcpServersDesc: (servers: string) => string;
+    importLlmProviders: string;
+    importLlmProvidersDesc: (providers: string) => string;
+    importSkip: string;
+    importSelected: string;
+    importFrom: (source: string) => string;
     selfHostUrlLabel: string;
     selfHostUrlPlaceholder: string;
     selfHostTest: string;

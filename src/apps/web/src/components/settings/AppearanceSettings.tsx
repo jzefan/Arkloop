@@ -5,6 +5,7 @@ import type { Locale } from '../../locales'
 import type { Theme } from '@arkloop/shared/contexts/theme'
 import { useLocale } from '../../contexts/LocaleContext'
 import { useTheme } from '../../contexts/ThemeContext'
+import { readGtdEnabled, writeGtdEnabled } from '../../storage'
 import { FontSettings } from './FontSettings'
 import { ThemePresetPicker } from './ThemePresetPicker'
 import { ThemeColorEditor } from './ThemeColorEditor'
@@ -293,6 +294,95 @@ export function ThemeModePicker() {
   )
 }
 
+function NormalPreview() {
+  return (
+    <div className="flex h-full w-full flex-col gap-1.5 p-2" style={{ background: 'var(--c-bg-sidebar)' }}>
+      <div style={{ height: 4, width: '70%', background: 'var(--c-border-mid)', borderRadius: 2 }} />
+      <div style={{ height: 4, width: '50%', background: 'var(--c-border-mid)', borderRadius: 2 }} />
+      <div style={{ height: 4, width: '60%', background: 'var(--c-border-mid)', borderRadius: 2 }} />
+      <div style={{ height: 4, width: '55%', background: 'var(--c-border-mid)', borderRadius: 2 }} />
+      <div style={{ height: 4, width: '45%', background: 'var(--c-border-mid)', borderRadius: 2 }} />
+    </div>
+  )
+}
+
+function GtdPreview() {
+  const bar = { height: 4, background: 'var(--c-border-mid)', borderRadius: 2 }
+  const label = { height: 4, width: 28, background: 'var(--c-accent)', borderRadius: 2, opacity: 0.5 }
+  return (
+    <div className="flex h-full w-full flex-col gap-1 p-2" style={{ background: 'var(--c-bg-sidebar)' }}>
+      <div style={{ ...label }} />
+      <div style={{ ...bar, width: '60%', marginLeft: 4 }} />
+      <div style={{ ...bar, width: '50%', marginLeft: 4 }} />
+      <div style={{ ...label, marginTop: 2 }} />
+      <div style={{ ...bar, width: '55%', marginLeft: 4 }} />
+      <div style={{ ...label, marginTop: 2 }} />
+      <div style={{ ...bar, width: '50%', marginLeft: 4 }} />
+    </div>
+  )
+}
+
+export function SidebarGroupingPicker() {
+  const { t } = useLocale()
+  const [gtdEnabled, setGtdEnabled] = useState(() => readGtdEnabled())
+
+  const options: { value: boolean; label: string; Preview: () => React.JSX.Element }[] = [
+    { value: false, label: t.sidebarGroupingNormal, Preview: NormalPreview },
+    { value: true, label: t.sidebarGroupingGtd, Preview: GtdPreview },
+  ]
+
+  return (
+    <div className="flex flex-col gap-2">
+      <span className="text-sm font-medium text-[var(--c-text-heading)]">{t.sidebarGrouping}</span>
+      <span className="text-xs text-[var(--c-text-tertiary)]">{t.sidebarGroupingDesc}</span>
+      <div className="flex gap-3">
+        {options.map(({ value, label, Preview }) => {
+          const active = gtdEnabled === value
+          return (
+            <button
+              key={String(value)}
+              type="button"
+              onClick={() => {
+                setGtdEnabled(value)
+                writeGtdEnabled(value)
+                window.dispatchEvent(new CustomEvent('arkloop:gtd-enabled-changed', { detail: value }))
+              }}
+              className="flex flex-col items-center gap-2"
+            >
+              <div
+                style={{
+                  width: 96,
+                  height: 64,
+                  borderRadius: 10,
+                  overflow: 'hidden',
+                  border: active
+                    ? '0.5px solid var(--c-border-mid)'
+                    : '0.5px solid var(--c-border-subtle)',
+                  outline: active ? '1.5px solid var(--c-accent)' : 'none',
+                  outlineOffset: '-1px',
+                  transition: 'border-color 0.15s, outline-color 0.15s',
+                  flexShrink: 0,
+                }}
+              >
+                <Preview />
+              </div>
+              <span
+                className="text-xs"
+                style={{
+                  color: active ? 'var(--c-text-heading)' : 'var(--c-text-tertiary)',
+                  fontWeight: active ? 500 : 400,
+                }}
+              >
+                {label}
+              </span>
+            </button>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
 export function AppearanceContent() {
   const [showEditor, setShowEditor] = useState(false)
 
@@ -304,6 +394,7 @@ export function AppearanceContent() {
         <ThemeColorEditor onClose={() => setShowEditor(false)} />
       )}
       <FontSettings />
+      <SidebarGroupingPicker />
     </div>
   )
 }

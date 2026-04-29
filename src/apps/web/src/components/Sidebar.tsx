@@ -17,8 +17,8 @@ import {
   Inbox,
   CheckCircle,
   XCircle,
-  ChevronDown,
   ChevronRight,
+  Plus,
 } from 'lucide-react'
 import type { ThreadResponse } from '../api'
 import { listStarredThreadIds, starThread, unstarThread, updateThreadTitle, deleteThread } from '../api'
@@ -29,13 +29,12 @@ import { beginPerfTrace, endPerfTrace, isPerfDebugEnabled, recordPerfValue } fro
 import { useAuth } from '../contexts/auth'
 import { useThreadList } from '../contexts/thread-list'
 import { useAppModeUI, useSearchUI, useSettingsUI, useSidebarUI } from '../contexts/app-ui'
-import type { SidebarViewMode } from '../storage'
 import {
   readGtdInboxThreadIds, writeGtdInboxThreadIds,
   readGtdTodoThreadIds, writeGtdTodoThreadIds,
   readPinnedThreadIds, writePinnedThreadIds,
-  readCollapsedProjectPaths, writeCollapsedProjectPaths,
-  readSidebarViewMode, readThreadWorkFolder,
+  readGtdEnabled, readExpandedProjectPaths, writeExpandedProjectPaths,
+  clearThreadWorkFolder, readThreadWorkFolder, writeThreadWorkFolder, writeWorkFolder,
 } from '../storage'
 
 type Props = {
@@ -48,6 +47,21 @@ type Props = {
 
 type ProjectGroup = { path: string; label: string; threads: ThreadResponse[] }
 type GtdGroup = { bucket: 'inbox' | 'todo' | 'inProcess' | 'done'; label: string; threads: ThreadResponse[] }
+
+const PROJECT_GROUP_PAGE_SIZE = 8
+const PROJECT_GROUP_SECONDARY_PAGE_SIZE = 2
+const PROJECT_GROUP_LABEL_WEIGHT = 'var(--c-sidebar-thread-weight)'
+const SIDEBAR_ROW_TEXT_SIZE = '13.5px'
+const SIDEBAR_ROW_LINE_HEIGHT = '20px'
+const DRAG_START_DISTANCE_PX = 3
+const DRAG_LONG_PRESS_DELAY_MS = 180
+
+type SidebarDragState = { threadId: string; title: string; x: number; y: number; fromPinned: boolean; sourcePath: string }
+
+function projectGroupLimit(value: number | undefined, fallback: number): number {
+  if (typeof value === 'number' && Number.isFinite(value) && value > 0) return Math.floor(value)
+  return fallback
+}
 
 function threadTitle(thread: ThreadResponse, untitled: string): string {
   const title = (thread.title ?? '').trim()
@@ -62,7 +76,8 @@ type SidebarThreadItemProps = {
   isEditing: boolean
   isActive: boolean
   isStarred: boolean
-  isPinned?: boolean
+  showStatusDot?: boolean
+  isDragging?: boolean
   editingTitle: string
   untitled: string
   editInputRef: React.RefObject<HTMLInputElement | null>
@@ -82,7 +97,8 @@ const SidebarThreadItem = memo(function SidebarThreadItem({
   isEditing,
   isActive,
   isStarred,
-  isPinned = false,
+  showStatusDot = false,
+  isDragging = false,
   editingTitle,
   untitled,
   editInputRef,
@@ -97,8 +113,11 @@ const SidebarThreadItem = memo(function SidebarThreadItem({
     <div
       key={`${thread.id}-${section}`}
       data-sidebar-thread-item="thread"
+      data-thread-id={thread.id}
+      aria-hidden={isDragging || undefined}
       className={[
         'group relative isolate flex w-full items-center rounded-[6px] before:pointer-events-none before:absolute before:inset-x-0 before:inset-y-px before:-z-10 before:rounded-[6px] before:content-[""]',
+        isDragging ? 'pointer-events-none invisible' : '',
         isActive || isMenuOpen
           ? 'before:bg-[var(--c-bg-deep)]'
           : 'hover:before:bg-[var(--c-bg-deep)]',
@@ -118,7 +137,7 @@ const SidebarThreadItem = memo(function SidebarThreadItem({
               setEditingThreadId(null)
             }
           }}
-          className="min-w-0 flex-1 bg-transparent px-2 py-[7px] text-[13px] text-[var(--c-text-primary)] outline-none"
+          className="h-[34px] min-w-0 flex-1 bg-transparent px-2 py-0 text-[13.5px] leading-[20px] text-[var(--c-text-primary)] outline-none"
           style={{ border: 'none', fontWeight: 'var(--c-sidebar-thread-weight)' }}
           maxLength={200}
         />
@@ -129,13 +148,18 @@ const SidebarThreadItem = memo(function SidebarThreadItem({
             navigate(`/t/${thread.id}`)
           }}
           className={[
-            'flex min-w-0 flex-1 items-center gap-2 px-2 py-[7px] text-left text-[14px] group-hover:text-[var(--c-text-primary)]',
+            'flex h-[34px] min-w-0 flex-1 items-center gap-2 px-2 py-0 text-left text-[13.5px] leading-[20px] group-hover:text-[var(--c-text-primary)]',
             isActive
               ? 'text-[var(--c-text-primary)]'
               : 'text-[var(--c-text-secondary)]',
           ].join(' ')}
           style={{ fontWeight: 'var(--c-sidebar-thread-weight)' }}
         >
+          {showStatusDot && (
+            isRunning
+              ? <span className="mx-[3px] h-[6px] w-[6px] shrink-0 rounded-full animate-pulse" style={{ background: 'var(--c-accent)' }} />
+              : <span className="mx-[5px] h-[6px] w-[6px] shrink-0 rounded-full" style={{ border: '1px solid var(--c-text-muted)', opacity: 0.4 }} />
+          )}
           {isStarred && (
             <Star size={11} className="shrink-0 fill-[var(--c-text-muted)] text-[var(--c-text-muted)] opacity-70" />
           )}
@@ -145,9 +169,6 @@ const SidebarThreadItem = memo(function SidebarThreadItem({
 
       {!isEditing && (
         <div className="mr-1 flex shrink-0 items-center">
-          {isPinned && (
-            <Pin size={10} className="shrink-0 mr-0.5 text-[var(--c-text-muted)]" />
-          )}
           {isRunning && (
             <span className="mr-1 h-3 w-3 shrink-0 animate-spin rounded-full border border-[var(--c-text-muted)] border-t-transparent" />
           )}
@@ -211,12 +232,19 @@ export function Sidebar({
   const [editingTitle, setEditingTitle] = useState<string>('')
   const editInputRef = useRef<HTMLInputElement>(null)
   const [deleteConfirmThreadId, setDeleteConfirmThreadId] = useState<string | null>(null)
-  const [viewMode, setViewMode] = useState<SidebarViewMode>(() => readSidebarViewMode())
+  const [gtdEnabled, setGtdEnabled] = useState(() => readGtdEnabled())
   const [gtdInboxIds, setGtdInboxIds] = useState<Set<string>>(() => readGtdInboxThreadIds())
   const [gtdTodoIds, setGtdTodoIds] = useState<Set<string>>(() => readGtdTodoThreadIds())
   const [pinnedIds, setPinnedIds] = useState<Set<string>>(() => readPinnedThreadIds())
-  const [collapsedProjectPaths, setCollapsedProjectPaths] = useState<Set<string>>(() => readCollapsedProjectPaths())
+  const [expandedPaths, setExpandedPaths] = useState<Set<string>>(() => readExpandedProjectPaths())
+  const [expandedLimits, setExpandedLimits] = useState<Record<string, number>>({})
   const [workFolderVersion, setWorkFolderVersion] = useState(0)
+  const [pinnedExpanded, setPinnedExpanded] = useState(true)
+  const [dragState, setDragState] = useState<SidebarDragState | null>(null)
+  const [dragOverPinned, setDragOverPinned] = useState(false)
+  const [dragOverProjectPath, setDragOverProjectPath] = useState<string | null>(null)
+  const pinnedDropRef = useRef<HTMLDivElement>(null)
+  const projectGroupRefs = useRef<Map<string, HTMLDivElement>>(new Map())
   const settingsPointerTraceRef = useRef<ReturnType<typeof beginPerfTrace>>(null)
   const collapsePointerTraceRef = useRef<ReturnType<typeof beginPerfTrace>>(null)
   const searchPointerTraceRef = useRef<ReturnType<typeof beginPerfTrace>>(null)
@@ -232,6 +260,11 @@ export function Sidebar({
     }
     return next
   }, [starredIds, threads])
+
+  const pinnedWorkThreads = useMemo(() => {
+    if (!isWorkMode) return []
+    return threads.filter(th => pinnedIds.has(th.id))
+  }, [isWorkMode, threads, pinnedIds])
 
   // 初始化时从服务端拉取收藏列表
   useEffect(() => {
@@ -259,21 +292,19 @@ export function Sidebar({
   // -- 分组逻辑 --
 
   const projectGroups = useMemo(() => {
+    void workFolderVersion
     const groups = new Map<string, ThreadResponse[]>()
 
     for (const t of threads) {
       const wf = readThreadWorkFolder(t.id)
       const key = wf || '__unassigned__'
       if (!groups.has(key)) groups.set(key, [])
-      groups.get(key)!.push(t)
+      if (!pinnedIds.has(t.id)) groups.get(key)!.push(t)
     }
 
     const result: ProjectGroup[] = []
     for (const [path, groupThreads] of groups) {
       const sorted = [...groupThreads].sort((a, b) => {
-        const aPin = pinnedIds.has(a.id) ? 1 : 0
-        const bPin = pinnedIds.has(b.id) ? 1 : 0
-        if (aPin !== bPin) return bPin - aPin
         const aStar = starredIds.includes(a.id) ? 1 : 0
         const bStar = starredIds.includes(b.id) ? 1 : 0
         if (aStar !== bStar) return bStar - aStar
@@ -285,8 +316,8 @@ export function Sidebar({
     }
 
     result.sort((a, b) => {
-      if (a.path === '__unassigned__') return 1
-      if (b.path === '__unassigned__') return -1
+      if (a.path === '__unassigned__') return -1
+      if (b.path === '__unassigned__') return 1
       return a.path.localeCompare(b.path)
     })
 
@@ -357,7 +388,18 @@ export function Sidebar({
 
   // -- 渲染辅助 --
 
-  const renderThread = useCallback((thread: ThreadResponse) => {
+  const draggingThreadId = dragState?.threadId ?? null
+  const draggingToPinned = dragState !== null && !dragState.fromPinned
+
+  const setProjectGroupNode = useCallback((path: string, node: HTMLDivElement | null) => {
+    if (node) {
+      projectGroupRefs.current.set(path, node)
+    } else {
+      projectGroupRefs.current.delete(path)
+    }
+  }, [])
+
+  const renderThread = useCallback((thread: ThreadResponse, options?: { showStatusDot?: boolean }) => {
     return (
       <SidebarThreadItem
         key={thread.id}
@@ -368,7 +410,8 @@ export function Sidebar({
         isEditing={editingThreadId === thread.id}
         isActive={thread.id === activeThreadId}
         isStarred={starredSet.has(thread.id)}
-        isPinned={pinnedIds.has(thread.id)}
+        showStatusDot={options?.showStatusDot}
+        isDragging={thread.id === draggingThreadId}
         editingTitle={editingTitle}
         untitled={t.untitled}
         editInputRef={editInputRef}
@@ -380,28 +423,102 @@ export function Sidebar({
         openMenu={openMenu}
       />
     )
-  }, [runningThreadIds, menuThreadId, editingThreadId, activeThreadId, starredSet, pinnedIds, editingTitle, t.untitled, editInputRef, setEditingTitle, setEditingThreadId, commitRename, beforeNavigateToThread, navigate, openMenu])
+  }, [runningThreadIds, menuThreadId, editingThreadId, activeThreadId, starredSet, draggingThreadId, editingTitle, t.untitled, editInputRef, setEditingTitle, setEditingThreadId, commitRename, beforeNavigateToThread, navigate, openMenu])
+
+  const renderDropRow = (icon: React.ReactNode, label: string, active: boolean) => (
+    <div
+      className={[
+        'relative isolate flex h-[34px] w-full items-center gap-2 rounded-[6px] px-2 py-0 text-[13.5px] leading-[20px] before:pointer-events-none before:absolute before:inset-x-0 before:inset-y-px before:-z-10 before:rounded-[6px] before:content-[""]',
+        active
+          ? 'text-[var(--c-text-primary)] before:bg-[var(--c-bg-deep)]'
+          : 'text-[var(--c-text-muted)]',
+      ].join(' ')}
+      style={{ fontWeight: 'var(--c-sidebar-thread-weight)' }}
+    >
+      {icon}
+      <span className="min-w-0 flex-1 truncate">{label}</span>
+    </div>
+  )
 
   // -- 视图组件 --
 
   const ProjectSidebarView = (
     <>
       {projectGroups.map(group => {
-        const isCollapsed = collapsedProjectPaths.has(group.path)
+        const isExpanded = expandedPaths.has(group.path)
+        const limit = projectGroupLimit(expandedLimits[group.path], PROJECT_GROUP_PAGE_SIZE)
+        const visible = isExpanded ? group.threads.slice(0, limit) : []
+        const hasMore = isExpanded && group.threads.length > limit
+
+        const toggleExpand = () => {
+          const willExpand = !expandedPaths.has(group.path)
+          const initialLimit = expandedPaths.size > 0 ? PROJECT_GROUP_SECONDARY_PAGE_SIZE : PROJECT_GROUP_PAGE_SIZE
+          setExpandedPaths(prev => {
+            const next = new Set(prev)
+            if (next.has(group.path)) {
+              next.delete(group.path)
+            } else {
+              next.add(group.path)
+            }
+            writeExpandedProjectPaths(next)
+            return next
+          })
+          if (willExpand) {
+            setExpandedLimits(prev => ({ ...prev, [group.path]: initialLimit }))
+          }
+        }
+
         return (
-          <div key={group.path}>
-            <button
-              onClick={() => toggleProjectCollapse(group.path)}
-              className="flex items-center gap-1 w-full px-2 py-1 text-sm text-[var(--c-text-tertiary)] hover:text-[var(--c-text-secondary)]"
+          <div
+            key={group.path}
+            ref={(node) => setProjectGroupNode(group.path, node)}
+            className={[
+              'rounded-[6px]',
+              dragOverProjectPath === group.path ? 'bg-[var(--c-bg-deep)]' : '',
+            ].join(' ')}
+          >
+            {/* folder header — click anywhere to toggle */}
+            <div
+              className="group/folder flex h-[34px] w-full cursor-pointer select-none items-center px-2 py-0"
+              onMouseDown={(e) => { if (e.detail > 1) e.preventDefault() }}
+              onClick={toggleExpand}
             >
-              {isCollapsed
-                ? <ChevronRight size={12} className="shrink-0" />
-                : <ChevronDown size={12} className="shrink-0" />
-              }
-              <span className="truncate flex-1 text-left">{group.label}</span>
-              <span className="text-xs text-[var(--c-text-muted)]">{group.threads.length}</span>
-            </button>
-            {!isCollapsed && group.threads.map(t => renderThread(t))}
+              <span
+                className="min-w-0 shrink select-none truncate text-left text-[13.5px] leading-[20px] text-[var(--c-text-muted)] transition-colors duration-[80ms] group-hover/folder:text-[var(--c-text-tertiary)]"
+                style={{ fontWeight: PROJECT_GROUP_LABEL_WEIGHT }}
+              >
+                {group.label}
+              </span>
+              {/* chevron — right of text, hover only */}
+              <span className="ml-1 shrink-0 opacity-0 group-hover/folder:opacity-100 text-[var(--c-text-muted)] transition-opacity duration-[80ms]">
+                <ChevronRight size={12} className={['transition-transform duration-150', isExpanded ? 'rotate-90' : 'rotate-0'].join(' ')} />
+              </span>
+              <span className="flex-1" />
+              {/* plus — far right, hover only */}
+              <button
+                onClick={(e) => {
+                  e.stopPropagation()
+                  writeWorkFolder(group.path === '__unassigned__' ? '' : group.path)
+                  onNewThread()
+                }}
+                className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md opacity-0 group-hover/folder:opacity-100 text-[var(--c-text-muted)] hover:bg-[var(--c-sidebar-btn-hover)] hover:text-[var(--c-text-primary)] transition-[opacity,background-color,color,transform] duration-[80ms] active:scale-[0.92]"
+              >
+                <Plus size={14} />
+              </button>
+            </div>
+            {visible.map(th => renderThread(th, { showStatusDot: true }))}
+            {/* More — styled like a session item */}
+            {hasMore && (
+              <button
+                onClick={() => setExpandedLimits(prev => ({ ...prev, [group.path]: limit + PROJECT_GROUP_PAGE_SIZE }))}
+                className="group relative isolate flex h-[34px] w-full items-center rounded-[6px] px-2 py-0 before:pointer-events-none before:absolute before:inset-x-0 before:inset-y-px before:-z-10 before:rounded-[6px] before:content-[''] hover:before:bg-[var(--c-bg-deep)]"
+              >
+                <div className="flex items-center gap-2 text-[13.5px] leading-[20px] text-[var(--c-text-muted)]" style={{ fontWeight: 'var(--c-sidebar-thread-weight)' }}>
+                  <MoreHorizontal size={14} className="shrink-0" />
+                  <span>{t.folderMore}</span>
+                </div>
+              </button>
+            )}
           </div>
         )
       })}
@@ -422,7 +539,7 @@ export function Sidebar({
     </>
   )
 
-  // GTD / Pin / Collapse 操作
+  // GTD / Pin 操作
   const markGtdInbox = useCallback((id: string) => {
     setGtdInboxIds((prev: Set<string>) => { const next = new Set(prev); next.add(id); writeGtdInboxThreadIds(next); return next })
     setGtdTodoIds((prev: Set<string>) => { const next = new Set(prev); next.delete(id); writeGtdTodoThreadIds(next); return next })
@@ -447,14 +564,183 @@ export function Sidebar({
     })
   }, [])
 
-  const toggleProjectCollapse = useCallback((path: string) => {
-    setCollapsedProjectPaths((prev: Set<string>) => {
+  const pinThread = useCallback((id: string) => {
+    setPinnedIds((prev: Set<string>) => {
+      if (prev.has(id)) return prev
       const next = new Set(prev)
-      if (next.has(path)) next.delete(path); else next.add(path)
-      writeCollapsedProjectPaths(next)
+      next.add(id)
+      writePinnedThreadIds(next)
       return next
     })
   }, [])
+
+  const unpinThread = useCallback((id: string) => {
+    setPinnedIds((prev: Set<string>) => {
+      if (!prev.has(id)) return prev
+      const next = new Set(prev)
+      next.delete(id)
+      writePinnedThreadIds(next)
+      return next
+    })
+  }, [])
+
+  const dragOverPinnedRef = useRef(false)
+  const dragOverProjectPathRef = useRef<string | null>(null)
+  useEffect(() => {
+    dragOverPinnedRef.current = dragOverPinned
+  }, [dragOverPinned])
+  useEffect(() => {
+    dragOverProjectPathRef.current = dragOverProjectPath
+  }, [dragOverProjectPath])
+
+  useEffect(() => {
+    if (!isWorkMode) return
+    let timer: number | null = null
+    let startX = 0
+    let startY = 0
+    let candidate: { id: string; title: string; fromPinned: boolean; sourcePath: string } | null = null
+    let dragging: { id: string; title: string; fromPinned: boolean; sourcePath: string } | null = null
+    let suppressClick = false
+
+    const clearTimer = () => {
+      if (timer) {
+        window.clearTimeout(timer)
+        timer = null
+      }
+    }
+
+    const setPinnedHover = (over: boolean) => {
+      dragOverPinnedRef.current = over
+      setDragOverPinned(prev => prev === over ? prev : over)
+    }
+
+    const setProjectHover = (path: string | null) => {
+      dragOverProjectPathRef.current = path
+      setDragOverProjectPath(prev => prev === path ? prev : path)
+    }
+
+    const findProjectTarget = (e: PointerEvent, sourcePath: string, fromPinned: boolean): string | null => {
+      for (const [path, node] of projectGroupRefs.current) {
+        const rect = node.getBoundingClientRect()
+        const inside = e.clientX >= rect.left && e.clientX <= rect.right && e.clientY >= rect.top && e.clientY <= rect.bottom
+        if (!inside) continue
+        if (!fromPinned && path === sourcePath) return null
+        return path
+      }
+      return null
+    }
+
+    const updateDropTargets = (e: PointerEvent, current: { fromPinned: boolean; sourcePath: string }) => {
+      const projectTarget = findProjectTarget(e, current.sourcePath, current.fromPinned)
+      setProjectHover(projectTarget)
+
+      if (!pinnedDropRef.current) {
+        setPinnedHover(false)
+        return
+      }
+      const rect = pinnedDropRef.current.getBoundingClientRect()
+      const overPinned = e.clientX >= rect.left && e.clientX <= rect.right && e.clientY >= rect.top && e.clientY <= rect.bottom
+      setPinnedHover(!current.fromPinned && overPinned)
+    }
+
+    const beginDrag = (e: PointerEvent) => {
+      if (!candidate || dragging) return
+      dragging = candidate
+      suppressClick = true
+      clearTimer()
+      setDragState({ threadId: candidate.id, title: candidate.title, x: e.clientX, y: e.clientY, fromPinned: candidate.fromPinned, sourcePath: candidate.sourcePath })
+      updateDropTargets(e, candidate)
+    }
+
+    const onPointerDown = (e: PointerEvent) => {
+      const el = (e.target as HTMLElement).closest('[data-sidebar-thread-item="thread"]')
+      if (!el) return
+      const threadId = el.getAttribute('data-thread-id')
+      if (!threadId) return
+      const thread = threads.find(t => t.id === threadId)
+      if (!thread) return
+      startX = e.clientX
+      startY = e.clientY
+      candidate = {
+        id: threadId,
+        title: threadTitle(thread, t.untitled),
+        fromPinned: pinnedIds.has(threadId),
+        sourcePath: readThreadWorkFolder(threadId) || '__unassigned__',
+      }
+      dragging = null
+      if (!candidate.fromPinned) {
+        timer = window.setTimeout(() => {
+          beginDrag(e)
+        }, DRAG_LONG_PRESS_DELAY_MS)
+      }
+    }
+
+    const onPointerMove = (e: PointerEvent) => {
+      if (dragging) {
+        e.preventDefault()
+        setDragState(prev => prev ? { ...prev, x: e.clientX, y: e.clientY } : null)
+        updateDropTargets(e, dragging)
+        return
+      }
+      if (!candidate) return
+      const dx = e.clientX - startX
+      const dy = e.clientY - startY
+      if (Math.sqrt(dx * dx + dy * dy) < DRAG_START_DISTANCE_PX) return
+      beginDrag(e)
+    }
+
+    const onPointerUp = () => {
+      clearTimer()
+      if (dragging) {
+        const projectTarget = dragOverProjectPathRef.current
+        if (dragging.fromPinned && projectTarget) {
+          if (projectTarget === '__unassigned__') {
+            clearThreadWorkFolder(dragging.id)
+          } else {
+            writeThreadWorkFolder(dragging.id, projectTarget)
+          }
+          unpinThread(dragging.id)
+        } else if (!dragging.fromPinned && dragOverPinnedRef.current) {
+          pinThread(dragging.id)
+          setPinnedExpanded(true)
+        } else if (!dragging.fromPinned && projectTarget && projectTarget !== dragging.sourcePath) {
+          if (projectTarget === '__unassigned__') {
+            clearThreadWorkFolder(dragging.id)
+          } else {
+            writeThreadWorkFolder(dragging.id, projectTarget)
+          }
+        }
+        dragging = null
+        setDragState(null)
+        setPinnedHover(false)
+        setProjectHover(null)
+        window.setTimeout(() => { suppressClick = false }, 100)
+      }
+      candidate = null
+    }
+
+    const onClick = (e: MouseEvent) => {
+      if (!suppressClick) return
+      const el = (e.target as HTMLElement).closest('[data-sidebar-thread-item="thread"]')
+      if (!el) return
+      e.preventDefault()
+      e.stopPropagation()
+    }
+
+    document.addEventListener('pointerdown', onPointerDown, true)
+    document.addEventListener('pointermove', onPointerMove)
+    document.addEventListener('pointerup', onPointerUp)
+    document.addEventListener('pointercancel', onPointerUp)
+    document.addEventListener('click', onClick, true)
+    return () => {
+      document.removeEventListener('pointerdown', onPointerDown, true)
+      document.removeEventListener('pointermove', onPointerMove)
+      document.removeEventListener('pointerup', onPointerUp)
+      document.removeEventListener('pointercancel', onPointerUp)
+      document.removeEventListener('click', onClick, true)
+      clearTimer()
+    }
+  }, [isWorkMode, threads, pinnedIds, t.untitled, pinThread, unpinThread])
 
   const handleDelete = useCallback(async (id: string) => {
     setDeleteConfirmThreadId(null)
@@ -505,14 +791,13 @@ export function Sidebar({
     return () => document.removeEventListener('keydown', handler)
   }, [deleteConfirmThreadId])
 
-  // 监听 viewMode 变更事件
   useEffect(() => {
     const handler = (e: Event) => {
-      const mode = (e as CustomEvent<SidebarViewMode>).detail
-      if (mode === 'project' || mode === 'gtd') setViewMode(mode)
+      const enabled = (e as CustomEvent<boolean>).detail
+      setGtdEnabled(enabled)
     }
-    window.addEventListener('arkloop:sidebar-view-mode-changed', handler)
-    return () => window.removeEventListener('arkloop:sidebar-view-mode-changed', handler)
+    window.addEventListener('arkloop:gtd-enabled-changed', handler)
+    return () => window.removeEventListener('arkloop:gtd-enabled-changed', handler)
   }, [])
 
   // 监听 work folder 变更，触发重新渲染
@@ -525,8 +810,13 @@ export function Sidebar({
   // 新建线程时 addThread 会更新 localStorage 中的 GTD Inbox，
   // 但 Sidebar 的 gtdInboxIds state 不会感知，需要在线程列表变化时同步。
   useEffect(() => {
-    setGtdInboxIds(readGtdInboxThreadIds())
-    setGtdTodoIds(readGtdTodoThreadIds())
+    let cancelled = false
+    window.queueMicrotask(() => {
+      if (cancelled) return
+      setGtdInboxIds(readGtdInboxThreadIds())
+      setGtdTodoIds(readGtdTodoThreadIds())
+    })
+    return () => { cancelled = true }
   }, [threads])
 
   useEffect(() => {
@@ -543,7 +833,7 @@ export function Sidebar({
       editing: editingThreadId !== null,
       deleting: deleteConfirmThreadId !== null,
       appMode: appMode ?? 'chat',
-      viewMode,
+      gtdEnabled,
       pathname: location.pathname,
     })
     recordPerfValue('sidebar_thread_partition_count', 1, 'count', {
@@ -554,7 +844,7 @@ export function Sidebar({
       regularCount: regularThreads.length,
       runningCount: runningThreadIds.size,
       appMode: appMode ?? 'chat',
-      viewMode,
+      gtdEnabled,
     })
   })
 
@@ -705,7 +995,7 @@ export function Sidebar({
           />
           {pinnedIds.has(menuThreadId) ? t.unpinThread : t.pinThread}
         </button>
-        {viewMode === 'gtd' && (
+        {gtdEnabled && !isWorkMode && (
           <>
             <div style={{ height: '1px', background: 'var(--c-border-subtle)', margin: '2px 0' }} />
             <button
@@ -826,6 +1116,35 @@ export function Sidebar({
           </button>
         </div>
       </div>
+    </div>,
+    document.body,
+  ) : null
+
+  const dragPortal = dragState ? createPortal(
+    <div
+      style={{
+        position: 'fixed',
+        left: dragState.x,
+        top: dragState.y,
+        transform: 'translate(-50%, -50%)',
+        zIndex: 9999,
+        pointerEvents: 'none',
+        padding: '6px 12px',
+        borderRadius: '6px',
+        background: 'var(--c-bg-page)',
+        border: '0.5px solid var(--c-border-subtle)',
+        boxShadow: 'var(--c-dropdown-shadow)',
+        fontSize: SIDEBAR_ROW_TEXT_SIZE,
+        lineHeight: SIDEBAR_ROW_LINE_HEIGHT,
+        fontWeight: 'var(--c-sidebar-thread-weight)',
+        color: 'var(--c-text-primary)',
+        maxWidth: '200px',
+        whiteSpace: 'nowrap',
+        overflow: 'hidden',
+        textOverflow: 'ellipsis',
+      }}
+    >
+      {dragState.title}
     </div>,
     document.body,
   ) : null
@@ -966,14 +1285,16 @@ export function Sidebar({
         style={{ transition: 'opacity 150ms ease' }}
         inert={collapsed || undefined}
       >
-          <div className="mb-[12px] mt-1 flex shrink-0 items-center gap-2 px-2">
-            <h3
-              className="text-[11px] tracking-[0.3px] text-[var(--c-text-tertiary)]"
-              style={{ fontWeight: 'var(--c-sidebar-section-weight)' }}
-            >
-              {t.recents}
-            </h3>
-          </div>
+          {!isWorkMode && (
+            <div className="mb-[12px] mt-1 flex shrink-0 items-center gap-2 px-2">
+              <h3
+                className="text-[11px] tracking-[0.3px] text-[var(--c-text-tertiary)]"
+                style={{ fontWeight: 'var(--c-sidebar-section-weight)' }}
+              >
+                {t.recents}
+              </h3>
+            </div>
+          )}
           <div className="flex flex-col gap-[2px] flex-1 min-h-0">
             {/* incognito placeholder */}
             <div
@@ -1010,10 +1331,50 @@ export function Sidebar({
             >
               {threads.length === 0 ? (
                 <p className="overflow-hidden whitespace-nowrap px-2 py-1 text-[12px] text-[var(--c-text-muted)]">{t.recentsEmpty}</p>
-              ) : viewMode === 'project' ? (
-                ProjectSidebarView
-              ) : (
+              ) : isWorkMode ? (
+                <>
+                  {/* Pinned section */}
+                  <div
+                    ref={pinnedDropRef}
+                    className={[
+                      'rounded-[6px]',
+                      dragOverPinned && draggingToPinned ? 'bg-[var(--c-bg-deep)]' : '',
+                    ].join(' ')}
+                  >
+                    <div
+                      className="group/pinned flex h-[34px] w-full cursor-pointer select-none items-center px-2 py-0"
+                      onMouseDown={(e) => { if (e.detail > 1) e.preventDefault() }}
+                      onClick={() => setPinnedExpanded(v => !v)}
+                    >
+                      <span
+                        className="select-none text-[13.5px] leading-[20px] text-[var(--c-text-muted)] transition-colors duration-[80ms] group-hover/pinned:text-[var(--c-text-tertiary)]"
+                        style={{ fontWeight: PROJECT_GROUP_LABEL_WEIGHT }}
+                      >
+                        {t.pinnedSection}
+                      </span>
+                      <span className="ml-1 shrink-0 opacity-0 group-hover/pinned:opacity-100 text-[var(--c-text-muted)] transition-opacity duration-[80ms]">
+                        <ChevronRight size={12} className={['transition-transform duration-150', pinnedExpanded ? 'rotate-90' : 'rotate-0'].join(' ')} />
+                      </span>
+                    </div>
+                    {pinnedExpanded && pinnedWorkThreads.length === 0 && (
+                      renderDropRow(
+                        <Pin size={14} className="shrink-0 opacity-50" />,
+                        dragOverPinned && draggingToPinned ? t.letGo : t.dragToPin,
+                        dragOverPinned && draggingToPinned,
+                      )
+                    )}
+                    {pinnedExpanded && pinnedWorkThreads
+                      .map(th => renderThread(th, { showStatusDot: true }))}
+                  </div>
+                  {ProjectSidebarView}
+                </>
+              ) : gtdEnabled ? (
                 GtdSidebarView
+              ) : (
+                <>
+                  {starredThreads.map(thread => renderThread(thread))}
+                  {regularThreads.map(thread => renderThread(thread))}
+                </>
               )}
             </div>
           </div>
@@ -1094,6 +1455,7 @@ export function Sidebar({
       {menuPortal}
       {shareModal}
       {deleteConfirmPortal}
+      {dragPortal}
     </>
   )
 }
