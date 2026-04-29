@@ -171,8 +171,10 @@ func (r *ThreadRepository) ListByOwner(
 		FROM threads t
 		LEFT JOIN LATERAL (
 			SELECT id FROM runs
-			WHERE thread_id = t.id AND status = 'running'
-			ORDER BY created_at DESC
+			WHERE thread_id = t.id
+			  AND status IN ('running', 'cancelling')
+			  AND deleted_at IS NULL
+			ORDER BY created_at DESC, id DESC
 			LIMIT 1
 		) r ON true
 		WHERE t.account_id = $1
@@ -521,8 +523,10 @@ func (r *ThreadRepository) SearchByQuery(
 		  AND m.hidden = FALSE
 		 LEFT JOIN LATERAL (
 		   SELECT id FROM runs
-		   WHERE thread_id = t.id AND status = 'running'
-		   ORDER BY created_at DESC
+		   WHERE thread_id = t.id
+		     AND status IN ('running', 'cancelling')
+		     AND deleted_at IS NULL
+		   ORDER BY created_at DESC, id DESC
 		   LIMIT 1
 		 ) r ON true
 		 WHERE t.account_id = $1

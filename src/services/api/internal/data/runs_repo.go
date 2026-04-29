@@ -537,6 +537,43 @@ func (r *RunEventRepository) GetActiveRootRunForThread(
 	return &run, nil
 }
 
+func (r *RunEventRepository) GetActiveRunIDForThread(
+	ctx context.Context,
+	accountID uuid.UUID,
+	threadID uuid.UUID,
+) (*uuid.UUID, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if accountID == uuid.Nil {
+		return nil, fmt.Errorf("account_id must not be empty")
+	}
+	if threadID == uuid.Nil {
+		return nil, fmt.Errorf("thread_id must not be empty")
+	}
+	var runID uuid.UUID
+	err := r.db.QueryRow(
+		ctx,
+		`SELECT id
+		   FROM runs
+		  WHERE account_id = $1
+		    AND thread_id = $2
+		    AND status IN ('running', 'cancelling')
+		    AND deleted_at IS NULL
+		  ORDER BY created_at DESC, id DESC
+		  LIMIT 1`,
+		accountID,
+		threadID,
+	).Scan(&runID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &runID, nil
+}
+
 func (r *RunEventRepository) GetLatestRootRunForThread(
 	ctx context.Context,
 	threadID uuid.UUID,
