@@ -775,6 +775,7 @@ func threadEntry(
 	createRun := createThreadRun(authService, membershipRepo, threadRepo, auditWriter, pool, apiKeysRepo, runLimiter, entSvc, rdb)
 	listRuns := listThreadRuns(authService, membershipRepo, threadRepo, runRepo, auditWriter, apiKeysRepo)
 	editMessage := editThreadMessage(authService, membershipRepo, threadRepo, messageRepo, auditWriter, pool, apiKeysRepo)
+	retryMessage := retryThreadMessage(authService, membershipRepo, threadRepo, messageRepo, auditWriter, pool, apiKeysRepo)
 	share := shareEntry(authService, membershipRepo, threadRepo, threadShareRepo, messageRepo, auditWriter, apiKeysRepo, flagService)
 	report := reportEntry(authService, membershipRepo, threadRepo, threadReportRepo, auditWriter, apiKeysRepo, flagService)
 	fork := forkThread(authService, membershipRepo, threadRepo, messageRepo, auditWriter, pool, apiKeysRepo)
@@ -838,9 +839,19 @@ func threadEntry(
 		switch subResource {
 		case "messages":
 			if hasSub {
-				messageID, err := uuid.Parse(subID)
+				messageIDPart, messageAction, hasMessageAction := strings.Cut(subID, ":")
+				messageID, err := uuid.Parse(messageIDPart)
 				if err != nil {
 					httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "request validation failed", traceID, nil)
+					return
+				}
+				if hasMessageAction {
+					switch messageAction {
+					case "retry":
+						retryMessage(w, r, threadID, messageID)
+					default:
+						httpkit.WriteNotFound(w, r)
+					}
 					return
 				}
 				if r.Method != nethttp.MethodPatch {

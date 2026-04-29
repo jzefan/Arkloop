@@ -333,6 +333,8 @@ func (c *qqConnector) HandleEvent(ctx context.Context, traceID string, ch data.C
 			c.threadRepo,
 			c.runEventRepo.WithTx(tx),
 			c.pool,
+			c.personasRepo,
+			c.channelsRepo,
 		); err != nil {
 			return err
 		} else if handled {
