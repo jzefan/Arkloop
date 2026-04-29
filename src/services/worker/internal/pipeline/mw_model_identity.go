@@ -34,7 +34,7 @@ func buildModelIdentityBlock(rc *RunContext) string {
 	var sb strings.Builder
 	sb.WriteString("<model_identity>\n")
 
-	sb.WriteString("Provider: " + string(selected.Credential.ProviderKind) + "\n")
+	sb.WriteString("Provider: " + selected.Credential.Name + "\n")
 	sb.WriteString("Model: " + selected.Route.Model + "\n")
 
 	if caps.ContextLength > 0 {
@@ -44,12 +44,10 @@ func buildModelIdentityBlock(rc *RunContext) string {
 		sb.WriteString("Max Output Tokens: " + fmt.Sprintf("%d", caps.MaxOutputTokens) + " tokens\n")
 	}
 
-	if len(caps.InputModalities) > 0 {
-		sb.WriteString("Input Modalities: " + strings.Join(caps.InputModalities, ", ") + "\n")
-	}
-	if len(caps.OutputModalities) > 0 {
-		sb.WriteString("Output Modalities: " + strings.Join(caps.OutputModalities, ", ") + "\n")
-	}
+	inputMods := ensureTextModality(caps.InputModalities)
+	outputMods := ensureTextModality(caps.OutputModalities)
+	sb.WriteString("Input Modalities: " + strings.Join(inputMods, ", ") + "\n")
+	sb.WriteString("Output Modalities: " + strings.Join(outputMods, ", ") + "\n")
 
 	if rc.Temperature != nil {
 		sb.WriteString(fmt.Sprintf("Temperature: %.2f\n", *rc.Temperature))
@@ -61,4 +59,13 @@ func buildModelIdentityBlock(rc *RunContext) string {
 
 	sb.WriteString("</model_identity>")
 	return sb.String()
+}
+
+func ensureTextModality(mods []string) []string {
+	for _, m := range mods {
+		if m == "text" {
+			return mods
+		}
+	}
+	return append([]string{"text"}, mods...)
 }
