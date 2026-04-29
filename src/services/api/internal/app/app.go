@@ -761,6 +761,23 @@ func (a *Application) Run(ctx context.Context) error {
 			DiscordClient:            discordClient,
 		})
 	}
+	accountapi.StartQQBotIngressRunner(ctx, accountapi.QQBotIngressRunnerDeps{
+		ChannelsRepo:             channelsRepo,
+		ChannelIdentitiesRepo:    channelIdentitiesRepo,
+		ChannelBindCodesRepo:     channelBindCodesRepo,
+		ChannelIdentityLinksRepo: channelIdentityLinksRepo,
+		ChannelDMThreadsRepo:     channelDMThreadsRepo,
+		ChannelGroupThreadsRepo:  channelGroupThreadsRepo,
+		ChannelReceiptsRepo:      channelReceiptsRepo,
+		ChannelLedgerRepo:        channelLedgerRepo,
+		SecretsRepo:              secretsRepo,
+		PersonasRepo:             personasRepo,
+		ThreadRepo:               threadRepo,
+		MessageRepo:              messageRepo,
+		RunEventRepo:             runEventRepo,
+		JobRepo:                  jobRepo,
+		Pool:                     pool,
+	})
 
 	server := &http.Server{
 		Handler: apihttp.NewHandler(apihttp.HandlerConfig{

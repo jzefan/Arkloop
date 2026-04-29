@@ -1359,7 +1359,7 @@ func desktopChannelDelivery(db data.DesktopDB, stickerStore interface {
 		var qqChannel *desktopQQDeliveryChannelRecord
 		var ux pipeline.TelegramChannelUX
 		channelType := desktopNormalizedChannelType(rc)
-		if db != nil && rc != nil && rc.ChannelContext != nil && (channelType == "telegram" || channelType == "discord" || channelType == "weixin") {
+		if db != nil && rc != nil && rc.ChannelContext != nil && (channelType == "telegram" || channelType == "discord" || channelType == "qqbot" || channelType == "weixin") {
 			ch, prefetchErr := loadDesktopDeliveryChannel(ctx, db, rc.ChannelContext.ChannelID)
 			if prefetchErr != nil {
 				slog.WarnContext(ctx, "desktop channel delivery prefetch failed", "run_id", rc.Run.ID, "err", prefetchErr.Error())
@@ -1446,7 +1446,7 @@ func desktopChannelDelivery(db data.DesktopDB, stickerStore interface {
 			return err
 		}
 		channelType = desktopNormalizedChannelType(rc)
-		if db == nil || (channelType != "telegram" && channelType != "discord" && channelType != "qq" && channelType != "weixin") {
+		if db == nil || (channelType != "telegram" && channelType != "discord" && channelType != "qq" && channelType != "qqbot" && channelType != "weixin") {
 			return err
 		}
 		if rc.ChannelOutputDelivered {
@@ -1609,6 +1609,43 @@ func desktopChannelDelivery(db data.DesktopDB, stickerStore interface {
 				return err
 			}
 			if tryErr := tryDeliverDesktopOneBotOutbox(ctx, db, rc, qCh, outboxRec, payload, outboxRepo); tryErr != nil {
+				return err
+			}
+		case "qqbot":
+			outputs := finalOutputs
+			if len(outputs) == 0 && strings.TrimSpace(output) != "" {
+				outputs = []string{output}
+			}
+			payload := data.OutboxPayload{
+				Outputs:          outputs,
+				AccountID:        rc.Run.AccountID,
+				RunID:            rc.Run.ID,
+				ThreadID:         desktopOutboxThreadPtr(rc.Run.ThreadID),
+				PlatformChatID:   rc.ChannelContext.Conversation.Target,
+				ReplyToMessageID: desktopQQBotReplyReferenceMessageID(rc),
+				PlatformThreadID: rc.ChannelContext.Conversation.ThreadID,
+				ConversationType: rc.ChannelContext.ConversationType,
+				Metadata:         desktopQQBotDeliveryMetadata(rc.ChannelContext.ConversationType),
+			}
+			tx, txErr := db.BeginTx(ctx, pgx.TxOptions{})
+			if txErr != nil {
+				recordDesktopChannelDeliveryFailure(db, rc.Run.ID, txErr)
+				slog.WarnContext(ctx, "desktop_qqbot_outbox_tx_begin_failed", "run_id", rc.Run.ID, "err", txErr.Error())
+				return err
+			}
+			outboxRec, insertErr := outboxRepo.InsertPending(ctx, tx, rc.Run.ID, rc.ChannelContext.ChannelID, desktopOutboxThreadPtr(rc.Run.ThreadID), channelType, data.OutboxKindMessage, payload)
+			if insertErr != nil {
+				_ = tx.Rollback(ctx)
+				recordDesktopChannelDeliveryFailure(db, rc.Run.ID, insertErr)
+				slog.WarnContext(ctx, "desktop_qqbot_outbox_insert_failed", "run_id", rc.Run.ID, "err", insertErr.Error())
+				return err
+			}
+			if cmtErr := tx.Commit(ctx); cmtErr != nil {
+				recordDesktopChannelDeliveryFailure(db, rc.Run.ID, cmtErr)
+				slog.WarnContext(ctx, "desktop_qqbot_outbox_tx_commit_failed", "run_id", rc.Run.ID, "err", cmtErr.Error())
+				return err
+			}
+			if tryErr := tryDeliverDesktopQQBotOutbox(ctx, db, rc, channel, outboxRec, payload, outboxRepo); tryErr != nil {
 				return err
 			}
 		case "weixin":
@@ -1952,6 +1989,38 @@ func desktopOneBotReplyReference(rc *pipeline.RunContext) *pipeline.ChannelMessa
 	return &ref
 }
 
+func desktopQQBotReplyReference(rc *pipeline.RunContext) *pipeline.ChannelMessageRef {
+	if rc == nil || rc.ChannelContext == nil || rc.HeartbeatRun {
+		return nil
+	}
+	if rc.ChannelContext.TriggerMessage != nil && strings.TrimSpace(rc.ChannelContext.TriggerMessage.MessageID) != "" {
+		return rc.ChannelContext.TriggerMessage
+	}
+	if strings.TrimSpace(rc.ChannelContext.InboundMessage.MessageID) == "" {
+		return nil
+	}
+	ref := rc.ChannelContext.InboundMessage
+	return &ref
+}
+
+func desktopQQBotReplyReferenceMessageID(rc *pipeline.RunContext) string {
+	ref := desktopQQBotReplyReference(rc)
+	if ref == nil {
+		return ""
+	}
+	return strings.TrimSpace(ref.MessageID)
+}
+
+func desktopQQBotDeliveryMetadata(conversationType string) map[string]any {
+	metadata := map[string]any{"conversation_type": conversationType}
+	if conversationType == "group" {
+		metadata["scope"] = "group"
+	} else {
+		metadata["scope"] = "c2c"
+	}
+	return metadata
+}
+
 func desktopWeixinReplyReference(rc *pipeline.RunContext) *pipeline.ChannelMessageRef {
 	if rc == nil || rc.ChannelContext == nil {
 		return nil
@@ -2119,6 +2188,17 @@ func loadDesktopDeliveryChannel(ctx context.Context, db data.DesktopDB, channelI
 		return nil, fmt.Errorf("desktop channel lookup: decrypt token: %w", err)
 	}
 	return &desktopDeliveryChannelRecord{ChannelType: channelType, Token: token, ConfigJSON: configRaw}, nil
+}
+
+func desktopDeliveryChannelForPipeline(channel *desktopDeliveryChannelRecord) *data.DeliveryChannelRecord {
+	if channel == nil {
+		return nil
+	}
+	return &data.DeliveryChannelRecord{
+		ChannelType: channel.ChannelType,
+		Token:       channel.Token,
+		ConfigJSON:  channel.ConfigJSON,
+	}
 }
 
 func recordDesktopChannelDeliveryFailure(db data.DesktopDB, runID uuid.UUID, err error) {
@@ -2421,6 +2501,64 @@ func tryDeliverDesktopOneBotOutbox(
 		if i > 0 {
 			ref = nil
 		}
+		messageIDs, err := sender.SendText(ctx, pipeline.ChannelDeliveryTarget{
+			ChannelType:  rc.ChannelContext.ChannelType,
+			Conversation: rc.ChannelContext.Conversation,
+			ReplyTo:      ref,
+			Metadata:     metadata,
+		}, trimmed)
+		if err != nil {
+			return handleDesktopInlineOutboxFailure(ctx, db, outboxRec, err, outboxRepo)
+		}
+		if err := recordDesktopChannelDelivery(
+			ctx,
+			db,
+			rc.Run.ID,
+			rc.Run.ThreadID,
+			rc.ChannelContext.ChannelID,
+			rc.ChannelContext.ChannelType,
+			rc.ChannelContext.Conversation.Target,
+			ref,
+			rc.ChannelContext.Conversation.ThreadID,
+			messageIDs,
+		); err != nil {
+			return handleDesktopInlineOutboxFailure(ctx, db, outboxRec, err, outboxRepo)
+		}
+		if err := outboxRepo.UpdateProgress(ctx, db, outboxRec.ID, i+1); err != nil {
+			return err
+		}
+		outboxRec.SegmentsSent = i + 1
+	}
+	return outboxRepo.UpdateSent(ctx, db, outboxRec.ID)
+}
+
+func tryDeliverDesktopQQBotOutbox(
+	ctx context.Context,
+	db data.DesktopDB,
+	rc *pipeline.RunContext,
+	channel *desktopDeliveryChannelRecord,
+	outboxRec *data.ChannelDeliveryOutboxRecord,
+	payload data.OutboxPayload,
+	outboxRepo data.ChannelDeliveryOutboxRepository,
+) error {
+	sender, err := pipeline.NewQQBotChannelSenderFromChannel(desktopDeliveryChannelForPipeline(channel), 50*time.Millisecond)
+	if err != nil {
+		return handleDesktopInlineOutboxFailure(ctx, db, outboxRec, err, outboxRepo)
+	}
+	replyTo := desktopQQBotReplyReference(rc)
+	metadata := payload.Metadata
+	if metadata == nil {
+		metadata = desktopQQBotDeliveryMetadata(payload.ConversationType)
+	}
+	for i := outboxRec.SegmentsSent; i < len(payload.Outputs); i++ {
+		trimmed := strings.TrimSpace(payload.Outputs[i])
+		if trimmed == "" {
+			if err := outboxRepo.UpdateProgress(ctx, db, outboxRec.ID, i+1); err != nil {
+				return err
+			}
+			continue
+		}
+		ref := replyTo
 		messageIDs, err := sender.SendText(ctx, pipeline.ChannelDeliveryTarget{
 			ChannelType:  rc.ChannelContext.ChannelType,
 			Conversation: rc.ChannelContext.Conversation,

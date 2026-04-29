@@ -626,6 +626,24 @@ func RunDesktop(ctx context.Context) error {
 		DiscordClient:            discordClient,
 		Bus:                      desktopBus,
 	})
+	accountapi.StartQQBotIngressRunner(ctx, accountapi.QQBotIngressRunnerDeps{
+		ChannelsRepo:             channelsRepo,
+		ChannelIdentitiesRepo:    channelIdentitiesRepo,
+		ChannelBindCodesRepo:     channelBindCodesRepo,
+		ChannelIdentityLinksRepo: channelIdentityLinksRepo,
+		ChannelDMThreadsRepo:     channelDMThreadsRepo,
+		ChannelGroupThreadsRepo:  channelGroupThreadsRepo,
+		ChannelReceiptsRepo:      channelReceiptsRepo,
+		ChannelLedgerRepo:        channelLedgerRepo,
+		SecretsRepo:              secretsRepo,
+		PersonasRepo:             personasRepo,
+		ThreadRepo:               threadRepo,
+		MessageRepo:              messageRepo,
+		RunEventRepo:             runEventRepo,
+		JobRepo:                  jobRepo,
+		Pool:                     pgxPool,
+		Bus:                      desktopBus,
+	})
 
 	accountapi.StartQQOneBotWSListener(ctx, accountapi.QQOneBotWSListenerDeps{
 		ChannelsRepo:             channelsRepo,

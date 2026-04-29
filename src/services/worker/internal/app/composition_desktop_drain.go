@@ -119,6 +119,8 @@ func drainDesktopOutboxRecord(
 		return drainDesktopDiscordOutbox(ctx, db, row, payload, outboxRepo)
 	case "qq":
 		return drainDesktopOneBotOutbox(ctx, db, row, payload, outboxRepo)
+	case "qqbot":
+		return drainDesktopQQBotOutbox(ctx, db, row, payload, outboxRepo)
 	case "weixin":
 		return drainDesktopWeixinOutbox(ctx, db, row, payload, outboxRepo)
 	default:
@@ -349,6 +351,64 @@ func drainDesktopOneBotOutbox(
 	return outboxRepo.UpdateSent(ctx, db, row.ID)
 }
 
+func drainDesktopQQBotOutbox(
+	ctx context.Context,
+	db data.DesktopDB,
+	row data.ChannelDeliveryOutboxRecord,
+	payload data.OutboxPayload,
+	outboxRepo data.ChannelDeliveryOutboxRepository,
+) error {
+	channel, err := loadDesktopDeliveryChannel(ctx, db, row.ChannelID)
+	if err != nil || channel == nil {
+		lastErr := errors.New("qqbot channel not found or inactive")
+		if err != nil {
+			lastErr = err
+		}
+		return handleDesktopDrainFailure(ctx, db, row, lastErr, outboxRepo)
+	}
+
+	sender, err := pipeline.NewQQBotChannelSenderFromChannel(desktopDeliveryChannelForPipeline(channel), 50*time.Millisecond)
+	if err != nil {
+		return handleDesktopDrainFailure(ctx, db, row, err, outboxRepo)
+	}
+	replyTo := qqbotReplyReferenceFromPayload(payload)
+	metadata := payload.Metadata
+	if metadata == nil {
+		metadata = desktopQQBotDeliveryMetadata(payload.ConversationType)
+	}
+
+	for i := row.SegmentsSent; i < len(payload.Outputs); i++ {
+		trimmed := strings.TrimSpace(payload.Outputs[i])
+		if trimmed == "" {
+			if err := outboxRepo.UpdateProgress(ctx, db, row.ID, i+1); err != nil {
+				return err
+			}
+			continue
+		}
+		ref := replyTo
+		messageIDs, sendErr := sender.SendText(ctx, pipeline.ChannelDeliveryTarget{
+			ChannelType:  row.ChannelType,
+			Conversation: pipeline.ChannelConversationRef{Target: payload.PlatformChatID, ThreadID: payload.PlatformThreadID},
+			ReplyTo:      ref,
+			Metadata:     metadata,
+		}, trimmed)
+		if sendErr != nil {
+			return handleDesktopDrainFailure(ctx, db, row, sendErr, outboxRepo)
+		}
+		if err := recordDesktopChannelDelivery(
+			ctx, db, row.RunID, derefOutboxThreadID(row.ThreadID), row.ChannelID, row.ChannelType,
+			payload.PlatformChatID, ref, payload.PlatformThreadID, messageIDs,
+		); err != nil {
+			return handleDesktopDrainFailure(ctx, db, row, err, outboxRepo)
+		}
+		if err := outboxRepo.UpdateProgress(ctx, db, row.ID, i+1); err != nil {
+			return err
+		}
+		row.SegmentsSent = i + 1
+	}
+	return outboxRepo.UpdateSent(ctx, db, row.ID)
+}
+
 func drainDesktopWeixinOutbox(
 	ctx context.Context,
 	db data.DesktopDB,
@@ -455,6 +515,13 @@ func discordReplyReferenceFromPayload(payload data.OutboxPayload) *pipeline.Chan
 }
 
 func onebotReplyReferenceFromPayload(payload data.OutboxPayload) *pipeline.ChannelMessageRef {
+	if strings.TrimSpace(payload.ReplyToMessageID) == "" {
+		return nil
+	}
+	return &pipeline.ChannelMessageRef{MessageID: strings.TrimSpace(payload.ReplyToMessageID)}
+}
+
+func qqbotReplyReferenceFromPayload(payload data.OutboxPayload) *pipeline.ChannelMessageRef {
 	if strings.TrimSpace(payload.ReplyToMessageID) == "" {
 		return nil
 	}
