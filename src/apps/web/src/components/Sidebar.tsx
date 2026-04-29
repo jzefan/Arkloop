@@ -1,7 +1,6 @@
 import { memo, useState, useRef, useEffect, useCallback, useMemo, useLayoutEffect } from 'react'
 import { createPortal } from 'react-dom'
 import { useNavigate, useParams, useLocation } from 'react-router-dom'
-import { Virtuoso } from 'react-virtuoso'
 import {
   SquarePen,
   Search,
@@ -14,6 +13,12 @@ import {
   Share2,
   Pencil,
   Trash2,
+  Pin,
+  Inbox,
+  CheckCircle,
+  XCircle,
+  ChevronDown,
+  ChevronRight,
 } from 'lucide-react'
 import type { ThreadResponse } from '../api'
 import { listStarredThreadIds, starThread, unstarThread, updateThreadTitle, deleteThread } from '../api'
@@ -24,6 +29,14 @@ import { beginPerfTrace, endPerfTrace, isPerfDebugEnabled, recordPerfValue } fro
 import { useAuth } from '../contexts/auth'
 import { useThreadList } from '../contexts/thread-list'
 import { useAppModeUI, useSearchUI, useSettingsUI, useSidebarUI } from '../contexts/app-ui'
+import type { SidebarViewMode } from '../storage'
+import {
+  readGtdInboxThreadIds, writeGtdInboxThreadIds,
+  readGtdTodoThreadIds, writeGtdTodoThreadIds,
+  readPinnedThreadIds, writePinnedThreadIds,
+  readCollapsedProjectPaths, writeCollapsedProjectPaths,
+  readSidebarViewMode, readThreadWorkFolder,
+} from '../storage'
 
 type Props = {
   threads: ThreadResponse[]
@@ -33,25 +46,8 @@ type Props = {
   beforeNavigateToThread?: () => void
 }
 
-type SidebarThreadListEntry = {
-  thread: ThreadResponse
-  section: 'starred' | 'regular'
-}
-
-const sidebarThreadItemSizeCache = new WeakMap<HTMLElement, { key: string; height: number }>()
-
-function measureSidebarThreadItem(el: HTMLElement, field: 'offsetHeight' | 'offsetWidth'): number {
-  if (field === 'offsetWidth') return 0
-
-  const kind = (el.firstElementChild as HTMLElement | null)?.dataset.sidebarThreadItem ?? 'thread'
-  const key = `${el.dataset.index ?? ''}:${kind}`
-  const cached = sidebarThreadItemSizeCache.get(el)
-  if (cached?.key === key) return cached.height
-
-  const height = el.offsetHeight
-  sidebarThreadItemSizeCache.set(el, { key, height })
-  return height
-}
+type ProjectGroup = { path: string; label: string; threads: ThreadResponse[] }
+type GtdGroup = { bucket: 'inbox' | 'todo' | 'inProcess' | 'done'; label: string; threads: ThreadResponse[] }
 
 function threadTitle(thread: ThreadResponse, untitled: string): string {
   const title = (thread.title ?? '').trim()
@@ -66,6 +62,7 @@ type SidebarThreadItemProps = {
   isEditing: boolean
   isActive: boolean
   isStarred: boolean
+  isPinned?: boolean
   editingTitle: string
   untitled: string
   editInputRef: React.RefObject<HTMLInputElement | null>
@@ -85,6 +82,7 @@ const SidebarThreadItem = memo(function SidebarThreadItem({
   isEditing,
   isActive,
   isStarred,
+  isPinned = false,
   editingTitle,
   untitled,
   editInputRef,
@@ -147,6 +145,9 @@ const SidebarThreadItem = memo(function SidebarThreadItem({
 
       {!isEditing && (
         <div className="mr-1 flex shrink-0 items-center">
+          {isPinned && (
+            <Pin size={10} className="shrink-0 mr-0.5 text-[var(--c-text-muted)]" />
+          )}
           {isRunning && (
             <span className="mr-1 h-3 w-3 shrink-0 animate-spin rounded-full border border-[var(--c-text-muted)] border-t-transparent" />
           )}
@@ -174,111 +175,6 @@ const SidebarThreadItem = memo(function SidebarThreadItem({
         </div>
       )}
     </div>
-  )
-})
-
-type SidebarThreadListProps = {
-  starredThreads: ThreadResponse[]
-  regularThreads: ThreadResponse[]
-  starredSet: Set<string>
-  runningThreadIds: Set<string>
-  menuThreadId: string | null
-  editingThreadId: string | null
-  editingTitle: string
-  activeThreadId?: string
-  untitled: string
-  editInputRef: React.RefObject<HTMLInputElement | null>
-  setEditingTitle: React.Dispatch<React.SetStateAction<string>>
-  setEditingThreadId: React.Dispatch<React.SetStateAction<string | null>>
-  commitRename: (id: string, newTitle: string) => void
-  beforeNavigateToThread?: () => void
-  navigate: ReturnType<typeof useNavigate>
-  openMenu: (event: React.MouseEvent, id: string) => void
-}
-
-const SidebarThreadList = memo(function SidebarThreadList({
-  starredThreads,
-  regularThreads,
-  starredSet,
-  runningThreadIds,
-  menuThreadId,
-  editingThreadId,
-  editingTitle,
-  activeThreadId,
-  untitled,
-  editInputRef,
-  setEditingTitle,
-  setEditingThreadId,
-  commitRename,
-  beforeNavigateToThread,
-  navigate,
-  openMenu,
-}: SidebarThreadListProps) {
-  useEffect(() => {
-    if (!isPerfDebugEnabled()) return
-    recordPerfValue('sidebar_thread_list_render_count', 1, 'count', {
-      starredCount: starredThreads.length,
-      regularCount: regularThreads.length,
-      runningCount: runningThreadIds.size,
-      activeThreadId: activeThreadId ?? null,
-    })
-  })
-
-  const allThreads = useMemo(() => {
-    const result: SidebarThreadListEntry[] = []
-    for (const thread of starredThreads) {
-      result.push({ thread, section: 'starred' as const })
-    }
-    if (starredThreads.length > 0 && regularThreads.length > 0) {
-      result.push({ thread: { id: '__separator__', title: '' } as ThreadResponse, section: 'regular' as const })
-    }
-    for (const thread of regularThreads) {
-      result.push({ thread, section: 'regular' as const })
-    }
-    return result
-  }, [starredThreads, regularThreads])
-
-  const computeItemKey = useCallback((_index: number, item: SidebarThreadListEntry) => {
-    return `${item.section}:${item.thread.id}`
-  }, [])
-
-  const itemContent = useCallback((_index: number, item: SidebarThreadListEntry) => {
-    if (item.thread.id === '__separator__') {
-      return <div data-sidebar-thread-item="separator" className="my-1 mx-2 h-px bg-[var(--c-border-subtle)]" />
-    }
-    const thread = item.thread
-    const section = item.section
-    return (
-      <SidebarThreadItem
-        thread={thread}
-        section={section}
-        isRunning={runningThreadIds.has(thread.id)}
-        isMenuOpen={menuThreadId === thread.id}
-        isEditing={editingThreadId === thread.id}
-        isActive={thread.id === activeThreadId}
-        isStarred={starredSet.has(thread.id)}
-        editingTitle={editingTitle}
-        untitled={untitled}
-        editInputRef={editInputRef}
-        setEditingTitle={setEditingTitle}
-        setEditingThreadId={setEditingThreadId}
-        commitRename={commitRename}
-        beforeNavigateToThread={beforeNavigateToThread}
-        navigate={navigate}
-        openMenu={openMenu}
-      />
-    )
-  }, [runningThreadIds, menuThreadId, editingThreadId, activeThreadId, starredSet, editingTitle, untitled, editInputRef, setEditingTitle, setEditingThreadId, commitRename, beforeNavigateToThread, navigate, openMenu])
-
-  return (
-    <Virtuoso
-      data={allThreads}
-      computeItemKey={computeItemKey}
-      itemContent={itemContent}
-      itemSize={measureSidebarThreadItem}
-      skipAnimationFrameInResizeObserver
-      style={{ height: '100%', contain: 'layout paint style' }}
-    />
   )
 })
 
@@ -315,6 +211,12 @@ export function Sidebar({
   const [editingTitle, setEditingTitle] = useState<string>('')
   const editInputRef = useRef<HTMLInputElement>(null)
   const [deleteConfirmThreadId, setDeleteConfirmThreadId] = useState<string | null>(null)
+  const [viewMode, setViewMode] = useState<SidebarViewMode>(() => readSidebarViewMode())
+  const [gtdInboxIds, setGtdInboxIds] = useState<Set<string>>(() => readGtdInboxThreadIds())
+  const [gtdTodoIds, setGtdTodoIds] = useState<Set<string>>(() => readGtdTodoThreadIds())
+  const [pinnedIds, setPinnedIds] = useState<Set<string>>(() => readPinnedThreadIds())
+  const [collapsedProjectPaths, setCollapsedProjectPaths] = useState<Set<string>>(() => readCollapsedProjectPaths())
+  const [workFolderVersion, setWorkFolderVersion] = useState(0)
   const settingsPointerTraceRef = useRef<ReturnType<typeof beginPerfTrace>>(null)
   const collapsePointerTraceRef = useRef<ReturnType<typeof beginPerfTrace>>(null)
   const searchPointerTraceRef = useRef<ReturnType<typeof beginPerfTrace>>(null)
@@ -354,6 +256,80 @@ export function Sidebar({
     })
   }, [accessToken, starredIds])
 
+  // -- 分组逻辑 --
+
+  const projectGroups = useMemo(() => {
+    const groups = new Map<string, ThreadResponse[]>()
+
+    for (const t of threads) {
+      const wf = readThreadWorkFolder(t.id)
+      const key = wf || '__unassigned__'
+      if (!groups.has(key)) groups.set(key, [])
+      groups.get(key)!.push(t)
+    }
+
+    const result: ProjectGroup[] = []
+    for (const [path, groupThreads] of groups) {
+      const sorted = [...groupThreads].sort((a, b) => {
+        const aPin = pinnedIds.has(a.id) ? 1 : 0
+        const bPin = pinnedIds.has(b.id) ? 1 : 0
+        if (aPin !== bPin) return bPin - aPin
+        const aStar = starredIds.includes(a.id) ? 1 : 0
+        const bStar = starredIds.includes(b.id) ? 1 : 0
+        if (aStar !== bStar) return bStar - aStar
+        return new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+      })
+
+      const label = path === '__unassigned__' ? t.projectUnassigned : path.split('/').pop() || path
+      result.push({ path, label, threads: sorted })
+    }
+
+    result.sort((a, b) => {
+      if (a.path === '__unassigned__') return 1
+      if (b.path === '__unassigned__') return -1
+      return a.path.localeCompare(b.path)
+    })
+
+    return result
+  }, [threads, pinnedIds, starredIds, t, workFolderVersion])
+
+  const gtdGroups = useMemo(() => {
+    const buckets: GtdGroup[] = [
+      { bucket: 'inbox', label: t.gtdInbox, threads: [] },
+      { bucket: 'todo', label: t.gtdTodo, threads: [] },
+      { bucket: 'inProcess', label: t.gtdInProcess, threads: [] },
+      { bucket: 'done', label: t.gtdDone, threads: [] },
+    ]
+
+    for (const t of threads) {
+      let bucket: GtdGroup
+      if (gtdInboxIds.has(t.id)) {
+        bucket = buckets[0]
+      } else if (gtdTodoIds.has(t.id)) {
+        bucket = buckets[1]
+      } else if (runningThreadIds.has(t.id)) {
+        bucket = buckets[2]
+      } else {
+        bucket = buckets[3]
+      }
+      bucket.threads.push(t)
+    }
+
+    for (const bucket of buckets) {
+      bucket.threads.sort((a, b) => {
+        const aPin = pinnedIds.has(a.id) ? 1 : 0
+        const bPin = pinnedIds.has(b.id) ? 1 : 0
+        if (aPin !== bPin) return bPin - aPin
+        const aStar = starredIds.includes(a.id) ? 1 : 0
+        const bStar = starredIds.includes(b.id) ? 1 : 0
+        if (aStar !== bStar) return bStar - aStar
+        return new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+      })
+    }
+
+    return buckets.filter(b => b.threads.length > 0)
+  }, [threads, gtdInboxIds, gtdTodoIds, runningThreadIds, pinnedIds, starredIds, t])
+
   const openMenu = useCallback((e: React.MouseEvent, id: string) => {
     e.stopPropagation()
     const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
@@ -379,15 +355,125 @@ export function Sidebar({
     }
   }, [accessToken, onThreadTitleUpdated])
 
+  // -- 渲染辅助 --
+
+  const renderThread = useCallback((thread: ThreadResponse) => {
+    return (
+      <SidebarThreadItem
+        key={thread.id}
+        thread={thread}
+        section="regular"
+        isRunning={runningThreadIds.has(thread.id)}
+        isMenuOpen={menuThreadId === thread.id}
+        isEditing={editingThreadId === thread.id}
+        isActive={thread.id === activeThreadId}
+        isStarred={starredSet.has(thread.id)}
+        isPinned={pinnedIds.has(thread.id)}
+        editingTitle={editingTitle}
+        untitled={t.untitled}
+        editInputRef={editInputRef}
+        setEditingTitle={setEditingTitle}
+        setEditingThreadId={setEditingThreadId}
+        commitRename={commitRename}
+        beforeNavigateToThread={beforeNavigateToThread}
+        navigate={navigate}
+        openMenu={openMenu}
+      />
+    )
+  }, [runningThreadIds, menuThreadId, editingThreadId, activeThreadId, starredSet, pinnedIds, editingTitle, t.untitled, editInputRef, setEditingTitle, setEditingThreadId, commitRename, beforeNavigateToThread, navigate, openMenu])
+
+  // -- 视图组件 --
+
+  const ProjectSidebarView = (
+    <>
+      {projectGroups.map(group => {
+        const isCollapsed = collapsedProjectPaths.has(group.path)
+        return (
+          <div key={group.path}>
+            <button
+              onClick={() => toggleProjectCollapse(group.path)}
+              className="flex items-center gap-1 w-full px-2 py-1 text-sm text-[var(--c-text-tertiary)] hover:text-[var(--c-text-secondary)]"
+            >
+              {isCollapsed
+                ? <ChevronRight size={12} className="shrink-0" />
+                : <ChevronDown size={12} className="shrink-0" />
+              }
+              <span className="truncate flex-1 text-left">{group.label}</span>
+              <span className="text-xs text-[var(--c-text-muted)]">{group.threads.length}</span>
+            </button>
+            {!isCollapsed && group.threads.map(t => renderThread(t))}
+          </div>
+        )
+      })}
+    </>
+  )
+
+  const GtdSidebarView = (
+    <>
+      {gtdGroups.map(group => (
+        <div key={group.bucket}>
+          <div className="flex items-center gap-1 px-2 py-1 text-sm text-[var(--c-text-tertiary)]">
+            <span className="flex-1">{group.label}</span>
+            <span className="text-xs text-[var(--c-text-muted)]">{group.threads.length}</span>
+          </div>
+          {group.threads.map(t => renderThread(t))}
+        </div>
+      ))}
+    </>
+  )
+
+  // GTD / Pin / Collapse 操作
+  const markGtdInbox = useCallback((id: string) => {
+    setGtdInboxIds((prev: Set<string>) => { const next = new Set(prev); next.add(id); writeGtdInboxThreadIds(next); return next })
+    setGtdTodoIds((prev: Set<string>) => { const next = new Set(prev); next.delete(id); writeGtdTodoThreadIds(next); return next })
+  }, [])
+
+  const markGtdTodo = useCallback((id: string) => {
+    setGtdTodoIds((prev: Set<string>) => { const next = new Set(prev); next.add(id); writeGtdTodoThreadIds(next); return next })
+    setGtdInboxIds((prev: Set<string>) => { const next = new Set(prev); next.delete(id); writeGtdInboxThreadIds(next); return next })
+  }, [])
+
+  const clearGtdStatus = useCallback((id: string) => {
+    setGtdInboxIds((prev: Set<string>) => { const next = new Set(prev); next.delete(id); writeGtdInboxThreadIds(next); return next })
+    setGtdTodoIds((prev: Set<string>) => { const next = new Set(prev); next.delete(id); writeGtdTodoThreadIds(next); return next })
+  }, [])
+
+  const togglePin = useCallback((id: string) => {
+    setPinnedIds((prev: Set<string>) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id); else next.add(id)
+      writePinnedThreadIds(next)
+      return next
+    })
+  }, [])
+
+  const toggleProjectCollapse = useCallback((path: string) => {
+    setCollapsedProjectPaths((prev: Set<string>) => {
+      const next = new Set(prev)
+      if (next.has(path)) next.delete(path); else next.add(path)
+      writeCollapsedProjectPaths(next)
+      return next
+    })
+  }, [])
+
   const handleDelete = useCallback(async (id: string) => {
     setDeleteConfirmThreadId(null)
     try {
       await deleteThread(accessToken, id)
+      // 清理 GTD 和 Pin 的本地状态
+      clearGtdStatus(id)
+      setPinnedIds((prev: Set<string>) => {
+        if (!prev.has(id)) return prev
+        const next = new Set(prev)
+        next.delete(id)
+        writePinnedThreadIds(next)
+        return next
+      })
       onThreadDeleted(id)
     } catch {
       // 失败静默
     }
-  }, [accessToken, onThreadDeleted])
+  }, [accessToken, onThreadDeleted, clearGtdStatus])
 
   // 进入编辑模式后自动聚焦 input
   useEffect(() => {
@@ -419,6 +505,30 @@ export function Sidebar({
     return () => document.removeEventListener('keydown', handler)
   }, [deleteConfirmThreadId])
 
+  // 监听 viewMode 变更事件
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const mode = (e as CustomEvent<SidebarViewMode>).detail
+      if (mode === 'project' || mode === 'gtd') setViewMode(mode)
+    }
+    window.addEventListener('arkloop:sidebar-view-mode-changed', handler)
+    return () => window.removeEventListener('arkloop:sidebar-view-mode-changed', handler)
+  }, [])
+
+  // 监听 work folder 变更，触发重新渲染
+  useEffect(() => {
+    const handler = () => setWorkFolderVersion(v => v + 1)
+    window.addEventListener('arkloop:work-folder-changed', handler)
+    return () => window.removeEventListener('arkloop:work-folder-changed', handler)
+  }, [])
+
+  // 新建线程时 addThread 会更新 localStorage 中的 GTD Inbox，
+  // 但 Sidebar 的 gtdInboxIds state 不会感知，需要在线程列表变化时同步。
+  useEffect(() => {
+    setGtdInboxIds(readGtdInboxThreadIds())
+    setGtdTodoIds(readGtdTodoThreadIds())
+  }, [threads])
+
   useEffect(() => {
     if (!isPerfDebugEnabled()) return
     recordPerfValue('sidebar_render_count', 1, 'count', {
@@ -433,6 +543,7 @@ export function Sidebar({
       editing: editingThreadId !== null,
       deleting: deleteConfirmThreadId !== null,
       appMode: appMode ?? 'chat',
+      viewMode,
       pathname: location.pathname,
     })
     recordPerfValue('sidebar_thread_partition_count', 1, 'count', {
@@ -443,6 +554,7 @@ export function Sidebar({
       regularCount: regularThreads.length,
       runningCount: runningThreadIds.size,
       appMode: appMode ?? 'chat',
+      viewMode,
     })
   })
 
@@ -579,6 +691,46 @@ export function Sidebar({
           />
           {starredIds.includes(menuThreadId) ? t.unstarThread : t.starThread}
         </button>
+        <button
+          onClick={() => togglePin(menuThreadId)}
+          className="flex w-full items-center gap-2 rounded-lg px-3 py-1.5 text-[13px] text-[var(--c-text-secondary)] hover:bg-[var(--c-bg-deep)] hover:text-[var(--c-text-primary)]"
+        >
+          <Pin
+            size={13}
+            style={{
+              flexShrink: 0,
+              color: 'var(--c-text-secondary)',
+              fill: pinnedIds.has(menuThreadId) ? 'var(--c-text-secondary)' : 'none',
+            }}
+          />
+          {pinnedIds.has(menuThreadId) ? t.unpinThread : t.pinThread}
+        </button>
+        {viewMode === 'gtd' && (
+          <>
+            <div style={{ height: '1px', background: 'var(--c-border-subtle)', margin: '2px 0' }} />
+            <button
+              onClick={() => { markGtdInbox(menuThreadId); setMenuThreadId(null) }}
+              className="flex w-full items-center gap-2 rounded-lg px-3 py-1.5 text-[13px] text-[var(--c-text-secondary)] hover:bg-[var(--c-bg-deep)] hover:text-[var(--c-text-primary)]"
+            >
+              <Inbox size={13} style={{ flexShrink: 0 }} />
+              {t.gtdMoveToInbox}
+            </button>
+            <button
+              onClick={() => { markGtdTodo(menuThreadId); setMenuThreadId(null) }}
+              className="flex w-full items-center gap-2 rounded-lg px-3 py-1.5 text-[13px] text-[var(--c-text-secondary)] hover:bg-[var(--c-bg-deep)] hover:text-[var(--c-text-primary)]"
+            >
+              <CheckCircle size={13} style={{ flexShrink: 0 }} />
+              {t.gtdMoveToTodo}
+            </button>
+            <button
+              onClick={() => { clearGtdStatus(menuThreadId); setMenuThreadId(null) }}
+              className="flex w-full items-center gap-2 rounded-lg px-3 py-1.5 text-[13px] text-[var(--c-text-secondary)] hover:bg-[var(--c-bg-deep)] hover:text-[var(--c-text-primary)]"
+            >
+              <XCircle size={13} style={{ flexShrink: 0 }} />
+              {t.gtdClearStatus}
+            </button>
+          </>
+        )}
         {!isDesktop() && (
           <button
             onClick={() => {
@@ -858,25 +1010,10 @@ export function Sidebar({
             >
               {threads.length === 0 ? (
                 <p className="overflow-hidden whitespace-nowrap px-2 py-1 text-[12px] text-[var(--c-text-muted)]">{t.recentsEmpty}</p>
+              ) : viewMode === 'project' ? (
+                ProjectSidebarView
               ) : (
-                <SidebarThreadList
-                  starredThreads={starredThreads}
-                  regularThreads={regularThreads}
-                  starredSet={starredSet}
-                  runningThreadIds={runningThreadIds}
-                  menuThreadId={menuThreadId}
-                  editingThreadId={editingThreadId}
-                  editingTitle={editingTitle}
-                  activeThreadId={activeThreadId}
-                  untitled={t.untitled}
-                  editInputRef={editInputRef}
-                  setEditingTitle={setEditingTitle}
-                  setEditingThreadId={setEditingThreadId}
-                  commitRename={commitRename}
-                  beforeNavigateToThread={beforeNavigateToThread}
-                  navigate={navigate}
-                  openMenu={openMenu}
-                />
+                GtdSidebarView
               )}
             </div>
           </div>
