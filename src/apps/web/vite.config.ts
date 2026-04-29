@@ -16,7 +16,9 @@ function readDesktopDevConfig(): { token: string; apiBaseUrl: string } | null {
     try {
       const p = parseInt(fs.readFileSync(path.join(ARKLOOP_HOME, 'desktop.port'), 'utf-8').trim(), 10)
       if (p > 0) port = p
-    } catch {}
+    } catch {
+      // Keep the default API port when the desktop port file is absent.
+    }
     return { token, apiBaseUrl: `http://127.0.0.1:${port}` }
   } catch {
     return null
