@@ -14,8 +14,8 @@ export function DesktopAppearanceSettings() {
       {showColorEditor && (
         <ThemeColorEditor onClose={() => setShowColorEditor(false)} />
       )}
-      <FontSettings />
       <SidebarGroupingPicker />
+      <FontSettings />
     </div>
   )
 }
