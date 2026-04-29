@@ -45,6 +45,13 @@ type PanelContextValue = {
 
 const Ctx = createContext<PanelContextValue | null>(null)
 
+// Lightweight context: only the artifact key of the active document panel.
+// Changing activePanel does NOT propagate through this context unless the
+// document artifact key itself changes, avoiding cascading re-renders in
+// MessageList / MessageBubble / MarkdownRenderer.
+const ActiveArtifactKeyContext = createContext<string | null>(null)
+export const useActiveArtifactKey = () => useContext(ActiveArtifactKeyContext)
+
 const defaultShareModal: ShareModalState = {
   open: false,
   sharingMessageId: null,
@@ -131,7 +138,15 @@ export function PanelProvider({ children }: { children: ReactNode }) {
     ],
   )
 
-  return <Ctx.Provider value={value}>{children}</Ctx.Provider>
+  const activePanelArtifactKey = activePanel?.type === 'document' ? activePanel.artifact.artifact.key : null
+
+  return (
+    <Ctx.Provider value={value}>
+      <ActiveArtifactKeyContext.Provider value={activePanelArtifactKey}>
+        {children}
+      </ActiveArtifactKeyContext.Provider>
+    </Ctx.Provider>
+  )
 }
 
 export function usePanels(): PanelContextValue {

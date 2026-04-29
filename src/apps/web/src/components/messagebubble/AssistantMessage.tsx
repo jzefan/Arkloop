@@ -5,13 +5,12 @@ import type { WebSource, ArtifactRef, BrowserActionRef, WidgetRef } from '../../
 import { WidgetBlock } from '../WidgetBlock'
 import { MarkdownRenderer } from '../MarkdownRenderer'
 import { recordPerfCount, recordPerfValue } from '../../perfDebug'
-import { DocumentCard } from '../DocumentCard'
 import { BrowserScreenshotCard } from '../BrowserScreenshotCard'
 import type { ArtifactAction } from '../ArtifactIframe'
 import { useLocale } from '../../contexts/LocaleContext'
 import { useTypewriter } from '../../hooks/useTypewriter'
 import { isDesktop } from '@arkloop/shared/desktop'
-import { isDocumentArtifact, isArtifactReferenced, getDomain } from './utils'
+import { getDomain } from './utils'
 import { messageTextContent } from '../../messageContent'
 import { CopyIconButton } from '../CopyIconButton'
 import { ActionIconButton } from '../ActionIconButton'
@@ -31,7 +30,6 @@ type Props = {
   onWidgetAction?: (action: ArtifactAction) => void
   onShowSources?: () => void
   onOpenDocument?: (artifact: ArtifactRef, options?: { trigger?: HTMLElement | null; artifacts?: ArtifactRef[]; runId?: string }) => void
-  activePanelArtifactKey?: string | null
   onViewRunDetail?: () => void
   contentPrefix?: string
   contentOverride?: string
@@ -212,7 +210,6 @@ export function AssistantMessage({
   onWidgetAction,
   onShowSources,
   onOpenDocument,
-  activePanelArtifactKey,
   onViewRunDetail,
   contentPrefix,
   contentOverride,
@@ -256,22 +253,6 @@ export function AssistantMessage({
         </div>
       )}
       <div style={{ maxWidth: isWorkMode ? undefined : '663px' }}>
-        {artifacts && onOpenDocument && (() => {
-          const referenced = artifacts.filter((a) => isDocumentArtifact(a) && isArtifactReferenced(messageText, a.key))
-          if (referenced.length === 0) return null
-          return (
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginBottom: '14px' }}>
-              {referenced.map((artifact) => (
-                <DocumentCard
-                  key={artifact.key}
-                  artifact={artifact}
-                  onClick={(trigger) => onOpenDocument(artifact, { trigger, artifacts, runId: message.run_id })}
-                  active={activePanelArtifactKey === artifact.key}
-                />
-              ))}
-            </div>
-          )
-        })()}
         {renderBrowserScreenshots(browserActions, accessToken)}
         <div ref={contentRef}>
           <MarkdownRenderer

@@ -15,6 +15,8 @@ import { MindmapBlock } from './MindmapBlock'
 import { MermaidBlock } from './MermaidBlock'
 import { GeoGebraBlock } from './GeoGebraBlock'
 import { WorkspaceResource, type WorkspaceFileRef } from './WorkspaceResource'
+import { DocumentCard } from './DocumentCard'
+import { useActiveArtifactKey } from '../contexts/panels'
 import { recordPerfCount, recordPerfValue } from '../perfDebug'
 
 type ArtifactsContextValue = {
@@ -22,6 +24,7 @@ type ArtifactsContextValue = {
   accessToken: string
   runId?: string
   onOpenDocument?: (artifact: ArtifactRef, options?: { trigger?: HTMLElement | null; artifacts?: ArtifactRef[]; runId?: string }) => void
+  activePanelArtifactKey?: string | null
 }
 
 const ArtifactsContext = createContext<ArtifactsContextValue>({ artifacts: [], accessToken: '' })
@@ -180,6 +183,19 @@ function useStreamingRenderContent(content: string, throttle: boolean): string {
 
 const ARTIFACT_PREFIX = 'artifact:'
 const WORKSPACE_PREFIX = 'workspace:'
+const BARE_ARTIFACT_RE = /(?<!\]\()artifact:([A-Za-z0-9_-]+)/g
+
+function preprocessBareArtifactRefs(content: string, artifacts: ArtifactRef[]): string {
+  if (artifacts.length === 0) return content
+  return content.replace(BARE_ARTIFACT_RE, (full, key: string) => {
+    if (artifacts.every((a) => a.key !== key)) return full
+    const artifact = artifacts.find((a) => a.key === key)!
+    const text = (artifact.filename || artifact.title || key)
+      .replace(/[\[\]()]/g, '\\$&')
+      .replace(/\n/g, ' ')
+    return `[${text}](${ARTIFACT_PREFIX}${key})`
+  })
+}
 
 // react-markdown v10 的 defaultUrlTransform 会过滤非标准协议，需要放行 artifact:/workspace:
 const artifactUrlTransform: UrlTransform = (url) => {
@@ -216,7 +232,7 @@ function buildWorkspaceFileRef(path: string): WorkspaceFileRef {
 
 // artifact: 协议感知的 img 渲染器
 function ArtifactAwareImg({ src, alt }: { src?: string; alt?: string }) {
-  const { artifacts, accessToken, runId, onOpenDocument } = useContext(ArtifactsContext)
+  const { artifacts, accessToken, runId, onOpenDocument, activePanelArtifactKey } = useContext(ArtifactsContext)
   const [failed, setFailed] = useState(false)
 
   if (src?.startsWith(ARTIFACT_PREFIX)) {
@@ -231,7 +247,9 @@ function ArtifactAwareImg({ src, alt }: { src?: string; alt?: string }) {
     if (artifact.mime_type === 'text/html') {
       return <ArtifactHtmlPreview artifact={artifact} accessToken={accessToken} />
     }
-    if (onOpenDocument && isDocumentArtifact(artifact)) return null
+    if (onOpenDocument && isDocumentArtifact(artifact)) {
+      return <div style={{ margin: '8px 0' }}><DocumentCard artifact={artifact} onClick={(trigger) => onOpenDocument(artifact, { trigger, artifacts, runId })} active={activePanelArtifactKey === artifact.key} /></div>
+    }
     return <ArtifactDownload artifact={artifact} accessToken={accessToken} />
   }
 
@@ -268,7 +286,7 @@ function ArtifactAwareImg({ src, alt }: { src?: string; alt?: string }) {
 
 // artifact: 协议感知的 a 渲染器
 function ArtifactAwareLink({ href, children }: { href?: string; children?: ReactNode }) {
-  const { artifacts, accessToken, runId, onOpenDocument } = useContext(ArtifactsContext)
+  const { artifacts, accessToken, runId, onOpenDocument, activePanelArtifactKey } = useContext(ArtifactsContext)
 
   if (href?.startsWith(ARTIFACT_PREFIX)) {
     const key = href.slice(ARTIFACT_PREFIX.length)
@@ -283,8 +301,10 @@ function ArtifactAwareLink({ href, children }: { href?: string; children?: React
     if (artifact.mime_type === 'text/html') {
       return <ArtifactHtmlPreview artifact={artifact} accessToken={accessToken} />
     }
-    // 文档类型：有面板回调时抑制内联渲染（顶部卡片是唯一入口）
-    if (onOpenDocument && isDocumentArtifact(artifact)) return null
+    // 文档类型：独占一行渲染 DocumentCard
+    if (onOpenDocument && isDocumentArtifact(artifact)) {
+      return <div style={{ margin: '8px 0' }}><DocumentCard artifact={artifact} onClick={(trigger) => onOpenDocument(artifact, { trigger, artifacts, runId })} active={activePanelArtifactKey === artifact.key} /></div>
+    }
     return <ArtifactDownload artifact={artifact} accessToken={accessToken} />
   }
 
@@ -755,17 +775,20 @@ export const MarkdownRenderer = memo(function MarkdownRenderer({ content, disabl
     [asyncPlugins],
   )
 
+  const activePanelArtifactKey = useActiveArtifactKey()
   const artifactsValue = useMemo<ArtifactsContextValue>(() => ({
     artifacts: artifacts ?? [],
     accessToken: accessToken ?? '',
     runId,
     onOpenDocument,
-  }), [accessToken, artifacts, onOpenDocument, runId])
+    activePanelArtifactKey,
+  }), [accessToken, artifacts, onOpenDocument, runId, activePanelArtifactKey])
 
   const normalizedContent = useMemo(() => {
-    const structuredContent = normalizeCollapsedPipeTables(renderContent)
+    const withArtifactLinks = preprocessBareArtifactRefs(renderContent, artifacts ?? [])
+    const structuredContent = normalizeCollapsedPipeTables(withArtifactLinks)
     return effectiveDisableMath ? structuredContent : normalizeLatexDelimiters(structuredContent)
-  }, [effectiveDisableMath, renderContent])
+  }, [effectiveDisableMath, renderContent, artifacts])
   const mdComponents = useMemo(() => buildMarkdownComponents(compact, typography), [compact, typography])
 
   useEffect(() => {
