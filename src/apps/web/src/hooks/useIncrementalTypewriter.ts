@@ -83,11 +83,13 @@ function buildSpec(from: string, to: string, animate: boolean): IncrementalSpec 
   }
 }
 
-export function useIncrementalTypewriter(text: string, enabled = true): string {
+export function useIncrementalTypewriter(text: string, enabled = true, seedText?: string): string {
   const animate = enabled && !prefersReducedMotion()
   const previousTargetRef = useRef(text)
-  const [spec, setSpec] = useState<IncrementalSpec>(() => buildSpec('', text, animate))
+  const initialFrom = seedText ?? ''
+  const [spec, setSpec] = useState<IncrementalSpec>(() => buildSpec(initialFrom, text, animate))
   const [revealedLen, setRevealedLen] = useState(() => (spec.animate ? 0 : spec.to.length))
+  const displayedRef = useRef(spec.animate ? spec.from : spec.to)
 
   useEffect(() => {
     if (!animate) {
@@ -99,7 +101,7 @@ export function useIncrementalTypewriter(text: string, enabled = true): string {
     const previous = previousTargetRef.current
     if (previous === text) return
     previousTargetRef.current = text
-    setSpec(buildSpec(previous, text, true))
+    setSpec(buildSpec(displayedRef.current, text, true))
     setRevealedLen(0)
   }, [animate, text])
 
@@ -130,10 +132,16 @@ export function useIncrementalTypewriter(text: string, enabled = true): string {
     return () => cancelAnimationFrame(frame)
   }, [spec])
 
-  return useMemo(() => {
+  const displayed = useMemo(() => {
     if (!spec.animate) return spec.to
     if (revealedLen === 0) return spec.from
     if (revealedLen >= spec.nextSegment.length) return spec.to
     return `${spec.prefix}${spec.nextSegment.slice(0, revealedLen)}${spec.suffix}`
   }, [revealedLen, spec])
+
+  useEffect(() => {
+    displayedRef.current = displayed
+  }, [displayed])
+
+  return displayed
 }

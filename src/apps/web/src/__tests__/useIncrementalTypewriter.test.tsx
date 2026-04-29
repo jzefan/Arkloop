@@ -9,13 +9,15 @@ const performanceNow = vi.fn(() => 0)
 function HookProbe({
   text,
   enabled = true,
+  seedText,
   onValue,
 }: {
   text: string
   enabled?: boolean
+  seedText?: string
   onValue: (value: string) => void
 }) {
-  const value = useIncrementalTypewriter(text, enabled)
+  const value = useIncrementalTypewriter(text, enabled, seedText)
   onValue(value)
   return null
 }
@@ -156,6 +158,86 @@ describe('useIncrementalTypewriter', () => {
       flushFrame(1460)
     })
     expect(values.at(-1)).toBe('Finding the right words for 1s')
+
+    act(() => root.unmount())
+    container.remove()
+  })
+
+  it('新挂载时可从种子状态句续写到 live 状态句', async () => {
+    const values: string[] = []
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const root = createRoot(container)
+
+    await act(async () => {
+      root.render(
+        <HookProbe
+          text="Translating thoughts to words for 1s"
+          seedText="Translating thoughts to words..."
+          onValue={(value) => values.push(value)}
+        />,
+      )
+    })
+
+    expect(values.at(-1)).toBe('Translating thoughts to words...')
+
+    await act(async () => {
+      flushFrame(54)
+    })
+
+    expect(values.at(-1)).toBe('Translating thoughts to words ')
+    expect(values).not.toContain('')
+
+    await act(async () => {
+      flushFrame(120)
+      flushFrame(220)
+      flushFrame(340)
+    })
+    expect(values.at(-1)).toBe('Translating thoughts to words for 1s')
+
+    act(() => root.unmount())
+    container.remove()
+  })
+
+  it('种子动画未完成时目标刷新不应跳到旧完整目标', async () => {
+    const values: string[] = []
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const root = createRoot(container)
+
+    await act(async () => {
+      root.render(
+        <HookProbe
+          text="Finding the right words for 1s"
+          seedText="Finding the right words..."
+          onValue={(value) => values.push(value)}
+        />,
+      )
+    })
+    await act(async () => {
+      flushFrame(54)
+    })
+
+    values.length = 0
+    await act(async () => {
+      root.render(
+        <HookProbe
+          text="Finding the right words for 2s"
+          seedText="Finding the right words..."
+          onValue={(value) => values.push(value)}
+        />,
+      )
+    })
+
+    expect(values).not.toContain('Finding the right words for 1s')
+    expect(values.at(-1)).toBe('Finding the right words ')
+
+    await act(async () => {
+      flushFrame(120)
+      flushFrame(220)
+      flushFrame(340)
+    })
+    expect(values.at(-1)).toBe('Finding the right words for 2s')
 
     act(() => root.unmount())
     container.remove()
