@@ -16,6 +16,7 @@ import {
   forkThread,
   isApiError,
   provideInput,
+  retryMessage,
   type MessageContent,
   type MessageResponse,
   type RunReasoningMode,
@@ -255,42 +256,41 @@ export function useChatActions({ scrollToBottom }: UseChatActionsDeps) {
     if (message.role !== 'user' || isStreaming || sending || !threadId) return
     const personaKey = readSelectedPersonaKeyFromStorage()
     const modelOverride = readSelectedModelFromStorage() ?? undefined
+    const thinkingHint = t.copThinkingHints[Math.floor(Math.random() * t.copThinkingHints.length)]
     setSending(true)
-    setPendingThinking(true)
-    setThinkingHint(t.copThinkingHints[Math.floor(Math.random() * t.copThinkingHints.length)])
     setError(null)
     setInjectionBlocked(null)
     injectionBlockedRunIdRef.current = null
     clearThreadRunHandoff(threadId)
     resetLiveState()
+    setPendingThinking(true)
+    setThinkingHint(thinkingHint)
     setTerminalRunDisplayId(null)
     setTerminalRunHandoffStatus(null)
     setTerminalRunCoveredRunIds([])
     try {
-      const forked = await forkThread(accessToken, threadId, message.id)
-      if (forked.id_mapping) migrateMessageMetadata(forked.id_mapping)
-      onThreadCreated(forked)
-      const mappedUserMessageId = forked.id_mapping?.find((pair) => pair.old_id === message.id)?.new_id
       const reasoningMode = readThreadReasoningMode(threadId)
-      const run = await createRun(
+      const run = await retryMessage(
         accessToken,
-        forked.id,
+        threadId,
+        message.id,
         personaKey,
         modelOverride,
         readThreadWorkFolder(threadId) ?? undefined,
         reasoningMode !== 'off' ? reasoningMode as RunReasoningMode : undefined,
       )
-      if (personaKey === SEARCH_PERSONA_KEY) addSearchThreadId(forked.id)
-      resetSearchSteps()
-      navigate(`/t/${forked.id}`, {
-        state: {
-          initialRunId: run.run_id,
-          userEnterMessageId: mappedUserMessageId,
-        },
-        replace: false,
+      invalidateMessageSync()
+      setMessages((prev) => {
+        const index = prev.findIndex((item) => item.id === message.id)
+        return index < 0 ? prev : prev.slice(0, index + 1)
       })
-      onRunStarted(forked.id)
+      if (personaKey === SEARCH_PERSONA_KEY) addSearchThreadId(threadId)
+      resetSearchSteps()
+      setActiveRunId(run.run_id)
+      onRunStarted(threadId)
+      scrollToBottom()
     } catch (err) {
+      setPendingThinking(false)
       if (isApiError(err) && err.status === 401) {
         onLoggedOut()
         return
@@ -302,16 +302,18 @@ export function useChatActions({ scrollToBottom }: UseChatActionsDeps) {
   }, [
     accessToken,
     injectionBlockedRunIdRef,
+    invalidateMessageSync,
     isStreaming,
-    navigate,
     onLoggedOut,
-    onThreadCreated,
     onRunStarted,
     resetLiveState,
     resetSearchSteps,
+    scrollToBottom,
     sending,
+    setActiveRunId,
     setError,
     setInjectionBlocked,
+    setMessages,
     setPendingThinking,
     setSending,
     setTerminalRunCoveredRunIds,

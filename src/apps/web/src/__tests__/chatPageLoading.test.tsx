@@ -23,6 +23,7 @@ import {
   cancelRun,
   provideInput,
   forkThread,
+  retryMessage,
 } from '../api'
 import {
   readMessageTerminalStatus,
@@ -103,6 +104,7 @@ vi.mock('../api', async () => {
     provideInput: vi.fn(),
     editMessage: vi.fn(),
     forkThread: vi.fn(),
+    retryMessage: vi.fn(),
     getThread: vi.fn(),
     createThreadShare: vi.fn(),
     uploadStagingAttachment: vi.fn(),
@@ -244,7 +246,15 @@ vi.mock('../components/MessageBubble', () => ({
 }))
 
 vi.mock('../components/ExecutionCard', () => ({
-  ExecutionCard: () => <div />,
+  ExecutionCard: ({
+    code,
+    label,
+    displayDescription,
+  }: {
+    code?: string
+    label?: string
+    displayDescription?: string
+  }) => <div>{displayDescription ?? code ?? label ?? ''}</div>,
 }))
 
 vi.mock('../components/CopTimeline', () => ({
@@ -679,6 +689,7 @@ describe('ChatPage loading state', () => {
   const mockedCancelRun = vi.mocked(cancelRun)
   const mockedProvideInput = vi.mocked(provideInput)
   const mockedForkThread = vi.mocked(forkThread)
+  const mockedRetryMessage = vi.mocked(retryMessage)
   const mockedWriteMessageAssistantTurn = vi.mocked(writeMessageAssistantTurn)
   const mockedWriteMessageCodeExecutions = vi.mocked(writeMessageCodeExecutions)
   const mockedWriteMessageSearchSteps = vi.mocked(writeMessageSearchSteps)
@@ -712,6 +723,7 @@ describe('ChatPage loading state', () => {
     mockedCancelRun.mockReset()
     mockedProvideInput.mockReset()
     mockedForkThread.mockReset()
+    mockedRetryMessage.mockReset()
     chatInputDraftStore.clear()
     mockedReadMessageAssistantTurn.mockReturnValue(null)
     mockedReadMessageTerminalStatus.mockReturnValue(null)
@@ -771,6 +783,7 @@ describe('ChatPage loading state', () => {
     mockedCreateRun.mockResolvedValue({ run_id: 'run-created', trace_id: 'trace-1' })
     mockedCancelRun.mockResolvedValue({ ok: true })
     mockedProvideInput.mockResolvedValue({ ok: true })
+    mockedRetryMessage.mockResolvedValue({ run_id: 'run-retry', trace_id: 'trace-retry' })
     mockedReadMessageTerminalStatus.mockReturnValue(null)
   })
 
@@ -2865,7 +2878,8 @@ describe('ChatPage loading state', () => {
     container.remove()
   })
 
-  it('user prompt 的 Retry 应从该 prompt fork 并创建新 run', async () => {
+  it('user prompt 的 Retry 应切到该 prompt 并在同 thread 创建新 run', async () => {
+    const randomSpy = vi.spyOn(Math, 'random').mockReturnValue(0)
     mockedListMessages.mockResolvedValue([
       {
         id: 'msg-1',
@@ -2886,24 +2900,6 @@ describe('ChatPage loading state', () => {
         created_at: '2026-03-10T00:00:01Z',
       },
     ])
-    mockedForkThread.mockResolvedValue({
-      id: 'thread-fork',
-      title: 'hello',
-      account_id: 'acc-1',
-      created_by_user_id: 'user-1',
-      mode: 'chat',
-      project_id: 'proj-1',
-      active_run_id: null,
-      collaboration_mode: 'default',
-      collaboration_mode_revision: 0,
-      is_private: false,
-      title_locked: false,
-      hidden: false,
-      created_at: '2026-03-10T00:00:00Z',
-      updated_at: '2026-03-10T00:00:00Z',
-      id_mapping: [{ old_id: 'msg-1', new_id: 'msg-1-fork' }],
-    })
-
     const container = document.createElement('div')
     document.body.appendChild(container)
     const root = createRoot(container)
@@ -2926,21 +2922,26 @@ describe('ChatPage loading state', () => {
 
     const retryButton = container.querySelector('button[aria-label="retry-user-message"]')
     expect(retryButton).toBeDefined()
+    const threadCreatedCallsBeforeRetry = vi.mocked(outletContext.onThreadCreated).mock.calls.length
 
     await act(async () => {
       retryButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
       await flushMicrotasks()
     })
 
-    expect(mockedForkThread).toHaveBeenCalledWith('token', 'thread-1', 'msg-1')
-    expect(mockedCreateRun.mock.calls.at(-1)?.[1]).toBe('thread-fork')
-    expect(outletContext.onThreadCreated).toHaveBeenCalledWith(expect.objectContaining({ id: 'thread-fork' }))
-    expect(outletContext.onRunStarted).toHaveBeenCalledWith('thread-fork')
+    expect(mockedRetryMessage).toHaveBeenCalledWith('token', 'thread-1', 'msg-1', 'default', undefined, undefined, undefined)
+    expect(mockedForkThread).not.toHaveBeenCalled()
+    expect(mockedCreateRun).not.toHaveBeenCalled()
+    expect(outletContext.onThreadCreated).toHaveBeenCalledTimes(threadCreatedCallsBeforeRetry)
+    expect(outletContext.onRunStarted).toHaveBeenCalledWith('thread-1')
+    expect(container.textContent).not.toContain('answer')
+    expect(container.textContent).toContain('Finding the right words')
 
     act(() => {
       root.unmount()
     })
     container.remove()
+    randomSpy.mockRestore()
   })
 
   it('run.completed 后应把显示权交回历史消息，同时保留完成态的折叠结构', async () => {

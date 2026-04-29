@@ -1,4 +1,5 @@
 import { copSegmentCalls, type AssistantTurnSegment, type AssistantTurnUi } from './assistantTurnSegments'
+import type { CopBlockItem } from './assistantTurnSegments'
 import type {
   CodeExecutionRef,
   FileOpRef,
@@ -30,7 +31,23 @@ export type GenericToolCallRef = {
   seq?: number
 }
 
+export type TodoItemRef = {
+  id: string
+  content: string
+  status: 'pending' | 'in_progress' | 'completed' | 'cancelled'
+}
+
+export type TodoWriteRef = {
+  id: string
+  toolName: 'todo_write'
+  todos: TodoItemRef[]
+  status: 'running' | 'success' | 'failed'
+  errorMessage?: string
+  seq?: number
+}
+
 const CODE_EXECUTION_TOOL_NAMES = new Set(['python_execute', 'exec_command', 'continue_process', 'terminate_process'])
+const TODO_TOOL_NAMES = new Set(['todo_write'])
 const SUB_AGENT_TOOL_NAMES = new Set([
   'spawn_agent', 'acp_agent', 'spawn_acp',
   'send_input', 'wait_agent', 'resume_agent', 'close_agent', 'interrupt_agent',
@@ -52,6 +69,49 @@ function sortBySeq<T extends { seq?: number }>(items: T[]): T[] {
   return [...items].sort((a, b) => (a.seq ?? 0) - (b.seq ?? 0))
 }
 
+export function isTopLevelCopToolName(toolName: string): boolean {
+  return CODE_EXECUTION_TOOL_NAMES.has(toolName) || TODO_TOOL_NAMES.has(toolName)
+}
+
+export type SplitCopItemEntry =
+  | { kind: 'timeline'; id: string; seq: number; items: CopBlockItem[] }
+  | { kind: 'tool'; id: string; seq: number; item: Extract<CopBlockItem, { kind: 'call' }> }
+
+export function splitCopItemsByTopLevelTools(items: CopBlockItem[]): SplitCopItemEntry[] {
+  const entries: SplitCopItemEntry[] = []
+  let current: CopBlockItem[] = []
+  let timelineIndex = 0
+
+  const flushCurrent = () => {
+    if (current.length === 0) return
+    entries.push({
+      kind: 'timeline',
+      id: `timeline-${timelineIndex}`,
+      seq: current[0]?.seq ?? 0,
+      items: current,
+    })
+    timelineIndex += 1
+    current = []
+  }
+
+  for (const item of items) {
+    if (item.kind === 'call' && isTopLevelCopToolName(item.call.toolName)) {
+      flushCurrent()
+      entries.push({
+        kind: 'tool',
+        id: item.call.toolCallId,
+        seq: item.seq,
+        item,
+      })
+      continue
+    }
+    current.push(item)
+  }
+
+  flushCurrent()
+  return entries
+}
+
 function pickCodeExecutionMode(args: Record<string, unknown>): CodeExecutionRef['mode'] | undefined {
   const mode = args.mode
   return mode === 'buffered' || mode === 'follow' || mode === 'stdin' || mode === 'pty'
@@ -60,7 +120,7 @@ function pickCodeExecutionMode(args: Record<string, unknown>): CodeExecutionRef[
 }
 
 function fallbackCodeExecutionFromCall(call: ReturnType<typeof copSegmentCalls>[number], seq: number): CodeExecutionRef | null {
-  if (call.toolName !== 'exec_command' && call.toolName !== 'python_execute') return null
+  if (!CODE_EXECUTION_TOOL_NAMES.has(call.toolName)) return null
   const code = typeof call.arguments.command === 'string' ? call.arguments.command
     : typeof call.arguments.code === 'string' ? call.arguments.code
       : typeof call.arguments.cmd === 'string' ? call.arguments.cmd
@@ -120,6 +180,7 @@ function isKnownTimelineTool(toolName: string): boolean {
   if (toolName === 'read' || toolName.startsWith('read.')) return true
   return (
     CODE_EXECUTION_TOOL_NAMES.has(toolName) ||
+    TODO_TOOL_NAMES.has(toolName) ||
     SUB_AGENT_TOOL_NAMES.has(toolName) ||
     FILE_OP_TOOL_NAMES.has(toolName) ||
     AUXILIARY_RENDERED_TOOL_NAMES.has(toolName) ||
@@ -145,6 +206,38 @@ function summarizeGenericResult(result: unknown): { output?: string; emptyLabel?
   if (typeof result === 'boolean') return { output: `returned boolean · ${result ? 'true' : 'false'}` }
   if (typeof result === 'number') return { output: `returned number · ${result}` }
   return { output: 'returned value' }
+}
+
+function parseTodoItems(value: unknown): TodoItemRef[] {
+  if (!Array.isArray(value)) return []
+  return value.flatMap((entry) => {
+    if (!entry || typeof entry !== 'object') return []
+    const item = entry as Record<string, unknown>
+    const id = typeof item.id === 'string' ? item.id.trim() : ''
+    const content = typeof item.content === 'string' ? item.content.trim() : ''
+    const status = item.status
+    if (!id || !content) return []
+    if (status !== 'pending' && status !== 'in_progress' && status !== 'completed' && status !== 'cancelled') return []
+    return [{ id, content, status }]
+  })
+}
+
+function todoWriteFromCall(item: Extract<CopSegment['items'][number], { kind: 'call' }>): TodoWriteRef | null {
+  const call = item.call
+  if (!TODO_TOOL_NAMES.has(call.toolName)) return null
+  const resultTodos = call.result && typeof call.result === 'object'
+    ? parseTodoItems((call.result as { todos?: unknown }).todos)
+    : []
+  const argumentTodos = parseTodoItems(call.arguments.todos)
+  const hasError = typeof call.errorClass === 'string' && call.errorClass.trim() !== ''
+  return {
+    id: call.toolCallId,
+    toolName: 'todo_write',
+    todos: resultTodos.length > 0 ? resultTodos : argumentTodos,
+    status: hasError ? 'failed' : call.result === undefined ? 'running' : 'success',
+    ...(hasError ? { errorMessage: call.errorClass } : {}),
+    seq: item.seq,
+  }
 }
 
 type WebSearchPhaseStepLike = Pick<MessageSearchStepRef, 'id' | 'kind' | 'label' | 'status' | 'queries' | 'seq' | 'resultSeq' | 'sources'>
@@ -222,6 +315,7 @@ export function copTimelinePayloadForSegment(
   webFetches?: WebFetchRef[]
   subAgents?: SubAgentRef[]
   genericTools?: GenericToolCallRef[]
+  todoWrites?: TodoWriteRef[]
 } {
   const calls = copSegmentCalls(segment)
   const ids = new Set(calls.map((c) => c.toolCallId))
@@ -242,6 +336,12 @@ export function copTimelinePayloadForSegment(
   const exploreGroups = groupConsecutiveExploreFileOps(calls, exploreFileOps)
   const webFetches = sortBySeq((pools.webFetches ?? []).filter((x) => ids.has(x.id)))
   const subAgents = sortBySeq((pools.subAgents ?? []).filter((x) => ids.has(x.id)))
+  const todoWrites = sortBySeq(
+    segment.items
+      .filter((item): item is Extract<CopSegment['items'][number], { kind: 'call' }> => item.kind === 'call')
+      .map(todoWriteFromCall)
+      .filter((item): item is TodoWriteRef => item != null),
+  )
 
   const mappedSteps: WebSearchPhaseStep[] = sortBySeq(
     (pools.searchSteps ?? [])
@@ -297,6 +397,7 @@ export function copTimelinePayloadForSegment(
     ...allFileOps.map((item) => item.id),
     ...webFetches.map((item) => item.id),
     ...subAgents.map((item) => item.id),
+    ...todoWrites.map((item) => item.id),
     ...steps.map((item) => item.id),
   ])
   const genericTools = sortBySeq(
@@ -331,6 +432,7 @@ export function copTimelinePayloadForSegment(
     exploreGroups.length > 0 ||
     webFetches.length > 0 ||
     subAgents.length > 0 ||
+    todoWrites.length > 0 ||
     genericTools.length > 0
 
   // 仅有 thinking、无 call：仍返回壳子供 CopTimeline 挂 thinkingRows
@@ -351,6 +453,7 @@ export function copTimelinePayloadForSegment(
     ...(exploreGroups.length > 0 ? { exploreGroups } : {}),
     ...(webFetches.length > 0 ? { webFetches } : {}),
     ...(subAgents.length > 0 ? { subAgents } : {}),
+    ...(todoWrites.length > 0 ? { todoWrites } : {}),
     ...(genericTools.length > 0 ? { genericTools } : {}),
   }
 }
@@ -374,6 +477,7 @@ export type CopTimelineBodySlice = {
   webFetches?: WebFetchRef[]
   genericTools?: GenericToolCallRef[]
   subAgents?: SubAgentRef[]
+  todoWrites?: TodoWriteRef[]
   thinkingRows?: Array<{ id: string; seq: number }>
   copInlineTextRows?: Array<{ id: string; seq: number }>
 }
@@ -402,6 +506,7 @@ export function copTimelineBodySeq({ payload, bodyFileOps, thinkingRows, copInli
     payload.webFetches?.[0],
     payload.genericTools?.[0],
     payload.subAgents?.[0],
+    payload.todoWrites?.[0],
     thinkingRows?.[0],
     copInlineTextRows?.[0],
   ]) ?? Number.MAX_SAFE_INTEGER
@@ -414,6 +519,7 @@ type BodyBucket =
   | { kind: 'fetch'; item: WebFetchRef }
   | { kind: 'generic'; item: GenericToolCallRef }
   | { kind: 'agent'; item: SubAgentRef }
+  | { kind: 'todo'; item: TodoWriteRef }
   | { kind: 'thinking'; item: { id: string; seq: number } }
   | { kind: 'inline'; item: { id: string; seq: number } }
 
@@ -424,6 +530,7 @@ function makeBodySlice(id: string, buckets: BodyBucket[], sources: WebSource[]):
   const webFetches = buckets.filter((entry): entry is Extract<BodyBucket, { kind: 'fetch' }> => entry.kind === 'fetch').map((entry) => entry.item)
   const genericTools = buckets.filter((entry): entry is Extract<BodyBucket, { kind: 'generic' }> => entry.kind === 'generic').map((entry) => entry.item)
   const subAgents = buckets.filter((entry): entry is Extract<BodyBucket, { kind: 'agent' }> => entry.kind === 'agent').map((entry) => entry.item)
+  const todoWrites = buckets.filter((entry): entry is Extract<BodyBucket, { kind: 'todo' }> => entry.kind === 'todo').map((entry) => entry.item)
   const thinkingRows = buckets.filter((entry): entry is Extract<BodyBucket, { kind: 'thinking' }> => entry.kind === 'thinking').map((entry) => entry.item)
   const copInlineTextRows = buckets.filter((entry): entry is Extract<BodyBucket, { kind: 'inline' }> => entry.kind === 'inline').map((entry) => entry.item)
   return {
@@ -436,6 +543,7 @@ function makeBodySlice(id: string, buckets: BodyBucket[], sources: WebSource[]):
     ...(webFetches.length > 0 ? { webFetches } : {}),
     ...(genericTools.length > 0 ? { genericTools } : {}),
     ...(subAgents.length > 0 ? { subAgents } : {}),
+    ...(todoWrites.length > 0 ? { todoWrites } : {}),
     ...(thinkingRows.length > 0 ? { thinkingRows } : {}),
     ...(copInlineTextRows.length > 0 ? { copInlineTextRows } : {}),
   }
@@ -462,6 +570,7 @@ export function promotedCopTimelineEntries(params: {
     ...(params.payload.webFetches ?? []).map((item) => ({ kind: 'fetch' as const, item })),
     ...(params.payload.genericTools ?? []).map((item) => ({ kind: 'generic' as const, item })),
     ...(params.payload.subAgents ?? []).map((item) => ({ kind: 'agent' as const, item })),
+    ...(params.payload.todoWrites ?? []).map((item) => ({ kind: 'todo' as const, item })),
     ...(params.thinkingRows ?? []).map((item) => ({ kind: 'thinking' as const, item })),
     ...(params.copInlineTextRows ?? []).map((item) => ({ kind: 'inline' as const, item })),
   ].sort((left, right) => itemSeq(left.item) - itemSeq(right.item) || left.kind.localeCompare(right.kind)) : []
@@ -523,6 +632,7 @@ export function toolCallIdsInCopTimelines(
     for (const w of payload.webFetches ?? []) ids.add(w.id)
     for (const a of payload.subAgents ?? []) ids.add(a.id)
     for (const g of payload.genericTools ?? []) ids.add(g.id)
+    for (const t of payload.todoWrites ?? []) ids.add(t.id)
   }
   return ids
 }

@@ -1,6 +1,8 @@
 import { memo, Fragment, type ComponentProps, useMemo } from 'react'
 import { MessageBubble } from './MessageBubble'
 import { CopTimeline, type WebSearchPhaseStep } from './cop-timeline/CopTimeline'
+import { CopSegmentBlocks } from './CopSegmentBlocks'
+import { TopLevelCopToolBlock } from './TopLevelCopToolBlock'
 import { AssistantActionBar } from './messagebubble/AssistantMessage'
 import { MarkdownRenderer } from './MarkdownRenderer'
 import { WidgetBlock } from './WidgetBlock'
@@ -16,7 +18,7 @@ import { useAuth } from '../contexts/auth'
 import { useThreadList } from '../contexts/thread-list'
 import { apiBaseUrl } from '@arkloop/shared/api'
 import { copTimelinePayloadForSegment } from '../copSegmentTimeline'
-import { buildSubSegments, buildResolvedPool, buildThinkingOnlyFromItems, segmentLiveTitle, EMPTY_POOL, buildFallbackSegments } from '../copSubSegment'
+import { buildResolvedPool, EMPTY_POOL, buildFallbackSegments } from '../copSubSegment'
 import { assistantTurnPlainText } from '../assistantTurnSegments'
 import { resolveMessageSourcesForRender } from './chatSourceResolver'
 import { createThreadShare } from '../api'
@@ -252,42 +254,17 @@ export const MessageList = memo(function MessageList({
                 />
               ) : (
                 (() => {
-                  const payload = copTimelinePayloadForSegment(seg, {
+                  const timelinePools = {
                     codeExecutions: messageCodeExecutions,
                     fileOps: messageFileOps,
                     webFetches: messageWebFetches,
                     subAgents: messageSubAgents,
                     searchSteps: messageSearchSteps ?? [],
                     sources: resolvedSources ?? [],
-                  })
-                  const pool = buildResolvedPool(payload)
+                  }
+                  const payload = copTimelinePayloadForSegment(seg, timelinePools)
                   const histWidgets = historicWidgetsForCop(seg, msgWidgetsRaw)
-
-                  const subSegments = buildSubSegments(seg.items)
                   const segmentLive = currentRunMessageLive && si === historicalSegments.length - 1
-                  if (subSegments.length > 0 && segmentLive) {
-                    const lastSeg = subSegments[subSegments.length - 1]!
-                    lastSeg.status = 'open'
-                    lastSeg.title = segmentLiveTitle(lastSeg.category)
-                  }
-
-                  const thinkingOnlyData = subSegments.length === 0 && !payload.codeExecutions?.length && !payload.subAgents?.length && !payload.fileOps?.length && !payload.webFetches?.length && !payload.genericTools?.length
-                    ? buildThinkingOnlyFromItems(seg.items)
-                    : null
-
-                  const hasTimelineBody =
-                    subSegments.length > 0 ||
-                    thinkingOnlyData != null ||
-                    payload.steps.length > 0 ||
-                    !!payload.codeExecutions?.length ||
-                    !!payload.fileOps?.length ||
-                    !!payload.webFetches?.length ||
-                    !!payload.genericTools?.length ||
-                    !!payload.subAgents?.length
-
-                  if (!hasTimelineBody && histWidgets.length === 0) {
-                    return null
-                  }
 
                   const timelineTitleOverride = displayTerminalStatus != null
                     ? currentRunCopHeaderOverride({
@@ -298,18 +275,18 @@ export const MessageList = memo(function MessageList({
                         hasFileOps: !!(payload.fileOps && payload.fileOps.length > 0),
                         hasWebFetches: !!(payload.webFetches && payload.webFetches.length > 0),
                         hasGenericTools: !!(payload.genericTools && payload.genericTools.length > 0),
-                        hasThinking: subSegments.some((s) => s.items.some((i) => i.kind === 'thinking')),
+                        hasThinking: seg.items.some((item) => item.kind === 'thinking'),
                         handoffStatus: displayTerminalStatus,
                       })
                     : seg.title?.trim() || undefined
 
                   const entryComplete = !segmentLive
                   const promotedNodes = [(
-                    <CopTimeline
+                    <CopSegmentBlocks
                       key={`${msg.id}-timeline-${si}`}
-                      segments={subSegments}
-                      pool={pool}
-                      thinkingOnly={thinkingOnlyData}
+                      segment={seg}
+                      keyPrefix={`${msg.id}-timeline-${si}`}
+                      {...timelinePools}
                       isComplete={entryComplete}
                       live={segmentLive}
                       headerOverride={timelineTitleOverride}
@@ -361,29 +338,35 @@ export const MessageList = memo(function MessageList({
         )}
         {msg.role === 'assistant' && !hasAssistantTurn && (timelineSteps.length > 0 || hasMessageCodeExecutions || (messageSubAgents && messageSubAgents.length > 0) || (messageFileOps && messageFileOps.length > 0) || (messageWebFetches && messageWebFetches.length > 0)) && (
           <div style={{ marginBottom: '12px' }}>
-            <CopTimeline
-              segments={buildFallbackSegments({
-                codeExecutions: messageCodeExecutions,
-                subAgents: messageSubAgents,
-                fileOps: messageFileOps,
-                webFetches: messageWebFetches,
-              })}
-              pool={buildResolvedPool({
-                steps: timelineSteps,
-                sources: resolvedSources ?? [],
-                codeExecutions: messageCodeExecutions,
-                subAgents: messageSubAgents,
-                fileOps: messageFileOps,
-                webFetches: messageWebFetches,
-              })}
-              isComplete
-              onOpenCodeExecution={openCodePanel}
-              activeCodeExecutionId={codePanelExecutionId ?? undefined}
-              onOpenSubAgent={openAgentPanel}
-              accessToken={accessToken}
-              baseUrl={baseUrl}
-              typography={isWorkMode ? 'work' : 'default'}
-            />
+            {messageCodeExecutions?.map((ce) => (
+              <TopLevelCopToolBlock
+                key={`fallback-code-${msg.id}-${ce.id}`}
+                entry={{ kind: 'code', id: ce.id, seq: ce.seq ?? 0, item: ce }}
+                onOpenCodeExecution={openCodePanel}
+                activeCodeExecutionId={codePanelExecutionId ?? undefined}
+              />
+            ))}
+            {(timelineSteps.length > 0 || (messageSubAgents && messageSubAgents.length > 0) || (messageFileOps && messageFileOps.length > 0) || (messageWebFetches && messageWebFetches.length > 0)) && (
+              <CopTimeline
+                segments={buildFallbackSegments({
+                  subAgents: messageSubAgents,
+                  fileOps: messageFileOps,
+                  webFetches: messageWebFetches,
+                })}
+                pool={buildResolvedPool({
+                  steps: timelineSteps,
+                  sources: resolvedSources ?? [],
+                  subAgents: messageSubAgents,
+                  fileOps: messageFileOps,
+                  webFetches: messageWebFetches,
+                })}
+                isComplete
+                onOpenSubAgent={openAgentPanel}
+                accessToken={accessToken}
+                baseUrl={baseUrl}
+                typography={isWorkMode ? 'work' : 'default'}
+              />
+            )}
           </div>
         )}
         <MessageBubble
