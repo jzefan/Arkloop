@@ -1,6 +1,7 @@
 import { memo } from 'react'
 import { Globe, Loader2 } from 'lucide-react'
 import type { WebFetchRef } from '../../storage'
+import { handleExternalAnchorClick } from '../../openExternal'
 import { getDomain, isHttpUrl, getShortName, getUrlScheme } from './utils'
 import { SourceFavicon } from './SourceList'
 
@@ -74,6 +75,7 @@ export const WebFetchItem = memo(function WebFetchItem({ fetch: f, live: _live }
         target="_blank"
         rel="noopener noreferrer"
         title={f.url}
+        onClick={(event) => handleExternalAnchorClick(event, f.url)}
         style={{
           display: 'flex',
           alignItems: 'center',

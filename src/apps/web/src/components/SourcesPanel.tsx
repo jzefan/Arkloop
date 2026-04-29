@@ -1,5 +1,6 @@
 import { X } from 'lucide-react'
 import type { WebSource } from '../storage'
+import { handleExternalAnchorClick } from '../openExternal'
 
 function getDomain(url: string): string {
   try {
@@ -81,6 +82,7 @@ export function SourcesPanel({ sources, userQuery, onClose }: Props) {
                 href={source.url}
                 target="_blank"
                 rel="noopener noreferrer"
+                onClick={(event) => handleExternalAnchorClick(event, source.url)}
                 style={{
                   textDecoration: 'none',
                   display: 'flex',

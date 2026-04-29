@@ -18,6 +18,7 @@ import { WorkspaceResource, type WorkspaceFileRef } from './WorkspaceResource'
 import { DocumentCard } from './DocumentCard'
 import { useActiveArtifactKey } from '../contexts/panels'
 import { recordPerfCount, recordPerfValue } from '../perfDebug'
+import { handleExternalAnchorClick } from '../openExternal'
 
 type ArtifactsContextValue = {
   artifacts: ArtifactRef[]
@@ -319,6 +320,7 @@ function ArtifactAwareLink({ href, children }: { href?: string; children?: React
       href={href}
       target="_blank"
       rel="noopener noreferrer"
+      onClick={(event) => handleExternalAnchorClick(event, href)}
       style={{ color: 'var(--c-text-primary)', fontWeight: 400, fontSize: '0.92em', textDecoration: 'underline', textDecorationColor: 'var(--c-border-subtle)', textUnderlineOffset: '2px' }}
     >
       {children}

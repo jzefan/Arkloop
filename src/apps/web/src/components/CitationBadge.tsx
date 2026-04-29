@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect, createContext, useContext } from 'react'
 import type { WebSource } from '../storage'
+import { handleExternalAnchorClick } from '../openExternal'
 
 export const WebSourcesContext = createContext<WebSource[]>([])
 
@@ -244,7 +245,10 @@ export function CitationBadge({ indices }: Props) {
             target="_blank"
             rel="noopener noreferrer"
             style={{ textDecoration: 'none', display: 'block' }}
-            onClick={(e) => e.stopPropagation()}
+            onClick={(e) => {
+              e.stopPropagation()
+              handleExternalAnchorClick(e, currentSource.url)
+            }}
           >
             <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '5px' }}>
               <img
