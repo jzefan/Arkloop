@@ -237,16 +237,25 @@ const UpdatePopover = forwardRef<HTMLDivElement, UpdatePopoverProps>(function Up
   const phase = state?.phase === 'unsupported' ? 'not-available' : (state?.phase ?? 'idle')
 
   const handleSkipOnce = useCallback(() => {
-    try { sessionStorage.setItem('arkloop:skip_update_once', '1') } catch {}
+    try {
+      sessionStorage.setItem('arkloop:skip_update_once', '1')
+    } catch {
+      // Browser storage can be unavailable in private or embedded contexts.
+    }
     onClose?.()
   }, [onClose])
 
+  const latestVersion = state?.latestVersion
   const handleSkipVersion = useCallback(() => {
-    if (state?.latestVersion) {
-      try { localStorage.setItem('arkloop:skip_version', state.latestVersion) } catch {}
+    if (latestVersion) {
+      try {
+        localStorage.setItem('arkloop:skip_version', latestVersion)
+      } catch {
+        // Browser storage can be unavailable in private or embedded contexts.
+      }
     }
     onClose?.()
-  }, [onClose, state?.latestVersion])
+  }, [latestVersion, onClose])
 
   const renderContent = () => {
     switch (phase) {
