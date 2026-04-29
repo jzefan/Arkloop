@@ -470,6 +470,46 @@ func TestOpenAISDKResponsesState_CompletedOnlyEmitsVisibleTextDelta(t *testing.T
 	}
 }
 
+func TestOpenAISDKResponsesState_CompletedMessageCarriesStreamedVisibleDelta(t *testing.T) {
+	var deltas []string
+	var completed *StreamRunCompleted
+	state := newOpenAISDKResponsesState(context.Background(), "llm_1", func(event StreamEvent) error {
+		switch ev := event.(type) {
+		case StreamMessageDelta:
+			if ev.Channel == nil {
+				deltas = append(deltas, ev.ContentDelta)
+			}
+		case StreamRunCompleted:
+			completed = &ev
+		}
+		return nil
+	})
+	chunks := []string{
+		`{"type":"response.output_text.delta","delta":"hello "}`,
+		`{"type":"response.output_text.delta","delta":"world"}`,
+		`{"type":"response.completed","response":{"output":[{"type":"message","role":"assistant","content":null}],"usage":{"input_tokens":1,"output_tokens":2}}}`,
+	}
+	for _, chunk := range chunks {
+		var event responses.ResponseStreamEventUnion
+		if err := json.Unmarshal([]byte(chunk), &event); err != nil {
+			t.Fatalf("unmarshal: %v", err)
+		}
+		if err := state.handle(event); err != nil {
+			t.Fatalf("handle: %v", err)
+		}
+	}
+
+	if strings.Join(deltas, "") != "hello world" {
+		t.Fatalf("unexpected deltas: %#v", deltas)
+	}
+	if completed == nil || completed.AssistantMessage == nil {
+		t.Fatalf("missing completion: %#v", completed)
+	}
+	if got := VisibleMessageText(*completed.AssistantMessage); got != "hello world" {
+		t.Fatalf("expected completed assistant message to carry streamed text, got %q", got)
+	}
+}
+
 func TestOpenAISDKResponsesState_CompletedMessageCarriesReasoningDelta(t *testing.T) {
 	var thinkingDeltas []string
 	var completed *StreamRunCompleted
