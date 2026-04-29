@@ -234,10 +234,14 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
   const [isPlanMode, setIsPlanMode] = useState(planMode ?? false)
   const isPlanModeRef = useLatest(isPlanMode)
   const [workCompactInputWraps, setWorkCompactInputWraps] = useState(false)
+  const [textareaFocusRestoreTick, setTextareaFocusRestoreTick] = useState(0)
   const [selectedModel, setSelectedModel] = useState<string | null>(readSelectedModelFromStorage)
   const compactTextareaWidthRef = useRef<number | null>(null)
   const pendingTextareaFocusRef = useRef<TextareaSelection | null>(null)
   const inputLayoutChangingRef = useRef(false)
+  const isComposingRef = useRef(false)
+  const [isComposingInput, setIsComposingInput] = useState(false)
+  const composingWorkCompactInputRef = useRef<boolean | null>(null)
   const draftScope = useMemo<InputDraftScope>(() => ({
     ownerKey: draftOwnerKey,
     page: variant === 'welcome' ? 'welcome' : 'thread',
@@ -356,7 +360,10 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
   const isPlainChatThread = variant === 'chat' && appMode !== 'work'
   const isEditingQueuedPrompt = !!queuedEditLabel
   const isWorkSingleLogicalLine = countLinesWithinLimit(draft, 2) === 1
-  const isWorkCompactInput = isWorkChat && isWorkSingleLogicalLine && !workCompactInputWraps
+  const measuredWorkCompactInput = isWorkChat && isWorkSingleLogicalLine && !workCompactInputWraps
+  const isWorkCompactInput = isWorkChat && isComposingInput && composingWorkCompactInputRef.current !== null
+    ? composingWorkCompactInputRef.current
+    : measuredWorkCompactInput
   const isWorkExpandedInput = isWorkChat && !isWorkCompactInput
   const formPadding = isPlainChatThread
     ? '19px 12px 11px 20px'
@@ -390,6 +397,11 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
     textarea.setSelectionRange(start, end, selection.direction)
   }, [disabled])
 
+  const requestTextareaFocusRestore = useCallback((selection: TextareaSelection) => {
+    pendingTextareaFocusRef.current = selection
+    setTextareaFocusRestoreTick((tick) => tick + 1)
+  }, [])
+
   const measureWorkInputWraps = useCallback((value: string, textarea: HTMLTextAreaElement) => {
     const style = window.getComputedStyle(textarea)
     const measuredWidth = measureTextareaContentWidth(textarea, style)
@@ -415,6 +427,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
   }, [isWorkChat, isWorkCompactInput, measureWorkInputWraps])
 
   useLayoutEffect(() => {
+    if (isComposingInput) return
     if (!isWorkChat) {
       compactTextareaWidthRef.current = null
       if (workCompactInputWraps) setWorkCompactInputWraps(false)
@@ -445,18 +458,19 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
       inputLayoutChangingRef.current = true
       setWorkCompactInputWraps(nextWraps)
     }
-  }, [draft, isWorkChat, isWorkCompactInput, isWorkSingleLogicalLine, workCompactInputWraps])
+  }, [draft, isComposingInput, isWorkChat, isWorkCompactInput, isWorkSingleLogicalLine, workCompactInputWraps])
 
   useLayoutEffect(() => {
     if (!pendingTextareaFocusRef.current) return
     if (inputLayoutChangingRef.current) {
       inputLayoutChangingRef.current = false
+      setTextareaFocusRestoreTick((tick) => tick + 1)
       return
     }
     const selection = pendingTextareaFocusRef.current
     pendingTextareaFocusRef.current = null
     restoreTextareaFocus(selection)
-  }, [draft, isWorkCompactInput, isWorkExpandedInput, restoreTextareaFocus])
+  }, [draft, isWorkCompactInput, isWorkExpandedInput, restoreTextareaFocus, textareaFocusRestoreTick])
 
   useLayoutEffect(() => {
     if (disabled || isRecording || isTranscribing) return
@@ -645,21 +659,26 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
     return true
   }
 
+  const isComposingEvent = (event: KeyboardEvent<HTMLTextAreaElement>['nativeEvent']) => (
+    isComposingRef.current || event.isComposing || event.keyCode === 229
+  )
+
   const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
+    const isComposing = isComposingEvent(e.nativeEvent)
     if (e.key === 'Tab' && e.shiftKey && appMode === 'work') {
       e.preventDefault()
       handleTogglePlanMode()
       return
     }
-    if (!e.nativeEvent.isComposing && e.key === 'ArrowUp' && handleHistoryNavigation('up', e.currentTarget)) {
+    if (!isComposing && e.key === 'ArrowUp' && handleHistoryNavigation('up', e.currentTarget)) {
       e.preventDefault()
       return
     }
-    if (!e.nativeEvent.isComposing && e.key === 'ArrowDown' && handleHistoryNavigation('down', e.currentTarget)) {
+    if (!isComposing && e.key === 'ArrowDown' && handleHistoryNavigation('down', e.currentTarget)) {
       e.preventDefault()
       return
     }
-    if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
+    if (e.key === 'Enter' && !e.shiftKey && !isComposing) {
       e.preventDefault()
       if (!disabled && (draft.trim() || attachments.length > 0)) {
         e.currentTarget.form?.requestSubmit()
@@ -715,9 +734,25 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
 
   const handleDraftChange = (target: HTMLTextAreaElement) => {
     resetHistoryCursor()
-    if (document.activeElement === target && willWorkInputLayoutChange(target.value, target)) {
+    if (!isComposingRef.current && document.activeElement === target && willWorkInputLayoutChange(target.value, target)) {
       pendingTextareaFocusRef.current = readTextareaSelection(target)
     }
+    trackedSetDraft(target.value)
+  }
+
+  const handleCompositionStart = () => {
+    isComposingRef.current = true
+    composingWorkCompactInputRef.current = isWorkChat ? isWorkCompactInput : null
+    setIsComposingInput(true)
+    pendingTextareaFocusRef.current = null
+  }
+
+  const handleCompositionEnd = (target: HTMLTextAreaElement) => {
+    isComposingRef.current = false
+    composingWorkCompactInputRef.current = null
+    setIsComposingInput(false)
+    resetHistoryCursor()
+    requestTextareaFocusRestore(readTextareaSelection(target))
     trackedSetDraft(target.value)
   }
 
@@ -937,6 +972,8 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
               value={draft}
               onChange={(e) => handleDraftChange(e.currentTarget)}
               onKeyDown={handleKeyDown}
+              onCompositionStart={handleCompositionStart}
+              onCompositionEnd={(e) => handleCompositionEnd(e.currentTarget)}
               onPaste={handleTextareaPaste}
               onFocus={() => setFocused(true)}
               onBlur={() => setFocused(false)}
@@ -1055,6 +1092,8 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                   value={draft}
                   onChange={(e) => handleDraftChange(e.currentTarget)}
                   onKeyDown={handleKeyDown}
+                  onCompositionStart={handleCompositionStart}
+                  onCompositionEnd={(e) => handleCompositionEnd(e.currentTarget)}
                   onPaste={handleTextareaPaste}
                   onFocus={() => setFocused(true)}
                   onBlur={() => setFocused(false)}

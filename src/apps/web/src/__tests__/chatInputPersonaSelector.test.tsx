@@ -8,6 +8,7 @@ import { PersonaModelBar } from '../components/chat-input/PersonaModelBar'
 import { LocaleProvider } from '../contexts/LocaleContext'
 import { writeSelectedPersonaKeyToStorage } from '../storage'
 import { listLlmProviders, listSelectablePersonas } from '../api'
+import { measureTextareaHeight } from '@arkloop/shared'
 
 vi.mock('../api', async () => {
   const actual = await vi.importActual<typeof import('../api')>('../api')
@@ -23,6 +24,14 @@ vi.mock('@arkloop/shared/desktop', () => ({
   isDesktop: () => true,
   getDesktopApi: () => null,
 }))
+
+vi.mock('@arkloop/shared', async () => {
+  const actual = await vi.importActual<typeof import('@arkloop/shared')>('@arkloop/shared')
+  return {
+    ...actual,
+    measureTextareaHeight: vi.fn(actual.measureTextareaHeight),
+  }
+})
 
 function flushMicrotasks(): Promise<void> {
   return Promise.resolve()
@@ -56,6 +65,27 @@ function createMemoryStorage(): Storage {
 
 function findButtonByText(container: HTMLElement, text: string): HTMLButtonElement | null {
   return Array.from(container.querySelectorAll('button')).find((button) => button.textContent?.trim() === text) as HTMLButtonElement | null
+}
+
+function setTextareaValue(textarea: HTMLTextAreaElement, value: string) {
+  const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set
+  if (setter) {
+    setter.call(textarea, value)
+    return
+  }
+  textarea.value = value
+}
+
+type TextareaReactProps = {
+  onChange: (event: { currentTarget: HTMLTextAreaElement }) => void
+  onCompositionStart: () => void
+  onCompositionEnd: (event: { currentTarget: HTMLTextAreaElement }) => void
+}
+
+function readTextareaReactProps(textarea: HTMLTextAreaElement): TextareaReactProps {
+  const propsKey = Object.keys(textarea).find((key) => key.startsWith('__reactProps$'))
+  expect(propsKey).toBeTruthy()
+  return (textarea as unknown as Record<string, TextareaReactProps>)[propsKey!]
 }
 
 describe('ChatInput persona selector', () => {
@@ -234,6 +264,80 @@ describe('ChatInput persona selector', () => {
     })
 
     expect(container.textContent).not.toContain('Work in a folder')
+
+    act(() => {
+      root.unmount()
+    })
+    container.remove()
+  })
+
+  it('Work compact 组合输入期间不因换行测量替换 textarea', async () => {
+    const mockedMeasureTextareaHeight = vi.mocked(measureTextareaHeight)
+    mockedMeasureTextareaHeight.mockImplementation(({ value }) => (
+      value.length > 15 ? 40 : 20
+    ))
+    const originalGetComputedStyle = window.getComputedStyle
+    vi.spyOn(window, 'getComputedStyle').mockImplementation((element) => {
+      const style = originalGetComputedStyle.call(window, element)
+      Object.defineProperty(style, 'lineHeight', { value: '20px', configurable: true })
+      Object.defineProperty(style, 'fontSize', { value: '16px', configurable: true })
+      Object.defineProperty(style, 'font', { value: '16px sans-serif', configurable: true })
+      return style
+    })
+    Object.defineProperty(HTMLTextAreaElement.prototype, 'clientWidth', { configurable: true, value: 120 })
+    Object.defineProperty(HTMLTextAreaElement.prototype, 'offsetWidth', { configurable: true, value: 120 })
+
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const root = createRoot(container)
+
+    await act(async () => {
+      root.render(
+        <LocaleProvider>
+          <ChatInput
+            onSubmit={(event) => event.preventDefault()}
+            accessToken="token"
+            variant="chat"
+            appMode="work"
+            hasMessages={false}
+            messagesLoading={false}
+          />
+        </LocaleProvider>,
+      )
+    })
+    await act(async () => {
+      await flushMicrotasks()
+    })
+
+    const compactTextarea = container.querySelector('textarea') as HTMLTextAreaElement | null
+    expect(compactTextarea).not.toBeNull()
+    if (!compactTextarea) return
+
+    await act(async () => {
+      compactTextarea.focus()
+      const props = readTextareaReactProps(compactTextarea)
+      props.onCompositionStart()
+      const value = '这是一段足够长但仍然是单行的中文组合输入内容'
+      setTextareaValue(compactTextarea, value)
+      compactTextarea.setSelectionRange(value.length, value.length)
+      expect(compactTextarea.value.length).toBeGreaterThan(15)
+      props.onChange({ currentTarget: compactTextarea })
+      await flushMicrotasks()
+    })
+
+    expect(container.querySelector('textarea')).toBe(compactTextarea)
+
+    await act(async () => {
+      readTextareaReactProps(compactTextarea).onCompositionEnd({ currentTarget: compactTextarea })
+      await flushMicrotasks()
+    })
+
+    expect(mockedMeasureTextareaHeight).toHaveBeenCalled()
+    expect(mockedMeasureTextareaHeight.mock.calls.some(([args]) => args.value.length > 15)).toBe(true)
+    const expandedTextarea = container.querySelector('textarea') as HTMLTextAreaElement | null
+    expect(expandedTextarea).not.toBe(compactTextarea)
+    expect(document.activeElement).toBe(expandedTextarea)
+    expect(expandedTextarea?.selectionStart).toBe(compactTextarea.value.length)
 
     act(() => {
       root.unmount()
