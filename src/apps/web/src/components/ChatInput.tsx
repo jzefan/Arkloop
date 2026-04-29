@@ -1134,8 +1134,8 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
           <div
             style={{
               position: 'relative',
-              width: isWorkChat ? '31.5px' : '30px',
-              height: isWorkChat ? '31.5px' : '30px',
+              width: '31.5px',
+              height: '31.5px',
               flexShrink: 0,
             }}
           >
