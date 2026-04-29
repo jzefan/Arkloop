@@ -13,6 +13,7 @@ import {
   COP_TIMELINE_THINKING_PLAIN_LINE_HEIGHT_PX,
   COP_TIMELINE_DOT_TOP,
   COP_TIMELINE_DOT_SIZE,
+  extractThinkingTitles,
 } from './utils'
 import {
   useThinkingElapsedSeconds,
@@ -101,11 +102,17 @@ export function CopTimeline({
   const aggregatedDurationSec = thinkingOnly?.durationSec ?? 0
   const segmentThinkingStartedAtMs = thinkingOnly?.startedAtMs
 
+  // 提取 thinking 中最后一个 **标题** 作为 header label
+  const thinkingTitles = thinkingOnly?.markdown ? extractThinkingTitles(thinkingOnly.markdown) : []
+  const lastThinkingTitle = thinkingTitles.length > 0 ? thinkingTitles[thinkingTitles.length - 1] : undefined
+
   const pendingHasContent = hasSegments || hasThinkingOnly
   const pendingShowThinkingHeader = !!live && !anyThinking && !pendingHasContent && !!thinkingHint
   const thinkingTimerActive = anyThinkingLive || (anyThinking && !!live)
   const activeThinkingElapsed = useThinkingElapsedSeconds(thinkingTimerActive, segmentThinkingStartedAtMs)
-  const thinkingLiveHeaderLabel = formatThinkingHeaderLabel(thinkingHint, activeThinkingElapsed, t)
+  const thinkingLiveHeaderLabel = lastThinkingTitle
+    ? `${lastThinkingTitle} ${activeThinkingElapsed}s`
+    : formatThinkingHeaderLabel(thinkingHint, activeThinkingElapsed, t)
 
   const shouldRender = hasSegments || hasThinkingOnly || !!thinkingHint
 
@@ -113,8 +120,13 @@ export function CopTimeline({
   const nonExecTimelineLive = !!live && nonExecSegments.some((s) => s.status === 'open')
   const hasNonExecBody = nonExecSegments.length > 0 || hasThinkingOnly || anyThinking || (!hasSegments && !!thinkingHint)
 
-  const thoughtDurationLabel =
-    aggregatedDurationSec > 0
+  // 带标题的 label："{title} {sec}s" 或 "{title}"
+  const titledDurationLabel = (title: string, sec: number) =>
+    sec > 0 ? `${title} ${sec}s` : title
+
+  const thoughtDurationLabel = lastThinkingTitle
+    ? titledDurationLabel(lastThinkingTitle, aggregatedDurationSec)
+    : aggregatedDurationSec > 0
       ? t.copTimelineThoughtForSeconds(aggregatedDurationSec)
       : t.copTimelineThinkingDoneNoDuration
 
@@ -192,7 +204,7 @@ export function CopTimeline({
   // exec-only: 没有非 exec 内容，直接平铺
   if (!hasNonExecBody && execCallItems.length > 0) {
     return (
-      <div className={`cop-timeline-root${typography === 'work' ? ' cop-timeline-root--work' : ''}`} style={{ maxWidth: '663px' }}>
+      <div className={`cop-timeline-root${typography === 'work' ? ' cop-timeline-root--work' : ''}`} style={typography !== 'work' ? { maxWidth: '663px' } : undefined}>
         {renderExecItems()}
       </div>
     )
@@ -204,7 +216,7 @@ export function CopTimeline({
   }
 
   return (
-    <div className={`cop-timeline-root${typography === 'work' ? ' cop-timeline-root--work' : ''}`} style={{ maxWidth: '663px' }}>
+    <div className={`cop-timeline-root${typography === 'work' ? ' cop-timeline-root--work' : ''}`} style={typography !== 'work' ? { maxWidth: '663px' } : undefined}>
       {hasNonExecBody && (
         <>
           <button
@@ -253,34 +265,43 @@ export function CopTimeline({
             transition={!reduceMotion ? { duration: 0.24, ease: [0.4, 0, 0.2, 1] } : { duration: 0 }}
             style={{ overflow: collapsed ? 'hidden' : 'visible' }}
           >
-            <div style={{ position: 'relative', paddingTop: '3px', paddingBottom: '3px', paddingLeft: (nonExecSegments.length > 1 || hasThinkingOnly) ? '24px' : undefined }}>
+            <div style={{ position: 'relative', paddingTop: typography === 'work' ? '5px' : '3px', paddingBottom: typography === 'work' ? '6px' : '3px', paddingLeft: (nonExecSegments.length > 1 || (hasThinkingOnly && typography !== 'work')) ? '24px' : undefined }}>
               {/* Thinking-only mode (no segments) */}
               {hasThinkingOnly && thinkingOnly && (() => {
-                const showDone = isComplete && !thinkingOnly.live
+                const isWork = typography === 'work'
+                const showDone = !isWork && isComplete && !thinkingOnly.live
                 const multiItems = showDone
                 return (
                   <>
-                    <CopTimelineUnifiedRow
-                      isFirst={true}
-                      isLast={!showDone}
-                      multiItems={multiItems}
-                      dotColor={thinkingOnly.live && !isComplete ? 'var(--c-text-secondary)' : 'var(--c-border-mid)'}
-                      dotTop={COP_TIMELINE_DOT_TOP}
-                      paddingBottom={8}
-                      horizontalMotion={false}
-                    >
-                      <div
-                        style={{
-                          paddingTop: Math.max(0, COP_TIMELINE_DOT_TOP + COP_TIMELINE_DOT_SIZE / 2 - COP_TIMELINE_THINKING_PLAIN_LINE_HEIGHT_PX / 2),
-                        }}
+                    {isWork ? (
+                      <AssistantThinkingMarkdown
+                        markdown={thinkingOnly.markdown}
+                        live={!!thinkingOnly.live && !isComplete}
+                        variant="timeline-plain"
+                      />
+                    ) : (
+                      <CopTimelineUnifiedRow
+                        isFirst={true}
+                        isLast={!showDone}
+                        multiItems={multiItems}
+                        dotColor={thinkingOnly.live && !isComplete ? 'var(--c-text-secondary)' : 'var(--c-border-mid)'}
+                        dotTop={COP_TIMELINE_DOT_TOP}
+                        paddingBottom={8}
+                        horizontalMotion={false}
                       >
-                        <AssistantThinkingMarkdown
-                          markdown={thinkingOnly.markdown}
-                          live={!!thinkingOnly.live && !isComplete}
-                          variant="timeline-plain"
-                        />
-                      </div>
-                    </CopTimelineUnifiedRow>
+                        <div
+                          style={{
+                            paddingTop: Math.max(0, COP_TIMELINE_DOT_TOP + COP_TIMELINE_DOT_SIZE / 2 - COP_TIMELINE_THINKING_PLAIN_LINE_HEIGHT_PX / 2),
+                          }}
+                        >
+                          <AssistantThinkingMarkdown
+                            markdown={thinkingOnly.markdown}
+                            live={!!thinkingOnly.live && !isComplete}
+                            variant="timeline-plain"
+                          />
+                        </div>
+                      </CopTimelineUnifiedRow>
+                    )}
                     {showDone && (
                       <CopTimelineUnifiedRow
                         isFirst={false}

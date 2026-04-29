@@ -126,3 +126,9 @@ export function firstThinkingStartMs(
 
 export const REVIEWING_SOURCE_PREVIEW_COUNT = 12
 export const FAVICON_REVEAL_DELAY_MS = 140
+
+/** 提取 thinking markdown 中独占一行的 **标题**，返回所有匹配（按出现顺序） */
+export function extractThinkingTitles(markdown: string): string[] {
+  const matches = [...markdown.matchAll(/^\*\*(.+?)\*\*$/gm)]
+  return matches.map((m) => m[1]!.trim())
+}
