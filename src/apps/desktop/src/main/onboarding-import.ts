@@ -126,24 +126,32 @@ export async function applyOnboardingImport(
   const errors: string[] = []
 
   if (selection.identity) {
-    await collectStepError(errors, async () => {
+    if (!await runImportStep(errors, async () => {
       imported.identity = await importWorkspace(source)
-    })
+    })) {
+      return { ok: false, imported, errors }
+    }
   }
   if (selection.skills) {
-    await collectStepError(errors, async () => {
+    if (!await runImportStep(errors, async () => {
       imported.skills = await importSkills(source, options)
-    })
+    })) {
+      return { ok: false, imported, errors }
+    }
   }
   if (selection.providers) {
-    await collectStepError(errors, async () => {
+    if (!await runImportStep(errors, async () => {
       imported.providers = await importProviders(source, options)
-    })
+    })) {
+      return { ok: false, imported, errors }
+    }
   }
   if (selection.mcp) {
-    await collectStepError(errors, async () => {
+    if (!await runImportStep(errors, async () => {
       imported.mcp = await importMcpServers(source, options)
-    })
+    })) {
+      return { ok: false, imported, errors }
+    }
   }
 
   return { ok: errors.length === 0, imported, errors }
@@ -200,8 +208,8 @@ async function loadHermesSource(): Promise<SourceDetails | null> {
 }
 
 async function loadOpenClawSource(): Promise<SourceDetails | null> {
-  const stateDir = resolveOpenClawStateDir()
-  const configPath = resolveOpenClawConfigPath(stateDir)
+  const stateDir = await resolveOpenClawStateDir()
+  const configPath = await resolveOpenClawConfigPath(stateDir)
   const config = await readJson5File(configPath)
   const agentId = resolveOpenClawAgentId(config ?? {})
   const agentDir = resolveOpenClawAgentDir(config ?? {}, stateDir, agentId)
@@ -300,22 +308,59 @@ function normalizeOpenClawAgentId(value: string): string {
   return normalized || 'main'
 }
 
-function resolveOpenClawStateDir(): string {
+async function resolveOpenClawStateDir(): Promise<string> {
   const override = process.env.OPENCLAW_STATE_DIR?.trim()
-  return override ? resolveOpenClawUserPath(override) : path.join(os.homedir(), '.openclaw')
+  if (override) {
+    return resolveOpenClawUserPath(override)
+  }
+  const home = resolveOpenClawHomeDir()
+  const stateDir = path.join(home, '.openclaw')
+  if (process.env.OPENCLAW_TEST_FAST === '1' || await pathExists(stateDir)) {
+    return stateDir
+  }
+  const legacyDir = path.join(home, '.clawdbot')
+  return await pathExists(legacyDir) ? legacyDir : stateDir
 }
 
-function resolveOpenClawConfigPath(stateDir: string): string {
+async function resolveOpenClawConfigPath(stateDir: string): Promise<string> {
   const override = process.env.OPENCLAW_CONFIG_PATH?.trim()
-  return override ? resolveOpenClawUserPath(override) : path.join(stateDir, 'openclaw.json')
+  if (override) {
+    return resolveOpenClawUserPath(override)
+  }
+  const candidates = [
+    path.join(stateDir, 'openclaw.json'),
+    path.join(stateDir, 'clawdbot.json'),
+  ]
+  for (const candidate of candidates) {
+    if (await pathExists(candidate)) {
+      return candidate
+    }
+  }
+  if (process.env.OPENCLAW_STATE_DIR?.trim()) {
+    return candidates[0]
+  }
+  const home = resolveOpenClawHomeDir()
+  const defaultCandidates = [
+    path.join(home, '.openclaw', 'openclaw.json'),
+    path.join(home, '.openclaw', 'clawdbot.json'),
+    path.join(home, '.clawdbot', 'openclaw.json'),
+    path.join(home, '.clawdbot', 'clawdbot.json'),
+  ]
+  for (const candidate of defaultCandidates) {
+    if (await pathExists(candidate)) {
+      return candidate
+    }
+  }
+  return candidates[0]
 }
 
 function resolveOpenClawDefaultAgentWorkspaceDir(): string {
+  const home = resolveOpenClawHomeDir()
   const profile = process.env.OPENCLAW_PROFILE?.trim()
   if (profile && profile.toLowerCase() !== 'default') {
-    return path.join(os.homedir(), '.openclaw', `workspace-${profile}`)
+    return path.join(home, '.openclaw', `workspace-${profile}`)
   }
-  return path.join(os.homedir(), '.openclaw', 'workspace')
+  return path.join(home, '.openclaw', 'workspace')
 }
 
 async function loadOpenClawEnv(stateDir: string, config: Record<string, unknown>): Promise<Record<string, string>> {
@@ -344,7 +389,7 @@ function parseProviderMap(providerMap: Record<string, unknown>, env: Record<stri
     const api = asString(raw.api) || sourceName
     const baseUrl = normalizeProviderBaseUrl(mapArkloopProvider(api, sourceName), asString(raw.baseUrl) || asString(raw.base_url))
     const apiKey =
-      resolveSecretValue(asString(raw.apiKey) || asString(raw.api_key), env) ||
+      resolveSecretInputValue(raw.apiKey ?? raw.api_key, env) ||
       resolveSecretValue(asString(raw.apiKeyEnv) || asString(raw.api_key_env), env)
     const mapped = mapProviderCandidate(sourceName, api, baseUrl, apiKey, parseModels(raw.models))
     if (mapped) {
@@ -494,13 +539,17 @@ function parseMcpMap(
         if (!envKey.trim()) {
           continue
         }
-        const resolved = resolveSecretValue(value, env, envAliases(envKey))
+        const resolved = resolveSecretInputValue(rawEnvValue, env, envAliases(envKey))
         if (resolved && isSecretEnvKey(envKey)) {
           envSecrets[envKey] = resolved
           continue
         }
         if (value.trim()) {
           visibleEnv[envKey] = value
+          continue
+        }
+        if (resolved) {
+          visibleEnv[envKey] = resolved
         }
       }
       if (Object.keys(visibleEnv).length > 0) {
@@ -514,7 +563,7 @@ function parseMcpMap(
       launchSpec.url = url
     }
 
-    const headers = stringRecord(raw.headers)
+    const headers = secretStringRecord(raw.headers, env)
     const bearerToken = resolveSecretValue(asString(raw.bearer_token) || asString(raw.bearerToken), env)
     const timeout = asNumber(raw.connectionTimeoutMs) ?? asNumber(raw.callTimeoutMs) ?? asNumber(raw.call_timeout_ms)
     if (timeout && timeout > 0) {
@@ -551,13 +600,17 @@ function normalizeTransport(value: string, raw: Record<string, unknown>): McpCan
 
 async function importWorkspace(source: SourceDetails): Promise<number> {
   const targetDir = arkloopWorkDir()
-  await fs.mkdir(targetDir, { recursive: true })
 
   if (source.kind === 'openclaw' && source.workspaceDir) {
+    if (path.resolve(source.workspaceDir) === path.resolve(targetDir)) {
+      return 1
+    }
+    await resetArkloopWorkDir(targetDir)
     await fs.cp(source.workspaceDir, targetDir, { recursive: true, force: true })
     return 1
   }
 
+  await resetArkloopWorkDir(targetDir)
   let count = 0
   count += await copyFileIfExists(path.join(source.homeDir, 'SOUL.md'), path.join(targetDir, 'SOUL.md'))
   count += await copyFileIfExists(path.join(source.homeDir, 'AGENTS.md'), path.join(targetDir, 'AGENTS.md'))
@@ -570,6 +623,14 @@ async function importWorkspace(source: SourceDetails): Promise<number> {
     count += 1
   }
   return count
+}
+
+async function resetArkloopWorkDir(targetDir: string): Promise<void> {
+  if (path.resolve(targetDir) !== path.resolve(arkloopWorkDir())) {
+    throw new Error('invalid work directory')
+  }
+  await fs.rm(targetDir, { recursive: true, force: true })
+  await fs.mkdir(targetDir, { recursive: true })
 }
 
 async function importProviders(source: SourceDetails, options: ApiOptions): Promise<number> {
@@ -986,6 +1047,18 @@ function resolveSecretValue(raw: string, env: Record<string, string>, aliases: s
   return undefined
 }
 
+function resolveSecretInputValue(raw: unknown, env: Record<string, string>, aliases: string[] = []): string | undefined {
+  const direct = asString(raw)
+  if (direct) {
+    return resolveSecretValue(direct, env, aliases)
+  }
+  const ref = asRecord(raw)
+  if (!ref || asString(ref.source) !== 'env') {
+    return undefined
+  }
+  return resolveSecretValue(asString(ref.id), env, aliases)
+}
+
 function envRefName(value: string): string | null {
   const trimmed = value.trim()
   const braced = trimmed.match(/^\$\{([A-Z0-9_]+)\}$/i)
@@ -1004,17 +1077,17 @@ function envAliases(key: string): string[] {
 }
 
 function isSecretEnvKey(key: string): boolean {
-  return /KEY|TOKEN|SECRET|PASSWORD|PAT/i.test(key)
+  return /KEY|TOKEN|SECRET|PASSWORD|PAT|AUTH/i.test(key)
 }
 
-function stringRecord(value: unknown): Record<string, string> | undefined {
+function secretStringRecord(value: unknown, env: Record<string, string>): Record<string, string> | undefined {
   const raw = asRecord(value)
   if (!raw) {
     return undefined
   }
   const out: Record<string, string> = {}
   for (const [key, item] of Object.entries(raw)) {
-    const text = asString(item)
+    const text = resolveSecretInputValue(item, env) || asString(item)
     if (key.trim() && text.trim()) {
       out[key.trim()] = text
     }
@@ -1078,11 +1151,13 @@ function emptyImportCounts(): Record<ImportItemKey, number> {
   return { identity: 0, skills: 0, mcp: 0, providers: 0 }
 }
 
-async function collectStepError(errors: string[], run: () => Promise<void>): Promise<void> {
+async function runImportStep(errors: string[], run: () => Promise<void>): Promise<boolean> {
   try {
     await run()
+    return true
   } catch (error) {
     errors.push(error instanceof Error ? error.message : String(error))
+    return false
   }
 }
 
@@ -1132,7 +1207,7 @@ async function pathExists(filePath: string): Promise<boolean> {
 }
 
 function resolveOpenClawUserPath(value: string): string {
-  const expanded = expandHomePath(value.trim())
+  const expanded = expandHomePathWithHome(value.trim(), resolveOpenClawHomeDir())
   return expanded ? path.resolve(expanded) : expanded
 }
 
@@ -1141,13 +1216,42 @@ function stripNullBytes(value: string): string {
 }
 
 function expandHomePath(value: string): string {
+  return expandHomePathWithHome(value, os.homedir())
+}
+
+function expandHomePathWithHome(value: string, home: string): string {
   if (value === '~') {
-    return os.homedir()
+    return home
   }
-  if (value.startsWith('~/')) {
-    return path.join(os.homedir(), value.slice(2))
+  if (value.startsWith('~/') || value.startsWith('~\\')) {
+    return path.join(home, value.slice(2))
   }
   return value
+}
+
+function resolveOpenClawHomeDir(): string {
+  const explicitHome = normalizeHomeEnv(process.env.OPENCLAW_HOME)
+  if (explicitHome) {
+    return path.resolve(expandHomePathWithHome(explicitHome, resolveOpenClawOsHomeDir()))
+  }
+  return resolveOpenClawOsHomeDir()
+}
+
+function resolveOpenClawOsHomeDir(): string {
+  return path.resolve(
+    normalizeHomeEnv(process.env.HOME) ||
+    normalizeHomeEnv(process.env.USERPROFILE) ||
+    os.homedir() ||
+    process.cwd(),
+  )
+}
+
+function normalizeHomeEnv(value: string | undefined): string | undefined {
+  const trimmed = value?.trim()
+  if (!trimmed || trimmed === 'undefined' || trimmed === 'null') {
+    return undefined
+  }
+  return trimmed
 }
 
 function displayPath(value: string): string {

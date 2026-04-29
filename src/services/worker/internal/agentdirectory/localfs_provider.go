@@ -41,36 +41,27 @@ func (p *LocalFSProvider) Load(_ context.Context, _ string) (*Content, error) {
 
 func loadExtraMarkdownFiles(base string, canonical map[string]*string) []FileContent {
 	extras := []FileContent{}
-	_ = filepath.WalkDir(base, func(filePath string, entry os.DirEntry, err error) error {
-		if err != nil {
-			return nil
-		}
+	entries, err := os.ReadDir(base)
+	if err != nil {
+		return extras
+	}
+	for _, entry := range entries {
 		name := entry.Name()
 		if entry.IsDir() {
-			switch name {
-			case ".git", "node_modules":
-				return filepath.SkipDir
-			}
-			return nil
+			continue
 		}
 		if !strings.EqualFold(filepath.Ext(name), ".md") {
-			return nil
+			continue
 		}
-		rel, err := filepath.Rel(base, filePath)
+		if _, ok := canonical[name]; ok {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(base, name))
 		if err != nil {
-			return nil
+			continue
 		}
-		rel = filepath.ToSlash(rel)
-		if _, ok := canonical[rel]; ok {
-			return nil
-		}
-		data, err := os.ReadFile(filePath)
-		if err != nil {
-			return nil
-		}
-		extras = append(extras, FileContent{Path: rel, Content: string(data)})
-		return nil
-	})
+		extras = append(extras, FileContent{Path: name, Content: string(data)})
+	}
 	sort.Slice(extras, func(i, j int) bool { return extras[i].Path < extras[j].Path })
 	return extras
 }

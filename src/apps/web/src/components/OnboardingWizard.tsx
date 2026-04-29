@@ -689,8 +689,7 @@ export function OnboardingWizard({ onComplete }: Props) {
         source: selectedImportSourceData.kind,
         selection,
       });
-      const importedTotal = Object.values(result.imported).reduce((sum, value) => sum + value, 0);
-      if (!result.ok && importedTotal === 0) {
+      if (!result.ok) {
         throw new Error(result.errors[0] ?? t.requestFailed);
       }
       setProviderImportedFromAgent(result.imported.providers > 0);
