@@ -2178,6 +2178,9 @@ export function writeGtdInboxThreadIds(ids: Set<string>): void {
 }
 
 const GTD_TODO_THREAD_IDS_KEY = 'arkloop:web:gtd_todo_thread_ids'
+const GTD_WAITING_THREAD_IDS_KEY = 'arkloop:web:gtd_waiting_thread_ids'
+const GTD_SOMEDAY_THREAD_IDS_KEY = 'arkloop:web:gtd_someday_thread_ids'
+const GTD_ARCHIVED_THREAD_IDS_KEY = 'arkloop:web:gtd_archived_thread_ids'
 
 export function readGtdTodoThreadIds(): Set<string> {
   if (!canUseLocalStorage()) return new Set()
@@ -2193,6 +2196,57 @@ export function writeGtdTodoThreadIds(ids: Set<string>): void {
   if (!canUseLocalStorage()) return
   try {
     localStorage.setItem(GTD_TODO_THREAD_IDS_KEY, JSON.stringify([...ids]))
+  } catch { /* ignore */ }
+}
+
+export function readGtdWaitingThreadIds(): Set<string> {
+  if (!canUseLocalStorage()) return new Set()
+  try {
+    const raw = localStorage.getItem(GTD_WAITING_THREAD_IDS_KEY)
+    return new Set(JSON.parse(raw ?? '[]') as string[])
+  } catch {
+    return new Set()
+  }
+}
+
+export function writeGtdWaitingThreadIds(ids: Set<string>): void {
+  if (!canUseLocalStorage()) return
+  try {
+    localStorage.setItem(GTD_WAITING_THREAD_IDS_KEY, JSON.stringify([...ids]))
+  } catch { /* ignore */ }
+}
+
+export function readGtdSomedayThreadIds(): Set<string> {
+  if (!canUseLocalStorage()) return new Set()
+  try {
+    const raw = localStorage.getItem(GTD_SOMEDAY_THREAD_IDS_KEY)
+    return new Set(JSON.parse(raw ?? '[]') as string[])
+  } catch {
+    return new Set()
+  }
+}
+
+export function writeGtdSomedayThreadIds(ids: Set<string>): void {
+  if (!canUseLocalStorage()) return
+  try {
+    localStorage.setItem(GTD_SOMEDAY_THREAD_IDS_KEY, JSON.stringify([...ids]))
+  } catch { /* ignore */ }
+}
+
+export function readGtdArchivedThreadIds(): Set<string> {
+  if (!canUseLocalStorage()) return new Set()
+  try {
+    const raw = localStorage.getItem(GTD_ARCHIVED_THREAD_IDS_KEY)
+    return new Set(JSON.parse(raw ?? '[]') as string[])
+  } catch {
+    return new Set()
+  }
+}
+
+export function writeGtdArchivedThreadIds(ids: Set<string>): void {
+  if (!canUseLocalStorage()) return
+  try {
+    localStorage.setItem(GTD_ARCHIVED_THREAD_IDS_KEY, JSON.stringify([...ids]))
   } catch { /* ignore */ }
 }
 
