@@ -34,13 +34,31 @@ export type GenericToolCallRef = {
 export type TodoItemRef = {
   id: string
   content: string
+  activeForm?: string
   status: 'pending' | 'in_progress' | 'completed' | 'cancelled'
+}
+
+export type TodoChangeRef = {
+  type: 'created' | 'updated' | 'removed'
+  id: string
+  content: string
+  status?: TodoItemRef['status']
+  previousStatus?: TodoItemRef['status']
+  index?: number
+  previousIndex?: number
+  oldContent?: string
+  activeForm?: string
+  oldActiveForm?: string
 }
 
 export type TodoWriteRef = {
   id: string
   toolName: 'todo_write'
   todos: TodoItemRef[]
+  oldTodos?: TodoItemRef[]
+  changes?: TodoChangeRef[]
+  completedCount?: number
+  totalCount?: number
   status: 'running' | 'success' | 'failed'
   errorMessage?: string
   seq?: number
@@ -215,25 +233,139 @@ function parseTodoItems(value: unknown): TodoItemRef[] {
     const item = entry as Record<string, unknown>
     const id = typeof item.id === 'string' ? item.id.trim() : ''
     const content = typeof item.content === 'string' ? item.content.trim() : ''
+    const activeFormRaw = typeof item.active_form === 'string' ? item.active_form
+      : typeof item.activeForm === 'string' ? item.activeForm
+        : ''
+    const activeForm = activeFormRaw.trim()
     const status = item.status
     if (!id || !content) return []
     if (status !== 'pending' && status !== 'in_progress' && status !== 'completed' && status !== 'cancelled') return []
-    return [{ id, content, status }]
+    return [{ id, content, ...(activeForm ? { activeForm } : {}), status }]
   })
+}
+
+function parseTodoStatus(value: unknown): TodoItemRef['status'] | undefined {
+  return value === 'pending' || value === 'in_progress' || value === 'completed' || value === 'cancelled'
+    ? value
+    : undefined
+}
+
+function parseTodoChanges(value: unknown): TodoChangeRef[] {
+  if (!Array.isArray(value)) return []
+  return value.flatMap((entry) => {
+    if (!entry || typeof entry !== 'object') return []
+    const item = entry as Record<string, unknown>
+    const type = item.type
+    const id = typeof item.id === 'string' ? item.id.trim() : ''
+    const content = typeof item.content === 'string' ? item.content.trim() : ''
+    if ((type !== 'created' && type !== 'updated' && type !== 'removed') || !id || !content) return []
+    const status = parseTodoStatus(item.status)
+    const previousStatus = parseTodoStatus(item.previous_status ?? item.previousStatus)
+    const index = typeof item.index === 'number' ? item.index : undefined
+    const previousIndexRaw = item.previous_index ?? item.previousIndex
+    const previousIndex = typeof previousIndexRaw === 'number' ? previousIndexRaw : undefined
+    const oldContentRaw = item.old_content ?? item.oldContent
+    const activeFormRaw = item.active_form ?? item.activeForm
+    const oldActiveFormRaw = item.old_active_form ?? item.oldActiveForm
+    const oldContent = typeof oldContentRaw === 'string' && oldContentRaw.trim() ? oldContentRaw.trim() : undefined
+    const activeForm = typeof activeFormRaw === 'string' && activeFormRaw.trim() ? activeFormRaw.trim() : undefined
+    const oldActiveForm = typeof oldActiveFormRaw === 'string' && oldActiveFormRaw.trim() ? oldActiveFormRaw.trim() : undefined
+    return [{
+      type,
+      id,
+      content,
+      ...(status ? { status } : {}),
+      ...(previousStatus ? { previousStatus } : {}),
+      ...(typeof index === 'number' ? { index } : {}),
+      ...(typeof previousIndex === 'number' ? { previousIndex } : {}),
+      ...(oldContent ? { oldContent } : {}),
+      ...(activeForm ? { activeForm } : {}),
+      ...(oldActiveForm ? { oldActiveForm } : {}),
+    }]
+  })
+}
+
+export function deriveTodoChanges(oldTodos: TodoItemRef[], newTodos: TodoItemRef[]): TodoChangeRef[] {
+  if (oldTodos.length === 0) return []
+  const oldByID = new Map(oldTodos.map((item, index) => [item.id, { item, index }] as const))
+  const newIDs = new Set<string>()
+  const changes: TodoChangeRef[] = []
+
+  newTodos.forEach((item, index) => {
+    newIDs.add(item.id)
+    const old = oldByID.get(item.id)
+    if (!old) {
+      changes.push({
+        type: 'created',
+        id: item.id,
+        content: item.content,
+        status: item.status,
+        index,
+        ...(item.activeForm ? { activeForm: item.activeForm } : {}),
+      })
+      return
+    }
+    if (old.item.content === item.content && old.item.status === item.status && old.item.activeForm === item.activeForm) {
+      return
+    }
+    changes.push({
+      type: 'updated',
+      id: item.id,
+      content: item.content,
+      status: item.status,
+      previousStatus: old.item.status,
+      index,
+      oldContent: old.item.content,
+      ...(item.activeForm ? { activeForm: item.activeForm } : {}),
+      ...(old.item.activeForm ? { oldActiveForm: old.item.activeForm } : {}),
+    })
+  })
+
+  oldTodos.forEach((item, previousIndex) => {
+    if (newIDs.has(item.id)) return
+    changes.push({
+      type: 'removed',
+      id: item.id,
+      content: item.content,
+      previousStatus: item.status,
+      previousIndex,
+      ...(item.activeForm ? { oldActiveForm: item.activeForm } : {}),
+    })
+  })
+  return changes
+}
+
+function resultArrayField(result: Record<string, unknown>, snakeKey: string, camelKey: string): unknown {
+  return result[snakeKey] ?? result[camelKey]
+}
+
+function resultNumberField(result: Record<string, unknown>, snakeKey: string, camelKey: string): number | undefined {
+  const value = result[snakeKey] ?? result[camelKey]
+  return typeof value === 'number' ? value : undefined
 }
 
 function todoWriteFromCall(item: Extract<CopSegment['items'][number], { kind: 'call' }>): TodoWriteRef | null {
   const call = item.call
   if (!TODO_TOOL_NAMES.has(call.toolName)) return null
-  const resultTodos = call.result && typeof call.result === 'object'
-    ? parseTodoItems((call.result as { todos?: unknown }).todos)
-    : []
+  const result = call.result && typeof call.result === 'object'
+    ? call.result as Record<string, unknown>
+    : null
+  const resultTodos = result ? parseTodoItems(result.todos) : []
   const argumentTodos = parseTodoItems(call.arguments.todos)
   const hasError = typeof call.errorClass === 'string' && call.errorClass.trim() !== ''
+  const oldTodos = result ? parseTodoItems(resultArrayField(result, 'old_todos', 'oldTodos')) : []
+  const parsedChanges = result ? parseTodoChanges(result.changes) : []
+  const changes = parsedChanges.length > 0 ? parsedChanges : deriveTodoChanges(oldTodos, resultTodos)
+  const completedCount = result ? resultNumberField(result, 'completed_count', 'completedCount') : undefined
+  const totalCount = result ? resultNumberField(result, 'total_count', 'totalCount') : undefined
   return {
     id: call.toolCallId,
     toolName: 'todo_write',
     todos: resultTodos.length > 0 ? resultTodos : argumentTodos,
+    ...(oldTodos.length > 0 ? { oldTodos } : {}),
+    ...(changes.length > 0 ? { changes } : {}),
+    ...(typeof completedCount === 'number' ? { completedCount } : {}),
+    ...(typeof totalCount === 'number' ? { totalCount } : {}),
     status: hasError ? 'failed' : call.result === undefined ? 'running' : 'success',
     ...(hasError ? { errorMessage: call.errorClass } : {}),
     seq: item.seq,

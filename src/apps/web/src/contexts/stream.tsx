@@ -46,7 +46,7 @@ interface StreamContextValue {
   topLevelWebFetches: WebFetchRef[]
   liveAssistantTurn: AssistantTurnUi | null
   preserveLiveRunUi: boolean
-  workTodos: Array<{ id: string; content: string; status: string }>
+  workTodos: Array<{ id: string; content: string; activeForm?: string; status: string }>
 
   // internal refs (双写：SSE 热路径先写 ref，渲染时 flush)
   segmentsRef: React.RefObject<Segment[]>
@@ -71,7 +71,7 @@ interface StreamContextValue {
   foldAssistantTurnEvent: (event: RunEvent) => void
   bumpSnapshot: () => void
   resetLiveState: () => void
-  setWorkTodos: React.Dispatch<React.SetStateAction<Array<{ id: string; content: string; status: string }>>>
+  setWorkTodos: React.Dispatch<React.SetStateAction<Array<{ id: string; content: string; activeForm?: string; status: string }>>>
   setPreserveLiveRunUi: (v: boolean) => void
   setLiveAssistantTurn: React.Dispatch<React.SetStateAction<AssistantTurnUi | null>>
   requestAssistantTurnThinkingBreak: () => void
@@ -143,7 +143,7 @@ export function StreamProvider({ children }: { children: ReactNode }) {
   const [topLevelWebFetches, setTopLevelWebFetches] = useState<WebFetchRef[]>([])
   const [liveAssistantTurn, setLiveAssistantTurn] = useState<AssistantTurnUi | null>(null)
   const [preserveLiveRunUi, setPreserveLiveRunUiState] = useState(false)
-  const [workTodos, setWorkTodos] = useState<Array<{ id: string; content: string; status: string }>>([])
+  const [workTodos, setWorkTodos] = useState<Array<{ id: string; content: string; activeForm?: string; status: string }>>([])
 
   const segmentsRef = useRef<Segment[]>([])
   useEffect(() => { segmentsRef.current = segments }, [segments])

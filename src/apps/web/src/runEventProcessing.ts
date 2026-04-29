@@ -1710,7 +1710,7 @@ export function buildMessageWebFetchesFromRunEvents(events: RunEvent[]): WebFetc
 
 export function buildTodosFromRunEvents(
   events: RunEvent[],
-): Array<{ id: string; content: string; status: string }> {
+): Array<{ id: string; content: string; activeForm?: string; status: string }> {
   for (let i = events.length - 1; i >= 0; i--) {
     const event = events[i]
     if (event.type !== 'todo.updated') continue
@@ -1725,7 +1725,10 @@ export function buildTodosFromRunEvents(
         typeof item.status !== 'string'
       )
         return []
-      return [{ id: item.id, content: item.content, status: item.status }]
+      const activeForm = typeof (item as { active_form?: unknown }).active_form === 'string'
+        ? (item as { active_form: string }).active_form.trim()
+        : ''
+      return [{ id: item.id, content: item.content, ...(activeForm ? { activeForm } : {}), status: item.status }]
     })
   }
   return []

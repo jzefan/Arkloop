@@ -297,7 +297,10 @@ export function useSseDispatch(): void {
             if (!t || typeof t !== 'object') return []
             const item = t as { id?: unknown; content?: unknown; status?: unknown }
             if (typeof item.id !== 'string' || typeof item.content !== 'string' || typeof item.status !== 'string') return []
-            return [{ id: item.id, content: item.content, status: item.status }]
+            const activeForm = typeof (t as { active_form?: unknown }).active_form === 'string'
+              ? (t as { active_form: string }).active_form.trim()
+              : ''
+            return [{ id: item.id, content: item.content, ...(activeForm ? { activeForm } : {}), status: item.status }]
           })
           stream.setWorkTodos(items)
           const tid = threadIdRef.current

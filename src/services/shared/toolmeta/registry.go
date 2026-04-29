@@ -679,7 +679,8 @@ var registry = []ToolMeta{
 			"Only ONE item should be in_progress at a time. " +
 			"Mark tasks as completed as soon as you finish them — do not batch completions. " +
 			"Status workflow: pending → in_progress → completed (or cancelled). " +
-			"Use clear, specific subjects in imperative form (e.g., \"Fix authentication bug\" not \"auth\").",
+			"Use clear, specific subjects in imperative form (e.g., \"Fix authentication bug\" not \"auth\"). " +
+			"When useful, include active_form as the present-progress phrase for an in-progress item (e.g., \"Fixing authentication bug\").",
 	},
 }
 
