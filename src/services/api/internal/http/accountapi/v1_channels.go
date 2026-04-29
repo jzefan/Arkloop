@@ -431,16 +431,6 @@ func createChannel(
 			return
 		}
 	}
-	if req.ChannelType == "feishu" && ch.IsActive {
-		if _, _, _, err := mustValidateFeishuActivation(r.Context(), actor.AccountID, personasRepo, ch.PersonaID, ch.ConfigJSON); err != nil {
-			httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", err.Error(), traceID, nil)
-			return
-		}
-		if req.BotToken == "" {
-			httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "feishu channel requires app_secret before activation", traceID, nil)
-			return
-		}
-	}
 	if req.ChannelType == "qqbot" && ch.IsActive {
 		if _, _, _, err := mustValidateQQBotActivation(r.Context(), actor.AccountID, personasRepo, ch.PersonaID, ch.ConfigJSON); err != nil {
 			httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", err.Error(), traceID, nil)
