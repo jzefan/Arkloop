@@ -35,7 +35,6 @@ export function UserMessage({ message, onRetry, onEdit, accessToken, animateEnte
   const [editText, setEditText] = useState('')
   const [userTextExpanded, setUserTextExpanded] = useState(false)
   const [userTextFullHeight, setUserTextFullHeight] = useState<number | null>(null)
-  const [enterScale, setEnterScale] = useState(USER_PROMPT_ENTER_BASE_SCALE)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const userTextRef = useRef<HTMLDivElement>(null)
   const enterBubbleRef = useRef<HTMLDivElement>(null)
@@ -110,6 +109,9 @@ export function UserMessage({ message, onRetry, onEdit, accessToken, animateEnte
     : legacy.fileNames
 
   useEffect(() => {
+    const setEnterScale = (scale: number) => {
+      enterBubbleRef.current?.style.setProperty('--user-prompt-enter-scale', String(scale))
+    }
     if (!animateEnter) {
       setEnterScale(USER_PROMPT_ENTER_BASE_SCALE)
       return
@@ -337,7 +339,7 @@ export function UserMessage({ message, onRetry, onEdit, accessToken, animateEnte
               ref={enterBubbleRef}
               className={[animateEnter ? 'user-prompt-bubble-enter' : '', 'user-prompt-bubble'].filter(Boolean).join(' ')}
               style={{
-                '--user-prompt-enter-scale': String(enterScale),
+                '--user-prompt-enter-scale': String(USER_PROMPT_ENTER_BASE_SCALE),
                 borderRadius: isWorkMode ? '12px 12px 12px 8px' : '12px',
                 padding: '10px 16px',
                 fontSize: '16.5px',
