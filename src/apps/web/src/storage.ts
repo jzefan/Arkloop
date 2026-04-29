@@ -2134,3 +2134,103 @@ export function writeCustomBodyFontToStorage(font: string | null): void {
     }
   } catch { /* ignore */ }
 }
+
+// -- Sidebar View & GTD --
+
+export type SidebarViewMode = 'project' | 'gtd'
+
+const SIDEBAR_VIEW_MODE_KEY = 'arkloop:web:sidebar_view_mode'
+
+export function readSidebarViewMode(): SidebarViewMode {
+  if (!canUseLocalStorage()) return 'project'
+  try {
+    const raw = localStorage.getItem(SIDEBAR_VIEW_MODE_KEY)
+    if (raw === 'gtd') return 'gtd'
+    return 'project'
+  } catch {
+    return 'project'
+  }
+}
+
+export function writeSidebarViewMode(mode: SidebarViewMode): void {
+  if (!canUseLocalStorage()) return
+  try {
+    localStorage.setItem(SIDEBAR_VIEW_MODE_KEY, mode)
+  } catch { /* ignore */ }
+}
+
+const GTD_INBOX_THREAD_IDS_KEY = 'arkloop:web:gtd_inbox_thread_ids'
+
+export function readGtdInboxThreadIds(): Set<string> {
+  if (!canUseLocalStorage()) return new Set()
+  try {
+    const raw = localStorage.getItem(GTD_INBOX_THREAD_IDS_KEY)
+    return new Set(JSON.parse(raw ?? '[]') as string[])
+  } catch {
+    return new Set()
+  }
+}
+
+export function writeGtdInboxThreadIds(ids: Set<string>): void {
+  if (!canUseLocalStorage()) return
+  try {
+    localStorage.setItem(GTD_INBOX_THREAD_IDS_KEY, JSON.stringify([...ids]))
+  } catch { /* ignore */ }
+}
+
+const GTD_TODO_THREAD_IDS_KEY = 'arkloop:web:gtd_todo_thread_ids'
+
+export function readGtdTodoThreadIds(): Set<string> {
+  if (!canUseLocalStorage()) return new Set()
+  try {
+    const raw = localStorage.getItem(GTD_TODO_THREAD_IDS_KEY)
+    return new Set(JSON.parse(raw ?? '[]') as string[])
+  } catch {
+    return new Set()
+  }
+}
+
+export function writeGtdTodoThreadIds(ids: Set<string>): void {
+  if (!canUseLocalStorage()) return
+  try {
+    localStorage.setItem(GTD_TODO_THREAD_IDS_KEY, JSON.stringify([...ids]))
+  } catch { /* ignore */ }
+}
+
+const PINNED_THREAD_IDS_KEY = 'arkloop:web:pinned_thread_ids'
+
+export function readPinnedThreadIds(): Set<string> {
+  if (!canUseLocalStorage()) return new Set()
+  try {
+    const raw = localStorage.getItem(PINNED_THREAD_IDS_KEY)
+    return new Set(JSON.parse(raw ?? '[]') as string[])
+  } catch {
+    return new Set()
+  }
+}
+
+export function writePinnedThreadIds(ids: Set<string>): void {
+  if (!canUseLocalStorage()) return
+  try {
+    localStorage.setItem(PINNED_THREAD_IDS_KEY, JSON.stringify([...ids]))
+  } catch { /* ignore */ }
+}
+
+const COLLAPSED_PROJECT_PATHS_KEY = 'arkloop:web:collapsed_project_paths'
+
+export function readCollapsedProjectPaths(): Set<string> {
+  if (!canUseLocalStorage()) return new Set()
+  try {
+    const raw = localStorage.getItem(COLLAPSED_PROJECT_PATHS_KEY)
+    return new Set(JSON.parse(raw ?? '[]') as string[])
+  } catch {
+    return new Set()
+  }
+}
+
+export function writeCollapsedProjectPaths(paths: Set<string>): void {
+  if (!canUseLocalStorage()) return
+  try {
+    localStorage.setItem(COLLAPSED_PROJECT_PATHS_KEY, JSON.stringify([...paths]))
+  } catch { /* ignore */ }
+}
