@@ -34,7 +34,7 @@ import {
   readGtdTodoThreadIds, writeGtdTodoThreadIds,
   readPinnedThreadIds, writePinnedThreadIds,
   readGtdEnabled, readExpandedProjectPaths, writeExpandedProjectPaths,
-  clearThreadWorkFolder, readThreadWorkFolder, writeThreadWorkFolder, writeWorkFolder,
+  clearThreadWorkFolder, readThreadWorkFolder, writeThreadWorkFolder, clearWorkFolder, writeWorkFolder,
 } from '../storage'
 
 type Props = {
@@ -498,7 +498,11 @@ export function Sidebar({
               <button
                 onClick={(e) => {
                   e.stopPropagation()
-                  writeWorkFolder(group.path === '__unassigned__' ? '' : group.path)
+                  if (group.path === '__unassigned__') {
+                    clearWorkFolder()
+                  } else {
+                    writeWorkFolder(group.path)
+                  }
                   onNewThread()
                 }}
                 className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md opacity-0 group-hover/folder:opacity-100 text-[var(--c-text-muted)] hover:bg-[var(--c-sidebar-btn-hover)] hover:text-[var(--c-text-primary)] transition-[opacity,background-color,color,transform] duration-[80ms] active:scale-[0.92]"
