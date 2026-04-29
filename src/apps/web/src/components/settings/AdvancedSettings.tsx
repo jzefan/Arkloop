@@ -10,7 +10,6 @@ import {
   Import,
   Loader2,
   Network,
-  Package,
   RefreshCw,
   ScrollText,
   TerminalSquare,
@@ -39,9 +38,8 @@ import { settingsInputCls } from './_SettingsInput'
 import { SettingsLabel } from './_SettingsLabel'
 import { SettingsSelect } from './_SettingsSelect'
 import { ConnectionSettings } from './ConnectionSettings'
-import { ModulesSettings } from './ModulesSettings'
 
-type AdvancedKey = 'network' | 'usage' | 'modules' | 'data' | 'logs'
+type AdvancedKey = 'network' | 'usage' | 'data' | 'logs'
 
 type Props = { accessToken: string }
 
@@ -1547,7 +1545,6 @@ export function AdvancedSettings({ accessToken }: Props) {
   const navItems: Array<{ key: AdvancedKey; icon: LucideIcon; label: string }> = [
     { key: 'usage', icon: BarChart3, label: ds.advancedUsage },
     { key: 'network', icon: Network, label: ds.advancedNetwork },
-    { key: 'modules', icon: Package, label: ds.advancedModules },
     { key: 'data', icon: Database, label: ds.advancedData },
     { key: 'logs', icon: ScrollText, label: ds.advancedLogs },
   ]
@@ -1588,12 +1585,6 @@ export function AdvancedSettings({ accessToken }: Props) {
             />
           )}
           {activeKey === 'network' && <NetworkPane onReloadOverview={loadOverview} />}
-          {activeKey === 'modules' && (
-            <div className="flex flex-col gap-6">
-              <SettingsSectionHeader title={ds.advancedModules} description={ds.advancedModulesDesc} />
-              <ModulesSettings />
-            </div>
-          )}
           {activeKey === 'data' && (
             <DataPane onReloadOverview={loadOverview} />
           )}

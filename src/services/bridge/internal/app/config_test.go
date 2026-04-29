@@ -6,7 +6,7 @@ import (
 )
 
 func TestLoadConfigFromEnv_AppendsCustomCORSOrigins(t *testing.T) {
-	t.Setenv(bridgeCORSOriginsEnv, "http://localhost:5173")
+	t.Setenv(bridgeCORSOriginsEnv, "http://localhost:5174")
 	t.Setenv(bridgeProjectDirEnv, t.TempDir())
 	t.Setenv(bridgeModulesFileEnv, t.TempDir())
 	t.Setenv(bridgeAuthTokenEnv, "test-token")
@@ -22,7 +22,7 @@ func TestLoadConfigFromEnv_AppendsCustomCORSOrigins(t *testing.T) {
 		if origin == "http://localhost:19080" {
 			foundDefault = true
 		}
-		if origin == "http://localhost:5173" {
+		if origin == "http://localhost:5174" {
 			foundCustom = true
 		}
 	}
@@ -32,6 +32,25 @@ func TestLoadConfigFromEnv_AppendsCustomCORSOrigins(t *testing.T) {
 	}
 	if !foundCustom {
 		t.Fatalf("expected custom bridge CORS origin to be appended, got %#v", cfg.CORSAllowedOrigins)
+	}
+}
+
+func TestDefaultConfigIncludesViteDevCORSOrigins(t *testing.T) {
+	cfg := DefaultConfig()
+
+	foundLocalhost := false
+	foundLoopback := false
+	for _, origin := range cfg.CORSAllowedOrigins {
+		if origin == "http://localhost:5173" {
+			foundLocalhost = true
+		}
+		if origin == "http://127.0.0.1:5173" {
+			foundLoopback = true
+		}
+	}
+
+	if !foundLocalhost || !foundLoopback {
+		t.Fatalf("expected Vite dev origins in defaults, got %#v", cfg.CORSAllowedOrigins)
 	}
 }
 

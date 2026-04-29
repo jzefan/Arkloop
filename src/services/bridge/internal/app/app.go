@@ -96,9 +96,7 @@ func (a *Application) Run(ctx context.Context) error {
 	apiHandler := bridgehttp.NewHandler(registry, compose, operations, auditLog, adapter, modelDL, bridgeVersion)
 	apiHandler.RegisterRoutes(mux)
 
-	handler := authMiddleware(a.config.AuthToken,
-		corsMiddleware(a.config.CORSAllowedOrigins, mux),
-	)
+	handler := bridgeHandler(a.config.AuthToken, a.config.CORSAllowedOrigins, mux)
 
 	// Parse host and port from configured address.
 	hostStr, portStr, err := net.SplitHostPort(a.config.Addr)
@@ -217,6 +215,10 @@ func corsMiddleware(allowedOrigins []string, next http.Handler) http.Handler {
 
 		next.ServeHTTP(w, r)
 	})
+}
+
+func bridgeHandler(authToken string, corsAllowedOrigins []string, next http.Handler) http.Handler {
+	return corsMiddleware(corsAllowedOrigins, authMiddleware(authToken, next))
 }
 
 // authMiddleware enforces Bearer token authentication on all routes except /healthz.

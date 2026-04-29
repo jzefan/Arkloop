@@ -1,5 +1,5 @@
 import { useRef, useState, useCallback, useEffect } from 'react'
-import { Plus, Paperclip, BookOpen, Search, Folder, FolderOpen, X, Check, Map } from 'lucide-react'
+import { Plus, Paperclip, BookOpen, Search, Folder, FolderOpen, X, Check } from 'lucide-react'
 import type { SelectablePersona } from '../../api'
 import { ModelPicker } from '../ModelPicker'
 import type { SettingsTab } from '../SettingsModal'
@@ -34,8 +34,6 @@ type Props = {
   accessToken?: string
   variant?: 'welcome' | 'chat'
   appMode?: AppMode
-  isPlanMode?: boolean
-  onTogglePlanMode?: () => void
   threadHasMessages?: boolean
   threadMessagesLoading?: boolean
   workThreadId?: string
@@ -64,8 +62,6 @@ export function PersonaModelBar({
   accessToken,
   variant,
   appMode,
-  isPlanMode,
-  onTogglePlanMode,
   threadHasMessages,
   threadMessagesLoading,
   workThreadId,
@@ -293,34 +289,14 @@ export function PersonaModelBar({
           >
             <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
               {isWorkMode ? (
-                <>
-                  <button
-                    type="button"
-                    onClick={() => { onTogglePlanMode?.(); setMenuOpen(false) }}
-                    className="flex w-full items-center justify-between rounded-lg px-3 py-2 text-sm hover:bg-[var(--c-bg-deep)]"
-                    style={{
-                      color: isPlanMode ? 'var(--c-plan-icon)' : 'var(--c-text-secondary)',
-                      fontWeight: isPlanMode ? 500 : 400,
-                    }}
-                  >
-                    <span style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                      <Map size={14} style={{ color: isPlanMode ? 'var(--c-plan-icon)' : 'var(--c-text-secondary)', flexShrink: 0 }} />
-                      {t.planMode}
-                    </span>
-                    {isPlanMode && (
-                      <Check size={13} style={{ color: '#4691F6', flexShrink: 0 }} />
-                    )}
-                  </button>
-                  <div style={{ height: '1px', background: 'var(--c-border-subtle)', margin: '2px 4px' }} />
-                  <button
-                    type="button"
-                    onClick={() => { onFileInputClick(); setMenuOpen(false) }}
-                    className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm text-[var(--c-text-secondary)] hover:bg-[var(--c-bg-deep)] hover:text-[var(--c-text-primary)]"
-                  >
-                    <Paperclip size={14} style={{ color: 'var(--c-text-secondary)', flexShrink: 0 }} />
-                    {t.addFromLocal}
-                  </button>
-                </>
+                <button
+                  type="button"
+                  onClick={() => { onFileInputClick(); setMenuOpen(false) }}
+                  className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm text-[var(--c-text-secondary)] hover:bg-[var(--c-bg-deep)] hover:text-[var(--c-text-primary)]"
+                >
+                  <Paperclip size={14} style={{ color: 'var(--c-text-secondary)', flexShrink: 0 }} />
+                  {t.addFromLocal}
+                </button>
               ) : (
                 <>
                   <button
@@ -366,53 +342,6 @@ export function PersonaModelBar({
           </div>
         )}
       </div>
-
-      {/* Plan mode chip — work mode only, no animation, no border */}
-      {isPlanMode && isWorkMode && (
-        <div
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: '1px',
-            height: isWorkMode ? '33.5px' : '32px',
-            padding: '0 4px 0 9px',
-            borderRadius: '8px',
-            background: 'var(--c-plan-bg)',
-            flexShrink: 0,
-            marginLeft: '4px',
-          }}
-        >
-          <Map size={14} style={{ color: 'var(--c-plan-icon)', flexShrink: 0 }} />
-          <span style={{
-            fontSize: '14px',
-            color: 'var(--c-plan-text)',
-            fontWeight: 375,
-            whiteSpace: 'nowrap',
-            margin: '0 2px',
-          }}>
-            {t.planMode}
-          </span>
-          <button
-            type="button"
-            onClick={onTogglePlanMode}
-            className="bg-transparent hover:bg-[rgba(0,0,0,0.05)]"
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              width: '20px',
-              height: '20px',
-              borderRadius: '5px',
-              border: 'none',
-              cursor: 'pointer',
-              padding: 0,
-              flexShrink: 0,
-            }}
-          >
-            <X size={14} strokeWidth={2} style={{ color: 'var(--c-plan-icon)', opacity: 0.7 }} />
-          </button>
-        </div>
-      )}
 
       {/* active mode chip */}
       {isNonDefaultMode && (
