@@ -296,28 +296,49 @@ export function ThemeModePicker() {
 
 function NormalPreview() {
   return (
-    <div className="flex h-full w-full flex-col gap-1.5 p-2" style={{ background: 'var(--c-bg-sidebar)' }}>
-      <div style={{ height: 4, width: '70%', background: 'var(--c-border-mid)', borderRadius: 2 }} />
-      <div style={{ height: 4, width: '50%', background: 'var(--c-border-mid)', borderRadius: 2 }} />
-      <div style={{ height: 4, width: '60%', background: 'var(--c-border-mid)', borderRadius: 2 }} />
-      <div style={{ height: 4, width: '55%', background: 'var(--c-border-mid)', borderRadius: 2 }} />
-      <div style={{ height: 4, width: '45%', background: 'var(--c-border-mid)', borderRadius: 2 }} />
+    <div className="flex h-full w-full flex-col p-2" style={{ background: 'var(--c-bg-sidebar)' }}>
+      <div style={{ height: 3, width: 22, background: 'var(--c-text-muted)', borderRadius: 2, opacity: 0.45, marginBottom: 6 }} />
+      {[70, 52, 64, 48].map((width, index) => (
+        <div
+          key={width}
+          style={{
+            height: 8,
+            width: `${width}%`,
+            background: index === 1 ? 'var(--c-bg-deep)' : 'transparent',
+            borderRadius: 4,
+            marginBottom: 3,
+            padding: '2px 4px',
+          }}
+        >
+          <div style={{ height: 3, width: '100%', background: 'var(--c-border-mid)', borderRadius: 2 }} />
+        </div>
+      ))}
     </div>
   )
 }
 
 function GtdPreview() {
-  const bar = { height: 4, background: 'var(--c-border-mid)', borderRadius: 2 }
-  const label = { height: 4, width: 28, background: 'var(--c-accent)', borderRadius: 2, opacity: 0.5 }
+  const groups = [
+    { label: 26, rows: [52, 38] },
+    { label: 22, rows: [48] },
+    { label: 30, rows: [44] },
+  ]
   return (
-    <div className="flex h-full w-full flex-col gap-1 p-2" style={{ background: 'var(--c-bg-sidebar)' }}>
-      <div style={{ ...label }} />
-      <div style={{ ...bar, width: '60%', marginLeft: 4 }} />
-      <div style={{ ...bar, width: '50%', marginLeft: 4 }} />
-      <div style={{ ...label, marginTop: 2 }} />
-      <div style={{ ...bar, width: '55%', marginLeft: 4 }} />
-      <div style={{ ...label, marginTop: 2 }} />
-      <div style={{ ...bar, width: '50%', marginLeft: 4 }} />
+    <div className="flex h-full w-full flex-col gap-[3px] p-2" style={{ background: 'var(--c-bg-sidebar)' }}>
+      {groups.map((group, index) => (
+        <div key={index} style={{ borderRadius: 5, background: index === 1 ? 'var(--c-bg-deep)' : 'transparent', padding: '2px 3px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 3, marginBottom: 3 }}>
+            <div style={{ height: 3, width: group.label, background: 'var(--c-text-muted)', borderRadius: 2, opacity: 0.55 }} />
+            <div style={{ width: 0, height: 0, borderTop: '3px solid transparent', borderBottom: '3px solid transparent', borderLeft: '4px solid var(--c-text-muted)', opacity: 0.35 }} />
+          </div>
+          {group.rows.map((width) => (
+            <div key={width} style={{ display: 'flex', alignItems: 'center', gap: 4, paddingLeft: 4, marginBottom: 2 }}>
+              <div style={{ width: 4, height: 4, border: '1px solid var(--c-text-muted)', borderRadius: 4, opacity: 0.35 }} />
+              <div style={{ height: 3, width, background: 'var(--c-border-mid)', borderRadius: 2 }} />
+            </div>
+          ))}
+        </div>
+      ))}
     </div>
   )
 }
@@ -393,8 +414,8 @@ export function AppearanceContent() {
       {showEditor && (
         <ThemeColorEditor onClose={() => setShowEditor(false)} />
       )}
-      <FontSettings />
       <SidebarGroupingPicker />
+      <FontSettings />
     </div>
   )
 }
