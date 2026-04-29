@@ -541,7 +541,36 @@ func TestThreadListActiveRunID(t *testing.T) {
 		t.Fatalf("active_run_id mismatch: want %q got %q", runPayload.RunID, *got.ActiveRunID)
 	}
 
-	// mark run completed — active_run_id must become null
+	// terminal event wins even if the runs row still says running
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO run_events (run_id, seq, type, data_json)
+		 SELECT $1, COALESCE(MAX(seq), 0) + 1, 'run.completed', '{}'::jsonb
+		 FROM run_events
+		 WHERE run_id = $1`,
+		runPayload.RunID,
+	); err != nil {
+		t.Fatalf("insert terminal event: %v", err)
+	}
+
+	listRespWithTerminal := doJSON(handler, nethttp.MethodGet, "/v1/threads?limit=50", nil, headers)
+	if listRespWithTerminal.Code != nethttp.StatusOK {
+		t.Fatalf("list threads after terminal event: %d %s", listRespWithTerminal.Code, listRespWithTerminal.Body.String())
+	}
+	var listedWithTerminal []threadResponse
+	if err := json.Unmarshal(listRespWithTerminal.Body.Bytes(), &listedWithTerminal); err != nil {
+		t.Fatalf("decode terminal list: %v", err)
+	}
+	byIDWithTerminal := make(map[string]threadResponse, len(listedWithTerminal))
+	for _, tr := range listedWithTerminal {
+		byIDWithTerminal[tr.ID] = tr
+	}
+	if got, ok := byIDWithTerminal[activeThread.ID]; !ok {
+		t.Fatalf("active thread missing from terminal list")
+	} else if got.ActiveRunID != nil {
+		t.Fatalf("terminal-event thread active_run_id should be null, got %q", *got.ActiveRunID)
+	}
+
+	// mark run completed — active_run_id must stay null
 	if _, err := pool.Exec(ctx,
 		`UPDATE runs SET status = 'completed' WHERE id = $1`,
 		runPayload.RunID,

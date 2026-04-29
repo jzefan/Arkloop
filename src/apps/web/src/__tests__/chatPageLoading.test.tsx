@@ -584,6 +584,7 @@ function OutletShell({ context }: { context: LegacyOutletContext }) {
   const threadListValue: ThreadListContextValue = {
     threads: context.threads,
     runningThreadIds: new Set(),
+    completedUnreadThreadIds: new Set(),
     privateThreadIds: context.privateThreadIds,
     isPrivateMode: context.isPrivateMode,
     pendingIncognitoMode: false,
@@ -594,6 +595,7 @@ function OutletShell({ context }: { context: LegacyOutletContext }) {
     updateCollaborationMode: vi.fn(),
     markRunning: context.onRunStarted,
     markIdle: context.onRunEnded,
+    markCompletionRead: vi.fn(),
     togglePrivateMode: context.onTogglePrivateMode,
     setPendingIncognito: context.onSetPendingIncognito,
     getFilteredThreads: () => context.threads,

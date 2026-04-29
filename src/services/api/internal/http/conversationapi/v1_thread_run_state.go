@@ -26,6 +26,7 @@ type threadRunStateEvent struct {
 	Type        string  `json:"type"`
 	ThreadID    string  `json:"thread_id"`
 	ActiveRunID *string `json:"active_run_id"`
+	Title       *string `json:"title"`
 }
 
 func streamThreadRunStateEvents(
@@ -96,7 +97,10 @@ func streamThreadRunStateEvents(
 			select {
 			case <-r.Context().Done():
 				return
-			case payload := <-payloadCh:
+			case payload, ok := <-payloadCh:
+				if !ok {
+					return
+				}
 				if err := writeThreadRunStateEvent(r.Context(), w, actor, threadRepo, projectRepo, teamRepo, runRepo, payload); err != nil {
 					return
 				}
@@ -250,6 +254,7 @@ func writeThreadRunStateEvent(
 		Type:        "thread.run_state",
 		ThreadID:    threadID.String(),
 		ActiveRunID: active,
+		Title:       thread.Title,
 	})
 	if err != nil {
 		return err

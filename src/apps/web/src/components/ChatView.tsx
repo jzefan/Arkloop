@@ -787,6 +787,8 @@ export const ChatView = memo(function ChatView() {
     threads, addThread: onThreadCreated,
     upsertThread: onThreadUpserted,
     markRunning: onRunStarted, markIdle: onRunEnded,
+    completedUnreadThreadIds,
+    markCompletionRead,
   } = useThreadList()
   const { appMode } = useAppModeUI()
   const { openSettings: onOpenSettings } = useSettingsUI()
@@ -795,6 +797,10 @@ export const ChatView = memo(function ChatView() {
     () => threads.find((thread) => thread.id === threadId) ?? null,
     [threadId, threads],
   )
+  useEffect(() => {
+    if (!threadId || !completedUnreadThreadIds.has(threadId)) return
+    markCompletionRead(threadId)
+  }, [threadId, completedUnreadThreadIds, markCompletionRead])
   const planModeUpdateRef = useRef<Promise<void> | null>(null)
   const planModeRequestSeqRef = useRef(0)
   const waitForPlanModeUpdate = useCallback(async () => {

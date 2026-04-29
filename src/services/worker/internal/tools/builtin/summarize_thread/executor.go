@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"arkloop/services/shared/threadrunstate"
 	sharedtoolmeta "arkloop/services/shared/toolmeta"
 	"arkloop/services/worker/internal/llm"
 	"arkloop/services/worker/internal/tools"
@@ -104,6 +105,7 @@ func (e *ToolExecutor) Execute(
 
 	// 通过 run_events 表推送 SSE 通知
 	emitTitleEvent(ctx, e.Pool, e.RDB, execCtx.RunID, *threadID, title)
+	publishThreadState(ctx, e.Pool, e.RDB, execCtx.AccountID, *threadID)
 
 	return tools.ExecutionResult{
 		ResultJSON: map[string]any{
@@ -111,6 +113,18 @@ func (e *ToolExecutor) Execute(
 		},
 		DurationMs: durationMs(started),
 	}
+}
+
+func publishThreadState(ctx context.Context, pool *pgxpool.Pool, rdb *redis.Client, accountID *uuid.UUID, threadID uuid.UUID) {
+	if accountID != nil && *accountID != uuid.Nil {
+		threadrunstate.Publish(ctx, pool, rdb, nil, *accountID, threadID)
+		return
+	}
+	var resolvedAccountID uuid.UUID
+	if err := pool.QueryRow(ctx, `SELECT account_id FROM threads WHERE id = $1`, threadID).Scan(&resolvedAccountID); err != nil {
+		return
+	}
+	threadrunstate.Publish(ctx, pool, rdb, nil, resolvedAccountID, threadID)
 }
 
 func emitTitleEvent(

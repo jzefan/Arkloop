@@ -83,6 +83,7 @@ type SidebarThreadItemProps = {
   thread: ThreadResponse
   section: 'starred' | 'regular'
   isRunning: boolean
+  isCompletedUnread: boolean
   isMenuOpen: boolean
   isEditing: boolean
   isActive: boolean
@@ -95,6 +96,7 @@ type SidebarThreadItemProps = {
   setEditingTitle: React.Dispatch<React.SetStateAction<string>>
   setEditingThreadId: React.Dispatch<React.SetStateAction<string | null>>
   commitRename: (id: string, newTitle: string) => void
+  markCompletionRead: (threadId: string) => void
   beforeNavigateToThread?: () => void
   navigate: ReturnType<typeof useNavigate>
   openMenu: (event: React.MouseEvent, id: string) => void
@@ -104,6 +106,7 @@ const SidebarThreadItem = memo(function SidebarThreadItem({
   thread,
   section,
   isRunning,
+  isCompletedUnread,
   isMenuOpen,
   isEditing,
   isActive,
@@ -116,6 +119,7 @@ const SidebarThreadItem = memo(function SidebarThreadItem({
   setEditingTitle,
   setEditingThreadId,
   commitRename,
+  markCompletionRead,
   beforeNavigateToThread,
   navigate,
   openMenu,
@@ -155,6 +159,7 @@ const SidebarThreadItem = memo(function SidebarThreadItem({
       ) : (
         <button
           onClick={() => {
+            markCompletionRead(thread.id)
             beforeNavigateToThread?.()
             navigate(`/t/${thread.id}`)
           }}
@@ -174,6 +179,8 @@ const SidebarThreadItem = memo(function SidebarThreadItem({
                   <span className="sidebar-running-dot" />
                   <span className="sidebar-running-dot" />
                 </span>
+              ) : isCompletedUnread ? (
+                <span className="sidebar-completed-unread-dot" />
               ) : (
                 <span className="h-[6px] w-[6px] rounded-full border border-[var(--c-text-muted)] opacity-40" />
               )}
@@ -222,7 +229,14 @@ export function Sidebar({
   beforeNavigateToThread,
 }: Props) {
   const { me, accessToken } = useAuth()
-  const { runningThreadIds, isPrivateMode, pendingIncognitoMode, updateTitle: onThreadTitleUpdated } = useThreadList()
+  const {
+    runningThreadIds,
+    completedUnreadThreadIds,
+    isPrivateMode,
+    pendingIncognitoMode,
+    updateTitle: onThreadTitleUpdated,
+    markCompletionRead,
+  } = useThreadList()
   const { sidebarCollapsed: collapsed, toggleSidebar: onToggleCollapse, rightPanelOpen: narrow } = useSidebarUI()
   const { openSearchOverlay: onOpenSearchOverlay } = useSearchUI()
   const { settingsOpen: suppressActiveThreadHighlight, openSettings: onOpenSettings } = useSettingsUI()
@@ -295,6 +309,11 @@ export function Sidebar({
       .then((ids) => setStarredIds(ids))
       .catch(() => {})
   }, [accessToken])
+
+  useEffect(() => {
+    if (!activeThreadId || !completedUnreadThreadIds.has(activeThreadId)) return
+    markCompletionRead(activeThreadId)
+  }, [activeThreadId, completedUnreadThreadIds, markCompletionRead])
 
   const toggleStar = useCallback((id: string) => {
     const wasStarred = starredIds.includes(id)
@@ -440,6 +459,7 @@ export function Sidebar({
         thread={thread}
         section="regular"
         isRunning={runningThreadIds.has(thread.id)}
+        isCompletedUnread={completedUnreadThreadIds.has(thread.id)}
         isMenuOpen={menuThreadId === thread.id}
         isEditing={editingThreadId === thread.id}
         isActive={thread.id === activeThreadId}
@@ -452,12 +472,13 @@ export function Sidebar({
         setEditingTitle={setEditingTitle}
         setEditingThreadId={setEditingThreadId}
         commitRename={commitRename}
+        markCompletionRead={markCompletionRead}
         beforeNavigateToThread={beforeNavigateToThread}
         navigate={navigate}
         openMenu={openMenu}
       />
     )
-  }, [runningThreadIds, menuThreadId, editingThreadId, activeThreadId, starredSet, draggingThreadId, editingTitle, t.untitled, editInputRef, setEditingTitle, setEditingThreadId, commitRename, beforeNavigateToThread, navigate, openMenu])
+  }, [runningThreadIds, completedUnreadThreadIds, menuThreadId, editingThreadId, activeThreadId, starredSet, draggingThreadId, editingTitle, t.untitled, editInputRef, setEditingTitle, setEditingThreadId, commitRename, markCompletionRead, beforeNavigateToThread, navigate, openMenu])
 
   const renderDropRow = (icon: React.ReactNode, label: string, active: boolean) => (
     <div

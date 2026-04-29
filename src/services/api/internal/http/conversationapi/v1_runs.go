@@ -715,14 +715,10 @@ func listThreadRuns(
 
 		resp := make([]threadRunResponse, 0, len(runs))
 		for _, run := range runs {
-			status := run.Status
-			if status == "running" {
-				terminal, err := runRepo.GetLatestEventType(r.Context(), run.ID, runTerminalEventTypes)
-				if err != nil {
-					writeInternalError(w, traceID, err)
-					return
-				}
-				status = deriveRunStatus(terminal)
+			status, err := visibleRunStatus(r.Context(), runRepo, run.ID, run.Status)
+			if err != nil {
+				writeInternalError(w, traceID, err)
+				return
 			}
 			resp = append(resp, threadRunResponse{
 				RunID:           run.ID.String(),
@@ -776,14 +772,10 @@ func getRun(
 			return
 		}
 
-		status := run.Status
-		if status == "running" {
-			terminal, err := runRepo.GetLatestEventType(r.Context(), run.ID, runTerminalEventTypes)
-			if err != nil {
-				writeInternalError(w, traceID, err)
-				return
-			}
-			status = deriveRunStatus(terminal)
+		status, err := visibleRunStatus(r.Context(), runRepo, run.ID, run.Status)
+		if err != nil {
+			writeInternalError(w, traceID, err)
+			return
 		}
 
 		var createdByUserID *string
@@ -1573,6 +1565,20 @@ func deriveRunStatus(terminalEventType string) string {
 	}
 }
 
+func visibleRunStatus(ctx context.Context, runRepo *data.RunEventRepository, runID uuid.UUID, status string) (string, error) {
+	if status != "running" && status != "cancelling" {
+		return status, nil
+	}
+	terminal, err := runRepo.GetLatestEventType(ctx, runID, runTerminalEventTypes)
+	if err != nil {
+		return "", err
+	}
+	if terminal == "" {
+		return status, nil
+	}
+	return deriveRunStatus(terminal), nil
+}
+
 func authorizeRunOrAudit(
 	w nethttp.ResponseWriter,
 	r *nethttp.Request,
@@ -1783,11 +1789,16 @@ func listGlobalRuns(
 
 		resp := make([]globalRunResponse, 0, len(runs))
 		for _, rw := range runs {
+			status, err := visibleRunStatus(r.Context(), runRepo, rw.ID, rw.Status)
+			if err != nil {
+				writeInternalError(w, traceID, err)
+				return
+			}
 			item := globalRunResponse{
 				RunID:             rw.ID.String(),
 				AccountID:         rw.AccountID.String(),
 				ThreadID:          rw.ThreadID.String(),
-				Status:            rw.Status,
+				Status:            status,
 				Model:             rw.Model,
 				PersonaID:         rw.PersonaID,
 				TotalInputTokens:  rw.TotalInputTokens,

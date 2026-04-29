@@ -16,6 +16,7 @@ import (
 	"arkloop/services/api/internal/featureflag"
 	"arkloop/services/api/internal/observability"
 	"arkloop/services/shared/eventbus"
+	"arkloop/services/shared/threadrunstate"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -340,6 +341,9 @@ func patchThread(
 	projectRepo *data.ProjectRepository,
 	auditWriter *audit.Writer,
 	apiKeysRepo *data.APIKeysRepository,
+	pool data.DB,
+	rdb *redis.Client,
+	bus eventbus.EventBus,
 ) func(nethttp.ResponseWriter, *nethttp.Request, uuid.UUID) {
 	return func(w nethttp.ResponseWriter, r *nethttp.Request, threadID uuid.UUID) {
 		traceID := observability.TraceIDFromContext(r.Context())
@@ -409,6 +413,7 @@ func patchThread(
 				return
 			}
 			if updated != nil {
+				threadrunstate.Publish(r.Context(), pool, rdb, bus, updated.AccountID, updated.ID)
 				httpkit.WriteJSON(w, traceID, nethttp.StatusOK, toThreadResponse(*updated))
 				return
 			}
@@ -457,6 +462,7 @@ func patchThread(
 			return
 		}
 
+		threadrunstate.Publish(r.Context(), pool, rdb, bus, updated.AccountID, updated.ID)
 		httpkit.WriteJSON(w, traceID, nethttp.StatusOK, toThreadResponse(*updated))
 	}
 }
@@ -770,7 +776,7 @@ func threadEntry(
 	flagService *featureflag.Service,
 ) func(nethttp.ResponseWriter, *nethttp.Request) {
 	get := getThread(authService, membershipRepo, threadRepo, projectRepo, teamRepo, auditWriter, apiKeysRepo)
-	patch := patchThread(authService, membershipRepo, threadRepo, projectRepo, auditWriter, apiKeysRepo)
+	patch := patchThread(authService, membershipRepo, threadRepo, projectRepo, auditWriter, apiKeysRepo, pool, rdb, bus)
 	del := deleteThread(authService, membershipRepo, threadRepo, messageRepo, attachmentStore, auditWriter, apiKeysRepo)
 	createMessage := createThreadMessage(authService, membershipRepo, threadRepo, messageRepo, auditWriter, apiKeysRepo, flagService, attachmentStore)
 	listMessages := listThreadMessages(authService, membershipRepo, threadRepo, messageRepo, auditWriter, apiKeysRepo, flagService)

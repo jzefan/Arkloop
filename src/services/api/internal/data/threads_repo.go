@@ -170,11 +170,17 @@ func (r *ThreadRepository) ListByOwner(
 		       t.parent_thread_id, t.branched_from_message_id, t.title_locked, r.id AS active_run_id
 		FROM threads t
 		LEFT JOIN LATERAL (
-			SELECT id FROM runs
-			WHERE thread_id = t.id
-			  AND status IN ('running', 'cancelling')
-			  AND deleted_at IS NULL
-			ORDER BY created_at DESC, id DESC
+			SELECT rr.id FROM runs rr
+			WHERE rr.thread_id = t.id
+			  AND rr.status IN ('running', 'cancelling')
+			  AND rr.deleted_at IS NULL
+			  AND NOT EXISTS (
+			    SELECT 1
+			    FROM run_events re
+			    WHERE re.run_id = rr.id
+			      AND re.type IN ('run.completed', 'run.failed', 'run.cancelled', 'run.interrupted')
+			  )
+			ORDER BY rr.created_at DESC, rr.id DESC
 			LIMIT 1
 		) r ON true
 		WHERE t.account_id = $1
@@ -517,18 +523,24 @@ func (r *ThreadRepository) SearchByQuery(
 		        t.deleted_at, t.project_id, t.is_private, t.collaboration_mode, t.collaboration_mode_revision, t.expires_at,
 		        t.parent_thread_id, t.branched_from_message_id, t.title_locked, r.id AS active_run_id
 		 FROM threads t
-		 LEFT JOIN messages m
-		   ON m.thread_id = t.id
-		  AND m.deleted_at IS NULL
-		  AND m.hidden = FALSE
-		 LEFT JOIN LATERAL (
-		   SELECT id FROM runs
-		   WHERE thread_id = t.id
-		     AND status IN ('running', 'cancelling')
-		     AND deleted_at IS NULL
-		   ORDER BY created_at DESC, id DESC
-		   LIMIT 1
-		 ) r ON true
+			 LEFT JOIN messages m
+			   ON m.thread_id = t.id
+			  AND m.deleted_at IS NULL
+			  AND m.hidden = FALSE
+			 LEFT JOIN LATERAL (
+			   SELECT rr.id FROM runs rr
+			   WHERE rr.thread_id = t.id
+			     AND rr.status IN ('running', 'cancelling')
+			     AND rr.deleted_at IS NULL
+			     AND NOT EXISTS (
+			       SELECT 1
+			       FROM run_events re
+			       WHERE re.run_id = rr.id
+			         AND re.type IN ('run.completed', 'run.failed', 'run.cancelled', 'run.interrupted')
+			     )
+			   ORDER BY rr.created_at DESC, rr.id DESC
+			   LIMIT 1
+			 ) r ON true
 		 WHERE t.account_id = $1
 		   AND t.created_by_user_id = $2
 		   AND t.deleted_at IS NULL

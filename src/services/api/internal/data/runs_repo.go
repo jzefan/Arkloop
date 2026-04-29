@@ -514,12 +514,18 @@ func (r *RunEventRepository) GetActiveRootRunForThread(
 		        parent_run_id, resume_from_run_id, status_updated_at, completed_at, failed_at,
 		        duration_ms, total_input_tokens, total_output_tokens, total_cost_usd,
 		        model, persona_id, profile_ref, workspace_ref, deleted_at
-		   FROM runs
-		  WHERE thread_id = $1
-		    AND parent_run_id IS NULL
-		    AND status IN ('running', 'cancelling')
-		    AND deleted_at IS NULL
-		  ORDER BY created_at DESC, id DESC
+		   FROM runs r
+		  WHERE r.thread_id = $1
+		    AND r.parent_run_id IS NULL
+		    AND r.status IN ('running', 'cancelling')
+		    AND r.deleted_at IS NULL
+		    AND NOT EXISTS (
+		      SELECT 1
+		      FROM run_events re
+		      WHERE re.run_id = r.id
+		        AND re.type IN ('run.completed', 'run.failed', 'run.cancelled', 'run.interrupted')
+		    )
+		  ORDER BY r.created_at DESC, r.id DESC
 		  LIMIT 1`,
 		threadID,
 	).Scan(
@@ -554,13 +560,19 @@ func (r *RunEventRepository) GetActiveRunIDForThread(
 	var runID uuid.UUID
 	err := r.db.QueryRow(
 		ctx,
-		`SELECT id
-		   FROM runs
-		  WHERE account_id = $1
-		    AND thread_id = $2
-		    AND status IN ('running', 'cancelling')
-		    AND deleted_at IS NULL
-		  ORDER BY created_at DESC, id DESC
+		`SELECT r.id
+		   FROM runs r
+		  WHERE r.account_id = $1
+		    AND r.thread_id = $2
+		    AND r.status IN ('running', 'cancelling')
+		    AND r.deleted_at IS NULL
+		    AND NOT EXISTS (
+		      SELECT 1
+		      FROM run_events re
+		      WHERE re.run_id = r.id
+		        AND re.type IN ('run.completed', 'run.failed', 'run.cancelled', 'run.interrupted')
+		    )
+		  ORDER BY r.created_at DESC, r.id DESC
 		  LIMIT 1`,
 		accountID,
 		threadID,
