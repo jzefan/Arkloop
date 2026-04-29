@@ -59,7 +59,7 @@ func NewChannelDeliveryMiddlewareWithOptions(pool *pgxpool.Pool, opts ChannelDel
 		var ux TelegramChannelUX
 		var obUX OneBotChannelUX
 		channelType := normalizedChannelTypeFromContext(rc)
-		if pool != nil && rc != nil && rc.ChannelContext != nil && (channelType == "telegram" || channelType == "discord" || channelType == "qq" || channelType == "weixin") {
+		if pool != nil && rc != nil && rc.ChannelContext != nil && (channelType == "telegram" || channelType == "discord" || channelType == "qq" || channelType == "qqbot" || channelType == "weixin") {
 			ch, prefetchErr := repo.GetChannel(ctx, pool, rc.ChannelContext.ChannelID)
 			if prefetchErr != nil {
 				slog.WarnContext(ctx, "channel delivery prefetch failed", "run_id", rc.Run.ID, "err", prefetchErr.Error())
@@ -212,7 +212,7 @@ func NewChannelDeliveryMiddlewareWithOptions(pool *pgxpool.Pool, opts ChannelDel
 			return err
 		}
 		channelType = normalizedChannelTypeFromContext(rc)
-		if pool == nil || (channelType != "telegram" && channelType != "discord" && channelType != "qq" && channelType != "weixin") {
+		if pool == nil || (channelType != "telegram" && channelType != "discord" && channelType != "qq" && channelType != "qqbot" && channelType != "weixin") {
 			return err
 		}
 		finalOutput := strings.TrimSpace(rc.FinalAssistantOutput)
@@ -293,6 +293,8 @@ func NewChannelDeliveryMiddlewareWithOptions(pool *pgxpool.Pool, opts ChannelDel
 			if deliverErr == nil && strings.TrimSpace(obUX.ReactionEmojiID) != "" {
 				MaybeOneBotInboundReaction(ctx, channel, rc, obUX.ReactionEmojiID)
 			}
+		case "qqbot":
+			deliverErr = inlineDeliverQQBotOutbox(ctx, pool, rc, channel, outboxRecord, payload, outboxRepo, repo, ledgerRepo, messagesRepo)
 		case "weixin":
 			deliverErr = inlineDeliverWeixinOutbox(ctx, pool, rc, channel, outboxRecord, payload, outboxRepo, repo, ledgerRepo, messagesRepo)
 		}
@@ -340,6 +342,14 @@ func buildOutboxPayload(rc *RunContext, channelType, output string, outputs []st
 				payload.ReplyToMessageID = rc.ChannelContext.InboundMessage.MessageID
 			}
 		}
+	case "qqbot":
+		if !rc.HeartbeatRun {
+			if rc.ChannelContext.TriggerMessage != nil && rc.ChannelContext.TriggerMessage.MessageID != "" {
+				payload.ReplyToMessageID = rc.ChannelContext.TriggerMessage.MessageID
+			} else if rc.ChannelContext.InboundMessage.MessageID != "" {
+				payload.ReplyToMessageID = rc.ChannelContext.InboundMessage.MessageID
+			}
+		}
 	case "weixin":
 		payload.Metadata = weixinDeliveryMetadata(rc)
 		if !rc.HeartbeatRun && !isPrivateChannelConversation(rc.ChannelContext.ConversationType) {
@@ -364,6 +374,15 @@ func buildOutboxPayload(rc *RunContext, channelType, output string, outputs []st
 		metadata := map[string]any{}
 		if rc.ChannelContext.ConversationType == "group" {
 			metadata["message_type"] = "group"
+		}
+		payload.Metadata = metadata
+	}
+	if channelType == "qqbot" {
+		metadata := map[string]any{"conversation_type": rc.ChannelContext.ConversationType}
+		if rc.ChannelContext.ConversationType == "group" {
+			metadata["scope"] = "group"
+		} else {
+			metadata["scope"] = "c2c"
 		}
 		payload.Metadata = metadata
 	}
@@ -583,6 +602,67 @@ func inlineDeliverOneBotOutbox(
 		if i > 0 {
 			ref = nil
 		}
+		messageIDs, sendErr := sender.SendText(ctx, ChannelDeliveryTarget{
+			ChannelType:  rc.ChannelContext.ChannelType,
+			Conversation: rc.ChannelContext.Conversation,
+			ReplyTo:      ref,
+			Metadata:     metadata,
+		}, trimmed)
+		if sendErr != nil {
+			return handleInlineOutboxFailure(ctx, pool, outboxRec, sendErr, outboxRepo)
+		}
+		if payload.IsTerminalNotice {
+			_, err := recordChannelTerminalNoticeSuccess(ctx, pool, messagesRepo, deliveryRepo, ledgerRepo, rc, ref, messageIDs, trimmed)
+			if err != nil {
+				return handleInlineOutboxFailure(ctx, pool, outboxRec, err, outboxRepo)
+			}
+		} else {
+			if err := recordChannelDeliverySuccess(ctx, pool, deliveryRepo, ledgerRepo, rc, ref, messageIDs, nil); err != nil {
+				return handleInlineOutboxFailure(ctx, pool, outboxRec, err, outboxRepo)
+			}
+		}
+		if err := outboxRepo.UpdateProgress(ctx, pool, outboxRec.ID, i+1); err != nil {
+			return err
+		}
+		outboxRec.SegmentsSent = i + 1
+	}
+	return outboxRepo.UpdateSent(ctx, pool, outboxRec.ID)
+}
+
+func inlineDeliverQQBotOutbox(
+	ctx context.Context,
+	pool *pgxpool.Pool,
+	rc *RunContext,
+	channel *data.DeliveryChannelRecord,
+	outboxRec *data.ChannelDeliveryOutboxRecord,
+	payload data.OutboxPayload,
+	outboxRepo data.ChannelDeliveryOutboxRepository,
+	deliveryRepo data.ChannelDeliveryRepository,
+	ledgerRepo data.ChannelMessageLedgerRepository,
+	messagesRepo data.MessagesRepository,
+) error {
+	if err := validateOutboxPayload(payload); err != nil {
+		return handleInlineOutboxFailure(ctx, pool, outboxRec, err, outboxRepo)
+	}
+	sender, err := NewQQBotChannelSenderFromChannel(channel, resolveSegmentDelay())
+	if err != nil {
+		return handleInlineOutboxFailure(ctx, pool, outboxRec, err, outboxRepo)
+	}
+	replyTo := qqbotReplyReference(rc)
+	metadata := payload.Metadata
+	if metadata == nil {
+		metadata = map[string]any{}
+	}
+
+	for i := outboxRec.SegmentsSent; i < len(payload.Outputs); i++ {
+		trimmed := strings.TrimSpace(payload.Outputs[i])
+		if trimmed == "" {
+			if err := outboxRepo.UpdateProgress(ctx, pool, outboxRec.ID, i+1); err != nil {
+				return err
+			}
+			continue
+		}
+		ref := replyTo
 		messageIDs, sendErr := sender.SendText(ctx, ChannelDeliveryTarget{
 			ChannelType:  rc.ChannelContext.ChannelType,
 			Conversation: rc.ChannelContext.Conversation,
@@ -968,6 +1048,43 @@ func deliverOneBotTerminalNotice(
 	return err
 }
 
+func deliverQQBotTerminalNotice(
+	ctx context.Context,
+	pool *pgxpool.Pool,
+	messagesRepo data.MessagesRepository,
+	deliveryRepo data.ChannelDeliveryRepository,
+	ledgerRepo data.ChannelMessageLedgerRepository,
+	rc *RunContext,
+	channel *data.DeliveryChannelRecord,
+	output string,
+) error {
+	if strings.TrimSpace(output) == "" {
+		return nil
+	}
+	sender, err := NewQQBotChannelSenderFromChannel(channel, resolveSegmentDelay())
+	if err != nil {
+		return err
+	}
+	replyTo := qqbotReplyReference(rc)
+	metadata := map[string]any{"conversation_type": rc.ChannelContext.ConversationType}
+	if rc.ChannelContext.ConversationType == "group" {
+		metadata["scope"] = "group"
+	} else {
+		metadata["scope"] = "c2c"
+	}
+	messageIDs, err := sender.SendText(ctx, ChannelDeliveryTarget{
+		ChannelType:  rc.ChannelContext.ChannelType,
+		Conversation: rc.ChannelContext.Conversation,
+		ReplyTo:      replyTo,
+		Metadata:     metadata,
+	}, output)
+	if err != nil {
+		return err
+	}
+	_, err = recordChannelTerminalNoticeSuccess(ctx, pool, messagesRepo, deliveryRepo, ledgerRepo, rc, replyTo, messageIDs, output)
+	return err
+}
+
 func deliverWeixinChannelOutput(
 	ctx context.Context,
 	pool *pgxpool.Pool,
@@ -1162,6 +1279,20 @@ func onebotReplyReference(rc *RunContext) *ChannelMessageRef {
 		return nil
 	}
 	if isPrivateChannelConversation(rc.ChannelContext.ConversationType) {
+		return nil
+	}
+	if rc.ChannelContext.TriggerMessage != nil && strings.TrimSpace(rc.ChannelContext.TriggerMessage.MessageID) != "" {
+		return rc.ChannelContext.TriggerMessage
+	}
+	if strings.TrimSpace(rc.ChannelContext.InboundMessage.MessageID) == "" {
+		return nil
+	}
+	ref := rc.ChannelContext.InboundMessage
+	return &ref
+}
+
+func qqbotReplyReference(rc *RunContext) *ChannelMessageRef {
+	if rc == nil || rc.ChannelContext == nil || rc.HeartbeatRun {
 		return nil
 	}
 	if rc.ChannelContext.TriggerMessage != nil && strings.TrimSpace(rc.ChannelContext.TriggerMessage.MessageID) != "" {
@@ -1460,7 +1591,7 @@ func TryDeliverChannelInjectionBlockNotice(ctx context.Context, pool *pgxpool.Po
 		return
 	}
 	channelType := normalizedChannelTypeFromContext(rc)
-	if channelType != "telegram" && channelType != "discord" && channelType != "qq" && channelType != "weixin" {
+	if channelType != "telegram" && channelType != "discord" && channelType != "qq" && channelType != "qqbot" && channelType != "weixin" {
 		return
 	}
 	repo := data.ChannelDeliveryRepository{}
@@ -1502,6 +1633,8 @@ func TryDeliverChannelInjectionBlockNotice(ctx context.Context, pool *pgxpool.Po
 		if deliverErr == nil && strings.TrimSpace(uxSend.ReactionEmojiID) != "" {
 			MaybeOneBotInboundReaction(ctx, channel, rc, uxSend.ReactionEmojiID)
 		}
+	case "qqbot":
+		deliverErr = deliverQQBotTerminalNotice(ctx, pool, messagesRepo, repo, ledgerRepo, rc, channel, text)
 	case "weixin":
 		deliverErr = deliverWeixinTerminalNotice(ctx, pool, messagesRepo, repo, ledgerRepo, rc, channel, text)
 	}

@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useMemo } from 'react'
-import { Plus, Trash2, Link2 } from 'lucide-react'
+import { ExternalLink, Plus, Trash2, Link2 } from 'lucide-react'
 import {
   type ChannelResponse,
   type ChannelIdentityResponse,
@@ -19,12 +19,13 @@ import { AutoResizeTextarea } from '@arkloop/shared'
 import { QQLoginFlow } from './QQLoginFlow'
 import { CopyIconButton } from './CopyIconButton'
 import { ModelDropdown } from './settings/DesktopChannelSettingsShared'
+import { openExternal } from '../openExternal'
 
 type Props = {
   accessToken: string
 }
 
-const CHANNEL_TYPES = ['telegram', 'discord', 'feishu', 'qq', 'weixin'] as const
+const CHANNEL_TYPES = ['telegram', 'discord', 'feishu', 'qqbot', 'qq', 'weixin'] as const
 type ChannelType = (typeof CHANNEL_TYPES)[number]
 
 function parseAllowedUserIds(input: string): string[] {
@@ -37,6 +38,7 @@ function parseAllowedUserIds(input: string): string[] {
 export function ChannelsSettingsContent({ accessToken }: Props) {
   const { t } = useLocale()
   const ct = t.channels
+  const ds = t.desktopSettings
 
   const [channels, setChannels] = useState<ChannelResponse[]>([])
   const [identities, setIdentities] = useState<ChannelIdentityResponse[]>([])
@@ -46,9 +48,12 @@ export function ChannelsSettingsContent({ accessToken }: Props) {
 
   const [showForm, setShowForm] = useState(false)
   const [formType, setFormType] = useState<ChannelType>('telegram')
+  const [formAppID, setFormAppID] = useState('')
   const [formToken, setFormToken] = useState('')
   const [formPersonaId, setFormPersonaId] = useState('')
   const [formAllowedUsers, setFormAllowedUsers] = useState('')
+  const [formAllowedGroups, setFormAllowedGroups] = useState('')
+  const [formDefaultModel, setFormDefaultModel] = useState('')
   const [saving, setSaving] = useState(false)
   const [tokenDrafts, setTokenDrafts] = useState<Record<string, string>>({})
 
@@ -80,22 +85,53 @@ export function ChannelsSettingsContent({ accessToken }: Props) {
 
   useEffect(() => { load() }, [load])
 
+  const resetCreateForm = () => {
+    setShowForm(false)
+    setFormAppID('')
+    setFormToken('')
+    setFormPersonaId('')
+    setFormAllowedUsers('')
+    setFormAllowedGroups('')
+    setFormDefaultModel('')
+  }
+
   const handleCreate = async () => {
+    if (formType === 'qqbot') {
+      if (!formAppID.trim()) {
+        setError(ct.qqBotAppIDRequired)
+        return
+      }
+      if (!formToken.trim()) {
+        setError(ct.qqBotClientSecretRequired)
+        return
+      }
+    }
+
     setSaving(true)
     setError('')
     try {
+      const configJSON = (() => {
+        if (formType === 'telegram') {
+          return { allowed_user_ids: parseAllowedUserIds(formAllowedUsers) }
+        }
+        if (formType === 'qqbot') {
+          return {
+            app_id: formAppID.trim(),
+            allowed_user_ids: parseAllowedUserIds(formAllowedUsers),
+            allowed_group_ids: parseAllowedUserIds(formAllowedGroups),
+            default_model: formDefaultModel.trim(),
+          }
+        }
+        return undefined
+      })()
+
       await createChannel(accessToken, {
         channel_type: formType,
-        bot_token: formToken,
+        bot_token: formType === 'qq' ? '' : formToken.trim(),
         persona_id: formPersonaId || undefined,
-        config_json: formType === 'telegram'
-          ? { allowed_user_ids: parseAllowedUserIds(formAllowedUsers) }
-          : undefined,
+        config_json: configJSON,
       })
-      setShowForm(false)
-      setFormToken('')
-      setFormPersonaId('')
-      setFormAllowedUsers('')
+      resetCreateForm()
       await load()
     } catch (err) {
       setError(isApiError(err) ? err.message : ct.saveFailed)
@@ -105,7 +141,7 @@ export function ChannelsSettingsContent({ accessToken }: Props) {
   }
 
   const handleToggle = async (ch: ChannelResponse) => {
-    if (!ch.is_active && ch.channel_type === 'telegram') {
+    if (!ch.is_active && (ch.channel_type === 'telegram' || ch.channel_type === 'qqbot')) {
       if (!ch.persona_id) {
         setError(ct.personaRequired)
         return
@@ -139,7 +175,7 @@ export function ChannelsSettingsContent({ accessToken }: Props) {
       const res = await createChannelBindCode(accessToken)
       setBindCode(res.token)
     } catch {
-      setError('Failed to generate bind code')
+      setError(ct.loadFailed)
     } finally {
       setGenerating(false)
     }
@@ -166,11 +202,23 @@ export function ChannelsSettingsContent({ accessToken }: Props) {
   }
 
   const channelLabel = (type: string) => {
-    const map: Record<string, string> = { telegram: ct.telegram, discord: ct.discord, feishu: ct.feishu, qq: 'QQ', weixin: ct.weixin }
+    const map: Record<string, string> = {
+      telegram: ct.telegram,
+      discord: ct.discord,
+      feishu: ct.feishu,
+      qqbot: ct.qq,
+      qq: ct.qqOneBot,
+      weixin: ct.weixin,
+    }
     return map[type] || type
   }
 
   const usedTypes = new Set(channels.map((c) => c.channel_type))
+  const createDisabled =
+    saving ||
+    (formType === 'qqbot'
+      ? !formAppID.trim() || !formToken.trim()
+      : formType !== 'qq' && !formToken.trim())
 
   if (loading) return <div className="text-sm text-[var(--c-text-tertiary)]">{t.loading}</div>
 
@@ -217,21 +265,73 @@ export function ChannelsSettingsContent({ accessToken }: Props) {
             </select>
           </div>
 
-          <div className="flex flex-col gap-1">
-            <label className="text-xs font-medium text-[var(--c-text-secondary)]">{ct.botToken}</label>
-            {formType === 'qq' ? (
-              <p className="text-xs text-[var(--c-text-tertiary)]">QQ channel will be configured automatically after creation.</p>
-            ) : (
-            <input
-              type="password"
-              value={formToken}
-              onChange={(e) => setFormToken(e.target.value)}
-              placeholder={ct.botTokenPlaceholder}
-              className="h-9 rounded-lg bg-[var(--c-bg-input)] px-3 text-sm text-[var(--c-text-primary)] outline-none placeholder:text-[var(--c-text-muted)]"
-              style={{ border: '0.5px solid var(--c-border-subtle)' }}
-            />
-            )}
-          </div>
+          {formType === 'qqbot' && (
+            <div
+              className="rounded-lg px-3 py-2"
+              style={{ border: '0.5px solid var(--c-border-subtle)', background: 'var(--c-bg-page)' }}
+            >
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                <div className="text-xs font-medium text-[var(--c-text-heading)]">{ct.qqBotOfficialIntro}</div>
+                <button
+                  type="button"
+                  onClick={() => openExternal('https://q.qq.com/qqbot/')}
+                  className="inline-flex shrink-0 items-center gap-1 text-xs text-[var(--c-text-secondary)] underline underline-offset-2 hover:text-[var(--c-text-primary)]"
+                >
+                  <ExternalLink size={13} />
+                  {ct.qqBotOfficialPortal}
+                </button>
+              </div>
+              <ol className="mt-1.5 list-decimal space-y-1 pl-4 text-xs leading-5 text-[var(--c-text-tertiary)]">
+                {ct.qqBotSetupSteps.map((step) => (
+                  <li key={step}>{step}</li>
+                ))}
+              </ol>
+            </div>
+          )}
+
+          {formType === 'qqbot' && (
+            <div className="flex flex-col gap-1">
+              <label className="text-xs font-medium text-[var(--c-text-secondary)]">{ct.qqBotAppID}</label>
+              <input
+                type="text"
+                value={formAppID}
+                onChange={(e) => setFormAppID(e.target.value)}
+                placeholder={ct.qqBotAppIDPlaceholder}
+                className="h-9 rounded-lg bg-[var(--c-bg-input)] px-3 text-sm text-[var(--c-text-primary)] outline-none placeholder:text-[var(--c-text-muted)]"
+                style={{ border: '0.5px solid var(--c-border-subtle)' }}
+              />
+            </div>
+          )}
+
+          {formType !== 'qq' && (
+            <div className="flex flex-col gap-1">
+              <label className="text-xs font-medium text-[var(--c-text-secondary)]">
+                {formType === 'qqbot' ? ct.qqBotClientSecret : ct.botToken}
+              </label>
+              <input
+                type="password"
+                value={formToken}
+                onChange={(e) => setFormToken(e.target.value)}
+                placeholder={formType === 'qqbot' ? ct.qqBotClientSecretPlaceholder : ct.botTokenPlaceholder}
+                className="h-9 rounded-lg bg-[var(--c-bg-input)] px-3 text-sm text-[var(--c-text-primary)] outline-none placeholder:text-[var(--c-text-muted)]"
+                style={{ border: '0.5px solid var(--c-border-subtle)' }}
+              />
+            </div>
+          )}
+
+          {formType === 'qqbot' && (
+            <div className="flex flex-col gap-1">
+              <label className="text-xs font-medium text-[var(--c-text-secondary)]">{ds.connectorDefaultModel}</label>
+              <input
+                type="text"
+                value={formDefaultModel}
+                onChange={(e) => setFormDefaultModel(e.target.value)}
+                placeholder={ds.connectorDefaultModelPlaceholder}
+                className="h-9 rounded-lg bg-[var(--c-bg-input)] px-3 text-sm text-[var(--c-text-primary)] outline-none placeholder:text-[var(--c-text-muted)]"
+                style={{ border: '0.5px solid var(--c-border-subtle)' }}
+              />
+            </div>
+          )}
 
           {formType === 'telegram' && (
             <div className="flex flex-col gap-1">
@@ -247,6 +347,38 @@ export function ChannelsSettingsContent({ accessToken }: Props) {
                 style={{ border: '0.5px solid var(--c-border-subtle)' }}
               />
             </div>
+          )}
+
+          {formType === 'qqbot' && (
+            <>
+              <div className="flex flex-col gap-1">
+                <label className="text-xs font-medium text-[var(--c-text-secondary)]">{ct.qqBotAllowedUsers}</label>
+                <AutoResizeTextarea
+                  value={formAllowedUsers}
+                  onChange={(e) => setFormAllowedUsers(e.target.value)}
+                  placeholder={ct.qqBotAllowedUsersPlaceholder}
+                  rows={3}
+                  minRows={3}
+                  maxHeight={220}
+                  className="rounded-lg bg-[var(--c-bg-input)] px-3 py-2 text-sm text-[var(--c-text-primary)] outline-none placeholder:text-[var(--c-text-muted)] resize-none"
+                  style={{ border: '0.5px solid var(--c-border-subtle)' }}
+                />
+              </div>
+
+              <div className="flex flex-col gap-1">
+                <label className="text-xs font-medium text-[var(--c-text-secondary)]">{ct.qqBotAllowedGroups}</label>
+                <AutoResizeTextarea
+                  value={formAllowedGroups}
+                  onChange={(e) => setFormAllowedGroups(e.target.value)}
+                  placeholder={ct.qqBotAllowedGroupsPlaceholder}
+                  rows={3}
+                  minRows={3}
+                  maxHeight={220}
+                  className="rounded-lg bg-[var(--c-bg-input)] px-3 py-2 text-sm text-[var(--c-text-primary)] outline-none placeholder:text-[var(--c-text-muted)] resize-none"
+                  style={{ border: '0.5px solid var(--c-border-subtle)' }}
+                />
+              </div>
+            </>
           )}
 
           {personas.length > 0 && (
@@ -265,14 +397,14 @@ export function ChannelsSettingsContent({ accessToken }: Props) {
           <div className="flex items-center gap-2 pt-1">
             <button
               onClick={handleCreate}
-              disabled={saving || (formType !== 'qq' && !formToken.trim())}
+              disabled={createDisabled}
               className="rounded-lg px-4 py-1.5 text-xs font-medium text-white transition-colors disabled:opacity-50"
               style={{ background: 'var(--c-accent, #3b82f6)' }}
             >
               {saving ? ct.saving : ct.save}
             </button>
             <button
-              onClick={() => { setShowForm(false); setFormToken(''); setFormPersonaId(''); setFormAllowedUsers('') }}
+              onClick={resetCreateForm}
               className="rounded-lg px-4 py-1.5 text-xs font-medium text-[var(--c-text-secondary)] transition-colors hover:bg-[var(--c-bg-deep)]"
               style={{ border: '0.5px solid var(--c-border-subtle)' }}
             >

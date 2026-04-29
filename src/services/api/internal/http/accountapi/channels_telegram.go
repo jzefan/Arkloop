@@ -195,6 +195,10 @@ func normalizeChannelConfigJSON(channelType string, raw json.RawMessage) (json.R
 		normalized, _, err := normalizeDiscordChannelConfig(raw)
 		return normalized, nil, err
 	}
+	if channelType == "qqbot" {
+		normalized, _, err := normalizeQQBotChannelConfig(raw)
+		return normalized, nil, err
+	}
 
 	var generic map[string]any
 	if err := json.Unmarshal(raw, &generic); err != nil {
@@ -2145,6 +2149,22 @@ func bindTelegramIdentity(
 	channelDMThreadsRepo *data.ChannelDMThreadsRepository,
 	threadRepo *data.ThreadRepository,
 ) (string, error) {
+	return bindChannelIdentity(ctx, tx, channel, identity, code, "Telegram", channelBindCodesRepo, channelIdentitiesRepo, channelIdentityLinksRepo, channelDMThreadsRepo, threadRepo)
+}
+
+func bindChannelIdentity(
+	ctx context.Context,
+	tx pgx.Tx,
+	channel *data.Channel,
+	identity data.ChannelIdentity,
+	code string,
+	identityLabel string,
+	channelBindCodesRepo *data.ChannelBindCodesRepository,
+	channelIdentitiesRepo *data.ChannelIdentitiesRepository,
+	channelIdentityLinksRepo *data.ChannelIdentityLinksRepository,
+	channelDMThreadsRepo *data.ChannelDMThreadsRepository,
+	threadRepo *data.ThreadRepository,
+) (string, error) {
 	code = strings.ToUpper(strings.TrimSpace(code))
 	if code == "" {
 		return "绑定码不能为空。", nil
@@ -2157,7 +2177,11 @@ func bindTelegramIdentity(
 		return "绑定码无效或已过期。", nil
 	}
 	if identity.UserID != nil && *identity.UserID != activeCode.IssuedByUserID {
-		return "当前 Telegram 身份已绑定到其他账号。", nil
+		label := strings.TrimSpace(identityLabel)
+		if label == "" {
+			label = "渠道"
+		}
+		return fmt.Sprintf("当前 %s 身份已绑定到其他账号。", label), nil
 	}
 	if identity.UserID != nil {
 		if _, err := channelBindCodesRepo.WithTx(tx).ConsumeForChannel(ctx, code, identity.ID, channel.ChannelType); err != nil {

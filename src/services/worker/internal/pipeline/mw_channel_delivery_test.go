@@ -2057,6 +2057,149 @@ func TestChannelDeliveryMiddlewareSendsWeixinContextToken(t *testing.T) {
 	}
 }
 
+func TestChannelDeliveryMiddlewareSendsQQBotReplyWithOfficialFields(t *testing.T) {
+	ctx := context.Background()
+	db := testutil.SetupPostgresDatabase(t, "pipeline_channel_delivery_qqbot_reply")
+	pool, err := pgxpool.New(ctx, db.DSN)
+	if err != nil {
+		t.Fatalf("pgxpool.New: %v", err)
+	}
+	t.Cleanup(pool.Close)
+
+	createChannelDeliveryTables(t, pool, `CREATE TABLE channel_message_ledger (
+		channel_id UUID NOT NULL,
+		channel_type TEXT NOT NULL,
+		direction TEXT NOT NULL,
+		thread_id UUID NULL,
+		run_id UUID NULL,
+		platform_conversation_id TEXT NOT NULL,
+		platform_message_id TEXT NOT NULL,
+		platform_parent_message_id TEXT NULL,
+		platform_thread_id TEXT NULL,
+		sender_channel_identity_id UUID NULL,
+		metadata_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+		UNIQUE (channel_id, direction, platform_conversation_id, platform_message_id)
+	)`)
+
+	keyBytes := make([]byte, 32)
+	for i := range keyBytes {
+		keyBytes[i] = byte(i + 33)
+	}
+	t.Setenv("ARKLOOP_ENCRYPTION_KEY", hex.EncodeToString(keyBytes))
+
+	var tokenBody map[string]string
+	var sendPath string
+	var sendAuth string
+	var sendBody map[string]any
+	server := httptest.NewServer(nethttp.HandlerFunc(func(w nethttp.ResponseWriter, r *nethttp.Request) {
+		switch r.URL.Path {
+		case "/token":
+			if err := json.NewDecoder(r.Body).Decode(&tokenBody); err != nil {
+				t.Fatalf("decode token body: %v", err)
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"access_token":"access-1","expires_in":7200}`))
+		case "/v2/groups/group-openid/messages":
+			sendPath = r.URL.Path
+			sendAuth = r.Header.Get("Authorization")
+			if err := json.NewDecoder(r.Body).Decode(&sendBody); err != nil {
+				t.Fatalf("decode send body: %v", err)
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"id":"qqbot-out-1"}`))
+		default:
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+	t.Setenv("ARKLOOP_QQBOT_TOKEN_URL", server.URL+"/token")
+	t.Setenv("ARKLOOP_QQBOT_API_BASE_URL", server.URL)
+
+	accountID := uuid.New()
+	projectID := uuid.New()
+	threadID := uuid.New()
+	runID := uuid.New()
+	channelID := uuid.New()
+	secretID := uuid.New()
+
+	seedPipelineThread(t, pool, accountID, threadID, projectID)
+	seedPipelineRun(t, pool, accountID, threadID, runID, nil)
+	if _, err := pool.Exec(ctx, `INSERT INTO secrets (id, encrypted_value, key_version) VALUES ($1, $2, 1)`, secretID, encryptChannelToken(t, keyBytes, "secret-1")); err != nil {
+		t.Fatalf("insert secret: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO channels (id, channel_type, credentials_id, is_active, config_json) VALUES ($1, 'qqbot', $2, TRUE, '{"app_id":"app-1"}'::jsonb)`, channelID, secretID); err != nil {
+		t.Fatalf("insert channel: %v", err)
+	}
+
+	rc := &RunContext{
+		Run:                  data.Run{ID: runID, AccountID: accountID, ThreadID: threadID},
+		FinalAssistantOutput: "qqbot reply text",
+		ChannelContext: &ChannelContext{
+			ChannelID:        channelID,
+			ChannelType:      "qqbot",
+			ConversationType: "group",
+			Conversation:     ChannelConversationRef{Target: "group-openid"},
+			InboundMessage:   ChannelMessageRef{MessageID: "inbound-777"},
+			TriggerMessage:   &ChannelMessageRef{MessageID: "inbound-777"},
+		},
+	}
+
+	mw := NewChannelDeliveryMiddleware(pool)
+	if err := mw(ctx, rc, func(_ context.Context, _ *RunContext) error { return nil }); err != nil {
+		t.Fatalf("middleware returned error: %v", err)
+	}
+
+	if tokenBody["appId"] != "app-1" || tokenBody["clientSecret"] != "secret-1" {
+		t.Fatalf("unexpected token body: %#v", tokenBody)
+	}
+	if sendPath != "/v2/groups/group-openid/messages" {
+		t.Fatalf("unexpected send path: %q", sendPath)
+	}
+	if sendAuth != "QQBot access-1" {
+		t.Fatalf("unexpected authorization: %q", sendAuth)
+	}
+	if sendBody["content"] != "qqbot reply text" || sendBody["msg_type"].(float64) != 0 || sendBody["msg_id"] != "inbound-777" {
+		t.Fatalf("unexpected qqbot send body: %#v", sendBody)
+	}
+	if seq, ok := sendBody["msg_seq"].(float64); !ok || seq < 1 || seq > 65535 {
+		t.Fatalf("unexpected qqbot msg_seq: %#v", sendBody["msg_seq"])
+	}
+
+	var (
+		outboxStatus string
+		payloadScope string
+		replyTo      string
+		messageID    string
+		parentID     *string
+	)
+	if err := pool.QueryRow(ctx, `
+		SELECT
+			(SELECT status FROM channel_delivery_outbox WHERE run_id = $1),
+			(SELECT payload_json #>> '{metadata,scope}' FROM channel_delivery_outbox WHERE run_id = $1),
+			(SELECT payload_json #>> '{reply_to_message_id}' FROM channel_delivery_outbox WHERE run_id = $1),
+			(SELECT platform_message_id FROM channel_message_ledger WHERE run_id = $1 LIMIT 1),
+			(SELECT platform_parent_message_id FROM channel_message_ledger WHERE run_id = $1 LIMIT 1)`,
+		runID,
+	).Scan(&outboxStatus, &payloadScope, &replyTo, &messageID, &parentID); err != nil {
+		t.Fatalf("query qqbot delivery state: %v", err)
+	}
+	if outboxStatus != "sent" {
+		t.Fatalf("expected sent outbox, got %q", outboxStatus)
+	}
+	if payloadScope != "group" {
+		t.Fatalf("unexpected outbox scope: %q", payloadScope)
+	}
+	if replyTo != "inbound-777" {
+		t.Fatalf("unexpected outbox reply id: %q", replyTo)
+	}
+	if messageID != "qqbot-out-1" {
+		t.Fatalf("unexpected ledger message id: %q", messageID)
+	}
+	if parentID == nil || *parentID != "inbound-777" {
+		t.Fatalf("unexpected ledger parent id: %#v", parentID)
+	}
+}
+
 func TestChannelDeliveryMiddlewareWritesOutboxAndInlineTrySucceeds(t *testing.T) {
 	ctx := context.Background()
 	db := testutil.SetupPostgresDatabase(t, "pipeline_channel_delivery_outbox_success")

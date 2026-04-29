@@ -10,6 +10,7 @@ import {
 } from '../../api'
 import { useLocale } from '../../contexts/LocaleContext'
 import { DesktopDiscordSettingsPanel } from './DesktopDiscordSettingsPanel'
+import { DesktopQQBotSettingsPanel } from './DesktopQQBotSettingsPanel'
 import { DesktopQQSettingsPanel } from './DesktopQQSettingsPanel'
 import { DesktopTelegramSettingsPanel } from './DesktopTelegramSettingsPanel'
 import { DesktopWeixinSettingsPanel } from './DesktopWeixinSettingsPanel'
@@ -18,7 +19,7 @@ type Props = {
   accessToken: string
 }
 
-type IntegrationTab = 'telegram' | 'discord' | 'qq' | 'weixin'
+type IntegrationTab = 'telegram' | 'discord' | 'qqbot' | 'qq' | 'weixin'
 
 function TelegramIcon({ size = 15 }: { size?: number }) {
   return (
@@ -55,6 +56,7 @@ function WeixinIcon({ size = 15 }: { size?: number }) {
 const PLATFORM_ICONS: Record<IntegrationTab, React.ReactNode> = {
   telegram: <TelegramIcon />,
   discord: <DiscordIcon />,
+  qqbot: <QQIcon />,
   qq: <QQIcon />,
   weixin: <WeixinIcon />,
 }
@@ -102,6 +104,10 @@ export function DesktopChannelsSettings({ accessToken }: Props) {
     () => channels.find((channel) => channel.channel_type === 'qq') ?? null,
     [channels],
   )
+  const qqBotChannel = useMemo(
+    () => channels.find((channel) => channel.channel_type === 'qqbot') ?? null,
+    [channels],
+  )
   const wxChannel = useMemo(
     () => channels.find((channel) => channel.channel_type === 'weixin') ?? null,
     [channels],
@@ -110,7 +116,8 @@ export function DesktopChannelsSettings({ accessToken }: Props) {
   const tabItems: { key: IntegrationTab; label: string; channel: ChannelResponse | null }[] = [
     { key: 'telegram', label: ct.telegram, channel: telegramChannel },
     { key: 'discord', label: ct.discord, channel: discordChannel },
-    { key: 'qq', label: ct.qq, channel: qqChannel },
+    { key: 'qqbot', label: ct.qq, channel: qqBotChannel },
+    { key: 'qq', label: ct.qqOneBot, channel: qqChannel },
     { key: 'weixin', label: ct.weixin, channel: wxChannel },
   ]
 
@@ -169,6 +176,14 @@ export function DesktopChannelsSettings({ accessToken }: Props) {
           <DesktopWeixinSettingsPanel
             accessToken={accessToken}
             channel={wxChannel}
+            personas={personas}
+            providers={providers}
+            reload={load}
+          />
+        ) : activeTab === 'qqbot' ? (
+          <DesktopQQBotSettingsPanel
+            accessToken={accessToken}
+            channel={qqBotChannel}
             personas={personas}
             providers={providers}
             reload={load}

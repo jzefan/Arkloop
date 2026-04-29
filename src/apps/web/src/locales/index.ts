@@ -677,6 +677,20 @@ export interface LocaleStrings {
     discordServerIdHint: string
     bindCodeInGroupHint: string
     qq: string
+    qqOneBot: string
+    qqBotAppID: string
+    qqBotAppIDPlaceholder: string
+    qqBotAppIDRequired: string
+    qqBotClientSecret: string
+    qqBotClientSecretPlaceholder: string
+    qqBotClientSecretRequired: string
+    qqBotOfficialIntro: string
+    qqBotOfficialPortal: string
+    qqBotSetupSteps: string[]
+    qqBotAllowedUsers: string
+    qqBotAllowedUsersPlaceholder: string
+    qqBotAllowedGroups: string
+    qqBotAllowedGroupsPlaceholder: string
     qqSetup: string
     qqFetchingInfo: string
     qqDownloading: string
