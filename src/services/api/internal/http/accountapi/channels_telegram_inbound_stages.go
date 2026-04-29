@@ -382,6 +382,7 @@ func (c telegramConnector) persistTelegramInboundStageA(
 			replyText := "暂无可用模型。"
 			if len(rows) > 0 {
 				replyText = "Choose model."
+				rows = append(rows, []telegrambot.InlineKeyboardButton{{Text: "✕", CallbackData: "dismiss"}})
 				replyMarkup = &telegrambot.InlineKeyboardMarkup{InlineKeyboard: rows}
 			}
 			if err := c.recordTelegramInboundFinalState(ctx, tx, ch, incoming, &modelsIdentity.ID, nil, nil, inboundStateCommandHandled, baseMetadata); err != nil {
@@ -458,6 +459,7 @@ func (c telegramConnector) persistTelegramInboundStageA(
 			replyText := "没有可切换的 persona。"
 			if len(rows) > 0 {
 				replyText = "Choose persona."
+				rows = append(rows, []telegrambot.InlineKeyboardButton{{Text: "✕", CallbackData: "dismiss"}})
 				replyMarkup = &telegrambot.InlineKeyboardMarkup{InlineKeyboard: rows}
 			}
 			if err := c.recordTelegramInboundFinalState(ctx, tx, ch, incoming, &personaIdentity.ID, nil, nil, inboundStateCommandHandled, baseMetadata); err != nil {
