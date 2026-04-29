@@ -8,10 +8,11 @@ import (
 type QuirkID string
 
 const (
-	QuirkEchoReasoningContent  QuirkID = "echo_reasoning_content"
-	QuirkStripUnsignedThinking QuirkID = "strip_unsigned_thinking"
-	QuirkForceTempOneOnThink   QuirkID = "force_temp_one_on_thinking"
-	QuirkEchoEmptyTextOnThink  QuirkID = "echo_empty_text_on_thinking"
+	QuirkEchoReasoningContent    QuirkID = "echo_reasoning_content"
+	QuirkDowngradeXHighReasoning QuirkID = "downgrade_xhigh_reasoning"
+	QuirkStripUnsignedThinking   QuirkID = "strip_unsigned_thinking"
+	QuirkForceTempOneOnThink     QuirkID = "force_temp_one_on_thinking"
+	QuirkEchoEmptyTextOnThink    QuirkID = "echo_empty_text_on_thinking"
 )
 
 type Quirk struct {
@@ -98,6 +99,11 @@ var openAIQuirks = []Quirk{
 		},
 		Apply: applyEchoReasoningContent,
 	},
+	{
+		ID:    QuirkDowngradeXHighReasoning,
+		Match: matchXHighReasoningUnsupported,
+		Apply: applyDowngradeXHighReasoning,
+	},
 }
 
 var anthropicQuirks = []Quirk{
@@ -172,6 +178,46 @@ func echoReasoningContentOnItem(item map[string]any) {
 		return
 	}
 	item["reasoning_content"] = ""
+}
+
+func matchXHighReasoningUnsupported(status int, rawBody string) bool {
+	if status != 400 {
+		return false
+	}
+	lower := strings.ToLower(rawBody)
+	if !strings.Contains(lower, "reasoning_effort") || !hasLowerAlphaToken(lower, "xhigh") {
+		return false
+	}
+	if !hasLowerAlphaToken(lower, "low") || !hasLowerAlphaToken(lower, "medium") || !hasLowerAlphaToken(lower, "high") {
+		return false
+	}
+	return strings.Contains(lower, "expected") ||
+		strings.Contains(lower, "input should be") ||
+		strings.Contains(lower, "literal_error")
+}
+
+func hasLowerAlphaToken(text string, want string) bool {
+	for _, token := range strings.FieldsFunc(text, func(r rune) bool {
+		return r < 'a' || r > 'z'
+	}) {
+		if token == want {
+			return true
+		}
+	}
+	return false
+}
+
+func applyDowngradeXHighReasoning(payload map[string]any) {
+	if effort, _ := payload["reasoning_effort"].(string); strings.EqualFold(effort, "xhigh") {
+		payload["reasoning_effort"] = "high"
+	}
+	reasoning, ok := payload["reasoning"].(map[string]any)
+	if !ok {
+		return
+	}
+	if effort, _ := reasoning["effort"].(string); strings.EqualFold(effort, "xhigh") {
+		reasoning["effort"] = "high"
+	}
 }
 
 func applyEchoEmptyTextOnThinking(payload map[string]any) {

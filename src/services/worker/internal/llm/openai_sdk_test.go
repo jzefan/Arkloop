@@ -962,3 +962,126 @@ func TestOpenAISDKGateway_QuirkRetryEchoReasoningContent(t *testing.T) {
 		t.Fatalf("retry payload missing reasoning_content on assistant message: %#v", secondMsgs)
 	}
 }
+
+func TestOpenAISDKGateway_QuirkRetryDowngradeXHighReasoning(t *testing.T) {
+	t.Setenv("ARKLOOP_OUTBOUND_ALLOW_LOOPBACK_HTTP", "true")
+	var attempts int
+	var bodies []map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		bodies = append(bodies, body)
+		attempts++
+		if attempts == 1 {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"code":"400","message":"Error from provider (Xiaomi): [{'type': 'literal_error', 'loc': ('body', 'reasoning_effort'), 'msg': \"Input should be 'low', 'medium' or 'high'\", 'input': 'xhigh', 'ctx': {'expected': \"'low', 'medium' or 'high'\"}}]","param":"","type":"Bad Request"}`))
+			return
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte(openAISDKSSE([]string{
+			`{"id":"chatcmpl_1","object":"chat.completion.chunk","created":1,"model":"gpt","choices":[{"index":0,"delta":{"role":"assistant","content":"ok"},"finish_reason":"stop"}]}`,
+		})))
+	}))
+	defer server.Close()
+
+	gateway := NewOpenAIGatewaySDK(OpenAIGatewayConfig{Transport: TransportConfig{APIKey: "key", BaseURL: server.URL}, Protocol: OpenAIProtocolConfig{PrimaryKind: ProtocolKindOpenAIChatCompletions}})
+	var completed *StreamRunCompleted
+	var learned []StreamQuirkLearned
+	if err := gateway.Stream(context.Background(), Request{
+		Model:         "xiaomi",
+		Messages:      []Message{{Role: "user", Content: []ContentPart{{Text: "hello"}}}},
+		ReasoningMode: "xhigh",
+	}, func(event StreamEvent) error {
+		switch ev := event.(type) {
+		case StreamRunCompleted:
+			completed = &ev
+		case StreamQuirkLearned:
+			learned = append(learned, ev)
+		}
+		return nil
+	}); err != nil {
+		t.Fatalf("Stream: %v", err)
+	}
+	if attempts != 2 || len(bodies) != 2 {
+		t.Fatalf("expected retry, got attempts=%d bodies=%#v", attempts, bodies)
+	}
+	if completed == nil {
+		t.Fatalf("expected completion after retry")
+	}
+	if bodies[0]["reasoning_effort"] != "xhigh" || bodies[1]["reasoning_effort"] != "high" {
+		t.Fatalf("expected xhigh then high, got %#v", bodies)
+	}
+	if !gateway.(*openAISDKGateway).quirks.Has(QuirkDowngradeXHighReasoning) {
+		t.Fatalf("quirk not stored")
+	}
+	if len(learned) != 1 || learned[0].ProviderKind != "openai" || learned[0].QuirkID != string(QuirkDowngradeXHighReasoning) {
+		t.Fatalf("expected one StreamQuirkLearned event, got %#v", learned)
+	}
+}
+
+func TestOpenAISDKGateway_ResponsesQuirkRetryDowngradeXHighReasoning(t *testing.T) {
+	t.Setenv("ARKLOOP_OUTBOUND_ALLOW_LOOPBACK_HTTP", "true")
+	var attempts int
+	var bodies []map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/responses" {
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		bodies = append(bodies, body)
+		attempts++
+		if attempts == 1 {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"code":"400","message":"Error from provider (Xiaomi): [{'type': 'literal_error', 'loc': ('body', 'reasoning_effort'), 'msg': \"Input should be 'low', 'medium' or 'high'\", 'input': 'xhigh', 'ctx': {'expected': \"'low', 'medium' or 'high'\"}}]","param":"","type":"Bad Request"}`))
+			return
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte(openAISDKSSE([]string{
+			`{"type":"response.completed","response":{"id":"resp_1","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"ok"}]}],"usage":{"input_tokens":1,"output_tokens":1}}}`,
+		})))
+	}))
+	defer server.Close()
+
+	gateway := NewOpenAIGatewaySDK(OpenAIGatewayConfig{Transport: TransportConfig{APIKey: "key", BaseURL: server.URL}, Protocol: OpenAIProtocolConfig{PrimaryKind: ProtocolKindOpenAIResponses}})
+	var completed *StreamRunCompleted
+	var learned []StreamQuirkLearned
+	if err := gateway.Stream(context.Background(), Request{
+		Model:         "xiaomi",
+		Messages:      []Message{{Role: "user", Content: []ContentPart{{Text: "hello"}}}},
+		ReasoningMode: "xhigh",
+	}, func(event StreamEvent) error {
+		switch ev := event.(type) {
+		case StreamRunCompleted:
+			completed = &ev
+		case StreamQuirkLearned:
+			learned = append(learned, ev)
+		}
+		return nil
+	}); err != nil {
+		t.Fatalf("Stream: %v", err)
+	}
+	if attempts != 2 || len(bodies) != 2 {
+		t.Fatalf("expected retry, got attempts=%d bodies=%#v", attempts, bodies)
+	}
+	if completed == nil {
+		t.Fatalf("expected completion after retry")
+	}
+	firstReasoning := bodies[0]["reasoning"].(map[string]any)
+	secondReasoning := bodies[1]["reasoning"].(map[string]any)
+	if firstReasoning["effort"] != "xhigh" || secondReasoning["effort"] != "high" {
+		t.Fatalf("expected xhigh then high, got %#v", bodies)
+	}
+	if !gateway.(*openAISDKGateway).quirks.Has(QuirkDowngradeXHighReasoning) {
+		t.Fatalf("quirk not stored")
+	}
+	if len(learned) != 1 || learned[0].ProviderKind != "openai" || learned[0].QuirkID != string(QuirkDowngradeXHighReasoning) {
+		t.Fatalf("expected one StreamQuirkLearned event, got %#v", learned)
+	}
+}
