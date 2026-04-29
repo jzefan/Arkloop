@@ -111,6 +111,20 @@ func RegisterRoutes(mux *nethttp.ServeMux, deps Deps) {
 			deps.MessageAttachmentStore,
 		))
 	}
+	mux.HandleFunc("/v1/channels/feishu/", feishuWebhookEntry(
+		deps.ChannelsRepo,
+		deps.ChannelIdentitiesRepo,
+		deps.ChannelDMThreadsRepo,
+		deps.ChannelGroupThreadsRepo,
+		deps.ChannelReceiptsRepo,
+		deps.SecretsRepo,
+		deps.PersonasRepo,
+		deps.ThreadRepo,
+		deps.MessageRepo,
+		deps.RunEventRepo,
+		deps.JobRepo,
+		deps.Pool,
+	))
 	mux.HandleFunc("/v1/channels", channelsEntry(deps.AuthService, deps.AccountMembershipRepo, deps.ChannelsRepo, deps.PersonasRepo, deps.EntitlementService, deps.APIKeysRepo, deps.SecretsRepo, deps.Pool, deps.AppBaseURL, deps.TelegramBotClient, deps.DiscordBotClient, deps.TelegramMode))
 	mux.HandleFunc("/v1/channels/", channelEntry(deps.AuthService, deps.AccountMembershipRepo, deps.ChannelsRepo, deps.ChannelIdentityLinksRepo, deps.ChannelIdentitiesRepo, deps.ChannelDMThreadsRepo, deps.PersonasRepo, deps.EntitlementService, deps.APIKeysRepo, deps.SecretsRepo, deps.Pool, deps.TelegramBotClient, deps.DiscordBotClient, deps.TelegramMode))
 	mux.HandleFunc("/v1/me/channel-binds", channelBindsEntry(deps.AuthService, deps.AccountMembershipRepo, deps.ChannelBindCodesRepo, deps.APIKeysRepo))
