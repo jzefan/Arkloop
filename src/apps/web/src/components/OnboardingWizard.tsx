@@ -36,10 +36,12 @@ import {
 import type { AvailableModel, LlmProvider, LlmProviderModel } from "../api";
 import { routeAdvancedJsonFromAvailableCatalog } from "@arkloop/shared/llm/available-catalog-advanced-json";
 
-type Step = "welcome" | "mode" | "provider" | "appearance" | "complete";
+type Step = "welcome" | "mode" | "provider" | "appearance" | "import" | "complete";
 
 type Vendor = "openai_responses" | "openai_chat_completions" | "anthropic" | "gemini";
 type VerifyStatus = "idle" | "verifying" | "verified" | "failed";
+type ImportSourceKind = "hermes" | "openclaw";
+type ImportItemKey = "identity" | "skills" | "mcp" | "providers";
 type ModelImportStatus =
   | "idle"
   | "loading"
@@ -50,9 +52,39 @@ type ModelImportStatus =
   | "failed";
 
 type Props = { onComplete: () => void };
+type ImportSelectionState = Partial<Record<ImportSourceKind, Record<ImportItemKey, boolean>>>;
+type AgentImportDiscovery = {
+  kind: ImportSourceKind;
+  name: string;
+  sourcePath: string;
+  skillsCount: number;
+  mcpServers: string[];
+  llmProviders: string[];
+};
 
 const LOCAL_ACCESS_TOKEN =
   getDesktopAccessToken() ?? "";
+
+const IMPORT_ITEM_KEYS = ["identity", "skills", "mcp", "providers"] as const;
+
+const MOCK_IMPORT_DISCOVERIES: AgentImportDiscovery[] = [
+  {
+    kind: "hermes",
+    name: "Hermes",
+    sourcePath: "~/.hermes",
+    skillsCount: 12,
+    mcpServers: ["github", "filesystem", "fetch"],
+    llmProviders: ["OpenAI", "Anthropic", "OpenRouter"],
+  },
+  {
+    kind: "openclaw",
+    name: "OpenClaw",
+    sourcePath: "~/.openclaw",
+    skillsCount: 8,
+    mcpServers: ["github", "filesystem"],
+    llmProviders: ["OpenAI", "Anthropic"],
+  },
+];
 
 const VENDOR_OPTIONS = [
   {
@@ -174,6 +206,65 @@ function mergeConfiguredModels(
   for (const model of current) merged.set(model.model, model);
   for (const model of next) merged.set(model.model, model);
   return Array.from(merged.values());
+}
+
+function createDefaultImportSelections(
+  sources: AgentImportDiscovery[],
+): ImportSelectionState {
+  return sources.reduce<ImportSelectionState>((acc, source) => {
+    acc[source.kind] = {
+      identity: true,
+      skills: true,
+      mcp: true,
+      providers: true,
+    };
+    return acc;
+  }, {});
+}
+
+async function detectAgentImportsMock(): Promise<AgentImportDiscovery[]> {
+  return MOCK_IMPORT_DISCOVERIES;
+}
+
+function ImportSourceIcon({ source }: { source: ImportSourceKind }) {
+  if (source === "hermes") {
+    return (
+      <svg viewBox="0 0 64 64" aria-hidden="true" style={{ width: 16, height: 16, display: "block" }}>
+        <path d="M30 10h4v44h-4z" fill="currentColor" opacity="0.9" />
+        <path d="M30 18c-7-5-15-5-20-1 6-1 13 0 19 5zM34 18c7-5 15-5 20-1-6-1-13 0-19 5z" fill="currentColor" opacity="0.72" />
+        <path d="M30 24c-5-3-11-3-16 0 5-1 10 0 15 4zM34 24c5-3 11-3 16 0-5-1-10 0-15 4z" fill="currentColor" opacity="0.48" />
+        <path d="M32 49c-10-4-13-12-5-17-8 3-10 11-3 16m8 1c10-4 13-12 5-17 8 3 10 11 3 16" fill="none" stroke="currentColor" strokeWidth="2.8" strokeLinecap="round" />
+        <circle cx="32" cy="10" r="4" fill="currentColor" />
+      </svg>
+    );
+  }
+
+  return (
+    <svg viewBox="0 0 120 120" aria-hidden="true" style={{ width: 16, height: 16, display: "block" }}>
+      <path d="M60 12c-25 0-43 18-43 43 0 19 12 35 28 42v10h10v-7c3 1 7 1 10 0v7h10V97c16-7 28-23 28-42 0-25-18-43-43-43Z" fill="currentColor" opacity="0.9" />
+      <path d="M23 47C9 43 1 51 7 62c6 10 17 6 22-7 2-5-1-8-6-8Zm74 0c14-4 22 4 16 15-6 10-17 6-22-7-2-5 1-8 6-8Z" fill="currentColor" opacity="0.72" />
+      <circle cx="45" cy="36" r="5" fill="var(--c-bg-page)" />
+      <circle cx="75" cy="36" r="5" fill="var(--c-bg-page)" />
+    </svg>
+  );
+}
+
+function ImportButtonContent({
+  source,
+  label,
+}: {
+  source: ImportSourceKind;
+  label: string;
+}) {
+  return (
+    <span className="onb-centered-icon-label">
+      <span className="onb-centered-icon">
+        <ImportSourceIcon source={source} />
+      </span>
+      <span className="onb-centered-label">{label}</span>
+      <span aria-hidden="true" />
+    </span>
+  );
 }
 
 function StepIndicator({
@@ -375,6 +466,14 @@ export function OnboardingWizard({ onComplete }: Props) {
   const { themePreset, setThemePreset } = useAppearance();
 
   const [step, setStep] = useState<Step>("welcome");
+  const [importSources, setImportSources] = useState<AgentImportDiscovery[]>([]);
+  const [selectedImportSource, setSelectedImportSource] =
+    useState<ImportSourceKind | null>(null);
+  const [providerImportedFromAgent, setProviderImportedFromAgent] =
+    useState(false);
+  const [importSelections, setImportSelections] = useState<ImportSelectionState>(
+    {},
+  );
 
   // Welcome animation phases
   type WelcomePhase = "animating" | "greeting" | "ready";
@@ -415,6 +514,22 @@ export function OnboardingWizard({ onComplete }: Props) {
   const apiKeyRef = useRef<HTMLInputElement>(null);
   const manualModelRef = useRef<HTMLInputElement>(null);
 
+  useEffect(() => {
+    let cancelled = false;
+    const timer = window.setTimeout(() => {
+      void detectAgentImportsMock().then((sources) => {
+        if (cancelled) return;
+        setImportSources(sources);
+        setImportSelections(createDefaultImportSelections(sources));
+      });
+    }, 360);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, []);
+
   const handleLogoComplete = useCallback(() => {
     setWelcomePhase("greeting");
     setTimeout(() => setWelcomePhase("ready"), 1800);
@@ -430,18 +545,26 @@ export function OnboardingWizard({ onComplete }: Props) {
     }
   }, [step, themePreset, setThemePreset]);
 
+  const hasImportStep = importSources.length > 0;
+  const selectedImportSourceData =
+    importSources.find((source) => source.kind === selectedImportSource) ?? null;
+  const hasImportDetailStep = selectedImportSourceData !== null;
+
   const stepMeta = useMemo(() => {
+    const total = hasImportDetailStep ? 5 : hasImportStep ? 4 : 3;
     switch (step) {
       case "appearance":
-        return { n: 1, total: 3 };
+        return { n: 1, total };
+      case "import":
+        return { n: hasImportDetailStep ? 3 : 2, total };
       case "provider":
-        return { n: 2, total: 3 };
+        return { n: hasImportDetailStep ? 4 : hasImportStep ? 3 : 2, total };
       case "complete":
-        return { n: 3, total: 3 };
+        return { n: total, total };
       default:
         return null;
     }
-  }, [step]);
+  }, [hasImportDetailStep, hasImportStep, step]);
 
   const providerVerified =
     step === "provider" && verifyStatus === "verified" && !!createdProviderId;
@@ -545,6 +668,50 @@ export function OnboardingWizard({ onComplete }: Props) {
 
   const handleWelcomeNext = useCallback(() => {
     setStep("appearance");
+  }, []);
+
+  const handleAppearanceNext = useCallback(() => {
+    setSelectedImportSource(null);
+    setProviderImportedFromAgent(false);
+    setStep(hasImportStep ? "import" : "provider");
+  }, [hasImportStep]);
+
+  const handleImportItemToggle = useCallback(
+    (source: ImportSourceKind, item: ImportItemKey) => {
+      setImportSelections((current) => {
+        const currentSource = current[source] ?? {
+          identity: true,
+          skills: true,
+          mcp: true,
+          providers: true,
+        };
+        return {
+          ...current,
+          [source]: {
+            ...currentSource,
+            [item]: !currentSource[item],
+          },
+        };
+      });
+    },
+    [],
+  );
+
+  const handleImportSelected = useCallback(() => {
+    if (!selectedImportSourceData) return;
+    const selection = importSelections[selectedImportSourceData.kind] ?? {
+      identity: true,
+      skills: true,
+      mcp: true,
+      providers: true,
+    };
+    setProviderImportedFromAgent(selection.providers);
+    setStep("provider");
+  }, [importSelections, selectedImportSourceData]);
+
+  const handleSkipImport = useCallback(() => {
+    setProviderImportedFromAgent(false);
+    setStep("provider");
   }, []);
 
   const handleModeSelectLocal = useCallback(async () => {
@@ -774,7 +941,8 @@ export function OnboardingWizard({ onComplete }: Props) {
         display: "flex",
         flexDirection: "column",
         position: "relative",
-        overflow: "hidden",
+        overflowX: "hidden",
+        overflowY: "auto",
       }}
     >
       <style>{`
@@ -817,6 +985,54 @@ export function OnboardingWizard({ onComplete }: Props) {
         .onb-btn-ghost:hover {
           color: var(--c-text-secondary) !important;
           background: var(--c-bg-sub) !important;
+        }
+        .onb-centered-icon-label {
+          display: grid;
+          grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+          align-items: center;
+          width: 100%;
+        }
+        .onb-centered-icon {
+          display: flex;
+          justify-self: end;
+          margin-right: 6px;
+        }
+        .onb-centered-label {
+          grid-column: 2;
+          justify-self: center;
+          min-width: 0;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+        }
+        .onb-import-actions {
+          display: grid;
+          grid-template-columns: repeat(auto-fit, minmax(148px, 1fr));
+          gap: 10px;
+          margin-top: 20px;
+        }
+        .onb-import-items {
+          display: flex;
+          flex-direction: column;
+          gap: 8px;
+        }
+        .onb-import-source-options {
+          display: flex;
+          flex-direction: column;
+          gap: 10px;
+          margin-top: 44px;
+        }
+        .onb-import-detail-actions {
+          display: flex;
+          flex-direction: column;
+          gap: 10px;
+          margin-top: 20px;
+        }
+        .onb-import-source:hover {
+          border-color: var(--c-border) !important;
+        }
+        .onb-import-row:hover {
+          background: var(--c-bg-deep) !important;
         }
       `}</style>
       <div className="auth-dots" />
@@ -1134,12 +1350,19 @@ export function OnboardingWizard({ onComplete }: Props) {
 
                     <button
                       type="button"
-                      onClick={() => setStep(verifyStatus === "verified" ? "appearance" : "complete")}
-                      className="onb-btn-ghost" style={ghostBtn}
+                      onClick={() => setStep(verifyStatus === "verified" ? (hasImportStep ? "import" : "appearance") : "complete")}
+                      className={providerImportedFromAgent && verifyStatus !== "verified" ? "onb-btn-primary" : "onb-btn-ghost"}
+                      style={
+                        providerImportedFromAgent && verifyStatus !== "verified"
+                          ? { ...primaryBtn, marginTop: "10px" }
+                          : ghostBtn
+                      }
                     >
                       {verifyStatus === "verified"
                         ? ob.back
-                        : ob.localProviderSkip}
+                        : providerImportedFromAgent
+                          ? ob.localProviderSkipConfig
+                          : ob.localProviderSkip}
                     </button>
                   </>
                 )}
@@ -1286,7 +1509,7 @@ export function OnboardingWizard({ onComplete }: Props) {
                 </div>
                 <button
                   type="button"
-                  onClick={() => setStep("provider")}
+                  onClick={handleAppearanceNext}
                   className="onb-btn-primary" style={primaryBtn}
                 >
                   {ob.next}
@@ -1298,6 +1521,211 @@ export function OnboardingWizard({ onComplete }: Props) {
                 >
                   {ob.back}
                 </button>
+              </div>
+            </Reveal>
+
+            {/* Import */}
+            <Reveal active={step === "import"}>
+              <div>
+                <Reveal active={!selectedImportSourceData}>
+                  <div>
+                    <div
+                      style={{
+                        fontSize: "18px",
+                        fontWeight: 500,
+                        color: "var(--c-text-heading)",
+                        marginBottom: "4px",
+                      }}
+                    >
+                      {ob.importTitle}
+                    </div>
+                    <div
+                      style={{
+                        fontSize: "13px",
+                        color: "var(--c-placeholder)",
+                      }}
+                    >
+                      {ob.importDesc}
+                    </div>
+
+                    <div className="onb-import-source-options">
+                      {importSources.map((source) => (
+                        <button
+                          key={source.kind}
+                          type="button"
+                          onClick={() => setSelectedImportSource(source.kind)}
+                          className="onb-btn-primary"
+                          style={{ ...primaryBtn, marginTop: 0 }}
+                        >
+                          <ImportButtonContent
+                            source={source.kind}
+                            label={ob.importFrom(source.name)}
+                          />
+                        </button>
+                      ))}
+                      <button
+                        type="button"
+                        onClick={handleSkipImport}
+                        className="onb-btn-primary"
+                        style={{ ...primaryBtn, marginTop: 0 }}
+                      >
+                        {ob.importSkip}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setStep("appearance")}
+                        className="onb-btn-ghost"
+                        style={{ ...ghostBtn, marginTop: 0 }}
+                      >
+                        {ob.back}
+                      </button>
+                    </div>
+                  </div>
+                </Reveal>
+
+                <Reveal active={!!selectedImportSourceData}>
+                  <div>
+                    {selectedImportSourceData && (
+                      <>
+                    <div
+                      style={{
+                        fontSize: "18px",
+                        fontWeight: 500,
+                        color: "var(--c-text-heading)",
+                        marginBottom: "4px",
+                      }}
+                    >
+                      {ob.importFrom(selectedImportSourceData.name)}
+                    </div>
+                    <div
+                      style={{
+                        fontSize: "13px",
+                        color: "var(--c-placeholder)",
+                        marginBottom: "20px",
+                      }}
+                    >
+                      {ob.importDetectedAt(selectedImportSourceData.sourcePath)}
+                    </div>
+
+                    <div className="onb-import-items">
+                      {IMPORT_ITEM_KEYS.map((itemKey) => {
+                        const selection = importSelections[selectedImportSourceData.kind] ?? {
+                          identity: true,
+                          skills: true,
+                          mcp: true,
+                          providers: true,
+                        };
+                        const title = {
+                          identity: ob.importAgentIdentity,
+                          skills: ob.importSkills,
+                          mcp: ob.importMcpServers,
+                          providers: ob.importLlmProviders,
+                        }[itemKey];
+                        const desc = {
+                          identity:
+                            selectedImportSourceData.kind === "hermes"
+                              ? ob.importAgentIdentityHermesDesc
+                              : ob.importAgentIdentityOpenClawDesc,
+                          skills: ob.importSkillsDesc(selectedImportSourceData.skillsCount),
+                          mcp: ob.importMcpServersDesc(selectedImportSourceData.mcpServers.join(", ")),
+                          providers: ob.importLlmProvidersDesc(selectedImportSourceData.llmProviders.join(", ")),
+                        }[itemKey];
+                        return (
+                          <div
+                            key={itemKey}
+                            role="button"
+                            tabIndex={0}
+                            onClick={() => handleImportItemToggle(selectedImportSourceData.kind, itemKey)}
+                            onKeyDown={(event) => {
+                              if (event.key === "Enter" || event.key === " ") {
+                                event.preventDefault();
+                                handleImportItemToggle(selectedImportSourceData.kind, itemKey);
+                              }
+                            }}
+                            className="onb-import-row"
+                            style={{
+                              ...sectionCardStyle,
+                              background: "var(--c-bg-menu)",
+                              borderRadius: "10px",
+                              cursor: "pointer",
+                              display: "flex",
+                              alignItems: "center",
+                              gap: "12px",
+                              transition: "background 0.15s",
+                            }}
+                          >
+                            <div style={{ flex: 1, minWidth: 0 }}>
+                              <div
+                                style={{
+                                  fontSize: "13px",
+                                  fontWeight: 500,
+                                  color: selection[itemKey]
+                                    ? "var(--c-text-primary)"
+                                    : "var(--c-text-secondary)",
+                                }}
+                              >
+                                {title}
+                              </div>
+                              <div
+                                style={{
+                                  fontSize: "11px",
+                                  color: "var(--c-placeholder)",
+                                  marginTop: "2px",
+                                  overflow: "hidden",
+                                  textOverflow: "ellipsis",
+                                  whiteSpace: "nowrap",
+                                }}
+                              >
+                                {desc}
+                              </div>
+                            </div>
+                            <span
+                              onClick={(event) => event.stopPropagation()}
+                              onKeyDown={(event) => event.stopPropagation()}
+                            >
+                              <ToggleSwitch
+                                checked={selection[itemKey]}
+                                onChange={() => handleImportItemToggle(selectedImportSourceData.kind, itemKey)}
+                              />
+                            </span>
+                          </div>
+                        );
+                      })}
+                    </div>
+
+                    <div className="onb-import-detail-actions">
+                      <button
+                        type="button"
+                        onClick={handleImportSelected}
+                        className="onb-btn-primary"
+                        style={{ ...primaryBtn, whiteSpace: "nowrap" }}
+                      >
+                        <ImportButtonContent
+                          source={selectedImportSourceData.kind}
+                          label={ob.importSelected}
+                        />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleSkipImport}
+                        className="onb-btn-ghost"
+                        style={{ ...ghostBtn, marginTop: 0, whiteSpace: "nowrap" }}
+                      >
+                        {ob.importSkip}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setSelectedImportSource(null)}
+                        className="onb-btn-ghost"
+                        style={{ ...ghostBtn, marginTop: 0 }}
+                      >
+                        {ob.back}
+                      </button>
+                    </div>
+                      </>
+                    )}
+                  </div>
+                </Reveal>
               </div>
             </Reveal>
 
