@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log/slog"
 	"strings"
 	"time"
 
@@ -1285,40 +1284,22 @@ func BuildMessageParts(ctx context.Context, store MessageAttachmentStore, msg da
 
 func BuildMessagePartsWithOptions(ctx context.Context, store MessageAttachmentStore, msg data.ThreadMessage, opts MessagePartBuildOptions) ([]llm.ContentPart, error) {
 	fallbackContent := msg.Content
-	assistantFallbackReason := ""
 	if msg.Role == "assistant" {
 		if restored, err := llm.AssistantMessageFromThreadContentJSON(msg.ContentJSON); err == nil && restored != nil {
-			logAssistantMessagePartsDebug(ctx, msg, true, assistantMessagePartsThinkingCount(restored.Content), false, "")
 			return restored.Content, nil
-		} else if err != nil {
-			assistantFallbackReason = "assistant_state_parse_failed"
-		} else {
-			assistantFallbackReason = "assistant_state_missing"
 		}
 		fallbackContent = sanitizeStoredAssistantText(fallbackContent)
 	}
 	if len(msg.ContentJSON) == 0 {
-		parts := fallbackTextParts(fallbackContent)
-		if msg.Role == "assistant" {
-			logAssistantMessagePartsDebug(ctx, msg, false, assistantMessagePartsThinkingCount(parts), true, "content_json_empty")
-		}
-		return parts, nil
+		return fallbackTextParts(fallbackContent), nil
 	}
 	parsed, err := messagecontent.Parse(msg.ContentJSON)
 	if err != nil {
-		parts := fallbackTextParts(fallbackContent)
-		if msg.Role == "assistant" {
-			logAssistantMessagePartsDebug(ctx, msg, false, assistantMessagePartsThinkingCount(parts), true, "content_json_parse_failed")
-		}
-		return parts, nil
+		return fallbackTextParts(fallbackContent), nil
 	}
 	content, err := messagecontent.Normalize(parsed.Parts)
 	if err != nil {
-		parts := fallbackTextParts(fallbackContent)
-		if msg.Role == "assistant" {
-			logAssistantMessagePartsDebug(ctx, msg, false, assistantMessagePartsThinkingCount(parts), true, "content_json_normalize_failed")
-		}
-		return parts, nil
+		return fallbackTextParts(fallbackContent), nil
 	}
 	parts := make([]llm.ContentPart, 0, len(content.Parts))
 	for _, part := range content.Parts {
@@ -1373,38 +1354,9 @@ func BuildMessagePartsWithOptions(ctx context.Context, store MessageAttachmentSt
 		}
 	}
 	if len(parts) == 0 {
-		parts := fallbackTextParts(fallbackContent)
-		if msg.Role == "assistant" {
-			logAssistantMessagePartsDebug(ctx, msg, false, assistantMessagePartsThinkingCount(parts), true, "content_parts_empty")
-		}
-		return parts, nil
-	}
-	if msg.Role == "assistant" && assistantFallbackReason != "" {
-		logAssistantMessagePartsDebug(ctx, msg, false, assistantMessagePartsThinkingCount(parts), true, assistantFallbackReason)
+		return fallbackTextParts(fallbackContent), nil
 	}
 	return parts, nil
-}
-
-func logAssistantMessagePartsDebug(ctx context.Context, msg data.ThreadMessage, restored bool, thinkingPartCount int, fallbackUsed bool, fallbackReason string) {
-	slog.DebugContext(ctx, "assistant_message_restore_debug",
-		"message_id", msg.ID.String(),
-		"content_json_len", len(msg.ContentJSON),
-		"assistant_state_restored", restored,
-		"thinking_part_count", thinkingPartCount,
-		"fallback_used", fallbackUsed,
-		"fallback_reason", fallbackReason,
-	)
-}
-
-func assistantMessagePartsThinkingCount(parts []llm.ContentPart) int {
-	count := 0
-	for _, part := range parts {
-		switch part.Kind() {
-		case "thinking", "redacted_thinking":
-			count++
-		}
-	}
-	return count
 }
 
 func fallbackTextParts(content string) []llm.ContentPart {
