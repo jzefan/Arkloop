@@ -1359,7 +1359,7 @@ func desktopChannelDelivery(db data.DesktopDB, stickerStore interface {
 		var qqChannel *desktopQQDeliveryChannelRecord
 		var ux pipeline.TelegramChannelUX
 		channelType := desktopNormalizedChannelType(rc)
-		if db != nil && rc != nil && rc.ChannelContext != nil && (channelType == "telegram" || channelType == "discord" || channelType == "qqbot" || channelType == "weixin") {
+		if db != nil && rc != nil && rc.ChannelContext != nil && (channelType == "telegram" || channelType == "discord" || channelType == "qqbot" || channelType == "weixin" || channelType == "feishu") {
 			ch, prefetchErr := loadDesktopDeliveryChannel(ctx, db, rc.ChannelContext.ChannelID)
 			if prefetchErr != nil {
 				slog.WarnContext(ctx, "desktop channel delivery prefetch failed", "run_id", rc.Run.ID, "err", prefetchErr.Error())
@@ -1446,7 +1446,7 @@ func desktopChannelDelivery(db data.DesktopDB, stickerStore interface {
 			return err
 		}
 		channelType = desktopNormalizedChannelType(rc)
-		if db == nil || (channelType != "telegram" && channelType != "discord" && channelType != "qq" && channelType != "qqbot" && channelType != "weixin") {
+		if db == nil || (channelType != "telegram" && channelType != "discord" && channelType != "qq" && channelType != "qqbot" && channelType != "weixin" && channelType != "feishu") {
 			return err
 		}
 		if rc.ChannelOutputDelivered {
@@ -1685,6 +1685,47 @@ func desktopChannelDelivery(db data.DesktopDB, stickerStore interface {
 				return err
 			}
 			if tryErr := tryDeliverDesktopWeixinOutbox(ctx, db, rc, channel, outboxRec, payload, outboxRepo); tryErr != nil {
+				return err
+			}
+		case "feishu":
+			outputs := finalOutputs
+			if len(outputs) == 0 && strings.TrimSpace(output) != "" {
+				outputs = []string{output}
+			}
+			payload := data.OutboxPayload{
+				Outputs:          outputs,
+				AccountID:        rc.Run.AccountID,
+				RunID:            rc.Run.ID,
+				ThreadID:         desktopOutboxThreadPtr(rc.Run.ThreadID),
+				PlatformChatID:   rc.ChannelContext.Conversation.Target,
+				ReplyToMessageID: desktopFeishuReplyReferenceMessageID(rc),
+				PlatformThreadID: rc.ChannelContext.Conversation.ThreadID,
+				ConversationType: rc.ChannelContext.ConversationType,
+				HeartbeatRun:     rc.HeartbeatRun,
+				InboundMessageID: strings.TrimSpace(rc.ChannelContext.InboundMessage.MessageID),
+				TriggerMessageID: desktopTriggerMessageID(rc),
+				IsTerminalNotice: strings.TrimSpace(finalOutput) == "" && notice != "" && strings.TrimSpace(output) != "",
+			}
+			tx, txErr := db.BeginTx(ctx, pgx.TxOptions{})
+			if txErr != nil {
+				recordDesktopChannelDeliveryFailure(db, rc.Run.ID, txErr)
+				slog.WarnContext(ctx, "desktop_feishu_outbox_tx_begin_failed", "run_id", rc.Run.ID, "err", txErr.Error())
+				return err
+			}
+			threadID := rc.Run.ThreadID
+			outboxRec, insertErr := outboxRepo.InsertPending(ctx, tx, rc.Run.ID, rc.ChannelContext.ChannelID, desktopOutboxThreadPtr(threadID), channelType, data.OutboxKindMessage, payload)
+			if insertErr != nil {
+				_ = tx.Rollback(ctx)
+				recordDesktopChannelDeliveryFailure(db, rc.Run.ID, insertErr)
+				slog.WarnContext(ctx, "desktop_feishu_outbox_insert_failed", "run_id", rc.Run.ID, "err", insertErr.Error())
+				return err
+			}
+			if cmtErr := tx.Commit(ctx); cmtErr != nil {
+				recordDesktopChannelDeliveryFailure(db, rc.Run.ID, cmtErr)
+				slog.WarnContext(ctx, "desktop_feishu_outbox_tx_commit_failed", "run_id", rc.Run.ID, "err", cmtErr.Error())
+				return err
+			}
+			if tryErr := tryDeliverDesktopFeishuOutbox(ctx, db, rc, channel, outboxRec, payload, outboxRepo); tryErr != nil {
 				return err
 			}
 		}
@@ -2047,6 +2088,41 @@ func desktopWeixinReplyReferenceMessageID(rc *pipeline.RunContext) string {
 		return ""
 	}
 	return strings.TrimSpace(ref.MessageID)
+}
+
+func desktopFeishuReplyReference(rc *pipeline.RunContext) *pipeline.ChannelMessageRef {
+	if rc == nil || rc.ChannelContext == nil {
+		return nil
+	}
+	if rc.HeartbeatRun {
+		return nil
+	}
+	if isPrivateChannelConversation(rc.ChannelContext.ConversationType) {
+		return nil
+	}
+	if rc.ChannelContext.TriggerMessage != nil && strings.TrimSpace(rc.ChannelContext.TriggerMessage.MessageID) != "" {
+		return rc.ChannelContext.TriggerMessage
+	}
+	if strings.TrimSpace(rc.ChannelContext.InboundMessage.MessageID) == "" {
+		return nil
+	}
+	ref := rc.ChannelContext.InboundMessage
+	return &ref
+}
+
+func desktopFeishuReplyReferenceMessageID(rc *pipeline.RunContext) string {
+	ref := desktopFeishuReplyReference(rc)
+	if ref == nil {
+		return ""
+	}
+	return strings.TrimSpace(ref.MessageID)
+}
+
+func desktopTriggerMessageID(rc *pipeline.RunContext) string {
+	if rc == nil || rc.ChannelContext == nil || rc.ChannelContext.TriggerMessage == nil {
+		return ""
+	}
+	return strings.TrimSpace(rc.ChannelContext.TriggerMessage.MessageID)
 }
 
 func desktopWeixinDeliveryMetadata(rc *pipeline.RunContext) map[string]any {
@@ -2619,6 +2695,59 @@ func tryDeliverDesktopWeixinOutbox(
 			Conversation: rc.ChannelContext.Conversation,
 			ReplyTo:      ref,
 			Metadata:     payload.Metadata,
+		}, trimmed)
+		if err != nil {
+			return handleDesktopInlineOutboxFailure(ctx, db, outboxRec, err, outboxRepo)
+		}
+		if err := recordDesktopChannelDelivery(
+			ctx,
+			db,
+			rc.Run.ID,
+			rc.Run.ThreadID,
+			rc.ChannelContext.ChannelID,
+			rc.ChannelContext.ChannelType,
+			rc.ChannelContext.Conversation.Target,
+			ref,
+			rc.ChannelContext.Conversation.ThreadID,
+			messageIDs,
+		); err != nil {
+			return handleDesktopInlineOutboxFailure(ctx, db, outboxRec, err, outboxRepo)
+		}
+		if err := outboxRepo.UpdateProgress(ctx, db, outboxRec.ID, i+1); err != nil {
+			return err
+		}
+		outboxRec.SegmentsSent = i + 1
+	}
+	return outboxRepo.UpdateSent(ctx, db, outboxRec.ID)
+}
+
+func tryDeliverDesktopFeishuOutbox(
+	ctx context.Context,
+	db data.DesktopDB,
+	rc *pipeline.RunContext,
+	channel *desktopDeliveryChannelRecord,
+	outboxRec *data.ChannelDeliveryOutboxRecord,
+	payload data.OutboxPayload,
+	outboxRepo data.ChannelDeliveryOutboxRepository,
+) error {
+	sender := pipeline.NewFeishuChannelSenderWithClient(nil, channel.ConfigJSON, channel.Token, 50*time.Millisecond)
+	replyTo := desktopFeishuReplyReference(rc)
+	for i := outboxRec.SegmentsSent; i < len(payload.Outputs); i++ {
+		trimmed := strings.TrimSpace(payload.Outputs[i])
+		if trimmed == "" {
+			if err := outboxRepo.UpdateProgress(ctx, db, outboxRec.ID, i+1); err != nil {
+				return err
+			}
+			continue
+		}
+		ref := replyTo
+		if i > 0 {
+			ref = nil
+		}
+		messageIDs, err := sender.SendText(ctx, pipeline.ChannelDeliveryTarget{
+			ChannelType:  rc.ChannelContext.ChannelType,
+			Conversation: rc.ChannelContext.Conversation,
+			ReplyTo:      ref,
 		}, trimmed)
 		if err != nil {
 			return handleDesktopInlineOutboxFailure(ctx, db, outboxRec, err, outboxRepo)

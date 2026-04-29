@@ -273,13 +273,21 @@ func createChannel(
 		return
 	}
 
-	var normalizedConfig json.RawMessage
-	var err error
+	var feishuSecret feishuChannelSecret
 	if req.ChannelType == "feishu" {
-		normalizedConfig, _, err = normalizeFeishuChannelConfigJSON(req.ConfigJSON)
-	} else {
-		normalizedConfig, _, err = normalizeChannelConfigJSON(req.ChannelType, req.ConfigJSON)
+		if secretsRepo == nil {
+			httpkit.WriteError(w, nethttp.StatusServiceUnavailable, "database.not_configured", "database not configured", traceID, nil)
+			return
+		}
+		secretPatch, err := feishuSecretPatchFromConfig(req.ConfigJSON)
+		if err != nil {
+			httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", err.Error(), traceID, nil)
+			return
+		}
+		feishuSecret = applyFeishuSecretPatch(feishuChannelSecret{AppSecret: req.BotToken}, secretPatch)
 	}
+
+	normalizedConfig, _, err := normalizeChannelConfigJSON(req.ChannelType, req.ConfigJSON)
 	if err != nil {
 		httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", err.Error(), traceID, nil)
 		return
@@ -330,7 +338,7 @@ func createChannel(
 			return
 		}
 	}
-	if req.ChannelType == "telegram" && personaID != nil {
+	if (req.ChannelType == "telegram" || req.ChannelType == "feishu") && personaID != nil {
 		resolvedPersonaID, err := ensureProjectScopedChannelPersona(r.Context(), personasRepo, actor.AccountID, actor.UserID, personaID)
 		if err != nil {
 			slog.Error("createChannel.ensureProjectScopedPersona", "err", err)
@@ -347,6 +355,12 @@ func createChannel(
 			return
 		}
 		personaID = resolvedPersonaID
+	}
+	if req.ChannelType == "feishu" {
+		if _, _, err := mustValidateFeishuActivation(r.Context(), actor.AccountID, personasRepo, personaID, normalizedConfig, feishuSecret); err != nil {
+			httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", err.Error(), traceID, nil)
+			return
+		}
 	}
 
 	existing, err := channelsRepo.GetByAccountAndType(r.Context(), actor.AccountID, req.ChannelType)
@@ -379,7 +393,16 @@ func createChannel(
 
 	var credentialsID *uuid.UUID
 	if secretsRepo != nil && req.BotToken != "" {
-		secret, err := secretsRepo.WithTx(tx).Create(r.Context(), actor.UserID, data.ChannelSecretName(channelID), req.BotToken)
+		secretValue := req.BotToken
+		if req.ChannelType == "feishu" {
+			var encodeErr error
+			secretValue, encodeErr = encodeFeishuChannelSecret(feishuSecret)
+			if encodeErr != nil {
+				httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", encodeErr.Error(), traceID, nil)
+				return
+			}
+		}
+		secret, err := secretsRepo.WithTx(tx).Create(r.Context(), actor.UserID, data.ChannelSecretName(channelID), secretValue)
 		if err != nil {
 			slog.Error("createChannel.secrets.Create", "err", err)
 			httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
@@ -581,6 +604,8 @@ func updateChannel(
 		desiredIsActive = *req.IsActive
 	}
 
+	var feishuSecretPatch feishuChannelSecretPatch
+
 	if req.PersonaID != nil {
 		raw := strings.TrimSpace(*req.PersonaID)
 		if raw == "" {
@@ -621,6 +646,11 @@ func updateChannel(
 		case "discord":
 			normalizedConfig, err = mergeDiscordChannelConfigJSONPatch(ch.ConfigJSON, *req.ConfigJSON)
 		case "feishu":
+			feishuSecretPatch, err = feishuSecretPatchFromConfig(*req.ConfigJSON)
+			if err != nil {
+				httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", err.Error(), traceID, nil)
+				return
+			}
 			normalizedConfig, err = mergeFeishuChannelConfigJSONPatch(ch.ConfigJSON, *req.ConfigJSON)
 		default:
 			normalizedConfig, _, err = normalizeChannelConfigJSON(ch.ChannelType, *req.ConfigJSON)
@@ -656,6 +686,17 @@ func updateChannel(
 		}
 	}
 	if ch.ChannelType == "telegram" && desiredPersonaID != nil {
+		resolvedPersonaID, err := ensureProjectScopedChannelPersona(r.Context(), personasRepo, actor.AccountID, actor.UserID, desiredPersonaID)
+		if err != nil {
+			httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
+			return
+		}
+		if resolvedPersonaID != nil && *resolvedPersonaID != derefUUID(desiredPersonaID) {
+			desiredPersonaID = resolvedPersonaID
+			upd.PersonaID = &resolvedPersonaID
+		}
+	}
+	if ch.ChannelType == "feishu" && desiredPersonaID != nil {
 		resolvedPersonaID, err := ensureProjectScopedChannelPersona(r.Context(), personasRepo, actor.AccountID, actor.UserID, desiredPersonaID)
 		if err != nil {
 			httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
@@ -710,6 +751,64 @@ func updateChannel(
 		}
 	}
 
+	var desiredFeishuSecret feishuChannelSecret
+	storeFeishuSecret := false
+	if ch.ChannelType == "feishu" {
+		if secretsRepo == nil {
+			httpkit.WriteError(w, nethttp.StatusServiceUnavailable, "database.not_configured", "database not configured", traceID, nil)
+			return
+		}
+		if ch.CredentialsID != nil && *ch.CredentialsID != uuid.Nil {
+			var loadErr error
+			desiredFeishuSecret, loadErr = loadFeishuChannelSecret(r.Context(), secretsRepo, ch.CredentialsID)
+			if loadErr != nil && desiredIsActive {
+				httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", loadErr.Error(), traceID, nil)
+				return
+			}
+		}
+		if req.BotToken != nil {
+			desiredFeishuSecret.AppSecret = strings.TrimSpace(*req.BotToken)
+			storeFeishuSecret = desiredFeishuSecret.AppSecret != ""
+		}
+		if feishuSecretPatchPresent(feishuSecretPatch) {
+			desiredFeishuSecret = applyFeishuSecretPatch(desiredFeishuSecret, feishuSecretPatch)
+			storeFeishuSecret = true
+		}
+		nextToken = strings.TrimSpace(desiredFeishuSecret.AppSecret)
+	}
+
+	if ch.ChannelType == "feishu" && desiredIsActive {
+		cfg, err := resolveFeishuChannelConfig(desiredConfigJSON)
+		if err != nil {
+			httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", err.Error(), traceID, nil)
+			return
+		}
+		if _, _, err := mustValidateFeishuActivation(r.Context(), actor.AccountID, personasRepo, desiredPersonaID, desiredConfigJSON, desiredFeishuSecret); err != nil {
+			httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", err.Error(), traceID, nil)
+			return
+		}
+		shouldRefreshProfile := !ch.IsActive ||
+			req.BotToken != nil ||
+			feishuConfigPatchTouchesAppID(req.ConfigJSON) ||
+			feishuConfigMissingBotProfile(desiredConfigJSON)
+		if shouldRefreshProfile {
+			verifyCtx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+			info, infoErr := verifyFeishuChannelBotInfo(verifyCtx, cfg, desiredFeishuSecret)
+			cancel()
+			if infoErr != nil {
+				httpkit.WriteError(w, nethttp.StatusBadGateway, "channels.feishu_remote_failed", infoErr.Error(), traceID, nil)
+				return
+			}
+			if merged, changed, mergeErr := mergeFeishuBotProfile(desiredConfigJSON, info); mergeErr == nil && changed {
+				desiredConfigJSON = merged
+				upd.ConfigJSON = &merged
+			} else if mergeErr != nil {
+				httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", mergeErr.Error(), traceID, nil)
+				return
+			}
+		}
+	}
+
 	tx, err := pool.BeginTx(r.Context(), pgx.TxOptions{})
 	if err != nil {
 		logChannelUpdateFailure(r.Context(), traceID, *ch, req, err, "begin_tx")
@@ -718,7 +817,7 @@ func updateChannel(
 	}
 	defer tx.Rollback(r.Context()) //nolint:errcheck
 
-	if req.BotToken != nil && strings.TrimSpace(*req.BotToken) != "" {
+	if ch.ChannelType != "feishu" && req.BotToken != nil && strings.TrimSpace(*req.BotToken) != "" {
 		var secretID *uuid.UUID
 		if ch.CredentialsID != nil && *ch.CredentialsID != uuid.Nil {
 			secret, secretErr := secretsRepo.WithTx(tx).UpdateByID(r.Context(), *ch.CredentialsID, strings.TrimSpace(*req.BotToken))
@@ -734,6 +833,36 @@ func updateChannel(
 				secretOwnerID = *ch.OwnerUserID
 			}
 			secret, secretErr := secretsRepo.WithTx(tx).Create(r.Context(), secretOwnerID, data.ChannelSecretName(channelID), strings.TrimSpace(*req.BotToken))
+			if secretErr != nil {
+				logChannelUpdateFailure(r.Context(), traceID, *ch, req, secretErr, "create_channel_secret")
+				httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
+				return
+			}
+			secretID = &secret.ID
+		}
+		upd.CredentialsID = &secretID
+	}
+	if ch.ChannelType == "feishu" && storeFeishuSecret {
+		secretValue, encodeErr := encodeFeishuChannelSecret(desiredFeishuSecret)
+		if encodeErr != nil {
+			httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", encodeErr.Error(), traceID, nil)
+			return
+		}
+		var secretID *uuid.UUID
+		if ch.CredentialsID != nil && *ch.CredentialsID != uuid.Nil {
+			secret, secretErr := secretsRepo.WithTx(tx).UpdateByID(r.Context(), *ch.CredentialsID, secretValue)
+			if secretErr != nil {
+				logChannelUpdateFailure(r.Context(), traceID, *ch, req, secretErr, "update_channel_secret")
+				httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
+				return
+			}
+			secretID = &secret.ID
+		} else {
+			secretOwnerID := actor.UserID
+			if ch.OwnerUserID != nil && *ch.OwnerUserID != uuid.Nil {
+				secretOwnerID = *ch.OwnerUserID
+			}
+			secret, secretErr := secretsRepo.WithTx(tx).Create(r.Context(), secretOwnerID, data.ChannelSecretName(channelID), secretValue)
 			if secretErr != nil {
 				logChannelUpdateFailure(r.Context(), traceID, *ch, req, secretErr, "create_channel_secret")
 				httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
@@ -781,16 +910,6 @@ func updateChannel(
 		}
 		if nextToken == "" {
 			httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "discord channel requires bot_token before activation", traceID, nil)
-			return
-		}
-	}
-	if ch.ChannelType == "feishu" && desiredIsActive {
-		if _, _, _, err := mustValidateFeishuActivation(r.Context(), actor.AccountID, personasRepo, desiredPersonaID, desiredConfigJSON); err != nil {
-			httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", err.Error(), traceID, nil)
-			return
-		}
-		if nextToken == "" {
-			httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "feishu channel requires app_secret before activation", traceID, nil)
 			return
 		}
 	}
@@ -1034,6 +1153,9 @@ func toChannelResponse(ch data.Channel) channelResponse {
 	if ch.ChannelType == "qqbot" {
 		webhookURL = nil
 	}
+	if ch.ChannelType == "feishu" {
+		configJSON = sanitizeFeishuConfigForResponse(configJSON)
+	}
 	return channelResponse{
 		ID:             ch.ID.String(),
 		AccountID:      ch.AccountID.String(),
@@ -1243,7 +1365,12 @@ func verifyChannel(
 			httpkit.WriteJSON(w, traceID, nethttp.StatusOK, channelVerifyResponse{OK: false, Error: cfgErr.Error()})
 			return
 		}
-		info, err := verifyFeishuChannelBotInfo(verifyCtx, cfg, strings.TrimSpace(*token))
+		secret, secretErr := decodeFeishuChannelSecret(*token)
+		if secretErr != nil {
+			httpkit.WriteJSON(w, traceID, nethttp.StatusOK, channelVerifyResponse{OK: false, Error: secretErr.Error()})
+			return
+		}
+		info, err := verifyFeishuChannelBotInfo(verifyCtx, cfg, secret)
 		if err != nil {
 			httpkit.WriteJSON(w, traceID, nethttp.StatusOK, channelVerifyResponse{OK: false, Error: err.Error()})
 			return
@@ -1255,10 +1382,11 @@ func verifyChannel(
 			}
 		}
 		httpkit.WriteJSON(w, traceID, nethttp.StatusOK, channelVerifyResponse{
-			OK:          true,
-			BotUsername: info.Name,
-			BotOpenID:   info.OpenID,
-			BotUserID:   info.UserID,
+			OK:              true,
+			BotUsername:     strings.TrimSpace(info.AppName),
+			BotOpenID:       strings.TrimSpace(info.OpenID),
+			BotUserID:       strings.TrimSpace(info.UserID),
+			ApplicationName: strings.TrimSpace(info.AppName),
 		})
 	default:
 		httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "verify not supported for this channel type", traceID, nil)

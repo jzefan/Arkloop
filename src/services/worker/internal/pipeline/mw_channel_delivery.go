@@ -59,7 +59,7 @@ func NewChannelDeliveryMiddlewareWithOptions(pool *pgxpool.Pool, opts ChannelDel
 		var ux TelegramChannelUX
 		var obUX OneBotChannelUX
 		channelType := normalizedChannelTypeFromContext(rc)
-		if pool != nil && rc != nil && rc.ChannelContext != nil && (channelType == "telegram" || channelType == "discord" || channelType == "qq" || channelType == "qqbot" || channelType == "weixin") {
+		if pool != nil && rc != nil && rc.ChannelContext != nil && (channelType == "telegram" || channelType == "discord" || channelType == "qq" || channelType == "qqbot" || channelType == "weixin" || channelType == "feishu") {
 			ch, prefetchErr := repo.GetChannel(ctx, pool, rc.ChannelContext.ChannelID)
 			if prefetchErr != nil {
 				slog.WarnContext(ctx, "channel delivery prefetch failed", "run_id", rc.Run.ID, "err", prefetchErr.Error())
@@ -212,7 +212,7 @@ func NewChannelDeliveryMiddlewareWithOptions(pool *pgxpool.Pool, opts ChannelDel
 			return err
 		}
 		channelType = normalizedChannelTypeFromContext(rc)
-		if pool == nil || (channelType != "telegram" && channelType != "discord" && channelType != "qq" && channelType != "qqbot" && channelType != "weixin") {
+		if pool == nil || (channelType != "telegram" && channelType != "discord" && channelType != "qq" && channelType != "qqbot" && channelType != "weixin" && channelType != "feishu") {
 			return err
 		}
 		finalOutput := strings.TrimSpace(rc.FinalAssistantOutput)
@@ -297,6 +297,8 @@ func NewChannelDeliveryMiddlewareWithOptions(pool *pgxpool.Pool, opts ChannelDel
 			deliverErr = inlineDeliverQQBotOutbox(ctx, pool, rc, channel, outboxRecord, payload, outboxRepo, repo, ledgerRepo, messagesRepo)
 		case "weixin":
 			deliverErr = inlineDeliverWeixinOutbox(ctx, pool, rc, channel, outboxRecord, payload, outboxRepo, repo, ledgerRepo, messagesRepo)
+		case "feishu":
+			deliverErr = inlineDeliverFeishuOutbox(ctx, pool, rc, channel, outboxRecord, payload, outboxRepo, repo, ledgerRepo, messagesRepo)
 		}
 
 		if deliverErr != nil {
@@ -314,6 +316,7 @@ func buildOutboxPayload(rc *RunContext, channelType, output string, outputs []st
 		ThreadID:         uuidPtr(rc.Run.ThreadID),
 		PlatformChatID:   rc.ChannelContext.Conversation.Target,
 		ConversationType: rc.ChannelContext.ConversationType,
+		HeartbeatRun:     rc.HeartbeatRun,
 		IsTerminalNotice: isTerminalNotice,
 	}
 	if rc.ChannelContext.Conversation.ThreadID != nil {
@@ -357,6 +360,18 @@ func buildOutboxPayload(rc *RunContext, channelType, output string, outputs []st
 				payload.ReplyToMessageID = rc.ChannelContext.TriggerMessage.MessageID
 			} else if rc.ChannelContext.InboundMessage.MessageID != "" {
 				payload.ReplyToMessageID = rc.ChannelContext.InboundMessage.MessageID
+			}
+		}
+	case "feishu":
+		payload.InboundMessageID = strings.TrimSpace(rc.ChannelContext.InboundMessage.MessageID)
+		if rc.ChannelContext.TriggerMessage != nil {
+			payload.TriggerMessageID = strings.TrimSpace(rc.ChannelContext.TriggerMessage.MessageID)
+		}
+		if !rc.HeartbeatRun && !isPrivateChannelConversation(rc.ChannelContext.ConversationType) {
+			if payload.TriggerMessageID != "" {
+				payload.ReplyToMessageID = payload.TriggerMessageID
+			} else if payload.InboundMessageID != "" {
+				payload.ReplyToMessageID = payload.InboundMessageID
 			}
 		}
 	}
@@ -754,6 +769,82 @@ func inlineDeliverWeixinOutbox(
 	return outboxRepo.UpdateSent(ctx, pool, outboxRec.ID)
 }
 
+func inlineDeliverFeishuOutbox(
+	ctx context.Context,
+	pool *pgxpool.Pool,
+	rc *RunContext,
+	channel *data.DeliveryChannelRecord,
+	outboxRec *data.ChannelDeliveryOutboxRecord,
+	payload data.OutboxPayload,
+	outboxRepo data.ChannelDeliveryOutboxRepository,
+	deliveryRepo data.ChannelDeliveryRepository,
+	ledgerRepo data.ChannelMessageLedgerRepository,
+	messagesRepo data.MessagesRepository,
+) error {
+	if err := validateOutboxPayload(payload); err != nil {
+		return handleInlineOutboxFailure(ctx, pool, outboxRec, err, outboxRepo)
+	}
+	sender := NewFeishuChannelSender(channel.ConfigJSON, channel.Token)
+	replyTo := feishuReplyReference(rc)
+
+	for i := outboxRec.SegmentsSent; i < len(payload.Outputs); i++ {
+		trimmed := strings.TrimSpace(payload.Outputs[i])
+		if trimmed == "" {
+			if err := outboxRepo.UpdateProgress(ctx, pool, outboxRec.ID, i+1); err != nil {
+				return err
+			}
+			continue
+		}
+		ref := replyTo
+		if i > 0 {
+			ref = nil
+		}
+		messageIDs, sendErr := sender.SendText(ctx, ChannelDeliveryTarget{
+			ChannelType:  rc.ChannelContext.ChannelType,
+			Conversation: rc.ChannelContext.Conversation,
+			ReplyTo:      ref,
+		}, trimmed)
+		if sendErr != nil {
+			return handleInlineOutboxFailure(ctx, pool, outboxRec, sendErr, outboxRepo)
+		}
+		if payload.IsTerminalNotice {
+			_, err := recordChannelTerminalNoticeSuccess(ctx, pool, messagesRepo, deliveryRepo, ledgerRepo, rc, ref, messageIDs, trimmed)
+			if err != nil {
+				return handleInlineOutboxFailure(ctx, pool, outboxRec, err, outboxRepo)
+			}
+		} else {
+			if err := recordChannelDeliverySuccess(ctx, pool, deliveryRepo, ledgerRepo, rc, ref, messageIDs, nil); err != nil {
+				return handleInlineOutboxFailure(ctx, pool, outboxRec, err, outboxRepo)
+			}
+		}
+		if err := outboxRepo.UpdateProgress(ctx, pool, outboxRec.ID, i+1); err != nil {
+			return err
+		}
+		outboxRec.SegmentsSent = i + 1
+	}
+	return outboxRepo.UpdateSent(ctx, pool, outboxRec.ID)
+}
+
+func feishuReplyReference(rc *RunContext) *ChannelMessageRef {
+	if rc == nil || rc.ChannelContext == nil {
+		return nil
+	}
+	if rc.HeartbeatRun {
+		return nil
+	}
+	if isPrivateChannelConversation(rc.ChannelContext.ConversationType) {
+		return nil
+	}
+	if rc.ChannelContext.TriggerMessage != nil && strings.TrimSpace(rc.ChannelContext.TriggerMessage.MessageID) != "" {
+		return rc.ChannelContext.TriggerMessage
+	}
+	if strings.TrimSpace(rc.ChannelContext.InboundMessage.MessageID) == "" {
+		return nil
+	}
+	ref := rc.ChannelContext.InboundMessage
+	return &ref
+}
+
 func weixinReplyReference(rc *RunContext) *ChannelMessageRef {
 	if rc == nil || rc.ChannelContext == nil {
 		return nil
@@ -1143,6 +1234,33 @@ func deliverWeixinTerminalNotice(
 	sender := NewWeixinChannelSenderWithClient(wxClient, resolveSegmentDelay())
 
 	replyTo := weixinReplyReference(rc)
+	messageIDs, err := sender.SendText(ctx, ChannelDeliveryTarget{
+		ChannelType:  rc.ChannelContext.ChannelType,
+		Conversation: rc.ChannelContext.Conversation,
+		ReplyTo:      replyTo,
+	}, output)
+	if err != nil {
+		return err
+	}
+	_, err = recordChannelTerminalNoticeSuccess(ctx, pool, messagesRepo, deliveryRepo, ledgerRepo, rc, replyTo, messageIDs, output)
+	return err
+}
+
+func deliverFeishuTerminalNotice(
+	ctx context.Context,
+	pool *pgxpool.Pool,
+	messagesRepo data.MessagesRepository,
+	deliveryRepo data.ChannelDeliveryRepository,
+	ledgerRepo data.ChannelMessageLedgerRepository,
+	rc *RunContext,
+	channel *data.DeliveryChannelRecord,
+	output string,
+) error {
+	if strings.TrimSpace(output) == "" {
+		return nil
+	}
+	sender := NewFeishuChannelSender(channel.ConfigJSON, channel.Token)
+	replyTo := feishuReplyReference(rc)
 	messageIDs, err := sender.SendText(ctx, ChannelDeliveryTarget{
 		ChannelType:  rc.ChannelContext.ChannelType,
 		Conversation: rc.ChannelContext.Conversation,
@@ -1591,7 +1709,7 @@ func TryDeliverChannelInjectionBlockNotice(ctx context.Context, pool *pgxpool.Po
 		return
 	}
 	channelType := normalizedChannelTypeFromContext(rc)
-	if channelType != "telegram" && channelType != "discord" && channelType != "qq" && channelType != "qqbot" && channelType != "weixin" {
+	if channelType != "telegram" && channelType != "discord" && channelType != "qq" && channelType != "qqbot" && channelType != "weixin" && channelType != "feishu" {
 		return
 	}
 	repo := data.ChannelDeliveryRepository{}
@@ -1637,6 +1755,8 @@ func TryDeliverChannelInjectionBlockNotice(ctx context.Context, pool *pgxpool.Po
 		deliverErr = deliverQQBotTerminalNotice(ctx, pool, messagesRepo, repo, ledgerRepo, rc, channel, text)
 	case "weixin":
 		deliverErr = deliverWeixinTerminalNotice(ctx, pool, messagesRepo, repo, ledgerRepo, rc, channel, text)
+	case "feishu":
+		deliverErr = deliverFeishuTerminalNotice(ctx, pool, messagesRepo, repo, ledgerRepo, rc, channel, text)
 	}
 	if deliverErr != nil {
 		recordChannelDeliveryFailure(ctx, pool, rc.Run.ID, deliverErr)

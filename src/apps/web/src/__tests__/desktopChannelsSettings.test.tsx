@@ -452,4 +452,158 @@ describe('DesktopChannelsSettings', () => {
     expect(container.textContent).toContain('@arkloop_bot')
     expect(container.textContent).toContain('app-123')
   })
+
+  it('可以创建飞书官方渠道并提交官方接入配置', async () => {
+    const { api, DesktopChannelsSettings, LocaleProvider } = await loadChannelsSubject()
+    vi.mocked(api.listChannels).mockResolvedValue([])
+    vi.mocked(api.listMyChannelIdentities).mockResolvedValue([])
+    vi.mocked(api.listChannelPersonas).mockResolvedValue([
+      {
+        id: 'persona-1',
+        persona_key: 'normal',
+        version: '1',
+        display_name: 'Normal',
+        source: 'project',
+      } as never,
+    ])
+    vi.mocked(api.listLlmProviders).mockResolvedValue([])
+    vi.mocked(api.createChannel).mockResolvedValue({
+      id: 'fs-created',
+      account_id: 'acc-1',
+      channel_type: 'feishu',
+      persona_id: 'persona-1',
+      webhook_url: null,
+      is_active: false,
+      config_json: {
+        app_id: 'cli_xxx',
+        domain: 'feishu',
+      },
+      has_credentials: true,
+      created_at: '2026-03-26T00:00:00Z',
+      updated_at: '2026-03-26T00:00:00Z',
+    })
+
+    await act(async () => {
+      root!.render(
+        <LocaleProvider>
+          <DesktopChannelsSettings accessToken="token" />
+        </LocaleProvider>,
+      )
+    })
+    await flushEffects()
+
+    const feishuTab = Array.from(container.querySelectorAll('button')).find((button) => button.textContent?.includes('飞书'))
+    await act(async () => {
+      feishuTab!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+
+    const appIDInput = Array.from(container.querySelectorAll('input')).find((input) => input.getAttribute('placeholder') === 'cli_xxx') as HTMLInputElement
+    const appSecretInput = Array.from(container.querySelectorAll('input')).find((input) => input.getAttribute('placeholder') === '粘贴 App Secret') as HTMLInputElement
+    const verifyTokenInput = Array.from(container.querySelectorAll('input')).find((input) => input.getAttribute('placeholder') === '粘贴 Verification Token') as HTMLInputElement
+    const encryptKeyInput = Array.from(container.querySelectorAll('input')).find((input) => input.getAttribute('placeholder') === '粘贴 Encrypt Key') as HTMLInputElement
+
+    await act(async () => {
+      setInputValue(appIDInput, 'cli_xxx')
+      setInputValue(appSecretInput, 'app-secret')
+      setInputValue(verifyTokenInput, 'verify-token')
+      setInputValue(encryptKeyInput, 'encrypt-key')
+    })
+    await flushEffects()
+
+    const saveButton = Array.from(container.querySelectorAll('button')).find((button) => button.textContent?.trim() === '保存')
+    await act(async () => {
+      saveButton!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+    await flushEffects()
+
+    expect(api.createChannel).toHaveBeenCalledWith('token', {
+      channel_type: 'feishu',
+      bot_token: 'app-secret',
+      persona_id: 'persona-1',
+      config_json: {
+        app_id: 'cli_xxx',
+        domain: 'feishu',
+        allowed_user_ids: [],
+        allowed_chat_ids: [],
+        trigger_keywords: [],
+        verification_token: 'verify-token',
+        encrypt_key: 'encrypt-key',
+      },
+    })
+  })
+
+  it('飞书 verify 成功时显示应用和机器人 open_id', async () => {
+    const { api, DesktopChannelsSettings, LocaleProvider } = await loadChannelsSubject()
+    const initialFeishuChannel = {
+      id: 'fs-1',
+      account_id: 'acc-1',
+      channel_type: 'feishu',
+      persona_id: 'persona-1',
+      webhook_url: 'https://arkloop.example/v1/channels/feishu/fs-1/webhook',
+      is_active: true,
+      config_json: {
+        app_id: 'cli_xxx',
+        domain: 'feishu',
+        bot_name: 'Arkloop Feishu',
+        bot_open_id: 'ou_old',
+      },
+      has_credentials: true,
+      created_at: '2026-03-26T00:00:00Z',
+      updated_at: '2026-03-26T00:00:00Z',
+    }
+    vi.mocked(api.listChannels)
+      .mockResolvedValueOnce([initialFeishuChannel])
+      .mockResolvedValue([
+        {
+          ...initialFeishuChannel,
+          config_json: {
+            ...initialFeishuChannel.config_json,
+            bot_open_id: 'ou_bot',
+          },
+        },
+      ])
+    vi.mocked(api.listMyChannelIdentities).mockResolvedValue([])
+    vi.mocked(api.listChannelPersonas).mockResolvedValue([
+      {
+        id: 'persona-1',
+        persona_key: 'normal',
+        version: '1',
+        display_name: 'Normal',
+        source: 'project',
+      } as never,
+    ])
+    vi.mocked(api.listLlmProviders).mockResolvedValue([])
+    vi.mocked(api.verifyChannel).mockResolvedValue({
+      ok: true,
+      application_name: 'Arkloop Feishu',
+      bot_user_id: 'ou_bot',
+    })
+
+    await act(async () => {
+      root!.render(
+        <LocaleProvider>
+          <DesktopChannelsSettings accessToken="token" />
+        </LocaleProvider>,
+      )
+    })
+    await flushEffects()
+
+    const feishuTab = Array.from(container.querySelectorAll('button')).find((button) => button.textContent?.includes('飞书'))
+    await act(async () => {
+      feishuTab!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+
+    const verifyButton = Array.from(container.querySelectorAll('button')).find((button) => button.textContent?.includes('验证连接'))
+    expect(verifyButton).toBeTruthy()
+
+    await act(async () => {
+      verifyButton!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+    await flushEffects()
+
+    expect(api.verifyChannel).toHaveBeenCalledWith('token', 'fs-1')
+    expect(container.textContent).toContain('https://arkloop.example/v1/channels/feishu/fs-1/webhook')
+    expect(container.textContent).toContain('Arkloop Feishu')
+    expect(container.textContent).toContain('ou_bot')
+  })
 })

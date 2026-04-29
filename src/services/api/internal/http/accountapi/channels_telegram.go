@@ -199,6 +199,10 @@ func normalizeChannelConfigJSON(channelType string, raw json.RawMessage) (json.R
 		normalized, _, err := normalizeQQBotChannelConfig(raw)
 		return normalized, nil, err
 	}
+	if channelType == "feishu" {
+		normalized, _, err := normalizeFeishuChannelConfig(raw)
+		return normalized, nil, err
+	}
 
 	var generic map[string]any
 	if err := json.Unmarshal(raw, &generic); err != nil {
