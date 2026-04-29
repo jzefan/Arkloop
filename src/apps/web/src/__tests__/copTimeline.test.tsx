@@ -190,7 +190,7 @@ describe('CopTimeline', () => {
       expect(workHtml).toContain('class="cop-timeline-root cop-timeline-root--work"')
     })
 
-    it('non-empty pool with no segments still renders', () => {
+    it('code execution pool without timeline segments renders nothing', () => {
       const pool = makePool({
         codeExecutions: new Map([['ce1', { id: 'ce1', code: 'echo hi' } as unknown as import('../storage').CodeExecutionRef]]),
       })
@@ -199,7 +199,7 @@ describe('CopTimeline', () => {
         pool,
         isComplete: true,
       })
-      expect(html).not.toBe('')
+      expect(html).toBe('')
     })
   })
 
@@ -271,7 +271,7 @@ describe('CopTimeline', () => {
   })
 
   describe('segment rendering', () => {
-    it('single exec segment with closed status renders', () => {
+    it('single exec segment with closed status renders nothing inside CopTimeline', () => {
       const seg = makeSeg({
         id: 'seg1',
         category: 'exec',
@@ -284,8 +284,7 @@ describe('CopTimeline', () => {
         pool: EMPTY_POOL,
         isComplete: true,
       })
-      expect(html).not.toBe('')
-      expect(html).toContain('cop-timeline-root')
+      expect(html).toBe('')
     })
 
     it('exec segment renders outside header collapse, not as nested segment', () => {
@@ -634,7 +633,7 @@ describe('CopTimeline', () => {
   })
 
   describe('edge cases', () => {
-    it('segment with no pool data still renders', () => {
+    it('todo_write segment renders nothing inside CopTimeline', () => {
       const seg = makeSeg({
         id: 's1',
         category: 'generic',
@@ -647,7 +646,7 @@ describe('CopTimeline', () => {
         pool: EMPTY_POOL,
         isComplete: true,
       })
-      expect(html).not.toBe('')
+      expect(html).toBe('')
     })
 
     it('headerOverride takes priority over thinkingOnly label', () => {
