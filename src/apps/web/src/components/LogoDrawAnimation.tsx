@@ -69,8 +69,8 @@ const EASE_OUT = "cubic-bezier(0.16, 1, 0.3, 1)";
 const DRAW_TOTAL = 1500;
 const FILL_DUR = 600;
 const BRAND_DUR = 1000;
-const HOLD_DUR = 1500;
-const EXIT_DUR = 600;
+const HOLD_DUR = 550;
+const EXIT_DUR = 420;
 
 type Phase = "drawing" | "filling" | "branding" | "holding" | "exiting" | "done";
 
