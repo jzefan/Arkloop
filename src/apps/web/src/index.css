@@ -1273,12 +1273,29 @@ button:not(:disabled) {
   to   { opacity: 1; transform: translateY(0); }
 }
 
+@keyframes dropdown-slide-right {
+  from { opacity: 0; transform: translateY(-50%) translateX(-3px); }
+  to   { opacity: 1; transform: translateY(-50%) translateX(0); }
+}
+
 .dropdown-menu {
   animation: dropdown-slide-in 0.08s ease-out;
 }
 
 .dropdown-menu-up {
   animation: dropdown-slide-up 0.08s ease-out;
+}
+
+.dropdown-menu-right {
+  animation: dropdown-slide-right 0.08s ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dropdown-menu,
+  .dropdown-menu-up,
+  .dropdown-menu-right {
+    animation: none;
+  }
 }
 
 @keyframes timeline-line-grow {

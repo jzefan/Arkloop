@@ -449,7 +449,7 @@ export function ModelPicker({ accessToken, value, onChange, onAddApiKey, variant
             return (
               <div
                 ref={optionsRef}
-                className="z-50"
+                className="dropdown-menu-right z-50"
                 style={{
                   position: 'absolute',
                   left: 'calc(100% + 2px)',
