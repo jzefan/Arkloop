@@ -330,7 +330,7 @@ func (c telegramConnector) persistTelegramInboundStageA(
 				thinkDisplay = "off"
 			}
 			var sb strings.Builder
-			sb.WriteString(fmt.Sprintf("模型：%s\n思考：%s", modelDisplay, thinkDisplay))
+			_, _ = fmt.Fprintf(&sb, "模型：%s\n思考：%s", modelDisplay, thinkDisplay)
 			if ch.PersonaID != nil && *ch.PersonaID != uuid.Nil {
 				threadMap, _ := c.channelGroupThreadsRepo.WithTx(tx).GetByBinding(ctx, ch.ID, incoming.PlatformChatID, *ch.PersonaID)
 				if threadMap != nil {
