@@ -189,7 +189,7 @@ func TestNowledgeDistillObserverRunsWhenEnabled(t *testing.T) {
 	}
 }
 
-func TestNowledgeDistillObserverRefreshesSnapshotAndImpression(t *testing.T) {
+func TestNowledgeDistillObserverRefreshesSnapshotAndImpressionWithoutCreatedCount(t *testing.T) {
 	t.Setenv(sharedoutbound.AllowLoopbackHTTPEnv, "true")
 
 	prevWindow := snapshotRefreshWindow
@@ -214,7 +214,7 @@ func TestNowledgeDistillObserverRefreshesSnapshotAndImpression(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(map[string]any{"should_distill": true})
 		case "/memories/distill":
 			distillCalled = true
-			_ = json.NewEncoder(w).Encode(map[string]any{"memories_created": 1})
+			_ = json.NewEncoder(w).Encode(map[string]any{"memories_created": 0})
 		case "/memories":
 			listCalled = true
 			_ = json.NewEncoder(w).Encode(map[string]any{
@@ -302,6 +302,98 @@ func TestNowledgeDistillObserverRefreshesSnapshotAndImpression(t *testing.T) {
 	case <-refreshTriggered:
 	case <-time.After(100 * time.Millisecond):
 		t.Fatal("expected impression refresh trigger")
+	}
+}
+
+func TestLegacyMemoryDistillObserverRefreshesNowledgeSnapshotWithoutCreatedCount(t *testing.T) {
+	t.Setenv(sharedoutbound.AllowLoopbackHTTPEnv, "true")
+
+	prevWindow := snapshotRefreshWindow
+	prevInterval := snapshotRefreshRetryInterval
+	prevAttempts := snapshotRefreshMaxAttempts
+	snapshotRefreshWindow = 200 * time.Millisecond
+	snapshotRefreshRetryInterval = 10 * time.Millisecond
+	snapshotRefreshMaxAttempts = 3
+	defer func() {
+		snapshotRefreshWindow = prevWindow
+		snapshotRefreshRetryInterval = prevInterval
+		snapshotRefreshMaxAttempts = prevAttempts
+	}()
+
+	var triageCalled bool
+	var distillCalled bool
+	var listCalled bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/memories/distill/triage":
+			triageCalled = true
+			_ = json.NewEncoder(w).Encode(map[string]any{"should_distill": true})
+		case "/memories/distill":
+			distillCalled = true
+			_ = json.NewEncoder(w).Encode(map[string]any{"memories_created": 0})
+		case "/memories":
+			listCalled = true
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"memories": []map[string]any{{
+					"id":         "mem-legacy",
+					"title":      "上一轮同步",
+					"content":    "Nowledge 已经有可投影到 Settings 的记忆。",
+					"confidence": 0.88,
+				}},
+			})
+		default:
+			t.Fatalf("unexpected nowledge request: %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer srv.Close()
+
+	provider := nowledge.NewClient(nowledge.Config{BaseURL: srv.URL})
+	snapshotStore := &nowledgeSnapshotStoreCapture{done: make(chan struct{}, 1)}
+	userID := uuid.New()
+	rc := &RunContext{
+		Run: data.Run{
+			ID:        uuid.New(),
+			AccountID: uuid.New(),
+			ThreadID:  uuid.New(),
+		},
+		UserID:         &userID,
+		MemoryProvider: provider,
+		TraceID:        "trace-nowledge-legacy-refresh",
+	}
+	delta := ThreadDelta{
+		AccountID:       rc.Run.AccountID,
+		ThreadID:        rc.Run.ThreadID,
+		UserID:          userID,
+		AgentID:         "user_" + userID.String(),
+		Messages:        []ThreadDeltaMessage{{Role: "user", Content: "同步上一轮消息"}, {Role: "assistant", Content: "我会更新记忆。"}},
+		AssistantOutput: "我会更新记忆。",
+	}
+	result := ThreadPersistResult{
+		Handled:          true,
+		Committed:        true,
+		ExternalThreadID: "thread-legacy",
+		Provider:         "nowledge",
+	}
+	observer := NewLegacyMemoryDistillObserver(snapshotStore, nil, nil, nil, nil)
+
+	if _, err := observer.AfterThreadPersist(context.Background(), rc, delta, result); err != nil {
+		t.Fatalf("AfterThreadPersist: %v", err)
+	}
+
+	select {
+	case <-snapshotStore.done:
+	case <-time.After(300 * time.Millisecond):
+		t.Fatal("timeout waiting for snapshot refresh")
+	}
+
+	if !triageCalled || !distillCalled || !listCalled {
+		t.Fatalf("expected nowledge refresh flow, triage=%v distill=%v list=%v", triageCalled, distillCalled, listCalled)
+	}
+	if !strings.Contains(snapshotStore.block, "上一轮同步") {
+		t.Fatalf("expected snapshot block to include listed memory, got %q", snapshotStore.block)
+	}
+	if len(snapshotStore.hits) != 1 || snapshotStore.hits[0].URI != "nowledge://memory/mem-legacy" {
+		t.Fatalf("unexpected snapshot hits: %#v", snapshotStore.hits)
 	}
 }
 

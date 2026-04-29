@@ -316,13 +316,10 @@ func (o *NowledgeDistillObserver) AfterThreadPersist(ctx context.Context, rc *Ru
 	if err != nil || !triage.ShouldDistill {
 		return nil, err
 	}
-	distill, err := o.provider.DistillThread(ctx, ident, threadID, buildNowledgeThreadTitle(delta), conversation)
-	if err != nil {
+	if _, err := o.provider.DistillThread(ctx, ident, threadID, buildNowledgeThreadTitle(delta), conversation); err != nil {
 		return nil, err
 	}
-	if distill.MemoriesCreated <= 0 {
-		return nil, nil
-	}
+	// Nowledge 的创建计数可能滞后于可列出的 memories，成功 distill 后总是刷新本地投影。
 	if o.impStore != nil {
 		addImpressionScore(ctx, o.impStore, ident, impressionScoreForRun(rc), o.configResolver, o.impRefresh)
 	}
