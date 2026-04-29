@@ -162,18 +162,61 @@
   border: 1px solid hsl(var(--fd-border));
   background: hsl(var(--fd-card));
   overflow: hidden;
+  position: relative;
+}
+
+.showcaseFrameInner {
+  position: absolute;
+  inset: 0;
+}
+
+.showcaseLoading {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  background: linear-gradient(
+    105deg,
+    hsl(var(--fd-card)) 0%,
+    hsl(var(--fd-accent) / 0.35) 45%,
+    hsl(var(--fd-card)) 90%
+  );
+  background-size: 200% 100%;
+  animation: showcaseSheen 1.4s ease-in-out infinite;
+  pointer-events: none;
+}
+
+.showcaseLoadingDone {
+  opacity: 0;
+  transition: opacity 380ms ease;
+}
+
+@keyframes showcaseSheen {
+  0% { background-position: 100% 0; }
+  100% { background-position: -100% 0; }
 }
 
 .showcasePlaceholder {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
   width: 100%;
   height: 100%;
   display: flex;
   align-items: center;
   justify-content: center;
   color: hsl(var(--fd-muted-foreground));
+  background: hsl(var(--fd-card));
+}
+
+.showcasePlaceholderIcon {
+  width: 42px;
+  height: 42px;
+  opacity: 0.55;
 }
 
 .showcaseVideo {
+  position: relative;
+  z-index: 0;
   width: 100%;
   height: 100%;
   object-fit: cover;
