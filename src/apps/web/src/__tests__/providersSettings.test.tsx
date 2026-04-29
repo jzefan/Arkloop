@@ -9,6 +9,7 @@ const originalActEnvironment = actEnvironment.IS_REACT_ACT_ENVIRONMENT
 
 const listLlmProviders = vi.fn()
 const listAvailableModels = vi.fn()
+const deleteLlmProvider = vi.fn()
 
 async function flushEffects() {
   await act(async () => {
@@ -27,7 +28,7 @@ async function loadSubject() {
       listAvailableModels,
       createLlmProvider: vi.fn(),
       updateLlmProvider: vi.fn(),
-      deleteLlmProvider: vi.fn(),
+      deleteLlmProvider,
       createProviderModel: vi.fn(),
       deleteProviderModel: vi.fn(),
       patchProviderModel: vi.fn(),
@@ -48,6 +49,7 @@ beforeEach(() => {
 
   listLlmProviders.mockReset()
   listAvailableModels.mockReset()
+  deleteLlmProvider.mockReset()
   listLlmProviders.mockResolvedValue([
     {
       id: 'provider-1',
@@ -62,6 +64,7 @@ beforeEach(() => {
   listAvailableModels.mockResolvedValue({
     models: [{ id: 'openai/gpt-4o-mini', name: 'GPT-4o mini', configured: false, type: 'chat' }],
   })
+  deleteLlmProvider.mockResolvedValue(undefined)
 })
 
 afterEach(() => {
@@ -141,4 +144,85 @@ describe('ProvidersSettings', () => {
 
     expect(document.body.textContent).toContain('provider request failed')
   })
+
+  it('删除一个供应商后可以继续删除下一个供应商', async () => {
+    const firstProvider = {
+      id: 'provider-1',
+      name: 'DuoJie',
+      provider: 'openai',
+      openai_api_mode: 'responses',
+      base_url: 'https://api.duojie.games',
+      advanced_json: {},
+      models: [],
+    }
+    const secondProvider = {
+      id: 'provider-2',
+      name: 'OpenRouter',
+      provider: 'openai',
+      openai_api_mode: 'responses',
+      base_url: 'https://openrouter.ai/api/v1',
+      advanced_json: {},
+      models: [],
+    }
+    listLlmProviders
+      .mockResolvedValueOnce([firstProvider, secondProvider])
+      .mockResolvedValueOnce([secondProvider])
+      .mockResolvedValueOnce([])
+
+    const { ProvidersSettings, LocaleProvider } = await loadSubject()
+
+    await act(async () => {
+      root!.render(
+        <LocaleProvider>
+          <ProvidersSettings accessToken="token" />
+        </LocaleProvider>,
+      )
+    })
+    await flushEffects()
+
+    await openProviderDeleteConfirm()
+    await clickProviderDeleteConfirm()
+    await flushEffects()
+
+    expect(deleteLlmProvider).toHaveBeenNthCalledWith(1, 'token', 'provider-1')
+    expect(container.textContent).toContain('OpenRouter')
+
+    await openProviderDeleteConfirm()
+    const secondDeleteButton = findProviderDeleteConfirm()
+    expect(secondDeleteButton.disabled).toBe(false)
+
+    await act(async () => {
+      secondDeleteButton.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+    await flushEffects()
+
+    expect(deleteLlmProvider).toHaveBeenNthCalledWith(2, 'token', 'provider-2')
+  })
 })
+
+async function openProviderDeleteConfirm() {
+  const trashButton = Array.from(container.querySelectorAll('button')).find((button) =>
+    button.textContent?.trim() === '' && button.querySelector('svg'),
+  )
+  expect(trashButton).toBeTruthy()
+  await act(async () => {
+    trashButton!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+  })
+  await flushEffects()
+}
+
+function findProviderDeleteConfirm(): HTMLButtonElement {
+  const button = Array.from(container.querySelectorAll('button')).find((item) =>
+    item.textContent?.includes('删除供应商') || item.textContent?.includes('Delete provider'),
+  ) as HTMLButtonElement | undefined
+  expect(button).toBeTruthy()
+  return button!
+}
+
+async function clickProviderDeleteConfirm() {
+  const button = findProviderDeleteConfirm()
+  await act(async () => {
+    button.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+  })
+  await flushEffects()
+}

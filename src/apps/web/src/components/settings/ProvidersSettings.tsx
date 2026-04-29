@@ -300,12 +300,13 @@ export function ProvidersSettings({ accessToken }: Props) {
       <div className="min-w-0 flex-1 overflow-y-auto p-4 max-[1230px]:p-3 sm:p-5">
         {selected ? (
           <ProviderDetail
+            key={selected.id}
             provider={selected}
             accessToken={accessToken}
-          onUpdated={load}
-          onDeleted={load}
-          p={p}
-        />
+            onUpdated={load}
+            onDeleted={load}
+            p={p}
+          />
         ) : (
           <div className="flex h-full flex-col items-center justify-center gap-3">
             <p className="text-sm text-[var(--c-text-muted)]">{p.noProviders}</p>
