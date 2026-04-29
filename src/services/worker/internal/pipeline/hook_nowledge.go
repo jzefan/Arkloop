@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"strings"
+	"sync"
 
 	sharedconfig "arkloop/services/shared/config"
 	"arkloop/services/worker/internal/data"
@@ -56,7 +57,26 @@ func (c *NowledgeContextContributor) collectPromptState(ctx context.Context, rc 
 		AgentID:   StableAgentID(rc),
 	}
 	state := nowledgePromptState{}
-	if workingMemory, err := c.provider.ReadWorkingMemory(ctx, ident); err == nil && workingMemory.Available && strings.TrimSpace(workingMemory.Content) != "" {
+	query := buildNowledgeRecallQuery(rc)
+	var workingMemory nowledge.WorkingMemory
+	var searchResults []nowledge.SearchResult
+	var searchErr error
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		workingMemory, _ = c.provider.ReadWorkingMemory(ctx, ident)
+	}()
+	if strings.TrimSpace(query) != "" {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			searchResults, searchErr = c.provider.SearchRich(ctx, ident, query, 5)
+		}()
+	}
+	wg.Wait()
+
+	if workingMemory.Available && strings.TrimSpace(workingMemory.Content) != "" {
 		state.segments = append(state.segments, PromptSegment{
 			Name:          "hook.before.nowledge.working_memory",
 			Target:        PromptTargetSystemPrefix,
@@ -67,18 +87,16 @@ func (c *NowledgeContextContributor) collectPromptState(ctx context.Context, rc 
 		})
 		state.workingMemoryInjected = true
 	}
-	query := buildNowledgeRecallQuery(rc)
 	if strings.TrimSpace(query) == "" {
 		state.guidance = buildNowledgeGuidanceText(state.workingMemoryInjected, state.recalledInjected)
 		return state, nil
 	}
-	results, err := c.provider.SearchRich(ctx, ident, query, 5)
-	if err != nil || len(results) == 0 {
+	if searchErr != nil || len(searchResults) == 0 {
 		state.guidance = buildNowledgeGuidanceText(state.workingMemoryInjected, state.recalledInjected)
 		return state, nil
 	}
 	var lines []string
-	for index, result := range results {
+	for index, result := range searchResults {
 		if result.Score < 0.1 {
 			continue
 		}

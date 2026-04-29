@@ -283,6 +283,65 @@ func (ThreadContextChunksRepository) ListByThreadUpToContextSeq(
 	return out, nil
 }
 
+func (ThreadContextChunksRepository) ListStateByThreadUpToContextSeq(
+	ctx context.Context,
+	tx pgx.Tx,
+	accountID uuid.UUID,
+	threadID uuid.UUID,
+	upperBoundContextSeq *int64,
+) ([]ContextChunkRecord, error) {
+	if tx == nil {
+		return nil, fmt.Errorf("tx must not be nil")
+	}
+	if accountID == uuid.Nil || threadID == uuid.Nil {
+		return nil, fmt.Errorf("account_id and thread_id must not be empty")
+	}
+
+	args := []any{accountID, threadID}
+	query := `SELECT id, account_id, thread_id, atom_id, chunk_seq, context_seq, chunk_kind,
+	                 payload_json, metadata_json, created_at
+	            FROM thread_context_chunks
+	           WHERE account_id = $1
+	             AND thread_id = $2`
+	if upperBoundContextSeq != nil {
+		query += ` AND context_seq <= $3`
+		args = append(args, *upperBoundContextSeq)
+	}
+	query += ` ORDER BY context_seq ASC`
+
+	rows, err := tx.Query(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := make([]ContextChunkRecord, 0)
+	for rows.Next() {
+		var item ContextChunkRecord
+		if err := rows.Scan(
+			&item.ID,
+			&item.AccountID,
+			&item.ThreadID,
+			&item.AtomID,
+			&item.ChunkSeq,
+			&item.ContextSeq,
+			&item.ChunkKind,
+			&item.PayloadJSON,
+			&item.MetadataJSON,
+			&item.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		item.ChunkKind = strings.TrimSpace(item.ChunkKind)
+		item.ChunkIndex = int(item.ChunkSeq - 1)
+		out = append(out, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (ThreadContextChunksRepository) GetContextSeqRangeForChunkIDs(
 	ctx context.Context,
 	tx pgx.Tx,

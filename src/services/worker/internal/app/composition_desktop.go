@@ -1203,7 +1203,20 @@ func desktopInputLoader(
 	rolloutStore objectstore.BlobStore,
 ) pipeline.RunMiddleware {
 	return func(ctx context.Context, rc *pipeline.RunContext, next pipeline.RunHandler) error {
-		loaded, err := pipeline.LoadRunInputs(ctx, db, rc.Run, rc.JobPayload, runsRepo, eventsRepo, data.MessagesRepository{}, attachmentStore, rolloutStore, rc.ThreadMessageHistoryLimit)
+		traceStage := func(stage string, durationMs int64, fields map[string]any) {
+			if rc == nil || rc.Tracer == nil {
+				return
+			}
+			payload := map[string]any{
+				"stage":       strings.TrimSpace(stage),
+				"duration_ms": durationMs,
+			}
+			for key, value := range fields {
+				payload[key] = value
+			}
+			rc.Tracer.Event("input_loader", "input_loader.stage_completed", payload)
+		}
+		loaded, err := pipeline.LoadRunInputsWithTrace(ctx, db, rc.Run, rc.JobPayload, runsRepo, eventsRepo, data.MessagesRepository{}, attachmentStore, rolloutStore, rc.ThreadMessageHistoryLimit, traceStage)
 		if err != nil {
 			if pipeline.IsResumeUnavailableError(err) {
 				if pipeline.IsRuntimeRecoveryJob(rc.JobPayload) {

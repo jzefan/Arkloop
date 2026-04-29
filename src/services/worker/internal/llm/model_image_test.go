@@ -147,6 +147,114 @@ func TestPrepareRequestModelInputImagesReusesPreparedImage(t *testing.T) {
 	}
 }
 
+func TestPrepareRequestModelInputImagesPreparesAllImageParts(t *testing.T) {
+	req := Request{
+		Model: "gpt",
+		Messages: []Message{
+			{
+				Role: "user",
+				Content: []ContentPart{
+					{Type: messagecontent.PartTypeText, Text: "before"},
+					{
+						Type: messagecontent.PartTypeImage,
+						Attachment: &messagecontent.AttachmentRef{
+							Key:      "attachments/image-a.png",
+							MimeType: "image/png",
+						},
+						Data: []byte("image-a"),
+					},
+				},
+			},
+			{
+				Role: "user",
+				Content: []ContentPart{
+					{
+						Type: messagecontent.PartTypeImage,
+						Attachment: &messagecontent.AttachmentRef{
+							Key:      "attachments/image-b.png",
+							MimeType: "image/png",
+						},
+						Data: []byte("image-b"),
+					},
+					{
+						Type: messagecontent.PartTypeImage,
+						Attachment: &messagecontent.AttachmentRef{
+							Key:      "attachments/image-c.png",
+							MimeType: "image/png",
+						},
+						Data: []byte("image-c"),
+					},
+				},
+			},
+		},
+	}
+
+	PrepareRequestModelInputImages(&req)
+	if !req.modelInputImagesPrepared {
+		t.Fatal("expected request to be marked prepared")
+	}
+	if req.Messages[0].Content[0].modelInputImage != nil {
+		t.Fatal("text part should not be prepared as image")
+	}
+
+	for _, item := range []struct {
+		part ContentPart
+		want string
+	}{
+		{part: req.Messages[0].Content[1], want: "image-a"},
+		{part: req.Messages[1].Content[0], want: "image-b"},
+		{part: req.Messages[1].Content[1], want: "image-c"},
+	} {
+		if item.part.modelInputImage == nil {
+			t.Fatal("expected image part to be prepared")
+		}
+		if got := string(item.part.modelInputImage.Data); got != item.want {
+			t.Fatalf("unexpected prepared data: got=%q want=%q", got, item.want)
+		}
+	}
+}
+
+func TestPrepareRequestModelInputImagesReusesProcessCache(t *testing.T) {
+	modelInputImageCache.Lock()
+	modelInputImageCache.order = nil
+	modelInputImageCache.items = map[string]preparedModelInputImage{}
+	modelInputImageCache.Unlock()
+
+	part := ContentPart{
+		Type: messagecontent.PartTypeImage,
+		Attachment: &messagecontent.AttachmentRef{
+			Key:      "attachments/cache-image.png",
+			MimeType: "image/png",
+		},
+		Data: []byte("cache-image"),
+	}
+	req := Request{Model: "gpt", Messages: []Message{{Role: "user", Content: []ContentPart{part}}}}
+	PrepareRequestModelInputImages(&req)
+	if req.Messages[0].Content[0].modelInputImage == nil {
+		t.Fatal("expected first request to prepare image")
+	}
+
+	cacheKey, ok := modelInputImageCacheKey(part)
+	if !ok {
+		t.Fatal("expected cache key")
+	}
+	modelInputImageCache.Lock()
+	cached := modelInputImageCache.items[cacheKey]
+	cached.Data = []byte("cached-image")
+	modelInputImageCache.items[cacheKey] = cached
+	modelInputImageCache.Unlock()
+
+	next := Request{Model: "gpt", Messages: []Message{{Role: "user", Content: []ContentPart{part}}}}
+	PrepareRequestModelInputImages(&next)
+	prepared := next.Messages[0].Content[0].modelInputImage
+	if prepared == nil {
+		t.Fatal("expected cached request to prepare image")
+	}
+	if got := string(prepared.Data); got != "cached-image" {
+		t.Fatalf("expected cached prepared data, got %q", got)
+	}
+}
+
 func TestToAnthropicMessagesAnnotatesUserImage(t *testing.T) {
 	_, messages, err := toAnthropicMessages([]Message{
 		{

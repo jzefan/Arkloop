@@ -214,24 +214,47 @@ func (l *Loop) Run(
 			recordRuntimeUserMessages(runCtx.PipelineRC, drained)
 		}
 		messages = compactToolResultsWithState(messages, toolResultReplacements)
+		stageStart := time.Now()
 		turnRequest := copyRequest(request, messages)
+		traceAgentLoopStage(runCtx, "copy_request", stageStart, map[string]any{
+			"message_count": len(messages),
+			"tool_count":    len(request.Tools),
+		})
 		debugEnabled := runCtx.PipelineRC != nil && runCtx.PipelineRC.PromptCacheDebugEnabled
 
 		if promptCacheState != nil {
+			stageStart = time.Now()
 			prepareTurnRequestPromptCache(&turnRequest, runCtx, promptCacheState)
+			traceAgentLoopStage(runCtx, "prepare_prompt_cache", stageStart, nil)
 		}
+		stageStart = time.Now()
 		llm.PrepareRequestModelInputImages(&turnRequest)
+		traceAgentLoopStage(runCtx, "prepare_images", stageStart, nil)
 		// computePromptCacheBreak 纯计算：得出 break info 与 stats，并将 state 推进到当前轮
 		var breakInfo promptCacheBreakInfo
 		var requestStats llm.RequestStats
+		stageStart = time.Now()
 		if promptCacheState != nil {
 			breakInfo, requestStats = computePromptCacheBreak(turnRequest, promptCacheState)
 		} else {
 			requestStats = llm.ComputeRequestStats(turnRequest)
 		}
+		traceAgentLoopStage(runCtx, "compute_request_stats", stageStart, map[string]any{
+			"abstract_request_bytes": requestStats.AbstractRequestBytes,
+			"base64_image_bytes":     requestStats.Base64ImageBytes,
+			"image_part_count":       requestStats.ImagePartCount,
+			"message_bytes":          requestStats.MessagesBytes,
+			"tool_bytes":             requestStats.ToolsBytes,
+		})
 		// emit 调试事件：在 LLM 调用之前。markers 从 plan 计算，与 stream 成败解耦。
 		if debugEnabled {
+			stageStart = time.Now()
 			markers := computePlanMarkers(turnRequest)
+			traceAgentLoopStage(runCtx, "compute_prompt_cache_markers", stageStart, map[string]any{
+				"cache_reference_count": markers.CacheReferenceCount,
+				"cache_edits_count":     markers.CacheEditsCount,
+			})
+			stageStart = time.Now()
 			payload := buildPromptCacheDebugPayload(
 				runCtx.PipelineRC,
 				turnIndex,
@@ -244,14 +267,25 @@ func (l *Loop) Run(
 			if err := yield(emitter.Emit("run.prompt_cache_debug", payload, nil, nil)); err != nil {
 				return err
 			}
+			traceAgentLoopStage(runCtx, "emit_prompt_cache_debug", stageStart, nil)
 		}
 
+		stageStart = time.Now()
 		refreshCacheSafeSnapshot(&runCtx, messages, turnRequest)
+		traceAgentLoopStage(runCtx, "refresh_cache_snapshot", stageStart, nil)
+		stageStart = time.Now()
 		turnRequestContextEstimateTokens := estimateTurnRequestContextTokens(runCtx, turnRequest)
+		traceAgentLoopStage(runCtx, "estimate_context_tokens", stageStart, map[string]any{
+			"estimated_tokens": turnRequestContextEstimateTokens,
+		})
 		if runCtx.PipelineRC != nil && runCtx.PipelineRC.HookRuntime != nil && runCtx.PipelineRC.HookRegistry != nil {
+			stageStart = time.Now()
 			runCtx.PipelineRC.HookRuntime.BeforeModelCall(ctx, runCtx.PipelineRC, turnRequest)
+			traceAgentLoopStage(runCtx, "before_model_call_hooks", stageStart, nil)
 		}
+		stageStart = time.Now()
 		turn, err := l.runTurnWithRetry(ctx, runCtx, turnRequest, emitter, yield, turnIndex)
+		traceAgentLoopStage(runCtx, "run_turn_with_retry", stageStart, nil)
 		if err != nil {
 			return err
 		}
@@ -2055,6 +2089,20 @@ func copyRequest(request llm.Request, messages []llm.Message) llm.Request {
 		Metadata:        copyMap(request.Metadata),
 		ReasoningMode:   request.ReasoningMode,
 	}
+}
+
+func traceAgentLoopStage(runCtx RunContext, stage string, start time.Time, fields map[string]any) {
+	if runCtx.Tracer == nil {
+		return
+	}
+	payload := map[string]any{
+		"stage":       strings.TrimSpace(stage),
+		"duration_ms": time.Since(start).Milliseconds(),
+	}
+	for key, value := range fields {
+		payload[key] = value
+	}
+	runCtx.Tracer.Event("agent_loop", "agent_loop.stage_completed", payload)
 }
 
 func refreshCacheSafeSnapshot(runCtx *RunContext, baseMessages []llm.Message, request llm.Request) {

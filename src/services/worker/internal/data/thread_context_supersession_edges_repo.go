@@ -157,6 +157,56 @@ func (ThreadContextSupersessionEdgesRepository) ListByReplacementID(
 	return out, nil
 }
 
+func (ThreadContextSupersessionEdgesRepository) ListByThread(
+	ctx context.Context,
+	tx pgx.Tx,
+	accountID uuid.UUID,
+	threadID uuid.UUID,
+) ([]ThreadContextSupersessionEdgeRecord, error) {
+	if tx == nil {
+		return nil, fmt.Errorf("tx must not be nil")
+	}
+	if accountID == uuid.Nil || threadID == uuid.Nil {
+		return nil, fmt.Errorf("account_id and thread_id must not be empty")
+	}
+
+	rows, err := tx.Query(
+		ctx,
+		`SELECT id, account_id, thread_id, replacement_id, superseded_replacement_id, superseded_chunk_id, created_at
+		   FROM replacement_supersession_edges
+		  WHERE account_id = $1
+		    AND thread_id = $2
+		  ORDER BY replacement_id ASC, created_at ASC, id ASC`,
+		accountID,
+		threadID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := make([]ThreadContextSupersessionEdgeRecord, 0)
+	for rows.Next() {
+		var item ThreadContextSupersessionEdgeRecord
+		if err := rows.Scan(
+			&item.ID,
+			&item.AccountID,
+			&item.ThreadID,
+			&item.ReplacementID,
+			&item.SupersededReplacementID,
+			&item.SupersededChunkID,
+			&item.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		out = append(out, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (ThreadContextSupersessionEdgesRepository) DeleteBySupersededChunkIDs(
 	ctx context.Context,
 	tx pgx.Tx,
