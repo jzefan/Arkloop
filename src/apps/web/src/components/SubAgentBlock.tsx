@@ -5,6 +5,7 @@ import { useLocale } from '../contexts/LocaleContext'
 import { useTypewriter } from '../hooks/useTypewriter'
 import { useSubAgentCop } from '../hooks/useSubAgentCop'
 import { CopTimeline } from './cop-timeline/CopTimeline'
+import type { WebSearchPhaseStep } from './cop-timeline/types'
 
 type Props = {
   sourceTool?: 'acp_agent'
@@ -225,7 +226,7 @@ export function SubAgentBlock({
                       webFetches: new Map(),
                       subAgents: new Map(),
                       genericTools: new Map(),
-                      steps: new Map(cop.steps.map((s: Record<string, unknown>) => [s.id as string, s])) as Map<string, any>,
+                      steps: new Map(cop.steps.map((step: WebSearchPhaseStep) => [step.id, step])),
                       sources: cop.sources,
                     }}
                     isComplete={cop.isComplete}
