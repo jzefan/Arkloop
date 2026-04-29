@@ -358,7 +358,7 @@ describe('useScrollPin', () => {
       await flushAnimationFrames(15)
     })
 
-    expect(anchorScrollBehavior).toBeUndefined()
+    expect(anchorScrollBehavior).toBe('smooth')
     expect(scrollContainer.scrollTop).toBe(552)
     expect(readyApi.isAtBottomRef.current).toBe(true)
     expect(prompt.getBoundingClientRect().top).toBe(48)
