@@ -29,12 +29,15 @@ export interface LocaleStrings {
   // GTD buckets
   gtdInbox: string;
   gtdTodo: string;
-  gtdInProcess: string;
-  gtdDone: string;
+  gtdWaiting: string;
+  gtdSomeday: string;
+  gtdArchived: string;
   // GTD actions
   gtdMoveToInbox: string;
   gtdMoveToTodo: string;
-  gtdClearStatus: string;
+  gtdMoveToWaiting: string;
+  gtdMoveToSomeday: string;
+  gtdMoveToArchived: string;
   // pin
   pinThread: string;
   unpinThread: string;

@@ -13,10 +13,10 @@ import {
   Share2,
   Pencil,
   Trash2,
+  Archive,
   Pin,
   Inbox,
   CheckCircle,
-  XCircle,
   ChevronRight,
   Plus,
 } from 'lucide-react'
@@ -32,6 +32,9 @@ import { useAppModeUI, useSearchUI, useSettingsUI, useSidebarUI } from '../conte
 import {
   readGtdInboxThreadIds, writeGtdInboxThreadIds,
   readGtdTodoThreadIds, writeGtdTodoThreadIds,
+  readGtdWaitingThreadIds, writeGtdWaitingThreadIds,
+  readGtdSomedayThreadIds, writeGtdSomedayThreadIds,
+  readGtdArchivedThreadIds, writeGtdArchivedThreadIds,
   readPinnedThreadIds, writePinnedThreadIds,
   readGtdEnabled, readExpandedProjectPaths, writeExpandedProjectPaths,
   clearThreadWorkFolder, readThreadWorkFolder, writeThreadWorkFolder, clearWorkFolder, writeWorkFolder,
@@ -46,7 +49,8 @@ type Props = {
 }
 
 type ProjectGroup = { path: string; label: string; threads: ThreadResponse[] }
-type GtdGroup = { bucket: 'inbox' | 'todo' | 'inProcess' | 'done'; label: string; threads: ThreadResponse[] }
+type GtdBucket = 'inbox' | 'todo' | 'waiting' | 'someday' | 'archived'
+type GtdGroup = { bucket: GtdBucket; label: string; threads: ThreadResponse[] }
 
 const PROJECT_GROUP_PAGE_SIZE = 8
 const PROJECT_GROUP_SECONDARY_PAGE_SIZE = 2
@@ -55,8 +59,11 @@ const SIDEBAR_ROW_TEXT_SIZE = '13.5px'
 const SIDEBAR_ROW_LINE_HEIGHT = '20px'
 const DRAG_START_DISTANCE_PX = 3
 const DRAG_LONG_PRESS_DELAY_MS = 180
+const GTD_BUCKETS: readonly GtdBucket[] = ['inbox', 'todo', 'waiting', 'someday', 'archived']
 
-type SidebarDragState = { threadId: string; title: string; x: number; y: number; fromPinned: boolean; sourcePath: string }
+type SidebarDragState =
+  | { kind: 'work'; threadId: string; title: string; x: number; y: number; fromPinned: boolean; sourcePath: string }
+  | { kind: 'gtd'; threadId: string; title: string; x: number; y: number; sourceBucket: GtdBucket }
 
 function projectGroupLimit(value: number | undefined, fallback: number): number {
   if (typeof value === 'number' && Number.isFinite(value) && value > 0) return Math.floor(value)
@@ -66,6 +73,10 @@ function projectGroupLimit(value: number | undefined, fallback: number): number 
 function threadTitle(thread: ThreadResponse, untitled: string): string {
   const title = (thread.title ?? '').trim()
   return title.length > 0 ? title : untitled
+}
+
+function defaultGtdExpandedBuckets(): Set<GtdBucket> {
+  return new Set(GTD_BUCKETS)
 }
 
 type SidebarThreadItemProps = {
@@ -156,9 +167,17 @@ const SidebarThreadItem = memo(function SidebarThreadItem({
           style={{ fontWeight: 'var(--c-sidebar-thread-weight)' }}
         >
           {showStatusDot && (
-            isRunning
-              ? <span className="mx-[3px] h-[6px] w-[6px] shrink-0 rounded-full animate-pulse" style={{ background: 'var(--c-accent)' }} />
-              : <span className="mx-[5px] h-[6px] w-[6px] shrink-0 rounded-full" style={{ border: '1px solid var(--c-text-muted)', opacity: 0.4 }} />
+            <span className="flex h-[14px] w-[16px] shrink-0 items-center justify-center" aria-hidden="true">
+              {isRunning ? (
+                <span className="sidebar-running-dots">
+                  <span className="sidebar-running-dot" />
+                  <span className="sidebar-running-dot" />
+                  <span className="sidebar-running-dot" />
+                </span>
+              ) : (
+                <span className="h-[6px] w-[6px] rounded-full border border-[var(--c-text-muted)] opacity-40" />
+              )}
+            </span>
           )}
           {isStarred && (
             <Star size={11} className="shrink-0 fill-[var(--c-text-muted)] text-[var(--c-text-muted)] opacity-70" />
@@ -169,9 +188,6 @@ const SidebarThreadItem = memo(function SidebarThreadItem({
 
       {!isEditing && (
         <div className="mr-1 flex shrink-0 items-center">
-          {isRunning && (
-            <span className="mr-1 h-3 w-3 shrink-0 animate-spin rounded-full border border-[var(--c-text-muted)] border-t-transparent" />
-          )}
           <div
             className={[
               'shrink-0',
@@ -235,16 +251,23 @@ export function Sidebar({
   const [gtdEnabled, setGtdEnabled] = useState(() => readGtdEnabled())
   const [gtdInboxIds, setGtdInboxIds] = useState<Set<string>>(() => readGtdInboxThreadIds())
   const [gtdTodoIds, setGtdTodoIds] = useState<Set<string>>(() => readGtdTodoThreadIds())
+  const [gtdWaitingIds, setGtdWaitingIds] = useState<Set<string>>(() => readGtdWaitingThreadIds())
+  const [gtdSomedayIds, setGtdSomedayIds] = useState<Set<string>>(() => readGtdSomedayThreadIds())
+  const [gtdArchivedIds, setGtdArchivedIds] = useState<Set<string>>(() => readGtdArchivedThreadIds())
   const [pinnedIds, setPinnedIds] = useState<Set<string>>(() => readPinnedThreadIds())
   const [expandedPaths, setExpandedPaths] = useState<Set<string>>(() => readExpandedProjectPaths())
   const [expandedLimits, setExpandedLimits] = useState<Record<string, number>>({})
+  const [expandedGtdBuckets, setExpandedGtdBuckets] = useState<Set<GtdBucket>>(() => defaultGtdExpandedBuckets())
+  const [gtdExpandedLimits, setGtdExpandedLimits] = useState<Record<GtdBucket, number>>({ inbox: 8, todo: 8, waiting: 8, someday: 8, archived: 8 })
   const [workFolderVersion, setWorkFolderVersion] = useState(0)
   const [pinnedExpanded, setPinnedExpanded] = useState(true)
   const [dragState, setDragState] = useState<SidebarDragState | null>(null)
   const [dragOverPinned, setDragOverPinned] = useState(false)
   const [dragOverProjectPath, setDragOverProjectPath] = useState<string | null>(null)
+  const [dragOverGtdBucket, setDragOverGtdBucket] = useState<GtdBucket | null>(null)
   const pinnedDropRef = useRef<HTMLDivElement>(null)
   const projectGroupRefs = useRef<Map<string, HTMLDivElement>>(new Map())
+  const gtdGroupRefs = useRef<Map<GtdBucket, HTMLDivElement>>(new Map())
   const settingsPointerTraceRef = useRef<ReturnType<typeof beginPerfTrace>>(null)
   const collapsePointerTraceRef = useRef<ReturnType<typeof beginPerfTrace>>(null)
   const searchPointerTraceRef = useRef<ReturnType<typeof beginPerfTrace>>(null)
@@ -328,8 +351,9 @@ export function Sidebar({
     const buckets: GtdGroup[] = [
       { bucket: 'inbox', label: t.gtdInbox, threads: [] },
       { bucket: 'todo', label: t.gtdTodo, threads: [] },
-      { bucket: 'inProcess', label: t.gtdInProcess, threads: [] },
-      { bucket: 'done', label: t.gtdDone, threads: [] },
+      { bucket: 'waiting', label: t.gtdWaiting, threads: [] },
+      { bucket: 'someday', label: t.gtdSomeday, threads: [] },
+      { bucket: 'archived', label: t.gtdArchived, threads: [] },
     ]
 
     for (const t of threads) {
@@ -338,10 +362,12 @@ export function Sidebar({
         bucket = buckets[0]
       } else if (gtdTodoIds.has(t.id)) {
         bucket = buckets[1]
-      } else if (runningThreadIds.has(t.id)) {
+      } else if (gtdWaitingIds.has(t.id)) {
         bucket = buckets[2]
-      } else {
+      } else if (gtdSomedayIds.has(t.id)) {
         bucket = buckets[3]
+      } else {
+        bucket = buckets[4]
       }
       bucket.threads.push(t)
     }
@@ -358,8 +384,8 @@ export function Sidebar({
       })
     }
 
-    return buckets.filter(b => b.threads.length > 0)
-  }, [threads, gtdInboxIds, gtdTodoIds, runningThreadIds, pinnedIds, starredIds, t])
+    return buckets
+  }, [threads, gtdInboxIds, gtdTodoIds, gtdWaitingIds, gtdSomedayIds, pinnedIds, starredIds, t])
 
   const openMenu = useCallback((e: React.MouseEvent, id: string) => {
     e.stopPropagation()
@@ -389,13 +415,21 @@ export function Sidebar({
   // -- 渲染辅助 --
 
   const draggingThreadId = dragState?.threadId ?? null
-  const draggingToPinned = dragState !== null && !dragState.fromPinned
+  const draggingToPinned = dragState?.kind === 'work' && !dragState.fromPinned
 
   const setProjectGroupNode = useCallback((path: string, node: HTMLDivElement | null) => {
     if (node) {
       projectGroupRefs.current.set(path, node)
     } else {
       projectGroupRefs.current.delete(path)
+    }
+  }, [])
+
+  const setGtdGroupNode = useCallback((bucket: GtdBucket, node: HTMLDivElement | null) => {
+    if (node) {
+      gtdGroupRefs.current.set(bucket, node)
+    } else {
+      gtdGroupRefs.current.delete(bucket)
     }
   }, [])
 
@@ -531,32 +565,112 @@ export function Sidebar({
 
   const GtdSidebarView = (
     <>
-      {gtdGroups.map(group => (
-        <div key={group.bucket}>
-          <div className="flex items-center gap-1 px-2 py-1 text-sm text-[var(--c-text-tertiary)]">
-            <span className="flex-1">{group.label}</span>
-            <span className="text-xs text-[var(--c-text-muted)]">{group.threads.length}</span>
+      {gtdGroups.map(group => {
+        const isExpanded = expandedGtdBuckets.has(group.bucket)
+        const limit = projectGroupLimit(gtdExpandedLimits[group.bucket], PROJECT_GROUP_PAGE_SIZE)
+        const visible = isExpanded ? group.threads.slice(0, limit) : []
+        const hasMore = isExpanded && group.threads.length > limit
+
+        const toggleExpand = () => {
+          setExpandedGtdBuckets(prev => {
+            const next = new Set(prev)
+            if (next.has(group.bucket)) {
+              next.delete(group.bucket)
+            } else {
+              next.add(group.bucket)
+            }
+            return next
+          })
+        }
+
+        return (
+          <div
+            key={group.bucket}
+            ref={(node) => setGtdGroupNode(group.bucket, node)}
+            className={[
+              'rounded-[6px]',
+              dragOverGtdBucket === group.bucket ? 'bg-[var(--c-bg-deep)]' : '',
+            ].join(' ')}
+          >
+            <div
+              className="group/folder flex h-[34px] w-full cursor-pointer select-none items-center px-2 py-0"
+              onMouseDown={(e) => { if (e.detail > 1) e.preventDefault() }}
+              onClick={toggleExpand}
+            >
+              <span
+                className="min-w-0 shrink select-none truncate text-left text-[13.5px] leading-[20px] text-[var(--c-text-muted)] transition-colors duration-[80ms] group-hover/folder:text-[var(--c-text-tertiary)]"
+                style={{ fontWeight: PROJECT_GROUP_LABEL_WEIGHT }}
+              >
+                {group.label}
+              </span>
+              <span className="ml-1 shrink-0 opacity-0 group-hover/folder:opacity-100 text-[var(--c-text-muted)] transition-opacity duration-[80ms]">
+                <ChevronRight size={12} className={['transition-transform duration-150', isExpanded ? 'rotate-90' : 'rotate-0'].join(' ')} />
+              </span>
+            </div>
+            {visible.map(th => renderThread(th, { showStatusDot: true }))}
+            {hasMore && (
+              <button
+                onClick={() => setGtdExpandedLimits(prev => ({ ...prev, [group.bucket]: limit + PROJECT_GROUP_PAGE_SIZE }))}
+                className="group relative isolate flex h-[34px] w-full items-center rounded-[6px] px-2 py-0 before:pointer-events-none before:absolute before:inset-x-0 before:inset-y-px before:-z-10 before:rounded-[6px] before:content-[''] hover:before:bg-[var(--c-bg-deep)]"
+              >
+                <div className="flex items-center gap-2 text-[13.5px] leading-[20px] text-[var(--c-text-muted)]" style={{ fontWeight: 'var(--c-sidebar-thread-weight)' }}>
+                  <MoreHorizontal size={14} className="shrink-0" />
+                  <span>{t.folderMore}</span>
+                </div>
+              </button>
+            )}
           </div>
-          {group.threads.map(t => renderThread(t))}
-        </div>
-      ))}
+        )
+      })}
     </>
   )
 
   // GTD / Pin 操作
-  const markGtdInbox = useCallback((id: string) => {
-    setGtdInboxIds((prev: Set<string>) => { const next = new Set(prev); next.add(id); writeGtdInboxThreadIds(next); return next })
-    setGtdTodoIds((prev: Set<string>) => { const next = new Set(prev); next.delete(id); writeGtdTodoThreadIds(next); return next })
+  const moveGtdThread = useCallback((id: string, bucket: GtdBucket) => {
+    setGtdInboxIds((prev: Set<string>) => {
+      const next = new Set(prev)
+      if (bucket === 'inbox') next.add(id); else next.delete(id)
+      writeGtdInboxThreadIds(next)
+      return next
+    })
+    setGtdTodoIds((prev: Set<string>) => {
+      const next = new Set(prev)
+      if (bucket === 'todo') next.add(id); else next.delete(id)
+      writeGtdTodoThreadIds(next)
+      return next
+    })
+    setGtdWaitingIds((prev: Set<string>) => {
+      const next = new Set(prev)
+      if (bucket === 'waiting') next.add(id); else next.delete(id)
+      writeGtdWaitingThreadIds(next)
+      return next
+    })
+    setGtdSomedayIds((prev: Set<string>) => {
+      const next = new Set(prev)
+      if (bucket === 'someday') next.add(id); else next.delete(id)
+      writeGtdSomedayThreadIds(next)
+      return next
+    })
+    setGtdArchivedIds((prev: Set<string>) => {
+      const next = new Set(prev)
+      if (bucket === 'archived') next.add(id); else next.delete(id)
+      writeGtdArchivedThreadIds(next)
+      return next
+    })
   }, [])
 
-  const markGtdTodo = useCallback((id: string) => {
-    setGtdTodoIds((prev: Set<string>) => { const next = new Set(prev); next.add(id); writeGtdTodoThreadIds(next); return next })
-    setGtdInboxIds((prev: Set<string>) => { const next = new Set(prev); next.delete(id); writeGtdInboxThreadIds(next); return next })
-  }, [])
+  const markGtdInbox = useCallback((id: string) => moveGtdThread(id, 'inbox'), [moveGtdThread])
+  const markGtdTodo = useCallback((id: string) => moveGtdThread(id, 'todo'), [moveGtdThread])
+  const markGtdWaiting = useCallback((id: string) => moveGtdThread(id, 'waiting'), [moveGtdThread])
+  const markGtdSomeday = useCallback((id: string) => moveGtdThread(id, 'someday'), [moveGtdThread])
+  const archiveGtdThread = useCallback((id: string) => moveGtdThread(id, 'archived'), [moveGtdThread])
 
-  const clearGtdStatus = useCallback((id: string) => {
+  const removeGtdThread = useCallback((id: string) => {
     setGtdInboxIds((prev: Set<string>) => { const next = new Set(prev); next.delete(id); writeGtdInboxThreadIds(next); return next })
     setGtdTodoIds((prev: Set<string>) => { const next = new Set(prev); next.delete(id); writeGtdTodoThreadIds(next); return next })
+    setGtdWaitingIds((prev: Set<string>) => { const next = new Set(prev); next.delete(id); writeGtdWaitingThreadIds(next); return next })
+    setGtdSomedayIds((prev: Set<string>) => { const next = new Set(prev); next.delete(id); writeGtdSomedayThreadIds(next); return next })
+    setGtdArchivedIds((prev: Set<string>) => { const next = new Set(prev); next.delete(id); writeGtdArchivedThreadIds(next); return next })
   }, [])
 
   const togglePin = useCallback((id: string) => {
@@ -590,12 +704,16 @@ export function Sidebar({
 
   const dragOverPinnedRef = useRef(false)
   const dragOverProjectPathRef = useRef<string | null>(null)
+  const dragOverGtdBucketRef = useRef<GtdBucket | null>(null)
   useEffect(() => {
     dragOverPinnedRef.current = dragOverPinned
   }, [dragOverPinned])
   useEffect(() => {
     dragOverProjectPathRef.current = dragOverProjectPath
   }, [dragOverProjectPath])
+  useEffect(() => {
+    dragOverGtdBucketRef.current = dragOverGtdBucket
+  }, [dragOverGtdBucket])
 
   useEffect(() => {
     if (!isWorkMode) return
@@ -652,7 +770,7 @@ export function Sidebar({
       dragging = candidate
       suppressClick = true
       clearTimer()
-      setDragState({ threadId: candidate.id, title: candidate.title, x: e.clientX, y: e.clientY, fromPinned: candidate.fromPinned, sourcePath: candidate.sourcePath })
+      setDragState({ kind: 'work', threadId: candidate.id, title: candidate.title, x: e.clientX, y: e.clientY, fromPinned: candidate.fromPinned, sourcePath: candidate.sourcePath })
       updateDropTargets(e, candidate)
     }
 
@@ -746,12 +864,138 @@ export function Sidebar({
     }
   }, [isWorkMode, threads, pinnedIds, t.untitled, pinThread, unpinThread])
 
+  useEffect(() => {
+    if (isWorkMode || !gtdEnabled) return
+    let timer: number | null = null
+    let startX = 0
+    let startY = 0
+    let candidate: { id: string; title: string; sourceBucket: GtdBucket } | null = null
+    let dragging: { id: string; title: string; sourceBucket: GtdBucket } | null = null
+    let suppressClick = false
+
+    const clearTimer = () => {
+      if (timer) {
+        window.clearTimeout(timer)
+        timer = null
+      }
+    }
+
+    const setGtdHover = (bucket: GtdBucket | null) => {
+      dragOverGtdBucketRef.current = bucket
+      setDragOverGtdBucket(prev => prev === bucket ? prev : bucket)
+    }
+
+    const currentBucket = (threadId: string): GtdBucket => {
+      if (gtdInboxIds.has(threadId)) return 'inbox'
+      if (gtdTodoIds.has(threadId)) return 'todo'
+      if (gtdWaitingIds.has(threadId)) return 'waiting'
+      if (gtdSomedayIds.has(threadId)) return 'someday'
+      if (gtdArchivedIds.has(threadId)) return 'archived'
+      return 'archived'
+    }
+
+    const findGtdTarget = (e: PointerEvent, sourceBucket: GtdBucket): GtdBucket | null => {
+      for (const [bucket, node] of gtdGroupRefs.current) {
+        const rect = node.getBoundingClientRect()
+        const inside = e.clientX >= rect.left && e.clientX <= rect.right && e.clientY >= rect.top && e.clientY <= rect.bottom
+        if (!inside) continue
+        if (bucket === sourceBucket) return null
+        return bucket
+      }
+      return null
+    }
+
+    const updateDropTargets = (e: PointerEvent, sourceBucket: GtdBucket) => {
+      setGtdHover(findGtdTarget(e, sourceBucket))
+    }
+
+    const beginDrag = (e: PointerEvent) => {
+      if (!candidate || dragging) return
+      dragging = candidate
+      suppressClick = true
+      clearTimer()
+      setDragState({ kind: 'gtd', threadId: candidate.id, title: candidate.title, x: e.clientX, y: e.clientY, sourceBucket: candidate.sourceBucket })
+      updateDropTargets(e, candidate.sourceBucket)
+    }
+
+    const onPointerDown = (e: PointerEvent) => {
+      const el = (e.target as HTMLElement).closest('[data-sidebar-thread-item="thread"]')
+      if (!el) return
+      const threadId = el.getAttribute('data-thread-id')
+      if (!threadId) return
+      const thread = threads.find(t => t.id === threadId)
+      if (!thread) return
+      startX = e.clientX
+      startY = e.clientY
+      candidate = {
+        id: threadId,
+        title: threadTitle(thread, t.untitled),
+        sourceBucket: currentBucket(threadId),
+      }
+      dragging = null
+      timer = window.setTimeout(() => {
+        beginDrag(e)
+      }, DRAG_LONG_PRESS_DELAY_MS)
+    }
+
+    const onPointerMove = (e: PointerEvent) => {
+      if (dragging) {
+        e.preventDefault()
+        setDragState(prev => prev ? { ...prev, x: e.clientX, y: e.clientY } : null)
+        updateDropTargets(e, dragging.sourceBucket)
+        return
+      }
+      if (!candidate) return
+      const dx = e.clientX - startX
+      const dy = e.clientY - startY
+      if (Math.sqrt(dx * dx + dy * dy) < DRAG_START_DISTANCE_PX) return
+      beginDrag(e)
+    }
+
+    const onPointerUp = () => {
+      clearTimer()
+      if (dragging) {
+        const target = dragOverGtdBucketRef.current
+        if (target) {
+          moveGtdThread(dragging.id, target)
+        }
+        dragging = null
+        setDragState(null)
+        setGtdHover(null)
+        window.setTimeout(() => { suppressClick = false }, 100)
+      }
+      candidate = null
+    }
+
+    const onClick = (e: MouseEvent) => {
+      if (!suppressClick) return
+      const el = (e.target as HTMLElement).closest('[data-sidebar-thread-item="thread"]')
+      if (!el) return
+      e.preventDefault()
+      e.stopPropagation()
+    }
+
+    document.addEventListener('pointerdown', onPointerDown, true)
+    document.addEventListener('pointermove', onPointerMove)
+    document.addEventListener('pointerup', onPointerUp)
+    document.addEventListener('pointercancel', onPointerUp)
+    document.addEventListener('click', onClick, true)
+    return () => {
+      document.removeEventListener('pointerdown', onPointerDown, true)
+      document.removeEventListener('pointermove', onPointerMove)
+      document.removeEventListener('pointerup', onPointerUp)
+      document.removeEventListener('pointercancel', onPointerUp)
+      document.removeEventListener('click', onClick, true)
+      clearTimer()
+    }
+  }, [isWorkMode, gtdEnabled, threads, gtdInboxIds, gtdTodoIds, gtdWaitingIds, gtdSomedayIds, gtdArchivedIds, t.untitled, moveGtdThread])
+
   const handleDelete = useCallback(async (id: string) => {
     setDeleteConfirmThreadId(null)
     try {
       await deleteThread(accessToken, id)
       // 清理 GTD 和 Pin 的本地状态
-      clearGtdStatus(id)
+      removeGtdThread(id)
       setPinnedIds((prev: Set<string>) => {
         if (!prev.has(id)) return prev
         const next = new Set(prev)
@@ -763,7 +1007,7 @@ export function Sidebar({
     } catch {
       // 失败静默
     }
-  }, [accessToken, onThreadDeleted, clearGtdStatus])
+  }, [accessToken, onThreadDeleted, removeGtdThread])
 
   // 进入编辑模式后自动聚焦 input
   useEffect(() => {
@@ -819,6 +1063,9 @@ export function Sidebar({
       if (cancelled) return
       setGtdInboxIds(readGtdInboxThreadIds())
       setGtdTodoIds(readGtdTodoThreadIds())
+      setGtdWaitingIds(readGtdWaitingThreadIds())
+      setGtdSomedayIds(readGtdSomedayThreadIds())
+      setGtdArchivedIds(readGtdArchivedThreadIds())
     })
     return () => { cancelled = true }
   }, [threads])
@@ -1017,11 +1264,25 @@ export function Sidebar({
               {t.gtdMoveToTodo}
             </button>
             <button
-              onClick={() => { clearGtdStatus(menuThreadId); setMenuThreadId(null) }}
+              onClick={() => { markGtdWaiting(menuThreadId); setMenuThreadId(null) }}
               className="flex w-full items-center gap-2 rounded-lg px-3 py-1.5 text-[13px] text-[var(--c-text-secondary)] hover:bg-[var(--c-bg-deep)] hover:text-[var(--c-text-primary)]"
             >
-              <XCircle size={13} style={{ flexShrink: 0 }} />
-              {t.gtdClearStatus}
+              <Clock size={13} style={{ flexShrink: 0 }} />
+              {t.gtdMoveToWaiting}
+            </button>
+            <button
+              onClick={() => { markGtdSomeday(menuThreadId); setMenuThreadId(null) }}
+              className="flex w-full items-center gap-2 rounded-lg px-3 py-1.5 text-[13px] text-[var(--c-text-secondary)] hover:bg-[var(--c-bg-deep)] hover:text-[var(--c-text-primary)]"
+            >
+              <Star size={13} style={{ flexShrink: 0 }} />
+              {t.gtdMoveToSomeday}
+            </button>
+            <button
+              onClick={() => { archiveGtdThread(menuThreadId); setMenuThreadId(null) }}
+              className="flex w-full items-center gap-2 rounded-lg px-3 py-1.5 text-[13px] text-[var(--c-text-secondary)] hover:bg-[var(--c-bg-deep)] hover:text-[var(--c-text-primary)]"
+            >
+              <Archive size={13} style={{ flexShrink: 0 }} />
+              {t.gtdMoveToArchived}
             </button>
           </>
         )}
@@ -1289,7 +1550,7 @@ export function Sidebar({
         style={{ transition: 'opacity 150ms ease' }}
         inert={collapsed || undefined}
       >
-          {!isWorkMode && (
+          {!isWorkMode && !gtdEnabled && (
             <div className="mb-[12px] mt-1 flex shrink-0 items-center gap-2 px-2">
               <h3
                 className="text-[11px] tracking-[0.3px] text-[var(--c-text-tertiary)]"
