@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"sort"
 	"strings"
+	"time"
 
 	"arkloop/services/worker/internal/data"
 	"arkloop/services/worker/internal/llm"
@@ -48,6 +49,20 @@ func buildCanonicalThreadContext(
 	messageLimit int,
 	partOptions ...MessagePartBuildOptions,
 ) (*canonicalThreadContext, error) {
+	return buildCanonicalThreadContextWithTrace(ctx, tx, run, messagesRepo, attachmentStore, upperBoundMessageID, messageLimit, nil, partOptions...)
+}
+
+func buildCanonicalThreadContextWithTrace(
+	ctx context.Context,
+	tx pgx.Tx,
+	run data.Run,
+	messagesRepo data.MessagesRepository,
+	attachmentStore MessageAttachmentStore,
+	upperBoundMessageID *uuid.UUID,
+	messageLimit int,
+	trace InputLoaderTraceFunc,
+	partOptions ...MessagePartBuildOptions,
+) (*canonicalThreadContext, error) {
 	fetchLimit := canonicalHistoryFetchLimit(messageLimit)
 
 	var (
@@ -55,6 +70,7 @@ func buildCanonicalThreadContext(
 		err             error
 		upperBoundSeq   *int64
 	)
+	stageStart := time.Now()
 	if upperBoundMessageID != nil && *upperBoundMessageID != uuid.Nil {
 		seq, seqErr := messagesRepo.GetThreadSeqByMessageID(ctx, tx, run.AccountID, run.ThreadID, *upperBoundMessageID)
 		if seqErr != nil {
@@ -72,21 +88,42 @@ func buildCanonicalThreadContext(
 	if err != nil {
 		return nil, err
 	}
+	traceInputLoaderStage(trace, "history_query", stageStart, map[string]any{
+		"message_count": len(visibleMessages),
+		"fetch_limit":   fetchLimit,
+	})
 
+	stageStart = time.Now()
 	renderableMessages := filterPromptRenderableThreadMessages(visibleMessages)
+	traceInputLoaderStage(trace, "filter_renderable", stageStart, map[string]any{
+		"message_count":     len(visibleMessages),
+		"renderable_count":  len(renderableMessages),
+		"filtered_messages": len(visibleMessages) - len(renderableMessages),
+	})
+	stageStart = time.Now()
 	atoms, chunks := buildCanonicalAtomGraph(renderableMessages)
+	traceInputLoaderStage(trace, "build_atom_graph", stageStart, map[string]any{
+		"atom_count":  len(atoms),
+		"chunk_count": len(chunks),
+	})
 	var upperBoundContextSeq *int64
 	if len(chunks) > 0 {
 		lastContextSeq := chunks[len(chunks)-1].ContextSeq
 		upperBoundContextSeq = &lastContextSeq
 	}
-	graph, err := ensureCanonicalThreadGraphPersistedFromMessages(ctx, tx, run.AccountID, run.ThreadID, renderableMessages)
+	stageStart = time.Now()
+	graph, err := ensureCanonicalThreadGraphPersistedFromGraph(ctx, tx, run.AccountID, run.ThreadID, atoms, chunks)
 	if err != nil {
 		return nil, err
 	}
+	traceInputLoaderStage(trace, "graph_persist", stageStart, map[string]any{
+		"atom_count":  len(atoms),
+		"chunk_count": len(chunks),
+	})
 
 	replacementsRepo := data.ThreadContextReplacementsRepository{}
 	var replacements []data.ThreadContextReplacementRecord
+	stageStart = time.Now()
 	if upperBoundContextSeq != nil {
 		replacements, err = replacementsRepo.ListActiveByThreadUpToContextSeq(
 			ctx,
@@ -107,25 +144,27 @@ func buildCanonicalThreadContext(
 	if err != nil {
 		return nil, err
 	}
+	traceInputLoaderStage(trace, "replacement_query", stageStart, map[string]any{
+		"replacement_count": len(replacements),
+	})
 
+	stageStart = time.Now()
 	frontier, err := buildThreadContextFrontier(ctx, tx, graph, run.AccountID, run.ThreadID, replacements, upperBoundContextSeq)
 	if err != nil {
 		return nil, err
 	}
-	lastAtom := (*canonicalAtom)(nil)
-	if len(atoms) > 0 {
-		lastAtom = &atoms[len(atoms)-1]
-	}
-	mapped := mapReplacementsToContextSpans(replacements, chunks, upperBoundContextSeq)
-	firstContextSeq := int64(0)
-	if len(chunks) > 0 {
-		firstContextSeq = chunks[0].ContextSeq
-	}
-	selected := selectRenderableReplacementSpans(mapped, firstContextSeq, lastAtom)
-	entries, _, err := renderCanonicalThreadMessagesFromGraph(ctx, attachmentStore, atoms, chunks, selected, partOptions...)
+	traceInputLoaderStage(trace, "frontier_build", stageStart, map[string]any{
+		"frontier_count": len(frontier),
+	})
+	stageStart = time.Now()
+	entries, err := renderCanonicalThreadMessagesFromFrontier(ctx, attachmentStore, atoms, chunks, frontier, partOptions...)
 	if err != nil {
 		return nil, err
 	}
+	traceInputLoaderStage(trace, "render_messages", stageStart, map[string]any{
+		"entry_count":                len(entries),
+		"selected_replacement_count": countFrontierReplacements(frontier),
+	})
 	renderedMessages := make([]llm.Message, 0, len(entries))
 	renderedIDs := make([]uuid.UUID, 0, len(entries))
 	for _, entry := range entries {
@@ -133,6 +172,7 @@ func buildCanonicalThreadContext(
 		renderedIDs = append(renderedIDs, entry.ThreadMessageID)
 	}
 	if messageLimit > 0 {
+		stageStart = time.Now()
 		entries = trimEntriesToMessageLimit(entries, messageLimit)
 		frontier = reindexFrontierToEntries(frontier, entries)
 		renderedMessages = renderedMessages[:0]
@@ -141,6 +181,10 @@ func buildCanonicalThreadContext(
 			renderedMessages = append(renderedMessages, entry.Message)
 			renderedIDs = append(renderedIDs, entry.ThreadMessageID)
 		}
+		traceInputLoaderStage(trace, "trim_message_limit", stageStart, map[string]any{
+			"message_limit": messageLimit,
+			"entry_count":   len(entries),
+		})
 	}
 
 	return &canonicalThreadContext{
@@ -156,7 +200,7 @@ func buildCanonicalThreadContext(
 
 func canonicalHistoryFetchLimit(messageLimit int) int {
 	if messageLimit <= 0 {
-		return canonicalPersistFetchLimit
+		return 0
 	}
 	return messageLimit
 }
@@ -527,6 +571,16 @@ func renderCanonicalThreadMessagesFromFrontier(
 		i = j
 	}
 	return entries, nil
+}
+
+func countFrontierReplacements(frontier []FrontierNode) int {
+	count := 0
+	for _, node := range frontier {
+		if node.Kind == FrontierNodeReplacement {
+			count++
+		}
+	}
+	return count
 }
 
 func trimEntriesToMessageLimit(entries []canonicalThreadContextEntry, messageLimit int) []canonicalThreadContextEntry {

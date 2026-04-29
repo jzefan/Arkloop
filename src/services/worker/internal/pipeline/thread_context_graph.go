@@ -2,6 +2,7 @@ package pipeline
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"sort"
@@ -18,6 +19,7 @@ const (
 	canonicalChunkTargetApproxTokens = 1200
 	canonicalChunkTargetApproxRunes  = canonicalChunkTargetApproxTokens * 4
 	canonicalPersistFetchLimit       = 1000000
+	canonicalPayloadHashMetadataKey  = "payload_sha256"
 )
 
 type canonicalAtomKind string
@@ -537,13 +539,24 @@ func ensureCanonicalThreadGraphPersistedFromMessages(
 	threadID uuid.UUID,
 	messages []data.ThreadMessage,
 ) (*persistedCanonicalThreadGraph, error) {
+	atoms, chunks := buildCanonicalAtomGraph(messages)
+	return ensureCanonicalThreadGraphPersistedFromGraph(ctx, tx, accountID, threadID, atoms, chunks)
+}
+
+func ensureCanonicalThreadGraphPersistedFromGraph(
+	ctx context.Context,
+	tx pgx.Tx,
+	accountID uuid.UUID,
+	threadID uuid.UUID,
+	atoms []canonicalAtom,
+	chunks []canonicalChunk,
+) (*persistedCanonicalThreadGraph, error) {
 	if tx == nil {
 		return nil, fmt.Errorf("tx must not be nil")
 	}
 	if accountID == uuid.Nil || threadID == uuid.Nil {
 		return nil, fmt.Errorf("account_id and thread_id must not be empty")
 	}
-	atoms, chunks := buildCanonicalAtomGraph(messages)
 
 	atomsRepo := data.ThreadContextAtomsRepository{}
 	chunksRepo := data.ThreadContextChunksRepository{}
@@ -551,12 +564,21 @@ func ensureCanonicalThreadGraphPersistedFromMessages(
 	chunkRecords := make(map[int64]*data.ContextChunkRecord, len(chunks))
 	chunkRecordsByID := make(map[uuid.UUID]*data.ContextChunkRecord, len(chunks))
 
+	existingAtoms, err := atomsRepo.ListStateByThreadUpToAtomSeq(ctx, tx, accountID, threadID, nil)
+	if err != nil {
+		return nil, err
+	}
+	existingAtomBySeq := make(map[int64]*data.ProtocolAtomRecord, len(existingAtoms))
+	for i := range existingAtoms {
+		existingAtomBySeq[existingAtoms[i].AtomSeq] = &existingAtoms[i]
+	}
+
 	for i := range atoms {
 		role := ""
 		if len(atoms[i].Messages) > 0 {
 			role = strings.TrimSpace(atoms[i].Messages[0].Role)
 		}
-		record, err := atomsRepo.Upsert(ctx, tx, data.ProtocolAtomInsertInput{
+		input := data.ProtocolAtomInsertInput{
 			AccountID:             accountID,
 			ThreadID:              threadID,
 			AtomSeq:               int64(i + 1),
@@ -565,9 +587,14 @@ func ensureCanonicalThreadGraphPersistedFromMessages(
 			SourceMessageStartSeq: atoms[i].StartThreadSeq,
 			SourceMessageEndSeq:   atoms[i].EndThreadSeq,
 			PayloadText:           atomFallbackChunk(atoms[i]),
-		})
-		if err != nil {
-			return nil, err
+		}
+		input.MetadataJSON = canonicalPayloadHashMetadata(input.PayloadText)
+		record := existingAtomBySeq[input.AtomSeq]
+		if !protocolAtomRecordMatches(record, input) {
+			record, err = atomsRepo.Upsert(ctx, tx, input)
+			if err != nil {
+				return nil, err
+			}
 		}
 		atomRecords[atoms[i].Key] = record
 	}
@@ -589,15 +616,18 @@ func ensureCanonicalThreadGraphPersistedFromMessages(
 			ChunkSeq: chunkSeqByAtomKey[chunks[i].AtomKey],
 		}
 	}
-	existingChunks, err := chunksRepo.ListByThreadUpToContextSeq(ctx, tx, accountID, threadID, nil)
+	existingChunks, err := chunksRepo.ListStateByThreadUpToContextSeq(ctx, tx, accountID, threadID, nil)
 	if err != nil {
 		return nil, err
 	}
 	staleChunkIDs := make([]uuid.UUID, 0)
 	staleChunkContextSeq := make([]int64, 0)
-	for _, chunk := range existingChunks {
+	for i := range existingChunks {
+		chunk := &existingChunks[i]
 		target, ok := desiredChunkByContextSeq[chunk.ContextSeq]
 		if ok && chunk.AtomID == target.AtomID && chunk.ChunkSeq == target.ChunkSeq {
+			chunkRecords[chunk.ContextSeq] = chunk
+			chunkRecordsByID[chunk.ID] = chunk
 			continue
 		}
 		staleChunkIDs = append(staleChunkIDs, chunk.ID)
@@ -619,10 +649,6 @@ func ensureCanonicalThreadGraphPersistedFromMessages(
 	for i := range atoms {
 		desiredAtomSeq[int64(i+1)] = struct{}{}
 	}
-	existingAtoms, err := atomsRepo.ListByThreadUpToAtomSeq(ctx, tx, accountID, threadID, nil)
-	if err != nil {
-		return nil, err
-	}
 	for _, atom := range existingAtoms {
 		if _, ok := desiredAtomSeq[atom.AtomSeq]; ok {
 			continue
@@ -639,7 +665,7 @@ func ensureCanonicalThreadGraphPersistedFromMessages(
 			return nil, fmt.Errorf("atom record missing for %s", chunks[i].AtomKey)
 		}
 		chunkSeqByAtomKey[chunks[i].AtomKey]++
-		record, err := chunksRepo.Upsert(ctx, tx, data.ContextChunkInsertInput{
+		input := data.ContextChunkInsertInput{
 			AccountID:   accountID,
 			ThreadID:    threadID,
 			AtomID:      atomRecord.ID,
@@ -647,9 +673,14 @@ func ensureCanonicalThreadGraphPersistedFromMessages(
 			ContextSeq:  chunks[i].ContextSeq,
 			ChunkKind:   "payload",
 			PayloadText: chunks[i].Content,
-		})
-		if err != nil {
-			return nil, err
+		}
+		input.MetadataJSON = canonicalPayloadHashMetadata(input.PayloadText)
+		record := chunkRecords[input.ContextSeq]
+		if !contextChunkRecordMatches(record, input) {
+			record, err = chunksRepo.Upsert(ctx, tx, input)
+			if err != nil {
+				return nil, err
+			}
 		}
 		chunkRecords[chunks[i].ContextSeq] = record
 		chunkRecordsByID[record.ID] = record
@@ -662,6 +693,77 @@ func ensureCanonicalThreadGraphPersistedFromMessages(
 		ChunkRecordsByContextSeq: chunkRecords,
 		ChunkRecordsByID:         chunkRecordsByID,
 	}, nil
+}
+
+func protocolAtomRecordMatches(record *data.ProtocolAtomRecord, input data.ProtocolAtomInsertInput) bool {
+	if record == nil {
+		return false
+	}
+	return record.AccountID == input.AccountID &&
+		record.ThreadID == input.ThreadID &&
+		record.AtomSeq == input.AtomSeq &&
+		strings.TrimSpace(record.AtomKind) == strings.TrimSpace(input.AtomKind) &&
+		strings.TrimSpace(record.Role) == strings.TrimSpace(input.Role) &&
+		record.SourceMessageStartSeq == input.SourceMessageStartSeq &&
+		record.SourceMessageEndSeq == input.SourceMessageEndSeq &&
+		jsonBytesMatchDefaultObject(record.PayloadJSON, input.PayloadJSON) &&
+		canonicalPayloadHashMatches(record.MetadataJSON, input.PayloadText)
+}
+
+func contextChunkRecordMatches(record *data.ContextChunkRecord, input data.ContextChunkInsertInput) bool {
+	if record == nil {
+		return false
+	}
+	chunkKind := strings.TrimSpace(input.ChunkKind)
+	if chunkKind == "" {
+		chunkKind = "payload"
+	}
+	payloadText := input.PayloadText
+	if strings.TrimSpace(payloadText) == "" {
+		payloadText = input.Text
+	}
+	return record.AccountID == input.AccountID &&
+		record.ThreadID == input.ThreadID &&
+		record.AtomID == input.AtomID &&
+		record.ChunkSeq == input.ChunkSeq &&
+		record.ContextSeq == input.ContextSeq &&
+		strings.TrimSpace(record.ChunkKind) == chunkKind &&
+		jsonBytesMatchDefaultObject(record.PayloadJSON, input.PayloadJSON) &&
+		canonicalPayloadHashMatches(record.MetadataJSON, payloadText)
+}
+
+func canonicalPayloadHashMetadata(payloadText string) json.RawMessage {
+	hash := canonicalPayloadHash(payloadText)
+	raw, err := json.Marshal(map[string]string{canonicalPayloadHashMetadataKey: hash})
+	if err != nil {
+		return json.RawMessage(`{}`)
+	}
+	return raw
+}
+
+func canonicalPayloadHashMatches(metadata json.RawMessage, payloadText string) bool {
+	var fields map[string]string
+	if err := json.Unmarshal(metadata, &fields); err != nil {
+		return false
+	}
+	return strings.TrimSpace(fields[canonicalPayloadHashMetadataKey]) == canonicalPayloadHash(payloadText)
+}
+
+func canonicalPayloadHash(payloadText string) string {
+	sum := sha256.Sum256([]byte(strings.TrimSpace(payloadText)))
+	return fmt.Sprintf("%x", sum[:])
+}
+
+func jsonBytesMatchDefaultObject(record json.RawMessage, input json.RawMessage) bool {
+	left := strings.TrimSpace(string(record))
+	right := strings.TrimSpace(string(input))
+	if left == "" {
+		left = "{}"
+	}
+	if right == "" {
+		right = "{}"
+	}
+	return left == right
 }
 
 func (g *persistedCanonicalThreadGraph) chunkTargetsForThreadSeqRange(startThreadSeq, endThreadSeq int64) ([]uuid.UUID, int64, int64, bool) {

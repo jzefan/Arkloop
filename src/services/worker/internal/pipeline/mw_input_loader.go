@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"time"
 
 	"arkloop/services/shared/messagecontent"
 	"arkloop/services/shared/objectstore"
@@ -60,11 +61,20 @@ type loadedRunInputs struct {
 
 type LoadedRunInputs = loadedRunInputs
 
+type InputLoaderTraceFunc func(stage string, durationMs int64, fields map[string]any)
+
 type resumeReplayInsertion struct {
 	AnchorKey      string
 	Messages       []llm.Message
 	RunID          uuid.UUID
 	PromptSnapshot *rollout.PromptSnapshot
+}
+
+func traceInputLoaderStage(trace InputLoaderTraceFunc, stage string, start time.Time, fields map[string]any) {
+	if trace == nil {
+		return
+	}
+	trace(stage, time.Since(start).Milliseconds(), fields)
 }
 
 type resumeUnavailableError struct {
@@ -103,7 +113,20 @@ func NewInputLoaderMiddleware(
 	rolloutStore objectstore.BlobStore,
 ) RunMiddleware {
 	return func(ctx context.Context, rc *RunContext, next RunHandler) error {
-		loaded, err := loadRunInputs(ctx, rc.Pool, rc.Run, rc.JobPayload, runsRepo, eventsRepo, messagesRepo, attachmentStore, rolloutStore, rc.ThreadMessageHistoryLimit)
+		traceStage := func(stage string, durationMs int64, fields map[string]any) {
+			if rc == nil || rc.Tracer == nil {
+				return
+			}
+			payload := map[string]any{
+				"stage":       strings.TrimSpace(stage),
+				"duration_ms": durationMs,
+			}
+			for key, value := range fields {
+				payload[key] = value
+			}
+			rc.Tracer.Event("input_loader", "input_loader.stage_completed", payload)
+		}
+		loaded, err := loadRunInputsWithTrace(ctx, rc.Pool, rc.Run, rc.JobPayload, runsRepo, eventsRepo, messagesRepo, attachmentStore, rolloutStore, rc.ThreadMessageHistoryLimit, traceStage)
 		if err != nil {
 			var resumeErr *resumeUnavailableError
 			if errors.As(err, &resumeErr) {
@@ -282,16 +305,38 @@ func loadRunInputs(
 	rolloutStore objectstore.BlobStore,
 	messageLimit int,
 ) (*loadedRunInputs, error) {
+	return loadRunInputsWithTrace(ctx, pool, run, jobPayload, runsRepo, eventsRepo, messagesRepo, attachmentStore, rolloutStore, messageLimit, nil)
+}
+
+func loadRunInputsWithTrace(
+	ctx context.Context,
+	pool interface {
+		BeginTx(ctx context.Context, txOptions pgx.TxOptions) (pgx.Tx, error)
+	},
+	run data.Run,
+	jobPayload map[string]any,
+	runsRepo runRecordLoader,
+	eventsRepo runRecoveryEventLoader,
+	messagesRepo data.MessagesRepository,
+	attachmentStore MessageAttachmentStore,
+	rolloutStore objectstore.BlobStore,
+	messageLimit int,
+	trace InputLoaderTraceFunc,
+) (*loadedRunInputs, error) {
+	stageStart := time.Now()
 	tx, err := pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return nil, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	traceInputLoaderStage(trace, "begin_tx", stageStart, nil)
 
+	stageStart = time.Now()
 	_, dataJSON, err := eventsRepo.FirstEventData(ctx, tx, run.ID)
 	if err != nil {
 		return nil, err
 	}
+	traceInputLoaderStage(trace, "first_event", stageStart, nil)
 
 	inputJSON := map[string]any{
 		"account_id": run.AccountID.String(),
@@ -364,6 +409,7 @@ func loadRunInputs(
 	}
 	_ = isHeartbeatRun(inputJSON, jobPayload)
 
+	stageStart = time.Now()
 	historyUpperBoundID, hasHistoryUpperBound, err := boundedThreadHistoryUpperBound(ctx, tx, inputJSON, jobPayload)
 	if err != nil {
 		return nil, err
@@ -371,12 +417,16 @@ func loadRunInputs(
 	if hasHistoryUpperBound {
 		inputJSON[runStartedThreadTailMessageIDKey] = historyUpperBoundID.String()
 	}
+	traceInputLoaderStage(trace, "history_bound", stageStart, map[string]any{
+		"has_upper_bound": hasHistoryUpperBound,
+	})
 
 	var upperBoundMessageID *uuid.UUID
 	if hasHistoryUpperBound {
 		upperBoundMessageID = &historyUpperBoundID
 	}
-	canonicalContext, err := buildCanonicalThreadContext(
+	stageStart = time.Now()
+	canonicalContext, err := buildCanonicalThreadContextWithTrace(
 		ctx,
 		tx,
 		run,
@@ -384,19 +434,33 @@ func loadRunInputs(
 		attachmentStore,
 		upperBoundMessageID,
 		messageLimit,
+		trace,
 		MessagePartBuildOptions{LazyImages: shouldLazyLoadChannelImages(inputJSON, jobPayload)},
 	)
 	if err != nil {
 		return nil, err
 	}
 	messages := canonicalContext.VisibleMessages
+	traceInputLoaderStage(trace, "canonical_context", stageStart, map[string]any{
+		"visible_messages":  len(canonicalContext.VisibleMessages),
+		"atoms":             len(canonicalContext.Atoms),
+		"chunks":            len(canonicalContext.Chunks),
+		"frontier":          len(canonicalContext.Frontier),
+		"entries":           len(canonicalContext.Entries),
+		"rendered_messages": len(canonicalContext.Messages),
+	})
 	replayInsertions := []resumeReplayInsertion(nil)
 	if IsRuntimeRecoveryJob(jobPayload) {
+		stageStart = time.Now()
 		replayInsertions, err = loadRuntimeRecoveryReplay(ctx, tx, run, eventsRepo, rolloutStore, canonicalContext, messages)
 		if err != nil {
 			return nil, err
 		}
+		traceInputLoaderStage(trace, "runtime_recovery_replay", stageStart, map[string]any{
+			"insertions": len(replayInsertions),
+		})
 	} else if run.ResumeFromRunID != nil {
+		stageStart = time.Now()
 		replayInsertions, err = loadResumedReplay(ctx, tx, run, runsRepo, eventsRepo, rolloutStore, canonicalContext, messages, isExplicitContinueJob(jobPayload))
 		if err != nil {
 			var resumeErr *resumeUnavailableError
@@ -410,12 +474,18 @@ func loadRunInputs(
 				return nil, err
 			}
 		}
+		traceInputLoaderStage(trace, "resume_replay", stageStart, map[string]any{
+			"insertions": len(replayInsertions),
+		})
 	}
 
+	stageStart = time.Now()
 	if err := tx.Commit(ctx); err != nil {
 		return nil, err
 	}
+	traceInputLoaderStage(trace, "commit", stageStart, nil)
 
+	stageStart = time.Now()
 	replayCount := 0
 	replayByAnchor := make(map[string][]resumeReplayInsertion, len(replayInsertions))
 	replayedRunIDs := make(map[uuid.UUID]struct{}, len(replayInsertions))
@@ -456,6 +526,10 @@ func loadRunInputs(
 		}
 	}
 	llmMessages, ids = sanitizeToolPairs(llmMessages, ids)
+	traceInputLoaderStage(trace, "assemble_output", stageStart, map[string]any{
+		"message_count": len(llmMessages),
+		"replay_count":  replayCount,
+	})
 
 	return &loadedRunInputs{
 		InputJSON:             inputJSON,
@@ -491,6 +565,24 @@ func LoadRunInputs(
 	messageLimit int,
 ) (*LoadedRunInputs, error) {
 	return loadRunInputs(ctx, pool, run, jobPayload, runsRepo, eventsRepo, messagesRepo, attachmentStore, rolloutStore, messageLimit)
+}
+
+func LoadRunInputsWithTrace(
+	ctx context.Context,
+	pool interface {
+		BeginTx(ctx context.Context, txOptions pgx.TxOptions) (pgx.Tx, error)
+	},
+	run data.Run,
+	jobPayload map[string]any,
+	runsRepo runRecordLoader,
+	eventsRepo runRecoveryEventLoader,
+	messagesRepo data.MessagesRepository,
+	attachmentStore MessageAttachmentStore,
+	rolloutStore objectstore.BlobStore,
+	messageLimit int,
+	trace InputLoaderTraceFunc,
+) (*LoadedRunInputs, error) {
+	return loadRunInputsWithTrace(ctx, pool, run, jobPayload, runsRepo, eventsRepo, messagesRepo, attachmentStore, rolloutStore, messageLimit, trace)
 }
 
 func IsResumeUnavailableError(err error) bool {

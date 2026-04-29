@@ -123,6 +123,13 @@ func TestThreadContextSupersessionEdgesRepositoryInsertAndList(t *testing.T) {
 	if len(items) != 2 {
 		t.Fatalf("expected 2 edges, got %d", len(items))
 	}
+	threadItems, err := edgesRepo.ListByThread(ctx, readTx, accountID, threadID)
+	if err != nil {
+		t.Fatalf("list thread edges: %v", err)
+	}
+	if len(threadItems) != 2 {
+		t.Fatalf("expected 2 thread edges, got %d", len(threadItems))
+	}
 }
 
 func TestThreadContextSupersessionEdgesRepositoryRejectsCrossThreadTargets(t *testing.T) {

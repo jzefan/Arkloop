@@ -319,6 +319,70 @@ func (ThreadContextAtomsRepository) ListByThreadUpToAtomSeq(
 	return out, nil
 }
 
+func (ThreadContextAtomsRepository) ListStateByThreadUpToAtomSeq(
+	ctx context.Context,
+	tx pgx.Tx,
+	accountID uuid.UUID,
+	threadID uuid.UUID,
+	upperBoundAtomSeq *int64,
+) ([]ProtocolAtomRecord, error) {
+	if tx == nil {
+		return nil, fmt.Errorf("tx must not be nil")
+	}
+	if accountID == uuid.Nil || threadID == uuid.Nil {
+		return nil, fmt.Errorf("account_id and thread_id must not be empty")
+	}
+
+	args := []any{accountID, threadID}
+	query := `SELECT id, account_id, thread_id, atom_seq, atom_kind, role,
+	                 source_message_start_seq, source_message_end_seq,
+	                 payload_json, metadata_json, created_at
+	            FROM thread_context_atoms
+	           WHERE account_id = $1
+	             AND thread_id = $2`
+	if upperBoundAtomSeq != nil {
+		query += ` AND atom_seq <= $3`
+		args = append(args, *upperBoundAtomSeq)
+	}
+	query += ` ORDER BY atom_seq ASC`
+
+	rows, err := tx.Query(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := make([]ProtocolAtomRecord, 0)
+	for rows.Next() {
+		var item ProtocolAtomRecord
+		if err := rows.Scan(
+			&item.ID,
+			&item.AccountID,
+			&item.ThreadID,
+			&item.AtomSeq,
+			&item.AtomKind,
+			&item.Role,
+			&item.SourceMessageStartSeq,
+			&item.SourceMessageEndSeq,
+			&item.PayloadJSON,
+			&item.MetadataJSON,
+			&item.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		item.AtomKind = strings.TrimSpace(item.AtomKind)
+		item.Role = strings.TrimSpace(item.Role)
+		item.AtomIndex = item.AtomSeq
+		item.StartThreadSeq = item.SourceMessageStartSeq
+		item.EndThreadSeq = item.SourceMessageEndSeq
+		out = append(out, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (ThreadContextAtomsRepository) DeleteByThreadAtomSeq(
 	ctx context.Context,
 	tx pgx.Tx,

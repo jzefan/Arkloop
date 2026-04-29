@@ -167,6 +167,74 @@ func TestEnsureCanonicalThreadGraphPersisted_RemovesSupersessionEdgesBeforeDelet
 	}
 }
 
+func TestEnsureCanonicalThreadGraphPersisted_UsesPayloadHashForSameShapeEdits(t *testing.T) {
+	db := testutil.SetupPostgresDatabase(t, "thread_context_graph_payload_hash_edits")
+	conn, err := pgx.Connect(context.Background(), db.DSN)
+	if err != nil {
+		t.Fatalf("connect db: %v", err)
+	}
+	defer func() { _ = conn.Close(context.Background()) }()
+
+	accountID := uuid.New()
+	threadID := uuid.New()
+	msgID := uuid.New()
+
+	if _, err := conn.Exec(
+		context.Background(),
+		`INSERT INTO threads (id, account_id, next_message_seq) VALUES ($1, $2, 10)`,
+		threadID, accountID,
+	); err != nil {
+		t.Fatalf("insert thread: %v", err)
+	}
+	if _, err := conn.Exec(
+		context.Background(),
+		`INSERT INTO messages (id, account_id, thread_id, thread_seq, role, content, metadata_json, hidden)
+		 VALUES ($1, $2, $3, 1, 'user', $4, '{}'::jsonb, false)`,
+		msgID, accountID, threadID, "alpha",
+	); err != nil {
+		t.Fatalf("insert message: %v", err)
+	}
+
+	tx, err := conn.Begin(context.Background())
+	if err != nil {
+		t.Fatalf("begin tx: %v", err)
+	}
+	defer func() { _ = tx.Rollback(context.Background()) }() //nolint:errcheck
+
+	messagesRepo := data.MessagesRepository{}
+	if _, err := ensureCanonicalThreadGraphPersisted(context.Background(), tx, messagesRepo, accountID, threadID); err != nil {
+		t.Fatalf("first persist graph: %v", err)
+	}
+	if _, err := tx.Exec(
+		context.Background(),
+		`UPDATE thread_context_atoms SET metadata_json = '{}'::jsonb WHERE account_id = $1 AND thread_id = $2;
+		 UPDATE thread_context_chunks SET metadata_json = '{}'::jsonb WHERE account_id = $1 AND thread_id = $2`,
+		accountID,
+		threadID,
+	); err != nil {
+		t.Fatalf("clear graph metadata: %v", err)
+	}
+	if _, err := ensureCanonicalThreadGraphPersisted(context.Background(), tx, messagesRepo, accountID, threadID); err != nil {
+		t.Fatalf("backfill graph metadata: %v", err)
+	}
+	assertStoredCanonicalPayload(t, context.Background(), tx, accountID, threadID, "alpha")
+
+	if _, err := tx.Exec(
+		context.Background(),
+		`UPDATE messages SET content = $4 WHERE id = $1 AND account_id = $2 AND thread_id = $3`,
+		msgID,
+		accountID,
+		threadID,
+		"gamma",
+	); err != nil {
+		t.Fatalf("edit message: %v", err)
+	}
+	if _, err := ensureCanonicalThreadGraphPersisted(context.Background(), tx, messagesRepo, accountID, threadID); err != nil {
+		t.Fatalf("persist graph after same-shape edit: %v", err)
+	}
+	assertStoredCanonicalPayload(t, context.Background(), tx, accountID, threadID, "gamma")
+}
+
 func assertCanonicalPersistenceMatchesCurrentGraph(
 	t *testing.T,
 	ctx context.Context,
@@ -251,5 +319,46 @@ func assertCanonicalPersistenceMatchesCurrentGraph(
 		if graphChunk == nil || graphChunk.ID != row.ID {
 			t.Fatalf("graph chunk record mismatch at context_seq=%d", row.ContextSeq)
 		}
+	}
+}
+
+func assertStoredCanonicalPayload(
+	t *testing.T,
+	ctx context.Context,
+	tx pgx.Tx,
+	accountID uuid.UUID,
+	threadID uuid.UUID,
+	want string,
+) {
+	t.Helper()
+
+	atomsRepo := data.ThreadContextAtomsRepository{}
+	atoms, err := atomsRepo.ListByThreadUpToAtomSeq(ctx, tx, accountID, threadID, nil)
+	if err != nil {
+		t.Fatalf("list atoms: %v", err)
+	}
+	if len(atoms) != 1 {
+		t.Fatalf("expected 1 atom, got %d", len(atoms))
+	}
+	if strings.TrimSpace(atoms[0].PayloadText) != want {
+		t.Fatalf("atom payload mismatch: got=%q want=%q", atoms[0].PayloadText, want)
+	}
+	if !canonicalPayloadHashMatches(atoms[0].MetadataJSON, want) {
+		t.Fatalf("atom payload hash mismatch: metadata=%s want_payload=%q", atoms[0].MetadataJSON, want)
+	}
+
+	chunksRepo := data.ThreadContextChunksRepository{}
+	chunks, err := chunksRepo.ListByThreadUpToContextSeq(ctx, tx, accountID, threadID, nil)
+	if err != nil {
+		t.Fatalf("list chunks: %v", err)
+	}
+	if len(chunks) != 1 {
+		t.Fatalf("expected 1 chunk, got %d", len(chunks))
+	}
+	if strings.TrimSpace(chunks[0].PayloadText) != want {
+		t.Fatalf("chunk payload mismatch: got=%q want=%q", chunks[0].PayloadText, want)
+	}
+	if !canonicalPayloadHashMatches(chunks[0].MetadataJSON, want) {
+		t.Fatalf("chunk payload hash mismatch: metadata=%s want_payload=%q", chunks[0].MetadataJSON, want)
 	}
 }

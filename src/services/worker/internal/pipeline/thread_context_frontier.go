@@ -219,6 +219,14 @@ func resolveReplacementCoverage(
 	}
 	replacementsRepo := data.ThreadContextReplacementsRepository{}
 	edgesRepo := data.ThreadContextSupersessionEdgesRepository{}
+	threadEdges, err := edgesRepo.ListByThread(ctx, tx, accountID, threadID)
+	if err != nil {
+		return nil, err
+	}
+	edgesByReplacementID := make(map[uuid.UUID][]data.ThreadContextSupersessionEdgeRecord, len(replacements))
+	for _, edge := range threadEdges {
+		edgesByReplacementID[edge.ReplacementID] = append(edgesByReplacementID[edge.ReplacementID], edge)
+	}
 	replacementCache := make(map[uuid.UUID]*data.ThreadContextReplacementRecord, len(replacements))
 	for i := range replacements {
 		item := replacements[i]
@@ -245,10 +253,7 @@ func resolveReplacementCoverage(
 			replacementCache[replacementID] = loaded
 			record = loaded
 		}
-		edges, err := edgesRepo.ListByReplacementID(ctx, tx, accountID, threadID, replacementID)
-		if err != nil {
-			return frontierReplacementCoverage{}, err
-		}
+		edges := edgesByReplacementID[replacementID]
 		chunkIDs := make(map[uuid.UUID]struct{})
 		visiting[replacementID] = struct{}{}
 		for _, edge := range edges {
