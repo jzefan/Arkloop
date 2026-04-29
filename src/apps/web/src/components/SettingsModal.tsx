@@ -32,7 +32,6 @@ import { UpdateSettingsContent } from './settings/UpdateSettings'
 import { ToolsSettings } from './settings/ToolsSettings'
 import { TimeZoneSettings } from './settings/TimeZoneSettings'
 import { isDesktop, isLocalMode } from '@arkloop/shared/desktop'
-import { readSidebarViewMode, writeSidebarViewMode, type SidebarViewMode } from '../storage'
 
 export type SettingsTab = 'account' | 'appearance' | 'settings' | 'tools' | 'skills' | 'credits' | 'models' | 'agents' | 'channels' | 'connection' | 'updates'
 
@@ -72,7 +71,6 @@ export function SettingsModal({ me, accessToken, initialTab = 'account', onClose
   const { theme, setTheme } = useTheme()
   const [activeKey, setActiveKey] = useState<SettingsTab>(initialTab)
   const [profileView, setProfileView] = useState(false)
-  const [sidebarViewMode, setSidebarViewMode] = useState<SidebarViewMode>(() => readSidebarViewMode())
   const localMode = isLocalMode()
   const navItems = (isDesktop() ? DESKTOP_NAV_ITEMS : BASE_NAV_ITEMS)
     .filter(item => !(localMode && item.key === 'credits'))
@@ -82,12 +80,6 @@ export function SettingsModal({ me, accessToken, initialTab = 'account', onClose
   const handleTabChange = (key: SettingsTab) => {
     setActiveKey(key)
     if (key !== 'account') setProfileView(false)
-  }
-
-  const handleViewModeChange = (mode: SidebarViewMode) => {
-    setSidebarViewMode(mode)
-    writeSidebarViewMode(mode)
-    window.dispatchEvent(new CustomEvent('arkloop:sidebar-view-mode-changed', { detail: mode }))
   }
 
   return (
@@ -184,33 +176,6 @@ export function SettingsModal({ me, accessToken, initialTab = 'account', onClose
                 <LanguageContent locale={locale} setLocale={setLocale} label={t.language} />
                 <TimeZoneSettings me={me} accessToken={accessToken} onMeUpdated={onMeUpdated} />
                 <ThemeContent theme={theme} setTheme={setTheme} label={t.appearance} t={t} />
-                <div className="flex flex-col gap-2">
-                  <span className="text-sm font-medium text-[var(--c-text-heading)]">{t.sidebarViewMode}</span>
-                  <span className="text-xs text-[var(--c-text-tertiary)]">{t.sidebarViewModeDesc}</span>
-                  <div
-                    className="flex w-[240px] rounded-lg p-[3px]"
-                    style={{ border: '0.5px solid var(--c-border-subtle)', background: 'var(--c-bg-page)' }}
-                  >
-                    {(['project', 'gtd'] as const).map((mode) => {
-                      const active = sidebarViewMode === mode
-                      return (
-                        <button
-                          key={mode}
-                          type="button"
-                          onClick={() => handleViewModeChange(mode)}
-                          className="flex flex-1 items-center justify-center rounded-md py-1.5 text-xs transition-colors duration-100"
-                          style={{
-                            background: active ? 'var(--c-bg-deep)' : 'transparent',
-                            color: active ? 'var(--c-text-heading)' : 'var(--c-text-tertiary)',
-                            fontWeight: active ? 500 : 400,
-                          }}
-                        >
-                          <span>{mode === 'project' ? t.sidebarViewModeProject : t.sidebarViewModeGtd}</span>
-                        </button>
-                      )
-                    })}
-                  </div>
-                </div>
                 <InviteCodeContent accessToken={accessToken} />
                 <div className="flex flex-col gap-2">
                   <HelpContent label={t.getHelp} />

@@ -2137,25 +2137,21 @@ export function writeCustomBodyFontToStorage(font: string | null): void {
 
 // -- Sidebar View & GTD --
 
-export type SidebarViewMode = 'project' | 'gtd'
+const GTD_ENABLED_KEY = 'arkloop:web:gtd_enabled'
 
-const SIDEBAR_VIEW_MODE_KEY = 'arkloop:web:sidebar_view_mode'
-
-export function readSidebarViewMode(): SidebarViewMode {
-  if (!canUseLocalStorage()) return 'project'
+export function readGtdEnabled(): boolean {
+  if (!canUseLocalStorage()) return false
   try {
-    const raw = localStorage.getItem(SIDEBAR_VIEW_MODE_KEY)
-    if (raw === 'gtd') return 'gtd'
-    return 'project'
+    return localStorage.getItem(GTD_ENABLED_KEY) === 'true'
   } catch {
-    return 'project'
+    return false
   }
 }
 
-export function writeSidebarViewMode(mode: SidebarViewMode): void {
+export function writeGtdEnabled(v: boolean): void {
   if (!canUseLocalStorage()) return
   try {
-    localStorage.setItem(SIDEBAR_VIEW_MODE_KEY, mode)
+    localStorage.setItem(GTD_ENABLED_KEY, String(v))
   } catch { /* ignore */ }
 }
 
@@ -2216,21 +2212,21 @@ export function writePinnedThreadIds(ids: Set<string>): void {
   } catch { /* ignore */ }
 }
 
-const COLLAPSED_PROJECT_PATHS_KEY = 'arkloop:web:collapsed_project_paths'
+const EXPANDED_PROJECT_PATHS_KEY = 'arkloop:web:expanded_project_paths'
 
-export function readCollapsedProjectPaths(): Set<string> {
+export function readExpandedProjectPaths(): Set<string> {
   if (!canUseLocalStorage()) return new Set()
   try {
-    const raw = localStorage.getItem(COLLAPSED_PROJECT_PATHS_KEY)
+    const raw = localStorage.getItem(EXPANDED_PROJECT_PATHS_KEY)
     return new Set(JSON.parse(raw ?? '[]') as string[])
   } catch {
     return new Set()
   }
 }
 
-export function writeCollapsedProjectPaths(paths: Set<string>): void {
+export function writeExpandedProjectPaths(paths: Set<string>): void {
   if (!canUseLocalStorage()) return
   try {
-    localStorage.setItem(COLLAPSED_PROJECT_PATHS_KEY, JSON.stringify([...paths]))
+    localStorage.setItem(EXPANDED_PROJECT_PATHS_KEY, JSON.stringify([...paths]))
   } catch { /* ignore */ }
 }
