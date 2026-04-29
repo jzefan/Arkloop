@@ -15,6 +15,7 @@ import (
 	"arkloop/services/api/internal/mcpfilesync"
 	"arkloop/services/api/internal/observability"
 	sharedenvironmentref "arkloop/services/shared/environmentref"
+	sharedmcpinstall "arkloop/services/shared/mcpinstall"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -26,6 +27,7 @@ type mcpInstallRequest struct {
 	Transport       *string           `json:"transport,omitempty"`
 	LaunchSpec      map[string]any    `json:"launch_spec,omitempty"`
 	AuthHeaders     map[string]string `json:"auth_headers,omitempty"`
+	EnvSecrets      map[string]string `json:"env_secrets,omitempty"`
 	BearerToken     *string           `json:"bearer_token,omitempty"`
 	ClearAuth       bool              `json:"clear_auth,omitempty"`
 	HostRequirement *string           `json:"host_requirement,omitempty"`
@@ -319,7 +321,7 @@ func createMCPInstall(
 		httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "request validation failed", traceID, nil)
 		return
 	}
-	install, authSecretID, err := buildMCPInstallFromRequest(actor.AccountID, actor.UserID, req)
+	install, authPayload, err := buildMCPInstallFromRequest(actor.AccountID, actor.UserID, req)
 	if err != nil {
 		httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", err.Error(), traceID, nil)
 		return
@@ -331,8 +333,8 @@ func createMCPInstall(
 	}
 	defer func() { _ = tx.Rollback(r.Context()) }()
 	txInstalls := installsRepo.WithTx(tx)
-	if authSecretID != nil && secretsRepo != nil {
-		secret, err := upsertMCPAuthHeadersSecret(r.Context(), secretsRepo.WithTx(tx), actor.UserID, install.InstallKey, authSecretID)
+	if authPayload != nil && secretsRepo != nil {
+		secret, err := upsertMCPAuthHeadersSecret(r.Context(), secretsRepo.WithTx(tx), actor.UserID, install.InstallKey, authPayload)
 		if err != nil {
 			httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 			return
@@ -403,6 +405,7 @@ func updateMCPInstall(
 			httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 			return
 		}
+		patch.ClearAuthHeaders = false
 		patch.AuthHeadersSecretID = &secretID
 	}
 	updated, err := installsRepo.WithTx(tx).Patch(r.Context(), actor.AccountID, id, patch)
@@ -480,12 +483,12 @@ func checkMCPInstall(
 		httpkit.WriteError(w, nethttp.StatusNotFound, "mcp_installs.not_found", "install not found", traceID, nil)
 		return
 	}
-	headers, err := loadMCPAuthHeaders(r.Context(), secretsRepo, item.AuthHeadersSecretID)
+	authPayload, err := loadMCPAuthPayload(r.Context(), secretsRepo, item.AuthHeadersSecretID)
 	if err != nil {
 		httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 		return
 	}
-	status, code, msg := runMCPInstallCheck(r.Context(), *item, headers)
+	status, code, msg := runMCPInstallCheck(r.Context(), *item, authPayload)
 	now := time.Now().UTC()
 	updated, err := installsRepo.Patch(r.Context(), actor.AccountID, item.ID, data.ProfileMCPInstallPatch{
 		DiscoveryStatus:  &status,
@@ -605,7 +608,7 @@ func setWorkspaceMCPEnablement(
 	httpkit.WriteJSON(w, traceID, nethttp.StatusOK, map[string]any{"items": itemsResp})
 }
 
-func buildMCPInstallFromRequest(accountID, userID uuid.UUID, req mcpInstallRequest) (data.ProfileMCPInstall, map[string]string, error) {
+func buildMCPInstallFromRequest(accountID, userID uuid.UUID, req mcpInstallRequest) (data.ProfileMCPInstall, *sharedmcpinstall.AuthPayload, error) {
 	displayName := strings.TrimSpace(derefReqString(req.DisplayName))
 	transport := strings.TrimSpace(derefReqString(req.Transport))
 	if displayName == "" || transport == "" {
@@ -624,7 +627,7 @@ func buildMCPInstallFromRequest(accountID, userID uuid.UUID, req mcpInstallReque
 			hostRequirement = "remote_http"
 		}
 	}
-	launchSpecJSON, authHeaders, err := sanitizeMCPLaunchSpec(req.LaunchSpec, req.AuthHeaders, req.BearerToken)
+	launchSpecJSON, authPayload, err := sanitizeMCPLaunchSpec(req.LaunchSpec, req.AuthHeaders, req.EnvSecrets, req.BearerToken)
 	if err != nil {
 		return data.ProfileMCPInstall{}, nil, fmt.Errorf("launch_spec is invalid")
 	}
@@ -639,10 +642,10 @@ func buildMCPInstallFromRequest(accountID, userID uuid.UUID, req mcpInstallReque
 		LaunchSpecJSON:  launchSpecJSON,
 		HostRequirement: hostRequirement,
 		DiscoveryStatus: "needs_check",
-	}, authHeaders, nil
+	}, authPayload, nil
 }
 
-func buildMCPInstallPatch(current data.ProfileMCPInstall, req mcpInstallRequest) (data.ProfileMCPInstallPatch, map[string]string, error) {
+func buildMCPInstallPatch(current data.ProfileMCPInstall, req mcpInstallRequest) (data.ProfileMCPInstallPatch, *sharedmcpinstall.AuthPayload, error) {
 	var patch data.ProfileMCPInstallPatch
 	if req.DisplayName != nil {
 		patch.DisplayName = cleanStringPtr(req.DisplayName)
@@ -651,14 +654,14 @@ func buildMCPInstallPatch(current data.ProfileMCPInstall, req mcpInstallRequest)
 		patch.Transport = cleanStringPtr(req.Transport)
 	}
 	if req.LaunchSpec != nil {
-		payload, authHeaders, err := sanitizeMCPLaunchSpec(req.LaunchSpec, req.AuthHeaders, req.BearerToken)
+		payload, authPayload, err := sanitizeMCPLaunchSpec(req.LaunchSpec, req.AuthHeaders, req.EnvSecrets, req.BearerToken)
 		if err != nil {
 			return patch, nil, fmt.Errorf("launch_spec is invalid")
 		}
 		patch.LaunchSpecJSON = &payload
 		status := "needs_check"
 		patch.DiscoveryStatus = &status
-		return finalizeMCPInstallPatch(patch, authHeaders, req)
+		return finalizeMCPInstallPatch(patch, authPayload, req)
 	}
 	if req.HostRequirement != nil {
 		patch.HostRequirement = cleanStringPtr(req.HostRequirement)
@@ -862,26 +865,30 @@ func resolveWorkspaceRef(
 	return ensureDefaultWorkspaceForProfile(ctx, profileRepo, workspaceRepo, accountID, userID, profileRef)
 }
 
-func finalizeMCPInstallPatch(patch data.ProfileMCPInstallPatch, authHeaders map[string]string, req mcpInstallRequest) (data.ProfileMCPInstallPatch, map[string]string, error) {
+func finalizeMCPInstallPatch(patch data.ProfileMCPInstallPatch, authPayload *sharedmcpinstall.AuthPayload, req mcpInstallRequest) (data.ProfileMCPInstallPatch, *sharedmcpinstall.AuthPayload, error) {
 	if req.ClearAuth {
 		patch.ClearAuthHeaders = true
 		status := data.MCPDiscoveryStatusNeedsCheck
 		patch.DiscoveryStatus = &status
 	}
-	if authHeaders == nil {
-		authHeaders = cloneStringMap(req.AuthHeaders)
+	if authPayload == nil {
+		headers := cloneStringMap(req.AuthHeaders)
 		if token := strings.TrimSpace(derefReqString(req.BearerToken)); token != "" {
-			authHeaders["Authorization"] = "Bearer " + token
+			if headers == nil {
+				headers = map[string]string{}
+			}
+			headers["Authorization"] = "Bearer " + token
 		}
+		authPayload = newMCPAuthPayload(headers, req.EnvSecrets)
 	}
-	if len(authHeaders) > 0 {
+	if authPayload != nil && (len(authPayload.Headers) > 0 || len(authPayload.Env) > 0) {
 		status := data.MCPDiscoveryStatusNeedsCheck
 		patch.DiscoveryStatus = &status
 	}
-	return patch, authHeaders, nil
+	return patch, authPayload, nil
 }
 
-func sanitizeMCPLaunchSpec(raw map[string]any, reqHeaders map[string]string, bearerToken *string) (json.RawMessage, map[string]string, error) {
+func sanitizeMCPLaunchSpec(raw map[string]any, reqHeaders map[string]string, reqEnvSecrets map[string]string, bearerToken *string) (json.RawMessage, *sharedmcpinstall.AuthPayload, error) {
 	spec := map[string]any{}
 	for key, value := range raw {
 		spec[key] = value
@@ -906,14 +913,36 @@ func sanitizeMCPLaunchSpec(raw map[string]any, reqHeaders map[string]string, bea
 	if token := strings.TrimSpace(derefReqString(bearerToken)); token != "" {
 		authHeaders["Authorization"] = "Bearer " + token
 	}
+	authEnv := cloneStringMap(reqEnvSecrets)
+	if len(authEnv) > 0 {
+		if rawEnv, ok := spec["env"].(map[string]any); ok {
+			cleanEnv := map[string]any{}
+			for key, value := range rawEnv {
+				cleanKey := strings.TrimSpace(key)
+				if cleanKey == "" {
+					continue
+				}
+				if _, secret := authEnv[cleanKey]; secret {
+					continue
+				}
+				cleanEnv[cleanKey] = value
+			}
+			if len(cleanEnv) > 0 {
+				spec["env"] = cleanEnv
+			} else {
+				delete(spec, "env")
+			}
+		}
+	}
 	encoded, err := json.Marshal(spec)
 	if err != nil {
 		return nil, nil, err
 	}
-	if len(authHeaders) == 0 {
+	authPayload := newMCPAuthPayload(authHeaders, authEnv)
+	if authPayload == nil {
 		return json.RawMessage(encoded), nil, nil
 	}
-	return json.RawMessage(encoded), authHeaders, nil
+	return json.RawMessage(encoded), authPayload, nil
 }
 
 func asRequestString(value any) string {
@@ -927,7 +956,7 @@ func writeImportedMCPAuthSecret(ctx context.Context, repo *data.SecretsRepositor
 	if imported == nil || len(imported.AuthHeaders) == 0 {
 		return nil, nil
 	}
-	id, err := upsertMCPAuthHeadersSecret(ctx, repo, userID, imported.Install.InstallKey, imported.AuthHeaders)
+	id, err := upsertMCPAuthHeadersSecret(ctx, repo, userID, imported.Install.InstallKey, newMCPAuthPayload(imported.AuthHeaders, nil))
 	if err != nil {
 		return nil, err
 	}
@@ -987,13 +1016,29 @@ func cloneStringMap(value map[string]string) map[string]string {
 	}
 	out := make(map[string]string, len(value))
 	for key, item := range value {
-		out[strings.TrimSpace(key)] = item
+		key = strings.TrimSpace(key)
+		if key == "" {
+			continue
+		}
+		out[key] = item
+	}
+	if len(out) == 0 {
+		return nil
 	}
 	return out
 }
 
-func upsertMCPAuthHeadersSecret(ctx context.Context, repo *data.SecretsRepository, userID uuid.UUID, installKey string, payload map[string]string) (uuid.UUID, error) {
-	if repo == nil || len(payload) == 0 {
+func newMCPAuthPayload(headers map[string]string, env map[string]string) *sharedmcpinstall.AuthPayload {
+	headers = cloneStringMap(headers)
+	env = cloneStringMap(env)
+	if len(headers) == 0 && len(env) == 0 {
+		return nil
+	}
+	return &sharedmcpinstall.AuthPayload{Headers: headers, Env: env}
+}
+
+func upsertMCPAuthHeadersSecret(ctx context.Context, repo *data.SecretsRepository, userID uuid.UUID, installKey string, payload *sharedmcpinstall.AuthPayload) (uuid.UUID, error) {
+	if repo == nil || payload == nil || (len(payload.Headers) == 0 && len(payload.Env) == 0) {
 		return uuid.Nil, nil
 	}
 	encoded, err := json.Marshal(payload)
@@ -1008,18 +1053,26 @@ func upsertMCPAuthHeadersSecret(ctx context.Context, repo *data.SecretsRepositor
 }
 
 func loadMCPAuthHeaders(ctx context.Context, repo *data.SecretsRepository, secretID *uuid.UUID) (map[string]string, error) {
+	payload, err := loadMCPAuthPayload(ctx, repo, secretID)
+	if err != nil {
+		return nil, err
+	}
+	return payload.Headers, nil
+}
+
+func loadMCPAuthPayload(ctx context.Context, repo *data.SecretsRepository, secretID *uuid.UUID) (sharedmcpinstall.AuthPayload, error) {
 	if repo == nil || secretID == nil || *secretID == uuid.Nil {
-		return nil, nil
+		return sharedmcpinstall.AuthPayload{}, nil
 	}
 	plain, err := repo.DecryptByID(ctx, *secretID)
 	if err != nil || plain == nil {
-		return nil, err
+		return sharedmcpinstall.AuthPayload{}, err
 	}
-	headers := map[string]string{}
-	if err := json.Unmarshal([]byte(*plain), &headers); err != nil {
-		return nil, err
+	payload, err := sharedmcpinstall.DecodeAuthPayload([]byte(*plain))
+	if err != nil {
+		return sharedmcpinstall.AuthPayload{}, err
 	}
-	return headers, nil
+	return payload, nil
 }
 
 func notifyMCPChanged(ctx context.Context, pool data.DB, accountID uuid.UUID) {

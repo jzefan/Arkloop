@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sort"
+	"strings"
 )
 
 type manifestEntry struct {
@@ -74,7 +76,16 @@ func (p *ObjectStoreProvider) Load(ctx context.Context, profileRef string) (*Con
 			continue
 		}
 		ptr, ok := fieldMap[entry.Path]
-		if !ok {
+		if ok {
+			blobKey := "profiles/" + profileRef + "/blobs/" + entry.SHA256
+			data, err := p.store.Get(ctx, blobKey)
+			if err != nil {
+				continue
+			}
+			*ptr = string(data)
+			continue
+		}
+		if !strings.EqualFold(pathExt(entry.Path), ".md") {
 			continue
 		}
 		blobKey := "profiles/" + profileRef + "/blobs/" + entry.SHA256
@@ -82,8 +93,17 @@ func (p *ObjectStoreProvider) Load(ctx context.Context, profileRef string) (*Con
 		if err != nil {
 			continue
 		}
-		*ptr = string(data)
+		content.ExtraFiles = append(content.ExtraFiles, FileContent{Path: entry.Path, Content: string(data)})
 	}
+	sort.Slice(content.ExtraFiles, func(i, j int) bool { return content.ExtraFiles[i].Path < content.ExtraFiles[j].Path })
 
 	return content, nil
+}
+
+func pathExt(value string) string {
+	index := strings.LastIndex(value, ".")
+	if index < 0 {
+		return ""
+	}
+	return value[index:]
 }

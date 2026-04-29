@@ -32,7 +32,9 @@
     "type-check": "tsc -p tsconfig.main.json --noEmit && tsc -p tsconfig.preload.json --noEmit"
   },
   "dependencies": {
-    "electron-updater": "^6.6.2"
+    "electron-updater": "^6.6.2",
+    "json5": "^2.2.3",
+    "yaml": "^2.8.2"
   },
   "devDependencies": {
     "@types/node": "^22.16.0",

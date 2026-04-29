@@ -2213,6 +2213,7 @@ export type UpsertMCPInstallRequest = {
   transport?: 'stdio' | 'http_sse' | 'streamable_http'
   launch_spec?: Record<string, unknown>
   auth_headers?: Record<string, string>
+  env_secrets?: Record<string, string>
   bearer_token?: string
   host_requirement?: string
   clear_auth?: boolean

@@ -40,3 +40,44 @@ func TestServerConfigFromInstallAppliesSharedHostFilteringInputs(t *testing.T) {
 		t.Fatal("expected stdio config to fail remote_http requirement")
 	}
 }
+
+func TestServerConfigFromInstallMergesSecretEnv(t *testing.T) {
+	launchSpec, err := json.Marshal(map[string]any{
+		"transport": "stdio",
+		"command":   "node",
+		"env": map[string]any{
+			"VISIBLE": "1",
+		},
+	})
+	if err != nil {
+		t.Fatalf("marshal launch spec: %v", err)
+	}
+
+	server, err := ServerConfigFromInstallWithAuth(EnabledInstall{
+		AccountID:      uuid.New(),
+		InstallKey:     "demo",
+		Transport:      "stdio",
+		LaunchSpecJSON: launchSpec,
+	}, AuthPayload{
+		Env: map[string]string{"GITHUB_TOKEN": "secret"},
+	}, 10_000)
+	if err != nil {
+		t.Fatalf("server config from install: %v", err)
+	}
+	if got := server.Env["VISIBLE"]; got != "1" {
+		t.Fatalf("unexpected visible env: %q", got)
+	}
+	if got := server.Env["GITHUB_TOKEN"]; got != "secret" {
+		t.Fatalf("unexpected secret env: %q", got)
+	}
+}
+
+func TestDecodeAuthPayloadSupportsLegacyHeaderMap(t *testing.T) {
+	auth, err := DecodeAuthPayload([]byte(`{"Authorization":"Bearer token"}`))
+	if err != nil {
+		t.Fatalf("decode auth payload: %v", err)
+	}
+	if got := auth.Headers["Authorization"]; got != "Bearer token" {
+		t.Fatalf("unexpected auth header: %q", got)
+	}
+}

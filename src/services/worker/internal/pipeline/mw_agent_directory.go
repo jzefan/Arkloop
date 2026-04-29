@@ -57,6 +57,9 @@ func assembleAWDSegment(c *agentdirectory.Content) string {
 		{"MEMORY.md", "memory", c.Memory},
 		{"USER.md", "user", c.User},
 	}
+	for _, file := range c.ExtraFiles {
+		entries = append(entries, fileEntry{file.Path, "file", file.Content})
+	}
 
 	totalChars := 0
 	for _, e := range entries {

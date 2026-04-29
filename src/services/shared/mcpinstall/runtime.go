@@ -49,6 +49,11 @@ type ServerConfig struct {
 	CallTimeoutMs    int
 }
 
+type AuthPayload struct {
+	Headers map[string]string `json:"headers,omitempty"`
+	Env     map[string]string `json:"env,omitempty"`
+}
+
 func LoadEnabledInstalls(ctx context.Context, pool DiscoveryQueryer, accountID uuid.UUID, profileRef string, workspaceRef string) ([]EnabledInstall, error) {
 	if pool == nil {
 		return nil, fmt.Errorf("mcp install: pool must not be nil")
@@ -200,6 +205,10 @@ func ParseServerConfig(serverID string, payload map[string]any, defaultTimeoutMs
 }
 
 func ServerConfigFromInstall(install EnabledInstall, headers map[string]string, defaultTimeoutMs int) (ServerConfig, error) {
+	return ServerConfigFromInstallWithAuth(install, AuthPayload{Headers: headers}, defaultTimeoutMs)
+}
+
+func ServerConfigFromInstallWithAuth(install EnabledInstall, auth AuthPayload, defaultTimeoutMs int) (ServerConfig, error) {
 	spec := map[string]any{}
 	if len(install.LaunchSpecJSON) > 0 {
 		if err := json.Unmarshal(install.LaunchSpecJSON, &spec); err != nil {
@@ -216,16 +225,28 @@ func ServerConfigFromInstall(install EnabledInstall, headers map[string]string, 
 		return ServerConfig{}, err
 	}
 	server.AccountID = install.AccountID.String()
-	if len(headers) > 0 {
+	if len(auth.Headers) > 0 {
 		if server.Headers == nil {
 			server.Headers = map[string]string{}
 		}
-		for key, value := range headers {
+		for key, value := range auth.Headers {
 			key = strings.TrimSpace(key)
 			if key == "" {
 				continue
 			}
 			server.Headers[key] = value
+		}
+	}
+	if len(auth.Env) > 0 {
+		if server.Env == nil {
+			server.Env = map[string]string{}
+		}
+		for key, value := range auth.Env {
+			key = strings.TrimSpace(key)
+			if key == "" {
+				continue
+			}
+			server.Env[key] = value
 		}
 	}
 	return server, nil
@@ -236,11 +257,11 @@ type InstallSecretDecryptor func(ctx context.Context, encrypted string, keyVersi
 func ServerConfigsFromInstalls(ctx context.Context, installs []EnabledInstall, decrypt InstallSecretDecryptor, defaultTimeoutMs int) []ServerConfig {
 	servers := make([]ServerConfig, 0, len(installs))
 	for _, install := range installs {
-		headers, ok := decryptInstallHeaders(ctx, install, decrypt)
+		auth, ok := decryptInstallAuthPayload(ctx, install, decrypt)
 		if !ok {
 			continue
 		}
-		server, err := ServerConfigFromInstall(install, headers, defaultTimeoutMs)
+		server, err := ServerConfigFromInstallWithAuth(install, auth, defaultTimeoutMs)
 		if err != nil {
 			continue
 		}
@@ -253,22 +274,32 @@ func ServerConfigsFromInstalls(ctx context.Context, installs []EnabledInstall, d
 }
 
 func decryptInstallHeaders(ctx context.Context, install EnabledInstall, decrypt InstallSecretDecryptor) (map[string]string, bool) {
+	auth, ok := decryptInstallAuthPayload(ctx, install, decrypt)
+	return auth.Headers, ok
+}
+
+func decryptInstallAuthPayload(ctx context.Context, install EnabledInstall, decrypt InstallSecretDecryptor) (AuthPayload, bool) {
 	headers := map[string]string{}
+	auth := AuthPayload{Headers: headers}
 	if install.EncryptedValue == nil {
 		if install.KeyVersion != nil {
-			return nil, false
+			return AuthPayload{}, false
 		}
-		return headers, true
+		return auth, true
 	}
 	if decrypt == nil {
-		return nil, false
+		return AuthPayload{}, false
 	}
 	payload, err := decrypt(ctx, *install.EncryptedValue, install.KeyVersion)
 	if err != nil {
-		return nil, false
+		return AuthPayload{}, false
 	}
 	if len(payload) == 0 {
-		return headers, true
+		return auth, true
+	}
+	decoded, err := DecodeAuthPayload(payload)
+	if err == nil {
+		return decoded, true
 	}
 	if err := json.Unmarshal(payload, &headers); err != nil {
 		token := strings.TrimSpace(string(payload))
@@ -276,7 +307,23 @@ func decryptInstallHeaders(ctx context.Context, install EnabledInstall, decrypt 
 			headers["Authorization"] = "Bearer " + token
 		}
 	}
-	return headers, true
+	auth.Headers = headers
+	return auth, true
+}
+
+func DecodeAuthPayload(payload []byte) (AuthPayload, error) {
+	var structured AuthPayload
+	if err := json.Unmarshal(payload, &structured); err == nil && (len(structured.Headers) > 0 || len(structured.Env) > 0) {
+		structured.Headers = cleanStringMap(structured.Headers)
+		structured.Env = cleanStringMap(structured.Env)
+		return structured, nil
+	}
+
+	headers := map[string]string{}
+	if err := json.Unmarshal(payload, &headers); err != nil {
+		return AuthPayload{}, err
+	}
+	return AuthPayload{Headers: cleanStringMap(headers)}, nil
 }
 
 func CheckHostRequirement(server ServerConfig, requirement string) error {
@@ -331,4 +378,19 @@ func asString(value any) string {
 	default:
 		return ""
 	}
+}
+
+func cleanStringMap(value map[string]string) map[string]string {
+	if len(value) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(value))
+	for key, item := range value {
+		key = strings.TrimSpace(key)
+		if key == "" {
+			continue
+		}
+		out[key] = item
+	}
+	return out
 }

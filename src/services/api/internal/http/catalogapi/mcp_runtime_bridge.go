@@ -8,8 +8,8 @@ import (
 	sharedmcpinstall "arkloop/services/shared/mcpinstall"
 )
 
-func runMCPInstallCheck(ctx context.Context, item data.ProfileMCPInstall, headers map[string]string) (string, string, string) {
-	server, err := effectiveServerConfigFromInstall(item, headers)
+func runMCPInstallCheck(ctx context.Context, item data.ProfileMCPInstall, auth sharedmcpinstall.AuthPayload) (string, string, string) {
+	server, err := effectiveServerConfigFromInstall(item, auth)
 	if err != nil {
 		return "protocol_error", "invalid_launch_spec", err.Error()
 	}
@@ -34,7 +34,7 @@ func runMCPInstallCheck(ctx context.Context, item data.ProfileMCPInstall, header
 	return "ready", "", ""
 }
 
-func effectiveServerConfigFromInstall(item data.ProfileMCPInstall, headers map[string]string) (effectiveMCPServerConfig, error) {
+func effectiveServerConfigFromInstall(item data.ProfileMCPInstall, auth sharedmcpinstall.AuthPayload) (effectiveMCPServerConfig, error) {
 	install := sharedmcpinstall.EnabledInstall{
 		ID:               item.ID,
 		AccountID:        item.AccountID,
@@ -52,7 +52,7 @@ func effectiveServerConfigFromInstall(item data.ProfileMCPInstall, headers map[s
 		LastErrorMessage: item.LastErrorMessage,
 		LastCheckedAt:    item.LastCheckedAt,
 	}
-	return sharedmcpinstall.ServerConfigFromInstall(install, headers, effectiveMCPDefaultTimeoutMs)
+	return sharedmcpinstall.ServerConfigFromInstallWithAuth(install, auth, effectiveMCPDefaultTimeoutMs)
 }
 
 func checkEffectiveMCPHostRequirement(server effectiveMCPServerConfig, requirement string) error {

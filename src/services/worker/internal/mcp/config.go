@@ -109,23 +109,24 @@ func LoadConfigFromDB(ctx context.Context, pool DiscoveryQueryer, accountID uuid
 
 	servers := make([]ServerConfig, 0, len(installs))
 	for _, install := range installs {
-		headers := map[string]string{}
+		auth := sharedmcpinstall.AuthPayload{Headers: map[string]string{}}
 		if install.EncryptedValue != nil && install.KeyVersion != nil {
 			plainBytes, err := workerCrypto.DecryptWithKeyVersion(*install.EncryptedValue, *install.KeyVersion)
 			if err != nil {
 				continue
 			}
-			if err := json.Unmarshal(plainBytes, &headers); err == nil {
+			if decoded, err := sharedmcpinstall.DecodeAuthPayload(plainBytes); err == nil {
+				auth = decoded
 			} else {
 				plaintext := strings.TrimSpace(string(plainBytes))
 				if plaintext != "" {
-					headers["Authorization"] = "Bearer " + plaintext
+					auth.Headers["Authorization"] = "Bearer " + plaintext
 				}
 			}
 		} else if install.EncryptedValue != nil {
 			continue
 		}
-		server, err := sharedmcpinstall.ServerConfigFromInstall(install, headers, defaultCallTimeoutMs)
+		server, err := sharedmcpinstall.ServerConfigFromInstallWithAuth(install, auth, defaultCallTimeoutMs)
 		if err != nil {
 			continue
 		}
