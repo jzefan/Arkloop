@@ -33,6 +33,38 @@ func TestQuirkMatch_EchoReasoningContent(t *testing.T) {
 	}
 }
 
+func TestQuirkMatch_DowngradeXHighReasoning(t *testing.T) {
+	q := openAIQuirks[1]
+	if q.ID != QuirkDowngradeXHighReasoning {
+		t.Fatalf("expected downgrade_xhigh_reasoning, got %s", q.ID)
+	}
+	cases := []struct {
+		name   string
+		status int
+		body   string
+		want   bool
+	}{
+		{
+			name:   "xiaomi_literal_error",
+			status: 400,
+			body:   `{"message":"Error from provider (Xiaomi): [{'type': 'literal_error', 'loc': ('body', 'reasoning_effort'), 'msg': \"Input should be 'low', 'medium' or 'high'\", 'input': 'xhigh', 'ctx': {'expected': \"'low', 'medium' or 'high'\"}}]"}`,
+			want:   true,
+		},
+		{"wrong_status", 500, `reasoning_effort xhigh expected low medium high`, false},
+		{"missing_xhigh", 400, `reasoning_effort expected low medium high`, false},
+		{"xhigh_does_not_count_as_high", 400, `reasoning_effort input xhigh expected low medium`, false},
+		{"missing_expected_values", 400, `reasoning_effort xhigh is invalid`, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := q.Match(tc.status, tc.body)
+			if got != tc.want {
+				t.Fatalf("Match(%d,%q)=%v want %v", tc.status, tc.body, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestQuirkMatch_StripUnsignedThinking(t *testing.T) {
 	q := anthropicQuirks[0]
 	if q.ID != QuirkStripUnsignedThinking {
@@ -132,6 +164,30 @@ func TestQuirkApply_EchoReasoningContent(t *testing.T) {
 	inputItem := payload["input"].([]any)[0].(map[string]any)
 	if _, ok := inputItem["reasoning_content"]; ok {
 		t.Fatalf("responses input must not get reasoning_content: %#v", inputItem)
+	}
+}
+
+func TestQuirkApply_DowngradeXHighReasoning(t *testing.T) {
+	payload := map[string]any{
+		"reasoning_effort": "xhigh",
+		"reasoning": map[string]any{
+			"effort":  "xhigh",
+			"summary": "auto",
+		},
+	}
+	applyDowngradeXHighReasoning(payload)
+	if payload["reasoning_effort"] != "high" {
+		t.Fatalf("expected chat reasoning_effort high, got %#v", payload["reasoning_effort"])
+	}
+	reasoning := payload["reasoning"].(map[string]any)
+	if reasoning["effort"] != "high" || reasoning["summary"] != "auto" {
+		t.Fatalf("unexpected responses reasoning: %#v", reasoning)
+	}
+
+	unchanged := map[string]any{"reasoning_effort": "medium", "reasoning": map[string]any{"effort": "low"}}
+	applyDowngradeXHighReasoning(unchanged)
+	if unchanged["reasoning_effort"] != "medium" || unchanged["reasoning"].(map[string]any)["effort"] != "low" {
+		t.Fatalf("non-xhigh reasoning must not change: %#v", unchanged)
 	}
 }
 
@@ -257,7 +313,7 @@ func TestQuirkApply_ForceTempOneOnThinking(t *testing.T) {
 func TestQuirkStore_Concurrent(t *testing.T) {
 	store := NewQuirkStore()
 	var wg sync.WaitGroup
-	ids := []QuirkID{QuirkEchoReasoningContent, QuirkStripUnsignedThinking, QuirkForceTempOneOnThink, QuirkEchoEmptyTextOnThink}
+	ids := []QuirkID{QuirkEchoReasoningContent, QuirkDowngradeXHighReasoning, QuirkStripUnsignedThinking, QuirkForceTempOneOnThink, QuirkEchoEmptyTextOnThink}
 	for _, id := range ids {
 		id := id
 		wg.Add(2)
@@ -301,6 +357,10 @@ func TestDetectQuirk(t *testing.T) {
 	id, ok = detectQuirk(400, `reasoning_content is missing because thinking is enabled`, openAIQuirks)
 	if !ok || id != QuirkEchoReasoningContent {
 		t.Fatalf("expected moonshot echo, got %s ok=%v", id, ok)
+	}
+	id, ok = detectQuirk(400, `reasoning_effort input xhigh expected low medium high`, openAIQuirks)
+	if !ok || id != QuirkDowngradeXHighReasoning {
+		t.Fatalf("expected xhigh downgrade, got %s ok=%v", id, ok)
 	}
 	id, ok = detectQuirk(400, `Invalid signature in thinking block`, anthropicQuirks)
 	if !ok || id != QuirkStripUnsignedThinking {
