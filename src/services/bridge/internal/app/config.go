@@ -19,17 +19,19 @@ const (
 	bridgeCORSOriginsEnv = "ARKLOOP_BRIDGE_CORS_ORIGINS"
 	bridgeAuthTokenEnv   = "ARKLOOP_BRIDGE_AUTH_TOKEN"
 
-	defaultBridgeAddr        = "127.0.0.1:19003"
-	defaultModulesFileRel    = "install/modules.yaml"
+	defaultBridgeAddr     = "127.0.0.1:19003"
+	defaultModulesFileRel = "install/modules.yaml"
 )
 
 var defaultBridgeCORSOrigins = []string{
+	"http://localhost:5173",
 	"http://localhost:19080",
 	"http://localhost:19081",
 	"http://localhost:19082",
 	"http://localhost:19083",
 	"http://localhost:19000",
 	"http://localhost:19006",
+	"http://127.0.0.1:5173",
 	"http://127.0.0.1:19080",
 	"http://127.0.0.1:19081",
 	"http://127.0.0.1:19082",
@@ -160,5 +162,3 @@ func isLoopbackAddr(ip net.IP) bool {
 	}
 	return ip.IsLoopback()
 }
-
-

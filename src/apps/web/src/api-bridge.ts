@@ -1,4 +1,4 @@
-import { getDesktopBridgeBaseUrl } from '@arkloop/shared/desktop'
+import { getDesktopAccessToken, getDesktopBridgeBaseUrl } from '@arkloop/shared/desktop'
 
 export type ModuleStatus =
   | 'not_installed'
@@ -56,6 +56,18 @@ class BridgeClient {
     return this.getBaseUrl()
   }
 
+  private authHeaders(): Record<string, string> | undefined {
+    const token = getDesktopAccessToken()
+    return token ? { Authorization: `Bearer ${token}` } : undefined
+  }
+
+  private jsonHeaders(): Record<string, string> {
+    return {
+      'Content-Type': 'application/json',
+      ...(this.authHeaders() ?? {}),
+    }
+  }
+
   async healthz(): Promise<BridgeHealth> {
     const resp = await fetch(`${this.baseUrl()}/healthz`, {
       signal: AbortSignal.timeout(3000),
@@ -66,6 +78,7 @@ class BridgeClient {
 
   async listModules(): Promise<ModuleInfo[]> {
     const resp = await fetch(`${this.baseUrl()}/v1/modules`, {
+      headers: this.authHeaders(),
       signal: AbortSignal.timeout(5000),
     })
     if (!resp.ok) throw new Error(`List modules failed: ${resp.status}`)
@@ -81,7 +94,7 @@ class BridgeClient {
       `${this.baseUrl()}/v1/modules/${encodeURIComponent(moduleId)}/actions`,
       {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: this.jsonHeaders(),
         body: JSON.stringify({ action, params }),
         signal: AbortSignal.timeout(10000),
       },
@@ -96,35 +109,93 @@ class BridgeClient {
     onDone: (result: { status: string; error?: string }) => void,
   ): () => void {
     let finished = false
-    let retries = 0
-    const MAX_RETRIES = 3
-
-    const es = new EventSource(
-      `${this.baseUrl()}/v1/operations/${encodeURIComponent(operationId)}/stream`,
-    )
-    es.addEventListener('log', (event: MessageEvent) => {
-      retries = 0
-      onLog(event.data as string)
-    })
-    es.addEventListener('status', (event: MessageEvent) => {
+    const controller = new AbortController()
+    const finish = (result: { status: string; error?: string }) => {
       if (finished) return
       finished = true
-      es.close()
-      onDone(JSON.parse(event.data as string) as { status: string; error?: string })
-    })
-    es.onerror = () => {
-      if (finished) return
-      retries++
-      if (retries > MAX_RETRIES) {
-        finished = true
-        es.close()
-        onDone({ status: 'failed', error: 'Connection lost' })
-      }
+      onDone(result)
     }
+
+    void this.readOperationStream(operationId, controller.signal, onLog, finish)
+      .catch((error: unknown) => {
+        if (finished || controller.signal.aborted) return
+        finished = true
+        onDone({
+          status: 'failed',
+          error: error instanceof Error ? error.message : 'Connection lost',
+        })
+      })
+
     return () => {
       finished = true
-      es.close()
+      controller.abort()
     }
+  }
+
+  private async readOperationStream(
+    operationId: string,
+    signal: AbortSignal,
+    onLog: (line: string) => void,
+    onDone: (result: { status: string; error?: string }) => void,
+  ): Promise<void> {
+    const resp = await fetch(
+      `${this.baseUrl()}/v1/operations/${encodeURIComponent(operationId)}/stream`,
+      {
+        headers: this.authHeaders(),
+        signal,
+      },
+    )
+    if (!resp.ok) throw new Error(`Operation stream failed: ${resp.status}`)
+    if (!resp.body) throw new Error('Operation stream missing body')
+
+    const reader = resp.body.getReader()
+    const decoder = new TextDecoder()
+    let buffer = ''
+    let streamDone = false
+    const finish = (result: { status: string; error?: string }) => {
+      streamDone = true
+      onDone(result)
+    }
+
+    try {
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+        buffer += decoder.decode(value, { stream: true })
+        buffer = this.consumeOperationFrames(buffer, onLog, finish)
+        if (signal.aborted || streamDone) return
+      }
+
+      buffer += decoder.decode()
+      this.consumeOperationFrames(`${buffer}\n\n`, onLog, finish)
+      if (!signal.aborted && !streamDone) {
+        throw new Error('Operation stream ended before status')
+      }
+    } finally {
+      reader.releaseLock()
+    }
+  }
+
+  private consumeOperationFrames(
+    buffer: string,
+    onLog: (line: string) => void,
+    onDone: (result: { status: string; error?: string }) => void,
+  ): string {
+    const parts = buffer.replace(/\r\n/g, '\n').split('\n\n')
+    const rest = parts.pop() ?? ''
+    for (const part of parts) {
+      const eventLine = part.split('\n').find((line) => line.startsWith('event:'))
+      const dataLine = part.split('\n').find((line) => line.startsWith('data:'))
+      const event = eventLine?.slice('event:'.length).trim()
+      const data = dataLine?.slice('data:'.length).trimStart() ?? ''
+
+      if (event === 'log') {
+        onLog(data)
+      } else if (event === 'status') {
+        onDone(JSON.parse(data) as { status: string; error?: string })
+      }
+    }
+    return rest
   }
 
   waitForOperation(operationId: string): Promise<void> {
@@ -147,6 +218,7 @@ class BridgeClient {
 
   async getExecutionMode(): Promise<'local' | 'vm'> {
     const resp = await fetch(`${this.baseUrl()}/v1/execution-mode`, {
+      headers: this.authHeaders(),
       signal: AbortSignal.timeout(3000),
     })
     if (!resp.ok) throw new Error(`Get execution mode failed: ${resp.status}`)
@@ -157,7 +229,7 @@ class BridgeClient {
   async setExecutionMode(mode: 'local' | 'vm'): Promise<void> {
     const resp = await fetch(`${this.baseUrl()}/v1/execution-mode`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: this.jsonHeaders(),
       body: JSON.stringify({ mode }),
       signal: AbortSignal.timeout(3000),
     })
@@ -166,9 +238,15 @@ class BridgeClient {
 }
 
 function resolveBridgeBaseUrl(): string {
-  return getDesktopBridgeBaseUrl()
-    ?? import.meta.env.VITE_BRIDGE_URL
+  return normalizeBridgeBaseUrl(getDesktopBridgeBaseUrl())
+    ?? normalizeBridgeBaseUrl(import.meta.env.VITE_BRIDGE_URL)
     ?? 'http://localhost:19003'
+}
+
+function normalizeBridgeBaseUrl(value: string | null | undefined): string | null {
+  const trimmed = value?.trim()
+  if (!trimmed) return null
+  return trimmed.replace(/\/+$/, '')
 }
 
 export const bridgeClient = new BridgeClient(resolveBridgeBaseUrl)

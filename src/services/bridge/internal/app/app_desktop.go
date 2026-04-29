@@ -91,9 +91,7 @@ func (a *Application) RunDesktop(ctx context.Context) error {
 		json.NewEncoder(w).Encode(map[string]string{"mode": req.Mode})
 	})
 
-	handler := authMiddleware(a.config.AuthToken,
-		corsMiddleware(a.config.CORSAllowedOrigins, mux),
-	)
+	handler := bridgeHandler(a.config.AuthToken, a.config.CORSAllowedOrigins, mux)
 
 	hostStr, portStr, err := net.SplitHostPort(a.config.Addr)
 	if err != nil {

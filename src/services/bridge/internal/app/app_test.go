@@ -65,6 +65,46 @@ func TestAuthMiddlewareRejectsWithoutToken(t *testing.T) {
 	}
 }
 
+func TestBridgeHandlerAddsCORSHeadersToUnauthorizedResponse(t *testing.T) {
+	handler := bridgeHandler("test-token", []string{"http://localhost:19080"}, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/modules", nil)
+	req.Header.Set("Origin", "http://localhost:19080")
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("expected missing auth to return 401, got %d", rec.Code)
+	}
+	if got := rec.Header().Get("Access-Control-Allow-Origin"); got != "http://localhost:19080" {
+		t.Fatalf("expected allowed origin header, got %q", got)
+	}
+}
+
+func TestBridgeHandlerHandlesPreflightWithoutAuth(t *testing.T) {
+	handler := bridgeHandler("test-token", []string{"http://localhost:19080"}, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatalf("preflight should not reach next handler")
+	}))
+
+	req := httptest.NewRequest(http.MethodOptions, "/v1/modules", nil)
+	req.Header.Set("Origin", "http://localhost:19080")
+	req.Header.Set("Access-Control-Request-Method", http.MethodGet)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("expected preflight to return 204, got %d", rec.Code)
+	}
+	if got := rec.Header().Get("Access-Control-Allow-Origin"); got != "http://localhost:19080" {
+		t.Fatalf("expected allowed origin header, got %q", got)
+	}
+	if got := rec.Header().Get("Access-Control-Allow-Headers"); got != "Content-Type, Authorization" {
+		t.Fatalf("expected allowed headers, got %q", got)
+	}
+}
+
 func TestAuthMiddlewareRejectsInvalidToken(t *testing.T) {
 	handler := authMiddleware("test-token", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
