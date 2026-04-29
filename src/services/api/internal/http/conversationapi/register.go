@@ -51,6 +51,24 @@ func RegisterRoutes(mux *nethttp.ServeMux, deps Deps) {
 	mux.HandleFunc("/v1/threads/search", searchThreads(deps.AuthService, deps.AccountMembershipRepo, deps.ThreadRepo, deps.APIKeysRepo, deps.AuditWriter))
 	mux.HandleFunc("/v1/threads/starred", listStarredThreads(deps.AuthService, deps.AccountMembershipRepo, deps.ThreadStarRepo, deps.APIKeysRepo, deps.AuditWriter))
 	mux.HandleFunc(
+		"/v1/thread-run-state/events",
+		streamThreadRunStateEvents(
+			deps.AuthService,
+			deps.AccountMembershipRepo,
+			deps.ThreadRepo,
+			deps.ProjectRepo,
+			deps.TeamRepo,
+			deps.RunEventRepo,
+			deps.AuditWriter,
+			deps.DirectPool,
+			deps.DirectPoolAcquireTimeout,
+			deps.SSEConfig,
+			deps.APIKeysRepo,
+			deps.RedisClient,
+			deps.EventBus,
+		),
+	)
+	mux.HandleFunc(
 		"/v1/threads/",
 		threadEntry(
 			deps.AuthService,
@@ -69,6 +87,7 @@ func RegisterRoutes(mux *nethttp.ServeMux, deps Deps) {
 			deps.RunLimiter,
 			deps.EntitlementService,
 			deps.RedisClient,
+			deps.EventBus,
 			deps.MessageAttachmentStore,
 			deps.FlagService,
 		),

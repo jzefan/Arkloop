@@ -15,6 +15,7 @@ import (
 	"arkloop/services/api/internal/entitlement"
 	"arkloop/services/api/internal/featureflag"
 	"arkloop/services/api/internal/observability"
+	"arkloop/services/shared/eventbus"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -764,6 +765,7 @@ func threadEntry(
 	runLimiter *data.RunLimiter,
 	entSvc *entitlement.Service,
 	rdb *redis.Client,
+	bus eventbus.EventBus,
 	attachmentStore messageAttachmentStore,
 	flagService *featureflag.Service,
 ) func(nethttp.ResponseWriter, *nethttp.Request) {
@@ -772,7 +774,7 @@ func threadEntry(
 	del := deleteThread(authService, membershipRepo, threadRepo, messageRepo, attachmentStore, auditWriter, apiKeysRepo)
 	createMessage := createThreadMessage(authService, membershipRepo, threadRepo, messageRepo, auditWriter, apiKeysRepo, flagService, attachmentStore)
 	listMessages := listThreadMessages(authService, membershipRepo, threadRepo, messageRepo, auditWriter, apiKeysRepo, flagService)
-	createRun := createThreadRun(authService, membershipRepo, threadRepo, auditWriter, pool, apiKeysRepo, runLimiter, entSvc, rdb)
+	createRun := createThreadRun(authService, membershipRepo, threadRepo, auditWriter, pool, apiKeysRepo, runLimiter, entSvc, rdb, bus)
 	listRuns := listThreadRuns(authService, membershipRepo, threadRepo, runRepo, auditWriter, apiKeysRepo)
 	editMessage := editThreadMessage(authService, membershipRepo, threadRepo, messageRepo, auditWriter, pool, apiKeysRepo)
 	retryMessage := retryThreadMessage(authService, membershipRepo, threadRepo, messageRepo, auditWriter, pool, apiKeysRepo)

@@ -26,6 +26,7 @@ import (
 	"arkloop/services/shared/eventbus"
 	"arkloop/services/shared/pgnotify"
 	"arkloop/services/shared/runlimit"
+	"arkloop/services/shared/threadrunstate"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -196,6 +197,7 @@ func createThreadRun(
 	limiter *data.RunLimiter,
 	entSvc *entitlement.Service,
 	rdb *redis.Client,
+	bus eventbus.EventBus,
 ) func(nethttp.ResponseWriter, *nethttp.Request, uuid.UUID) {
 	return func(w nethttp.ResponseWriter, r *nethttp.Request, threadID uuid.UUID) {
 		if r.Method != nethttp.MethodPost {
@@ -453,6 +455,7 @@ func createThreadRun(
 
 		// Commit 成功，计数器由 Worker 在终态时 DECR
 		acquired = false
+		threadrunstate.Publish(r.Context(), pool, rdb, bus, thread.AccountID, thread.ID)
 
 		httpkit.WriteJSON(w, traceID, nethttp.StatusCreated, createRunResponse{
 			RunID:   run.ID.String(),
@@ -826,6 +829,8 @@ func cancelRun(
 	auditWriter *audit.Writer,
 	pool data.DB,
 	apiKeysRepo *data.APIKeysRepository,
+	rdb *redis.Client,
+	bus eventbus.EventBus,
 ) func(nethttp.ResponseWriter, *nethttp.Request, uuid.UUID) {
 	return func(w nethttp.ResponseWriter, r *nethttp.Request, runID uuid.UUID) {
 		traceID := observability.TraceIDFromContext(r.Context())
@@ -912,6 +917,7 @@ func cancelRun(
 
 		// 通知 worker 立即中断，失败可忽略（worker 有 DB 兜底检查）
 		_, _ = pool.Exec(r.Context(), "SELECT pg_notify($1, $2)", pgnotify.ChannelRunCancel, run.ID.String())
+		threadrunstate.Publish(r.Context(), pool, rdb, bus, run.AccountID, run.ThreadID)
 
 		if auditWriter != nil {
 			auditWriter.WriteRunCancelRequested(r.Context(), traceID, actor.AccountID, actor.UserID, run.ID)
@@ -1485,7 +1491,7 @@ func runEntry(
 	bus eventbus.EventBus,
 ) func(nethttp.ResponseWriter, *nethttp.Request) {
 	get := getRun(authService, membershipRepo, runRepo, auditWriter, apiKeysRepo)
-	cancel := cancelRun(authService, membershipRepo, runRepo, auditWriter, pool, apiKeysRepo)
+	cancel := cancelRun(authService, membershipRepo, runRepo, auditWriter, pool, apiKeysRepo, rdb, bus)
 	submitInput := submitRunInput(authService, membershipRepo, runRepo, auditWriter, pool, apiKeysRepo, resolver)
 	streamEvents := streamRunEvents(authService, membershipRepo, runRepo, auditWriter, directPool, directPoolAcquireTimeout, sseConfig, apiKeysRepo, rdb, bus)
 
