@@ -147,6 +147,66 @@ func (WorkspaceRegistriesRepository) ListLatestManifestRevisions(ctx context.Con
 	return listLatestManifestRevisions(ctx, pool, "workspace_registries", "workspace_ref")
 }
 
+func (r ProfileRegistriesRepository) GetLatestManifestRevision(ctx context.Context, pool DB, profileRef string) (string, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if pool == nil {
+		return "", fmt.Errorf("pool must not be nil")
+	}
+	profileRef = strings.TrimSpace(profileRef)
+	if profileRef == "" {
+		return "", fmt.Errorf("profile ref must not be empty")
+	}
+
+	var rev *string
+	err := pool.QueryRow(
+		ctx,
+		`SELECT latest_manifest_rev FROM profile_registries WHERE profile_ref = $1`,
+		profileRef,
+	).Scan(&rev)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	if rev == nil {
+		return "", nil
+	}
+	return *rev, nil
+}
+
+func (r WorkspaceRegistriesRepository) GetLatestManifestRevision(ctx context.Context, pool DB, workspaceRef string) (string, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if pool == nil {
+		return "", fmt.Errorf("pool must not be nil")
+	}
+	workspaceRef = strings.TrimSpace(workspaceRef)
+	if workspaceRef == "" {
+		return "", fmt.Errorf("workspace ref must not be empty")
+	}
+
+	var rev *string
+	err := pool.QueryRow(
+		ctx,
+		`SELECT latest_manifest_rev FROM workspace_registries WHERE workspace_ref = $1`,
+		workspaceRef,
+	).Scan(&rev)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	if rev == nil {
+		return "", nil
+	}
+	return *rev, nil
+}
+
 func getProfileRegistry(ctx context.Context, pool DB, profileRef string) (RegistryRecord, error) {
 	if ctx == nil {
 		ctx = context.Background()
