@@ -4,14 +4,10 @@ import {
   BarChart3,
   Database,
   Download,
-  ExternalLink,
   FileText,
   FolderOpen,
-  Github,
   Globe,
-  HardDrive,
   Import,
-  Info,
   Loader2,
   Network,
   Package,
@@ -22,9 +18,8 @@ import {
   type LucideIcon,
 } from 'lucide-react'
 import { getDesktopApi } from '@arkloop/shared/desktop'
-import { Button, Modal, PillToggle, TabBar, formatDateTime, useTimeZone, useToast } from '@arkloop/shared'
+import { Modal, TabBar, formatDateTime, useTimeZone, useToast } from '@arkloop/shared'
 import type {
-  DesktopAdvancedOverview,
   DesktopExportSection,
   DesktopLogEntry,
   DesktopLogLevel,
@@ -34,9 +29,7 @@ import type { MeDailyUsageItem, MeHourlyUsageItem, MeModelUsageItem, MeUsageSumm
 import { getMyDailyUsage, getMyHourlyUsage, getMyUsage, getMyUsageByModel } from '../../api'
 import { useAppearance } from '../../contexts/AppearanceContext'
 import { useLocale } from '../../contexts/LocaleContext'
-import { openExternal } from '../../openExternal'
 import type { ThemeDefinition } from '../../themes/types'
-import { readDeveloperMode, writeDeveloperMode } from '../../storage'
 import { SettingsSection } from './_SettingsSection'
 import { SettingsSectionHeader } from './_SettingsSectionHeader'
 import { settingsInputCls } from './_SettingsInput'
@@ -44,9 +37,8 @@ import { SettingsLabel } from './_SettingsLabel'
 import { SettingsSelect } from './_SettingsSelect'
 import { ConnectionSettings } from './ConnectionSettings'
 import { ModulesSettings } from './ModulesSettings'
-import { UpdateSettingsContent } from './UpdateSettings'
 
-type AdvancedKey = 'about' | 'network' | 'usage' | 'modules' | 'data' | 'logs'
+type AdvancedKey = 'network' | 'usage' | 'modules' | 'data' | 'logs'
 
 type Props = { accessToken: string }
 
@@ -190,107 +182,6 @@ function logLevelTag(level: DesktopLogLevel): string {
 }
 
 // -- Sub-panes --
-
-function AboutPane({
-  overview,
-  loading,
-  error,
-}: {
-  overview: DesktopAdvancedOverview | null
-  loading: boolean
-  error: string
-}) {
-  const { t } = useLocale()
-  const ds = t.desktopSettings
-  const api = getDesktopApi()
-  const [devMode, setDevMode] = useState(() => readDeveloperMode())
-  const [fallbackVersion, setFallbackVersion] = useState('')
-
-  useEffect(() => {
-    if (overview?.appVersion || !api?.app) return
-    let active = true
-    void api.app.getVersion()
-      .then((version) => {
-        if (active) setFallbackVersion(version)
-      })
-      .catch(() => {})
-    return () => {
-      active = false
-    }
-  }, [api, overview?.appVersion])
-
-  const appName = overview?.appName ?? 'Arkloop'
-  const appVersion = overview?.appVersion ?? fallbackVersion
-  const links = overview?.links ?? []
-  const iconDataUrl = overview?.iconDataUrl ?? null
-
-  return (
-    <div className="flex flex-col gap-6">
-      <SettingsSectionHeader title={ds.about} description={ds.aboutDesc} />
-
-      <SettingsSection>
-        <div className="flex flex-wrap items-start gap-4">
-          <div
-            className="flex h-14 w-14 items-center justify-center overflow-hidden rounded-2xl bg-[var(--c-bg-deep)]"
-            style={{ border: '0.5px solid var(--c-border-subtle)' }}
-          >
-            {iconDataUrl ? (
-              <img src={iconDataUrl} alt={appName} className="h-full w-full object-cover" />
-            ) : (
-              <HardDrive size={22} className="text-[var(--c-text-muted)]" />
-            )}
-          </div>
-          <div className="min-w-[12rem] flex-1">
-            <div className="text-lg font-semibold text-[var(--c-text-heading)]">{appName}</div>
-            <div className="mt-0.5 text-sm text-[var(--c-text-secondary)]">
-              {appVersion || (loading ? '...' : '')}
-            </div>
-          </div>
-          <div className="flex basis-full flex-wrap gap-2 xl:ml-auto xl:basis-auto xl:justify-end">
-            {links.map((link) => (
-              <Button
-                key={link.url}
-                onClick={() => openExternal(link.url)}
-                variant="outline"
-                size="sm"
-                className="shrink-0"
-              >
-                {link.label === 'GitHub' ? <Github size={14} /> : <ExternalLink size={14} />}
-                <span>{link.label}</span>
-              </Button>
-            ))}
-          </div>
-        </div>
-      </SettingsSection>
-
-      {error && (
-        <SettingsSection>
-          <p className="text-sm" style={{ color: 'var(--c-status-error)' }}>{error}</p>
-        </SettingsSection>
-      )}
-
-      <SettingsSection>
-        <UpdateSettingsContent />
-      </SettingsSection>
-
-      <SettingsSection>
-        <div className="flex items-center justify-between">
-          <div>
-            <div className="text-sm font-medium text-[var(--c-text-primary)]">{ds.developerTitle}</div>
-            <div className="text-xs text-[var(--c-text-muted)]">{ds.developerDesc}</div>
-          </div>
-          <PillToggle
-            checked={devMode}
-            onChange={(next) => {
-              setDevMode(next)
-              writeDeveloperMode(next)
-            }}
-          />
-        </div>
-      </SettingsSection>
-    </div>
-  )
-}
 
 function NetworkPane({ onReloadOverview }: { onReloadOverview: () => Promise<void> }) {
   const { t } = useLocale()
@@ -1344,30 +1235,16 @@ export function AdvancedSettings({ accessToken }: Props) {
   const { t } = useLocale()
   const { timeZone } = useTimeZone()
   const ds = t.desktopSettings
-  const api = getDesktopApi()
   const now = useMemo(() => getDateStringInTimeZone(new Date(), timeZone), [timeZone])
   const defaultYear = Number(now.slice(0, 4))
   const defaultMonth = Number(now.slice(5, 7))
 
-  const [activeKey, setActiveKey] = useState<AdvancedKey>('about')
-  const [overview, setOverview] = useState<DesktopAdvancedOverview | null>(null)
-  const [overviewLoading, setOverviewLoading] = useState(true)
-  const [overviewError, setOverviewError] = useState('')
+  const [activeKey, setActiveKey] = useState<AdvancedKey>('usage')
   const [prefetchedUsage, setPrefetchedUsage] = useState<UsageState | null>(null)
 
   const loadOverview = useCallback(async () => {
-    if (!api?.advanced) return
-    setOverviewLoading(true)
-    setOverviewError('')
-    try {
-      const data = await api.advanced.getOverview()
-      setOverview(data)
-    } catch (err) {
-      setOverviewError(err instanceof Error ? err.message : t.requestFailed)
-    } finally {
-      setOverviewLoading(false)
-    }
-  }, [api, t.requestFailed])
+    // NetworkPane 和 DataPane 调用此方法刷新配置
+  }, [])
 
   useEffect(() => { void loadOverview() }, [loadOverview])
 
@@ -1396,9 +1273,8 @@ export function AdvancedSettings({ accessToken }: Props) {
   }, [accessToken, defaultMonth, defaultYear])
 
   const navItems: Array<{ key: AdvancedKey; icon: LucideIcon; label: string }> = [
-    { key: 'about', icon: Info, label: ds.about },
-    { key: 'network', icon: Network, label: ds.advancedNetwork },
     { key: 'usage', icon: BarChart3, label: ds.advancedUsage },
+    { key: 'network', icon: Network, label: ds.advancedNetwork },
     { key: 'modules', icon: Package, label: ds.advancedModules },
     { key: 'data', icon: Database, label: ds.advancedData },
     { key: 'logs', icon: ScrollText, label: ds.advancedLogs },
@@ -1431,14 +1307,6 @@ export function AdvancedSettings({ accessToken }: Props) {
 
       <div className="min-w-0 flex-1 overflow-y-auto p-4 max-[1230px]:p-3 sm:p-5">
         <div className="mx-auto min-w-0 max-w-4xl">
-          {activeKey === 'about' && (
-            <AboutPane
-              overview={overview}
-              loading={overviewLoading}
-              error={overviewError}
-            />
-          )}
-          {activeKey === 'network' && <NetworkPane onReloadOverview={loadOverview} />}
           {activeKey === 'usage' && (
             <UsagePane
               accessToken={accessToken}
@@ -1447,6 +1315,7 @@ export function AdvancedSettings({ accessToken }: Props) {
               initialUsage={prefetchedUsage}
             />
           )}
+          {activeKey === 'network' && <NetworkPane onReloadOverview={loadOverview} />}
           {activeKey === 'modules' && (
             <div className="flex flex-col gap-6">
               <SettingsSectionHeader title={ds.advancedModules} description={ds.advancedModulesDesc} />

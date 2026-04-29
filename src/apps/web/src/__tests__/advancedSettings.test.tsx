@@ -42,121 +42,6 @@ afterEach(() => {
 })
 
 describe('AdvancedSettings', () => {
-  it('关于区链接使用独立换行容器并保持外链点击', async () => {
-    const openExternal = vi.fn()
-    const desktopApi = {
-      advanced: {
-        getOverview: vi.fn().mockResolvedValue({
-          appName: 'Arkloop',
-          appVersion: '1.2.3',
-          githubUrl: 'https://github.com/qqqqqf-q/Arkloop',
-          telegramUrl: null,
-          iconDataUrl: null,
-          configPath: '/tmp/config.json',
-          dataDir: '/tmp/data',
-          logsDir: '/tmp/logs',
-          sqlitePath: '/tmp/data.db',
-          links: [
-            { label: 'GitHub', url: 'https://github.com/qqqqqf-q/Arkloop' },
-            { label: 'Releases', url: 'https://github.com/qqqqqf-q/Arkloop/releases' },
-            { label: 'Follow on X', url: 'https://x.com/arkloop' },
-          ],
-          status: [],
-          usage: null,
-        }),
-        chooseDataFolder: vi.fn().mockResolvedValue('/tmp/export'),
-        exportDataBundle: vi.fn().mockResolvedValue({ ok: true, filePath: '/tmp/export/bundle' }),
-        importDataBundle: vi.fn().mockResolvedValue({ ok: true, importedFrom: '/tmp/import' }),
-        listLogs: vi.fn().mockResolvedValue({ entries: [] }),
-      },
-      config: {
-        get: vi.fn().mockResolvedValue({
-          network: {
-            proxyEnabled: false,
-            requestTimeoutMs: 30000,
-            retryCount: 1,
-          },
-        }),
-        set: vi.fn().mockResolvedValue({ ok: true }),
-      },
-    }
-
-    vi.doMock('../storage', async () => {
-      const actual = await vi.importActual<typeof import('../storage')>('../storage')
-      return {
-        ...actual,
-        readLocaleFromStorage: vi.fn(() => 'zh'),
-        writeLocaleToStorage: vi.fn(),
-      }
-    })
-    vi.doMock('../api', async () => {
-      const actual = await vi.importActual<typeof import('../api')>('../api')
-      return {
-        ...actual,
-        getMyUsage: vi.fn().mockResolvedValue(null),
-        getMyDailyUsage: vi.fn().mockResolvedValue([]),
-        getMyHourlyUsage: vi.fn().mockResolvedValue([]),
-        getMyUsageByModel: vi.fn().mockResolvedValue([]),
-      }
-    })
-    vi.doMock('../openExternal', () => ({ openExternal }))
-    vi.doMock('../components/settings/ConnectionSettings', () => ({
-      ConnectionSettings: () => <div>connection-settings</div>,
-    }))
-    vi.doMock('../components/settings/ModulesSettings', () => ({
-      ModulesSettings: () => <div>modules-settings</div>,
-    }))
-    vi.doMock('../components/settings/ExtensionsSettings', () => ({
-      ExtensionsSettings: () => <div>extensions-settings</div>,
-    }))
-    vi.doMock('../components/settings/UpdateSettings', () => ({
-      UpdateSettingsContent: () => <div>update-settings</div>,
-    }))
-    vi.doMock('../contexts/AppearanceContext', () => ({
-      useAppearance: () => ({
-        customThemeId: null,
-        customThemes: {},
-        saveCustomTheme: vi.fn(),
-        setActiveCustomTheme: vi.fn(),
-      }),
-    }))
-    vi.doMock('@arkloop/shared', async () => {
-      const actual = await vi.importActual<typeof import('@arkloop/shared')>('@arkloop/shared')
-      return {
-        ...actual,
-        useToast: () => ({ addToast }),
-      }
-    })
-    vi.doMock('@arkloop/shared/desktop', () => ({
-      getDesktopApi: () => desktopApi,
-    }))
-
-    const { AdvancedSettings } = await import('../components/settings/AdvancedSettings')
-    const { LocaleProvider } = await import('../contexts/LocaleContext')
-
-    await act(async () => {
-      root!.render(
-        <LocaleProvider>
-          <AdvancedSettings accessToken="token" />
-        </LocaleProvider>,
-      )
-    })
-    await flushEffects()
-
-    const githubButton = Array.from(container.querySelectorAll('button')).find((button) => button.textContent?.includes('GitHub'))
-    const followButton = Array.from(container.querySelectorAll('button')).find((button) => button.textContent?.includes('Follow on X'))
-
-    expect(githubButton).toBeTruthy()
-    expect(followButton).toBeTruthy()
-    expect(githubButton?.parentElement?.className).toContain('basis-full')
-
-    await act(async () => {
-      followButton!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
-    })
-
-    expect(openExternal).toHaveBeenCalledWith('https://x.com/arkloop')
-  })
-
   it('渲染高级中心并切换到日志页', async () => {
     const desktopApi = {
       advanced: {
@@ -284,8 +169,7 @@ describe('AdvancedSettings', () => {
     })
     await flushEffects()
 
-    expect(container.textContent).toContain('关于')
-    expect(container.textContent).toContain('Arkloop')
+    expect(container.textContent).toContain('使用量')
     expect(container.textContent).toContain('模块')
 
     const logsButton = Array.from(container.querySelectorAll('button')).find((button) => button.textContent?.includes('日志'))
