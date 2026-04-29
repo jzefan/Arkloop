@@ -49,12 +49,28 @@ type BotCommand struct {
 	Description string `json:"description"`
 }
 
+type InlineKeyboardButton struct {
+	Text         string `json:"text"`
+	CallbackData string `json:"callback_data"`
+}
+
+type InlineKeyboardMarkup struct {
+	InlineKeyboard [][]InlineKeyboardButton `json:"inline_keyboard"`
+}
+
+type AnswerCallbackQueryRequest struct {
+	CallbackQueryID string `json:"callback_query_id"`
+	Text            string `json:"text,omitempty"`
+	ShowAlert       bool   `json:"show_alert,omitempty"`
+}
+
 type SendMessageRequest struct {
-	ChatID           string `json:"chat_id"`
-	Text             string `json:"text"`
-	ParseMode        string `json:"parse_mode,omitempty"`
-	ReplyToMessageID string `json:"reply_to_message_id,omitempty"`
-	MessageThreadID  string `json:"message_thread_id,omitempty"`
+	ChatID           string                `json:"chat_id"`
+	Text             string                `json:"text"`
+	ParseMode        string                `json:"parse_mode,omitempty"`
+	ReplyToMessageID string                `json:"reply_to_message_id,omitempty"`
+	MessageThreadID  string                `json:"message_thread_id,omitempty"`
+	ReplyMarkup      *InlineKeyboardMarkup `json:"reply_markup,omitempty"`
 }
 
 type SentMessage struct {
@@ -94,11 +110,12 @@ type SetMessageReactionRequest struct {
 
 // EditMessageTextRequest mirrors Telegram editMessageText (for future streaming).
 type EditMessageTextRequest struct {
-	ChatID          string `json:"chat_id"`
-	MessageID       int64  `json:"message_id"`
-	Text            string `json:"text"`
-	ParseMode       string `json:"parse_mode,omitempty"`
-	MessageThreadID string `json:"message_thread_id,omitempty"`
+	ChatID          string                `json:"chat_id"`
+	MessageID       int64                 `json:"message_id"`
+	Text            string                `json:"text"`
+	ParseMode       string                `json:"parse_mode,omitempty"`
+	MessageThreadID string                `json:"message_thread_id,omitempty"`
+	ReplyMarkup     *InlineKeyboardMarkup `json:"reply_markup,omitempty"`
 }
 
 type apiEnvelope struct {
@@ -209,6 +226,25 @@ func (c *Client) SetMessageReaction(ctx context.Context, token string, req SetMe
 // Telegram returns either a Message or true; we only require ok envelope.
 func (c *Client) EditMessageText(ctx context.Context, token string, req EditMessageTextRequest) error {
 	return c.callJSON(ctx, token, "editMessageText", req, nil)
+}
+
+// AnswerCallbackQuery sends a callback query answer to prevent Telegram retrying.
+func (c *Client) AnswerCallbackQuery(ctx context.Context, token string, req AnswerCallbackQueryRequest) error {
+	return c.callJSON(ctx, token, "answerCallbackQuery", req, nil)
+}
+
+// EditMessageReplyMarkup updates only the reply markup of a message.
+func (c *Client) EditMessageReplyMarkup(ctx context.Context, token string, chatID string, messageID int64, markup *InlineKeyboardMarkup) error {
+	req := map[string]any{
+		"chat_id":    chatID,
+		"message_id": messageID,
+	}
+	if markup != nil {
+		req["reply_markup"] = markup
+	} else {
+		req["reply_markup"] = map[string]any{"inline_keyboard": [][]any{}}
+	}
+	return c.callJSON(ctx, token, "editMessageReplyMarkup", req, nil)
 }
 
 // isLocalPath returns true if the path looks like a local filesystem path.

@@ -25,6 +25,7 @@ var errInboundDispatchDeferred = errors.New("channel inbound dispatch deferred")
 type telegramInboundStageAResult struct {
 	finalState  string
 	replyText   string
+	replyMarkup *telegrambot.InlineKeyboardMarkup
 	cancelRunID uuid.UUID
 }
 
@@ -162,7 +163,7 @@ func (c telegramConnector) persistTelegramInboundStageA(
 			}
 			return &telegramInboundStageAResult{finalState: inboundStateIgnoredUnlinked}, nil
 		}
-		if handled, replyText, err := handleTelegramCommand(
+		if handled, replyText, replyMarkup, err := handleTelegramCommand(
 			ctx,
 			tx,
 			&ch,
@@ -188,8 +189,9 @@ func (c telegramConnector) persistTelegramInboundStageA(
 				return nil, err
 			}
 			return &telegramInboundStageAResult{
-				finalState: inboundStateCommandHandled,
-				replyText:  replyText,
+				finalState:  inboundStateCommandHandled,
+				replyText:   replyText,
+				replyMarkup: replyMarkup,
 			}, nil
 		}
 	}
@@ -313,7 +315,7 @@ func (c telegramConnector) persistTelegramInboundStageA(
 			if groupIdentity != nil {
 				modelIdentity = *groupIdentity
 			}
-			replyText, err := handleTelegramPreferenceCommand(
+			replyText, replyMarkup, err := handleTelegramPreferenceCommand(
 				ctx, tx, ch.AccountID, modelIdentity, incoming.CommandText, c.channelIdentitiesRepo, c.entitlementSvc,
 			)
 			if err != nil {
@@ -325,7 +327,7 @@ func (c telegramConnector) persistTelegramInboundStageA(
 			if err := commitTx(); err != nil {
 				return nil, err
 			}
-			return &telegramInboundStageAResult{finalState: inboundStateCommandHandled, replyText: replyText}, nil
+			return &telegramInboundStageAResult{finalState: inboundStateCommandHandled, replyText: replyText, replyMarkup: replyMarkup}, nil
 		}
 		// keyword / @mention / reply-to-bot: fall through to run creation path
 		if incoming.ShouldCreateRun() {

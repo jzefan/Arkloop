@@ -240,7 +240,7 @@ func pollTelegramDesktopOnce(
 
 		req := telegrambot.GetUpdatesRequest{
 			Limit:          limit,
-			Updates:        []string{"message", "edited_message"},
+			Updates:        []string{"message", "edited_message", "callback_query"},
 			TimeoutSeconds: longPollSec,
 		}
 		if offset, ok := offsets[ch.ID]; ok && offset > 0 {
