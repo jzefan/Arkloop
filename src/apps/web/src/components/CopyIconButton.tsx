@@ -101,9 +101,11 @@ export function CopyIconButton({
 
   const showCheck = phase === 'entering' || phase === 'active' || phase === 'exiting-back'
   const showTooltip = hovered && phase === 'idle'
+  const accessibleLabel = tooltip || 'Copy'
 
   return (
     <ActionIconButton
+      aria-label={accessibleLabel}
       onClick={handleClick}
       onMouseEnter={handleMouseEnter}
       onMouseLeave={handleMouseLeave}

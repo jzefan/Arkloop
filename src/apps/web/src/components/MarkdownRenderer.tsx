@@ -191,7 +191,7 @@ function preprocessBareArtifactRefs(content: string, artifacts: ArtifactRef[]): 
     if (artifacts.every((a) => a.key !== key)) return full
     const artifact = artifacts.find((a) => a.key === key)!
     const text = (artifact.filename || artifact.title || key)
-      .replace(/[\[\]()]/g, '\\$&')
+      .replace(/[[\]()]/g, '\\$&')
       .replace(/\n/g, ' ')
     return `[${text}](${ARTIFACT_PREFIX}${key})`
   })
@@ -378,7 +378,6 @@ function extractTextFromChildren(node: ReactNode): string {
 }
 
 function CodeBlockWrapper({ children, compact = false }: { children: React.ReactNode; compact?: boolean }) {
-  const [copyHover, setCopyHover] = useState(false)
   const preRef = useRef<HTMLPreElement>(null)
   const languageLabel = normalizeCodeLanguageLabel(extractCodeLanguage(children))
   const frameRadius = 10
@@ -436,29 +435,36 @@ function CodeBlockWrapper({ children, compact = false }: { children: React.React
       >
         {children}
       </pre>
-      <CopyIconButton
-        onCopy={handleCopy}
-        size={13}
-        className="opacity-0 group-hover/codeblock:opacity-100"
+      <span
+        data-md-code-copy
         style={{
           position: 'absolute',
           top: '8px',
           right: '8px',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          width: '26px',
-          height: '26px',
-          borderRadius: '6px',
-          border: '0.5px solid var(--c-border-subtle)',
-          background: copyHover ? 'var(--c-bg-deep)' : 'transparent',
-          color: 'var(--c-text-icon)',
-          transition: 'opacity 150ms ease, background 150ms ease',
+          zIndex: 2,
+          display: 'inline-flex',
         }}
-        onMouseEnter={() => setCopyHover(true)}
-        onMouseLeave={() => setCopyHover(false)}
-        resetDelay={2000}
-      />
+      >
+        <CopyIconButton
+          onCopy={handleCopy}
+          size={13}
+          hoverBackground="var(--c-bg-card-hover)"
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            width: '26px',
+            height: '26px',
+            borderRadius: '6px',
+            border: '0.5px solid var(--c-border-subtle)',
+            background: 'var(--c-bg-sub)',
+            color: 'var(--c-text-icon)',
+            opacity: 0.86,
+            transition: 'opacity 150ms ease, background-color 150ms ease, color 150ms ease',
+          }}
+          resetDelay={2000}
+        />
+      </span>
     </div>
   )
 }
@@ -753,7 +759,7 @@ export const MarkdownRenderer = memo(function MarkdownRenderer({ content, disabl
       loadedRef.current = true
       const loadPlugins = async () => {
         // 动态加载 rehype 插件，异步执行不阻塞渲染
-        const plugins: any[] = []
+        const plugins: NonNullable<Options['rehypePlugins']> = []
         if (!effectiveDisableMath) {
           try {
             const m = await import('rehype-katex')

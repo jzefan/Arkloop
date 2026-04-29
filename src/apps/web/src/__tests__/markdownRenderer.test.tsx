@@ -89,6 +89,14 @@ describe('MarkdownRenderer', () => {
     expect(textHtml).toContain('>text<')
   })
 
+  it('代码块复制按钮应常驻右上角', () => {
+    const html = renderMarkdown('```bash\necho ok\n```')
+
+    expect(html).toContain('data-md-code-copy="true"')
+    expect(html).toMatch(/data-md-code-copy="true" style="[^"]*position:absolute;top:8px;right:8px/)
+    expect(html).not.toContain('opacity-0')
+  })
+
   it('应在数学模式开启时渲染 KaTeX，关闭时保持原文', () => {
     const mathEnabled = renderMarkdown('行内公式 $a^2+b^2$')
     const mathDisabled = renderMarkdown('行内公式 $a^2+b^2$', { disableMath: true })
