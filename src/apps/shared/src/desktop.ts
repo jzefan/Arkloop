@@ -59,6 +59,29 @@ export type MemoryConfig = {
   nowledge?: NowledgeDesktopConfig
 }
 
+export type ImportSourceKind = 'hermes' | 'openclaw'
+export type ImportItemKey = 'identity' | 'skills' | 'mcp' | 'providers'
+
+export type AgentImportDiscovery = {
+  kind: ImportSourceKind
+  name: string
+  sourcePath: string
+  skillsCount: number
+  mcpServers: string[]
+  llmProviders: string[]
+}
+
+export type OnboardingImportApplyRequest = {
+  source: ImportSourceKind
+  selection?: Partial<Record<ImportItemKey, boolean>>
+}
+
+export type OnboardingImportApplyResult = {
+  ok: boolean
+  imported: Record<ImportItemKey, number>
+  errors: string[]
+}
+
 export type VoiceConfig = {
   enabled: boolean
   language?: string
@@ -216,6 +239,8 @@ export type ArkloopDesktopApi = {
   onboarding: {
     getStatus: () => Promise<{ completed: boolean }>
     complete: () => Promise<{ ok: boolean }>
+    detectImports?: () => Promise<AgentImportDiscovery[]>
+    applyImport?: (request: OnboardingImportApplyRequest) => Promise<OnboardingImportApplyResult>
   }
   app: {
     getVersion: () => Promise<string>

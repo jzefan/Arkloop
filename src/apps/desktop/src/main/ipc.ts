@@ -17,6 +17,7 @@ import { checkForUpdates, applyUpdate, getCachedUpdateStatus } from './updater'
 import { getAppUpdaterState, checkForAppUpdates, downloadAppUpdate, installAppUpdate } from './app-updater'
 import { DEFAULT_CONFIG } from './types'
 import { getDesktopLogDir, getDesktopLogPaths } from './logging'
+import { applyOnboardingImport, detectOnboardingImportSources, type OnboardingImportApplyRequest } from './onboarding-import'
 import type { AppConfig, ApplyConfigUpdateOptions, ConnectorsConfig, MemoryConfig } from './types'
 
 type DesktopController = {
@@ -226,6 +227,17 @@ export function registerIpcHandlers(
     config.onboarding_completed = true
     saveConfig(config)
     return { ok: true }
+  })
+
+  ipcMain.handle('arkloop:onboarding-import:detect', async () => {
+    return await detectOnboardingImportSources()
+  })
+
+  ipcMain.handle('arkloop:onboarding-import:apply', async (_event, request: OnboardingImportApplyRequest) => {
+    return await applyOnboardingImport(request, {
+      apiBaseUrl: getLocalApiBaseUrl(),
+      token: getDesktopAccessToken(),
+    })
   })
 
   ipcMain.handle('arkloop:connectors:get', async () => {

@@ -34,14 +34,13 @@ import {
   updateLlmProvider,
 } from "../api";
 import type { AvailableModel, LlmProvider, LlmProviderModel } from "../api";
+import type { AgentImportDiscovery, ImportItemKey, ImportSourceKind } from "@arkloop/shared/desktop";
 import { routeAdvancedJsonFromAvailableCatalog } from "@arkloop/shared/llm/available-catalog-advanced-json";
 
 type Step = "welcome" | "mode" | "provider" | "appearance" | "import" | "complete";
 
 type Vendor = "openai_responses" | "openai_chat_completions" | "anthropic" | "gemini";
 type VerifyStatus = "idle" | "verifying" | "verified" | "failed";
-type ImportSourceKind = "hermes" | "openclaw";
-type ImportItemKey = "identity" | "skills" | "mcp" | "providers";
 type ModelImportStatus =
   | "idle"
   | "loading"
@@ -53,38 +52,10 @@ type ModelImportStatus =
 
 type Props = { onComplete: () => void };
 type ImportSelectionState = Partial<Record<ImportSourceKind, Record<ImportItemKey, boolean>>>;
-type AgentImportDiscovery = {
-  kind: ImportSourceKind;
-  name: string;
-  sourcePath: string;
-  skillsCount: number;
-  mcpServers: string[];
-  llmProviders: string[];
-};
-
 const LOCAL_ACCESS_TOKEN =
   getDesktopAccessToken() ?? "";
 
 const IMPORT_ITEM_KEYS = ["identity", "skills", "mcp", "providers"] as const;
-
-const MOCK_IMPORT_DISCOVERIES: AgentImportDiscovery[] = [
-  {
-    kind: "hermes",
-    name: "Hermes",
-    sourcePath: "~/.hermes",
-    skillsCount: 12,
-    mcpServers: ["github", "filesystem", "fetch"],
-    llmProviders: ["OpenAI", "Anthropic", "OpenRouter"],
-  },
-  {
-    kind: "openclaw",
-    name: "OpenClaw",
-    sourcePath: "~/.openclaw",
-    skillsCount: 8,
-    mcpServers: ["github", "filesystem"],
-    llmProviders: ["OpenAI", "Anthropic"],
-  },
-];
 
 const VENDOR_OPTIONS = [
   {
@@ -220,10 +191,6 @@ function createDefaultImportSelections(
     };
     return acc;
   }, {});
-}
-
-async function detectAgentImportsMock(): Promise<AgentImportDiscovery[]> {
-  return MOCK_IMPORT_DISCOVERIES;
 }
 
 function ImportSourceIcon({ source }: { source: ImportSourceKind }) {
@@ -474,6 +441,8 @@ export function OnboardingWizard({ onComplete }: Props) {
   const [importSelections, setImportSelections] = useState<ImportSelectionState>(
     {},
   );
+  const [importingAgent, setImportingAgent] = useState(false);
+  const [importError, setImportError] = useState<AppError | null>(null);
 
   // Welcome animation phases
   type WelcomePhase = "animating" | "greeting" | "ready";
@@ -515,12 +484,18 @@ export function OnboardingWizard({ onComplete }: Props) {
   const manualModelRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
+    const detectImports = api?.onboarding.detectImports;
+    if (!detectImports) return;
     let cancelled = false;
     const timer = window.setTimeout(() => {
-      void detectAgentImportsMock().then((sources) => {
+      void detectImports().then((sources) => {
         if (cancelled) return;
         setImportSources(sources);
         setImportSelections(createDefaultImportSelections(sources));
+      }).catch(() => {
+        if (cancelled) return;
+        setImportSources([]);
+        setImportSelections({});
       });
     }, 360);
 
@@ -528,7 +503,7 @@ export function OnboardingWizard({ onComplete }: Props) {
       cancelled = true;
       window.clearTimeout(timer);
     };
-  }, []);
+  }, [api]);
 
   const handleLogoComplete = useCallback(() => {
     setWelcomePhase("greeting");
@@ -673,6 +648,7 @@ export function OnboardingWizard({ onComplete }: Props) {
   const handleAppearanceNext = useCallback(() => {
     setSelectedImportSource(null);
     setProviderImportedFromAgent(false);
+    setImportError(null);
     setStep(hasImportStep ? "import" : "provider");
   }, [hasImportStep]);
 
@@ -697,20 +673,38 @@ export function OnboardingWizard({ onComplete }: Props) {
     [],
   );
 
-  const handleImportSelected = useCallback(() => {
-    if (!selectedImportSourceData) return;
+  const handleImportSelected = useCallback(async () => {
+    if (!selectedImportSourceData || !api?.onboarding.applyImport || importingAgent) return;
     const selection = importSelections[selectedImportSourceData.kind] ?? {
       identity: true,
       skills: true,
       mcp: true,
       providers: true,
     };
-    setProviderImportedFromAgent(selection.providers);
-    setStep("provider");
-  }, [importSelections, selectedImportSourceData]);
+    setImportError(null);
+    setImportingAgent(true);
+    try {
+      await ensureSidecar();
+      const result = await api.onboarding.applyImport({
+        source: selectedImportSourceData.kind,
+        selection,
+      });
+      const importedTotal = Object.values(result.imported).reduce((sum, value) => sum + value, 0);
+      if (!result.ok && importedTotal === 0) {
+        throw new Error(result.errors[0] ?? t.requestFailed);
+      }
+      setProviderImportedFromAgent(result.imported.providers > 0);
+      setStep("provider");
+    } catch (error) {
+      setImportError(normalizeError(error, t.requestFailed));
+    } finally {
+      setImportingAgent(false);
+    }
+  }, [api, ensureSidecar, importSelections, importingAgent, selectedImportSourceData, t.requestFailed]);
 
   const handleSkipImport = useCallback(() => {
     setProviderImportedFromAgent(false);
+    setImportError(null);
     setStep("provider");
   }, []);
 
@@ -1553,7 +1547,10 @@ export function OnboardingWizard({ onComplete }: Props) {
                         <button
                           key={source.kind}
                           type="button"
-                          onClick={() => setSelectedImportSource(source.kind)}
+                          onClick={() => {
+                            setImportError(null);
+                            setSelectedImportSource(source.kind);
+                          }}
                           className="onb-btn-primary"
                           style={{ ...primaryBtn, marginTop: 0 }}
                         >
@@ -1693,31 +1690,51 @@ export function OnboardingWizard({ onComplete }: Props) {
                       })}
                     </div>
 
+                    {importError && (
+                      <ErrorCallout
+                        error={importError}
+                        locale={locale}
+                        requestFailedText={t.requestFailed}
+                      />
+                    )}
+
                     <div className="onb-import-detail-actions">
                       <button
                         type="button"
                         onClick={handleImportSelected}
+                        disabled={importingAgent}
                         className="onb-btn-primary"
-                        style={{ ...primaryBtn, whiteSpace: "nowrap" }}
+                        style={{ ...primaryBtn, whiteSpace: "nowrap", opacity: importingAgent ? 0.72 : 1 }}
                       >
-                        <ImportButtonContent
-                          source={selectedImportSourceData.kind}
-                          label={ob.importSelected}
-                        />
+                        {importingAgent ? (
+                          <>
+                            <SpinnerIcon /> {ob.importSelected}
+                          </>
+                        ) : (
+                          <ImportButtonContent
+                            source={selectedImportSourceData.kind}
+                            label={ob.importSelected}
+                          />
+                        )}
                       </button>
                       <button
                         type="button"
                         onClick={handleSkipImport}
+                        disabled={importingAgent}
                         className="onb-btn-ghost"
-                        style={{ ...ghostBtn, marginTop: 0, whiteSpace: "nowrap" }}
+                        style={{ ...ghostBtn, marginTop: 0, whiteSpace: "nowrap", opacity: importingAgent ? 0.72 : 1 }}
                       >
                         {ob.importSkip}
                       </button>
                       <button
                         type="button"
-                        onClick={() => setSelectedImportSource(null)}
+                        onClick={() => {
+                          setImportError(null);
+                          setSelectedImportSource(null);
+                        }}
+                        disabled={importingAgent}
                         className="onb-btn-ghost"
-                        style={{ ...ghostBtn, marginTop: 0 }}
+                        style={{ ...ghostBtn, marginTop: 0, opacity: importingAgent ? 0.72 : 1 }}
                       >
                         {ob.back}
                       </button>
