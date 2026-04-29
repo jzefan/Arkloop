@@ -7,7 +7,9 @@ import (
 	"strings"
 	"time"
 
+	"arkloop/services/shared/eventbus"
 	"arkloop/services/shared/runkind"
+	"arkloop/services/shared/threadrunstate"
 	"arkloop/services/worker/internal/data"
 	"arkloop/services/worker/internal/queue"
 
@@ -31,6 +33,7 @@ var callbackRunStartedDataKeys = []string{
 type SubAgentStateProjector struct {
 	pool     data.DB
 	rdb      *redis.Client
+	eventBus eventbus.EventBus
 	jobQueue queue.JobQueue
 	factory  *SubAgentRunFactory
 }
@@ -54,6 +57,14 @@ func NewSubAgentStateProjector(pool data.DB, rdb *redis.Client, jobQueue queue.J
 		jobQueue: jobQueue,
 		factory:  NewSubAgentRunFactory(pool, NewSnapshotStorage()),
 	}
+}
+
+func (p *SubAgentStateProjector) WithEventBus(bus eventbus.EventBus) *SubAgentStateProjector {
+	if p == nil {
+		return nil
+	}
+	p.eventBus = bus
+	return p
 }
 
 func (p *SubAgentStateProjector) EnqueueRun(ctx context.Context, accountID uuid.UUID, runID uuid.UUID, traceID string, availableAt *time.Time, payload map[string]any) error {
@@ -108,6 +119,10 @@ func (p *SubAgentStateProjector) MarkRunFailed(ctx context.Context, childRunID u
 	if _, err := tx.Exec(ctx, `SELECT 1 FROM runs WHERE id = $1 FOR UPDATE`, childRunID); err != nil {
 		return err
 	}
+	run, err := (data.RunsRepository{}).GetRun(ctx, tx, childRunID)
+	if err != nil {
+		return err
+	}
 	var seq int64
 	if err := tx.QueryRow(ctx,
 		`SELECT COALESCE(MAX(seq), 0) + 1 FROM run_events WHERE run_id = $1`,
@@ -147,6 +162,9 @@ func (p *SubAgentStateProjector) MarkRunFailed(ctx context.Context, childRunID u
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return err
+	}
+	if run != nil {
+		threadrunstate.Publish(ctx, p.pool, p.rdb, p.eventBus, run.AccountID, run.ThreadID)
 	}
 	if p.rdb != nil {
 		ch := fmt.Sprintf("run.child.%s.done", childRunID.String())
@@ -387,6 +405,7 @@ func (p *SubAgentStateProjector) enqueueCallbackRunIfIdle(ctx context.Context, c
 	if err := tx.Commit(ctx); err != nil {
 		return err
 	}
+	threadrunstate.Publish(ctx, p.pool, p.rdb, p.eventBus, callback.AccountID, callback.ThreadID)
 	_, err = p.jobQueue.EnqueueRun(ctx, callback.AccountID, runID, strings.TrimSpace(traceID), queue.RunExecuteJobType, map[string]any{
 		"source":       runkind.SubagentCallback,
 		"run_kind":     runkind.SubagentCallback,
@@ -478,7 +497,11 @@ func (p *SubAgentStateProjector) markCallbackRunEnqueueFailed(ctx context.Contex
 	); err != nil {
 		return err
 	}
-	return tx.Commit(ctx)
+	if err := tx.Commit(ctx); err != nil {
+		return err
+	}
+	threadrunstate.Publish(ctx, p.pool, p.rdb, p.eventBus, run.AccountID, run.ThreadID)
+	return nil
 }
 
 func errorString(err error) string {

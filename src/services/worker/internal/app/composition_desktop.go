@@ -28,8 +28,8 @@ import (
 	"arkloop/services/shared/telegrambot"
 	sharedtoolruntime "arkloop/services/shared/toolruntime"
 	"arkloop/services/shared/weixinclient"
-	promptinjection "arkloop/services/worker/internal/app/promptinjection"
 	"arkloop/services/worker/internal/agentdirectory"
+	promptinjection "arkloop/services/worker/internal/app/promptinjection"
 	"arkloop/services/worker/internal/data"
 	"arkloop/services/worker/internal/environmentbindings"
 	"arkloop/services/worker/internal/events"
@@ -676,7 +676,7 @@ func (e *DesktopEngine) Execute(ctx context.Context, run data.Run, traceID strin
 	}
 
 	if e.jobQueue != nil && subAgentsEnabled {
-		rc.SubAgentControl = subagentctl.NewService(e.db, nil, e.jobQueue, run, traceID, subagentctl.SubAgentLimits{}, subagentctl.BackpressureConfig{}, e.rolloutStore)
+		rc.SubAgentControl = subagentctl.NewService(e.db, nil, e.jobQueue, run, traceID, subagentctl.SubAgentLimits{}, subagentctl.BackpressureConfig{}, e.rolloutStore).WithEventBus(e.bus)
 	}
 	defer pipeline.FlushTracer(rc.Tracer)
 

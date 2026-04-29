@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"arkloop/services/shared/eventbus"
+	"arkloop/services/shared/threadrunstate"
 	"arkloop/services/worker/internal/data"
 	"arkloop/services/worker/internal/events"
 
@@ -209,6 +210,10 @@ func appendAndCommitSingle(
 	if rdb != nil {
 		redisChannel := fmt.Sprintf("arkloop:sse:run_events:%s", run.ID.String())
 		_, _ = rdb.Publish(ctx, redisChannel, "").Result()
+	}
+
+	if _, ok := TerminalStatuses[ev.Type]; ok {
+		threadrunstate.Publish(ctx, pool, rdb, bus, run.AccountID, run.ThreadID)
 	}
 
 	// Success path: release now and nil out so defer does not double-call.
