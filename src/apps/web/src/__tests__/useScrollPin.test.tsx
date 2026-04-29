@@ -5,6 +5,7 @@ import { useScrollPin, type ScrollPinResult } from '../hooks/useScrollPin'
 
 type HarnessMetrics = {
   clientHeight: number
+  clientWidth?: number
   scrollHeight: number
   turnHeight: number
   turnOffset: number
@@ -102,6 +103,10 @@ function ScrollPinHarness({
     Object.defineProperty(container, 'clientHeight', {
       configurable: true,
       get: () => metrics.clientHeight,
+    })
+    Object.defineProperty(container, 'clientWidth', {
+      configurable: true,
+      get: () => metrics.clientWidth ?? 800,
     })
     Object.defineProperty(container, 'scrollHeight', {
       configurable: true,
@@ -346,13 +351,14 @@ describe('useScrollPin', () => {
     const prompt = requireLastUserPrompt(readyApi)
 
     act(() => {
+      anchorScrollBehavior = undefined
       readyApi.activateAnchor()
     })
     await act(async () => {
       await flushAnimationFrames(15)
     })
 
-    expect(anchorScrollBehavior).toBe('smooth')
+    expect(anchorScrollBehavior).toBeUndefined()
     expect(scrollContainer.scrollTop).toBe(552)
     expect(readyApi.isAtBottomRef.current).toBe(true)
     expect(prompt.getBoundingClientRect().top).toBe(48)
@@ -376,6 +382,75 @@ describe('useScrollPin', () => {
     expect(scrollContainer.scrollTop).toBe(552)
     expect(readyApi.isAtBottomRef.current).toBe(true)
     expect(prompt.getBoundingClientRect().top).toBe(48)
+
+    act(() => {
+      root.unmount()
+    })
+  })
+
+  it('顶部锚定时，布局宽度变化不应被当成贴底跟随', async () => {
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const root = createRoot(container)
+    let api: ScrollPinResult | null = null
+    const metrics = {
+      clientHeight: 400,
+      clientWidth: 800,
+      scrollHeight: 1400,
+      turnHeight: 120,
+      turnOffset: 600,
+      headerOffset: 600,
+      bottomOffset: 1400,
+    }
+
+    await act(async () => {
+      root.render(
+        <ScrollPinHarness
+          metrics={metrics}
+          messages={[{ id: 'user-1' }]}
+          onReady={(value) => { api = value }}
+        />,
+      )
+    })
+
+    const readyApi = requireApi(api)
+    const scrollContainer = requireContainer(readyApi)
+    const prompt = requireLastUserPrompt(readyApi)
+
+    act(() => {
+      readyApi.activateAnchor()
+    })
+    await act(async () => {
+      await flushAnimationFrames(3)
+    })
+
+    expect(scrollContainer.scrollTop).toBe(552)
+    expect(prompt.getBoundingClientRect().top).toBe(48)
+    expect(readyApi.isAtBottomRef.current).toBe(true)
+
+    await act(async () => {
+      metrics.clientWidth = 720
+      root.render(
+        <ScrollPinHarness
+          metrics={metrics}
+          messages={[{ id: 'user-1' }, { id: 'assistant-live' }]}
+          liveRunUiVisible
+          onReady={(value) => { api = value }}
+        />,
+      )
+      await flushAnimationFrames(1)
+    })
+
+    act(() => {
+      readyApi.handleScrollContainerScroll()
+    })
+    await act(async () => {
+      await flushAnimationFrames(2)
+    })
+
+    expect(scrollContainer.scrollTop).toBe(552)
+    expect(prompt.getBoundingClientRect().top).toBe(48)
+    expect(readyApi.isAtBottomRef.current).toBe(true)
 
     act(() => {
       root.unmount()
@@ -611,6 +686,76 @@ describe('useScrollPin', () => {
     })
 
     expect(scrollContainer.scrollTop).toBe(552)
+    expect(readyApi.isAtBottomRef.current).toBe(true)
+
+    act(() => {
+      root.unmount()
+    })
+  })
+
+  it('顶部锚定期间，流式内容连续增高不应让 prompt 漂移', async () => {
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const root = createRoot(container)
+    let api: ScrollPinResult | null = null
+    const metrics = {
+      clientHeight: 400,
+      scrollHeight: 1400,
+      turnHeight: 120,
+      turnOffset: 600,
+      headerOffset: 600,
+      bottomOffset: 1400,
+    }
+
+    await act(async () => {
+      root.render(
+        <ScrollPinHarness
+          metrics={metrics}
+          messages={[{ id: 'user-1' }]}
+          onReady={(value) => { api = value }}
+        />,
+      )
+    })
+
+    const readyApi = requireApi(api)
+    const scrollContainer = requireContainer(readyApi)
+    const contentRoot = requireContentRoot(readyApi)
+    const observedTurn = requireLastTurn(readyApi)
+    const prompt = requireLastUserPrompt(readyApi)
+
+    act(() => {
+      readyApi.activateAnchor()
+    })
+    await act(async () => {
+      await flushAnimationFrames(3)
+    })
+
+    expect(scrollContainer.scrollTop).toBe(552)
+    expect(prompt.getBoundingClientRect().top).toBe(48)
+
+    for (let i = 0; i < 16; i += 1) {
+      await act(async () => {
+        metrics.scrollHeight += 36
+        metrics.turnHeight += 36
+        metrics.bottomOffset += 36
+        root.render(
+          <ScrollPinHarness
+            metrics={metrics}
+            messages={[{ id: 'user-1' }, { id: `assistant-live-${i}` }]}
+            liveRunUiVisible
+            onReady={(value) => { api = value }}
+          />,
+        )
+        triggerResize(observedTurn)
+        triggerResize(contentRoot)
+        await flushAnimationFrames(2)
+      })
+
+      expect(scrollContainer.scrollTop).toBe(552)
+      expect(prompt.getBoundingClientRect().top).toBe(48)
+      expect(readyApi.programmaticScrollDepthRef.current).toBe(0)
+    }
+
     expect(readyApi.isAtBottomRef.current).toBe(true)
 
     act(() => {
