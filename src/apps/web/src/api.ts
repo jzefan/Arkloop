@@ -544,6 +544,106 @@ export type ThreadResponse = {
   parent_thread_id?: string | null
 }
 
+export type ThreadRunStateEvent = {
+  type: 'thread.run_state'
+  thread_id: string
+  active_run_id: string | null
+  title?: string | null
+}
+
+function parseThreadRunStateEvent(data: string): ThreadRunStateEvent | null {
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(data) as unknown
+  } catch {
+    return null
+  }
+  if (!parsed || typeof parsed !== 'object') return null
+  const value = parsed as Record<string, unknown>
+  if (value.type !== 'thread.run_state') return null
+  const threadId = value.thread_id
+  const activeRunId = value.active_run_id
+  const title = value.title
+  if (typeof threadId !== 'string' || threadId.length === 0) return null
+  if (activeRunId !== null && typeof activeRunId !== 'string') return null
+  if (title !== undefined && title !== null && typeof title !== 'string') return null
+  const event: ThreadRunStateEvent = {
+    type: 'thread.run_state',
+    thread_id: threadId,
+    active_run_id: activeRunId,
+  }
+  if (title !== undefined) event.title = title
+  return event
+}
+
+export async function streamThreadRunStateEvents(
+  accessToken: string,
+  options: {
+    signal?: AbortSignal
+    onEvent: (event: ThreadRunStateEvent) => void
+  },
+): Promise<void> {
+  const response = await fetch(buildUrl('/v1/thread-run-state/events'), {
+    method: 'GET',
+    headers: {
+      Accept: 'text/event-stream',
+      Authorization: `Bearer ${accessToken}`,
+    },
+    signal: options.signal,
+  })
+
+  if (!response.ok) {
+    const headerTraceId = response.headers.get(TRACE_ID_HEADER) ?? undefined
+    const payload = await readJsonSafely(response)
+    if (payload && typeof payload === 'object') {
+      const env = payload as ErrorEnvelope
+      const traceId = typeof env.trace_id === 'string' ? env.trace_id : headerTraceId
+      const code = typeof env.code === 'string' ? env.code : undefined
+      const message =
+        typeof env.message === 'string'
+          ? env.message
+          : `请求失败（HTTP ${response.status}）`
+      throw new ApiError({
+        status: response.status,
+        message,
+        code,
+        traceId,
+        details: env.details,
+      })
+    }
+    throw new ApiError({
+      status: response.status,
+      message: `请求失败（HTTP ${response.status}）`,
+      traceId: headerTraceId,
+    })
+  }
+
+  if (!response.body) {
+    throw new Error('SSE 响应无 body')
+  }
+
+  const reader = response.body.getReader()
+  const decoder = new TextDecoder()
+  let buffer = ''
+
+  try {
+    while (true) {
+      const { value, done } = await reader.read()
+      if (done) return
+      buffer += decoder.decode(value, { stream: true })
+      const { events, remaining } = parseSSEChunk(buffer)
+      buffer = remaining
+      for (const event of events) {
+        if (event.event !== 'thread.run_state' || !event.data) continue
+        const parsed = parseThreadRunStateEvent(event.data)
+        if (parsed) options.onEvent(parsed)
+      }
+    }
+  } finally {
+    reader.releaseLock()
+  }
+}
+
 export type ProjectWorkspaceStatus = 'active' | 'idle' | 'unavailable'
 
 export type ProjectWorkspace = {

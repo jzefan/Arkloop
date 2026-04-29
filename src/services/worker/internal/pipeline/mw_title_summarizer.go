@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"arkloop/services/shared/eventbus"
+	"arkloop/services/shared/threadrunstate"
 	"arkloop/services/worker/internal/llm"
 	"arkloop/services/worker/internal/routing"
 
@@ -443,7 +444,7 @@ func generateTitle(
 	})
 	cancel()
 
-	notifyTitleEvent(ctx, pool, rdb, bus, runID, seq)
+	notifyTitleEvent(ctx, pool, rdb, bus, runID, threadID, seq)
 }
 
 func writeThreadTitleAndEventOnce(
@@ -607,6 +608,7 @@ func notifyTitleEvent(
 	rdb *redis.Client,
 	bus eventbus.EventBus,
 	runID uuid.UUID,
+	threadID uuid.UUID,
 	seq int64,
 ) {
 	logTitleSummarizerDebug(ctx, "notify_title_event",
@@ -633,6 +635,13 @@ func notifyTitleEvent(
 			slog.WarnContext(ctx, "title_redis_publish_failed", "channel", rdbChannel, "err", err)
 		}
 	}
+
+	var accountID uuid.UUID
+	if err := pool.QueryRow(ctx, `SELECT account_id FROM runs WHERE id = $1`, runID).Scan(&accountID); err != nil {
+		slog.WarnContext(ctx, "title_thread_state_lookup_failed", "run_id", runID.String(), "err", err)
+		return
+	}
+	threadrunstate.Publish(ctx, pool, rdb, bus, accountID, threadID)
 }
 
 func buildTitleInput(messages []llm.Message) string {

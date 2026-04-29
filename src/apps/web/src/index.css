@@ -129,6 +129,7 @@ button:not(:disabled) {
   --title-btn-hover: rgba(255, 255, 255, 0.09);
   --c-window-close-hover: #c42b1c;
   --c-sidebar-btn-hover: #000000;
+  --c-sidebar-completed-unread-dot: #e8a427;
   --c-mode-switch-track: rgba(255, 255, 255, 0.06);
   --c-mode-switch-border: rgba(255, 255, 255, 0.08);
   --c-mode-switch-pill: rgba(255, 255, 255, 0.10);
@@ -272,6 +273,7 @@ button:not(:disabled) {
     --title-btn-hover: rgba(0, 0, 0, 0.10);
     --c-window-close-hover: #c42b1c;
     --c-sidebar-btn-hover: rgba(0, 0, 0, 0.12);
+    --c-sidebar-completed-unread-dot: #e8a427;
     --c-mode-switch-track: rgba(0, 0, 0, 0.05);
     --c-mode-switch-border: rgba(0, 0, 0, 0.08);
     --c-mode-switch-pill: #FFFFFF;
@@ -396,6 +398,7 @@ button:not(:disabled) {
   --title-btn-hover: rgba(0, 0, 0, 0.10);
   --c-window-close-hover: #c42b1c;
   --c-sidebar-btn-hover: rgba(0, 0, 0, 0.12);
+  --c-sidebar-completed-unread-dot: #e8a427;
   --c-mode-switch-track: rgba(0, 0, 0, 0.05);
   --c-mode-switch-border: rgba(0, 0, 0, 0.08);
   --c-mode-switch-pill: #FFFFFF;
@@ -1534,6 +1537,13 @@ button:not(:disabled) {
 
 .sidebar-running-dot:nth-child(3) {
   animation-delay: 340ms;
+}
+
+.sidebar-completed-unread-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 9999px;
+  background: var(--c-sidebar-completed-unread-dot);
 }
 
 @keyframes sidebar-running-dot-flow {
