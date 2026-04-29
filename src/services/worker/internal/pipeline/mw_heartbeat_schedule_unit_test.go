@@ -44,7 +44,7 @@ func (db heartbeatChannelConfigDB) Query(context.Context, string, ...any) (pgx.R
 }
 
 func (db heartbeatChannelConfigDB) QueryRow(context.Context, string, ...any) pgx.Row {
-	return heartbeatChannelConfigRow{raw: db.raw, err: db.err}
+	return heartbeatChannelConfigRow(db)
 }
 
 func (db heartbeatChannelConfigDB) BeginTx(context.Context, pgx.TxOptions) (pgx.Tx, error) {
