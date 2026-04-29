@@ -179,6 +179,8 @@ func (c telegramConnector) persistTelegramInboundStageA(
 			c.threadRepo,
 			c.runEventRepo.WithTx(tx),
 			c.pool,
+			c.personasRepo,
+			c.channelsRepo,
 		); err != nil {
 			return nil, err
 		} else if handled {
@@ -198,7 +200,7 @@ func (c telegramConnector) persistTelegramInboundStageA(
 
 	if !incoming.IsPrivate() && isTelegramGroupLikeChatType(incoming.ChatType) && c.channelGroupThreadsRepo != nil {
 		cmd, ok := telegramCommandBase(strings.TrimSpace(incoming.CommandText), cfg.BotUsername)
-		if ok && cmd == "/new" {
+		if ok && (cmd == "/new" || cmd == "/reset") {
 			var replyText string
 			if ch.PersonaID == nil || *ch.PersonaID == uuid.Nil {
 				replyText = "当前会话未配置 persona。"
@@ -309,6 +311,162 @@ func (c telegramConnector) persistTelegramInboundStageA(
 				replyText:   replyText,
 				cancelRunID: cancelRunID,
 			}, nil
+		}
+		if ok && cmd == "/status" {
+			statusIdentity := identity
+			if groupIdentity != nil {
+				statusIdentity = *groupIdentity
+			}
+			preferredModel, reasoningMode, err := c.channelIdentitiesRepo.WithTx(tx).GetPreferenceConfig(ctx, statusIdentity.ID)
+			if err != nil {
+				return nil, err
+			}
+			modelDisplay := "跟随频道"
+			if strings.TrimSpace(preferredModel) != "" {
+				modelDisplay = preferredModel
+			}
+			thinkDisplay := reasoningMode
+			if thinkDisplay == "" {
+				thinkDisplay = "off"
+			}
+			var sb strings.Builder
+			sb.WriteString(fmt.Sprintf("模型：%s\n思考：%s", modelDisplay, thinkDisplay))
+			if ch.PersonaID != nil && *ch.PersonaID != uuid.Nil {
+				threadMap, _ := c.channelGroupThreadsRepo.WithTx(tx).GetByBinding(ctx, ch.ID, incoming.PlatformChatID, *ch.PersonaID)
+				if threadMap != nil {
+					activeRun, _ := c.runEventRepo.GetActiveRootRunForThread(ctx, threadMap.ThreadID)
+					if activeRun != nil {
+						sb.WriteString("\n状态：运行中")
+					} else {
+						sb.WriteString("\n状态：空闲")
+					}
+				}
+			}
+			if err := c.recordTelegramInboundFinalState(ctx, tx, ch, incoming, &statusIdentity.ID, nil, nil, inboundStateCommandHandled, baseMetadata); err != nil {
+				return nil, err
+			}
+			if err := commitTx(); err != nil {
+				return nil, err
+			}
+			return &telegramInboundStageAResult{finalState: inboundStateCommandHandled, replyText: sb.String()}, nil
+		}
+		if ok && cmd == "/models" {
+			modelsIdentity := identity
+			if groupIdentity != nil {
+				modelsIdentity = *groupIdentity
+			}
+			candidates, err := loadTelegramSelectorCandidates(ctx, tx, ch.AccountID)
+			if err != nil {
+				return nil, err
+			}
+			allowUserScoped, err := resolveTelegramByokEnabled(ctx, c.entitlementSvc, ch.AccountID)
+			if err != nil {
+				return nil, err
+			}
+			preferredModel, _, _ := c.channelIdentitiesRepo.WithTx(tx).GetPreferenceConfig(ctx, modelsIdentity.ID)
+			var rows [][]telegrambot.InlineKeyboardButton
+			for _, cand := range candidates {
+				if !cand.accountScoped && !allowUserScoped {
+					continue
+				}
+				label := cand.model
+				if strings.EqualFold(strings.TrimSpace(cand.model), strings.TrimSpace(preferredModel)) {
+					label = cand.model + " ✓"
+				}
+				rows = append(rows, []telegrambot.InlineKeyboardButton{{
+					Text:         label,
+					CallbackData: "model:" + cand.model,
+				}})
+			}
+			var replyMarkup *telegrambot.InlineKeyboardMarkup
+			replyText := "暂无可用模型。"
+			if len(rows) > 0 {
+				replyText = "Choose model."
+				replyMarkup = &telegrambot.InlineKeyboardMarkup{InlineKeyboard: rows}
+			}
+			if err := c.recordTelegramInboundFinalState(ctx, tx, ch, incoming, &modelsIdentity.ID, nil, nil, inboundStateCommandHandled, baseMetadata); err != nil {
+				return nil, err
+			}
+			if err := commitTx(); err != nil {
+				return nil, err
+			}
+			return &telegramInboundStageAResult{finalState: inboundStateCommandHandled, replyText: replyText, replyMarkup: replyMarkup}, nil
+		}
+		if ok && cmd == "/persona" {
+			if ch.PersonaID == nil || *ch.PersonaID == uuid.Nil {
+				if err := commitTx(); err != nil {
+					return nil, err
+				}
+				return &telegramInboundStageAResult{finalState: inboundStateCommandHandled, replyText: "当前会话未配置 persona。"}, nil
+			}
+			if identity.UserID == nil {
+				if err := commitTx(); err != nil {
+					return nil, err
+				}
+				return &telegramInboundStageAResult{finalState: inboundStateCommandHandled, replyText: "无权限。"}, nil
+			}
+			if c.telegramClient != nil && strings.TrimSpace(token) != "" {
+				tgUserID, _ := strconv.ParseInt(incoming.PlatformUserID, 10, 64)
+				member, err := c.telegramClient.GetChatMember(ctx, token, telegrambot.GetChatMemberRequest{
+					ChatID: incoming.PlatformChatID,
+					UserID: tgUserID,
+				})
+				if err != nil || member == nil || (member.Status != "creator" && member.Status != "administrator") {
+					if err := commitTx(); err != nil {
+						return nil, err
+					}
+					return &telegramInboundStageAResult{finalState: inboundStateCommandHandled, replyText: "无权限。"}, nil
+				}
+			}
+			personaIdentity := identity
+			if groupIdentity != nil {
+				personaIdentity = *groupIdentity
+			}
+			currentPersona, err := c.personasRepo.GetByIDForAccount(ctx, ch.AccountID, *ch.PersonaID)
+			if err != nil || currentPersona == nil {
+				return nil, err
+			}
+			projectID := uuid.Nil
+			if currentPersona.ProjectID != nil {
+				projectID = *currentPersona.ProjectID
+			}
+			if projectID == uuid.Nil {
+				if err := commitTx(); err != nil {
+					return nil, err
+				}
+				return &telegramInboundStageAResult{finalState: inboundStateCommandHandled, replyText: "当前会话未配置 persona。"}, nil
+			}
+			personas, err := c.personasRepo.ListActiveByProject(ctx, projectID)
+			if err != nil {
+				return nil, err
+			}
+			var rows [][]telegrambot.InlineKeyboardButton
+			for _, p := range personas {
+				if !p.UserSelectable {
+					continue
+				}
+				label := p.DisplayName
+				if p.ID == *ch.PersonaID {
+					label = p.DisplayName + " ✓"
+				}
+				rows = append(rows, []telegrambot.InlineKeyboardButton{{
+					Text:         label,
+					CallbackData: "persona:" + p.ID.String(),
+				}})
+			}
+			var replyMarkup *telegrambot.InlineKeyboardMarkup
+			replyText := "没有可切换的 persona。"
+			if len(rows) > 0 {
+				replyText = "Choose persona."
+				replyMarkup = &telegrambot.InlineKeyboardMarkup{InlineKeyboard: rows}
+			}
+			if err := c.recordTelegramInboundFinalState(ctx, tx, ch, incoming, &personaIdentity.ID, nil, nil, inboundStateCommandHandled, baseMetadata); err != nil {
+				return nil, err
+			}
+			if err := commitTx(); err != nil {
+				return nil, err
+			}
+			return &telegramInboundStageAResult{finalState: inboundStateCommandHandled, replyText: replyText, replyMarkup: replyMarkup}, nil
 		}
 		if ok && (cmd == "/model" || strings.HasPrefix(cmd, "/think")) {
 			modelIdentity := identity

@@ -1378,6 +1378,71 @@ func TestAgentLoopEmptyCompletionRetries(t *testing.T) {
 	}
 }
 
+func TestAgentLoopThinkingOnlyCompletionDoesNotRetry(t *testing.T) {
+	gateway := &scriptedTurnsGateway{turns: [][]llm.StreamEvent{
+		{
+			llm.StreamRunCompleted{
+				LlmCallID: "thinking-1",
+				AssistantMessage: &llm.Message{
+					Role:    "assistant",
+					Content: []llm.ContentPart{{Type: "thinking", Text: "done", Signature: "sig_1"}},
+				},
+			},
+		},
+	}}
+	loop := NewLoop(gateway, nil)
+	emitter := events.NewEmitter("trace")
+
+	var got []events.RunEvent
+	err := loop.Run(
+		context.Background(),
+		RunContext{
+			RunID:               uuid.New(),
+			TraceID:             "trace",
+			InputJSON:           map[string]any{},
+			ReasoningIterations: 3,
+			LlmRetryMaxAttempts: 2,
+			LlmRetryBaseDelayMs: 1,
+			CancelSignal:        func() bool { return false },
+		},
+		llm.Request{Model: "stub"},
+		emitter,
+		func(ev events.RunEvent) error {
+			got = append(got, ev)
+			return nil
+		},
+	)
+	if err != nil {
+		t.Fatalf("loop.Run failed: %v", err)
+	}
+	if gateway.calls != 1 {
+		t.Fatalf("expected no retry, got %d calls", gateway.calls)
+	}
+	for _, ev := range got {
+		if ev.Type == "run.llm.retry" {
+			t.Fatalf("unexpected retry event: %#v", ev)
+		}
+	}
+	if got[len(got)-1].Type != "run.completed" {
+		t.Fatalf("expected final run.completed, got %s", got[len(got)-1].Type)
+	}
+}
+
+func TestCompletedTurnIsEmptyRespectsAssistantState(t *testing.T) {
+	if !completedTurnIsEmpty("", nil, nil, nil) {
+		t.Fatal("nil assistant message should be empty")
+	}
+	if !completedTurnIsEmpty("", &llm.Message{Content: []llm.ContentPart{{Text: "   "}}}, nil, nil) {
+		t.Fatal("blank visible text should be empty")
+	}
+	if completedTurnIsEmpty("", &llm.Message{Content: []llm.ContentPart{{Type: "thinking", Text: "plan"}}}, nil, nil) {
+		t.Fatal("thinking text should not be empty")
+	}
+	if completedTurnIsEmpty("", &llm.Message{Content: []llm.ContentPart{{Type: "redacted_thinking", Text: "opaque"}}}, nil, nil) {
+		t.Fatal("redacted thinking should not be empty")
+	}
+}
+
 func TestAgentLoopPreflightOversizeRewritesBeforeFirstProviderRequest(t *testing.T) {
 	primary := &oversizeSuccessGateway{phase: llm.OversizePhasePreflight}
 	loop := NewLoop(primary, nil)

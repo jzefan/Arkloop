@@ -254,6 +254,8 @@ func (c telegramConnector) processTelegramMediaGroupMerged(
 			c.threadRepo,
 			c.runEventRepo.WithTx(tx),
 			c.pool,
+			c.personasRepo,
+			c.channelsRepo,
 		); err != nil {
 			return err
 		} else if handled {

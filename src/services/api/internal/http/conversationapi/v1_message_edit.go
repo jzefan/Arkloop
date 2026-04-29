@@ -63,6 +63,23 @@ func writeThreadRunBusyOrInternal(w nethttp.ResponseWriter, traceID string, err 
 	httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
 }
 
+func inheritRunRefsFromParent(ctx context.Context, tx pgx.Tx, run data.Run, parentRun *data.Run) error {
+	if parentRun == nil || (parentRun.ProfileRef == nil && parentRun.WorkspaceRef == nil) {
+		return nil
+	}
+	_, err := tx.Exec(
+		ctx,
+		`UPDATE runs
+		    SET profile_ref = $2,
+		        workspace_ref = $3
+		  WHERE id = $1`,
+		run.ID,
+		parentRun.ProfileRef,
+		parentRun.WorkspaceRef,
+	)
+	return err
+}
+
 func inheritRunExecutionData(startedData map[string]any, jobData map[string]any, parentStartedData map[string]any, parentRun *data.Run) {
 	copyString := func(key string) {
 		if parentStartedData == nil {
@@ -376,20 +393,9 @@ func editThreadMessage(
 			writeThreadRunBusyOrInternal(w, traceID, err)
 			return
 		}
-		if parentRun != nil && (parentRun.ProfileRef != nil || parentRun.WorkspaceRef != nil) {
-			if _, err := tx.Exec(
-				r.Context(),
-				`UPDATE runs
-				    SET profile_ref = $2,
-				        workspace_ref = $3
-				  WHERE id = $1`,
-				run.ID,
-				parentRun.ProfileRef,
-				parentRun.WorkspaceRef,
-			); err != nil {
-				httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
-				return
-			}
+		if err := inheritRunRefsFromParent(r.Context(), tx, run, parentRun); err != nil {
+			httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "internal error", traceID, nil)
+			return
 		}
 
 		_ = txThreadRepo.Touch(r.Context(), threadID)

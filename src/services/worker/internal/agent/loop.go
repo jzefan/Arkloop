@@ -2669,6 +2669,9 @@ func completedTurnIsEmpty(
 	if len(assistantMessage.ToolCalls) > 0 {
 		return false
 	}
+	if assistantMessageHasState(assistantMessage.Content) {
+		return false
+	}
 	for _, part := range llm.VisibleContentParts(assistantMessage.Content) {
 		switch part.Kind() {
 		case messagecontent.PartTypeImage:
@@ -2680,6 +2683,22 @@ func completedTurnIsEmpty(
 		}
 	}
 	return true
+}
+
+func assistantMessageHasState(parts []llm.ContentPart) bool {
+	for _, part := range parts {
+		switch part.Kind() {
+		case "thinking":
+			if strings.TrimSpace(part.Text) != "" || strings.TrimSpace(part.Signature) != "" {
+				return true
+			}
+		case "redacted_thinking":
+			if strings.TrimSpace(part.Text) != "" {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func emptyCompletionFailureEvent(emitter events.Emitter, completedJSON map[string]any) events.RunEvent {
