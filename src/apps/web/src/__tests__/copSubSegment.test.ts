@@ -76,3 +76,63 @@ describe('copSubSegment web search titles', () => {
     expect(aggregateMainTitle(segments, false, true)).not.toBe('2 steps completed')
   })
 })
+
+describe('copSubSegment load tool titles', () => {
+  it('load_tools 完成态标题不退化为代码探索', () => {
+    const segments = buildSubSegments([
+      toolCall('lt1', 'load_tools', 1, { queries: ['todo_write'] }),
+    ])
+
+    expect(segments[0]?.title).toBe('Loaded 1 tool')
+    expect(aggregateMainTitle(segments, false, true)).toBe('Loaded 1 tool')
+    expect(aggregateMainTitle(segments, false, true)).not.toBe('Explored code')
+  })
+
+  it('load_tools live 标题使用加载语义', () => {
+    const segments = buildSubSegments([
+      toolCall('lt1', 'load_tools', 1, { queries: ['spawn_agent', 'wait_agent'] }),
+    ])
+    const openSegment = {
+      ...segments[0]!,
+      status: 'open' as const,
+      title: 'Exploring code...',
+    }
+
+    expect(aggregateMainTitle([openSegment], true, false)).toBe('Loading 2 tools...')
+  })
+
+  it('load_skill 完成态标题显示技能加载语义', () => {
+    const segments = buildSubSegments([
+      toolCall('ls1', 'load_skill', 1),
+    ])
+
+    expect(segments[0]?.title).toBe('Loaded 1 skill')
+    expect(aggregateMainTitle(segments, false, true)).toBe('Loaded 1 skill')
+  })
+
+  it('thought 不影响 load_tools/load_skill 专属标题判断', () => {
+    const segments = buildSubSegments([
+      { kind: 'thinking', content: 'need tools', seq: 1 },
+      toolCall('lt1', 'load_tools', 2, { queries: ['spawn_agent', 'wait_agent'] }),
+      toolCall('ls1', 'load_skill', 3),
+      { kind: 'thinking', content: 'skills too', seq: 4 },
+      toolCall('ls2', 'load_skill', 5),
+      toolCall('ls3', 'load_skill', 6),
+    ])
+
+    expect(segments[0]?.title).toBe('Loaded 2 tools, 3 skills')
+    expect(aggregateMainTitle(segments, false, true)).toBe('Loaded 2 tools, 3 skills')
+  })
+
+  it('同一 COP 混入代码探索工具时不显示加载标题', () => {
+    const segments = buildSubSegments([
+      { kind: 'thinking', content: 'load then read', seq: 1 },
+      toolCall('lt1', 'load_tools', 2, { queries: ['read'] }),
+      toolCall('r1', 'read_file', 3, { file_path: '/tmp/a.ts' }),
+    ])
+
+    expect(segments[0]?.title).toBe('Read 1 file')
+    expect(aggregateMainTitle(segments, false, true)).toBe('Read 1 file')
+    expect(aggregateMainTitle(segments, false, true)).not.toContain('Loaded')
+  })
+})

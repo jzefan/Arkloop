@@ -29,6 +29,7 @@ export type ExploreGroupRef = {
 }
 
 const EXPLORE_TOOL_NAMES = new Set(['read_file', 'grep', 'glob', 'load_tools', 'load_skill', 'lsp'])
+const LOAD_TOOL_NAMES = new Set(['load_tools', 'load_skill'])
 const MUTATING_LSP_OPERATIONS = new Set(['rename'])
 
 function basename(path: string): string {
@@ -201,8 +202,29 @@ export function isExploreFileOp(op: FileOpRef): boolean {
   return op.operation !== 'rename'
 }
 
+function formatCount(count: number, singular: string, plural: string): string {
+  return `${count} ${count === 1 ? singular : plural}`
+}
+
+function formatLoadGroupLabel(toolCount: number, skillCount: number, tense: 'live' | 'done'): string {
+  const verb = tense === 'live' ? 'Loading' : 'Loaded'
+  const parts: string[] = []
+  if (toolCount > 0) parts.push(formatCount(toolCount, 'tool', 'tools'))
+  if (skillCount > 0) parts.push(formatCount(skillCount, 'skill', 'skills'))
+  return parts.length > 0 ? `${verb} ${parts.join(', ')}` : `${verb} tools`
+}
+
 export function exploreGroupLabel(items: FileOpRef[], status: ExploreGroupRef['status']): string {
-  if (status === 'running') return 'Exploring code'
+  const onlyLoadTools = items.length > 0 && items.every((item) => LOAD_TOOL_NAMES.has(normalizeToolName(item.toolName)))
+  const loadToolsCount = items.filter((item) => normalizeToolName(item.toolName) === 'load_tools').length
+  const loadSkillCount = items.filter((item) => normalizeToolName(item.toolName) === 'load_skill').length
+
+  if (status === 'running') {
+    return onlyLoadTools ? formatLoadGroupLabel(loadToolsCount, loadSkillCount, 'live') : 'Exploring code'
+  }
+
+  if (onlyLoadTools) return formatLoadGroupLabel(loadToolsCount, loadSkillCount, 'done')
+
   const reads = new Set(items.filter((item) => normalizeToolName(item.toolName) === 'read_file').map((item) => item.filePath || item.label))
   const hasSearch = items.some((item) => ['grep', 'lsp'].includes(normalizeToolName(item.toolName)))
   const hasGlob = items.some((item) => normalizeToolName(item.toolName) === 'glob')
