@@ -3131,9 +3131,14 @@ describe('ChatPage loading state', () => {
     expect(text).toContain('我要先')
     expect(text).toContain('再继续')
     expect(container.querySelector('[data-testid="current-run-handoff"]')).toBeNull()
-    expect(countMatches(text, '1 steps completed')).toBe(2)
+    expect(text).toContain('pwd')
+    expect(text).toContain('ls')
+    expect(text).not.toContain('1 steps completed')
     expect(container.querySelector('[data-preserve-expanded="true"]')).toBeNull()
     expect(text.indexOf('我要先')).toBeGreaterThanOrEqual(0)
+    expect(text.indexOf('pwd')).toBeGreaterThan(text.indexOf('我要先'))
+    expect(text.indexOf('再继续')).toBeGreaterThan(text.indexOf('pwd'))
+    expect(text.indexOf('ls')).toBeGreaterThan(text.indexOf('再继续'))
     expect(scrollIntoViewMock.mock.calls.some(([opts]) => (opts as { behavior?: string } | undefined)?.behavior === 'smooth')).toBe(false)
     expect(scrollIntoViewMock.mock.calls.some(([opts]) => (opts as { behavior?: string } | undefined)?.behavior === 'instant')).toBe(false)
 
@@ -4803,7 +4808,7 @@ describe('ChatPage loading state', () => {
 
     expect(container.querySelector('[data-testid="current-run-handoff"]')).toBeNull()
     expect(container.querySelector('[data-live="true"]')).toBeNull()
-    expect(container.querySelector('[data-live="false"]')).not.toBeNull()
+    expect(container.textContent ?? '').toContain('pwd')
 
     await act(async () => {
       resolveRefresh?.([

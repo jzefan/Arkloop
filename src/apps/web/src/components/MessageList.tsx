@@ -262,6 +262,10 @@ export const MessageList = memo(function MessageList({
                     searchSteps: messageSearchSteps ?? [],
                     sources: resolvedSources ?? [],
                   }
+                  const turnTodoWrites = historicalSegments
+                    .flatMap((entry) => entry.type === 'cop'
+                      ? copTimelinePayloadForSegment(entry, timelinePools).todoWrites ?? []
+                      : [])
                   const payload = copTimelinePayloadForSegment(seg, timelinePools)
                   const histWidgets = historicWidgetsForCop(seg, msgWidgetsRaw)
                   const segmentLive = currentRunMessageLive && si === historicalSegments.length - 1
@@ -297,6 +301,7 @@ export const MessageList = memo(function MessageList({
                       accessToken={accessToken}
                       baseUrl={baseUrl}
                       typography={isWorkMode ? 'work' : 'default'}
+                      todoWritesForFinalDisplay={turnTodoWrites}
                     />
                   )]
 

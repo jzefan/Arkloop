@@ -6,7 +6,9 @@ import { CopTimeline } from './cop-timeline/CopTimeline'
 import { buildResolvedPool, buildSubSegments, buildThinkingOnlyFromItems, segmentLiveTitle } from '../copSubSegment'
 import {
   copTimelinePayloadForSegment,
+  deriveTodoChanges,
   splitCopItemsByTopLevelTools,
+  type TodoWriteRef,
 } from '../copSegmentTimeline'
 import { TopLevelCopToolBlock, type TopLevelCopToolEntry } from './TopLevelCopToolBlock'
 
@@ -33,11 +35,13 @@ type Props = {
   accessToken?: string
   baseUrl?: string
   typography?: 'default' | 'work'
+  todoWritesForFinalDisplay?: TodoWriteRef[] | null
 }
 
 function topLevelEntryForTool(
   entry: Extract<ReturnType<typeof splitCopItemsByTopLevelTools>[number], { kind: 'tool' }>,
   payload: ReturnType<typeof copTimelinePayloadForSegment>,
+  todoWritesForFinalDisplay?: TodoWriteRef[] | null,
 ): TopLevelCopToolEntry | null {
   const id = entry.item.call.toolCallId
   const codeExecution = payload.codeExecutions?.find((item) => item.id === id)
@@ -46,9 +50,38 @@ function topLevelEntryForTool(
   }
   const todo = payload.todoWrites?.find((item) => item.id === id)
   if (todo) {
-    return { kind: 'todo', id, seq: entry.seq, item: todo }
+    return { kind: 'todo', id, seq: entry.seq, item: todoForFinalDisplay(todo, todoWritesForFinalDisplay ?? payload.todoWrites ?? []) }
   }
   return null
+}
+
+function countCompletedTodos(todo: TodoWriteRef): number {
+  return todo.completedCount ?? todo.todos.filter((item) => item.status === 'completed').length
+}
+
+function hydrateTodoFromPreviousWrite(todo: TodoWriteRef, allTodos: TodoWriteRef[]): TodoWriteRef {
+  if ((todo.oldTodos?.length ?? 0) > 0 || todo.todos.length === 0) return todo
+  const previous = allTodos
+    .filter((item) => item.id !== todo.id && (item.seq ?? 0) < (todo.seq ?? 0) && item.todos.length > 0)
+    .sort((left, right) => (right.seq ?? 0) - (left.seq ?? 0))[0]
+  if (!previous) return todo
+  const changes = deriveTodoChanges(previous.todos, todo.todos)
+  if (changes.length === 0) return todo
+  return { ...todo, oldTodos: previous.todos, changes }
+}
+
+function todoForFinalDisplay(todo: TodoWriteRef, allTodos: TodoWriteRef[]): TodoWriteRef {
+  const hydrated = hydrateTodoFromPreviousWrite(todo, allTodos)
+  const latest = allTodos
+    .filter((item) => item.todos.length > 0)
+    .sort((left, right) => (right.seq ?? 0) - (left.seq ?? 0))[0]
+  if (!latest || latest.id === hydrated.id) return hydrated
+  return {
+    ...hydrated,
+    todos: latest.todos,
+    completedCount: countCompletedTodos(latest),
+    totalCount: latest.totalCount ?? latest.todos.length,
+  }
 }
 
 export function CopSegmentBlocks({
@@ -72,6 +105,7 @@ export function CopSegmentBlocks({
   accessToken,
   baseUrl,
   typography = 'default',
+  todoWritesForFinalDisplay,
 }: Props) {
   const splitEntries = splitCopItemsByTopLevelTools(segment.items)
   if (splitEntries.length === 0) return null
@@ -87,7 +121,7 @@ export function CopSegmentBlocks({
         const entryComplete = isComplete || !entryLive
 
         if (entry.kind === 'tool') {
-          const toolEntry = topLevelEntryForTool(entry, fullPayload)
+          const toolEntry = topLevelEntryForTool(entry, fullPayload, todoWritesForFinalDisplay)
           if (!toolEntry) return null
           return (
             <TopLevelCopToolBlock

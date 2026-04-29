@@ -417,6 +417,10 @@ export interface LocaleStrings {
   shellRanShort: string
   todoListTitle: string
   todoListProgress: (completed: number, total: number) => string
+  todoChangeCompleted: (completed: number, total: number) => string
+  todoChangeStarted: (position: number, total: number) => string
+  todoChangeCancelled: (position: number, total: number) => string
+  todoChangeUpdated: (position: number, total: number) => string
   // sub-agent
   agentSubAgent: string
   agentAcpAgent: string

@@ -102,6 +102,103 @@ describe('copTimelinePayloadForSegment', () => {
     expect(r.genericTools).toBeUndefined()
   })
 
+  it('todo_write 从结果中读取 old_todos、changes 和进度', () => {
+    const r = copTimelinePayloadForSegment(
+      {
+        type: 'cop',
+        title: null,
+        items: [{
+          kind: 'call',
+          call: {
+            toolCallId: 'todo_1',
+            toolName: 'todo_write',
+            arguments: {
+              todos: [
+                { id: 'a', content: 'Read current renderer', status: 'pending' },
+              ],
+            },
+            result: {
+              old_todos: [
+                { id: 'a', content: 'Read current renderer', status: 'pending' },
+              ],
+              todos: [
+                { id: 'a', content: 'Read current renderer', status: 'completed' },
+                { id: 'b', content: 'Wire the renderer', active_form: 'Wiring the renderer', status: 'in_progress' },
+              ],
+              changes: [
+                { type: 'updated', id: 'a', content: 'Read current renderer', previous_status: 'pending', status: 'completed', index: 0 },
+                { type: 'created', id: 'b', content: 'Wire the renderer', active_form: 'Wiring the renderer', status: 'in_progress', index: 1 },
+              ],
+              completed_count: 1,
+              total_count: 2,
+            },
+          },
+          seq: 5,
+        }],
+      },
+      { sources: [] },
+    )
+
+    expect(r.todoWrites?.[0]).toEqual(expect.objectContaining({
+      completedCount: 1,
+      totalCount: 2,
+      oldTodos: [{ id: 'a', content: 'Read current renderer', status: 'pending' }],
+      todos: [
+        { id: 'a', content: 'Read current renderer', status: 'completed' },
+        { id: 'b', content: 'Wire the renderer', activeForm: 'Wiring the renderer', status: 'in_progress' },
+      ],
+      changes: [
+        { type: 'updated', id: 'a', content: 'Read current renderer', previousStatus: 'pending', status: 'completed', index: 0 },
+        { type: 'created', id: 'b', content: 'Wire the renderer', activeForm: 'Wiring the renderer', status: 'in_progress', index: 1 },
+      ],
+    }))
+  })
+
+  it('todo_write 缺少 changes 时从 old_todos 推导状态变化', () => {
+    const r = copTimelinePayloadForSegment(
+      {
+        type: 'cop',
+        title: null,
+        items: [{
+          kind: 'call',
+          call: {
+            toolCallId: 'todo_1',
+            toolName: 'todo_write',
+            arguments: {
+              todos: [
+                { id: 'a', content: 'Read current renderer', status: 'pending' },
+                { id: 'b', content: 'Wire the renderer', activeForm: 'Wiring the renderer', status: 'pending' },
+              ],
+            },
+            result: {
+              oldTodos: [
+                { id: 'a', content: 'Read current renderer', status: 'pending' },
+                { id: 'b', content: 'Wire the renderer', activeForm: 'Wiring the renderer', status: 'pending' },
+              ],
+              todos: [
+                { id: 'a', content: 'Read current renderer', status: 'completed' },
+                { id: 'b', content: 'Wire the renderer', activeForm: 'Wiring the renderer', status: 'in_progress' },
+              ],
+              completedCount: 1,
+              totalCount: 2,
+            },
+          },
+          seq: 5,
+        }],
+      },
+      { sources: [] },
+    )
+
+    expect(r.todoWrites?.[0]).toEqual(expect.objectContaining({
+      completedCount: 1,
+      totalCount: 2,
+      changes: [
+        { type: 'updated', id: 'a', content: 'Read current renderer', previousStatus: 'pending', status: 'completed', oldContent: 'Read current renderer', index: 0 },
+        { type: 'updated', id: 'b', content: 'Wire the renderer', previousStatus: 'pending', status: 'in_progress', oldContent: 'Wire the renderer', activeForm: 'Wiring the renderer', oldActiveForm: 'Wiring the renderer', index: 1 },
+      ],
+    }))
+  })
+
   it('含 searching 步骤时附带 sources', () => {
     const r = copTimelinePayloadForSegment(
       {

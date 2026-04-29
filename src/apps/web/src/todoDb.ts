@@ -12,6 +12,7 @@
 export interface TodoItem {
   id: string
   content: string
+  activeForm?: string
   status: string
 }
 

@@ -2504,6 +2504,10 @@ export const ChatView = memo(function ChatView() {
       searchSteps,
       sources: currentRunSourcesRef.current,
     }
+    const turnTodoWrites = liveSegments
+      .flatMap((entry) => entry.type === 'cop'
+        ? copTimelinePayloadForSegment(entry, timelinePools).todoWrites ?? []
+        : [])
     const payload = copTimelinePayloadForSegment(seg, timelinePools)
 
     const liveWidgets = liveStreamingWidgetEntriesForCop(seg, streamingArtifacts)
@@ -2541,6 +2545,7 @@ export const ChatView = memo(function ChatView() {
           accessToken={accessToken}
           baseUrl={baseUrl}
           typography={appMode === 'work' ? 'work' : 'default'}
+          todoWritesForFinalDisplay={turnTodoWrites}
         />,
       ...liveWidgets.map((entry) => (
         <WidgetBlock

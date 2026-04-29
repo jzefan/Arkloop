@@ -27,8 +27,9 @@ var LlmSpec = llm.ToolSpec{
 				"items": map[string]any{
 					"type": "object",
 					"properties": map[string]any{
-						"id":      map[string]any{"type": "string"},
-						"content": map[string]any{"type": "string"},
+						"id":          map[string]any{"type": "string"},
+						"content":     map[string]any{"type": "string"},
+						"active_form": map[string]any{"type": "string"},
 						"status": map[string]any{
 							"type": "string",
 							"enum": []string{"pending", "in_progress", "completed", "cancelled"},
