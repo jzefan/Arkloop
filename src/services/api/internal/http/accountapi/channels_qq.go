@@ -321,7 +321,7 @@ func (c *qqConnector) HandleEvent(ctx context.Context, traceID string, ch data.C
 		}
 
 		// 私聊命令处理（复用 Telegram 的命令处理器）
-		if handled, replyText, err := handleTelegramCommand(
+		if handled, replyText, _, err := handleTelegramCommand(
 			ctx, tx, &ch, identity, text,
 			"",
 			ch.AccountID,

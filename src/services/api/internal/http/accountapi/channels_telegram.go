@@ -53,10 +53,18 @@ type telegramChannelConfig struct {
 	TriggerKeywords       []string `json:"trigger_keywords,omitempty"`
 }
 
+type telegramCallbackQuery struct {
+	ID      string           `json:"id"`
+	From    *telegramUser    `json:"from"`
+	Message *telegramMessage `json:"message"`
+	Data    string           `json:"data"`
+}
+
 type telegramUpdate struct {
-	UpdateID      int64            `json:"update_id"`
-	Message       *telegramMessage `json:"message"`
-	EditedMessage *telegramMessage `json:"edited_message"`
+	UpdateID      int64                  `json:"update_id"`
+	Message       *telegramMessage       `json:"message"`
+	EditedMessage *telegramMessage       `json:"edited_message"`
+	CallbackQuery *telegramCallbackQuery `json:"callback_query,omitempty"`
 }
 
 type telegramMessage struct {
@@ -739,7 +747,7 @@ func configureTelegramRemote(
 	if err := client.SetWebhook(remoteCtx, token, telegrambot.SetWebhookRequest{
 		URL:         strings.TrimSpace(*channel.WebhookURL),
 		SecretToken: secret,
-		Updates:     []string{"message", "edited_message"},
+		Updates:     []string{"message", "edited_message", "callback_query"},
 	}); err != nil {
 		return err
 	}
@@ -1224,6 +1232,9 @@ func (c telegramConnector) HandleUpdate(
 	if update.EditedMessage != nil {
 		return c.handleTelegramEditedMessage(ctx, ch, update.EditedMessage)
 	}
+	if update.CallbackQuery != nil {
+		return c.handleTelegramCallbackQuery(ctx, traceID, ch, token, update.CallbackQuery)
+	}
 	if update.Message == nil || update.Message.From == nil {
 		return nil
 	}
@@ -1285,8 +1296,9 @@ func (c telegramConnector) HandleUpdate(
 		if stageA.replyText != "" && c.telegramClient != nil && strings.TrimSpace(token) != "" {
 			sendCtx, sendCancel := context.WithTimeout(ctx, telegramRemoteRequestTimeout)
 			_, _ = c.telegramClient.SendMessage(sendCtx, token, telegrambot.SendMessageRequest{
-				ChatID: incoming.PlatformChatID,
-				Text:   stageA.replyText,
+				ChatID:      incoming.PlatformChatID,
+				Text:        stageA.replyText,
+				ReplyMarkup: stageA.replyMarkup,
 			})
 			sendCancel()
 		}
@@ -1735,134 +1747,140 @@ func handleTelegramCommand(
 	threadRepo *data.ThreadRepository,
 	runEventRepo *data.RunEventRepository,
 	pool data.DB,
-) (bool, string, error) {
+) (bool, string, *telegrambot.InlineKeyboardMarkup, error) {
 	if !strings.HasPrefix(text, "/") {
-		return false, "", nil
+		return false, "", nil, nil
 	}
 	parts := strings.Fields(text)
 	if len(parts) == 0 {
-		return false, "", nil
+		return false, "", nil, nil
 	}
 	command := strings.TrimSpace(parts[0])
 	switch command {
 	case "/help":
-		return true, "/start — 查看连接状态\n/bind <code> — 绑定你的账号\n/new — 开启新会话\n/stop — 停止当前任务\n/model [name] — View or switch model\n/think [level] — View or set thinking intensity\n/help — 显示此帮助", nil
+		return true, "/start — 查看连接状态\n/bind <code> — 绑定你的账号\n/new — 开启新会话\n/stop — 停止当前任务\n/model [name] — View or switch model\n/think [level] — View or set thinking intensity\n/help — 显示此帮助", nil, nil
 	case "/start":
 		if len(parts) > 1 && strings.HasPrefix(parts[1], "bind_") {
 			replyText, err := bindTelegramIdentity(ctx, tx, channel, identity, strings.TrimPrefix(parts[1], "bind_"), channelBindCodesRepo, channelIdentitiesRepo, channelIdentityLinksRepo, channelDMThreadsRepo, threadRepo)
-			return true, replyText, err
+			return true, replyText, nil, err
 		}
-		return true, "已连接 Arkloop\n\n使用 /bind <code> 绑定账号\n私聊直接发消息开始对话，/new 开启新会话\n群内 @bot 触发对话，管理员可用 /new 重置会话", nil
+		return true, "已连接 Arkloop\n\n使用 /bind <code> 绑定账号\n私聊直接发消息开始对话，/new 开启新会话\n群内 @bot 触发对话，管理员可用 /new 重置会话", nil, nil
 	case "/bind":
 		if len(parts) < 2 {
-			return true, "用法：/bind <code>", nil
+			return true, "用法：/bind <code>", nil, nil
 		}
 		replyText, err := bindTelegramIdentity(ctx, tx, channel, identity, parts[1], channelBindCodesRepo, channelIdentitiesRepo, channelIdentityLinksRepo, channelDMThreadsRepo, threadRepo)
-		return true, replyText, err
+		return true, replyText, nil, err
 	case "/new":
 		if channel == nil || channel.PersonaID == nil || *channel.PersonaID == uuid.Nil {
-			return true, "当前会话未配置 persona。", nil
+			return true, "当前会话未配置 persona。", nil, nil
 		}
 		if err := channelDMThreadsRepo.WithTx(tx).DeleteByBinding(ctx, channel.ID, identity.ID, *channel.PersonaID, platformThreadID); err != nil {
-			return true, "", err
+			return true, "", nil, err
 		}
-		return true, "已开启新会话。", nil
+		return true, "已开启新会话。", nil, nil
 	case "/stop":
 		if channel == nil || channel.PersonaID == nil || *channel.PersonaID == uuid.Nil {
-			return true, "当前没有运行中的任务。", nil
+			return true, "当前没有运行中的任务。", nil, nil
 		}
 		dmThread, err := channelDMThreadsRepo.GetByBinding(ctx, channel.ID, identity.ID, *channel.PersonaID, platformThreadID)
 		if err != nil {
-			return true, "", err
+			return true, "", nil, err
 		}
 		if dmThread == nil {
-			return true, "当前没有运行中的任务。", nil
+			return true, "当前没有运行中的任务。", nil, nil
 		}
 		activeRun, err := runEventRepo.GetActiveRootRunForThread(ctx, dmThread.ThreadID)
 		if err != nil {
-			return true, "", err
+			return true, "", nil, err
 		}
 		if activeRun == nil {
-			return true, "当前没有运行中的任务。", nil
+			return true, "当前没有运行中的任务。", nil, nil
 		}
 		if _, err := runEventRepo.RequestCancel(ctx, activeRun.ID, identity.UserID, "", 0, nil); err != nil {
-			return true, "", err
+			return true, "", nil, err
 		}
 		_, _ = pool.Exec(ctx, "SELECT pg_notify($1, $2)", pgnotify.ChannelRunCancel, activeRun.ID.String())
-		return true, "已请求停止当前任务。", nil
+		return true, "已请求停止当前任务。", nil, nil
 	case "/model":
 		allowUserScoped, err := resolveTelegramByokEnabled(ctx, entSvc, accountID)
 		if err != nil {
-			return true, "", err
+			return true, "", nil, err
 		}
 		preferredModel, _, err := channelIdentitiesRepo.WithTx(tx).GetPreferenceConfig(ctx, identity.ID)
 		if err != nil {
-			return true, "", err
+			return true, "", nil, err
 		}
 		if len(parts) < 2 {
 			candidates, err := loadTelegramSelectorCandidates(ctx, tx, accountID)
 			if err != nil {
-				return true, "", err
+				return true, "", nil, err
 			}
-			var sb strings.Builder
-			sb.WriteString("当前模型：")
-			if strings.TrimSpace(preferredModel) == "" {
-				sb.WriteString("跟随频道\n")
-			} else {
-				sb.WriteString(preferredModel + "\n")
-			}
-			sb.WriteString("\n可用模型：\n")
+			var rows [][]telegrambot.InlineKeyboardButton
 			for _, c := range candidates {
 				if !c.accountScoped && !allowUserScoped {
 					continue
 				}
-				mark := "  "
+				label := c.model
 				if strings.EqualFold(strings.TrimSpace(c.model), strings.TrimSpace(preferredModel)) {
-					mark = "✓ "
+					label = c.model + " ✓"
 				}
-				sb.WriteString(mark + c.model + "\n")
+				rows = append(rows, []telegrambot.InlineKeyboardButton{{
+					Text:         label,
+					CallbackData: "model:" + c.model,
+				}})
 			}
-			return true, strings.TrimRight(sb.String(), "\n"), nil
+			header := "Choose model.\nCurrent: follow channel default"
+			if strings.TrimSpace(preferredModel) != "" {
+				header = "Choose model.\nCurrent: " + preferredModel
+			}
+			var markup *telegrambot.InlineKeyboardMarkup
+			if len(rows) > 0 {
+				markup = &telegrambot.InlineKeyboardMarkup{InlineKeyboard: rows}
+			}
+			return true, header, markup, nil
 		}
 		newModel := strings.TrimSpace(parts[1])
 		if err := validateTelegramModelSelector(ctx, tx, accountID, newModel, allowUserScoped); err != nil {
-			return true, fmt.Sprintf("模型选择器无效：%s", newModel), nil
+			return true, fmt.Sprintf("模型选择器无效：%s", newModel), nil, nil
 		}
 		_, reasoningMode, err := channelIdentitiesRepo.WithTx(tx).GetPreferenceConfig(ctx, identity.ID)
 		if err != nil {
-			return true, "", err
+			return true, "", nil, err
 		}
 		if err := channelIdentitiesRepo.WithTx(tx).UpdatePreferenceConfig(ctx, identity.ID, newModel, reasoningMode); err != nil {
-			return true, "", err
+			return true, "", nil, err
 		}
-		return true, "model → " + newModel, nil
+		return true, "model → " + newModel, nil, nil
 	case "/think":
 		_, reasoningMode, err := channelIdentitiesRepo.WithTx(tx).GetPreferenceConfig(ctx, identity.ID)
 		if err != nil {
-			return true, "", err
+			return true, "", nil, err
 		}
 		if len(parts) < 2 {
 			display := reasoningMode
 			if display == "" {
 				display = "off"
 			}
-			return true, "think → " + display, nil
+			markup := buildThinkKeyboard(display)
+			header := fmt.Sprintf("Choose level for /think.\nCurrent: %s\nOptions: off, minimal, low, medium, high, max.", display)
+			return true, header, markup, nil
 		}
 		newMode := strings.TrimSpace(parts[1])
 		validModes := map[string]bool{"off": true, "minimal": true, "low": true, "medium": true, "high": true, "max": true}
 		if !validModes[newMode] {
-			return true, "可用档位：off、minimal、low、medium、high、max", nil
+			return true, "可用档位：off、minimal、low、medium、high、max", nil, nil
 		}
 		preferredModel, _, err := channelIdentitiesRepo.WithTx(tx).GetPreferenceConfig(ctx, identity.ID)
 		if err != nil {
-			return true, "", err
+			return true, "", nil, err
 		}
 		if err := channelIdentitiesRepo.WithTx(tx).UpdatePreferenceConfig(ctx, identity.ID, preferredModel, newMode); err != nil {
-			return true, "", err
+			return true, "", nil, err
 		}
-		return true, "think → " + newMode, nil
+		return true, "think → " + newMode, nil, nil
 	default:
-		return false, "", nil
+		return false, "", nil, nil
 	}
 }
 
@@ -2126,6 +2144,9 @@ func (c telegramConnector) HandleUpdateForPoll(
 	if update.EditedMessage != nil {
 		return c.handleTelegramEditedMessage(ctx, ch, update.EditedMessage)
 	}
+	if update.CallbackQuery != nil {
+		return c.handleTelegramCallbackQuery(ctx, traceID, ch, token, update.CallbackQuery)
+	}
 	if update.Message == nil || update.Message.From == nil {
 		return nil
 	}
@@ -2188,8 +2209,9 @@ func (c telegramConnector) HandleUpdateForPoll(
 		if stageA.replyText != "" && c.telegramClient != nil && strings.TrimSpace(token) != "" {
 			sendCtx, sendCancel := context.WithTimeout(ctx, telegramRemoteRequestTimeout)
 			_, _ = c.telegramClient.SendMessage(sendCtx, token, telegrambot.SendMessageRequest{
-				ChatID: incoming.PlatformChatID,
-				Text:   stageA.replyText,
+				ChatID:      incoming.PlatformChatID,
+				Text:        stageA.replyText,
+				ReplyMarkup: stageA.replyMarkup,
 			})
 			sendCancel()
 		}
@@ -2208,6 +2230,31 @@ func (c telegramConnector) HandleUpdateForPoll(
 	return nil
 }
 
+// buildThinkKeyboard 构建 /think 按钮键盘，当前档位标 ✓。
+func buildThinkKeyboard(currentMode string) *telegrambot.InlineKeyboardMarkup {
+	modes := []string{"off", "minimal", "low", "medium", "high", "max"}
+	var rows [][]telegrambot.InlineKeyboardButton
+	var row []telegrambot.InlineKeyboardButton
+	for _, mode := range modes {
+		label := mode
+		if mode == currentMode {
+			label = mode + " ✓"
+		}
+		row = append(row, telegrambot.InlineKeyboardButton{
+			Text:         label,
+			CallbackData: "think:" + mode,
+		})
+		if len(row) == 2 {
+			rows = append(rows, row)
+			row = nil
+		}
+	}
+	if len(row) > 0 {
+		rows = append(rows, row)
+	}
+	return &telegrambot.InlineKeyboardMarkup{InlineKeyboard: rows}
+}
+
 // handleTelegramPreferenceCommand 处理 /model 和 /think 偏好命令（群聊和私聊均可用）。
 func handleTelegramPreferenceCommand(
 	ctx context.Context,
@@ -2217,84 +2264,178 @@ func handleTelegramPreferenceCommand(
 	rawText string,
 	channelIdentitiesRepo *data.ChannelIdentitiesRepository,
 	entSvc *entitlement.Service,
-) (string, error) {
+) (string, *telegrambot.InlineKeyboardMarkup, error) {
 	parts := strings.Fields(rawText)
 	if len(parts) == 0 {
-		return "", nil
+		return "", nil, nil
 	}
 	cmd, _ := telegramCommandBase(rawText, "")
 	switch cmd {
 	case "/model":
 		allowUserScoped, err := resolveTelegramByokEnabled(ctx, entSvc, accountID)
 		if err != nil {
-			return "", err
+			return "", nil, err
 		}
 		preferredModel, _, err := channelIdentitiesRepo.WithTx(tx).GetPreferenceConfig(ctx, identity.ID)
 		if err != nil {
-			return "", err
+			return "", nil, err
 		}
 		if len(parts) < 2 {
 			candidates, err := loadTelegramSelectorCandidates(ctx, tx, accountID)
 			if err != nil {
-				return "", err
+				return "", nil, err
 			}
-			var sb strings.Builder
-			sb.WriteString("当前模型：")
-			if strings.TrimSpace(preferredModel) == "" {
-				sb.WriteString("跟随频道\n")
-			} else {
-				sb.WriteString(preferredModel + "\n")
-			}
-			sb.WriteString("\n可用模型：\n")
+			var rows [][]telegrambot.InlineKeyboardButton
 			for _, c := range candidates {
 				if !c.accountScoped && !allowUserScoped {
 					continue
 				}
-				mark := "  "
+				label := c.model
 				if strings.EqualFold(strings.TrimSpace(c.model), strings.TrimSpace(preferredModel)) {
-					mark = "✓ "
+					label = c.model + " ✓"
 				}
-				sb.WriteString(mark + c.model + "\n")
+				rows = append(rows, []telegrambot.InlineKeyboardButton{{
+					Text:         label,
+					CallbackData: "model:" + c.model,
+				}})
 			}
-			return strings.TrimRight(sb.String(), "\n"), nil
+			header := "Choose model.\nCurrent: follow channel default"
+			if strings.TrimSpace(preferredModel) != "" {
+				header = "Choose model.\nCurrent: " + preferredModel
+			}
+			var markup *telegrambot.InlineKeyboardMarkup
+			if len(rows) > 0 {
+				markup = &telegrambot.InlineKeyboardMarkup{InlineKeyboard: rows}
+			}
+			return header, markup, nil
 		}
 		newModel := strings.TrimSpace(parts[1])
 		if err := validateTelegramModelSelector(ctx, tx, accountID, newModel, allowUserScoped); err != nil {
-			return fmt.Sprintf("模型选择器无效：%s", newModel), nil
+			return fmt.Sprintf("模型选择器无效：%s", newModel), nil, nil
 		}
 		_, reasoningMode, err := channelIdentitiesRepo.WithTx(tx).GetPreferenceConfig(ctx, identity.ID)
 		if err != nil {
-			return "", err
+			return "", nil, err
 		}
 		if err := channelIdentitiesRepo.WithTx(tx).UpdatePreferenceConfig(ctx, identity.ID, newModel, reasoningMode); err != nil {
-			return "", err
+			return "", nil, err
 		}
-		return "model → " + newModel, nil
+		return "model → " + newModel, nil, nil
 	case "/think":
 		_, reasoningMode, err := channelIdentitiesRepo.WithTx(tx).GetPreferenceConfig(ctx, identity.ID)
 		if err != nil {
-			return "", err
+			return "", nil, err
 		}
 		if len(parts) < 2 {
 			display := reasoningMode
 			if display == "" {
 				display = "off"
 			}
-			return "think → " + display, nil
+			markup := buildThinkKeyboard(display)
+			header := fmt.Sprintf("Choose level for /think.\nCurrent: %s\nOptions: off, minimal, low, medium, high, max.", display)
+			return header, markup, nil
 		}
 		newMode := strings.TrimSpace(parts[1])
 		validModes := map[string]bool{"off": true, "minimal": true, "low": true, "medium": true, "high": true, "max": true}
 		if !validModes[newMode] {
-			return "可用档位：off、minimal、low、medium、high、max", nil
+			return "可用档位：off、minimal、low、medium、high、max", nil, nil
 		}
 		preferredModel, _, err := channelIdentitiesRepo.WithTx(tx).GetPreferenceConfig(ctx, identity.ID)
 		if err != nil {
-			return "", err
+			return "", nil, err
 		}
 		if err := channelIdentitiesRepo.WithTx(tx).UpdatePreferenceConfig(ctx, identity.ID, preferredModel, newMode); err != nil {
-			return "", err
+			return "", nil, err
 		}
-		return "think → " + newMode, nil
+		return "think → " + newMode, nil, nil
 	}
-	return "", nil
+	return "", nil, nil
+}
+
+// handleTelegramCallbackQuery 处理 InlineKeyboard 按钮回调。
+func (c telegramConnector) handleTelegramCallbackQuery(
+	ctx context.Context,
+	traceID string,
+	ch data.Channel,
+	token string,
+	cb *telegramCallbackQuery,
+) error {
+	// 立即应答，防止 Telegram 重试。
+	if c.telegramClient != nil && strings.TrimSpace(token) != "" {
+		ansCtx, ansCancel := context.WithTimeout(ctx, 5*time.Second)
+		_ = c.telegramClient.AnswerCallbackQuery(ansCtx, token, telegrambot.AnswerCallbackQueryRequest{
+			CallbackQueryID: cb.ID,
+		})
+		ansCancel()
+	}
+
+	if cb.From == nil || cb.Message == nil {
+		return nil
+	}
+
+	data := strings.TrimSpace(cb.Data)
+	if data == "" {
+		return nil
+	}
+
+	// 解析 callback_data。
+	var thinkLevel string
+	var modelName string
+	var confirmText string
+	switch {
+	case strings.HasPrefix(data, "think:"):
+		thinkLevel = strings.TrimPrefix(data, "think:")
+		validModes := map[string]bool{"off": true, "minimal": true, "low": true, "medium": true, "high": true, "max": true}
+		if !validModes[thinkLevel] {
+			return nil
+		}
+		confirmText = "think → " + thinkLevel
+	case strings.HasPrefix(data, "model:"):
+		modelName = strings.TrimPrefix(data, "model:")
+		if modelName == "" {
+			return nil
+		}
+		confirmText = "model → " + modelName
+	default:
+		return nil
+	}
+
+	// 查找发送者的 ChannelIdentity，直接更新偏好。
+	identity, err := c.channelIdentitiesRepo.GetByChannelAndSubject(ctx, ch.ChannelType, fmt.Sprintf("%d", cb.From.ID))
+	if err != nil {
+		return err
+	}
+	if identity == nil {
+		return nil
+	}
+
+	if thinkLevel != "" {
+		preferredModel, _, err := c.channelIdentitiesRepo.GetPreferenceConfig(ctx, identity.ID)
+		if err != nil {
+			return err
+		}
+		if err := c.channelIdentitiesRepo.UpdatePreferenceConfig(ctx, identity.ID, preferredModel, thinkLevel); err != nil {
+			return err
+		}
+	} else if modelName != "" {
+		_, reasoningMode, err := c.channelIdentitiesRepo.GetPreferenceConfig(ctx, identity.ID)
+		if err != nil {
+			return err
+		}
+		if err := c.channelIdentitiesRepo.UpdatePreferenceConfig(ctx, identity.ID, modelName, reasoningMode); err != nil {
+			return err
+		}
+	}
+
+	// 编辑原消息：替换为确认文本，移除按钮。
+	if c.telegramClient != nil && strings.TrimSpace(token) != "" {
+		editCtx, editCancel := context.WithTimeout(ctx, telegramRemoteRequestTimeout)
+		_ = c.telegramClient.EditMessageText(editCtx, token, telegrambot.EditMessageTextRequest{
+			ChatID:    fmt.Sprintf("%d", cb.Message.Chat.ID),
+			MessageID: cb.Message.MessageID,
+			Text:      confirmText,
+		})
+		editCancel()
+	}
+	return nil
 }

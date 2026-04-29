@@ -238,7 +238,7 @@ func (c telegramConnector) processTelegramMediaGroupMerged(
 
 	if incoming.IsPrivate() {
 		trimmedCommandText := strings.TrimSpace(incoming.CommandText)
-		if handled, replyText, err := handleTelegramCommand(
+		if handled, replyText, _, err := handleTelegramCommand(
 			ctx,
 			tx,
 			&ch,
