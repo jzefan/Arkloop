@@ -1,4 +1,4 @@
-import { app, BrowserWindow, Menu, nativeImage, session } from 'electron'
+import { app, BrowserWindow, Menu, nativeImage, session, shell } from 'electron'
 import * as fs from 'fs'
 import * as os from 'os'
 import * as path from 'path'
@@ -38,6 +38,28 @@ let activeSidecarPort: number | null = null
 const hasSingleInstanceLock = app.requestSingleInstanceLock()
 
 const REACT_DEVTOOLS_EXTENSION_ID = 'fmkadmapgofadopljbjfkapdkoienihi'
+
+function parseHttpUrl(url: string): URL | null {
+  try {
+    const parsed = new URL(url)
+    if (parsed.protocol === 'http:' || parsed.protocol === 'https:') return parsed
+  } catch {}
+  return null
+}
+
+function getRendererDevOrigin(): string {
+  try {
+    return new URL(process.env.VITE_DEV_URL || 'http://localhost:5173').origin
+  } catch {
+    return 'http://localhost:5173'
+  }
+}
+
+function isAppHttpNavigation(url: string): boolean {
+  if (process.env.ELECTRON_DEV !== 'true') return false
+  const parsed = parseHttpUrl(url)
+  return parsed?.origin === getRendererDevOrigin()
+}
 
 function getAppIconPath(): string {
   const candidates = app.isPackaged
@@ -367,6 +389,21 @@ function createWindow(): BrowserWindow {
 
   win.once('ready-to-show', () => {
     win.show()
+  })
+
+  win.webContents.setWindowOpenHandler(({ url }) => {
+    if (parseHttpUrl(url)) {
+      void shell.openExternal(url)
+    }
+    return { action: 'deny' }
+  })
+
+  win.webContents.on('will-frame-navigate', (event) => {
+    const { url, isMainFrame } = event
+    if (!parseHttpUrl(url)) return
+    if (isMainFrame && isAppHttpNavigation(url)) return
+    event.preventDefault()
+    void shell.openExternal(url)
   })
 
   attachRendererContextMenu(win)
