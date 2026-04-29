@@ -43,17 +43,50 @@ import {
   clearThreadRunHandoff,
 } from '../storage'
 
-const sseMock = vi.hoisted(() => ({
-  state: 'idle',
-  events: [] as unknown[],
-  lastSeq: 0,
-  error: null as Error | null,
-  connect: vi.fn(),
-  disconnect: vi.fn(),
-  reconnect: vi.fn(),
-  clearEvents: vi.fn(),
-  reset: vi.fn(),
-}))
+const sseMock = vi.hoisted(() => {
+  let events: unknown[] = []
+  const eventListeners = new Set<() => void>()
+  const notifyEventListeners = () => {
+    queueMicrotask(() => {
+      for (const listener of eventListeners) {
+        listener()
+      }
+    })
+  }
+
+  return {
+    state: 'idle',
+    get events() {
+      return events
+    },
+    set events(next: unknown[]) {
+      events = next
+      notifyEventListeners()
+    },
+    lastSeq: 0,
+    error: null as Error | null,
+    connect: vi.fn(),
+    disconnect: vi.fn(),
+    reconnect: vi.fn(),
+    clearEvents: vi.fn(() => {
+      events = []
+      notifyEventListeners()
+    }),
+    reset: vi.fn(() => {
+      events = []
+      notifyEventListeners()
+    }),
+    subscribeEvents: vi.fn((listener: () => void) => {
+      eventListeners.add(listener)
+      return () => {
+        eventListeners.delete(listener)
+      }
+    }),
+    clearEventListeners: () => {
+      eventListeners.clear()
+    },
+  }
+})
 
 const chatInputDraftStore = vi.hoisted(() => new Map<string, string>())
 
@@ -695,6 +728,7 @@ describe('ChatPage loading state', () => {
     sseMock.events = []
     sseMock.lastSeq = 0
     sseMock.error = null
+    sseMock.clearEventListeners()
     mockedListMessages.mockResolvedValue([
       {
         id: 'msg-1',

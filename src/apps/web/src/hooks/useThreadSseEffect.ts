@@ -1,4 +1,4 @@
-import { useEffect, useRef, useCallback, useState, type RefObject } from 'react'
+import { useEffect, useRef, useCallback, type RefObject } from 'react'
 import { canonicalToolName, pickLogicalToolName } from '@arkloop/shared'
 import { setThreadTodos } from '../todoDb'
 import { useAuth } from '../contexts/auth'
@@ -159,7 +159,8 @@ export function useThreadSseEffect({
   }, [armCompletedTitleTailState])
 
   const contextCompactHideTimerRef = useRef<number | null>(null)
-  const [deferredRunEventDrainTick, setDeferredRunEventDrainTick] = useState(0)
+  const liveSegmentSnapshotIdsRef = useRef(new Set<string>())
+  const drainSseEventsRef = useRef<() => void>(() => {})
   const clearContextCompactHideTimer = useCallback(() => {
     if (contextCompactHideTimerRef.current != null) {
       clearTimeout(contextCompactHideTimerRef.current)
@@ -173,9 +174,15 @@ export function useThreadSseEffect({
 
   const scheduleDeferredRunEventDrain = useCallback(() => {
     window.setTimeout(() => {
-      setDeferredRunEventDrainTick((value) => value + 1)
+      drainSseEventsRef.current()
     }, 0)
   }, [])
+
+  useEffect(() => {
+    return sse.subscribeEvents(() => {
+      drainSseEventsRef.current()
+    })
+  }, [sse])
 
   const materializeTerminalRunMessage = useCallback((
     runId: string,
@@ -215,7 +222,7 @@ export function useThreadSseEffect({
   }, [persistRunDataToMessage, threadId, upsertLocalTerminalMessage])
 
   // SSE 事件处理
-  useEffect(() => {
+  const drainSseEvents = () => {
     if (!sseRunId) return
     const resetTerminalRunState = (options?: {
       preserveSearchSteps?: boolean
@@ -245,6 +252,7 @@ export function useThreadSseEffect({
         setTopLevelWebFetches([])
       }
       if (!handoffRunCache) {
+        liveSegmentSnapshotIdsRef.current.clear()
         streamingArtifactsRef.current = []
         setStreamingArtifacts([])
         flushSegmentsRefToState()
@@ -314,6 +322,7 @@ export function useThreadSseEffect({
         const label = typeof display.label === 'string' ? display.label : ''
         if (!segmentId) continue
         activeSegmentIdRef.current = segmentId
+        liveSegmentSnapshotIdsRef.current.delete(segmentId)
         requestAssistantTurnThinkingBreak(assistantTurnFoldStateRef.current)
         foldAssistantTurnEvent(assistantTurnFoldStateRef.current, event)
         bumpAssistantTurnSnapshot()
@@ -422,7 +431,10 @@ export function useThreadSseEffect({
           appendSegmentContent(activeSeg, delta)
           if (activeSegmentVisible) {
             foldAssistantTurnEvent(assistantTurnFoldStateRef.current, event)
-            bumpAssistantTurnSnapshot()
+            if (!liveSegmentSnapshotIdsRef.current.has(activeSeg)) {
+              liveSegmentSnapshotIdsRef.current.add(activeSeg)
+              bumpAssistantTurnSnapshot()
+            }
           }
           continue
         }
@@ -1020,7 +1032,12 @@ export function useThreadSseEffect({
         continue
       }
     }
-  }, [sseRunId, activeRunId, armCompletedTitleTail, clearCompletedTitleTail, clearContextCompactHideTimer, clearLiveRunSecurityArtifacts, completedTitleTailRunId, deferredRunEventDrainTick, scheduleDeferredRunEventDrain, materializeTerminalRunMessage, persistThreadRunHandoff, refreshMessages, refreshCredits, resetSearchSteps, sse.events, appendSegmentContent, endSegmentStream, addSegment, flushSegmentsRefToState]) // eslint-disable-line react-hooks/exhaustive-deps
+  }
+
+  useEffect(() => {
+    drainSseEventsRef.current = drainSseEvents
+    drainSseEvents()
+  })
 
   // 401 SSE 错误时登出
   useEffect(() => {

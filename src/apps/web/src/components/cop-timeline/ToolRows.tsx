@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { createContext, memo, useCallback, useContext, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion'
 import { ChevronDown, ChevronRight } from 'lucide-react'
 import hljs from 'highlight.js/lib/common'
@@ -161,25 +161,38 @@ export function FileOpToolCard({ op }: { op: FileOpRef }) {
 }
 
 
-export function FileOpToolRow({ op, live }: { op: FileOpRef; live?: boolean }) {
+type FileOpToolRowProps = { op: FileOpRef; live?: boolean }
+
+function areFileOpToolRowPropsEqual(prev: FileOpToolRowProps, next: FileOpToolRowProps): boolean {
+  return prev.op === next.op && prev.live === next.live
+}
+
+export const FileOpToolRow = memo(function FileOpToolRow({ op, live }: FileOpToolRowProps) {
   const [expanded, setExpanded] = useState(false)
   const [hovered, setHovered] = useState(false)
   const stabilizeLocalExpansionScroll = useStabilizeLocalExpansionScroll()
   const triggerRef = useRef<HTMLButtonElement | null>(null)
   const title = op.displayDescription || op.label || op.toolName
   const filePath = op.filePath || op.displayDetail || ''
-  const lines = previewLines(op.output || op.errorMessage)
+  const lines = useMemo(() => previewLines(op.output || op.errorMessage), [op.output, op.errorMessage])
   const cardTitle = op.pattern || op.displaySubject || (filePath ? basename(filePath) : title)
   const cardSubtitle = filePath && cardTitle !== filePath ? filePath : op.displayDetail || ''
   const expandable = !!(filePath || lines.length > 0 || op.pattern || op.operation)
   const isReadFile = op.toolName === 'read_file' || op.toolName === 'read' || op.toolName.startsWith('read.')
   const fileNameForTitle = isReadFile && filePath ? basename(filePath) : ''
-  const codeBody = useMemo(() => {
+  const codeText = useMemo(() => {
     if (!isReadFile || lines.length === 0 || op.status === 'running') return null
-    const text = lines.map((line, index) => `${String(index + 1).padStart(3, ' ')}  ${line}`).join('\n')
-    const html = highlightCode(text, languageFromPath(filePath))
+    return lines.map((line, index) => `${String(index + 1).padStart(3, ' ')}  ${line}`).join('\n')
+  }, [isReadFile, lines, op.status])
+  const language = useMemo(() => languageFromPath(filePath), [filePath])
+  const codeBody = useMemo(() => {
+    if (!codeText) return null
+    const html = highlightCode(codeText, language)
     return html || null
-  }, [isReadFile, lines, op.status, filePath])
+  }, [codeText, language])
+  const numberedText = useMemo(() => (
+    lines.map((line, index) => `${String(index + 1).padStart(3, ' ')}  ${line}`).join('\n')
+  ), [lines])
 
   return (
     <div style={{ maxWidth: 'min(100%, 760px)', minWidth: 0 }}>
@@ -237,11 +250,11 @@ export function FileOpToolRow({ op, live }: { op: FileOpRef; live?: boolean }) {
                     className="hljs"
                     style={{ margin: 0, padding: '9px 10px', maxHeight: 280, overflow: 'auto', fontFamily: MONO, fontSize: 12, lineHeight: '18px', background: 'var(--c-code-preview-bg)', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}
                   >
-                    <code className={`language-${languageFromPath(filePath) ?? 'plaintext'}`} dangerouslySetInnerHTML={{ __html: codeBody }} />
+                    <code className={`language-${language ?? 'plaintext'}`} dangerouslySetInnerHTML={{ __html: codeBody }} />
                   </pre>
                 ) : (
                   <pre style={{ margin: 0, padding: '9px 10px', maxHeight: 280, overflow: 'auto', fontFamily: MONO, fontSize: 12, lineHeight: '18px', color: op.status === 'failed' ? 'var(--c-status-error-text, #ef4444)' : 'var(--c-text-secondary)', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
-                    {lines.map((line, index) => `${String(index + 1).padStart(3, ' ')}  ${line}`).join('\n')}
+                    {numberedText}
                   </pre>
                 )
               ) : (
@@ -255,7 +268,7 @@ export function FileOpToolRow({ op, live }: { op: FileOpRef; live?: boolean }) {
       </AnimatePresence>
     </div>
   )
-}
+}, areFileOpToolRowPropsEqual)
 
 export function ExploreTimelineRow({ group, live, segmentLive, headerVariant = 'tool', attachedThinkingRows }: { group: ExploreGroupRef; live?: boolean; segmentLive?: boolean; headerVariant?: 'tool' | 'segment'; attachedThinkingRows?: Array<{ id: string; markdown: string; live?: boolean; durationSec?: number; startedAtMs?: number }> }) {
   const reduceMotion = useReducedMotion()

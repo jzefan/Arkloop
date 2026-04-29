@@ -16,6 +16,7 @@ export type UseSSEResult = {
   state: SSEClientState
   lastSeq: number
   error: Error | null
+  subscribeEvents: (listener: () => void) => () => void
   connect: () => void
   disconnect: () => void
   reconnect: () => void
@@ -30,12 +31,12 @@ export type UseSSEResult = {
 export function useSSE(options: UseSSEOptions): UseSSEResult {
   const { runId, accessToken, baseUrl = '' } = options
 
-  const [events, setEvents] = useState<RunEvent[]>([])
   const [state, setState] = useState<SSEClientState>('idle')
-  const [lastSeq, setLastSeq] = useState(0)
   const [error, setError] = useState<Error | null>(null)
 
   const clientRef = useRef<SSEClient | null>(null)
+  const eventsRef = useRef<RunEvent[]>([])
+  const eventListenersRef = useRef(new Set<() => void>())
   const seenSeqsRef = useRef<Set<number>>(new Set())
   const cursorRef = useRef(0)
   const connectedRunIdRef = useRef('')
@@ -46,16 +47,21 @@ export function useSSE(options: UseSSEOptions): UseSSEResult {
   const normalizedBaseUrl = baseUrl.replace(/\/$/, '')
   const sseUrl = `${normalizedBaseUrl}/v1/runs/${runId}/events`
 
+  const notifyEventListeners = useCallback(() => {
+    for (const listener of eventListenersRef.current) {
+      listener()
+    }
+  }, [])
+
   const handleEvent = useCallback((event: RunEvent) => {
     // 去重：避免重连时重复展示
     if (seenSeqsRef.current.has(event.seq)) return
     seenSeqsRef.current.add(event.seq)
 
-    setEvents(prev => [...prev, event])
+    eventsRef.current.push(event)
 
     if (typeof event.seq === 'number' && event.seq >= 0) {
       cursorRef.current = event.seq
-      setLastSeq(event.seq)
 
       // 限频写入：避免 streaming/catch-up 时每条事件都写一次 localStorage
       const now = Date.now()
@@ -74,7 +80,8 @@ export function useSSE(options: UseSSEOptions): UseSSEResult {
         }, 1000)
       }
     }
-  }, [runId])
+    notifyEventListeners()
+  }, [notifyEventListeners, runId])
 
   const handleStateChange = useCallback((newState: SSEClientState) => {
     setState(newState)
@@ -116,15 +123,14 @@ export function useSSE(options: UseSSEOptions): UseSSEResult {
     if (connectedRunIdRef.current !== runId) {
       connectedRunIdRef.current = runId
       cursorRef.current = 0
-      setLastSeq(0)
-      setEvents([])
+      eventsRef.current = []
       seenSeqsRef.current.clear()
+      notifyEventListeners()
     }
 
     const stored = readLastSeqFromStorage(runId)
     const nextCursor = Math.max(cursorRef.current, stored)
     cursorRef.current = nextCursor
-    setLastSeq(nextCursor)
     emitStreamDebug('run-sse:connect', {
       runId,
       afterSeq: nextCursor,
@@ -144,7 +150,7 @@ export function useSSE(options: UseSSEOptions): UseSSEResult {
 
     clientRef.current = client
     void client.connect()
-  }, [sseUrl, accessToken, runId, handleEvent, handleStateChange, handleError, handleTokenRefresh])
+  }, [sseUrl, accessToken, runId, handleEvent, handleStateChange, handleError, handleTokenRefresh, notifyEventListeners])
 
   const disconnect = useCallback(() => {
     clientRef.current?.close()
@@ -166,18 +172,26 @@ export function useSSE(options: UseSSEOptions): UseSSEResult {
   }, [runId])
 
   const clearEvents = useCallback(() => {
-    setEvents([])
-  }, [])
+    eventsRef.current = []
+    notifyEventListeners()
+  }, [notifyEventListeners])
 
   const reset = useCallback(() => {
     clearLastSeqInStorage(runId)
     cursorRef.current = 0
-    setLastSeq(0)
-    setEvents([])
+    eventsRef.current = []
     seenSeqsRef.current.clear()
     setError(null)
     setState('idle')
-  }, [runId])
+    notifyEventListeners()
+  }, [notifyEventListeners, runId])
+
+  const subscribeEvents = useCallback((listener: () => void) => {
+    eventListenersRef.current.add(listener)
+    return () => {
+      eventListenersRef.current.delete(listener)
+    }
+  }, [])
 
   // 组件卸载时断开连接
   useEffect(() => {
@@ -200,14 +214,19 @@ export function useSSE(options: UseSSEOptions): UseSSEResult {
   }, [runId])
 
   return useMemo(() => ({
-    events,
+    get events() {
+      return eventsRef.current
+    },
     state,
-    lastSeq,
+    get lastSeq() {
+      return cursorRef.current
+    },
     error,
+    subscribeEvents,
     connect,
     disconnect,
     reconnect,
     clearEvents,
     reset,
-  }), [events, state, lastSeq, error, connect, disconnect, reconnect, clearEvents, reset])
+  }), [state, error, subscribeEvents, connect, disconnect, reconnect, clearEvents, reset])
 }
