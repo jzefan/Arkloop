@@ -386,6 +386,45 @@ describe('copTimelinePayloadForSegment', () => {
     expect(r.exploreGroups?.[0]?.items.map((item) => item.id)).toEqual(['r1', 'g1', 'l1'])
   })
 
+  it('load_tools 的 Explore 组标题使用工具加载语义', () => {
+    const r = copTimelinePayloadForSegment(
+      {
+        type: 'cop',
+        title: null,
+        items: [call('lt1', 'load_tools', 1)],
+      },
+      {
+        fileOps: [
+          { id: 'lt1', toolName: 'load_tools', label: 'Loaded tools', status: 'success', seq: 1, displayKind: 'explore' },
+        ],
+        sources: [],
+      },
+    )
+
+    expect(r.exploreGroups?.[0]?.label).toBe('Loaded 1 tool')
+    expect(r.exploreGroups?.[0]?.label).not.toBe('Explored code')
+  })
+
+  it('load_tools 混入搜索时 Explore 组标题使用搜索语义', () => {
+    const r = copTimelinePayloadForSegment(
+      {
+        type: 'cop',
+        title: null,
+        items: [call('lt1', 'load_tools', 1), call('g1', 'grep', 2)],
+      },
+      {
+        fileOps: [
+          { id: 'lt1', toolName: 'load_tools', label: 'Loaded tools', status: 'success', seq: 1, displayKind: 'explore' },
+          { id: 'g1', toolName: 'grep', label: 'Searched adaptive title', status: 'success', seq: 2, displayKind: 'grep' },
+        ],
+        sources: [],
+      },
+    )
+
+    expect(r.exploreGroups?.[0]?.label).toBe('Searched code')
+    expect(r.exploreGroups?.[0]?.label).not.toContain('Loaded')
+  })
+
   it('exec_command 会切断 Explore 聚合，后续 read 进入新的 Explore', () => {
     const r = copTimelinePayloadForSegment(
       {

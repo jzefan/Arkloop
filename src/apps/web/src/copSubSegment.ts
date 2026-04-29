@@ -22,6 +22,7 @@ const AGENT_NAMES = new Set([
   'send_acp', 'wait_acp', 'close_acp', 'interrupt_acp',
 ])
 const MUTATING_LSP = new Set(['rename'])
+const LOAD_TOOL_NAMES = new Set(['load_tools', 'load_skill'])
 
 function isWebFetchToolName(toolName: string): boolean {
   const n = normalizeToolName(toolName).toLowerCase().replace(/-/g, '_')
@@ -59,6 +60,34 @@ function basename(path: string): string {
   return normalized.split('/').filter(Boolean).pop() ?? path
 }
 
+function isLoadToolName(toolName: string): boolean {
+  return LOAD_TOOL_NAMES.has(normalizeToolName(toolName))
+}
+
+function countLoadToolsCall(call: CallItem['call']): number {
+  const result = call.result && typeof call.result === 'object' && !Array.isArray(call.result)
+    ? call.result as Record<string, unknown>
+    : null
+  if (result) {
+    if (typeof result.count === 'number') return Math.max(0, result.count)
+    if (Array.isArray(result.matched)) return result.matched.length
+  }
+  const queries = Array.isArray(call.arguments?.queries) ? call.arguments.queries.length : 0
+  return Math.max(1, queries)
+}
+
+function formatCount(count: number, singular: string, plural: string): string {
+  return `${count} ${count === 1 ? singular : plural}`
+}
+
+function formatLoadToolsTitle(loadToolsCount: number, loadSkillCount: number, tense: 'live' | 'done'): string {
+  const verb = tense === 'live' ? 'Loading' : 'Loaded'
+  const parts: string[] = []
+  if (loadToolsCount > 0) parts.push(formatCount(loadToolsCount, 'tool', 'tools'))
+  if (loadSkillCount > 0) parts.push(formatCount(loadSkillCount, 'skill', 'skills'))
+  return parts.length > 0 ? `${verb} ${parts.join(', ')}` : `${verb} 0 tools`
+}
+
 export function segmentCompletedTitle(seg: CopSubSegment): string {
   const calls = seg.items
     .filter((i): i is Extract<CopBlockItem, { kind: 'call' }> => i.kind === 'call')
@@ -78,6 +107,13 @@ export function segmentCompletedTitle(seg: CopSubSegment): string {
         return n === 'grep' || n === 'lsp'
       }).length
       const globCount = calls.filter((c) => normalizeToolName(c.toolName) === 'glob').length
+      const loadToolsCount = calls
+        .filter((c) => normalizeToolName(c.toolName) === 'load_tools')
+        .reduce((count, call) => count + countLoadToolsCall(call), 0)
+      const loadSkillCount = calls.filter((c) => normalizeToolName(c.toolName) === 'load_skill').length
+      if (calls.every((c) => isLoadToolName(c.toolName))) {
+        return formatLoadToolsTitle(loadToolsCount, loadSkillCount, 'done')
+      }
       const parts: string[] = []
       if (readPaths.size > 0) parts.push(`Read ${readPaths.size} file${readPaths.size === 1 ? '' : 's'}`)
       if (searchCount > 0) parts.push(`${searchCount} search${searchCount === 1 ? '' : 'es'}`)
@@ -127,6 +163,8 @@ export type AggregatedCallStats = {
   fetchCount: number
   webSearchCount: number
   webSearchQueries: string[]
+  loadToolsCount: number
+  loadSkillCount: number
   genericCount: number
   byToolName: Map<string, number>
 }
@@ -158,6 +196,8 @@ export function aggregateCallStats(calls: ReadonlyArray<CallItem['call']>): Aggr
     fetchCount: 0,
     webSearchCount: 0,
     webSearchQueries: [],
+    loadToolsCount: 0,
+    loadSkillCount: 0,
     genericCount: 0,
     byToolName: new Map<string, number>(),
   }
@@ -171,6 +211,8 @@ export function aggregateCallStats(calls: ReadonlyArray<CallItem['call']>): Aggr
     }
     if (n === 'grep') { stats.searchCount += 1; continue }
     if (n === 'glob') { stats.globCount += 1; continue }
+    if (n === 'load_tools') { stats.loadToolsCount += countLoadToolsCall(c); continue }
+    if (n === 'load_skill') { stats.loadSkillCount += 1; continue }
     if (n === 'lsp') {
       // rename 算 edit，其余算 search
       const op = typeof c.arguments?.operation === 'string' ? c.arguments.operation : ''
@@ -330,6 +372,7 @@ function pluralize(n: number, singular: string, plural: string): string {
 }
 
 function formatStatsParts(stats: AggregatedCallStats): string {
+  const onlyLoadTools = Array.from(stats.byToolName.keys()).every((toolName) => LOAD_TOOL_NAMES.has(toolName))
   const parts: string[] = []
   if (stats.writePaths.length === 1) parts.push(`Wrote ${stats.writePaths[0]}`)
   else if (stats.writePaths.length > 1) parts.push(`Wrote ${stats.writePaths.length} files`)
@@ -338,6 +381,9 @@ function formatStatsParts(stats: AggregatedCallStats): string {
   if (stats.readPaths.size > 0) parts.push(`Read ${stats.readPaths.size} ${pluralize(stats.readPaths.size, 'file', 'files')}`)
   if (stats.searchCount > 0) parts.push(`${stats.searchCount} ${pluralize(stats.searchCount, 'search', 'searches')}`)
   if (stats.globCount > 0) parts.push(`Listed ${stats.globCount} ${pluralize(stats.globCount, 'file', 'files')}`)
+  if (parts.length === 0 && onlyLoadTools) {
+    parts.push(formatLoadToolsTitle(stats.loadToolsCount, stats.loadSkillCount, 'done'))
+  }
   if (stats.execCount > 0) parts.push(`Ran ${stats.execCount} ${pluralize(stats.execCount, 'command', 'commands')}`)
   if (stats.agentCount > 0) parts.push(`${stats.agentCount} agent ${pluralize(stats.agentCount, 'task', 'tasks')}`)
   if (stats.fetchCount > 0) parts.push(`${stats.fetchCount} ${pluralize(stats.fetchCount, 'fetch', 'fetches')}`)
@@ -406,9 +452,18 @@ export function aggregateMainTitle(
       const it = openSeg.items[i]!
       if (it.kind === 'call') { lastCall = it.call; break }
     }
-    const current = lastCall
-      ? presentToProgressive(lastCall.toolName, lastCall.arguments, lastCall.displayDescription)
-      : segmentLiveTitle(openSeg.category).replace(/\.\.\.$/, '')
+    const openCalls = openSeg.items
+      .filter((it): it is CallItem => it.kind === 'call')
+      .map((it) => it.call)
+    const current = (() => {
+      if (!lastCall) return segmentLiveTitle(openSeg.category).replace(/\.\.\.$/, '')
+      if (openCalls.length > 0 && openCalls.every((call) => isLoadToolName(call.toolName))) {
+        const stats = aggregateCallStats(openCalls)
+        return formatLoadToolsTitle(stats.loadToolsCount, stats.loadSkillCount, 'live')
+      }
+      if (isLoadToolName(lastCall.toolName)) return segmentLiveTitle(openSeg.category).replace(/\.\.\.$/, '')
+      return presentToProgressive(lastCall.toolName, lastCall.arguments, lastCall.displayDescription)
+    })()
     const closedSegs = segments.filter((s) => s !== openSeg && s.status === 'closed')
     const closedCalls = collectCalls(closedSegs)
     if (closedCalls.length === 0) return `${current}...`
