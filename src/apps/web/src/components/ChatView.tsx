@@ -2458,7 +2458,7 @@ export const ChatView = memo(function ChatView() {
       ref={chatInputRef}
       onSubmit={handleSend}
       onCancel={handleCancel}
-      placeholder={isStreaming ? 'Send follow-up' : t.replyPlaceholder}
+      placeholder={isStreaming ? t.followUpPlaceholder : t.replyPlaceholder}
       disabled={sending}
       isStreaming={isStreaming}
       canCancel={canCancel}
@@ -2482,7 +2482,7 @@ export const ChatView = memo(function ChatView() {
       planMode={currentThread?.collaboration_mode === 'plan'}
       onTogglePlanMode={handleTogglePlanMode}
     />
-  ), [attachments, sending, isStreaming, canCancel, cancelSubmitting, appMode, isSearchThread, hasMessages, messagesLoading, threadId, accessToken, me?.id, t.replyPlaceholder, handleSend, handleCancel, handleAttachFiles, handlePasteContent, handleRemoveAttachment, handleAsrError, handlePersonaChange, onOpenSettings, editingQueuedPromptId, cancelQueuedPromptEdit, currentThread?.collaboration_mode, handleTogglePlanMode])
+  ), [attachments, sending, isStreaming, canCancel, cancelSubmitting, appMode, isSearchThread, hasMessages, messagesLoading, threadId, accessToken, me?.id, t.followUpPlaceholder, t.replyPlaceholder, handleSend, handleCancel, handleAttachFiles, handlePasteContent, handleRemoveAttachment, handleAsrError, handlePersonaChange, onOpenSettings, editingQueuedPromptId, cancelQueuedPromptEdit, currentThread?.collaboration_mode, handleTogglePlanMode])
 
   const renderLiveCopItems = (
     seg: Extract<AssistantTurnSegment, { type: 'cop' }>,
