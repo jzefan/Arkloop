@@ -773,6 +773,7 @@ export const en: LocaleStrings = {
   // chat page
   checkInPlaceholder: "Type your response...",
   replyPlaceholder: "Reply...",
+  followUpPlaceholder: "Send follow-up",
   connection: {
     title: "Connection Mode",
     local: "Local",

@@ -767,6 +767,7 @@ export const zh: LocaleStrings = {
   // chat page
   checkInPlaceholder: "输入你的回复...",
   replyPlaceholder: "回复...",
+  followUpPlaceholder: "追加回复...",
   connection: {
     title: "连接模式",
     local: "本地",

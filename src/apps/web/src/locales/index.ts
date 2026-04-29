@@ -756,6 +756,7 @@ export interface LocaleStrings {
   // chat page
   checkInPlaceholder: string;
   replyPlaceholder: string;
+  followUpPlaceholder: string;
   // connection settings (desktop only)
   connection: {
     title: string;

@@ -169,6 +169,7 @@ vi.mock('../components/ChatInput', () => ({
     canCancel,
     onCancel,
     cancelSubmitting,
+    placeholder,
     appMode,
     searchMode,
     workThreadId,
@@ -179,6 +180,7 @@ vi.mock('../components/ChatInput', () => ({
     canCancel?: boolean
     onCancel?: () => void
     cancelSubmitting?: boolean
+    placeholder?: string
     appMode?: 'chat' | 'work'
     searchMode?: boolean
     workThreadId?: string
@@ -206,6 +208,7 @@ vi.mock('../components/ChatInput', () => ({
     <form onSubmit={(event) => onSubmit(event, 'default')}>
       <input
         aria-label="chat-input"
+        placeholder={placeholder}
         value={value}
           onChange={(event) => setValue(event.target.value)}
         />
@@ -1918,6 +1921,7 @@ describe('ChatPage loading state', () => {
     if (!input || !form) {
       throw new Error('chat input mock not rendered')
     }
+    expect(input.placeholder).toBe('追加回复...')
     const setInputValue = async (value: string) => {
       await act(async () => {
         const valueSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set
