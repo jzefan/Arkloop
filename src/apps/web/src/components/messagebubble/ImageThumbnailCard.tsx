@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
+import { createPortal } from 'react-dom'
 import { X, Download, ExternalLink } from 'lucide-react'
 import { apiBaseUrl } from '@arkloop/shared/api'
 import type { ArtifactRef } from '../../storage'
@@ -138,7 +139,7 @@ export function ImageThumbnailCard({ artifact, accessToken, pathPrefix = '/v1/ar
         )}
       </div>
 
-      {lbVisible && blobUrl && (
+      {lbVisible && blobUrl && createPortal(
         <div
           onClick={(e) => { if (e.target === e.currentTarget) closeLightbox() }}
           style={{
@@ -274,7 +275,8 @@ export function ImageThumbnailCard({ artifact, accessToken, pathPrefix = '/v1/ar
               <Download size={16} />
             </button>
           </div>
-        </div>
+        </div>,
+        document.body,
       )}
     </>
   )

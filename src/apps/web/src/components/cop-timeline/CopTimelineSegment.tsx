@@ -369,7 +369,7 @@ function renderItem(
         </div>
         {step.kind === 'searching' && step.queries && step.queries.length > 0 && (
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', marginTop: '6px' }}>
-            {step.queries.map((q) => <QueryPill key={q} text={q} live={live} />)}
+            {step.queries.map((q, index) => <QueryPill key={`${step.id}:query:${index}`} text={q} live={live} />)}
           </div>
         )}
         {step.kind === 'reviewing' && <SourceListCard sources={step.sources ?? pool.sources} />}

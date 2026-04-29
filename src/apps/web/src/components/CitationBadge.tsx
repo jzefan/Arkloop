@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect, createContext, useContext } from 'react'
+import { createPortal } from 'react-dom'
 import type { WebSource } from '../storage'
 import { handleExternalAnchorClick } from '../openExternal'
 
@@ -156,7 +157,7 @@ export function CitationBadge({ indices }: Props) {
         )}
       </button>
 
-      {open && popoverStyle && (
+      {open && popoverStyle && createPortal(
         <div
           style={{
             ...popoverStyle,
@@ -292,7 +293,8 @@ export function CitationBadge({ indices }: Props) {
               </div>
             )}
           </a>
-        </div>
+        </div>,
+        document.body,
       )}
     </span>
   )

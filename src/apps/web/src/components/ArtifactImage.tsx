@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
+import { createPortal } from 'react-dom'
 import { X, Download, ExternalLink } from 'lucide-react'
 import { apiBaseUrl } from '@arkloop/shared/api'
 import type { ArtifactRef } from '../storage'
@@ -144,7 +145,7 @@ export function ArtifactImage({ artifact, accessToken, pathPrefix = '/v1/artifac
           }}
         />
       </div>
-      {visible && (
+      {visible && createPortal(
         <div
           onClick={handleOverlayClick}
           style={{
@@ -273,7 +274,8 @@ export function ArtifactImage({ artifact, accessToken, pathPrefix = '/v1/artifac
               <Download size={16} />
             </button>
           </div>
-        </div>
+        </div>,
+        document.body,
       )}
     </>
   )

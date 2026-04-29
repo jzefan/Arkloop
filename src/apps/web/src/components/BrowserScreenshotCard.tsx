@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
+import { createPortal } from 'react-dom'
 import { X, Download, ExternalLink, Globe, Loader2 } from 'lucide-react'
 import { apiBaseUrl } from '@arkloop/shared/api'
 import type { ArtifactRef } from '../storage'
@@ -228,7 +229,7 @@ export function BrowserScreenshotCard({ artifact, accessToken, command, url }: P
       </div>
 
       {/* lightbox */}
-      {visible && (
+      {visible && createPortal(
         <div
           onClick={handleOverlayClick}
           style={{
@@ -338,7 +339,8 @@ export function BrowserScreenshotCard({ artifact, accessToken, command, url }: P
               <Download size={16} />
             </button>
           </div>
-        </div>
+        </div>,
+        document.body,
       )}
     </>
   )

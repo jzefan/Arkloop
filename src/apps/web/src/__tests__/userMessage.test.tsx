@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act } from 'react'
 import { createRoot } from 'react-dom/client'
 import { renderToStaticMarkup } from 'react-dom/server'
@@ -97,6 +97,85 @@ describe('UserMessage attachments', () => {
 
     expect(html).toContain('notes.txt')
     expect(html).not.toContain('PASTED')
+  })
+
+  it('图片缩略图点击后把预览层挂到 body', async () => {
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const root = createRoot(container)
+    const originalFetch = globalThis.fetch
+    const originalRaf = globalThis.requestAnimationFrame
+    const createObjectURLSpy = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:uploaded-image')
+
+    Object.defineProperty(globalThis, 'fetch', {
+      configurable: true,
+      writable: true,
+      value: vi.fn(async () => new Response(new Blob(['image'], { type: 'image/png' }), { status: 200 })),
+    })
+    Object.defineProperty(globalThis, 'requestAnimationFrame', {
+      configurable: true,
+      writable: true,
+      value: (callback: FrameRequestCallback) => {
+        callback(0)
+        return 1
+      },
+    })
+
+    try {
+      await act(async () => {
+        root.render(
+          <LocaleProvider>
+            <UserMessage
+              accessToken="token"
+              message={makeMessage({
+                content_json: {
+                  parts: [{
+                    type: 'image',
+                    attachment: {
+                      key: 'image-1',
+                      filename: 'shot.png',
+                      mime_type: 'image/png',
+                      size: 128,
+                    },
+                  }],
+                },
+              })}
+            />
+          </LocaleProvider>,
+        )
+      })
+      await act(async () => {
+        await flushMicrotasks()
+      })
+
+      const thumbnail = container.querySelector('img[alt="shot.png"]') as HTMLImageElement | null
+      expect(thumbnail).toBeTruthy()
+      if (!thumbnail) return
+
+      await act(async () => {
+        thumbnail.click()
+        await flushMicrotasks()
+      })
+
+      expect(document.body.querySelector('a[href="blob:uploaded-image"]')).not.toBeNull()
+      expect(container.querySelector('a[href="blob:uploaded-image"]')).toBeNull()
+    } finally {
+      act(() => {
+        root.unmount()
+      })
+      container.remove()
+      createObjectURLSpy.mockRestore()
+      Object.defineProperty(globalThis, 'fetch', {
+        configurable: true,
+        writable: true,
+        value: originalFetch,
+      })
+      Object.defineProperty(globalThis, 'requestAnimationFrame', {
+        configurable: true,
+        writable: true,
+        value: originalRaf,
+      })
+    }
   })
 })
 
