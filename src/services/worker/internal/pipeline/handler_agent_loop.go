@@ -14,6 +14,7 @@ import (
 	sharedent "arkloop/services/shared/entitlement"
 	"arkloop/services/shared/eventbus"
 	"arkloop/services/shared/runkind"
+	"arkloop/services/shared/threadrunstate"
 	"arkloop/services/worker/internal/data"
 	"arkloop/services/worker/internal/events"
 	"arkloop/services/worker/internal/llm"
@@ -370,6 +371,7 @@ func newEventWriter(
 	if multiplier <= 0 {
 		multiplier = 1.0
 	}
+	projector := subagentctl.NewSubAgentStateProjector(pool, runLimiterRDB, jobQueue).WithEventBus(bus)
 	return &eventWriter{
 		pool:                      pool,
 		run:                       run,
@@ -378,7 +380,7 @@ func newEventWriter(
 		runLimiterRDB:             runLimiterRDB,
 		eventBus:                  bus,
 		jobQueue:                  jobQueue,
-		projector:                 subagentctl.NewSubAgentStateProjector(pool, runLimiterRDB, jobQueue),
+		projector:                 projector,
 		model:                     model,
 		personaID:                 strings.TrimSpace(personaID),
 		usageRepo:                 usageRepo,
@@ -860,7 +862,10 @@ func (w *eventWriter) commit(ctx context.Context) error {
 	}
 
 	if w.hasTerminal {
+		threadrunstate.Publish(ctx, w.pool, w.runLimiterRDB, w.eventBus, w.run.AccountID, w.run.ThreadID)
+
 		for _, nextRunID := range w.pendingEnqueueRunIDs {
+			publishThreadRunStateForRun(ctx, w.pool, w.runLimiterRDB, w.eventBus, nextRunID)
 			if w.projector == nil {
 				continue
 			}
@@ -915,6 +920,19 @@ func (w *eventWriter) commit(ctx context.Context) error {
 	}
 
 	return nil
+}
+
+func publishThreadRunStateForRun(ctx context.Context, pool *pgxpool.Pool, rdb *redis.Client, bus eventbus.EventBus, runID uuid.UUID) {
+	if pool == nil || runID == uuid.Nil {
+		return
+	}
+	var accountID uuid.UUID
+	var threadID uuid.UUID
+	err := pool.QueryRow(ctx, `SELECT account_id, thread_id FROM runs WHERE id = $1`, runID).Scan(&accountID, &threadID)
+	if err != nil {
+		return
+	}
+	threadrunstate.Publish(ctx, pool, rdb, bus, accountID, threadID)
 }
 
 func parseOptionalUUID(raw string) *uuid.UUID {
