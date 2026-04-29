@@ -276,21 +276,21 @@ func (p *Pool) createVM(ctx context.Context, tier string) (*entry, error) {
 	}
 	serialOut, err := os.OpenFile(os.DevNull, os.O_WRONLY, 0)
 	if err != nil {
-		serialIn.Close()
+		_ = serialIn.Close()
 		cleanup()
 		return nil, fmt.Errorf("open devnull for serial out: %w", err)
 	}
 	serialAttachment, err := vz.NewFileHandleSerialPortAttachment(serialIn, serialOut)
 	if err != nil {
-		serialIn.Close()
-		serialOut.Close()
+		_ = serialIn.Close()
+		_ = serialOut.Close()
 		cleanup()
 		return nil, fmt.Errorf("create serial attachment: %w", err)
 	}
 	consoleDev, err := vz.NewVirtioConsoleDeviceSerialPortConfiguration(serialAttachment)
 	if err != nil {
-		serialIn.Close()
-		serialOut.Close()
+		_ = serialIn.Close()
+		_ = serialOut.Close()
 		cleanup()
 		return nil, fmt.Errorf("create console device: %w", err)
 	}
@@ -460,8 +460,8 @@ func (c *vzConn) LocalAddr() net.Addr  { return vsockAddr{label: "local"} }
 func (c *vzConn) RemoteAddr() net.Addr { return vsockAddr{label: "remote"} }
 
 func (c *vzConn) SetDeadline(t time.Time) error      { return nil }
-func (c *vzConn) SetReadDeadline(t time.Time) error   { return nil }
-func (c *vzConn) SetWriteDeadline(t time.Time) error  { return nil }
+func (c *vzConn) SetReadDeadline(t time.Time) error  { return nil }
+func (c *vzConn) SetWriteDeadline(t time.Time) error { return nil }
 
 // vsockAddr is a minimal net.Addr for vzConn.
 type vsockAddr struct{ label string }
