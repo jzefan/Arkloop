@@ -26,6 +26,7 @@ import (
 	"arkloop/services/shared/onebotclient"
 	"arkloop/services/shared/rollout"
 	"arkloop/services/shared/telegrambot"
+	"arkloop/services/shared/threadrunstate"
 	sharedtoolruntime "arkloop/services/shared/toolruntime"
 	"arkloop/services/shared/weixinclient"
 	"arkloop/services/worker/internal/agentdirectory"
@@ -3297,6 +3298,7 @@ func (w *desktopEventWriter) append(ctx context.Context, runID uuid.UUID, ev eve
 			return err
 		}
 		w.publishRunEvents(ctx)
+		w.publishThreadRunState(ctx)
 		w.enqueueProjectedRuns(ctx, nextRunIDs)
 		return errDesktopStopProcessing
 	}
@@ -3444,6 +3446,7 @@ func (w *desktopEventWriter) append(ctx context.Context, runID uuid.UUID, ev eve
 					return failErr
 				}
 				w.publishRunEvents(ctx)
+				w.publishThreadRunState(ctx)
 				return errDesktopStopProcessing
 			}
 		}
@@ -3455,6 +3458,9 @@ func (w *desktopEventWriter) append(ctx context.Context, runID uuid.UUID, ev eve
 		return err
 	}
 	w.publishRunEvents(ctx)
+	if _, ok := desktopTerminalStatuses[ev.Type]; ok {
+		w.publishThreadRunState(ctx)
+	}
 	if err := w.flushTelegramBoundaryAndProgress(ctx, flushChunk, pendingProgressCall); err != nil {
 		return err
 	}
@@ -3567,6 +3573,10 @@ func (w *desktopEventWriter) publishRunEvents(ctx context.Context) {
 		channel := fmt.Sprintf("run_events:%s", w.run.ID.String())
 		_ = w.bus.Publish(ctx, channel, "")
 	}
+}
+
+func (w *desktopEventWriter) publishThreadRunState(ctx context.Context) {
+	threadrunstate.Publish(ctx, nil, nil, w.bus, w.run.AccountID, w.run.ThreadID)
 }
 
 func (w *desktopEventWriter) transitionCancelled(ctx context.Context, tx pgx.Tx, runID uuid.UUID) ([]uuid.UUID, error) {
@@ -3841,6 +3851,7 @@ func (w *desktopEventWriter) finalizeCancelledIfRequested(ctx context.Context) (
 			return false, err
 		}
 		w.publishRunEvents(ctx)
+		w.publishThreadRunState(ctx)
 		w.enqueueProjectedRuns(ctx, nextRunIDs)
 		return true, nil
 	default:
@@ -4127,6 +4138,7 @@ func desktopPersistFinalAssistantOutput(
 			return err
 		}
 		w.publishRunEvents(ctx)
+		w.publishThreadRunState(ctx)
 		return nil
 	}
 

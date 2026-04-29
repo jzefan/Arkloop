@@ -30,3 +30,7 @@ func (r *StatusRecorder) Flush() {
 		f.Flush()
 	}
 }
+
+func (r *StatusRecorder) Unwrap() http.ResponseWriter {
+	return r.ResponseWriter
+}
