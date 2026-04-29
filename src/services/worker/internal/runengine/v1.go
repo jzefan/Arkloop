@@ -20,6 +20,7 @@ import (
 	"arkloop/services/shared/skillstore"
 	sharedtoolruntime "arkloop/services/shared/toolruntime"
 	promptinjection "arkloop/services/worker/internal/app/promptinjection"
+	"arkloop/services/worker/internal/agentdirectory"
 	"arkloop/services/worker/internal/data"
 	"arkloop/services/worker/internal/events"
 	"arkloop/services/worker/internal/llm"
@@ -921,6 +922,15 @@ func buildCapabilityLayer(
 			},
 			ExternalDirs: serviceExternalSkillDirs,
 		}),
+		pipeline.NewAgentDirectoryMiddleware(
+			agentdirectory.NewObjectStoreProvider(
+				deps.RolloutBlobStore,
+				func(ctx context.Context, profileRef string) (string, error) {
+					return data.ProfileRegistriesRepository{}.GetLatestManifestRevision(ctx, deps.DBPool, profileRef)
+				},
+				"/home/arkloop",
+			),
+		),
 		traceMemoryInjectionMiddleware(func(ctx context.Context, rc *pipeline.RunContext, next pipeline.RunHandler) error {
 			return promptHookMW(ctx, rc, func(ctx context.Context, rc *pipeline.RunContext) error {
 				return memoryMW(ctx, rc, next)

@@ -38,6 +38,10 @@ var profileExactFiles = map[string]struct{}{
 	".profile":   {},
 	".zshrc":     {},
 	".gitconfig": {},
+	"SOUL.md":    {},
+	"AGENTS.md":  {},
+	"MEMORY.md":  {},
+	"USER.md":    {},
 }
 
 var profilePrefixFiles = []string{
@@ -45,6 +49,7 @@ var profilePrefixFiles = []string{
 	".config/",
 	".local/bin/",
 	".arkloop/",
+	"memory/",
 }
 
 func BuildHydrateManifest(scope string, source Manifest, options PrepareOptions) Manifest {

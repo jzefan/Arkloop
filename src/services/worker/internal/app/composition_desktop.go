@@ -29,6 +29,7 @@ import (
 	sharedtoolruntime "arkloop/services/shared/toolruntime"
 	"arkloop/services/shared/weixinclient"
 	promptinjection "arkloop/services/worker/internal/app/promptinjection"
+	"arkloop/services/worker/internal/agentdirectory"
 	"arkloop/services/worker/internal/data"
 	"arkloop/services/worker/internal/environmentbindings"
 	"arkloop/services/worker/internal/events"
@@ -766,6 +767,12 @@ func (e *DesktopEngine) Execute(ctx context.Context, run data.Run, traceID strin
 			LayoutResolver: e.skillLayout,
 			ExternalDirs:   desktopExternalSkillDirs(e.db),
 		})),
+		desktopObservedStage("agent_directory", eventsRepo, pipeline.NewAgentDirectoryMiddleware(
+			agentdirectory.NewLocalFSProvider(func() string {
+				home, _ := os.UserHomeDir()
+				return filepath.Join(home, ".arkloop", "home")
+			}),
+		)),
 	}
 	middlewares = append(middlewares, desktopCapabilityMiddlewares(memMiddleware, e.promptInjection, eventsRepo)...)
 	if e.lspManager != nil {
