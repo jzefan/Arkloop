@@ -149,7 +149,10 @@ export function TimeZoneSettings({ me, accessToken, onMeUpdated }: Props) {
   const listRef = useRef<HTMLDivElement>(null)
   const zones = useMemo(() => (open ? getSupportedZonesCached() : EMPTY_ZONES), [open])
   const zoneOffsets = useMemo(
-    () => (open ? getCachedOffsets(labelNow) : EMPTY_ZONE_OFFSETS),
+    () => {
+      void offsetCacheVersion
+      return open ? getCachedOffsets(labelNow) : EMPTY_ZONE_OFFSETS
+    },
     [open, labelNow, offsetCacheVersion],
   )
 
