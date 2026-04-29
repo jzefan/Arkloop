@@ -68,6 +68,7 @@ export function useSseDispatch(): void {
   // Timer for contextCompactBar auto-hide
   const contextCompactHideTimerRef = useRef<number | null>(null)
   const [deferredRunEventDrainTick, setDeferredRunEventDrainTick] = useState(0)
+  const [sseEventTick, setSseEventTick] = useState(0)
 
   const clearContextCompactHideTimer = useCallback(() => {
     if (contextCompactHideTimerRef.current != null) {
@@ -81,6 +82,12 @@ export function useSseDispatch(): void {
       setDeferredRunEventDrainTick((value) => value + 1)
     }, 0)
   }, [])
+
+  useEffect(() => {
+    return run.sse.subscribeEvents(() => {
+      setSseEventTick((value) => value + 1)
+    })
+  }, [run.sse])
 
   // ── helpers ─────────────────────────────────���──────────────────────────────
 
@@ -848,7 +855,7 @@ export function useSseDispatch(): void {
     if (needsBumpSnapshot) stream.bumpSnapshot()
 
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [run.sse.events, deferredRunEventDrainTick, scheduleDeferredRunEventDrain])
+  }, [sseEventTick, deferredRunEventDrainTick, scheduleDeferredRunEventDrain])
 
   // ── 401 SSE 错误登出 ──────────────────────────────────────────────────────
   useEffect(() => {

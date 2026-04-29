@@ -186,6 +186,7 @@ export function useSubAgentCop(params: {
   const { runId, accessToken, baseUrl = '', enabled } = params
   const [state, dispatch] = useReducer(reducer, initialState)
   const processedCountRef = useRef(0)
+  const drainEventsRef = useRef<() => void>(() => {})
 
   const sse = useSSE({ runId: runId ?? '', accessToken, baseUrl })
 
@@ -208,15 +209,25 @@ export function useSubAgentCop(params: {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [enabled, runId])
 
-  // 处理新到事件
   useEffect(() => {
+    return sse.subscribeEvents(() => {
+      drainEventsRef.current()
+    })
+  }, [sse])
+
+  const drainEvents = () => {
     if (sse.events.length <= processedCountRef.current) return
     const fresh = sse.events.slice(processedCountRef.current)
     processedCountRef.current = sse.events.length
     for (const event of fresh) {
       processEvent(event, dispatch)
     }
-  }, [sse.events])
+  }
+
+  useEffect(() => {
+    drainEventsRef.current = drainEvents
+    drainEvents()
+  })
 
   const isStreaming =
     enabled &&

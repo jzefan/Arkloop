@@ -63,7 +63,7 @@ import { useChatSession } from '../contexts/chat-session'
 import { useMessageStore } from '../contexts/message-store'
 import { useRunLifecycle } from '../contexts/run-lifecycle'
 import { useMessageMeta, type MessageMeta } from '../contexts/message-meta'
-import { useStream } from '../contexts/stream'
+import { useStream, useStreamingContent } from '../contexts/stream'
 import { usePanels } from '../contexts/panels'
 import { useScrollPin } from '../hooks/useScrollPin'
 import { useDevTools } from '../hooks/useDevTools'
@@ -224,6 +224,7 @@ type LiveRunPaneProps = {
   currentRunSources: WebSource[]
   currentRunArtifacts: ArtifactRef[]
   activeRunId: string | null
+  activeSegmentId: string | null
   accessToken: string
   baseUrl: string
   thinkingHint?: string
@@ -270,6 +271,7 @@ const LiveRunPane = memo(function LiveRunPane({
   currentRunSources,
   currentRunArtifacts,
   activeRunId,
+  activeSegmentId,
   accessToken,
   baseUrl,
   thinkingHint,
@@ -353,6 +355,7 @@ const LiveRunPane = memo(function LiveRunPane({
                 key={`live-at-${si}`}
                 content={seg.content}
                 typewriterDone={mdTypewriterDone}
+                streamSegmentId={!mdTypewriterDone ? activeSegmentId : null}
                 webSources={currentRunSources.length > 0 ? currentRunSources : undefined}
                 artifacts={currentRunArtifacts.length > 0 ? currentRunArtifacts : undefined}
                 accessToken={accessToken}
@@ -566,23 +569,27 @@ function assistantTurnActionText(turn: AssistantTurnUi | null): string {
 function LiveTurnMarkdown({
   content,
   typewriterDone,
+  streamSegmentId,
   ...rest
 }: {
   content: string
   typewriterDone: boolean
+  streamSegmentId?: string | null
 } & Omit<ComponentProps<typeof MarkdownRenderer>, 'content'>) {
-  const displayed = useTypewriter(content, typewriterDone)
+  const streamingContent = useStreamingContent(streamSegmentId)
+  const targetContent = streamSegmentId ? (streamingContent || content) : content
+  const displayed = useTypewriter(targetContent, typewriterDone)
   useEffect(() => {
     recordPerfCount('live_turn_markdown_render', 1, {
-      contentLength: content.length,
+      contentLength: targetContent.length,
       displayedLength: displayed.length,
       typewriterDone,
     })
     recordPerfValue('live_turn_markdown_displayed', displayed.length, 'chars', {
-      contentLength: content.length,
+      contentLength: targetContent.length,
       typewriterDone,
     })
-  }, [content.length, displayed.length, typewriterDone])
+  }, [targetContent.length, displayed.length, typewriterDone])
   return <MarkdownRenderer content={displayed} streaming={!typewriterDone} {...rest} />
 }
 
@@ -2661,6 +2668,7 @@ export const ChatView = memo(function ChatView() {
                     currentRunSources={currentRunSourcesRef.current}
                     currentRunArtifacts={currentRunArtifactsRef.current}
                     activeRunId={activeRunId}
+                    activeSegmentId={activeSegmentIdRef.current}
                     accessToken={accessToken}
                     baseUrl={baseUrl}
                     thinkingHint={thinkingHint}
