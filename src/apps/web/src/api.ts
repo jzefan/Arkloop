@@ -849,6 +849,27 @@ export async function editMessage(
   })
 }
 
+export async function retryMessage(
+  accessToken: string,
+  threadId: string,
+  messageId: string,
+  personaId?: string,
+  modelOverride?: string,
+  workDir?: string,
+  reasoningMode?: RunReasoningMode,
+): Promise<CreateRunResponse> {
+  return await apiFetch<CreateRunResponse>(`/v1/threads/${threadId}/messages/${messageId}:retry`, {
+    method: 'POST',
+    accessToken,
+    body: JSON.stringify({
+      ...(personaId ? { persona_id: personaId } : {}),
+      ...(modelOverride ? { model: modelOverride } : {}),
+      ...(workDir ? { work_dir: workDir } : {}),
+      ...(reasoningMode ? { reasoning_mode: reasoningMode } : {}),
+    }),
+  })
+}
+
 // Runs API
 
 export type CreateRunResponse = {

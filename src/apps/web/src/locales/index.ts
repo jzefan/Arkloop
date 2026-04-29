@@ -415,6 +415,8 @@ export interface LocaleStrings {
   shellNoOutput: string
   shellRunning: string
   shellRanShort: string
+  todoListTitle: string
+  todoListProgress: (completed: number, total: number) => string
   // sub-agent
   agentSubAgent: string
   agentAcpAgent: string

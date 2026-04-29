@@ -27,6 +27,8 @@ import { DocumentPanel } from './DocumentPanel'
 import { AgentPanel } from './AgentPanel'
 import { ChatTitleMenu } from './ChatTitleMenu'
 import { MessageList } from './MessageList'
+import { CopSegmentBlocks } from './CopSegmentBlocks'
+import { TopLevelCopToolBlock } from './TopLevelCopToolBlock'
 import { ContextCompactBar } from './ContextCompactBar'
 import { IncognitoDivider } from './IncognitoDivider'
 import { AssistantActionBar } from './messagebubble/AssistantMessage'
@@ -53,7 +55,7 @@ import {
   type AssistantTurnUi,
 } from '../assistantTurnSegments'
 import { copTimelinePayloadForSegment, toolCallIdsInCopTimelines } from '../copSegmentTimeline'
-import { buildSubSegments, buildResolvedPool, segmentLiveTitle, EMPTY_POOL, buildThinkingOnlyFromItems, buildFallbackSegments } from '../copSubSegment'
+import { buildResolvedPool, EMPTY_POOL, buildFallbackSegments } from '../copSubSegment'
 import { applyRunEventToWebSearchSteps } from '../webSearchTimelineFromRunEvent'
 import { useLocale } from '../contexts/LocaleContext'
 import { useAuth } from '../contexts/auth'
@@ -389,29 +391,35 @@ const LiveRunPane = memo(function LiveRunPane({
         allStreamItemsForUi.length === 0 &&
         (dedupedTopLevelCodeExecutions.length > 0 || topLevelSubAgents.length > 0 || topLevelFileOps.length > 0 || topLevelWebFetches.length > 0) && (
         <div style={{ maxWidth: liveContentMaxWidth }}>
-          <CopTimeline
-            segments={buildFallbackSegments({
-              codeExecutions: dedupedTopLevelCodeExecutions,
-              subAgents: topLevelSubAgents,
-              fileOps: topLevelFileOps,
-              webFetches: topLevelWebFetches,
-            })}
-            pool={buildResolvedPool({
-              steps: [],
-              sources: [],
-              codeExecutions: dedupedTopLevelCodeExecutions,
-              subAgents: topLevelSubAgents,
-              fileOps: topLevelFileOps,
-              webFetches: topLevelWebFetches,
-            })}
-            isComplete
-            onOpenCodeExecution={onOpenCodeExecution}
-            onOpenSubAgent={onOpenSubAgent}
-            activeCodeExecutionId={codePanelExecutionId ?? undefined}
-            accessToken={accessToken}
-            baseUrl={baseUrl}
-            typography={isWorkMode ? 'work' : 'default'}
-          />
+          {dedupedTopLevelCodeExecutions.map((ce) => (
+            <TopLevelCopToolBlock
+              key={`fallback-code-${ce.id}`}
+              entry={{ kind: 'code', id: ce.id, seq: ce.seq ?? 0, item: ce }}
+              onOpenCodeExecution={onOpenCodeExecution}
+              activeCodeExecutionId={codePanelExecutionId ?? undefined}
+            />
+          ))}
+          {(topLevelSubAgents.length > 0 || topLevelFileOps.length > 0 || topLevelWebFetches.length > 0) && (
+            <CopTimeline
+              segments={buildFallbackSegments({
+                subAgents: topLevelSubAgents,
+                fileOps: topLevelFileOps,
+                webFetches: topLevelWebFetches,
+              })}
+              pool={buildResolvedPool({
+                steps: [],
+                sources: [],
+                subAgents: topLevelSubAgents,
+                fileOps: topLevelFileOps,
+                webFetches: topLevelWebFetches,
+              })}
+              isComplete
+              onOpenSubAgent={onOpenSubAgent}
+              accessToken={accessToken}
+              baseUrl={baseUrl}
+              typography={isWorkMode ? 'work' : 'default'}
+            />
+          )}
         </div>
       )}
 
@@ -2488,45 +2496,18 @@ export const ChatView = memo(function ChatView() {
     const copClosedByFollowingSeg = si < lastSegIdx
     const copTimelineLive = liveRunUiActive && !copClosedByFollowingSeg
 
-    const payload = copTimelinePayloadForSegment(seg, {
+    const timelinePools = {
       codeExecutions: dedupedTopLevelCodeExecutions,
       fileOps: topLevelFileOps,
       webFetches: topLevelWebFetches,
       subAgents: topLevelSubAgents,
       searchSteps,
       sources: currentRunSourcesRef.current,
-    })
-    const pool = buildResolvedPool(payload)
-
-    const subSegments = buildSubSegments(seg.items)
-    if (subSegments.length > 0 && copTimelineLive) {
-      const lastSeg = subSegments[subSegments.length - 1]!
-      lastSeg.status = 'open'
-      lastSeg.title = segmentLiveTitle(lastSeg.category)
     }
+    const payload = copTimelinePayloadForSegment(seg, timelinePools)
 
     const liveWidgets = liveStreamingWidgetEntriesForCop(seg, streamingArtifacts)
     const liveArts = liveInlineArtifactEntriesForCop(seg, streamingArtifacts)
-
-    const thinkingOnlyData = subSegments.length === 0 && !payload.codeExecutions?.length && !payload.subAgents?.length && !payload.fileOps?.length && !payload.webFetches?.length && !payload.genericTools?.length
-      ? buildThinkingOnlyFromItems(seg.items)
-      : null
-
-    const hasTimelineBody =
-      subSegments.length > 0 ||
-      thinkingOnlyData != null ||
-      payload.steps.length > 0 ||
-      payload.sources.length > 0 ||
-      !!payload.codeExecutions?.length ||
-      !!payload.fileOps?.length ||
-      !!payload.webFetches?.length ||
-      !!payload.genericTools?.length ||
-      !!payload.subAgents?.length ||
-      !!(payload.exploreGroups && payload.exploreGroups.length > 0)
-
-    if (!hasTimelineBody && liveWidgets.length === 0 && liveArts.length === 0) {
-      return []
-    }
 
     const timelineTitleOverride =
       preservingHandoffSegments
@@ -2538,31 +2519,29 @@ export const ChatView = memo(function ChatView() {
             hasFileOps: !!(payload.fileOps && payload.fileOps.length > 0),
             hasWebFetches: !!(payload.webFetches && payload.webFetches.length > 0),
             hasGenericTools: !!(payload.genericTools && payload.genericTools.length > 0),
-            hasThinking: subSegments.some((s) => s.items.some((i) => i.kind === 'thinking')),
+            hasThinking: seg.items.some((item) => item.kind === 'thinking'),
             handoffStatus: terminalRunHandoffStatus === 'running' ? null : terminalRunHandoffStatus,
           })
         : seg.title?.trim() || undefined
 
     return [
-      subSegments.length > 0 || thinkingOnlyData ? (
-        <CopTimeline
+      <CopSegmentBlocks
           key={`live-cop-${si}`}
-          segments={subSegments}
-          pool={pool}
-          thinkingOnly={thinkingOnlyData}
-          thinkingHint={thinkingHint}
-          headerOverride={timelineTitleOverride}
+          segment={seg}
+          keyPrefix={`live-cop-${si}`}
+          {...timelinePools}
           isComplete={!copTimelineLive}
           live={copTimelineLive}
           shimmer={copTimelineLive}
+          thinkingHint={thinkingHint}
+          headerOverride={timelineTitleOverride}
           onOpenCodeExecution={openCodePanel}
           onOpenSubAgent={openAgentPanelState}
           activeCodeExecutionId={codePanelExecution?.id}
           accessToken={accessToken}
           baseUrl={baseUrl}
           typography={appMode === 'work' ? 'work' : 'default'}
-        />
-      ) : null,
+        />,
       ...liveWidgets.map((entry) => (
         <WidgetBlock
           key={`live-w-${entry.toolCallId ?? entry.toolCallIndex}`}

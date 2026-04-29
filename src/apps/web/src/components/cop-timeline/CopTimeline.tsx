@@ -2,8 +2,6 @@ import { useState, useEffect, useRef } from 'react'
 import { motion, useReducedMotion } from 'framer-motion'
 import { ChevronRight } from 'lucide-react'
 import type { CodeExecution } from '../CodeExecutionCard'
-import { CodeExecutionCard } from '../CodeExecutionCard'
-import { ExecutionCard } from '../ExecutionCard'
 import type { SubAgentRef } from '../../storage'
 import { useLocale } from '../../contexts/LocaleContext'
 import type { CopSubSegment, ResolvedPool } from '../../copSubSegment'
@@ -25,6 +23,13 @@ import { CopTimelineSegment } from './CopTimelineSegment'
 import { CopTimelineUnifiedRow } from './CopUnifiedRow'
 
 export type { WebSearchPhaseStep } from './types'
+
+const TOP_LEVEL_TOOL_NAMES = new Set(['python_execute', 'exec_command', 'continue_process', 'terminate_process', 'todo_write'])
+
+function isTopLevelOnlySegment(segment: CopSubSegment): boolean {
+  const calls = segment.items.filter((item): item is Extract<CopSubSegment['items'][number], { kind: 'call' }> => item.kind === 'call')
+  return calls.length > 0 && calls.every((item) => TOP_LEVEL_TOOL_NAMES.has(item.call.toolName))
+}
 
 export function CopTimeline({
   segments,
@@ -61,10 +66,11 @@ export function CopTimeline({
 }) {
   const { t } = useLocale()
   const reduceMotion = useReducedMotion()
+  const timelineSegments = segments.filter((s) => !isTopLevelOnlySegment(s))
 
-  const poolHasItems = pool.codeExecutions.size > 0 || pool.fileOps.size > 0 || pool.webFetches.size > 0 || pool.subAgents.size > 0 || pool.genericTools.size > 0 || pool.steps.size > 0
-  const hasSegments = segments.length > 0 || poolHasItems
-  const hasThinkingOnly = thinkingOnly != null && segments.length === 0 && !poolHasItems
+  const poolHasItems = pool.fileOps.size > 0 || pool.webFetches.size > 0 || pool.subAgents.size > 0 || pool.genericTools.size > 0 || pool.steps.size > 0
+  const hasSegments = timelineSegments.length > 0 || poolHasItems
+  const hasThinkingOnly = thinkingOnly != null && timelineSegments.length === 0 && !poolHasItems
   const anyThinking = thinkingOnly != null
   const thinkingLive = thinkingOnly?.live ?? false
   const anyThinkingLive = thinkingLive
@@ -107,18 +113,17 @@ export function CopTimeline({
   const lastThinkingTitle = thinkingTitles.length > 0 ? thinkingTitles[thinkingTitles.length - 1] : undefined
 
   const pendingHasContent = hasSegments || hasThinkingOnly
-  const pendingShowThinkingHeader = !!live && !anyThinking && !pendingHasContent && !!thinkingHint
+  const pendingShowThinkingHeader = segments.length === 0 && !!live && !anyThinking && !pendingHasContent && !!thinkingHint
   const thinkingTimerActive = anyThinkingLive || (anyThinking && !!live)
   const activeThinkingElapsed = useThinkingElapsedSeconds(thinkingTimerActive, segmentThinkingStartedAtMs)
   const thinkingLiveHeaderLabel = lastThinkingTitle
     ? `${lastThinkingTitle} ${activeThinkingElapsed}s`
     : formatThinkingHeaderLabel(thinkingHint, activeThinkingElapsed, t)
 
-  const shouldRender = hasSegments || hasThinkingOnly || !!thinkingHint
+  const shouldRender = hasSegments || hasThinkingOnly || pendingShowThinkingHeader
 
-  const nonExecSegments = segments.filter((s) => s.category !== 'exec')
-  const nonExecTimelineLive = !!live && nonExecSegments.some((s) => s.status === 'open')
-  const hasNonExecBody = nonExecSegments.length > 0 || hasThinkingOnly || anyThinking || (!hasSegments && !!thinkingHint)
+  const timelineLive = !!live && timelineSegments.some((s) => s.status === 'open')
+  const hasTimelineBody = timelineSegments.length > 0 || hasThinkingOnly || anyThinking || pendingShowThinkingHeader
 
   // 带标题的 label："{title} {sec}s" 或 "{title}"
   const titledDurationLabel = (title: string, sec: number) =>
@@ -136,7 +141,7 @@ export function CopTimeline({
       ? 'thought'
       : pendingShowThinkingHeader
         ? 'thinking-pending'
-        : nonExecTimelineLive
+        : timelineLive
           ? 'live'
           : isComplete
             ? 'complete'
@@ -147,8 +152,8 @@ export function CopTimeline({
     if (anyThinking && isComplete && !hasSegments) return thoughtDurationLabel
     if (pendingShowThinkingHeader) return `${thinkingHint}...`
     if (hasSegments) {
-      const nonExecComplete = isComplete || (!!live && !nonExecTimelineLive)
-      const aggregated = aggregateMainTitle(nonExecSegments, nonExecTimelineLive, nonExecComplete)
+      const timelineComplete = isComplete || (!!live && !timelineLive)
+      const aggregated = aggregateMainTitle(timelineSegments, timelineLive, timelineComplete)
       if (aggregated) return aggregated
     }
     if (anyThinking) return thoughtDurationLabel
@@ -157,58 +162,25 @@ export function CopTimeline({
   })()
 
   const seededStatusAnimation =
-    nonExecTimelineLive || !!shimmer || headerPhaseKey === 'thinking-pending' || headerPhaseKey === 'thinking-live'
+    timelineLive || !!shimmer || headerPhaseKey === 'thinking-pending' || headerPhaseKey === 'thinking-live'
   const headerUsesIncrementalTypewriter = seededStatusAnimation
 
   const [hovered, setHovered] = useState(false)
 
   useEffect(() => {
     recordPerfCount('cop_timeline_render', 1, {
-      segments: segments.length,
+      segments: timelineSegments.length,
       thinkingOnly: !!hasThinkingOnly,
       live: !!live,
       collapsed,
     })
-    recordPerfValue('cop_timeline_segments', segments.length, 'segments', {
+    recordPerfValue('cop_timeline_segments', timelineSegments.length, 'segments', {
       collapsed,
       live: !!live,
     })
-  }, [collapsed, hasThinkingOnly, live, segments.length])
+  }, [collapsed, hasThinkingOnly, live, timelineSegments.length])
 
   if (!shouldRender) return null
-
-  // exec items: 收集所有 exec segment 的 call items，保持原始 segment 顺序
-  type ExecCallItem = Extract<import('../../assistantTurnSegments').CopBlockItem, { kind: 'call' }>
-  const execCallItems: ExecCallItem[] = []
-  for (const seg of segments) {
-    if (seg.category !== 'exec') continue
-    for (const item of seg.items) {
-      if (item.kind === 'call') execCallItems.push(item)
-    }
-  }
-
-  const renderExecItems = () =>
-    execCallItems.map((callItem) => {
-      const ce = pool.codeExecutions.get(callItem.call.toolCallId)
-      if (!ce) return null
-      return (
-        <div key={callItem.call.toolCallId} style={{ padding: '4px 0' }}>
-          {ce.language === 'shell'
-            ? <ExecutionCard variant="shell" displayDescription={ce.displayDescription} code={ce.code} output={ce.output} status={ce.status} errorMessage={ce.errorMessage} smooth={!!live && ce.status === 'running'} />
-            : <CodeExecutionCard language={ce.language} code={ce.code} output={ce.output} errorMessage={ce.errorMessage} status={ce.status} onOpen={onOpenCodeExecution ? () => onOpenCodeExecution(ce) : undefined} isActive={activeCodeExecutionId === ce.id} />
-          }
-        </div>
-      )
-    })
-
-  // exec-only: 没有非 exec 内容，直接平铺
-  if (!hasNonExecBody && execCallItems.length > 0) {
-    return (
-      <div className={`cop-timeline-root${typography === 'work' ? ' cop-timeline-root--work' : ''}`} style={typography !== 'work' ? { maxWidth: '663px' } : undefined}>
-        {renderExecItems()}
-      </div>
-    )
-  }
 
   const toggleBody = () => {
     setUserToggled(true)
@@ -217,7 +189,7 @@ export function CopTimeline({
 
   return (
     <div className={`cop-timeline-root${typography === 'work' ? ' cop-timeline-root--work' : ''}`} style={typography !== 'work' ? { maxWidth: '663px' } : undefined}>
-      {hasNonExecBody && (
+      {hasTimelineBody && (
         <>
           <button
             type="button"
@@ -265,7 +237,7 @@ export function CopTimeline({
             transition={!reduceMotion ? { duration: 0.24, ease: [0.4, 0, 0.2, 1] } : { duration: 0 }}
             style={{ overflow: collapsed ? 'hidden' : 'visible' }}
           >
-            <div style={{ position: 'relative', paddingTop: typography === 'work' ? '5px' : '3px', paddingBottom: typography === 'work' ? '6px' : '3px', paddingLeft: (nonExecSegments.length > 1 || (hasThinkingOnly && typography !== 'work')) ? '24px' : undefined }}>
+            <div style={{ position: 'relative', paddingTop: typography === 'work' ? '5px' : '3px', paddingBottom: typography === 'work' ? '6px' : '3px', paddingLeft: (timelineSegments.length > 1 || (hasThinkingOnly && typography !== 'work')) ? '24px' : undefined }}>
               {/* Thinking-only mode (no segments) */}
               {hasThinkingOnly && thinkingOnly && (() => {
                 const isWork = typography === 'work'
@@ -328,12 +300,12 @@ export function CopTimeline({
                 )
               })()}
 
-              {/* Non-exec segments */}
-              {nonExecSegments.length === 1 ? (
+              {/* Segments */}
+              {timelineSegments.length === 1 ? (
                 <CopTimelineSegment
-                  segment={nonExecSegments[0]!}
+                  segment={timelineSegments[0]!}
                   pool={pool}
-                  isLive={!!live && nonExecSegments[0]!.status === 'open'}
+                  isLive={!!live && timelineSegments[0]!.status === 'open'}
                   defaultExpanded={true}
                   hideHeader
                   compactNarrativeEnd={compactNarrativeEnd}
@@ -345,8 +317,8 @@ export function CopTimeline({
                   typography={typography}
                 />
               ) : (
-                nonExecSegments.map((seg, index) => {
-                const isLast = index === nonExecSegments.length - 1
+                timelineSegments.map((seg, index) => {
+                const isLast = index === timelineSegments.length - 1
                 const segDotColor = seg.status === 'open'
                   ? 'var(--c-text-secondary)'
                   : 'var(--c-text-muted)'
@@ -355,7 +327,7 @@ export function CopTimeline({
                     key={seg.id}
                     isFirst={index === 0}
                     isLast={isLast}
-                    multiItems={nonExecSegments.length >= 2}
+                    multiItems={timelineSegments.length >= 2}
                     dotColor={segDotColor}
                     dotTop={8}
                     paddingBottom={7}
@@ -381,9 +353,6 @@ export function CopTimeline({
           </motion.div>
         </>
       )}
-
-      {/* Exec items: 始终在折叠体外，与 header/segment 平级 */}
-      {renderExecItems()}
     </div>
   )
 }

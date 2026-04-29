@@ -430,6 +430,8 @@ export const en: LocaleStrings = {
   shellNoOutput: "No output",
   shellRunning: "Running",
   shellRanShort: "Ran",
+  todoListTitle: "Todos",
+  todoListProgress: (completed, total) => `${completed} of ${total} Done`,
   agentSubAgent: "Sub Agent",
   agentAcpAgent: "ACP agent",
   agentSpawning: "Spawning",
