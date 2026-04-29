@@ -1857,7 +1857,7 @@ func handleTelegramCommand(
 			thinkDisplay = "off"
 		}
 		var sb strings.Builder
-		sb.WriteString(fmt.Sprintf("模型：%s\n思考：%s", modelDisplay, thinkDisplay))
+		_, _ = fmt.Fprintf(&sb, "模型：%s\n思考：%s", modelDisplay, thinkDisplay)
 		if channel != nil && channel.PersonaID != nil && *channel.PersonaID != uuid.Nil {
 			dmThread, _ := channelDMThreadsRepo.GetByBinding(ctx, channel.ID, identity.ID, *channel.PersonaID, platformThreadID)
 			if dmThread != nil {
