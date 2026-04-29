@@ -12,6 +12,7 @@ import {
   listMyChannelIdentities,
   createChannelBindCode,
   unbindChannelIdentity,
+  verifyChannel,
   isApiError,
 } from '../api'
 import { useLocale } from '../contexts/LocaleContext'
@@ -35,6 +36,11 @@ function parseAllowedUserIds(input: string): string[] {
     .filter(Boolean)
 }
 
+function readChannelConfigString(channel: ChannelResponse, key: string): string {
+  const raw = channel.config_json?.[key]
+  return typeof raw === 'string' ? raw : ''
+}
+
 export function ChannelsSettingsContent({ accessToken }: Props) {
   const { t } = useLocale()
   const ct = t.channels
@@ -54,8 +60,17 @@ export function ChannelsSettingsContent({ accessToken }: Props) {
   const [formAllowedUsers, setFormAllowedUsers] = useState('')
   const [formAllowedGroups, setFormAllowedGroups] = useState('')
   const [formDefaultModel, setFormDefaultModel] = useState('')
+  const [formFeishuAppID, setFormFeishuAppID] = useState('')
+  const [formFeishuDomain, setFormFeishuDomain] = useState<'feishu' | 'lark'>('feishu')
+  const [formFeishuVerificationToken, setFormFeishuVerificationToken] = useState('')
+  const [formFeishuEncryptKey, setFormFeishuEncryptKey] = useState('')
+  const [formFeishuAllowedUsers, setFormFeishuAllowedUsers] = useState('')
+  const [formFeishuAllowedChats, setFormFeishuAllowedChats] = useState('')
+  const [formFeishuTriggerKeywords, setFormFeishuTriggerKeywords] = useState('')
   const [saving, setSaving] = useState(false)
   const [tokenDrafts, setTokenDrafts] = useState<Record<string, string>>({})
+  const [verifyingChannelId, setVerifyingChannelId] = useState<string | null>(null)
+  const [verifyResults, setVerifyResults] = useState<Record<string, { ok: boolean; message: string }>>({})
 
   const personaOptions = useMemo(
     () => personas.map((p) => ({ value: p.id, label: p.display_name || p.id })),
@@ -93,6 +108,13 @@ export function ChannelsSettingsContent({ accessToken }: Props) {
     setFormAllowedUsers('')
     setFormAllowedGroups('')
     setFormDefaultModel('')
+    setFormFeishuAppID('')
+    setFormFeishuDomain('feishu')
+    setFormFeishuVerificationToken('')
+    setFormFeishuEncryptKey('')
+    setFormFeishuAllowedUsers('')
+    setFormFeishuAllowedChats('')
+    setFormFeishuTriggerKeywords('')
   }
 
   const handleCreate = async () => {
@@ -103,6 +125,20 @@ export function ChannelsSettingsContent({ accessToken }: Props) {
       }
       if (!formToken.trim()) {
         setError(ct.qqBotClientSecretRequired)
+        return
+      }
+    }
+    if (formType === 'feishu') {
+      if (!formPersonaId) {
+        setError(ct.personaRequired)
+        return
+      }
+      if (!formFeishuAppID.trim()) {
+        setError(ct.feishuAppIDRequired)
+        return
+      }
+      if (!formToken.trim() || !formFeishuVerificationToken.trim() || !formFeishuEncryptKey.trim()) {
+        setError(ct.feishuCredentialsRequired)
         return
       }
     }
@@ -122,16 +158,25 @@ export function ChannelsSettingsContent({ accessToken }: Props) {
             default_model: formDefaultModel.trim(),
           }
         }
+        if (formType === 'feishu') {
+          return {
+            app_id: formFeishuAppID.trim(),
+            domain: formFeishuDomain,
+            verification_token: formFeishuVerificationToken.trim(),
+            encrypt_key: formFeishuEncryptKey.trim(),
+            allowed_user_ids: parseAllowedUserIds(formFeishuAllowedUsers),
+            allowed_chat_ids: parseAllowedUserIds(formFeishuAllowedChats),
+            trigger_keywords: parseAllowedUserIds(formFeishuTriggerKeywords).map((item) => item.toLowerCase()),
+          }
+        }
         return undefined
       })()
-
       await createChannel(accessToken, {
         channel_type: formType,
         bot_token: formType === 'qq' ? '' : formToken.trim(),
         persona_id: formPersonaId || undefined,
         config_json: configJSON,
       })
-      resetCreateForm()
       await load()
     } catch (err) {
       setError(isApiError(err) ? err.message : ct.saveFailed)
@@ -140,8 +185,30 @@ export function ChannelsSettingsContent({ accessToken }: Props) {
     }
   }
 
+  const handleVerify = async (ch: ChannelResponse) => {
+    setVerifyingChannelId(ch.id)
+    setError('')
+    try {
+      const result = await verifyChannel(accessToken, ch.id)
+      const message = result.ok
+        ? [result.application_name, result.bot_user_id].map((part) => part?.trim()).filter(Boolean).join(' · ') || ds.connectorVerifyOk
+        : result.error || ds.connectorVerifyFail
+      setVerifyResults((prev) => ({ ...prev, [ch.id]: { ok: result.ok, message } }))
+      if (result.ok) {
+        await load()
+      }
+    } catch (err) {
+      setVerifyResults((prev) => ({
+        ...prev,
+        [ch.id]: { ok: false, message: isApiError(err) ? err.message : ds.connectorVerifyFail },
+      }))
+    } finally {
+      setVerifyingChannelId(null)
+    }
+  }
+
   const handleToggle = async (ch: ChannelResponse) => {
-    if (!ch.is_active && (ch.channel_type === 'telegram' || ch.channel_type === 'qqbot')) {
+    if (!ch.is_active && (ch.channel_type === 'telegram' || ch.channel_type === 'qqbot' || ch.channel_type === 'feishu')) {
       if (!ch.persona_id) {
         setError(ct.personaRequired)
         return
@@ -216,9 +283,13 @@ export function ChannelsSettingsContent({ accessToken }: Props) {
   const usedTypes = new Set(channels.map((c) => c.channel_type))
   const createDisabled =
     saving ||
-    (formType === 'qqbot'
-      ? !formAppID.trim() || !formToken.trim()
-      : formType !== 'qq' && !formToken.trim())
+    (formType === 'qq'
+      ? false
+      : formType === 'qqbot'
+        ? !formAppID.trim() || !formToken.trim()
+        : formType === 'feishu'
+          ? !formToken.trim() || !formPersonaId || !formFeishuAppID.trim() || !formFeishuVerificationToken.trim() || !formFeishuEncryptKey.trim()
+          : !formToken.trim())
 
   if (loading) return <div className="text-sm text-[var(--c-text-tertiary)]">{t.loading}</div>
 
@@ -255,7 +326,10 @@ export function ChannelsSettingsContent({ accessToken }: Props) {
             <label className="text-xs font-medium text-[var(--c-text-secondary)]">{ct.platform}</label>
             <select
               value={formType}
-              onChange={(e) => setFormType(e.target.value as ChannelType)}
+              onChange={(e) => {
+                setFormType(e.target.value as ChannelType)
+                setError('')
+              }}
               className="h-9 rounded-lg bg-[var(--c-bg-input)] px-3 text-sm text-[var(--c-text-primary)] outline-none"
               style={{ border: '0.5px solid var(--c-border-subtle)' }}
             >
@@ -303,21 +377,25 @@ export function ChannelsSettingsContent({ accessToken }: Props) {
             </div>
           )}
 
-          {formType !== 'qq' && (
-            <div className="flex flex-col gap-1">
-              <label className="text-xs font-medium text-[var(--c-text-secondary)]">
-                {formType === 'qqbot' ? ct.qqBotClientSecret : ct.botToken}
-              </label>
+          <div className="flex flex-col gap-1">
+            <label className="text-xs font-medium text-[var(--c-text-secondary)]">
+              {formType === 'feishu' ? ct.feishuAppSecret : formType === 'qqbot' ? ct.qqBotClientSecret : ct.botToken}
+            </label>
+            {formType === 'qq' ? (
+              <p className="text-xs text-[var(--c-text-tertiary)]">{ct.qqChannelCreateHint}</p>
+            ) : (
               <input
                 type="password"
                 value={formToken}
                 onChange={(e) => setFormToken(e.target.value)}
-                placeholder={formType === 'qqbot' ? ct.qqBotClientSecretPlaceholder : ct.botTokenPlaceholder}
+                placeholder={
+                  formType === 'feishu' ? ct.feishuAppSecretPlaceholder : formType === 'qqbot' ? ct.qqBotClientSecretPlaceholder : ct.botTokenPlaceholder
+                }
                 className="h-9 rounded-lg bg-[var(--c-bg-input)] px-3 text-sm text-[var(--c-text-primary)] outline-none placeholder:text-[var(--c-text-muted)]"
                 style={{ border: '0.5px solid var(--c-border-subtle)' }}
               />
-            </div>
-          )}
+            )}
+          </div>
 
           {formType === 'qqbot' && (
             <div className="flex flex-col gap-1">
@@ -374,6 +452,103 @@ export function ChannelsSettingsContent({ accessToken }: Props) {
                   rows={3}
                   minRows={3}
                   maxHeight={220}
+                  className="rounded-lg bg-[var(--c-bg-input)] px-3 py-2 text-sm text-[var(--c-text-primary)] outline-none placeholder:text-[var(--c-text-muted)] resize-none"
+                  style={{ border: '0.5px solid var(--c-border-subtle)' }}
+                />
+              </div>
+            </>
+          )}
+
+          {formType === 'feishu' && (
+            <>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div className="flex flex-col gap-1">
+                  <label className="text-xs font-medium text-[var(--c-text-secondary)]">{ct.feishuAppID}</label>
+                  <input
+                    value={formFeishuAppID}
+                    onChange={(e) => setFormFeishuAppID(e.target.value)}
+                    placeholder={ct.feishuAppIDPlaceholder}
+                    className="h-9 rounded-lg bg-[var(--c-bg-input)] px-3 text-sm text-[var(--c-text-primary)] outline-none placeholder:text-[var(--c-text-muted)]"
+                    style={{ border: '0.5px solid var(--c-border-subtle)' }}
+                  />
+                </div>
+                <div className="flex flex-col gap-1">
+                  <label className="text-xs font-medium text-[var(--c-text-secondary)]">{ct.feishuDomain}</label>
+                  <select
+                    value={formFeishuDomain}
+                    onChange={(e) => setFormFeishuDomain(e.target.value as 'feishu' | 'lark')}
+                    className="h-9 rounded-lg bg-[var(--c-bg-input)] px-3 text-sm text-[var(--c-text-primary)] outline-none"
+                    style={{ border: '0.5px solid var(--c-border-subtle)' }}
+                  >
+                    <option value="feishu">{ct.feishuDomainFeishu}</option>
+                    <option value="lark">{ct.feishuDomainLark}</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div className="flex flex-col gap-1">
+                  <label className="text-xs font-medium text-[var(--c-text-secondary)]">{ct.feishuVerificationToken}</label>
+                  <input
+                    type="password"
+                    value={formFeishuVerificationToken}
+                    onChange={(e) => setFormFeishuVerificationToken(e.target.value)}
+                    placeholder={ct.feishuVerificationTokenPlaceholder}
+                    className="h-9 rounded-lg bg-[var(--c-bg-input)] px-3 text-sm text-[var(--c-text-primary)] outline-none placeholder:text-[var(--c-text-muted)]"
+                    style={{ border: '0.5px solid var(--c-border-subtle)' }}
+                  />
+                </div>
+                <div className="flex flex-col gap-1">
+                  <label className="text-xs font-medium text-[var(--c-text-secondary)]">{ct.feishuEncryptKey}</label>
+                  <input
+                    type="password"
+                    value={formFeishuEncryptKey}
+                    onChange={(e) => setFormFeishuEncryptKey(e.target.value)}
+                    placeholder={ct.feishuEncryptKeyPlaceholder}
+                    className="h-9 rounded-lg bg-[var(--c-bg-input)] px-3 text-sm text-[var(--c-text-primary)] outline-none placeholder:text-[var(--c-text-muted)]"
+                    style={{ border: '0.5px solid var(--c-border-subtle)' }}
+                  />
+                </div>
+              </div>
+
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div className="flex flex-col gap-1">
+                  <label className="text-xs font-medium text-[var(--c-text-secondary)]">{ct.feishuAllowedUsers}</label>
+                  <AutoResizeTextarea
+                    value={formFeishuAllowedUsers}
+                    onChange={(e) => setFormFeishuAllowedUsers(e.target.value)}
+                    placeholder={ct.feishuAllowedUsersPlaceholder}
+                    rows={2}
+                    minRows={2}
+                    maxHeight={160}
+                    className="rounded-lg bg-[var(--c-bg-input)] px-3 py-2 text-sm text-[var(--c-text-primary)] outline-none placeholder:text-[var(--c-text-muted)] resize-none"
+                    style={{ border: '0.5px solid var(--c-border-subtle)' }}
+                  />
+                </div>
+                <div className="flex flex-col gap-1">
+                  <label className="text-xs font-medium text-[var(--c-text-secondary)]">{ct.feishuAllowedChats}</label>
+                  <AutoResizeTextarea
+                    value={formFeishuAllowedChats}
+                    onChange={(e) => setFormFeishuAllowedChats(e.target.value)}
+                    placeholder={ct.feishuAllowedChatsPlaceholder}
+                    rows={2}
+                    minRows={2}
+                    maxHeight={160}
+                    className="rounded-lg bg-[var(--c-bg-input)] px-3 py-2 text-sm text-[var(--c-text-primary)] outline-none placeholder:text-[var(--c-text-muted)] resize-none"
+                    style={{ border: '0.5px solid var(--c-border-subtle)' }}
+                  />
+                </div>
+              </div>
+
+              <div className="flex flex-col gap-1">
+                <label className="text-xs font-medium text-[var(--c-text-secondary)]">{ct.feishuTriggerKeywords}</label>
+                <AutoResizeTextarea
+                  value={formFeishuTriggerKeywords}
+                  onChange={(e) => setFormFeishuTriggerKeywords(e.target.value)}
+                  placeholder={ct.feishuTriggerKeywordsPlaceholder}
+                  rows={2}
+                  minRows={2}
+                  maxHeight={160}
                   className="rounded-lg bg-[var(--c-bg-input)] px-3 py-2 text-sm text-[var(--c-text-primary)] outline-none placeholder:text-[var(--c-text-muted)] resize-none"
                   style={{ border: '0.5px solid var(--c-border-subtle)' }}
                 />
@@ -495,6 +670,39 @@ export function ChannelsSettingsContent({ accessToken }: Props) {
                       {ct.save}
                     </button>
                   )}
+                </div>
+              )}
+
+              {ch.channel_type === 'feishu' && (
+                <div className="flex flex-col gap-2">
+                  {(readChannelConfigString(ch, 'bot_name') || readChannelConfigString(ch, 'bot_open_id')) && (
+                    <div className="text-xs text-[var(--c-text-tertiary)]">
+                      {readChannelConfigString(ch, 'bot_name') || readChannelConfigString(ch, 'bot_open_id')}
+                    </div>
+                  )}
+                  {verifyResults[ch.id] && (
+                    <div
+                      className="rounded-lg px-3 py-2 text-xs"
+                      style={{
+                        background: verifyResults[ch.id].ok
+                          ? 'var(--c-status-success-bg, rgba(34,197,94,0.1))'
+                          : 'var(--c-status-error-bg, rgba(239,68,68,0.08))',
+                        color: verifyResults[ch.id].ok
+                          ? 'var(--c-status-success, #22c55e)'
+                          : 'var(--c-status-error, #ef4444)',
+                      }}
+                    >
+                      {verifyResults[ch.id].message}
+                    </div>
+                  )}
+                  <button
+                    onClick={() => void handleVerify(ch)}
+                    disabled={!ch.has_credentials || verifyingChannelId === ch.id}
+                    className="self-start rounded-lg px-3 py-1 text-xs font-medium text-[var(--c-text-secondary)] transition-colors hover:bg-[var(--c-bg-deep)] disabled:opacity-50"
+                    style={{ border: '0.5px solid var(--c-border-subtle)' }}
+                  >
+                    {verifyingChannelId === ch.id ? ds.connectorVerifying : ds.connectorVerify}
+                  </button>
                 </div>
               )}
             </div>

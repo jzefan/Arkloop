@@ -123,6 +123,8 @@ func drainDesktopOutboxRecord(
 		return drainDesktopQQBotOutbox(ctx, db, row, payload, outboxRepo)
 	case "weixin":
 		return drainDesktopWeixinOutbox(ctx, db, row, payload, outboxRepo)
+	case "feishu":
+		return drainDesktopFeishuOutbox(ctx, db, row, payload, outboxRepo)
 	default:
 		return fmt.Errorf("unsupported channel type: %s", row.ChannelType)
 	}
@@ -464,6 +466,59 @@ func drainDesktopWeixinOutbox(
 	return outboxRepo.UpdateSent(ctx, db, row.ID)
 }
 
+func drainDesktopFeishuOutbox(
+	ctx context.Context,
+	db data.DesktopDB,
+	row data.ChannelDeliveryOutboxRecord,
+	payload data.OutboxPayload,
+	outboxRepo data.ChannelDeliveryOutboxRepository,
+) error {
+	channel, err := loadDesktopDeliveryChannel(ctx, db, row.ChannelID)
+	if err != nil || channel == nil {
+		lastErr := errors.New("feishu channel not found or inactive")
+		if err != nil {
+			lastErr = err
+		}
+		return handleDesktopDrainFailure(ctx, db, row, lastErr, outboxRepo)
+	}
+
+	sender := pipeline.NewFeishuChannelSenderWithClient(nil, channel.ConfigJSON, channel.Token, 50*time.Millisecond)
+	replyTo := feishuReplyReferenceFromPayload(payload)
+
+	for i := row.SegmentsSent; i < len(payload.Outputs); i++ {
+		trimmed := strings.TrimSpace(payload.Outputs[i])
+		if trimmed == "" {
+			if err := outboxRepo.UpdateProgress(ctx, db, row.ID, i+1); err != nil {
+				return err
+			}
+			continue
+		}
+		ref := replyTo
+		if i > 0 {
+			ref = nil
+		}
+		messageIDs, sendErr := sender.SendText(ctx, pipeline.ChannelDeliveryTarget{
+			ChannelType:  row.ChannelType,
+			Conversation: pipeline.ChannelConversationRef{Target: payload.PlatformChatID, ThreadID: payload.PlatformThreadID},
+			ReplyTo:      ref,
+		}, trimmed)
+		if sendErr != nil {
+			return handleDesktopDrainFailure(ctx, db, row, sendErr, outboxRepo)
+		}
+		if err := recordDesktopChannelDelivery(
+			ctx, db, row.RunID, derefOutboxThreadID(row.ThreadID), row.ChannelID, row.ChannelType,
+			payload.PlatformChatID, ref, payload.PlatformThreadID, messageIDs,
+		); err != nil {
+			return handleDesktopDrainFailure(ctx, db, row, err, outboxRepo)
+		}
+		if err := outboxRepo.UpdateProgress(ctx, db, row.ID, i+1); err != nil {
+			return err
+		}
+		row.SegmentsSent = i + 1
+	}
+	return outboxRepo.UpdateSent(ctx, db, row.ID)
+}
+
 // handleDesktopDrainFailure 向调用方传播发送失败的真实错误；bookkeeping 失败时
 // 用 errors.Join 合并两段错误，便于日志和上层定位。
 func handleDesktopDrainFailure(
@@ -529,6 +584,13 @@ func qqbotReplyReferenceFromPayload(payload data.OutboxPayload) *pipeline.Channe
 }
 
 func weixinReplyReferenceFromPayload(payload data.OutboxPayload) *pipeline.ChannelMessageRef {
+	if strings.TrimSpace(payload.ReplyToMessageID) == "" {
+		return nil
+	}
+	return &pipeline.ChannelMessageRef{MessageID: strings.TrimSpace(payload.ReplyToMessageID)}
+}
+
+func feishuReplyReferenceFromPayload(payload data.OutboxPayload) *pipeline.ChannelMessageRef {
 	if strings.TrimSpace(payload.ReplyToMessageID) == "" {
 		return nil
 	}

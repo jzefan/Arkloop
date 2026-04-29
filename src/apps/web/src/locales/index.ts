@@ -646,10 +646,29 @@ export interface LocaleStrings {
     deleteFailed: string
     loadFailed: string
     personaRequired: string
-    telegram: string
-    discord: string
-    feishu: string
-    bindingsTitle: string
+	    telegram: string
+	    discord: string
+	    feishu: string
+	    feishuAppID: string
+	    feishuAppIDPlaceholder: string
+	    feishuAppIDRequired: string
+	    feishuAppSecret: string
+	    feishuAppSecretPlaceholder: string
+	    feishuVerificationToken: string
+	    feishuVerificationTokenPlaceholder: string
+	    feishuEncryptKey: string
+	    feishuEncryptKeyPlaceholder: string
+	    feishuCredentialsRequired: string
+	    feishuDomain: string
+	    feishuDomainFeishu: string
+	    feishuDomainLark: string
+	    feishuAllowedUsers: string
+	    feishuAllowedUsersPlaceholder: string
+	    feishuAllowedChats: string
+	    feishuAllowedChatsPlaceholder: string
+	    feishuTriggerKeywords: string
+	    feishuTriggerKeywordsPlaceholder: string
+	    bindingsTitle: string
     bindingsEmpty: string
     generateCode: string
     generating: string
@@ -691,6 +710,7 @@ export interface LocaleStrings {
     qqBotAllowedUsersPlaceholder: string
     qqBotAllowedGroups: string
     qqBotAllowedGroupsPlaceholder: string
+    qqChannelCreateHint: string
     qqSetup: string
     qqFetchingInfo: string
     qqDownloading: string
