@@ -80,6 +80,17 @@ const ICONS = {
   ),
 };
 
+type ShowcaseState = 'loading' | 'ready' | 'error';
+
+function ShowcaseFilmIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="3" y="5" width="18" height="14" rx="2" ry="2" />
+      <path d="M7 5v14M17 5v14M3 11h18" />
+    </svg>
+  );
+}
+
 export default function LandingPage({
   params,
 }: {
@@ -88,7 +99,15 @@ export default function LandingPage({
   const { lang: rawLang } = use(params);
   const lang: Lang = rawLang === 'en' ? 'en' : 'zh';
   const [dlOpen, setDlOpen] = useState(false);
+  const [showcaseState, setShowcaseState] = useState<ShowcaseState>('loading');
   const c = CONTENT[lang];
+
+  useEffect(() => {
+    const id = window.setTimeout(() => {
+      setShowcaseState((prev) => (prev === 'loading' ? 'ready' : prev));
+    }, 20000);
+    return () => window.clearTimeout(id);
+  }, []);
 
   useEffect(() => {
     if (!dlOpen) return;
@@ -160,14 +179,30 @@ export default function LandingPage({
       {/* Showcase */}
       <section className={styles.showcase}>
         <div className={styles.showcaseFrame}>
-          <video
-            className={styles.showcaseVideo}
-            src="/showcase.mp4"
-            autoPlay
-            loop
-            muted
-            playsInline
-          />
+          <div className={styles.showcaseFrameInner}>
+            <video
+              className={styles.showcaseVideo}
+              src="/showcase.mp4"
+              autoPlay
+              loop
+              muted
+              playsInline
+              preload="auto"
+              onLoadedData={() => setShowcaseState((prev) => (prev === 'error' ? prev : 'ready'))}
+              onError={() => setShowcaseState('error')}
+            />
+            {showcaseState !== 'error' && (
+              <div
+                className={`${styles.showcaseLoading} ${showcaseState === 'ready' ? styles.showcaseLoadingDone : ''}`}
+                aria-hidden
+              />
+            )}
+            {showcaseState === 'error' && (
+              <div className={styles.showcasePlaceholder} role="alert">
+                <ShowcaseFilmIcon className={styles.showcasePlaceholderIcon} />
+              </div>
+            )}
+          </div>
         </div>
       </section>
 
