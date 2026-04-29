@@ -191,7 +191,7 @@ async function loadHermesSource(): Promise<SourceDetails | null> {
     config: configRoot,
     env,
     skillDirs,
-    providers: parseProviderMap('hermes', providerMap, env),
+    providers: parseProviderMap(providerMap, env),
     mcpConfigs: parseMcpMap('hermes', mcpRoot, env),
     mcpServers: [],
     llmProviders: [],
@@ -200,17 +200,18 @@ async function loadHermesSource(): Promise<SourceDetails | null> {
 }
 
 async function loadOpenClawSource(): Promise<SourceDetails | null> {
-  const stateDir = expandHomePath(process.env.OPENCLAW_STATE_DIR || path.join(os.homedir(), '.openclaw'))
-  const configPath = expandHomePath(process.env.OPENCLAW_CONFIG_PATH || path.join(stateDir, 'openclaw.json'))
+  const stateDir = resolveOpenClawStateDir()
+  const configPath = resolveOpenClawConfigPath(stateDir)
   const config = await readJson5File(configPath)
-  const workspaceDir = resolveOpenClawWorkspaceDir(config ?? {}, stateDir)
+  const agentId = resolveOpenClawAgentId(config ?? {})
+  const agentDir = resolveOpenClawAgentDir(config ?? {}, stateDir, agentId)
+  const workspaceDir = resolveOpenClawWorkspaceDir(config ?? {}, stateDir, agentId)
   const hasWorkspace = await pathExists(workspaceDir)
   if (!config && !hasWorkspace) {
     return null
   }
 
-  const agentId = resolveOpenClawAgentId(config ?? {})
-  const agentModels = await readJson5File(path.join(stateDir, 'agents', agentId, 'agent', 'models.json'))
+  const agentModels = await readJson5File(path.join(agentDir, 'models.json'))
   const env = await loadOpenClawEnv(stateDir, config ?? {})
   const providerMap = {
     ...(asRecord(asRecord(config?.models)?.providers) ?? {}),
@@ -235,7 +236,7 @@ async function loadOpenClawSource(): Promise<SourceDetails | null> {
     env,
     workspaceDir,
     skillDirs,
-    providers: parseProviderMap('openclaw', providerMap, env),
+    providers: parseProviderMap(providerMap, env),
     mcpConfigs: parseMcpMap('openclaw', mcpRoot, env),
     mcpServers: [],
     llmProviders: [],
@@ -244,20 +245,77 @@ async function loadOpenClawSource(): Promise<SourceDetails | null> {
 }
 
 function resolveOpenClawAgentId(config: Record<string, unknown>): string {
-  return (
-    asString(asRecord(config.agents)?.default) ||
-    asString(asRecord(config.agent)?.id) ||
-    asString(config.defaultAgent) ||
-    'main'
-  )
+  const agents = asRecord(config.agents)
+  const explicit = asString(agents?.default) || asString(asRecord(config.agent)?.id) || asString(config.defaultAgent)
+  if (explicit) {
+    return normalizeOpenClawAgentId(explicit)
+  }
+  const entries = openClawAgentEntries(config)
+  const defaultEntry = entries.find((entry) => asBoolean(entry.default))
+  const chosen = defaultEntry ?? entries[0]
+  return normalizeOpenClawAgentId(asString(chosen?.id) || 'main')
 }
 
-function resolveOpenClawWorkspaceDir(config: Record<string, unknown>, stateDir: string): string {
-  const raw =
-    asString(asRecord(config.workspace)?.path) ||
-    asString(asRecord(asRecord(config.agents)?.main)?.workspace) ||
-    ''
-  return raw ? resolvePath(raw, stateDir) : path.join(stateDir, 'workspace')
+function resolveOpenClawWorkspaceDir(config: Record<string, unknown>, stateDir: string, agentId: string): string {
+  const agent = resolveOpenClawAgentConfig(config, agentId)
+  const configured = asString(agent?.workspace)
+  if (configured) {
+    return stripNullBytes(resolveOpenClawUserPath(configured))
+  }
+
+  const defaultAgentId = resolveOpenClawAgentId(config)
+  const fallback = asString(asRecord(asRecord(config.agents)?.defaults)?.workspace)
+  if (agentId === defaultAgentId) {
+    return stripNullBytes(fallback ? resolveOpenClawUserPath(fallback) : resolveOpenClawDefaultAgentWorkspaceDir())
+  }
+  if (fallback) {
+    return stripNullBytes(path.join(resolveOpenClawUserPath(fallback), agentId))
+  }
+  return stripNullBytes(path.join(stateDir, `workspace-${agentId}`))
+}
+
+function resolveOpenClawAgentDir(config: Record<string, unknown>, stateDir: string, agentId: string): string {
+  const configured = asString(resolveOpenClawAgentConfig(config, agentId)?.agentDir)
+  return configured ? resolveOpenClawUserPath(configured) : path.join(stateDir, 'agents', agentId, 'agent')
+}
+
+function resolveOpenClawAgentConfig(config: Record<string, unknown>, agentId: string): Record<string, unknown> | null {
+  return openClawAgentEntries(config).find((entry) => normalizeOpenClawAgentId(asString(entry.id)) === agentId) ?? null
+}
+
+function openClawAgentEntries(config: Record<string, unknown>): Record<string, unknown>[] {
+  const list = asRecord(config.agents)?.list
+  if (!Array.isArray(list)) {
+    return []
+  }
+  return list.filter((entry): entry is Record<string, unknown> => asRecord(entry) !== null)
+}
+
+function normalizeOpenClawAgentId(value: string): string {
+  const trimmed = value.trim()
+  if (!trimmed) {
+    return 'main'
+  }
+  const normalized = trimmed.toLowerCase().replace(/[^a-z0-9_-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 64)
+  return normalized || 'main'
+}
+
+function resolveOpenClawStateDir(): string {
+  const override = process.env.OPENCLAW_STATE_DIR?.trim()
+  return override ? resolveOpenClawUserPath(override) : path.join(os.homedir(), '.openclaw')
+}
+
+function resolveOpenClawConfigPath(stateDir: string): string {
+  const override = process.env.OPENCLAW_CONFIG_PATH?.trim()
+  return override ? resolveOpenClawUserPath(override) : path.join(stateDir, 'openclaw.json')
+}
+
+function resolveOpenClawDefaultAgentWorkspaceDir(): string {
+  const profile = process.env.OPENCLAW_PROFILE?.trim()
+  if (profile && profile.toLowerCase() !== 'default') {
+    return path.join(os.homedir(), '.openclaw', `workspace-${profile}`)
+  }
+  return path.join(os.homedir(), '.openclaw', 'workspace')
 }
 
 async function loadOpenClawEnv(stateDir: string, config: Record<string, unknown>): Promise<Record<string, string>> {
@@ -276,11 +334,7 @@ async function loadOpenClawEnv(stateDir: string, config: Record<string, unknown>
   return env
 }
 
-function parseProviderMap(
-  sourceKind: ImportSourceKind,
-  providerMap: Record<string, unknown>,
-  env: Record<string, string>,
-): ProviderCandidate[] {
+function parseProviderMap(providerMap: Record<string, unknown>, env: Record<string, string>): ProviderCandidate[] {
   const providers: ProviderCandidate[] = []
   for (const [sourceName, rawValue] of Object.entries(providerMap)) {
     const raw = asRecord(rawValue)
@@ -292,7 +346,7 @@ function parseProviderMap(
     const apiKey =
       resolveSecretValue(asString(raw.apiKey) || asString(raw.api_key), env) ||
       resolveSecretValue(asString(raw.apiKeyEnv) || asString(raw.api_key_env), env)
-    const mapped = mapProviderCandidate(sourceKind, sourceName, api, baseUrl, apiKey, parseModels(raw.models))
+    const mapped = mapProviderCandidate(sourceName, api, baseUrl, apiKey, parseModels(raw.models))
     if (mapped) {
       providers.push(mapped)
     }
@@ -302,7 +356,6 @@ function parseProviderMap(
 }
 
 function mapProviderCandidate(
-  sourceKind: ImportSourceKind,
   sourceName: string,
   api: string,
   baseUrl: string | undefined,
@@ -325,7 +378,7 @@ function mapProviderCandidate(
 
   return {
     sourceName,
-    name: `${sourceKind === 'hermes' ? 'Hermes' : 'OpenClaw'} ${humanizeName(sourceName)}`,
+    name: sourceName,
     provider,
     apiKey,
     baseUrl,
@@ -1078,9 +1131,13 @@ async function pathExists(filePath: string): Promise<boolean> {
   }
 }
 
-function resolvePath(value: string, baseDir: string): string {
-  const expanded = expandHomePath(value)
-  return path.isAbsolute(expanded) ? expanded : path.resolve(baseDir, expanded)
+function resolveOpenClawUserPath(value: string): string {
+  const expanded = expandHomePath(value.trim())
+  return expanded ? path.resolve(expanded) : expanded
+}
+
+function stripNullBytes(value: string): string {
+  return value.replace(/\0/g, '')
 }
 
 function expandHomePath(value: string): string {
