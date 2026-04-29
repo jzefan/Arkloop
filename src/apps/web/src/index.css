@@ -795,14 +795,22 @@ button:not(:disabled) {
 
 /* 时间轴内仅 thinking 完结直出：略小于正文、字色偏淡，行高与圆点对齐 */
 .cop-timeline-root .cop-thinking-output-md--timeline-plain .md-content {
+  font-family: inherit !important;
   font-size: 13px !important;
   line-height: 17.5px !important;
-  letter-spacing: -0.025em !important;
-  word-spacing: -0.12em !important;
-  color: var(--c-text-tertiary) !important;
+  font-weight: var(--c-fw-375) !important;
+  letter-spacing: normal !important;
+  word-spacing: normal !important;
+  color: var(--c-text-muted) !important;
 }
 .cop-timeline-root .cop-thinking-output-md--timeline-plain .md-content > :first-child {
   margin-top: 0 !important;
+}
+.cop-timeline-root .cop-thinking-output-md--timeline-plain .md-content p + p {
+  margin-top: 2px !important;
+}
+.cop-timeline-root .cop-thinking-output-md--timeline-plain .md-content p {
+  margin-bottom: 2px !important;
 }
 .cop-timeline-root .cop-thinking-output-md--timeline-plain .md-content p,
 .cop-timeline-root .cop-thinking-output-md--timeline-plain .md-content li,
@@ -810,41 +818,51 @@ button:not(:disabled) {
 .cop-timeline-root .cop-thinking-output-md--timeline-plain .md-content ol,
 .cop-timeline-root .cop-thinking-output-md--timeline-plain .md-content td,
 .cop-timeline-root .cop-thinking-output-md--timeline-plain .md-content th {
+  font-family: inherit !important;
   font-size: 13px !important;
   line-height: 17.5px !important;
-  letter-spacing: -0.025em !important;
-  word-spacing: -0.12em !important;
-  color: var(--c-text-tertiary) !important;
+  font-weight: var(--c-fw-375) !important;
+  letter-spacing: normal !important;
+  word-spacing: normal !important;
+  color: var(--c-text-muted) !important;
 }
 .cop-timeline-root .cop-thinking-output-md--timeline-plain .md-content h1 {
+  font-family: inherit !important;
   font-size: 13px !important;
   line-height: 17.5px !important;
-  letter-spacing: -0.025em !important;
-  word-spacing: -0.12em !important;
+  font-weight: var(--c-fw-375) !important;
+  letter-spacing: normal !important;
+  word-spacing: normal !important;
   color: var(--c-text-secondary) !important;
 }
 .cop-timeline-root .cop-thinking-output-md--timeline-plain .md-content h2 {
+  font-family: inherit !important;
   font-size: 13.5px !important;
   line-height: 18.5px !important;
-  letter-spacing: -0.025em !important;
-  word-spacing: -0.12em !important;
+  font-weight: var(--c-fw-375) !important;
+  letter-spacing: normal !important;
+  word-spacing: normal !important;
   color: var(--c-text-secondary) !important;
 }
 .cop-timeline-root .cop-thinking-output-md--timeline-plain .md-content h3,
 .cop-timeline-root .cop-thinking-output-md--timeline-plain .md-content h4,
 .cop-timeline-root .cop-thinking-output-md--timeline-plain .md-content h5,
 .cop-timeline-root .cop-thinking-output-md--timeline-plain .md-content h6 {
+  font-family: inherit !important;
   font-size: 12.5px !important;
   line-height: 17.5px !important;
-  letter-spacing: -0.025em !important;
-  word-spacing: -0.12em !important;
+  font-weight: var(--c-fw-375) !important;
+  letter-spacing: normal !important;
+  word-spacing: normal !important;
   color: var(--c-text-secondary) !important;
 }
 .cop-timeline-root .cop-thinking-output-md--timeline-plain .md-content blockquote {
+  font-family: inherit !important;
   font-size: 12.5px !important;
   line-height: 17.5px !important;
-  letter-spacing: -0.025em !important;
-  word-spacing: -0.12em !important;
+  font-weight: var(--c-fw-375) !important;
+  letter-spacing: normal !important;
+  word-spacing: normal !important;
   color: var(--c-text-muted) !important;
 }
 .cop-timeline-root .cop-thinking-output-md--timeline-plain .md-content strong {
@@ -854,7 +872,7 @@ button:not(:disabled) {
   color: var(--c-text-muted) !important;
 }
 .cop-timeline-root .cop-thinking-output-md--timeline-plain .md-content a {
-  color: var(--c-text-tertiary) !important;
+  color: var(--c-text-muted) !important;
 }
 .cop-timeline-root--work .cop-thinking-output-md--timeline-plain .md-content,
 .cop-timeline-root--work .cop-thinking-output-md--timeline-plain .md-content p,
