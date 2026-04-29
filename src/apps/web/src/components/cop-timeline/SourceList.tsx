@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo, memo } from 'react'
 import { Globe } from 'lucide-react'
 import type { WebSource } from '../../storage'
 import { useLocale } from '../../contexts/LocaleContext'
+import { handleExternalAnchorClick } from '../../openExternal'
 import { getDomain, getDomainShort, isHttpUrl, REVIEWING_SOURCE_PREVIEW_COUNT, FAVICON_REVEAL_DELAY_MS } from './utils'
 
 export const SourceFavicon = memo(function SourceFavicon({
@@ -55,6 +56,7 @@ export const SourceItem = memo(function SourceItem({ source }: { source: WebSour
       href={source.url}
       target="_blank"
       rel="noopener noreferrer"
+      onClick={(event) => handleExternalAnchorClick(event, source.url)}
       className="hover:bg-[var(--c-bg-deep)]"
       style={{
         display: 'flex',

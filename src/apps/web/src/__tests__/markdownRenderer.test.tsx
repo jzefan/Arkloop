@@ -57,6 +57,37 @@ describe('MarkdownRenderer', () => {
     expect(html).not.toContain('Web:1')
   })
 
+  it('HTTP 链接点击应走外部浏览器并阻止默认导航', async () => {
+    const originalArkloop = window.arkloop
+    const openExternal = vi.fn().mockResolvedValue(undefined)
+    window.arkloop = { app: { openExternal } }
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const root = createRoot(container)
+
+    await act(async () => {
+      root.render(
+        <LocaleProvider>
+          <MarkdownRenderer content="[Example](https://example.com/page)" />
+        </LocaleProvider>,
+      )
+    })
+
+    const link = container.querySelector('a[href="https://example.com/page"]')
+    expect(link).not.toBeNull()
+
+    const event = new MouseEvent('click', { bubbles: true, cancelable: true })
+    const dispatched = link!.dispatchEvent(event)
+
+    expect(openExternal).toHaveBeenCalledWith('https://example.com/page')
+    expect(event.defaultPrevented).toBe(true)
+    expect(dispatched).toBe(false)
+
+    act(() => root.unmount())
+    container.remove()
+    window.arkloop = originalArkloop
+  })
+
   it('应把连续来源引用聚合为同一个 badge', () => {
     const html = renderMarkdown('来源 web:1, Web:2。', {
       webSources: [
