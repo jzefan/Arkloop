@@ -519,7 +519,7 @@ describe('CopTimeline', () => {
   describe('collapse and expand behavior', () => {
     it('complete timeline starts collapsed', async () => {
       const seg = makeSeg({ id: 's1', status: 'closed', title: '1 step completed', items: [
-        { kind: 'call', call: { toolCallId: 'c1', toolName: 'exec_command', arguments: {} }, seq: 0 },
+        { kind: 'call', call: { toolCallId: 'c1', toolName: 'read_file', arguments: {} }, seq: 0 },
       ]})
       const { container, cleanup } = await renderTimelineDom({
         segments: [seg],
@@ -538,7 +538,7 @@ describe('CopTimeline', () => {
 
     it('user click on header expands a collapsed timeline', async () => {
       const seg = makeSeg({ id: 's1', status: 'closed', title: '1 step completed', items: [
-        { kind: 'call', call: { toolCallId: 'c1', toolName: 'exec_command', arguments: {} }, seq: 0 },
+        { kind: 'call', call: { toolCallId: 'c1', toolName: 'read_file', arguments: {} }, seq: 0 },
       ]})
       const { container, cleanup } = await renderTimelineDom({
         segments: [seg],
@@ -563,7 +563,7 @@ describe('CopTimeline', () => {
 
     it('transition from live to complete auto-collapses', async () => {
       const seg = makeSeg({ id: 's1', status: 'open', title: 'Running...', items: [
-        { kind: 'call', call: { toolCallId: 'c1', toolName: 'exec_command', arguments: {} }, seq: 0 },
+        { kind: 'call', call: { toolCallId: 'c1', toolName: 'read_file', arguments: {} }, seq: 0 },
       ]})
       const { container, rerender, cleanup } = await renderTimelineDom({
         segments: [seg],

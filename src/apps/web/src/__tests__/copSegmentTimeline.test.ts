@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { copTimelinePayloadForSegment, promotedCopTimelineEntries, toolCallIdsInCopTimelines } from '../copSegmentTimeline'
+import { copTimelinePayloadForSegment, promotedCopTimelineEntries, splitCopItemsByTopLevelTools, toolCallIdsInCopTimelines } from '../copSegmentTimeline'
 
 const call = (id: string, name: string, seq: number) =>
   ({ kind: 'call' as const, call: { toolCallId: id, toolName: name, arguments: {} }, seq })
@@ -64,6 +64,42 @@ describe('copTimelinePayloadForSegment', () => {
       errorClass: undefined,
       seq: 4,
     }])
+  })
+
+  it('todo_write 映射为顶层 todo 数据，不进入 generic fallback', () => {
+    const r = copTimelinePayloadForSegment(
+      {
+        type: 'cop',
+        title: null,
+        items: [{
+          kind: 'call',
+          call: {
+            toolCallId: 'todo_1',
+            toolName: 'todo_write',
+            arguments: {
+              todos: [
+                { id: 'a', content: 'Read current renderer', status: 'completed' },
+                { id: 'b', content: 'Move todo card out', status: 'pending' },
+              ],
+            },
+          },
+          seq: 5,
+        }],
+      },
+      { sources: [] },
+    )
+
+    expect(r.todoWrites).toEqual([{
+      id: 'todo_1',
+      toolName: 'todo_write',
+      todos: [
+        { id: 'a', content: 'Read current renderer', status: 'completed' },
+        { id: 'b', content: 'Move todo card out', status: 'pending' },
+      ],
+      status: 'running',
+      seq: 5,
+    }])
+    expect(r.genericTools).toBeUndefined()
   })
 
   it('含 searching 步骤时附带 sources', () => {
@@ -332,6 +368,24 @@ describe('copTimelinePayloadForSegment', () => {
       `explore:${payload.exploreGroups?.[0]?.id}`,
       'edit:edit_1',
       `explore:${payload.exploreGroups?.[1]?.id}`,
+    ])
+  })
+
+  it('splitCopItemsByTopLevelTools 将 exec 和 todo 从 timeline 切出来', () => {
+    const entries = splitCopItemsByTopLevelTools([
+      { kind: 'thinking', content: 'scan first', seq: 1 },
+      call('cmd_1', 'exec_command', 2),
+      call('read_1', 'read', 3),
+      call('todo_1', 'todo_write', 4),
+      { kind: 'thinking', content: 'wrap up', seq: 5 },
+    ])
+
+    expect(entries.map((entry) => entry.kind === 'tool' ? `tool:${entry.item.call.toolName}` : `timeline:${entry.items.length}`)).toEqual([
+      'timeline:1',
+      'tool:exec_command',
+      'timeline:1',
+      'tool:todo_write',
+      'timeline:1',
     ])
   })
 
