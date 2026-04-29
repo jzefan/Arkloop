@@ -160,11 +160,14 @@ export default function LandingPage({
       {/* Showcase */}
       <section className={styles.showcase}>
         <div className={styles.showcaseFrame}>
-          <div className={styles.showcasePlaceholder}>
-            <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1" strokeLinecap="round" strokeLinejoin="round" opacity={0.3}>
-              <polygon points="5 3 19 12 5 21 5 3" />
-            </svg>
-          </div>
+          <video
+            className={styles.showcaseVideo}
+            src="/showcase.mp4"
+            autoPlay
+            loop
+            muted
+            playsInline
+          />
         </div>
       </section>
 
