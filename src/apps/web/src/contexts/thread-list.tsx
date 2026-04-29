@@ -11,7 +11,9 @@ import {
 import { listThreads, type CollaborationMode, type ThreadResponse } from '../api'
 import {
   readAppModeFromStorage,
+  readGtdInboxThreadIds,
   readThreadModes,
+  writeGtdInboxThreadIds,
   writeThreadMode,
   type AppMode,
 } from '../storage'
@@ -73,6 +75,9 @@ export function ThreadListProvider({ children }: { children: ReactNode }) {
       const mode = readAppModeFromStorage()
       writeThreadMode(thread.id, mode)
       setThreadModes((prev) => (prev[thread.id] === mode ? prev : { ...prev, [thread.id]: mode }))
+      const inboxIds = readGtdInboxThreadIds()
+      inboxIds.add(thread.id)
+      writeGtdInboxThreadIds(inboxIds)
     }
     setThreads((prev) => {
       if (prev.some((t) => t.id === thread.id)) return prev
