@@ -1804,6 +1804,7 @@ function threadWorkFolderKey(threadId: string): string {
 }
 
 function addToRecents(folder: string): void {
+  if (!folder) return
   try {
     const raw = localStorage.getItem(WORK_RECENT_FOLDERS_KEY)
     const recents: string[] = raw ? (JSON.parse(raw) as string[]) : []
@@ -1888,7 +1889,9 @@ export function readWorkRecentFolders(): string[] {
   try {
     const raw = localStorage.getItem(WORK_RECENT_FOLDERS_KEY)
     if (!raw) return []
-    return JSON.parse(raw) as string[]
+    const folders = JSON.parse(raw) as unknown
+    if (!Array.isArray(folders)) return []
+    return folders.filter((folder): folder is string => typeof folder === 'string' && folder.length > 0)
   } catch { return [] }
 }
 

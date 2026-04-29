@@ -11,6 +11,7 @@ import {
   writeWorkFolder,
   clearWorkFolder,
   readWorkRecentFolders,
+  readThreadWorkFolder,
   writeThreadWorkFolder,
   clearThreadWorkFolder,
 } from '../../storage'
@@ -41,6 +42,10 @@ type Props = {
   hideWorkFolderPicker?: boolean
   hideModelPicker?: boolean
   onMenuOpenChange?: (open: boolean) => void
+}
+
+function readActiveWorkFolder(threadId?: string): string | null {
+  return threadId ? readThreadWorkFolder(threadId) : readWorkFolder()
 }
 
 export function PersonaModelBar({
@@ -76,10 +81,11 @@ export function PersonaModelBar({
 
   const [menuOpen, setMenuOpen] = useState(false)
   const [folderMenuOpen, setFolderMenuOpen] = useState(false)
-  const [workFolder, setWorkFolder] = useState<string | null>(() => readWorkFolder())
+  const [workFolder, setWorkFolder] = useState<string | null>(() => readActiveWorkFolder(workThreadId))
   const [recentFolders, setRecentFolders] = useState<string[]>(() => readWorkRecentFolders())
   const isWorkMode = appMode === 'work'
   const showWorkFolderPicker = isWorkMode && isDesktop() && !hideWorkFolderPicker && !threadMessagesLoading && !threadHasMessages
+  const effectiveFolderMenuOpen = folderMenuOpen && showWorkFolderPicker
 
   // close plus menu on outside click
   useEffect(() => {
@@ -97,7 +103,7 @@ export function PersonaModelBar({
 
   // close folder menu on outside click
   useEffect(() => {
-    if (!folderMenuOpen) return
+    if (!effectiveFolderMenuOpen) return
     const handler = (e: MouseEvent) => {
       const target = e.target as HTMLElement
       if (folderBtnRef.current?.contains(target)) return
@@ -107,7 +113,7 @@ export function PersonaModelBar({
     }
     document.addEventListener('mousedown', handler)
     return () => document.removeEventListener('mousedown', handler)
-  }, [folderMenuOpen])
+  }, [effectiveFolderMenuOpen])
 
   // notify parent of menu open/close state changes (for focus management)
   useEffect(() => {
@@ -115,14 +121,18 @@ export function PersonaModelBar({
   }, [menuOpen, onMenuOpenChange])
 
   useEffect(() => {
-    onMenuOpenChange?.(folderMenuOpen)
-  }, [folderMenuOpen, onMenuOpenChange])
+    onMenuOpenChange?.(effectiveFolderMenuOpen)
+  }, [effectiveFolderMenuOpen, onMenuOpenChange])
 
   useEffect(() => {
-    if (!showWorkFolderPicker && folderMenuOpen) {
-      setFolderMenuOpen(false)
+    const syncWorkFolder = () => {
+      setWorkFolder(readActiveWorkFolder(workThreadId))
+      setRecentFolders(readWorkRecentFolders())
     }
-  }, [folderMenuOpen, showWorkFolderPicker])
+    syncWorkFolder()
+    window.addEventListener('arkloop:work-folder-changed', syncWorkFolder)
+    return () => window.removeEventListener('arkloop:work-folder-changed', syncWorkFolder)
+  }, [workThreadId])
 
   const handleSelectFolder = useCallback(async (path?: string) => {
     let folder = path
@@ -176,7 +186,7 @@ export function PersonaModelBar({
             </span>
           </button>
 
-          {folderMenuOpen && (
+          {effectiveFolderMenuOpen && (
             <div
               ref={folderMenuRef}
               className={`absolute left-0 z-50 ${variant === 'welcome' ? 'dropdown-menu' : 'dropdown-menu-up'}`}
