@@ -38,10 +38,10 @@ func buildModelIdentityBlock(rc *RunContext) string {
 	sb.WriteString("Model: " + selected.Route.Model + "\n")
 
 	if caps.ContextLength > 0 {
-		sb.WriteString("Context Window: " + fmt.Sprintf("%d", caps.ContextLength) + " tokens\n")
+		fmt.Fprintf(&sb, "Context Window: %d tokens\n", caps.ContextLength)
 	}
 	if caps.MaxOutputTokens > 0 {
-		sb.WriteString("Max Output Tokens: " + fmt.Sprintf("%d", caps.MaxOutputTokens) + " tokens\n")
+		fmt.Fprintf(&sb, "Max Output Tokens: %d tokens\n", caps.MaxOutputTokens)
 	}
 
 	inputMods := ensureTextModality(caps.InputModalities)
@@ -50,7 +50,7 @@ func buildModelIdentityBlock(rc *RunContext) string {
 	sb.WriteString("Output Modalities: " + strings.Join(outputMods, ", ") + "\n")
 
 	if rc.Temperature != nil {
-		sb.WriteString(fmt.Sprintf("Temperature: %.2f\n", *rc.Temperature))
+		fmt.Fprintf(&sb, "Temperature: %.2f\n", *rc.Temperature)
 	}
 
 	if rc.AgentConfig != nil && rc.AgentConfig.ReasoningMode != "" {
