@@ -410,6 +410,9 @@ func TestBuildProcessEnvDoesNotInheritHostEnvironment(t *testing.T) {
 	if !strings.Contains(joined, "LANG="+defaultProcessLang) {
 		t.Fatalf("expected sanitized LANG in env, got %q", joined)
 	}
+	if !strings.Contains(joined, "PYTHONDONTWRITEBYTECODE=1") {
+		t.Fatalf("expected Python bytecode writes disabled, got %q", joined)
+	}
 }
 
 func TestRTKRewriteTimesOutAndFallsBack(t *testing.T) {

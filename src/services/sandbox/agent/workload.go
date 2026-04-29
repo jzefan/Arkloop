@@ -46,13 +46,14 @@ func ensureWorkloadBaseDirs() error {
 
 func baseWorkloadEnv() map[string]string {
 	return map[string]string{
-		"HOME":         shellHomeDir,
-		"PATH":         defaultWorkloadPath,
-		"LANG":         defaultWorkloadLang,
-		"TMPDIR":       shellTempDir,
-		"MPLCONFIGDIR": matplotlibConfigDir,
-		"USER":         workloadUser,
-		"LOGNAME":      workloadUser,
+		"HOME":                    shellHomeDir,
+		"PATH":                    defaultWorkloadPath,
+		"LANG":                    defaultWorkloadLang,
+		"TMPDIR":                  shellTempDir,
+		"MPLCONFIGDIR":            matplotlibConfigDir,
+		"PYTHONDONTWRITEBYTECODE": "1",
+		"USER":                    workloadUser,
+		"LOGNAME":                 workloadUser,
 	}
 }
 
