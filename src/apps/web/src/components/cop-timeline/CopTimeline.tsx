@@ -114,6 +114,7 @@ export function CopTimeline({
 
   const pendingHasContent = hasSegments || hasThinkingOnly
   const pendingShowThinkingHeader = segments.length === 0 && !!live && !anyThinking && !pendingHasContent && !!thinkingHint
+  const pendingThinkingHeaderLabel = thinkingHint ? `${thinkingHint}...` : undefined
   const thinkingTimerActive = anyThinkingLive || (anyThinking && !!live)
   const activeThinkingElapsed = useThinkingElapsedSeconds(thinkingTimerActive, segmentThinkingStartedAtMs)
   const thinkingLiveHeaderLabel = lastThinkingTitle
@@ -150,7 +151,7 @@ export function CopTimeline({
   const headerLabel = headerOverride ?? (() => {
     if (anyThinkingLive || (anyThinking && live)) return thinkingLiveHeaderLabel
     if (anyThinking && isComplete && !hasSegments) return thoughtDurationLabel
-    if (pendingShowThinkingHeader) return `${thinkingHint}...`
+    if (pendingShowThinkingHeader) return pendingThinkingHeaderLabel ?? ''
     if (hasSegments) {
       const timelineComplete = isComplete || (!!live && !timelineLive)
       const aggregated = aggregateMainTitle(timelineSegments, timelineLive, timelineComplete)
@@ -164,6 +165,10 @@ export function CopTimeline({
   const seededStatusAnimation =
     timelineLive || !!shimmer || headerPhaseKey === 'thinking-pending' || headerPhaseKey === 'thinking-live'
   const headerUsesIncrementalTypewriter = seededStatusAnimation
+  const headerAnimationSeedText =
+    headerOverride == null && headerPhaseKey === 'thinking-live' && !lastThinkingTitle
+      ? pendingThinkingHeaderLabel
+      : undefined
 
   const [hovered, setHovered] = useState(false)
 
@@ -219,6 +224,7 @@ export function CopTimeline({
               phaseKey={headerPhaseKey}
               shimmer={!!shimmer}
               incremental={headerUsesIncrementalTypewriter}
+              animationSeedText={headerAnimationSeedText}
             />
             {(isComplete || live) && bodyHasContent && (
               <motion.div

@@ -36,13 +36,15 @@ export function CopTimelineHeaderLabel({
   phaseKey,
   shimmer,
   incremental,
+  animationSeedText,
 }: {
   text: string
   phaseKey: string
   shimmer?: boolean
   incremental?: boolean
+  animationSeedText?: string
 }) {
-  const displayed = useIncrementalTypewriter(text, incremental)
+  const displayed = useIncrementalTypewriter(text, incremental, animationSeedText)
   return (
     <span
       data-phase={phaseKey}

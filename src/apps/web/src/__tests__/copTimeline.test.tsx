@@ -8,12 +8,14 @@ import type { CopSubSegment, ResolvedPool } from '../copSubSegment'
 import { EMPTY_POOL } from '../copSubSegment'
 import { LocaleProvider } from '../contexts/LocaleContext'
 
+const incrementalTypewriterMock = vi.hoisted(() => vi.fn((text: string) => text))
+
 vi.mock('../hooks/useTypewriter', () => ({
   useTypewriter: (text: string) => text,
 }))
 
 vi.mock('../hooks/useIncrementalTypewriter', () => ({
-  useIncrementalTypewriter: (text: string) => text,
+  useIncrementalTypewriter: incrementalTypewriterMock,
 }))
 
 globalThis.scrollTo = (() => {}) as typeof globalThis.scrollTo
@@ -51,6 +53,7 @@ function defaultMatchMedia(query: string) {
 beforeEach(() => {
   actEnvironment.IS_REACT_ACT_ENVIRONMENT = true
   window.matchMedia = vi.fn(defaultMatchMedia)
+  incrementalTypewriterMock.mockClear()
 })
 
 afterEach(() => {
@@ -664,6 +667,41 @@ describe('CopTimeline', () => {
 })
 
 describe('CopTimelineHeaderLabel', () => {
+  it('live thinking header 从 pending 状态句继续增量动画', () => {
+    renderTimeline({
+      segments: [],
+      pool: EMPTY_POOL,
+      thinkingOnly: { markdown: 'Thinking', durationSec: 0, live: true },
+      isComplete: false,
+      live: true,
+      thinkingHint: 'Planning next moves',
+    })
+
+    expect(incrementalTypewriterMock).toHaveBeenCalledWith(
+      'Planning next moves for 0s',
+      true,
+      'Planning next moves...',
+    )
+  })
+
+  it('headerOverride 不使用 pending 状态句作为动画种子', () => {
+    renderTimeline({
+      segments: [],
+      pool: EMPTY_POOL,
+      thinkingOnly: { markdown: 'Thinking', durationSec: 0, live: true },
+      isComplete: false,
+      live: true,
+      thinkingHint: 'Planning next moves',
+      headerOverride: 'Thinking',
+    })
+
+    expect(incrementalTypewriterMock).toHaveBeenCalledWith(
+      'Thinking',
+      true,
+      undefined,
+    )
+  })
+
   it('renders text with data-phase attribute', async () => {
     const { container, cleanup } = await renderHeaderLabelDom({
       text: 'Thinking for 3s',
