@@ -491,6 +491,7 @@ type openAISDKResponsesState struct {
 	ctx                context.Context
 	llmCallID          string
 	yield              func(StreamEvent) error
+	visible            strings.Builder
 	thinking           strings.Builder
 	completed          bool
 	emittedVisibleText bool
@@ -518,6 +519,7 @@ func (s *openAISDKResponsesState) handle(event responses.ResponseStreamEventUnio
 				return err
 			}
 		} else {
+			s.visible.WriteString(delta)
 			s.emittedVisibleText = true
 			if err := s.yield(StreamMessageDelta{ContentDelta: delta, Role: "assistant"}); err != nil {
 				return err
@@ -539,6 +541,7 @@ func (s *openAISDKResponsesState) handle(event responses.ResponseStreamEventUnio
 			warnings = append(warnings, bufferedWarnings...)
 		}
 		s.applyStreamedThinking(&assistantMessage)
+		s.applyStreamedVisibleText(&assistantMessage)
 		if !s.emittedVisibleText {
 			if text := VisibleMessageText(assistantMessage); text != "" {
 				s.emittedVisibleText = true
@@ -603,6 +606,20 @@ func (s *openAISDKResponsesState) applyStreamedThinking(message *Message) {
 		return
 	}
 	message.Content = append([]ContentPart{{Type: "thinking", Text: text}}, message.Content...)
+}
+
+func (s *openAISDKResponsesState) applyStreamedVisibleText(message *Message) {
+	if s == nil || message == nil {
+		return
+	}
+	if VisibleMessageText(*message) != "" {
+		return
+	}
+	text := s.visible.String()
+	if text == "" {
+		return
+	}
+	message.Content = append(message.Content, TextPart{Text: text})
 }
 
 func openAISDKChatUsageFromRaw(raw string, currentUsage *Usage, currentCost *Cost) (*Usage, *Cost) {
