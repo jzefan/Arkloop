@@ -2811,8 +2811,7 @@ export const ChatView = memo(function ChatView() {
       </div>
 
         </div>
-        {/* 右侧面板：flex 兄弟节点；chat 模式下用 motion 驱动 width，避免嵌套 flex + CSS transition 偶发不插值 */}
-        {appMode === 'work' ? null : (
+        {/* 右侧面板：flex 兄弟节点；用 motion 驱动 width，避免嵌套 flex + CSS transition 偶发不插值 */}
           <motion.div
             className="flex-shrink-0 overflow-hidden"
             initial={false}
@@ -2835,7 +2834,6 @@ export const ChatView = memo(function ChatView() {
             {documentPanelContent}
             {agentPanelContent}
           </motion.div>
-        )}
       </div>
 
       {shareModalEl}

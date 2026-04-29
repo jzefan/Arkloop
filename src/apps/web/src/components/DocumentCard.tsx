@@ -34,9 +34,7 @@ export function DocumentCard({ artifact, onClick, active }: Props) {
         boxShadow: ring,
       }}
       onMouseEnter={(e) => {
-        if (!active) {
-          e.currentTarget.style.background = 'var(--c-bg-deep)'
-        }
+        e.currentTarget.style.background = 'var(--c-bg-deep)'
       }}
       onMouseLeave={(e) => {
         e.currentTarget.style.background = restingBackground

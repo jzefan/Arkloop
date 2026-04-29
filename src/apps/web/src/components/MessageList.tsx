@@ -146,7 +146,6 @@ export const MessageList = memo(function MessageList({
   })())
 
   const codePanelExecutionId = panels.activePanel?.type === 'code' ? panels.activePanel.execution.id : null
-  const documentPanelArtifactKey = panels.activePanel?.type === 'document' ? panels.activePanel.artifact.artifact.key : null
 
   const sharingMessageId = panels.shareModal.sharingMessageId
   const sharedMessageId = panels.shareModal.sharedMessageId
@@ -438,7 +437,6 @@ export const MessageList = memo(function MessageList({
               : undefined
           }
           onOpenDocument={msg.role === 'assistant' ? openDocumentPanel : undefined}
-          activePanelArtifactKey={documentPanelArtifactKey}
           onViewRunDetail={
             showRunEvents && msg.role === 'assistant' && msg.run_id
               ? () => setRunDetailPanelRunId(msg.run_id!)

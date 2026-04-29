@@ -151,6 +151,7 @@ export function DocumentPanel({ artifact, artifacts, accessToken, runId, onClose
           padding: '12px 16px',
           flexShrink: 0,
           background: 'var(--c-bg-page)',
+          borderBottom: '0.5px solid var(--c-border-subtle)',
         }}
       >
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px', minWidth: 0 }}>
@@ -310,7 +311,7 @@ export function DocumentPanel({ artifact, artifacts, accessToken, runId, onClose
       </div>
 
       {/* body */}
-      <div style={{ flex: 1, overflowY: 'auto', background: 'var(--c-code-panel-bg)' }}>
+      <div style={{ flex: 1, overflowY: 'auto', background: 'var(--c-bg-page)' }}>
         {loadState.status === 'loading' && (
           <div
             style={{

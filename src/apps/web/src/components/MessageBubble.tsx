@@ -27,7 +27,6 @@ type Props = {
   onWidgetAction?: (action: ArtifactAction) => void
   onShowSources?: () => void
   onOpenDocument?: (artifact: ArtifactRef, options?: { trigger?: HTMLElement | null; artifacts?: ArtifactRef[]; runId?: string }) => void
-  activePanelArtifactKey?: string | null
   onViewRunDetail?: () => void
   contentPrefix?: string
   contentOverride?: string
@@ -37,7 +36,7 @@ type Props = {
   suppressActionBar?: boolean
 }
 
-export const MessageBubble = memo(function MessageBubble({ message, streamAssistantMarkdown, animateUserEnter, onUserEnterAnimationEnd, onRetry, onEdit, onFork, onShare, shareState, webSources, artifacts, browserActions, widgets, accessToken, onWidgetAction, onShowSources, onOpenDocument, activePanelArtifactKey, onViewRunDetail, contentPrefix, contentOverride, plainTextForCopy, isLast, isWorkMode, suppressActionBar }: Props) {
+export const MessageBubble = memo(function MessageBubble({ message, streamAssistantMarkdown, animateUserEnter, onUserEnterAnimationEnd, onRetry, onEdit, onFork, onShare, shareState, webSources, artifacts, browserActions, widgets, accessToken, onWidgetAction, onShowSources, onOpenDocument, onViewRunDetail, contentPrefix, contentOverride, plainTextForCopy, isLast, isWorkMode, suppressActionBar }: Props) {
   if (message.role === 'user') {
     return (
       <UserMessage
@@ -67,7 +66,6 @@ export const MessageBubble = memo(function MessageBubble({ message, streamAssist
       onWidgetAction={onWidgetAction}
       onShowSources={onShowSources}
       onOpenDocument={onOpenDocument}
-      activePanelArtifactKey={activePanelArtifactKey}
       onViewRunDetail={onViewRunDetail}
       contentPrefix={contentPrefix}
       contentOverride={contentOverride}
