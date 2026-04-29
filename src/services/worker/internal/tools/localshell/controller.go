@@ -785,12 +785,13 @@ func resolveProcessCwd(cwd string) string {
 
 func buildProcessEnv(extra map[string]*string, includeTerm bool) []string {
 	env := map[string]string{
-		"HOME":    processHomeDir(),
-		"PATH":    processPath(),
-		"LANG":    defaultProcessLang,
-		"TMPDIR":  processTempDir(),
-		"USER":    processUserName,
-		"LOGNAME": processUserName,
+		"HOME":                    processHomeDir(),
+		"PATH":                    processPath(),
+		"LANG":                    defaultProcessLang,
+		"TMPDIR":                  processTempDir(),
+		"PYTHONDONTWRITEBYTECODE": "1",
+		"USER":                    processUserName,
+		"LOGNAME":                 processUserName,
 	}
 	if includeTerm {
 		env["TERM"] = "xterm-256color"
