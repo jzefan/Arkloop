@@ -164,27 +164,25 @@ func (o *legacyMemoryDistillObserver) AfterThreadPersist(ctx context.Context, rc
 		if err != nil || !triage.ShouldDistill {
 			return nil, err
 		}
-		distill, err := typed.DistillThread(ctx, ident, threadID, buildNowledgeThreadTitle(delta), conversation)
-		if err != nil {
+		if _, err := typed.DistillThread(ctx, ident, threadID, buildNowledgeThreadTitle(delta), conversation); err != nil {
 			return nil, err
 		}
+		// Nowledge 的创建计数可能滞后于可列出的 memories，成功 distill 后总是刷新本地投影。
 		if o.impStore != nil {
 			addImpressionScore(ctx, o.impStore, ident, impressionScoreForRun(rc), o.configResolver, o.impRefresh)
 		}
-		if distill.MemoriesCreated > 0 {
-			scheduleSnapshotRefresh(
-				typed,
-				o.snap,
-				o.mdb,
-				rc.Run.ID,
-				rc.TraceID,
-				ident,
-				threadID,
-				buildNowledgeSnapshotQueries(delta),
-				"memory.distill",
-				"distill",
-			)
-		}
+		scheduleSnapshotRefresh(
+			typed,
+			o.snap,
+			o.mdb,
+			rc.Run.ID,
+			rc.TraceID,
+			ident,
+			threadID,
+			buildNowledgeSnapshotQueries(delta),
+			"memory.distill",
+			"distill",
+		)
 		return nil, nil
 	}
 
