@@ -85,7 +85,7 @@ func (p *ObjectStoreProvider) Load(ctx context.Context, profileRef string) (*Con
 			*ptr = string(data)
 			continue
 		}
-		if !strings.EqualFold(pathExt(entry.Path), ".md") {
+		if strings.Contains(entry.Path, "/") || !strings.EqualFold(pathExt(entry.Path), ".md") {
 			continue
 		}
 		blobKey := "profiles/" + profileRef + "/blobs/" + entry.SHA256

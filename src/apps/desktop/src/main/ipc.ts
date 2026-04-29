@@ -235,7 +235,7 @@ export function registerIpcHandlers(
 
   ipcMain.handle('arkloop:onboarding-import:apply', async (_event, request: OnboardingImportApplyRequest) => {
     return await applyOnboardingImport(request, {
-      apiBaseUrl: getLocalApiBaseUrl(),
+      apiBaseUrl: await waitForLocalApiBaseUrlReady(),
       token: getDesktopAccessToken(),
     })
   })
