@@ -10,7 +10,7 @@ import (
 
 const (
 	agentDirectorySegmentName = "agent_directory.context"
-	agentDirectoryMaxChars    = 8000
+	agentDirectoryMaxChars    = 24000
 )
 
 // NewAgentDirectoryMiddleware 将 agent work directory 内容注入 system prompt。
