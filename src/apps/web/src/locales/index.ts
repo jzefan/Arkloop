@@ -20,6 +20,25 @@ export interface LocaleStrings {
   connectionFailed: string;
   retryConnection: string;
   enterprisePlan: string;
+  // sidebar view mode
+  sidebarViewMode: string;
+  sidebarViewModeProject: string;
+  sidebarViewModeGtd: string;
+  sidebarViewModeDesc: string;
+  // GTD buckets
+  gtdInbox: string;
+  gtdTodo: string;
+  gtdInProcess: string;
+  gtdDone: string;
+  // GTD actions
+  gtdMoveToInbox: string;
+  gtdMoveToTodo: string;
+  gtdClearStatus: string;
+  // pin
+  pinThread: string;
+  unpinThread: string;
+  // project view
+  projectUnassigned: string;
   // settings nav
   nav: {
     account: string;
