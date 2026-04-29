@@ -162,7 +162,7 @@ function MessageStoreProviderContent({ children, threadId }: { children: ReactNo
     if (!isMessageSyncCurrent(syncVersion)) return []
     setMessages(items)
     return items
-  }, [threadId, beginMessageSync, readConsistentMessages, isMessageSyncCurrent])
+  }, [threadId, beginMessageSync, readConsistentMessages, isMessageSyncCurrent, setMessages])
 
   const value = useMemo<MessageStoreContextValue>(() => ({
     messages,
