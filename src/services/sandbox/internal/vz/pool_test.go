@@ -311,7 +311,9 @@ func TestCopyFile(t *testing.T) {
 	if _, err := src.Write(content); err != nil {
 		t.Fatal(err)
 	}
-	src.Close()
+	if err := src.Close(); err != nil {
+		t.Fatal(err)
+	}
 
 	dst := filepath.Join(t.TempDir(), "dst-copy")
 	if err := copyFile(src.Name(), dst); err != nil {
