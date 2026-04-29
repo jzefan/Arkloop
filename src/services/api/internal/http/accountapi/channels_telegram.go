@@ -1897,6 +1897,7 @@ func handleTelegramCommand(
 		if len(rows) == 0 {
 			return true, "暂无可用模型。", nil, nil
 		}
+		rows = append(rows, []telegrambot.InlineKeyboardButton{{Text: "✕", CallbackData: "dismiss"}})
 		return true, "Choose model.", &telegrambot.InlineKeyboardMarkup{InlineKeyboard: rows}, nil
 	case "/persona":
 		if channel == nil {
@@ -1943,6 +1944,7 @@ func handleTelegramCommand(
 				header = "Choose persona.\nCurrent: " + current.DisplayName
 			}
 		}
+		rows = append(rows, []telegrambot.InlineKeyboardButton{{Text: "✕", CallbackData: "dismiss"}})
 		return true, header, &telegrambot.InlineKeyboardMarkup{InlineKeyboard: rows}, nil
 	case "/model":
 		allowUserScoped, err := resolveTelegramByokEnabled(ctx, entSvc, accountID)
@@ -1972,12 +1974,14 @@ func handleTelegramCommand(
 					CallbackData: "model:" + c.model,
 				}})
 			}
+			rows = append(rows, []telegrambot.InlineKeyboardButton{{Text: "✕", CallbackData: "dismiss"}})
 			header := "Choose model.\nCurrent: follow channel default"
 			if strings.TrimSpace(preferredModel) != "" {
 				header = "Choose model.\nCurrent: " + preferredModel
 			}
 			var markup *telegrambot.InlineKeyboardMarkup
 			if len(rows) > 0 {
+				rows = append(rows, []telegrambot.InlineKeyboardButton{{Text: "✕", CallbackData: "dismiss"}})
 				markup = &telegrambot.InlineKeyboardMarkup{InlineKeyboard: rows}
 			}
 			return true, header, markup, nil
@@ -2394,6 +2398,7 @@ func buildThinkKeyboard(currentMode string) *telegrambot.InlineKeyboardMarkup {
 	if len(row) > 0 {
 		rows = append(rows, row)
 	}
+	rows = append(rows, []telegrambot.InlineKeyboardButton{{Text: "✕", CallbackData: "dismiss"}})
 	return &telegrambot.InlineKeyboardMarkup{InlineKeyboard: rows}
 }
 
@@ -2447,6 +2452,7 @@ func handleTelegramPreferenceCommand(
 			}
 			var markup *telegrambot.InlineKeyboardMarkup
 			if len(rows) > 0 {
+				rows = append(rows, []telegrambot.InlineKeyboardButton{{Text: "✕", CallbackData: "dismiss"}})
 				markup = &telegrambot.InlineKeyboardMarkup{InlineKeyboard: rows}
 			}
 			return header, markup, nil
@@ -2517,6 +2523,16 @@ func (c telegramConnector) handleTelegramCallbackQuery(
 
 	cbData := strings.TrimSpace(cb.Data)
 	if cbData == "" {
+		return nil
+	}
+
+	// dismiss: 移除按钮，保留原消息文本。
+	if cbData == "dismiss" {
+		if c.telegramClient != nil && strings.TrimSpace(token) != "" {
+			editCtx, editCancel := context.WithTimeout(ctx, telegramRemoteRequestTimeout)
+			_ = c.telegramClient.EditMessageReplyMarkup(editCtx, token, fmt.Sprintf("%d", cb.Message.Chat.ID), cb.Message.MessageID, nil)
+			editCancel()
+		}
 		return nil
 	}
 
