@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { Download, ExternalLink, FileCode2, X } from 'lucide-react'
 import { apiBaseUrl } from '@arkloop/shared/api'
 import { useLocale } from '../contexts/LocaleContext'
@@ -276,7 +277,7 @@ export function WorkspaceResource({ file, runId, projectId, accessToken }: Props
             style={{ maxWidth: '100%', display: 'block', borderRadius: '6px', cursor: 'default' }}
           />
         </div>
-        {visible && (
+        {visible && createPortal(
           <div
             onClick={(event) => {
               if (event.target === event.currentTarget) closeLightbox()
@@ -386,7 +387,8 @@ export function WorkspaceResource({ file, runId, projectId, accessToken }: Props
                 <span style={{ fontSize: 13 }}>{t.documentPanel.download}</span>
               </button>
             </div>
-          </div>
+          </div>,
+          document.body,
         )}
       </>
     )

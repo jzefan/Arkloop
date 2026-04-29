@@ -193,6 +193,42 @@ describe('CopTimeline', () => {
       expect(workHtml).toContain('class="cop-timeline-root cop-timeline-root--work"')
     })
 
+    it('重复搜索 query 不触发 React key 警告', async () => {
+      const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
+      const segment = makeSeg({
+        category: 'search',
+        items: [{
+          kind: 'call',
+          seq: 1,
+          call: { toolCallId: 'search-1', toolName: 'web_search', arguments: {} },
+        }],
+        title: 'Search',
+      })
+      const pool = makePool({
+        steps: new Map([['search-1', {
+          id: 'search-1',
+          kind: 'searching',
+          label: 'Searching',
+          status: 'done',
+          queries: ['Arkloop AI assistant open source', 'Arkloop AI assistant open source'],
+          seq: 1,
+        }]]),
+      })
+      const { container, cleanup } = await renderTimelineDom({
+        segments: [segment],
+        pool,
+        isComplete: true,
+      })
+
+      try {
+        expect(container.textContent).toContain('Arkloop AI assistant open source')
+        expect(consoleError.mock.calls.some((call) => String(call[0]).includes('Encountered two children with the same key'))).toBe(false)
+      } finally {
+        cleanup()
+        consoleError.mockRestore()
+      }
+    })
+
     it('code execution pool without timeline segments renders nothing', () => {
       const pool = makePool({
         codeExecutions: new Map([['ce1', { id: 'ce1', code: 'echo hi' } as unknown as import('../storage').CodeExecutionRef]]),

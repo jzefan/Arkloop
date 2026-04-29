@@ -99,6 +99,44 @@ describe('MarkdownRenderer', () => {
     expect(html).toContain('+1')
   })
 
+  it('引用 hover 卡片应挂到 body', async () => {
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const root = createRoot(container)
+
+    try {
+      await act(async () => {
+        root.render(
+          <LocaleProvider>
+            <MarkdownRenderer
+              content="参考 web:1。"
+              webSources={[{
+                title: 'Example source',
+                url: 'https://example.com/article',
+                snippet: 'Source snippet',
+              }]}
+            />
+          </LocaleProvider>,
+        )
+      })
+
+      const badge = container.querySelector('button') as HTMLButtonElement | null
+      expect(badge).toBeTruthy()
+      if (!badge) return
+
+      await act(async () => {
+        badge.dispatchEvent(new MouseEvent('mouseover', { bubbles: true, relatedTarget: null }))
+      })
+
+      const popoverLink = document.body.querySelector('a[href="https://example.com/article"]')
+      expect(popoverLink).not.toBeNull()
+      expect(container.querySelector('a[href="https://example.com/article"]')).toBeNull()
+    } finally {
+      act(() => root.unmount())
+      container.remove()
+    }
+  })
+
   it('不应替换代码片段中的 web: 引用文本', () => {
     const html = renderMarkdown('命令 `web:1` 保持原样。', {
       webSources: [{ title: 'Example', url: 'https://example.com' }],
