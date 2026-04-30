@@ -542,8 +542,6 @@ func TestAnthropicSDKGateway_LimitsCacheControlBlocks(t *testing.T) {
 		Messages: []Message{
 			{Role: "system", Content: []ContentPart{{Text: "legacy system", CacheControl: &cacheControl}}},
 			{Role: "user", Content: []ContentPart{{Text: "hello"}}},
-			{Role: "assistant", ToolCalls: []ToolCall{{ToolCallID: "toolu_1", ToolName: "echo", ArgumentsJSON: map[string]any{"text": "hi"}}}},
-			{Role: "tool", Content: []ContentPart{{Text: `{"tool_call_id":"toolu_1","tool_name":"echo","result":"ok"}`}}},
 			{Role: "user", Content: []ContentPart{{Text: "continue"}}},
 		},
 		Tools: []ToolSpec{{
@@ -558,9 +556,8 @@ func TestAnthropicSDKGateway_LimitsCacheControlBlocks(t *testing.T) {
 				{Text: "session two", Stability: CacheStabilitySessionPrefix, CacheEligible: true},
 				{Text: "stable three", Stability: CacheStabilityStablePrefix, CacheEligible: true},
 				{Text: "session four", Stability: CacheStabilitySessionPrefix, CacheEligible: true},
-				{Text: "stable five", Stability: CacheStabilityStablePrefix, CacheEligible: true},
 			},
-			MessageCache: MessageCachePlan{Enabled: true, MarkerMessageIndex: 4},
+			MessageCache: MessageCachePlan{Enabled: true, MarkerMessageIndex: 2},
 		},
 	}
 	if err := gateway.Stream(context.Background(), request, func(event StreamEvent) error { return nil }); err != nil {
@@ -569,9 +566,22 @@ func TestAnthropicSDKGateway_LimitsCacheControlBlocks(t *testing.T) {
 	if count := countAnthropicCacheControlBlocks(captured); count != anthropicMaxCacheControlBlocks {
 		t.Fatalf("expected %d cache_control blocks, got %d in %#v", anthropicMaxCacheControlBlocks, count, captured)
 	}
+	if count := countAnthropicMessageCacheControlBlocks(captured); count != 1 {
+		t.Fatalf("expected message cache_control to be preserved, got %d in %#v", count, captured)
+	}
+	if count := countAnthropicSystemCacheControlBlocks(captured); count != anthropicMaxCacheControlBlocks-1 {
+		t.Fatalf("expected one system cache_control to be removed, got %d in %#v", count, captured)
+	}
 }
 
 func countAnthropicCacheControlBlocks(payload map[string]any) int {
+	count := countAnthropicSystemCacheControlBlocks(payload)
+	count += countAnthropicMessageCacheControlBlocks(payload)
+	count += countAnthropicToolCacheControlBlocks(payload)
+	return count
+}
+
+func countAnthropicSystemCacheControlBlocks(payload map[string]any) int {
 	count := 0
 	if system, _ := payload["system"].([]any); len(system) > 0 {
 		for _, raw := range system {
@@ -581,6 +591,11 @@ func countAnthropicCacheControlBlocks(payload map[string]any) int {
 			}
 		}
 	}
+	return count
+}
+
+func countAnthropicMessageCacheControlBlocks(payload map[string]any) int {
+	count := 0
 	if messages, _ := payload["messages"].([]any); len(messages) > 0 {
 		for _, rawMessage := range messages {
 			message, _ := rawMessage.(map[string]any)
@@ -593,6 +608,11 @@ func countAnthropicCacheControlBlocks(payload map[string]any) int {
 			}
 		}
 	}
+	return count
+}
+
+func countAnthropicToolCacheControlBlocks(payload map[string]any) int {
+	count := 0
 	if tools, _ := payload["tools"].([]any); len(tools) > 0 {
 		for _, raw := range tools {
 			tool, _ := raw.(map[string]any)
