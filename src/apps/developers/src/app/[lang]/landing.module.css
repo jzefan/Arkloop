@@ -185,11 +185,6 @@
   pointer-events: none;
 }
 
-.showcaseLoadingDone {
-  opacity: 0;
-  transition: opacity 380ms ease;
-}
-
 @keyframes showcaseSheen {
   0% { background-position: 100% 0; }
   100% { background-position: -100% 0; }
