@@ -280,6 +280,11 @@ func TestAgentLoopHeartbeatDecisionReplyTrueStopsWithoutSecondLlmTurn(t *testing
 	loop := NewLoop(gateway, executor)
 	emitter := events.NewEmitter("trace")
 	pipelineRC := &pipeline.RunContext{HeartbeatRun: true}
+	initialRequest := llm.Request{
+		Model:      "stub",
+		Tools:      []llm.ToolSpec{{Name: "echo", JSONSchema: map[string]any{"type": "object"}}, heartbeattool.Spec},
+		ToolChoice: &llm.ToolChoice{Mode: "specific", ToolName: heartbeattool.ToolName},
+	}
 
 	var got []events.RunEvent
 	err := loop.Run(
@@ -293,7 +298,7 @@ func TestAgentLoopHeartbeatDecisionReplyTrueStopsWithoutSecondLlmTurn(t *testing
 			CancelSignal:        func() bool { return false },
 			PipelineRC:          pipelineRC,
 		},
-		llm.Request{Model: "stub"},
+		initialRequest,
 		emitter,
 		func(ev events.RunEvent) error {
 			got = append(got, ev)
@@ -305,6 +310,18 @@ func TestAgentLoopHeartbeatDecisionReplyTrueStopsWithoutSecondLlmTurn(t *testing
 	}
 	if gateway.calls != 2 {
 		t.Fatalf("expected heartbeat reply=true to trigger Phase 2, got %d calls", gateway.calls)
+	}
+	if len(gateway.requests) != 2 {
+		t.Fatalf("expected two captured requests, got %d", len(gateway.requests))
+	}
+	if gateway.requests[0].ToolChoice == nil || gateway.requests[0].ToolChoice.ToolName != heartbeattool.ToolName {
+		t.Fatalf("expected Phase 1 to force heartbeat_decision, got %#v", gateway.requests[0].ToolChoice)
+	}
+	if gateway.requests[1].ToolChoice != nil {
+		t.Fatalf("expected Phase 2 tool choice to be cleared, got %#v", gateway.requests[1].ToolChoice)
+	}
+	if containsToolSpec(gateway.requests[1].Tools, heartbeattool.ToolName) {
+		t.Fatalf("expected Phase 2 to remove heartbeat_decision tool, got %#v", gateway.requests[1].Tools)
 	}
 	assertHasEvent(t, got, "run.completed")
 	for _, ev := range got {
@@ -2270,6 +2287,145 @@ func TestAgentLoopAppliesPromptCachePlanOnFollowupTurns(t *testing.T) {
 	assertHasEvent(t, got, "run.completed")
 }
 
+func TestPrepareTurnRequestPromptCacheHeartbeatSkipsVolatileTail(t *testing.T) {
+	request := llm.Request{
+		Messages: []llm.Message{
+			{Role: "user", Content: []llm.ContentPart{{Text: "old user"}}},
+			{Role: "assistant", Content: []llm.ContentPart{{Text: "old reply"}}},
+			{Role: "user", Content: []llm.ContentPart{{Text: "new channel messages"}}},
+			{Role: "user", Content: []llm.ContentPart{{Text: "[SYSTEM_HEARTBEAT_CHECK]\ntime_utc: 2026-04-30T11:20:38Z"}}},
+		},
+		PromptPlan: &llm.PromptPlan{
+			MessageCache: llm.MessageCachePlan{
+				Enabled:                  true,
+				MarkerMessageIndex:       3,
+				StableMarkerEnabled:      true,
+				StableMarkerMessageIndex: 2,
+			},
+		},
+	}
+	state := &promptCacheTurnState{StableMarkerIndex: 0, StableMarkerPinned: true}
+
+	prepareTurnRequestPromptCache(&request, RunContext{
+		PipelineRC: &pipeline.RunContext{
+			HeartbeatRun: true,
+			AgentConfig:  &pipeline.ResolvedAgentConfig{PromptCacheControl: "system_prompt"},
+		},
+	}, state)
+
+	if !request.PromptPlan.MessageCache.Enabled {
+		t.Fatalf("expected message cache enabled, got %#v", request.PromptPlan.MessageCache)
+	}
+	if got, want := request.PromptPlan.MessageCache.MarkerMessageIndex, 1; got != want {
+		t.Fatalf("unexpected marker index: got %d want %d", got, want)
+	}
+	if got, want := request.PromptPlan.MessageCache.ToolResultCacheCutIndex, 1; got != want {
+		t.Fatalf("unexpected tool result cut index: got %d want %d", got, want)
+	}
+	if request.PromptPlan.MessageCache.StableMarkerEnabled {
+		t.Fatalf("heartbeat cache must not pin volatile tail marker: %#v", request.PromptPlan.MessageCache)
+	}
+}
+
+func TestPrepareTurnRequestPromptCacheHeartbeatRequiresStableBoundary(t *testing.T) {
+	request := llm.Request{
+		Messages: []llm.Message{
+			{Role: "user", Content: []llm.ContentPart{{Text: "new channel messages"}}},
+			{Role: "user", Content: []llm.ContentPart{{Text: "[SYSTEM_HEARTBEAT_CHECK]\ntime_utc: 2026-04-30T11:20:38Z"}}},
+		},
+		PromptPlan: &llm.PromptPlan{
+			MessageCache: llm.MessageCachePlan{
+				Enabled:            true,
+				MarkerMessageIndex: 1,
+			},
+		},
+	}
+
+	prepareTurnRequestPromptCache(&request, RunContext{
+		PipelineRC: &pipeline.RunContext{
+			HeartbeatRun: true,
+			AgentConfig:  &pipeline.ResolvedAgentConfig{PromptCacheControl: "system_prompt"},
+		},
+	}, &promptCacheTurnState{StableMarkerIndex: -1})
+
+	if request.PromptPlan.MessageCache.Enabled {
+		t.Fatalf("heartbeat cache must be disabled without a stable assistant boundary: %#v", request.PromptPlan.MessageCache)
+	}
+}
+
+func TestPrepareTurnRequestPromptCacheHeartbeatDecisionPhaseSkipsMessageCache(t *testing.T) {
+	request := llm.Request{
+		Messages: []llm.Message{
+			{Role: "user", Content: []llm.ContentPart{{Text: "old user"}}},
+			{Role: "assistant", Content: []llm.ContentPart{{Text: "old reply"}}},
+			{Role: "user", Content: []llm.ContentPart{{Text: "[SYSTEM_HEARTBEAT_CHECK]\ntime_utc: 2026-04-30T11:20:38Z"}}},
+		},
+		ToolChoice: &llm.ToolChoice{Mode: "specific", ToolName: heartbeattool.ToolName},
+		PromptPlan: &llm.PromptPlan{
+			MessageCache: llm.MessageCachePlan{
+				Enabled:            true,
+				MarkerMessageIndex: 2,
+			},
+		},
+	}
+
+	prepareTurnRequestPromptCache(&request, RunContext{
+		PipelineRC: &pipeline.RunContext{
+			HeartbeatRun: true,
+			AgentConfig:  &pipeline.ResolvedAgentConfig{PromptCacheControl: "system_prompt"},
+		},
+	}, &promptCacheTurnState{StableMarkerIndex: -1})
+
+	if request.PromptPlan.MessageCache.Enabled {
+		t.Fatalf("heartbeat decision phase must not write message cache: %#v", request.PromptPlan.MessageCache)
+	}
+}
+
+func TestPrepareTurnRequestPromptCacheChannelSkipsLatestUserTail(t *testing.T) {
+	request := llm.Request{
+		Messages: []llm.Message{
+			{Role: "user", Content: []llm.ContentPart{{Text: "old user"}}},
+			{Role: "assistant", Content: []llm.ContentPart{{Text: "old reply"}}},
+			{Role: "user", Content: []llm.ContentPart{{Text: "latest telegram delivery"}}},
+		},
+		PromptPlan: &llm.PromptPlan{
+			MessageCache: llm.MessageCachePlan{
+				Enabled:            true,
+				MarkerMessageIndex: 2,
+			},
+		},
+	}
+
+	prepareTurnRequestPromptCache(&request, RunContext{
+		PipelineRC: &pipeline.RunContext{
+			ChannelContext: &pipeline.ChannelContext{
+				ChannelType:      "telegram",
+				ConversationType: "private",
+			},
+			AgentConfig: &pipeline.ResolvedAgentConfig{PromptCacheControl: "system_prompt"},
+		},
+	}, &promptCacheTurnState{StableMarkerIndex: -1})
+
+	if !request.PromptPlan.MessageCache.Enabled {
+		t.Fatalf("expected message cache enabled, got %#v", request.PromptPlan.MessageCache)
+	}
+	if got, want := request.PromptPlan.MessageCache.MarkerMessageIndex, 1; got != want {
+		t.Fatalf("unexpected marker index: got %d want %d", got, want)
+	}
+	if got, want := request.PromptPlan.MessageCache.ToolResultCacheCutIndex, 1; got != want {
+		t.Fatalf("unexpected tool result cut index: got %d want %d", got, want)
+	}
+}
+
+func containsToolSpec(specs []llm.ToolSpec, name string) bool {
+	for _, spec := range specs {
+		if spec.Name == name {
+			return true
+		}
+	}
+	return false
+}
+
 func TestAgentLoopZeroReasoningIterationsMeansUnlimited(t *testing.T) {
 	registry := tools.NewRegistry()
 	if err := registry.Register(builtin.EchoAgentSpec); err != nil {
@@ -2725,7 +2881,8 @@ type heartbeatDecisionGateway struct {
 }
 
 type heartbeatReplyGateway struct {
-	calls int
+	calls    int
+	requests []llm.Request
 }
 
 var errRetryGatewayCalled = errors.New("retry gateway called")
@@ -2817,7 +2974,7 @@ func (g *heartbeatDecisionGateway) Stream(ctx context.Context, request llm.Reque
 
 func (g *heartbeatReplyGateway) Stream(ctx context.Context, request llm.Request, yield func(llm.StreamEvent) error) error {
 	_ = ctx
-	_ = request
+	g.requests = append(g.requests, request)
 	g.calls++
 	if g.calls == 1 {
 		if err := yield(llm.StreamMessageDelta{ContentDelta: "这是", Role: "assistant"}); err != nil {

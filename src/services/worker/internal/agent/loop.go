@@ -693,6 +693,9 @@ func (l *Loop) Run(
 			if request.ToolChoice != nil {
 				request.ToolChoice = nil
 			}
+			request.Tools = filterToolSpecs(request.Tools, func(spec llm.ToolSpec) bool {
+				return pipeline.IsHeartbeatDecisionToolName(spec.Name)
+			})
 		}
 
 		// end_reply: terminate run without further output
@@ -2079,15 +2082,16 @@ func countAssistantThinkingParts(parts []llm.ContentPart) int {
 
 func copyRequest(request llm.Request, messages []llm.Message) llm.Request {
 	return llm.Request{
-		Model:           request.Model,
-		Messages:        cloneMessages(messages),
-		Temperature:     request.Temperature,
-		MaxOutputTokens: request.MaxOutputTokens,
-		Tools:           cloneToolSpecs(request.Tools),
-		ToolChoice:      request.ToolChoice,
-		PromptPlan:      clonePromptPlan(request.PromptPlan),
-		Metadata:        copyMap(request.Metadata),
-		ReasoningMode:   request.ReasoningMode,
+		Model:            request.Model,
+		Messages:         cloneMessages(messages),
+		Temperature:      request.Temperature,
+		MaxOutputTokens:  request.MaxOutputTokens,
+		Tools:            cloneToolSpecs(request.Tools),
+		ToolChoice:       request.ToolChoice,
+		PromptPlan:       clonePromptPlan(request.PromptPlan),
+		Metadata:         copyMap(request.Metadata),
+		ExperimentalJSON: copyMap(request.ExperimentalJSON),
+		ReasoningMode:    request.ReasoningMode,
 	}
 }
 
@@ -2157,16 +2161,26 @@ func prepareTurnRequestPromptCache(request *llm.Request, runCtx RunContext, stat
 	if request.PromptPlan == nil {
 		request.PromptPlan = &llm.PromptPlan{}
 	}
-	lastIdx := len(request.Messages) - 1
+	isHeartbeat := pipeline.IsHeartbeatRunContext(runCtx.PipelineRC)
+	if isHeartbeatDecisionPhase(request) {
+		request.PromptPlan.MessageCache = llm.MessageCachePlan{}
+		return
+	}
+	markerIdx := promptCacheMarkerIndex(request.Messages, runCtx)
+	if markerIdx < 0 {
+		request.PromptPlan.MessageCache = llm.MessageCachePlan{}
+		return
+	}
 	request.PromptPlan.MessageCache.Enabled = true
-	request.PromptPlan.MessageCache.MarkerMessageIndex = lastIdx
-	request.PromptPlan.MessageCache.ToolResultCacheCutIndex = lastIdx
+	request.PromptPlan.MessageCache.MarkerMessageIndex = markerIdx
+	request.PromptPlan.MessageCache.ToolResultCacheCutIndex = markerIdx
 	request.PromptPlan.MessageCache.ToolResultCacheReferences = true
 	request.PromptPlan.MessageCache.PinnedCacheEdits = clonePromptCacheEditBlocks(state.PinnedCacheEdits)
 	request.PromptPlan.MessageCache.NewCacheEdits = nil
-
-	// Pin stable marker: first turn computes it, subsequent turns reuse the same position.
-	if state.StableMarkerPinned && state.StableMarkerIndex >= 0 && state.StableMarkerIndex < lastIdx {
+	if isHeartbeat {
+		request.PromptPlan.MessageCache.StableMarkerEnabled = false
+		request.PromptPlan.MessageCache.StableMarkerMessageIndex = 0
+	} else if state.StableMarkerPinned && state.StableMarkerIndex >= 0 && state.StableMarkerIndex < markerIdx {
 		request.PromptPlan.MessageCache.StableMarkerEnabled = true
 		request.PromptPlan.MessageCache.StableMarkerMessageIndex = state.StableMarkerIndex
 	} else if !state.StableMarkerPinned {
@@ -2176,7 +2190,7 @@ func prepareTurnRequestPromptCache(request *llm.Request, runCtx RunContext, stat
 		}
 	}
 
-	currentRefs := collectToolResultReferences(request.Messages, lastIdx)
+	currentRefs := collectToolResultReferences(request.Messages, markerIdx)
 	if len(state.KnownToolResultRefs) > 0 {
 		deletions := missingToolResultReferences(state.KnownToolResultRefs, currentRefs)
 		if len(deletions) > 0 {
@@ -2195,6 +2209,86 @@ func prepareTurnRequestPromptCache(request *llm.Request, runCtx RunContext, stat
 		}
 	}
 	state.KnownToolResultRefs = currentRefs
+}
+
+func promptCacheMarkerIndex(messages []llm.Message, runCtx RunContext) int {
+	lastIdx := len(messages) - 1
+	if lastIdx < 0 {
+		return -1
+	}
+	if pipeline.IsHeartbeatRunContext(runCtx.PipelineRC) {
+		return heartbeatPromptCacheMarkerIndex(messages)
+	}
+	if isChannelRunContext(runCtx.PipelineRC) && strings.TrimSpace(messages[lastIdx].Role) == "user" {
+		if idx := lastAssistantMessageIndexBefore(messages, lastIdx); idx >= 0 {
+			return idx
+		}
+	}
+	return lastIdx
+}
+
+func isHeartbeatDecisionPhase(request *llm.Request) bool {
+	if request == nil || request.ToolChoice == nil {
+		return false
+	}
+	return strings.EqualFold(strings.TrimSpace(request.ToolChoice.Mode), "specific") &&
+		pipeline.IsHeartbeatDecisionToolName(request.ToolChoice.ToolName)
+}
+
+func heartbeatPromptCacheMarkerIndex(messages []llm.Message) int {
+	heartbeatIdx := -1
+	for i, msg := range messages {
+		if messageHasText(msg, "[SYSTEM_HEARTBEAT_CHECK]") {
+			heartbeatIdx = i
+			break
+		}
+	}
+	if heartbeatIdx < 0 {
+		return len(messages) - 1
+	}
+	return lastAssistantMessageIndexBefore(messages, heartbeatIdx)
+}
+
+func lastAssistantMessageIndexBefore(messages []llm.Message, before int) int {
+	if before > len(messages) {
+		before = len(messages)
+	}
+	for i := before - 1; i >= 0; i-- {
+		if strings.TrimSpace(messages[i].Role) == "assistant" {
+			return i
+		}
+	}
+	return -1
+}
+
+func isChannelRunContext(rc *pipeline.RunContext) bool {
+	return rc != nil && rc.ChannelContext != nil
+}
+
+func filterToolSpecs(specs []llm.ToolSpec, drop func(llm.ToolSpec) bool) []llm.ToolSpec {
+	if len(specs) == 0 || drop == nil {
+		return specs
+	}
+	out := specs[:0]
+	for _, spec := range specs {
+		if drop(spec) {
+			continue
+		}
+		out = append(out, spec)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func messageHasText(msg llm.Message, needle string) bool {
+	for _, part := range msg.Content {
+		if strings.Contains(part.Text, needle) {
+			return true
+		}
+	}
+	return false
 }
 
 // computePlanMarkers 从 plan 计算 plan-time markers 概览，反映本轮请求"打算"如何放 cache marker。
