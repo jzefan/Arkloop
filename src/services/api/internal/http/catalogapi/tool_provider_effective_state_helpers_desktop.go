@@ -31,10 +31,6 @@ func desktopSandboxAvailable() bool {
 	return desktop.GetExecutionMode() == "vm" && desktopCurrentSandboxAvailable()
 }
 
-func desktopLocalACPAvailable() bool {
-	return desktop.GetExecutionMode() == "local"
-}
-
 func desktopLocalMemoryAvailable() bool {
 	return desktop.GetMemoryRuntime() == "notebook"
 }
@@ -57,23 +53,6 @@ func resolveDesktopToolProviderRuntimeStatus(def toolProviderDefinition, snapsho
 					Source: toolProviderRuntimeSourceSandbox,
 				}, true
 			}
-		}
-		return toolProviderRuntimeStatus{
-			Status: toolProviderRuntimeStatusUnavailable,
-			Source: toolProviderRuntimeSourceNone,
-		}, true
-	case "acp":
-		if desktopSandboxAvailable() {
-			return toolProviderRuntimeStatus{
-				Status: toolProviderRuntimeStatusAvailable,
-				Source: toolProviderRuntimeSourceSandbox,
-			}, true
-		}
-		if desktopLocalACPAvailable() {
-			return toolProviderRuntimeStatus{
-				Status: toolProviderRuntimeStatusAvailable,
-				Source: toolProviderRuntimeSourceLocal,
-			}, true
 		}
 		return toolProviderRuntimeStatus{
 			Status: toolProviderRuntimeStatusUnavailable,

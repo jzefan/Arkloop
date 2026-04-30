@@ -1,4 +1,4 @@
-import { isACPDelegateEventData, canonicalToolName, pickLogicalToolName } from '@arkloop/shared'
+import { canonicalToolName, pickLogicalToolName } from '@arkloop/shared'
 import type { WebSearchPhaseStep } from './components/CopTimeline'
 import type { WebSource } from './storage'
 import type { RunEvent } from './sse'
@@ -90,7 +90,6 @@ export function applyRunEventToWebSearchSteps(
   }
 
   if (event.type === 'tool.call') {
-    if (isACPDelegateEventData(event.data)) return steps
     const obj = event.data as { tool_call_id?: unknown; arguments?: unknown }
     const toolName = pickLogicalToolName(event.data, event.tool_name)
     if (!isWebSearchToolName(toolName)) return steps
@@ -110,7 +109,6 @@ export function applyRunEventToWebSearchSteps(
   }
 
   if (event.type === 'tool.result') {
-    if (isACPDelegateEventData(event.data)) return steps
     const obj = event.data as { tool_call_id?: unknown; result?: unknown }
     const toolName = pickLogicalToolName(event.data, event.tool_name)
     if (!isWebSearchToolName(toolName)) return steps
@@ -136,7 +134,6 @@ export function applyRunEventToWebSearchSteps(
     event.type === 'run.cancelled' ||
     event.type === 'run.interrupted'
   ) {
-    if (isACPDelegateEventData(event.data)) return steps
     return steps.map((s) =>
       s.status === 'active' ? { ...s, status: 'done' as const } : s,
     )

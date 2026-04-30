@@ -449,7 +449,6 @@ export interface LocaleStrings {
   todoChangeUpdated: (position: number, total: number) => string
   // sub-agent
   agentSubAgent: string
-  agentAcpAgent: string
   agentSpawning: string
   agentRunning: string
   agentCompleted: string

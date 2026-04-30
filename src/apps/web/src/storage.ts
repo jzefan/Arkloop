@@ -1324,8 +1324,6 @@ export type SubAgentRef = {
   depth?: number
   currentRunId?: string
   seq?: number
-  /** host acp_agent vs spawn_agent；仅影响标签文案 */
-  sourceTool?: 'acp_agent'
 }
 
 function isSubAgentStatus(v: unknown): v is SubAgentStatus {

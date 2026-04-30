@@ -10,16 +10,14 @@ import (
 	"syscall"
 	"time"
 
-	"arkloop/services/sandbox/internal/acp"
 	"arkloop/services/sandbox/internal/app"
 	dockerpool "arkloop/services/sandbox/internal/docker"
-	localpool "arkloop/services/sandbox/internal/local"
 	"arkloop/services/sandbox/internal/environment"
-	processsvc "arkloop/services/sandbox/internal/process"
 	"arkloop/services/sandbox/internal/firecracker"
 	sandboxhttp "arkloop/services/sandbox/internal/http"
 	"arkloop/services/sandbox/internal/logging"
 	"arkloop/services/sandbox/internal/pool"
+	processsvc "arkloop/services/sandbox/internal/process"
 	"arkloop/services/sandbox/internal/session"
 	"arkloop/services/sandbox/internal/shell"
 	"arkloop/services/sandbox/internal/skills"
@@ -106,8 +104,6 @@ func run() error {
 		vmPool, err = buildDockerPool(cfg, logger)
 	case app.ProviderVz:
 		vmPool, err = buildVzPool(cfg, logger)
-	case app.ProviderLocal:
-		vmPool = localpool.New(localpool.Config{Logger: logger})
 	default:
 		err = fmt.Errorf("unknown provider: %s", cfg.Provider)
 	}
@@ -150,9 +146,8 @@ func run() error {
 		RestoreTTL: time.Duration(cfg.RestoreTTLDays) * 24 * time.Hour,
 	})
 	processMgr := processsvc.NewManager(mgr, artifactStore, envMgr, skillOverlay, logger)
-	acpMgr := acp.NewManager(mgr, logger)
 
-	handler := sandboxhttp.NewHandler(mgr, envMgr, skillOverlay, shellMgr, processMgr, acpMgr, artifactStore, logger, cfg.AuthToken)
+	handler := sandboxhttp.NewHandler(mgr, envMgr, skillOverlay, shellMgr, processMgr, artifactStore, logger, cfg.AuthToken)
 
 	if cfg.AuthToken == "" {
 		return fmt.Errorf("ARKLOOP_SANDBOX_AUTH_TOKEN must be set, refusing to start without auth")

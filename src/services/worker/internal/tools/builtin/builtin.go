@@ -5,9 +5,8 @@ import (
 	"arkloop/services/shared/objectstore"
 	"arkloop/services/worker/internal/llm"
 	"arkloop/services/worker/internal/tools"
-	"arkloop/services/worker/internal/tools/builtin/acptool"
-	artifactguidelines "arkloop/services/worker/internal/tools/builtin/artifact_guidelines"
 	arkloophelp "arkloop/services/worker/internal/tools/builtin/arkloop_help"
+	artifactguidelines "arkloop/services/worker/internal/tools/builtin/artifact_guidelines"
 	"arkloop/services/worker/internal/tools/builtin/askuser"
 	"arkloop/services/worker/internal/tools/builtin/edit"
 	enterplanmode "arkloop/services/worker/internal/tools/builtin/enter_plan_mode"
@@ -61,11 +60,6 @@ func AgentSpecs() []tools.AgentToolSpec {
 		spawnagent.InterruptAgentSpec,
 		summarizethread.AgentSpec,
 		askuser.AgentSpec,
-		acptool.SpawnACPAgentSpec,
-		acptool.SendACPAgentSpec,
-		acptool.WaitACPAgentSpec,
-		acptool.InterruptACPAgentSpec,
-		acptool.CloseACPAgentSpec,
 		showwidget.AgentSpec,
 		todowrite.AgentSpec,
 		enterplanmode.AgentSpec,
@@ -91,11 +85,6 @@ func LlmSpecs() []llm.ToolSpec {
 		// spawn_agent 由 NewToolProviderMiddleware 按需动态注入
 		summarizethread.LlmSpec,
 		askuser.LlmSpec,
-		acptool.SpawnACPLlmSpec,
-		acptool.SendACPLlmSpec,
-		acptool.WaitACPLlmSpec,
-		acptool.InterruptACPLlmSpec,
-		acptool.CloseACPLlmSpec,
 		showwidget.LlmSpec,
 		todowrite.LlmSpec,
 		enterplanmode.LlmSpec,
@@ -129,12 +118,6 @@ func Executors(pool *pgxpool.Pool, rdb *redis.Client, resolver sharedconfig.Reso
 		grep.AgentSpec.Name:                &grep.Executor{},
 		summarizethread.AgentSpec.Name:     &summarizethread.ToolExecutor{Pool: pool, RDB: rdb},
 		askuser.AgentSpec.Name:             askuser.ToolExecutor{},
-		acptool.AgentSpec.Name:             acptool.ToolExecutor{ConfigResolver: resolver},
-		acptool.SpawnACPAgentSpec.Name:     acptool.ToolExecutor{ConfigResolver: resolver},
-		acptool.SendACPAgentSpec.Name:      acptool.ToolExecutor{ConfigResolver: resolver},
-		acptool.WaitACPAgentSpec.Name:      acptool.ToolExecutor{ConfigResolver: resolver},
-		acptool.InterruptACPAgentSpec.Name: acptool.ToolExecutor{ConfigResolver: resolver},
-		acptool.CloseACPAgentSpec.Name:     acptool.ToolExecutor{ConfigResolver: resolver},
 		showwidget.AgentSpec.Name:          showwidget.NewToolExecutor(),
 		todowrite.AgentSpec.Name:           &todowrite.Executor{},
 		enterplanmode.AgentSpec.Name:       enterplanmode.New(),

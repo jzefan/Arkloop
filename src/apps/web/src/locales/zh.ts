@@ -453,7 +453,6 @@ export const zh: LocaleStrings = {
   todoChangeCancelled: (position, total) => `Cancelled ${position} of ${total}`,
   todoChangeUpdated: (position, total) => `Updated ${position} of ${total}`,
   agentSubAgent: "子代理",
-  agentAcpAgent: "ACP 代理",
   agentSpawning: "启动中",
   agentRunning: "运行中",
   agentCompleted: "已完成",

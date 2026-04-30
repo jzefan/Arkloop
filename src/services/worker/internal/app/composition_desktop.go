@@ -51,7 +51,6 @@ import (
 	"arkloop/services/worker/internal/toolprovider"
 	"arkloop/services/worker/internal/tools"
 	"arkloop/services/worker/internal/tools/builtin"
-	"arkloop/services/worker/internal/tools/builtin/acptool"
 	"arkloop/services/worker/internal/tools/builtin/read"
 	sandboxbuiltin "arkloop/services/worker/internal/tools/builtin/sandbox"
 	conversationtool "arkloop/services/worker/internal/tools/conversation"
@@ -191,14 +190,6 @@ func ComposeDesktopEngine(ctx context.Context, db data.DesktopDB, bus eventbus.E
 		slog.WarnContext(ctx, "desktop: skill store init failed", "err", err.Error())
 	}
 	executors, fileTracker := builtin.Executors(nil, nil, nil, skillStore)
-	for _, name := range []string{
-		acptool.AgentSpec.Name,
-		acptool.SpawnACPAgentSpec.Name,
-	} {
-		if exec, ok := executors[name].(acptool.ToolExecutor); ok {
-			executors[name] = acptool.DesktopExecutorWithInject(exec, db)
-		}
-	}
 
 	sandboxAddr := desktop.GetSandboxAddr()
 
@@ -251,13 +242,10 @@ func ComposeDesktopEngine(ctx context.Context, db data.DesktopDB, bus eventbus.E
 		runtimeSnapshot = &sharedtoolruntime.RuntimeSnapshot{
 			SandboxBaseURL:   "http://" + sandboxAddr,
 			SandboxAuthToken: authToken,
-			ACPHostKind:      "sandbox",
 		}
 		slog.Info("desktop: shell execution available (local + VM)", "sandbox_addr", sandboxAddr)
 	} else {
-		runtimeSnapshot = &sharedtoolruntime.RuntimeSnapshot{
-			ACPHostKind: "local",
-		}
+		runtimeSnapshot = &sharedtoolruntime.RuntimeSnapshot{}
 		slog.Info("desktop: shell execution available (local only, sandbox not available)")
 	}
 
@@ -3352,17 +3340,6 @@ func cleanupDesktopRunTools(rc *pipeline.RunContext, writer *desktopEventWriter)
 			defer cancel()
 			if err := cleaner.CleanupRun(ctx, runID, terminalStatus); err != nil {
 				slog.Warn("desktop shell cleanup failed", "run_id", runID, "error", err.Error())
-			}
-		}(rc.Run.ID.String(), writer.terminalStatus)
-	}
-	if cleaner, ok := rc.ToolExecutors[acptool.SpawnACPAgentSpec.Name].(interface {
-		CleanupRun(context.Context, string, string) error
-	}); ok {
-		go func(runID string, terminalStatus string) {
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			defer cancel()
-			if err := cleaner.CleanupRun(ctx, runID, terminalStatus); err != nil {
-				slog.Warn("desktop acp cleanup failed", "run_id", runID, "error", err.Error())
 			}
 		}(rc.Run.ID.String(), writer.terminalStatus)
 	}

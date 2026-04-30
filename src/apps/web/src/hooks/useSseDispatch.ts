@@ -42,7 +42,6 @@ import {
 } from '../lib/chat-helpers'
 import { extractPartialArtifactFields, extractPartialWidgetFields } from '../components/ArtifactStreamBlock'
 import { getInjectionBlockMessage, shouldSuppressLiveRunEventAfterInjectionBlock } from '../liveRunSecurity'
-import { isACPDelegateEventData } from '@arkloop/shared'
 import { isWebFetchToolName } from '../runEventProcessing'
 import type { UserInputRequest, RequestedSchema } from '../userInputTypes'
 import { useLatest } from './useLatest'
@@ -311,7 +310,6 @@ export function useSseDispatch(): void {
 
       // ── message.delta ─────────────────────────────────────────────────────
       if (event.type === 'message.delta') {
-        if (isACPDelegateEventData(event.data)) continue
         run.noResponseMsgIdRef.current = null
         const obj = event.data as { content_delta?: unknown; role?: unknown; channel?: unknown }
         if (obj.role != null && obj.role !== 'assistant') continue
@@ -390,7 +388,6 @@ export function useSseDispatch(): void {
 
       // ── tool.call ─────────────────────────────────────────────────────────
       if (event.type === 'tool.call') {
-        if (isACPDelegateEventData(event.data)) continue
         stream.setPendingThinking(false)
         run.seenFirstToolCallInRunRef.current = true
         const obj = event.data as { tool_call_id?: unknown; arguments?: unknown }
@@ -508,7 +505,6 @@ export function useSseDispatch(): void {
 
       // ── tool.result ───────────────────────────────────────────────────────
       if (event.type === 'tool.result') {
-        if (isACPDelegateEventData(event.data)) continue
         const obj = event.data as { tool_call_id?: unknown; result?: unknown }
         const resultToolName = pickLogicalToolName(event.data, event.tool_name)
 
@@ -665,7 +661,6 @@ export function useSseDispatch(): void {
 
       // ── run.completed ─────────────────────────────────────────────────────
       if (event.type === 'run.completed') {
-        if (isACPDelegateEventData(event.data)) continue
         run.freezeCutoffRef.current = null
         const completedRunId = event.run_id
         run.injectionBlockedRunIdRef.current = null
@@ -724,7 +719,6 @@ export function useSseDispatch(): void {
 
       // ── run.cancelled ─────────────────────────────────────────────────────
       if (event.type === 'run.cancelled') {
-        if (isACPDelegateEventData(event.data)) continue
         const blockedByInjection = run.injectionBlockedRunIdRef.current === event.run_id
         const runId = event.run_id
         run.setTerminalRunDisplayId(runId)
@@ -766,7 +760,6 @@ export function useSseDispatch(): void {
 
       // ── run.failed ────────────────────────────────────────────────────────
       if (event.type === 'run.failed') {
-        if (isACPDelegateEventData(event.data)) continue
         const runId = event.run_id
         run.setTerminalRunDisplayId(runId)
         run.setTerminalRunHandoffStatus('failed')
@@ -813,7 +806,6 @@ export function useSseDispatch(): void {
 
       // ── run.interrupted ───────────────────────────────────────────────────
       if (event.type === 'run.interrupted') {
-        if (isACPDelegateEventData(event.data)) continue
         const runId = event.run_id
         run.setTerminalRunDisplayId(runId)
         run.setTerminalRunHandoffStatus('interrupted')

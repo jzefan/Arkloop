@@ -17,9 +17,8 @@ const EXPLORE_NAMES = new Set(['read_file', 'grep', 'glob', 'load_tools', 'load_
 const EXEC_NAMES = new Set(['exec_command', 'python_execute', 'continue_process', 'terminate_process'])
 const EDIT_NAMES = new Set(['edit', 'edit_file', 'write_file'])
 const AGENT_NAMES = new Set([
-  'spawn_agent', 'acp_agent', 'spawn_acp',
+  'spawn_agent',
   'send_input', 'wait_agent', 'resume_agent', 'close_agent', 'interrupt_agent',
-  'send_acp', 'wait_acp', 'close_acp', 'interrupt_acp',
 ])
 const MUTATING_LSP = new Set(['rename'])
 const LOAD_TOOL_NAMES = new Set(['load_tools', 'load_skill'])
@@ -591,7 +590,7 @@ export const EMPTY_POOL: ResolvedPool = {
 
 export function buildFallbackSegments(tools: {
   codeExecutions?: Array<{ id: string; seq?: number }> | null
-  subAgents?: Array<{ id: string; sourceTool?: string; seq?: number }> | null
+  subAgents?: Array<{ id: string; seq?: number }> | null
   fileOps?: Array<{ id: string; toolName: string; seq?: number }> | null
   webFetches?: Array<{ id: string; seq?: number }> | null
 }): CopSubSegment[] {
@@ -601,7 +600,7 @@ export function buildFallbackSegments(tools: {
     for (const c of tools.codeExecutions) allTools.push({ id: c.id, toolName: 'exec_command', seq: c.seq })
   }
   if (tools.subAgents) {
-    for (const a of tools.subAgents) allTools.push({ id: a.id, toolName: a.sourceTool ?? 'spawn_agent', seq: a.seq })
+    for (const a of tools.subAgents) allTools.push({ id: a.id, toolName: 'spawn_agent', seq: a.seq })
   }
   if (tools.fileOps) {
     for (const f of tools.fileOps) allTools.push({ id: f.id, toolName: f.toolName, seq: f.seq })

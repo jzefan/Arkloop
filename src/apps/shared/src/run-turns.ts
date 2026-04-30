@@ -1,5 +1,4 @@
 import { redactDataUrlsInString } from './debugPayloadRedact'
-import { isACPDelegateEventData } from './runEventDelegate'
 import { canonicalToolName, pickLogicalToolName } from './tool-names'
 
 export type RunEventRaw = {
@@ -658,7 +657,6 @@ export function buildTurns(events: RunEventRaw[]): LlmTurn[] {
     if (!currentState) continue
 
     if (event.type === 'message.delta') {
-      if (isACPDelegateEventData(event.data)) continue
       const data = eventData
       if (data.channel === 'thinking') continue
       const delta = String(data.content_delta ?? '')
@@ -672,7 +670,6 @@ export function buildTurns(events: RunEventRaw[]): LlmTurn[] {
     }
 
     if (event.type === 'tool.call') {
-      if (isACPDelegateEventData(event.data)) continue
       flushAssistant()
       const data = eventData
       const toolCallId = String(data.tool_call_id ?? '')
@@ -699,7 +696,6 @@ export function buildTurns(events: RunEventRaw[]): LlmTurn[] {
     }
 
     if (event.type === 'tool.result') {
-      if (isACPDelegateEventData(event.data)) continue
       flushAssistant()
       const data = eventData
       const toolCallId = String(data.tool_call_id ?? '')
@@ -755,11 +751,9 @@ export function buildTurns(events: RunEventRaw[]): LlmTurn[] {
     }
 
     if (event.type === 'run.completed' || event.type === 'run.failed' || event.type === 'run.cancelled') {
-      if (!isACPDelegateEventData(event.data)) {
-        flushAssistant()
-        currentState = null
-        activeRequestCallID = ''
-      }
+      flushAssistant()
+      currentState = null
+      activeRequestCallID = ''
       continue
     }
   }

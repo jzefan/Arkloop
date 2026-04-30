@@ -47,9 +47,8 @@ func TestLoadDesktopActiveToolProvidersPlatformRow(t *testing.T) {
 	}
 
 	cfg := map[string]any{
-		"command":                 []string{"mycli", "sub"},
-		"extra_args":              []string{"--x"},
-		"delegate_model_selector": "cred^m1",
+		"endpoint": "https://search.internal",
+		"mode":     "strict",
 	}
 	cfgBytes, err := json.Marshal(cfg)
 	if err != nil {
@@ -58,7 +57,7 @@ func TestLoadDesktopActiveToolProvidersPlatformRow(t *testing.T) {
 	if _, err := db.Exec(ctx, `
 		INSERT INTO tool_provider_configs (
 			account_id, owner_kind, group_name, provider_name, is_active, config_json
-		) VALUES ($1, 'platform', 'acp', 'acp.opencode', 1, $2)`,
+		) VALUES ($1, 'platform', 'web_search', 'web_search.duckduckgo', 1, $2)`,
 		accountID.String(), string(cfgBytes),
 	); err != nil {
 		t.Fatalf("insert tool_provider_configs: %v", err)
@@ -72,7 +71,7 @@ func TestLoadDesktopActiveToolProvidersPlatformRow(t *testing.T) {
 		t.Fatalf("expected 1 platform row, got %d", len(platform))
 	}
 	c := platform[0]
-	if c.GroupName != "acp" || c.ProviderName != "acp.opencode" {
+	if c.GroupName != "web_search" || c.ProviderName != "web_search.duckduckgo" {
 		t.Fatalf("unexpected row: %+v", c)
 	}
 	raw, err := json.Marshal(c.ConfigJSON)
@@ -83,11 +82,11 @@ func TestLoadDesktopActiveToolProvidersPlatformRow(t *testing.T) {
 	if err := json.Unmarshal(raw, &out); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	if out["delegate_model_selector"] != "cred^m1" {
-		t.Fatalf("delegate_model_selector: %v", out["delegate_model_selector"])
+	if out["endpoint"] != "https://search.internal" {
+		t.Fatalf("endpoint: %v", out["endpoint"])
 	}
 	rt := ToRuntimeProviderConfig(c)
-	if rt.GroupName != "acp" || rt.ProviderName != "acp.opencode" {
+	if rt.GroupName != "web_search" || rt.ProviderName != "web_search.duckduckgo" {
 		t.Fatalf("runtime: %+v", rt)
 	}
 	if rt.ConfigJSON == nil {

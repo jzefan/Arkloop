@@ -1,4 +1,3 @@
-import { isACPDelegateEventData } from './runEventDelegate'
 import { pickLogicalToolName } from './tool-names'
 
 export type AssistantTurnEvent = {
@@ -341,7 +340,6 @@ export function foldAssistantTurnEvent(state: AssistantTurnFoldState, event: Ass
   }
 
   if (event.type === 'message.delta') {
-    if (isACPDelegateEventData(event.data)) return
     const obj = event.data as { content_delta?: unknown; role?: unknown; channel?: unknown }
     if (obj.role != null && obj.role !== 'assistant') {
       state.currentCop = currentCop
@@ -414,7 +412,6 @@ export function foldAssistantTurnEvent(state: AssistantTurnFoldState, event: Ass
   }
 
   if (event.type === 'tool.call') {
-    if (isACPDelegateEventData(event.data)) return
     const toolName = pickToolName(event.data)
     if (toolName === TIMELINE_TITLE_TOOL) {
       if (currentCop != null && copHasExecutionCall(currentCop)) {
@@ -453,7 +450,6 @@ export function foldAssistantTurnEvent(state: AssistantTurnFoldState, event: Ass
   }
 
   if (event.type === 'tool.result') {
-    if (isACPDelegateEventData(event.data)) return
     const toolName = pickToolName(event.data)
     if (toolName === TIMELINE_TITLE_TOOL) return
     if (shouldHideCopTool(toolName)) return

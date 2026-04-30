@@ -49,7 +49,6 @@ import {
 import { extractPartialArtifactFields, extractPartialWidgetFields } from '../components/ArtifactStreamBlock'
 import type { MsgRunEvent } from '../storage'
 import { getInjectionBlockMessage, shouldSuppressLiveRunEventAfterInjectionBlock } from '../liveRunSecurity'
-import { isACPDelegateEventData } from '@arkloop/shared'
 import type { RequestedSchema } from '../userInputTypes'
 import { noteShowWidgetDelta } from '../streamDebug'
 import type { MessageResponse } from '../api'
@@ -405,7 +404,6 @@ export function useThreadSseEffect({
       }
 
       if (event.type === 'message.delta') {
-        if (isACPDelegateEventData(event.data)) continue
         noResponseMsgIdRef.current = null
         const obj = event.data as { content_delta?: unknown; role?: unknown; channel?: unknown }
         if (obj.role != null && obj.role !== 'assistant') continue
@@ -490,7 +488,6 @@ export function useThreadSseEffect({
       }
 
       if (event.type === 'tool.call') {
-        if (isACPDelegateEventData(event.data)) continue
         setPendingThinking(false)
         seenFirstToolCallInRunRef.current = true
         const obj = event.data as { llm_name?: unknown; tool_call_id?: unknown; arguments?: unknown }
@@ -611,7 +608,6 @@ export function useThreadSseEffect({
       }
 
       if (event.type === 'tool.result') {
-        if (isACPDelegateEventData(event.data)) continue
         const obj = event.data as { tool_call_id?: unknown; result?: unknown; error?: unknown }
         const resultToolName = pickLogicalToolName(event.data, event.tool_name)
         if (isWebSearchToolName(resultToolName)) {
@@ -758,7 +754,6 @@ export function useThreadSseEffect({
       }
 
       if (event.type === 'run.completed') {
-        if (isACPDelegateEventData(event.data)) continue
         freezeCutoffRef.current = null
         const completedRunId = event.run_id
         injectionBlockedRunIdRef.current = null
@@ -842,7 +837,6 @@ export function useThreadSseEffect({
       }
 
       if (event.type === 'run.cancelled') {
-        if (isACPDelegateEventData(event.data)) continue
         const blockedByInjection = injectionBlockedRunIdRef.current === event.run_id
         const runId = event.run_id
         setTerminalRunDisplayId(runId)
@@ -904,7 +898,6 @@ export function useThreadSseEffect({
       }
 
       if (event.type === 'run.failed') {
-        if (isACPDelegateEventData(event.data)) continue
         const runId = event.run_id
         setTerminalRunDisplayId(runId)
         setTerminalRunHandoffStatus('failed')
@@ -972,7 +965,6 @@ export function useThreadSseEffect({
       }
 
       if (event.type === 'run.interrupted') {
-        if (isACPDelegateEventData(event.data)) continue
         const runId = event.run_id
         setTerminalRunDisplayId(runId)
         setTerminalRunHandoffStatus('interrupted')

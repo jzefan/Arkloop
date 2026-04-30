@@ -19,8 +19,8 @@ import (
 	"arkloop/services/shared/runlimit"
 	"arkloop/services/shared/skillstore"
 	sharedtoolruntime "arkloop/services/shared/toolruntime"
-	promptinjection "arkloop/services/worker/internal/app/promptinjection"
 	"arkloop/services/worker/internal/agentdirectory"
+	promptinjection "arkloop/services/worker/internal/app/promptinjection"
 	"arkloop/services/worker/internal/data"
 	"arkloop/services/worker/internal/events"
 	"arkloop/services/worker/internal/llm"
@@ -487,21 +487,6 @@ func (e *EngineV1) Execute(ctx context.Context, pool *pgxpool.Pool, run data.Run
 			}
 			if cleanupErr := cleaner.CleanupRun(cleanupCtx, run.ID.String(), terminalStatus); cleanupErr != nil {
 				slog.Warn("shell cleanup failed", "run_id", run.ID.String(), "error", cleanupErr.Error())
-			}
-		}()
-	}
-	if cleaner, ok := rc.ToolExecutors["spawn_acp"].(interface {
-		CleanupRun(context.Context, string, string) error
-	}); ok {
-		go func() {
-			cleanupCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			defer cancel()
-			terminalStatus := ""
-			if ctx.Err() != nil {
-				terminalStatus = "cancelled"
-			}
-			if cleanupErr := cleaner.CleanupRun(cleanupCtx, run.ID.String(), terminalStatus); cleanupErr != nil {
-				slog.Warn("acp cleanup failed", "run_id", run.ID.String(), "error", cleanupErr.Error())
 			}
 		}()
 	}

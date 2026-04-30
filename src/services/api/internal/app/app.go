@@ -28,7 +28,6 @@ import (
 	"arkloop/services/api/internal/personasync"
 	"arkloop/services/api/internal/scheduler"
 	"arkloop/services/api/internal/skillseed"
-	"arkloop/services/shared/acptoken"
 	sharedconfig "arkloop/services/shared/config"
 	"arkloop/services/shared/discordbot"
 	"arkloop/services/shared/objectstore"
@@ -283,7 +282,6 @@ func (a *Application) Run(ctx context.Context) error {
 
 		emailVerifyTokenRepo *data.EmailVerificationTokenRepository
 
-		acpTokenValidator    *acptoken.Validator
 		authService          *auth.Service
 		registrationService  *auth.RegistrationService
 		emailVerifyService   *auth.EmailVerifyService
@@ -560,10 +558,6 @@ func (a *Application) Run(ctx context.Context) error {
 			return err
 		}
 		tokenService, err := auth.NewJwtAccessTokenService(a.config.Auth.JWTSecret, a.config.Auth.AccessTokenTTLSeconds, a.config.Auth.RefreshTokenTTLSeconds)
-		if err != nil {
-			return err
-		}
-		acpTokenValidator, err = acptoken.NewValidator(a.config.Auth.JWTSecret)
 		if err != nil {
 			return err
 		}
@@ -876,7 +870,6 @@ func (a *Application) Run(ctx context.Context) error {
 			},
 			RepoPersonas:       repoPersonas,
 			PersonaSyncTrigger: personaSyncManager,
-			ACPTokenValidator:  acpTokenValidator,
 		}),
 		ReadHeaderTimeout: 5 * time.Second,
 		WriteTimeout:      60 * time.Second,

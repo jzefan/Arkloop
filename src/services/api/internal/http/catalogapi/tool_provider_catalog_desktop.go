@@ -25,18 +25,6 @@ var toolProviderCatalog = []toolProviderDefinition{
 			{Key: "model", Label: "Model", Type: "string", Required: false, Default: "MiniMax-VL-01", Placeholder: "MiniMax-VL-01"},
 		},
 	},
-	{
-		GroupName: "acp", ProviderName: "acp.opencode",
-		ConfigFields: []ConfigFieldDef{
-			{Key: "host_kind", Label: "Host Kind", Type: "select", Required: false, Default: "local", Options: []string{"local", "sandbox"}},
-			{Key: "auth_strategy", Label: "Auth Strategy", Type: "select", Required: false, Default: "provider_native", Options: []string{"provider_native", "arkloop_proxy"}},
-			{Key: "command", Label: "Command", Type: "string", Required: false, Placeholder: "opencode"},
-			{Key: "extra_args", Label: "Arguments", Type: "string", Required: false, Placeholder: "--verbose"},
-			{Key: "delegate_model_selector", Label: "Model", Type: "string", Required: false, Placeholder: "credentialId^model"},
-			{Key: "cwd", Label: "Working Directory", Type: "string", Required: false, Placeholder: "."},
-			{Key: "env_overrides", Label: "Env Overrides", Type: "string", Required: false, Placeholder: "{\"KEY\":\"value\"}"},
-		},
-	},
 	{GroupName: "sandbox", ProviderName: "sandbox.docker", RequiresBaseURL: true, AllowsInternalHTTP: true, DefaultBaseURL: "http://sandbox-docker:19002"},
 	{GroupName: "sandbox", ProviderName: "sandbox.firecracker", RequiresBaseURL: true, AllowsInternalHTTP: true, DefaultBaseURL: "http://sandbox:19002"},
 	{

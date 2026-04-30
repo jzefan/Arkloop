@@ -624,7 +624,7 @@ func displayToolName(toolName string) string {
 		return "Edit File"
 	case "load_tools":
 		return "Load Tools"
-	case "spawn_agent", "acp_agent", "spawn_acp", "sub_agent":
+	case "spawn_agent", "sub_agent":
 		return "Sub-agent"
 	case "browser":
 		return "Browser"
@@ -682,7 +682,7 @@ func toolBrief(toolName, argsJSON string) string {
 		return truncateBrief(extractStringField(args, "cmd"))
 	case "read_file", "write_file", "edit", "edit_file", "read":
 		return truncateBrief(extractStringField(args, "path"))
-	case "spawn_agent", "acp_agent", "spawn_acp", "sub_agent":
+	case "spawn_agent", "sub_agent":
 		return truncateBrief(extractStringField(args, "task"))
 	default:
 		return ""

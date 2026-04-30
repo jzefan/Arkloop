@@ -121,7 +121,6 @@ export { TurnView } from './components/TurnView'
 
 export { buildTurns, normalizeChannelEnvelopeText } from './run-turns'
 export type { LlmTurn, RunEventRaw } from './run-turns'
-export { ACP_DELEGATE_LAYER, isACPDelegateEventData } from './runEventDelegate'
 export { buildThreadTurns, buildRequestThreadTurns, threadMessageTextContent } from './thread-turns'
 export { canonicalToolName, pickLogicalToolName } from './tool-names'
 export type { ThreadMessage, ThreadTurn, RequestThreadTurn } from './thread-turns'

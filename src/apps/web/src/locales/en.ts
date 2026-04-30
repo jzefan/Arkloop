@@ -458,7 +458,6 @@ export const en: LocaleStrings = {
   todoChangeCancelled: (position, total) => `Cancelled ${position} of ${total}`,
   todoChangeUpdated: (position, total) => `Updated ${position} of ${total}`,
   agentSubAgent: "Sub Agent",
-  agentAcpAgent: "ACP agent",
   agentSpawning: "Spawning",
   agentRunning: "Running",
   agentCompleted: "Completed",
