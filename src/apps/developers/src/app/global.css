@@ -67,6 +67,33 @@
   flex-shrink: 0;
 }
 
+header.topbar .topbar-actions a.topbar-gh {
+  display: inline-flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px;
+  font-size: 0.82rem;
+  font-weight: 500;
+  color: hsl(var(--fd-muted-foreground));
+  text-decoration: none;
+  border: 1px solid hsl(var(--fd-border));
+  border-radius: 6px;
+  transition: color 120ms ease, border-color 120ms ease, background 120ms ease;
+}
+
+header.topbar .topbar-actions a.topbar-gh:hover {
+  color: hsl(var(--fd-foreground));
+  background: hsl(var(--fd-accent));
+}
+
+/* Tailwind/Fumadocs preflight sets svg { display:block }; without flex on the anchor, icon stacks above label. */
+header.topbar .topbar-actions a.topbar-gh svg {
+  display: inline-block;
+  vertical-align: middle;
+  flex-shrink: 0;
+}
+
 .lang-switch {
   padding: 5px 12px;
   font-size: 0.82rem;
