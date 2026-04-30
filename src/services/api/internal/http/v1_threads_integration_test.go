@@ -121,6 +121,115 @@ func TestThreadsCreateListGetPatchAndAudit(t *testing.T) {
 	if threadPayload.ProjectID == nil || *threadPayload.ProjectID == "" {
 		t.Fatalf("expected project_id in thread payload: %#v", threadPayload)
 	}
+	if threadPayload.Mode != data.ThreadModeChat {
+		t.Fatalf("expected default thread mode chat, got %q", threadPayload.Mode)
+	}
+
+	workThreadResp := doJSON(handler, nethttp.MethodPost, "/v1/threads", map[string]any{"title": "work-mode-thread", "mode": "work"}, headers)
+	if workThreadResp.Code != nethttp.StatusCreated {
+		t.Fatalf("unexpected create work thread status: %d body=%s", workThreadResp.Code, workThreadResp.Body.String())
+	}
+	workThreadPayload := decodeJSONBody[threadResponse](t, workThreadResp.Body.Bytes())
+	if workThreadPayload.Mode != data.ThreadModeWork {
+		t.Fatalf("expected work thread mode, got %#v", workThreadPayload)
+	}
+
+	invalidModeResp := doJSON(handler, nethttp.MethodPost, "/v1/threads", map[string]any{"mode": "claw"}, headers)
+	assertErrorEnvelope(t, invalidModeResp, nethttp.StatusUnprocessableEntity, "validation.error")
+
+	getWorkResp := doJSON(handler, nethttp.MethodGet, "/v1/threads/"+workThreadPayload.ID, nil, headers)
+	if getWorkResp.Code != nethttp.StatusOK {
+		t.Fatalf("get work thread: %d body=%s", getWorkResp.Code, getWorkResp.Body.String())
+	}
+	getWorkPayload := decodeJSONBody[threadResponse](t, getWorkResp.Body.Bytes())
+	if getWorkPayload.Mode != data.ThreadModeWork {
+		t.Fatalf("expected get work mode, got %#v", getWorkPayload)
+	}
+
+	listWorkResp := doJSON(handler, nethttp.MethodGet, "/v1/threads?limit=50&mode=work", nil, headers)
+	if listWorkResp.Code != nethttp.StatusOK {
+		t.Fatalf("list work threads: %d body=%s", listWorkResp.Code, listWorkResp.Body.String())
+	}
+	var workThreads []threadResponse
+	if err := json.Unmarshal(listWorkResp.Body.Bytes(), &workThreads); err != nil {
+		t.Fatalf("decode work list: %v", err)
+	}
+	if len(workThreads) != 1 || workThreads[0].ID != workThreadPayload.ID {
+		t.Fatalf("unexpected work thread list: %#v", workThreads)
+	}
+	invalidListModeResp := doJSON(handler, nethttp.MethodGet, "/v1/threads?mode=claw", nil, headers)
+	assertErrorEnvelope(t, invalidListModeResp, nethttp.StatusUnprocessableEntity, "validation.error")
+
+	searchWorkResp := doJSON(handler, nethttp.MethodGet, "/v1/threads/search?q=work-mode&mode=work&limit=10", nil, headers)
+	if searchWorkResp.Code != nethttp.StatusOK {
+		t.Fatalf("search work threads: %d body=%s", searchWorkResp.Code, searchWorkResp.Body.String())
+	}
+	var workSearch []threadResponse
+	if err := json.Unmarshal(searchWorkResp.Body.Bytes(), &workSearch); err != nil {
+		t.Fatalf("decode work search: %v", err)
+	}
+	if len(workSearch) != 1 || workSearch[0].ID != workThreadPayload.ID {
+		t.Fatalf("unexpected work search results: %#v", workSearch)
+	}
+	searchChatResp := doJSON(handler, nethttp.MethodGet, "/v1/threads/search?q=work-mode&mode=chat&limit=10", nil, headers)
+	if searchChatResp.Code != nethttp.StatusOK {
+		t.Fatalf("search chat threads: %d body=%s", searchChatResp.Code, searchChatResp.Body.String())
+	}
+	var chatSearch []threadResponse
+	if err := json.Unmarshal(searchChatResp.Body.Bytes(), &chatSearch); err != nil {
+		t.Fatalf("decode chat search: %v", err)
+	}
+	if len(chatSearch) != 0 {
+		t.Fatalf("unexpected chat search results: %#v", chatSearch)
+	}
+
+	patchModeResp := doJSON(handler, nethttp.MethodPatch, "/v1/threads/"+threadPayload.ID, map[string]any{"mode": "work"}, headers)
+	if patchModeResp.Code != nethttp.StatusOK {
+		t.Fatalf("patch thread mode: %d body=%s", patchModeResp.Code, patchModeResp.Body.String())
+	}
+	patchModePayload := decodeJSONBody[threadResponse](t, patchModeResp.Body.Bytes())
+	if patchModePayload.Mode != data.ThreadModeWork {
+		t.Fatalf("expected patched mode work, got %#v", patchModePayload)
+	}
+	if patchModePayload.UpdatedAt != threadPayload.UpdatedAt {
+		t.Fatalf("mode patch changed updated_at: before=%s after=%s", threadPayload.UpdatedAt, patchModePayload.UpdatedAt)
+	}
+	invalidPatchModeResp := doJSON(handler, nethttp.MethodPatch, "/v1/threads/"+threadPayload.ID, map[string]any{"mode": "claw"}, headers)
+	assertErrorEnvelope(t, invalidPatchModeResp, nethttp.StatusUnprocessableEntity, "validation.error")
+
+	sidebarPatchResp := doJSON(handler, nethttp.MethodPatch, "/v1/threads/"+workThreadPayload.ID, map[string]any{
+		"sidebar_work_folder": "/workspace/arkloop",
+		"sidebar_pinned":      true,
+		"sidebar_gtd_bucket":  "todo",
+	}, headers)
+	if sidebarPatchResp.Code != nethttp.StatusOK {
+		t.Fatalf("patch sidebar state: %d body=%s", sidebarPatchResp.Code, sidebarPatchResp.Body.String())
+	}
+	sidebarPatchPayload := decodeJSONBody[threadResponse](t, sidebarPatchResp.Body.Bytes())
+	if sidebarPatchPayload.SidebarWorkFolder == nil || *sidebarPatchPayload.SidebarWorkFolder != "/workspace/arkloop" {
+		t.Fatalf("unexpected sidebar work folder: %#v", sidebarPatchPayload)
+	}
+	if sidebarPatchPayload.SidebarPinnedAt == nil || *sidebarPatchPayload.SidebarPinnedAt == "" {
+		t.Fatalf("expected sidebar pinned_at: %#v", sidebarPatchPayload)
+	}
+	if sidebarPatchPayload.SidebarGtdBucket == nil || *sidebarPatchPayload.SidebarGtdBucket != "todo" {
+		t.Fatalf("unexpected sidebar gtd bucket: %#v", sidebarPatchPayload)
+	}
+	if sidebarPatchPayload.UpdatedAt != workThreadPayload.UpdatedAt {
+		t.Fatalf("sidebar patch changed updated_at: before=%s after=%s", workThreadPayload.UpdatedAt, sidebarPatchPayload.UpdatedAt)
+	}
+	sidebarClearResp := doJSON(handler, nethttp.MethodPatch, "/v1/threads/"+workThreadPayload.ID, map[string]any{
+		"sidebar_work_folder": nil,
+		"sidebar_pinned":      false,
+		"sidebar_gtd_bucket":  nil,
+	}, headers)
+	if sidebarClearResp.Code != nethttp.StatusOK {
+		t.Fatalf("clear sidebar state: %d body=%s", sidebarClearResp.Code, sidebarClearResp.Body.String())
+	}
+	sidebarClearPayload := decodeJSONBody[threadResponse](t, sidebarClearResp.Body.Bytes())
+	if sidebarClearPayload.SidebarWorkFolder != nil || sidebarClearPayload.SidebarPinnedAt != nil || sidebarClearPayload.SidebarGtdBucket != nil {
+		t.Fatalf("expected cleared sidebar state: %#v", sidebarClearPayload)
+	}
 
 	cursorIncomplete := doJSON(handler, nethttp.MethodGet, "/v1/threads?before_id="+threadPayload.ID, nil, headers)
 	env := assertErrorEnvelopePayload(t, cursorIncomplete, nethttp.StatusUnprocessableEntity, "validation.error")

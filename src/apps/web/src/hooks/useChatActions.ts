@@ -44,7 +44,7 @@ export function useChatActions({ scrollToBottom }: UseChatActionsDeps) {
   const navigate = useNavigate()
   const { t } = useLocale()
   const { accessToken, logout: onLoggedOut } = useAuth()
-  const { addThread: onThreadCreated, markRunning: onRunStarted } = useThreadList()
+  const { threads, addThread: onThreadCreated, markRunning: onRunStarted } = useThreadList()
   const { threadId } = useChatSession()
   const {
     setMessages,
@@ -117,7 +117,8 @@ export function useChatActions({ scrollToBottom }: UseChatActionsDeps) {
       setUserEnterMessageId(message.id)
       setMessages((prev) => [...prev, message])
       noResponseMsgIdRef.current = message.id
-      const run = await createRun(accessToken, threadId, personaKey, modelOverride, readThreadWorkFolder(threadId) ?? undefined, readThreadReasoningMode(threadId) !== 'off' ? readThreadReasoningMode(threadId) as RunReasoningMode : undefined)
+      const workFolder = threads.find((thread) => thread.id === threadId)?.sidebar_work_folder ?? readThreadWorkFolder(threadId) ?? undefined
+      const run = await createRun(accessToken, threadId, personaKey, modelOverride, workFolder, readThreadReasoningMode(threadId) !== 'off' ? readThreadReasoningMode(threadId) as RunReasoningMode : undefined)
       if (personaKey === SEARCH_PERSONA_KEY) addSearchThreadId(threadId)
       resetSearchSteps()
       setActiveRunId(run.run_id)
@@ -155,6 +156,7 @@ export function useChatActions({ scrollToBottom }: UseChatActionsDeps) {
     setTerminalRunCoveredRunIds,
     setUserEnterMessageId,
     threadId,
+    threads,
     injectionBlockedRunIdRef,
   ])
 
@@ -206,7 +208,7 @@ export function useChatActions({ scrollToBottom }: UseChatActionsDeps) {
         newContentJson,
         personaKey,
         modelOverride,
-        readThreadWorkFolder(threadId) ?? undefined,
+        threads.find((thread) => thread.id === threadId)?.sidebar_work_folder ?? readThreadWorkFolder(threadId) ?? undefined,
         reasoningMode !== 'off' ? reasoningMode as RunReasoningMode : undefined,
       )
       invalidateMessageSync()
@@ -250,6 +252,7 @@ export function useChatActions({ scrollToBottom }: UseChatActionsDeps) {
     setTerminalRunHandoffStatus,
     setTerminalRunCoveredRunIds,
     threadId,
+    threads,
   ])
 
   const handleRetryUserMessage = useCallback(async (message: MessageResponse) => {
@@ -276,7 +279,7 @@ export function useChatActions({ scrollToBottom }: UseChatActionsDeps) {
         message.id,
         personaKey,
         modelOverride,
-        readThreadWorkFolder(threadId) ?? undefined,
+        threads.find((thread) => thread.id === threadId)?.sidebar_work_folder ?? readThreadWorkFolder(threadId) ?? undefined,
         reasoningMode !== 'off' ? reasoningMode as RunReasoningMode : undefined,
       )
       invalidateMessageSync()
@@ -322,6 +325,7 @@ export function useChatActions({ scrollToBottom }: UseChatActionsDeps) {
     setThinkingHint,
     t.copThinkingHints,
     threadId,
+    threads,
   ])
 
   const handleFork = useCallback(async (messageId: string) => {

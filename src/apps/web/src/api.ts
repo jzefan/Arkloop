@@ -525,12 +525,16 @@ export type CreateThreadRequest = {
 
 export type ThreadMode = 'chat' | 'work'
 export type CollaborationMode = 'default' | 'plan'
+export type ThreadGtdBucket = 'inbox' | 'todo' | 'waiting' | 'someday' | 'archived'
 
 export type ThreadResponse = {
   id: string
   account_id: string
   created_by_user_id: string
   mode: ThreadMode
+  sidebar_work_folder?: string | null
+  sidebar_pinned_at?: string | null
+  sidebar_gtd_bucket?: ThreadGtdBucket | null
   title: string | null
   project_id: string
   created_at: string
@@ -811,6 +815,36 @@ export async function updateThreadCollaborationMode(
     method: 'PATCH',
     accessToken,
     body: JSON.stringify({ collaboration_mode: collaborationMode }),
+  })
+}
+
+export async function updateThreadMode(
+  accessToken: string,
+  threadId: string,
+  mode: ThreadMode,
+): Promise<ThreadResponse> {
+  return await apiFetch<ThreadResponse>(`/v1/threads/${threadId}`, {
+    method: 'PATCH',
+    accessToken,
+    body: JSON.stringify({ mode }),
+  })
+}
+
+export type UpdateThreadSidebarRequest = {
+  sidebar_work_folder?: string | null
+  sidebar_pinned?: boolean
+  sidebar_gtd_bucket?: ThreadGtdBucket | null
+}
+
+export async function updateThreadSidebarState(
+  accessToken: string,
+  threadId: string,
+  req: UpdateThreadSidebarRequest,
+): Promise<ThreadResponse> {
+  return await apiFetch<ThreadResponse>(`/v1/threads/${threadId}`, {
+    method: 'PATCH',
+    accessToken,
+    body: JSON.stringify(req),
   })
 }
 

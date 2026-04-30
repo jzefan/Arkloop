@@ -633,15 +633,20 @@ type globalRunResponse struct {
 }
 
 type threadResponse struct {
-	ID              string  `json:"id"`
-	AccountID       string  `json:"account_id"`
-	CreatedByUserID *string `json:"created_by_user_id"`
-	Title           *string `json:"title"`
-	ProjectID       *string `json:"project_id,omitempty"`
-	CreatedAt       string  `json:"created_at"`
-	ActiveRunID     *string `json:"active_run_id"`
-	IsPrivate       bool    `json:"is_private"`
-	ParentThreadID  *string `json:"parent_thread_id,omitempty"`
+	ID                string  `json:"id"`
+	AccountID         string  `json:"account_id"`
+	CreatedByUserID   *string `json:"created_by_user_id"`
+	Title             *string `json:"title"`
+	Mode              string  `json:"mode"`
+	SidebarWorkFolder *string `json:"sidebar_work_folder,omitempty"`
+	SidebarPinnedAt   *string `json:"sidebar_pinned_at,omitempty"`
+	SidebarGtdBucket  *string `json:"sidebar_gtd_bucket,omitempty"`
+	ProjectID         *string `json:"project_id,omitempty"`
+	CreatedAt         string  `json:"created_at"`
+	UpdatedAt         string  `json:"updated_at"`
+	ActiveRunID       *string `json:"active_run_id"`
+	IsPrivate         bool    `json:"is_private"`
+	ParentThreadID    *string `json:"parent_thread_id,omitempty"`
 }
 
 type messageResponse struct {

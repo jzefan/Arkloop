@@ -26,6 +26,7 @@ import (
 type createThreadRequest struct {
 	Title             *string      `json:"title"`
 	IsPrivate         bool         `json:"is_private"`
+	Mode              *string      `json:"mode"`
 	ProjectID         optionalUUID `json:"project_id"`
 	CollaborationMode *string      `json:"collaboration_mode"`
 }
@@ -34,6 +35,10 @@ type updateThreadRequest struct {
 	Title             optionalString `json:"title"`
 	ProjectID         optionalUUID   `json:"project_id"`
 	CollaborationMode optionalString `json:"collaboration_mode"`
+	Mode              optionalString `json:"mode"`
+	SidebarWorkFolder optionalString `json:"sidebar_work_folder"`
+	SidebarPinned     optionalBool   `json:"sidebar_pinned"`
+	SidebarGtdBucket  optionalString `json:"sidebar_gtd_bucket"`
 }
 
 type threadResponse struct {
@@ -41,6 +46,10 @@ type threadResponse struct {
 	AccountID                 string  `json:"account_id"`
 	CreatedByUserID           *string `json:"created_by_user_id"`
 	Title                     *string `json:"title"`
+	Mode                      string  `json:"mode"`
+	SidebarWorkFolder         *string `json:"sidebar_work_folder,omitempty"`
+	SidebarPinnedAt           *string `json:"sidebar_pinned_at,omitempty"`
+	SidebarGtdBucket          *string `json:"sidebar_gtd_bucket,omitempty"`
 	ProjectID                 *string `json:"project_id,omitempty"`
 	CreatedAt                 string  `json:"created_at"`
 	UpdatedAt                 string  `json:"updated_at"`
@@ -54,6 +63,16 @@ type threadResponse struct {
 type optionalString struct {
 	Present bool
 	Value   *string
+}
+
+type optionalBool struct {
+	Present bool
+	Value   bool
+}
+
+func (b *optionalBool) UnmarshalJSON(raw []byte) error {
+	b.Present = true
+	return json.Unmarshal(raw, &b.Value)
 }
 
 func (s *optionalString) UnmarshalJSON(raw []byte) error {
@@ -77,7 +96,7 @@ type optionalUUID struct {
 }
 
 func isTitleOnlyThreadUpdate(body updateThreadRequest) bool {
-	return body.Title.Present && !body.ProjectID.Present && !body.CollaborationMode.Present
+	return body.Title.Present && !body.ProjectID.Present && !body.CollaborationMode.Present && !body.Mode.Present && !body.SidebarWorkFolder.Present && !body.SidebarPinned.Present && !body.SidebarGtdBucket.Present
 }
 
 func (u *optionalUUID) UnmarshalJSON(raw []byte) error {
@@ -150,6 +169,15 @@ func createThread(
 			httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "request validation failed", traceID, nil)
 			return
 		}
+		initialMode := data.ThreadModeChat
+		if body.Mode != nil {
+			normalized, ok := data.NormalizeThreadMode(*body.Mode)
+			if !ok {
+				httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "request validation failed", traceID, nil)
+				return
+			}
+			initialMode = normalized
+		}
 		initialCollaborationMode := data.ThreadCollaborationModeDefault
 		if body.CollaborationMode != nil {
 			normalized, ok := data.NormalizeThreadCollaborationMode(*body.CollaborationMode)
@@ -199,7 +227,7 @@ func createThread(
 			projectID = project.ID
 		}
 
-		thread, err := txThreadRepo.Create(r.Context(), actor.AccountID, &actor.UserID, projectID, body.Title, body.IsPrivate)
+		thread, err := txThreadRepo.CreateWithMode(r.Context(), actor.AccountID, &actor.UserID, projectID, body.Title, body.IsPrivate, initialMode)
 		if err != nil {
 			writeInternalError(w, traceID, err)
 			return
@@ -266,14 +294,24 @@ func listThreads(
 		if !ok {
 			return
 		}
+		modeFilter := strings.TrimSpace(r.URL.Query().Get("mode"))
+		if modeFilter != "" {
+			normalized, valid := data.NormalizeThreadMode(modeFilter)
+			if !valid {
+				httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "request validation failed", traceID, nil)
+				return
+			}
+			modeFilter = normalized
+		}
 
-		threads, err := threadRepo.ListByOwner(
+		threads, err := threadRepo.ListByOwnerWithMode(
 			r.Context(),
 			actor.AccountID,
 			actor.UserID,
 			limit,
 			beforeUpdatedAt,
 			beforeID,
+			modeFilter,
 		)
 		if err != nil {
 			writeInternalError(w, traceID, err)
@@ -369,7 +407,7 @@ func patchThread(
 			httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "request validation failed", traceID, nil)
 			return
 		}
-		if !body.Title.Present && !body.ProjectID.Present && !body.CollaborationMode.Present {
+		if !body.Title.Present && !body.ProjectID.Present && !body.CollaborationMode.Present && !body.Mode.Present && !body.SidebarWorkFolder.Present && !body.SidebarPinned.Present && !body.SidebarGtdBucket.Present {
 			httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "request validation failed", traceID, nil)
 			return
 		}
@@ -380,6 +418,44 @@ func patchThread(
 		if body.ProjectID.Present && body.ProjectID.Value == nil {
 			httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "request validation failed", traceID, nil)
 			return
+		}
+		threadMode := ""
+		if body.Mode.Present {
+			if body.Mode.Value == nil {
+				httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "request validation failed", traceID, nil)
+				return
+			}
+			normalized, ok := data.NormalizeThreadMode(*body.Mode.Value)
+			if !ok {
+				httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "request validation failed", traceID, nil)
+				return
+			}
+			threadMode = normalized
+		}
+		var sidebarWorkFolder *string
+		if body.SidebarWorkFolder.Present && body.SidebarWorkFolder.Value != nil {
+			trimmed := strings.TrimSpace(*body.SidebarWorkFolder.Value)
+			if len(trimmed) > 2048 {
+				httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "request validation failed", traceID, nil)
+				return
+			}
+			if trimmed != "" {
+				sidebarWorkFolder = &trimmed
+			}
+		}
+		var sidebarPinnedAt *time.Time
+		if body.SidebarPinned.Present && body.SidebarPinned.Value {
+			now := time.Now().UTC()
+			sidebarPinnedAt = &now
+		}
+		var sidebarGtdBucket *string
+		if body.SidebarGtdBucket.Present && body.SidebarGtdBucket.Value != nil {
+			normalized, ok := data.NormalizeThreadGtdBucket(*body.SidebarGtdBucket.Value)
+			if !ok {
+				httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "request validation failed", traceID, nil)
+				return
+			}
+			sidebarGtdBucket = &normalized
 		}
 		collaborationMode := ""
 		if body.CollaborationMode.Present {
@@ -404,6 +480,14 @@ func patchThread(
 			ProjectID:            body.ProjectID.Value,
 			SetCollaborationMode: body.CollaborationMode.Present,
 			CollaborationMode:    collaborationMode,
+			SetMode:              body.Mode.Present,
+			Mode:                 threadMode,
+			SetSidebarWorkFolder: body.SidebarWorkFolder.Present,
+			SidebarWorkFolder:    sidebarWorkFolder,
+			SetSidebarPinnedAt:   body.SidebarPinned.Present,
+			SidebarPinnedAt:      sidebarPinnedAt,
+			SetSidebarGtdBucket:  body.SidebarGtdBucket.Present,
+			SidebarGtdBucket:     sidebarGtdBucket,
 		}
 
 		if isTitleOnlyThreadUpdate(body) {
@@ -611,8 +695,17 @@ func searchThreads(
 		if !ok {
 			return
 		}
+		modeFilter := strings.TrimSpace(r.URL.Query().Get("mode"))
+		if modeFilter != "" {
+			normalized, valid := data.NormalizeThreadMode(modeFilter)
+			if !valid {
+				httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "request validation failed", traceID, nil)
+				return
+			}
+			modeFilter = normalized
+		}
 
-		threads, err := threadRepo.SearchByQuery(r.Context(), actor.AccountID, actor.UserID, q, limit)
+		threads, err := threadRepo.SearchByQueryWithMode(r.Context(), actor.AccountID, actor.UserID, q, limit, modeFilter)
 		if err != nil {
 			writeInternalError(w, traceID, err)
 			return
@@ -1027,11 +1120,31 @@ func toThreadResponse(thread data.Thread) threadResponse {
 		value := thread.ParentThreadID.String()
 		parentThreadID = &value
 	}
+	mode, ok := data.NormalizeThreadMode(thread.Mode)
+	if !ok {
+		mode = data.ThreadModeChat
+	}
+	var sidebarPinnedAt *string
+	if thread.SidebarPinnedAt != nil {
+		value := thread.SidebarPinnedAt.UTC().Format(time.RFC3339Nano)
+		sidebarPinnedAt = &value
+	}
+	var sidebarGtdBucket *string
+	if thread.SidebarGtdBucket != nil {
+		value, ok := data.NormalizeThreadGtdBucket(*thread.SidebarGtdBucket)
+		if ok {
+			sidebarGtdBucket = &value
+		}
+	}
 	return threadResponse{
 		ID:                        thread.ID.String(),
 		AccountID:                 thread.AccountID.String(),
 		CreatedByUserID:           createdByUserID,
 		Title:                     thread.Title,
+		Mode:                      mode,
+		SidebarWorkFolder:         thread.SidebarWorkFolder,
+		SidebarPinnedAt:           sidebarPinnedAt,
+		SidebarGtdBucket:          sidebarGtdBucket,
 		ProjectID:                 projectID,
 		CreatedAt:                 thread.CreatedAt.UTC().Format(time.RFC3339Nano),
 		UpdatedAt:                 thread.UpdatedAt.UTC().Format(time.RFC3339Nano),

@@ -80,12 +80,36 @@ func TestThreadRepositoryListSearchFork(t *testing.T) {
 		t.Fatalf("create thread b: %v", err)
 	}
 
+	titleWork := "thread-work"
+	threadWork, err := threadRepo.CreateWithMode(ctx, account.ID, &user.ID, project.ID, &titleWork, false, ThreadModeWork)
+	if err != nil {
+		t.Fatalf("create work thread: %v", err)
+	}
+	if threadWork.Mode != ThreadModeWork {
+		t.Fatalf("work thread mode = %q", threadWork.Mode)
+	}
+
 	listed, err := threadRepo.ListByOwner(ctx, account.ID, user.ID, 10, nil, nil)
 	if err != nil {
 		t.Fatalf("list by owner: %v", err)
 	}
-	if len(listed) != 2 {
-		t.Fatalf("expected 2 threads, got %d", len(listed))
+	if len(listed) != 3 {
+		t.Fatalf("expected 3 threads, got %d", len(listed))
+	}
+
+	listedChat, err := threadRepo.ListByOwnerWithMode(ctx, account.ID, user.ID, 10, nil, nil, ThreadModeChat)
+	if err != nil {
+		t.Fatalf("list chat by owner: %v", err)
+	}
+	if len(listedChat) != 2 {
+		t.Fatalf("expected 2 chat threads, got %d", len(listedChat))
+	}
+	listedWork, err := threadRepo.ListByOwnerWithMode(ctx, account.ID, user.ID, 10, nil, nil, ThreadModeWork)
+	if err != nil {
+		t.Fatalf("list work by owner: %v", err)
+	}
+	if len(listedWork) != 1 || listedWork[0].ID != threadWork.ID {
+		t.Fatalf("unexpected work threads: %#v", listedWork)
 	}
 
 	needle := "shared-search-token-unique"
@@ -102,19 +126,80 @@ func TestThreadRepositoryListSearchFork(t *testing.T) {
 	if len(searchHits) != 2 {
 		t.Fatalf("expected 2 search hits, got %#v", searchHits)
 	}
+	workSearchHits, err := threadRepo.SearchByQueryWithMode(ctx, account.ID, user.ID, needle, 10, ThreadModeWork)
+	if err != nil {
+		t.Fatalf("search work: %v", err)
+	}
+	if len(workSearchHits) != 0 {
+		t.Fatalf("expected no work search hits, got %#v", workSearchHits)
+	}
 
-	forkSource, err := messageRepo.Create(ctx, account.ID, threadB.ID, "user", "fork source body", &user.ID)
+	updatedThreadB, err := threadRepo.UpdateFields(ctx, threadB.ID, ThreadUpdateFields{
+		SetMode: true,
+		Mode:    ThreadModeWork,
+	})
+	if err != nil {
+		t.Fatalf("update thread mode: %v", err)
+	}
+	if updatedThreadB == nil || updatedThreadB.Mode != ThreadModeWork {
+		t.Fatalf("updated thread mode = %#v", updatedThreadB)
+	}
+	if !updatedThreadB.UpdatedAt.Equal(threadB.UpdatedAt) {
+		t.Fatalf("mode update changed updated_at: before=%s after=%s", threadB.UpdatedAt, updatedThreadB.UpdatedAt)
+	}
+
+	workFolder := "/workspace/arkloop"
+	workBucket := ThreadGtdBucketTodo
+	pinnedAt := threadWork.CreatedAt
+	threadWorkWithSidebar, err := threadRepo.UpdateFields(ctx, threadWork.ID, ThreadUpdateFields{
+		SetSidebarWorkFolder: true,
+		SidebarWorkFolder:    &workFolder,
+		SetSidebarPinnedAt:   true,
+		SidebarPinnedAt:      &pinnedAt,
+		SetSidebarGtdBucket:  true,
+		SidebarGtdBucket:     &workBucket,
+	})
+	if err != nil {
+		t.Fatalf("update sidebar state: %v", err)
+	}
+	if threadWorkWithSidebar == nil || threadWorkWithSidebar.SidebarWorkFolder == nil || *threadWorkWithSidebar.SidebarWorkFolder != workFolder {
+		t.Fatalf("sidebar work folder = %#v", threadWorkWithSidebar)
+	}
+	if threadWorkWithSidebar.SidebarPinnedAt == nil || !threadWorkWithSidebar.SidebarPinnedAt.Equal(pinnedAt) {
+		t.Fatalf("sidebar pinned_at = %#v", threadWorkWithSidebar)
+	}
+	if threadWorkWithSidebar.SidebarGtdBucket == nil || *threadWorkWithSidebar.SidebarGtdBucket != workBucket {
+		t.Fatalf("sidebar gtd bucket = %#v", threadWorkWithSidebar)
+	}
+	if !threadWorkWithSidebar.UpdatedAt.Equal(threadWork.UpdatedAt) {
+		t.Fatalf("sidebar update changed updated_at: before=%s after=%s", threadWork.UpdatedAt, threadWorkWithSidebar.UpdatedAt)
+	}
+	threadWork = *threadWorkWithSidebar
+
+	forkSource, err := messageRepo.Create(ctx, account.ID, threadWork.ID, "user", "fork source body", &user.ID)
 	if err != nil {
 		t.Fatalf("create fork source message: %v", err)
 	}
-	forked, err := threadRepo.Fork(ctx, account.ID, &user.ID, threadB.ID, forkSource.ID, false)
+	forked, err := threadRepo.Fork(ctx, account.ID, &user.ID, threadWork.ID, forkSource.ID, false)
 	if err != nil {
 		t.Fatalf("fork thread: %v", err)
 	}
-	if forked.ParentThreadID == nil || *forked.ParentThreadID != threadB.ID {
-		t.Fatalf("expected parent_thread_id=%s, got %#v", threadB.ID, forked.ParentThreadID)
+	if forked.ParentThreadID == nil || *forked.ParentThreadID != threadWork.ID {
+		t.Fatalf("expected parent_thread_id=%s, got %#v", threadWork.ID, forked.ParentThreadID)
 	}
 	if forked.BranchedFromMessageID == nil || *forked.BranchedFromMessageID != forkSource.ID {
 		t.Fatalf("expected branched_from_message_id=%s", forkSource.ID)
+	}
+	if forked.Mode != ThreadModeWork {
+		t.Fatalf("forked mode = %q", forked.Mode)
+	}
+	if forked.SidebarWorkFolder == nil || *forked.SidebarWorkFolder != workFolder {
+		t.Fatalf("forked sidebar work folder = %#v", forked.SidebarWorkFolder)
+	}
+	if forked.SidebarGtdBucket == nil || *forked.SidebarGtdBucket != workBucket {
+		t.Fatalf("forked sidebar gtd bucket = %#v", forked.SidebarGtdBucket)
+	}
+	if forked.SidebarPinnedAt != nil {
+		t.Fatalf("forked sidebar pinned_at = %#v", forked.SidebarPinnedAt)
 	}
 }

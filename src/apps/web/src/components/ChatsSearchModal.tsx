@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Search, X, SquarePen } from 'lucide-react'
-import type { ThreadResponse } from '../api'
+import type { ThreadMode, ThreadResponse } from '../api'
 import { searchThreads } from '../api'
 import { useLocale } from '../contexts/LocaleContext'
 import { isPerfDebugEnabled, recordPerfDuration, recordPerfValue } from '../perfDebug'
@@ -72,13 +72,14 @@ function groupByDate(threads: ThreadResponse[], labels: {
 
 type Props = {
   threads: ThreadResponse[]
+  mode: ThreadMode
   accessToken: string
   onClose: () => void
 }
 
 const INITIAL_VISIBLE_THREAD_COUNT = 18
 
-export function ChatsSearchModal({ threads, accessToken, onClose }: Props) {
+export function ChatsSearchModal({ threads, mode, accessToken, onClose }: Props) {
   const navigate = useNavigate()
   const { t } = useLocale()
   const { timeZone } = useTimeZone()
@@ -174,7 +175,7 @@ export function ChatsSearchModal({ threads, accessToken, onClose }: Props) {
 
     const pendingId = requestAnimationFrame(() => setSearching(true))
     debounceRef.current = setTimeout(() => {
-      void searchThreads(accessToken, q, 'chat').then((results) => {
+      void searchThreads(accessToken, q, mode).then((results) => {
         setSearchResults(results)
       }).catch(() => {
         setSearchResults([])
@@ -187,7 +188,7 @@ export function ChatsSearchModal({ threads, accessToken, onClose }: Props) {
       cancelAnimationFrame(pendingId)
       if (debounceRef.current) clearTimeout(debounceRef.current)
     }
-  }, [query, accessToken])
+  }, [query, accessToken, mode])
 
   const displayThreads = searchResults ?? threads
   const visibleThreadCount = Math.min(renderedThreadCount, displayThreads.length)

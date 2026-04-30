@@ -58,6 +58,7 @@ type LayoutMainProps = {
   desktop: boolean
   isSearchOpen: boolean
   filteredThreads: import('../api').ThreadResponse[]
+  appMode: import('../storage').AppMode
   pathname: string
   onSearchClose: () => void
   onMeUpdated: (m: import('../api').MeResponse) => void
@@ -68,6 +69,7 @@ const LayoutMain = memo(function LayoutMain({
   desktop,
   isSearchOpen,
   filteredThreads,
+  appMode,
   pathname,
   onSearchClose,
   onMeUpdated,
@@ -106,7 +108,7 @@ const LayoutMain = memo(function LayoutMain({
       )}
 
       {isSearchOpen && (
-        <ChatsSearchModal threads={filteredThreads} accessToken={accessToken} onClose={onSearchClose} />
+        <ChatsSearchModal threads={filteredThreads} mode={appMode} accessToken={accessToken} onClose={onSearchClose} />
       )}
 
       {desktop && settingsOpen ? (
@@ -136,6 +138,7 @@ const LayoutMain = memo(function LayoutMain({
 export function AppLayout() {
   const { me, meLoaded, accessToken, logout, updateMe } = useAuth()
   const {
+    threads,
     isPrivateMode, pendingIncognitoMode,
     privateThreadIds, removeThread,
     togglePrivateMode,
@@ -201,7 +204,13 @@ export function AppLayout() {
 
   const pathnameSearchOpen = location.pathname.endsWith('/search')
   const isSearchOpen = searchOverlayOpen || pathnameSearchOpen
-  const filteredThreads = useMemo(() => getFilteredThreads(appMode), [getFilteredThreads, appMode])
+  const currentThreadId = location.pathname.match(/^\/t\/([^/]+)/)?.[1] ?? null
+  const currentThread = useMemo(
+    () => currentThreadId ? threads.find((thread) => thread.id === currentThreadId) ?? null : null,
+    [currentThreadId, threads],
+  )
+  const activeAppMode = currentThread?.mode === 'work' ? 'work' : currentThread?.mode === 'chat' ? 'chat' : appMode
+  const filteredThreads = useMemo(() => getFilteredThreads(activeAppMode), [getFilteredThreads, activeAppMode])
 
   const handleDesktopTitleBarIncognitoClick = useCallback(() => {
     triggerTitleBarIncognitoClick(togglePrivateMode)
@@ -253,7 +262,6 @@ export function AppLayout() {
     )
   }
 
-  const currentThreadId = location.pathname.match(/^\/t\/([^/]+)/)?.[1] ?? null
   const titleBarIncognitoActive =
     isPrivateMode || pendingIncognitoMode ||
     (currentThreadId != null && privateThreadIds.has(currentThreadId))
@@ -265,10 +273,10 @@ export function AppLayout() {
           <DesktopTitleBar
             sidebarCollapsed={sidebarCollapsed}
             onToggleSidebar={() => toggleSidebar('titlebar')}
-            appMode={appMode}
+            appMode={activeAppMode}
             onSetAppMode={setAppMode}
             availableModes={availableAppModes}
-            showIncognitoToggle={appMode !== 'work'}
+            showIncognitoToggle={activeAppMode !== 'work'}
             isPrivateMode={titleBarIncognitoActive}
             onTogglePrivateMode={handleDesktopTitleBarIncognitoClick}
             hasComponentUpdates={hasComponentUpdates || (appUpdateState != null && appUpdateState.phase === 'available')}
@@ -294,6 +302,7 @@ export function AppLayout() {
             desktop={desktop}
             isSearchOpen={isSearchOpen}
             filteredThreads={filteredThreads}
+            appMode={activeAppMode}
             pathname={location.pathname}
             onSearchClose={handleCloseSearch}
             onMeUpdated={updateMe}

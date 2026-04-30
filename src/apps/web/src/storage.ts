@@ -1756,18 +1756,19 @@ export function writeMsgRunEvents(messageId: string, events: MsgRunEvent[]): voi
   } catch { /* ignore */ }
 }
 
-// -- Thread Mode Tracking --
+// -- Legacy Thread Mode Migration --
 
-const THREAD_MODES_KEY = 'arkloop:web:thread_modes'
+const LEGACY_THREAD_MODES_KEY = 'arkloop:web:thread_modes'
 
-export function readThreadModes(): Record<string, AppMode> {
+export function readLegacyThreadModesForMigration(): Record<string, AppMode> {
   if (!canUseLocalStorage()) return {}
   try {
-    const raw = localStorage.getItem(THREAD_MODES_KEY)
+    const raw = localStorage.getItem(LEGACY_THREAD_MODES_KEY)
     if (!raw) return {}
     const parsed = JSON.parse(raw) as Record<string, string>
     const next: Record<string, AppMode> = {}
     for (const [threadId, mode] of Object.entries(parsed)) {
+      if (!threadId) continue
       next[threadId] = mode === 'work' ? 'work' : 'chat'
     }
     return next
@@ -1776,22 +1777,16 @@ export function readThreadModes(): Record<string, AppMode> {
   }
 }
 
-export function writeThreadMode(threadId: string, mode: AppMode): void {
-  if (!canUseLocalStorage() || !threadId) return
+export function writeLegacyThreadModesForMigration(modes: Record<string, AppMode>): void {
+  if (!canUseLocalStorage()) return
   try {
-    const map = readThreadModes()
-    map[threadId] = mode
-    localStorage.setItem(THREAD_MODES_KEY, JSON.stringify(map))
+    const entries = Object.entries(modes).filter(([threadId, mode]) => threadId && (mode === 'chat' || mode === 'work'))
+    if (entries.length === 0) {
+      localStorage.removeItem(LEGACY_THREAD_MODES_KEY)
+      return
+    }
+    localStorage.setItem(LEGACY_THREAD_MODES_KEY, JSON.stringify(Object.fromEntries(entries)))
   } catch { /* ignore */ }
-}
-
-export function readThreadMode(threadId: string): AppMode {
-  if (!canUseLocalStorage() || !threadId) return 'chat'
-  try {
-    const map = readThreadModes()
-    const mode = map[threadId]
-    return mode === 'work' ? 'work' : 'chat'
-  } catch { return 'chat' }
 }
 
 // -- Work Folder --

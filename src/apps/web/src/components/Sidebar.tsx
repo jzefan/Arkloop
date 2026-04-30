@@ -20,8 +20,8 @@ import {
   ChevronRight,
   Plus,
 } from 'lucide-react'
-import type { ThreadResponse } from '../api'
-import { listStarredThreadIds, starThread, unstarThread, updateThreadTitle, deleteThread } from '../api'
+import type { ThreadGtdBucket, ThreadResponse, UpdateThreadSidebarRequest } from '../api'
+import { listStarredThreadIds, starThread, unstarThread, updateThreadTitle, deleteThread, updateThreadSidebarState } from '../api'
 import { isLocalMode, isDesktop } from '@arkloop/shared/desktop'
 import { useLocale } from '../contexts/LocaleContext'
 import { ShareModal } from './ShareModal'
@@ -49,7 +49,7 @@ type Props = {
 }
 
 type ProjectGroup = { path: string; label: string; threads: ThreadResponse[] }
-type GtdBucket = 'inbox' | 'todo' | 'waiting' | 'someday' | 'archived'
+type GtdBucket = ThreadGtdBucket
 type GtdGroup = { bucket: GtdBucket; label: string; threads: ThreadResponse[] }
 
 const PROJECT_GROUP_PAGE_SIZE = 8
@@ -77,6 +77,25 @@ function threadTitle(thread: ThreadResponse, untitled: string): string {
 
 function defaultGtdExpandedBuckets(): Set<GtdBucket> {
   return new Set(GTD_BUCKETS)
+}
+
+function normalizeGtdBucket(value: ThreadResponse['sidebar_gtd_bucket']): GtdBucket | null {
+  return value && GTD_BUCKETS.includes(value) ? value : null
+}
+
+function withSidebarPatch(thread: ThreadResponse, patch: UpdateThreadSidebarRequest): ThreadResponse {
+  const next: ThreadResponse = { ...thread }
+  if ('sidebar_work_folder' in patch) {
+    const folder = (patch.sidebar_work_folder ?? '').trim()
+    next.sidebar_work_folder = folder.length > 0 ? folder : null
+  }
+  if ('sidebar_pinned' in patch) {
+    next.sidebar_pinned_at = patch.sidebar_pinned ? new Date().toISOString() : null
+  }
+  if ('sidebar_gtd_bucket' in patch) {
+    next.sidebar_gtd_bucket = patch.sidebar_gtd_bucket ?? null
+  }
+  return next
 }
 
 type SidebarThreadItemProps = {
@@ -235,6 +254,7 @@ export function Sidebar({
     isPrivateMode,
     pendingIncognitoMode,
     updateTitle: onThreadTitleUpdated,
+    upsertThread,
     markCompletionRead,
   } = useThreadList()
   const { sidebarCollapsed: collapsed, toggleSidebar: onToggleCollapse, rightPanelOpen: narrow } = useSidebarUI()
@@ -298,10 +318,18 @@ export function Sidebar({
     return next
   }, [starredIds, threads])
 
+  const effectivePinnedIds = useMemo(() => {
+    const next = new Set(pinnedIds)
+    for (const thread of threads) {
+      if (thread.sidebar_pinned_at) next.add(thread.id)
+    }
+    return next
+  }, [pinnedIds, threads])
+
   const pinnedWorkThreads = useMemo(() => {
     if (!isWorkMode) return []
-    return threads.filter(th => pinnedIds.has(th.id))
-  }, [isWorkMode, threads, pinnedIds])
+    return threads.filter(th => effectivePinnedIds.has(th.id))
+  }, [isWorkMode, threads, effectivePinnedIds])
 
   // 初始化时从服务端拉取收藏列表
   useEffect(() => {
@@ -331,6 +359,17 @@ export function Sidebar({
     })
   }, [accessToken, starredIds])
 
+  const patchSidebarState = useCallback((id: string, patch: UpdateThreadSidebarRequest, rollbackLocal?: () => void) => {
+    const current = threads.find((thread) => thread.id === id)
+    if (current) upsertThread(withSidebarPatch(current, patch))
+    void updateThreadSidebarState(accessToken, id, patch).then((updated) => {
+      upsertThread(updated)
+    }).catch(() => {
+      rollbackLocal?.()
+      if (current) upsertThread(current)
+    })
+  }, [accessToken, threads, upsertThread])
+
   // -- 分组逻辑 --
 
   const projectGroups = useMemo(() => {
@@ -338,10 +377,10 @@ export function Sidebar({
     const groups = new Map<string, ThreadResponse[]>()
 
     for (const t of threads) {
-      const wf = readThreadWorkFolder(t.id)
+      const wf = (t.sidebar_work_folder ?? readThreadWorkFolder(t.id) ?? '').trim()
       const key = wf || '__unassigned__'
       if (!groups.has(key)) groups.set(key, [])
-      if (!pinnedIds.has(t.id)) groups.get(key)!.push(t)
+      if (!effectivePinnedIds.has(t.id)) groups.get(key)!.push(t)
     }
 
     const result: ProjectGroup[] = []
@@ -364,7 +403,20 @@ export function Sidebar({
     })
 
     return result
-  }, [threads, pinnedIds, starredIds, t, workFolderVersion])
+  }, [threads, effectivePinnedIds, starredIds, t, workFolderVersion])
+
+  const localGtdBucketForThread = useCallback((id: string): GtdBucket | null => {
+    if (gtdInboxIds.has(id)) return 'inbox'
+    if (gtdTodoIds.has(id)) return 'todo'
+    if (gtdWaitingIds.has(id)) return 'waiting'
+    if (gtdSomedayIds.has(id)) return 'someday'
+    if (gtdArchivedIds.has(id)) return 'archived'
+    return null
+  }, [gtdArchivedIds, gtdInboxIds, gtdSomedayIds, gtdTodoIds, gtdWaitingIds])
+
+  const effectiveGtdBucketForThread = useCallback((thread: ThreadResponse): GtdBucket | null => {
+    return normalizeGtdBucket(thread.sidebar_gtd_bucket) ?? localGtdBucketForThread(thread.id)
+  }, [localGtdBucketForThread])
 
   const gtdGroups = useMemo(() => {
     const buckets: GtdGroup[] = [
@@ -375,26 +427,16 @@ export function Sidebar({
       { bucket: 'archived', label: t.gtdArchived, threads: [] },
     ]
 
-    for (const t of threads) {
-      let bucket: GtdGroup
-      if (gtdInboxIds.has(t.id)) {
-        bucket = buckets[0]
-      } else if (gtdTodoIds.has(t.id)) {
-        bucket = buckets[1]
-      } else if (gtdWaitingIds.has(t.id)) {
-        bucket = buckets[2]
-      } else if (gtdSomedayIds.has(t.id)) {
-        bucket = buckets[3]
-      } else {
-        bucket = buckets[4]
-      }
-      bucket.threads.push(t)
+    for (const thread of threads) {
+      const bucketName = effectiveGtdBucketForThread(thread) ?? 'archived'
+      const bucket = buckets.find((item) => item.bucket === bucketName) ?? buckets[4]
+      bucket.threads.push(thread)
     }
 
     for (const bucket of buckets) {
       bucket.threads.sort((a, b) => {
-        const aPin = pinnedIds.has(a.id) ? 1 : 0
-        const bPin = pinnedIds.has(b.id) ? 1 : 0
+        const aPin = effectivePinnedIds.has(a.id) ? 1 : 0
+        const bPin = effectivePinnedIds.has(b.id) ? 1 : 0
         if (aPin !== bPin) return bPin - aPin
         const aStar = starredIds.includes(a.id) ? 1 : 0
         const bStar = starredIds.includes(b.id) ? 1 : 0
@@ -404,7 +446,7 @@ export function Sidebar({
     }
 
     return buckets
-  }, [threads, gtdInboxIds, gtdTodoIds, gtdWaitingIds, gtdSomedayIds, pinnedIds, starredIds, t])
+  }, [threads, effectiveGtdBucketForThread, effectivePinnedIds, starredIds, t])
 
   const openMenu = useCallback((e: React.MouseEvent, id: string) => {
     e.stopPropagation()
@@ -647,7 +689,7 @@ export function Sidebar({
   )
 
   // GTD / Pin 操作
-  const moveGtdThread = useCallback((id: string, bucket: GtdBucket) => {
+  const applyGtdBucketLocal = useCallback((id: string, bucket: GtdBucket | null) => {
     setGtdInboxIds((prev: Set<string>) => {
       const next = new Set(prev)
       if (bucket === 'inbox') next.add(id); else next.delete(id)
@@ -680,52 +722,81 @@ export function Sidebar({
     })
   }, [])
 
+  const currentGtdBucket = useCallback((id: string): GtdBucket | null => {
+    const thread = threads.find((item) => item.id === id)
+    return thread ? effectiveGtdBucketForThread(thread) : localGtdBucketForThread(id)
+  }, [effectiveGtdBucketForThread, localGtdBucketForThread, threads])
+
+  const moveGtdThread = useCallback((id: string, bucket: GtdBucket) => {
+    const previous = currentGtdBucket(id)
+    applyGtdBucketLocal(id, bucket)
+    patchSidebarState(id, { sidebar_gtd_bucket: bucket }, () => applyGtdBucketLocal(id, previous))
+  }, [applyGtdBucketLocal, currentGtdBucket, patchSidebarState])
+
   const markGtdInbox = useCallback((id: string) => moveGtdThread(id, 'inbox'), [moveGtdThread])
   const markGtdTodo = useCallback((id: string) => moveGtdThread(id, 'todo'), [moveGtdThread])
   const markGtdWaiting = useCallback((id: string) => moveGtdThread(id, 'waiting'), [moveGtdThread])
   const markGtdSomeday = useCallback((id: string) => moveGtdThread(id, 'someday'), [moveGtdThread])
   const archiveGtdThread = useCallback((id: string) => moveGtdThread(id, 'archived'), [moveGtdThread])
 
-  const removeGtdThread = useCallback((id: string) => {
-    setGtdInboxIds((prev: Set<string>) => { const next = new Set(prev); next.delete(id); writeGtdInboxThreadIds(next); return next })
-    setGtdTodoIds((prev: Set<string>) => { const next = new Set(prev); next.delete(id); writeGtdTodoThreadIds(next); return next })
-    setGtdWaitingIds((prev: Set<string>) => { const next = new Set(prev); next.delete(id); writeGtdWaitingThreadIds(next); return next })
-    setGtdSomedayIds((prev: Set<string>) => { const next = new Set(prev); next.delete(id); writeGtdSomedayThreadIds(next); return next })
-    setGtdArchivedIds((prev: Set<string>) => { const next = new Set(prev); next.delete(id); writeGtdArchivedThreadIds(next); return next })
+  const applyPinnedLocal = useCallback((id: string, pinned: boolean) => {
+    setPinnedIds((prev: Set<string>) => {
+      const next = new Set(prev)
+      if (pinned) next.add(id); else next.delete(id)
+      writePinnedThreadIds(next)
+      return next
+    })
   }, [])
 
   const togglePin = useCallback((id: string) => {
-    setPinnedIds((prev: Set<string>) => {
-      const next = new Set(prev)
-      if (next.has(id)) next.delete(id); else next.add(id)
-      writePinnedThreadIds(next)
-      return next
-    })
-  }, [])
+    const nextPinned = !effectivePinnedIds.has(id)
+    applyPinnedLocal(id, nextPinned)
+    patchSidebarState(id, { sidebar_pinned: nextPinned }, () => applyPinnedLocal(id, !nextPinned))
+  }, [applyPinnedLocal, effectivePinnedIds, patchSidebarState])
 
   const pinThread = useCallback((id: string) => {
-    setPinnedIds((prev: Set<string>) => {
-      if (prev.has(id)) return prev
-      const next = new Set(prev)
-      next.add(id)
-      writePinnedThreadIds(next)
-      return next
-    })
-  }, [])
-
-  const unpinThread = useCallback((id: string) => {
-    setPinnedIds((prev: Set<string>) => {
-      if (!prev.has(id)) return prev
-      const next = new Set(prev)
-      next.delete(id)
-      writePinnedThreadIds(next)
-      return next
-    })
-  }, [])
+    if (effectivePinnedIds.has(id)) return
+    applyPinnedLocal(id, true)
+    patchSidebarState(id, { sidebar_pinned: true }, () => applyPinnedLocal(id, false))
+  }, [applyPinnedLocal, effectivePinnedIds, patchSidebarState])
 
   const dragOverPinnedRef = useRef(false)
   const dragOverProjectPathRef = useRef<string | null>(null)
   const dragOverGtdBucketRef = useRef<GtdBucket | null>(null)
+  const setThreadWorkFolder = useCallback((id: string, folder: string | null) => {
+    const previous = readThreadWorkFolder(id)
+    if (folder && folder !== '__unassigned__') {
+      writeThreadWorkFolder(id, folder)
+    } else {
+      clearThreadWorkFolder(id)
+    }
+    patchSidebarState(id, { sidebar_work_folder: folder === '__unassigned__' ? null : folder }, () => {
+      if (previous) writeThreadWorkFolder(id, previous)
+      else clearThreadWorkFolder(id)
+    })
+  }, [patchSidebarState])
+
+  const movePinnedThreadToFolder = useCallback((id: string, folder: string | null) => {
+    const normalizedFolder = folder === '__unassigned__' ? null : folder
+    const thread = threads.find((item) => item.id === id)
+    const previousFolder = thread?.sidebar_work_folder ?? readThreadWorkFolder(id)
+    const previousPinned = effectivePinnedIds.has(id)
+
+    if (normalizedFolder) writeThreadWorkFolder(id, normalizedFolder)
+    else clearThreadWorkFolder(id)
+    applyPinnedLocal(id, false)
+
+    patchSidebarState(
+      id,
+      { sidebar_work_folder: normalizedFolder, sidebar_pinned: false },
+      () => {
+        if (previousFolder) writeThreadWorkFolder(id, previousFolder)
+        else clearThreadWorkFolder(id)
+        applyPinnedLocal(id, previousPinned)
+      },
+    )
+  }, [applyPinnedLocal, effectivePinnedIds, patchSidebarState, threads])
+
   useEffect(() => {
     dragOverPinnedRef.current = dragOverPinned
   }, [dragOverPinned])
@@ -807,8 +878,8 @@ export function Sidebar({
       candidate = {
         id: threadId,
         title: threadTitle(thread, t.untitled),
-        fromPinned: pinnedIds.has(threadId),
-        sourcePath: readThreadWorkFolder(threadId) || '__unassigned__',
+        fromPinned: effectivePinnedIds.has(threadId),
+        sourcePath: (thread.sidebar_work_folder ?? readThreadWorkFolder(threadId)) || '__unassigned__',
       }
       dragging = null
       if (!candidate.fromPinned) {
@@ -837,21 +908,12 @@ export function Sidebar({
       if (dragging) {
         const projectTarget = dragOverProjectPathRef.current
         if (dragging.fromPinned && projectTarget) {
-          if (projectTarget === '__unassigned__') {
-            clearThreadWorkFolder(dragging.id)
-          } else {
-            writeThreadWorkFolder(dragging.id, projectTarget)
-          }
-          unpinThread(dragging.id)
+          movePinnedThreadToFolder(dragging.id, projectTarget === '__unassigned__' ? null : projectTarget)
         } else if (!dragging.fromPinned && dragOverPinnedRef.current) {
           pinThread(dragging.id)
           setPinnedExpanded(true)
         } else if (!dragging.fromPinned && projectTarget && projectTarget !== dragging.sourcePath) {
-          if (projectTarget === '__unassigned__') {
-            clearThreadWorkFolder(dragging.id)
-          } else {
-            writeThreadWorkFolder(dragging.id, projectTarget)
-          }
+          setThreadWorkFolder(dragging.id, projectTarget === '__unassigned__' ? null : projectTarget)
         }
         dragging = null
         setDragState(null)
@@ -883,7 +945,7 @@ export function Sidebar({
       document.removeEventListener('click', onClick, true)
       clearTimer()
     }
-  }, [isWorkMode, threads, pinnedIds, t.untitled, pinThread, unpinThread])
+  }, [isWorkMode, threads, effectivePinnedIds, t.untitled, movePinnedThreadToFolder, pinThread, setThreadWorkFolder])
 
   useEffect(() => {
     if (isWorkMode || !gtdEnabled) return
@@ -906,13 +968,8 @@ export function Sidebar({
       setDragOverGtdBucket(prev => prev === bucket ? prev : bucket)
     }
 
-    const currentBucket = (threadId: string): GtdBucket => {
-      if (gtdInboxIds.has(threadId)) return 'inbox'
-      if (gtdTodoIds.has(threadId)) return 'todo'
-      if (gtdWaitingIds.has(threadId)) return 'waiting'
-      if (gtdSomedayIds.has(threadId)) return 'someday'
-      if (gtdArchivedIds.has(threadId)) return 'archived'
-      return 'archived'
+    const currentBucket = (thread: ThreadResponse): GtdBucket => {
+      return effectiveGtdBucketForThread(thread) ?? 'archived'
     }
 
     const findGtdTarget = (e: PointerEvent, sourceBucket: GtdBucket): GtdBucket | null => {
@@ -951,7 +1008,7 @@ export function Sidebar({
       candidate = {
         id: threadId,
         title: threadTitle(thread, t.untitled),
-        sourceBucket: currentBucket(threadId),
+        sourceBucket: currentBucket(thread),
       }
       dragging = null
       timer = window.setTimeout(() => {
@@ -1009,14 +1066,14 @@ export function Sidebar({
       document.removeEventListener('click', onClick, true)
       clearTimer()
     }
-  }, [isWorkMode, gtdEnabled, threads, gtdInboxIds, gtdTodoIds, gtdWaitingIds, gtdSomedayIds, gtdArchivedIds, t.untitled, moveGtdThread])
+  }, [isWorkMode, gtdEnabled, threads, effectiveGtdBucketForThread, t.untitled, moveGtdThread])
 
   const handleDelete = useCallback(async (id: string) => {
     setDeleteConfirmThreadId(null)
     try {
       await deleteThread(accessToken, id)
       // 清理 GTD 和 Pin 的本地状态
-      removeGtdThread(id)
+      applyGtdBucketLocal(id, null)
       setPinnedIds((prev: Set<string>) => {
         if (!prev.has(id)) return prev
         const next = new Set(prev)
@@ -1028,7 +1085,7 @@ export function Sidebar({
     } catch {
       // 失败静默
     }
-  }, [accessToken, onThreadDeleted, removeGtdThread])
+  }, [accessToken, applyGtdBucketLocal, onThreadDeleted])
 
   // 进入编辑模式后自动聚焦 input
   useEffect(() => {
@@ -1087,6 +1144,7 @@ export function Sidebar({
       setGtdWaitingIds(readGtdWaitingThreadIds())
       setGtdSomedayIds(readGtdSomedayThreadIds())
       setGtdArchivedIds(readGtdArchivedThreadIds())
+      setPinnedIds(readPinnedThreadIds())
     })
     return () => { cancelled = true }
   }, [threads])
@@ -1262,10 +1320,10 @@ export function Sidebar({
             style={{
               flexShrink: 0,
               color: 'var(--c-text-secondary)',
-              fill: pinnedIds.has(menuThreadId) ? 'var(--c-text-secondary)' : 'none',
+              fill: effectivePinnedIds.has(menuThreadId) ? 'var(--c-text-secondary)' : 'none',
             }}
           />
-          {pinnedIds.has(menuThreadId) ? t.unpinThread : t.pinThread}
+          {effectivePinnedIds.has(menuThreadId) ? t.unpinThread : t.pinThread}
         </button>
         {gtdEnabled && !isWorkMode && (
           <>

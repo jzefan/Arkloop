@@ -359,6 +359,7 @@ export function WelcomePage() {
       const thread = await createThread(accessToken, {
         title,
         is_private: isPrivateMode,
+        mode: appMode === 'work' ? 'work' : 'chat',
         collaboration_mode: appMode === 'work' && initialPlanMode ? 'plan' : 'default',
       })
       const uploaded = await Promise.all(

@@ -797,6 +797,12 @@ export const ChatView = memo(function ChatView() {
     () => threads.find((thread) => thread.id === threadId) ?? null,
     [threadId, threads],
   )
+  const resolveThreadWorkFolder = useCallback((id: string): string | undefined => {
+    const thread = threads.find((item) => item.id === id)
+    return thread?.sidebar_work_folder ?? readThreadWorkFolder(id) ?? undefined
+  }, [threads])
+  const effectiveAppMode = currentThread?.mode === 'work' ? 'work' : currentThread?.mode === 'chat' ? 'chat' : appMode
+  const isWorkMode = effectiveAppMode === 'work'
   useEffect(() => {
     if (!threadId || !completedUnreadThreadIds.has(threadId)) return
     markCompletionRead(threadId)
@@ -1019,7 +1025,7 @@ export const ChatView = memo(function ChatView() {
     liveAssistantTurn,
     liveRunUiVisible,
     topLevelCodeExecutionsLength: topLevelCodeExecutions.length,
-    promptPinningDisabled: appMode === 'work',
+    promptPinningDisabled: isWorkMode,
   })
 
   const { resetAssistantTurnLive, captureTerminalRunCache, persistThreadRunHandoff } = useRunTransition()
@@ -1736,9 +1742,9 @@ export const ChatView = memo(function ChatView() {
     ownerKey: me?.id,
     page: 'thread',
     threadId,
-    appMode: appMode === 'work' ? 'work' : 'chat',
+    appMode: effectiveAppMode,
     searchMode: isSearchThread,
-  }), [appMode, isSearchThread, me?.id, threadId])
+  }), [effectiveAppMode, isSearchThread, me?.id, threadId])
   const draftScopeKey = useMemo(() => JSON.stringify(draftScope), [draftScope])
 
   const {
@@ -2025,7 +2031,7 @@ export const ChatView = memo(function ChatView() {
           attachments: queuedAttachments,
           personaKey,
           modelOverride,
-          workDir: readThreadWorkFolder(threadId) ?? undefined,
+          workDir: resolveThreadWorkFolder(threadId),
           reasoningMode: resolveReasoningMode(),
         }))
         attachments.forEach((attachment) => revokeDraftAttachment(attachment))
@@ -2065,7 +2071,7 @@ export const ChatView = memo(function ChatView() {
         onThreadCreated(forked)
         const uploaded = await uploadAttachments()
         const forkUserMessage = await createMessage(accessToken, forked.id, buildMessageRequest(text, uploaded))
-        const run = await createRun(accessToken, forked.id, personaKey, modelOverride, readThreadWorkFolder(threadId) ?? undefined, readThreadReasoningMode(threadId) !== 'off' ? readThreadReasoningMode(threadId) as RunReasoningMode : undefined)
+        const run = await createRun(accessToken, forked.id, personaKey, modelOverride, resolveThreadWorkFolder(threadId), readThreadReasoningMode(threadId) !== 'off' ? readThreadReasoningMode(threadId) as RunReasoningMode : undefined)
         writeRunThinkingHint(run.run_id, hint)
         if (personaKey === SEARCH_PERSONA_KEY) addSearchThreadId(forked.id)
         attachments.forEach((attachment) => revokeDraftAttachment(attachment))
@@ -2110,7 +2116,7 @@ export const ChatView = memo(function ChatView() {
       noResponseMsgIdRef.current = message.id
 
       await waitForPlanModeUpdate()
-      const run = await createRun(accessToken, threadId, personaKey, modelOverride, readThreadWorkFolder(threadId) ?? undefined, readThreadReasoningMode(threadId) !== 'off' ? readThreadReasoningMode(threadId) as RunReasoningMode : undefined)
+      const run = await createRun(accessToken, threadId, personaKey, modelOverride, resolveThreadWorkFolder(threadId), readThreadReasoningMode(threadId) !== 'off' ? readThreadReasoningMode(threadId) as RunReasoningMode : undefined)
       writeRunThinkingHint(run.run_id, hint)
       if (personaKey === SEARCH_PERSONA_KEY) addSearchThreadId(threadId)
       resetSearchSteps()
@@ -2159,6 +2165,7 @@ export const ChatView = memo(function ChatView() {
     threadId,
     waitForPlanModeUpdate,
     queueReadyAttachments,
+    resolveThreadWorkFolder,
     resolveReasoningMode,
   ])
 
@@ -2432,7 +2439,7 @@ export const ChatView = memo(function ChatView() {
   }, [])
 
   const handleTogglePlanMode = useCallback(async (currentMode: boolean) => {
-    if (!threadId || appMode !== 'work') return
+    if (!threadId || !isWorkMode) return
     const nextMode: CollaborationMode = currentMode ? 'default' : 'plan'
     const requestSeq = ++planModeRequestSeqRef.current
     const updatePromise: Promise<void> = updateThreadCollaborationMode(accessToken, threadId, nextMode).then((thread) => {
@@ -2451,16 +2458,16 @@ export const ChatView = memo(function ChatView() {
     })
     planModeUpdateRef.current = updatePromise
     await updatePromise
-  }, [accessToken, appMode, onThreadUpserted, setError, threadId])
+  }, [accessToken, isWorkMode, onThreadUpserted, setError, threadId])
 
   const hasMessages = messages.length > 0
-  const inputHorizontalPadding = appMode === 'work'
+  const inputHorizontalPadding = isWorkMode
     ? (isPanelOpen ? chatContentPadding.panelOpen : chatContentPadding.panelClosed)
     : (isPanelOpen ? chatInputPadding.panelOpen : chatInputPadding.panelClosed)
 
   const chatInputEl = useMemo(() => (
     <ChatInput
-      key={`${threadId ?? '__no_thread__'}:${appMode}:${isSearchThread ? 'search' : 'default'}`}
+      key={`${threadId ?? '__no_thread__'}:${effectiveAppMode}:${isSearchThread ? 'search' : 'default'}`}
       ref={chatInputRef}
       onSubmit={handleSend}
       onCancel={handleCancel}
@@ -2478,7 +2485,7 @@ export const ChatView = memo(function ChatView() {
       searchMode={isSearchThread}
       onPersonaChange={handlePersonaChange}
       onOpenSettings={onOpenSettings}
-      appMode={appMode}
+      appMode={effectiveAppMode}
       hasMessages={hasMessages}
       messagesLoading={messagesLoading}
       workThreadId={threadId}
@@ -2488,7 +2495,7 @@ export const ChatView = memo(function ChatView() {
       planMode={currentThread?.collaboration_mode === 'plan'}
       onTogglePlanMode={handleTogglePlanMode}
     />
-  ), [attachments, sending, isStreaming, canCancel, cancelSubmitting, appMode, isSearchThread, hasMessages, messagesLoading, threadId, accessToken, me?.id, t.followUpPlaceholder, t.replyPlaceholder, handleSend, handleCancel, handleAttachFiles, handlePasteContent, handleRemoveAttachment, handleAsrError, handlePersonaChange, onOpenSettings, editingQueuedPromptId, cancelQueuedPromptEdit, currentThread?.collaboration_mode, handleTogglePlanMode])
+  ), [attachments, sending, isStreaming, canCancel, cancelSubmitting, effectiveAppMode, isSearchThread, hasMessages, messagesLoading, threadId, accessToken, me?.id, t.followUpPlaceholder, t.replyPlaceholder, handleSend, handleCancel, handleAttachFiles, handlePasteContent, handleRemoveAttachment, handleAsrError, handlePersonaChange, onOpenSettings, editingQueuedPromptId, cancelQueuedPromptEdit, currentThread?.collaboration_mode, handleTogglePlanMode])
 
   const renderLiveCopItems = (
     seg: Extract<AssistantTurnSegment, { type: 'cop' }>,
@@ -2550,7 +2557,7 @@ export const ChatView = memo(function ChatView() {
           activeCodeExecutionId={codePanelExecution?.id}
           accessToken={accessToken}
           baseUrl={baseUrl}
-          typography={appMode === 'work' ? 'work' : 'default'}
+          typography={isWorkMode ? 'work' : 'default'}
           todoWritesForFinalDisplay={turnTodoWrites}
         />,
       ...liveWidgets.map((entry) => (
@@ -2612,15 +2619,15 @@ export const ChatView = memo(function ChatView() {
           >
         <div
           style={{
-            maxWidth: appMode === 'work' ? 1000 : 800,
+            maxWidth: isWorkMode ? 1000 : 800,
             margin: '0 auto',
             padding: `50px ${isPanelOpen ? chatContentPadding.panelOpen : chatContentPadding.panelClosed} var(--chat-input-area-height)`,
-            gap: appMode === 'work' ? 0 : undefined,
+            gap: isWorkMode ? 0 : undefined,
           }}
           className="flex w-full flex-col gap-6"
         >
           {messagesLoading ? (
-            <ChatSkeleton isWorkMode={appMode === 'work'} />
+            <ChatSkeleton isWorkMode={isWorkMode} />
           ) : (
             <>
               {contextCompactBar && (
@@ -2634,13 +2641,13 @@ export const ChatView = memo(function ChatView() {
               )}
               <CopTimelineLocalExpansionProvider stabilizeScroll={stabilizeDocumentPanelScroll}>
                 <MessageList
-                isWorkMode={appMode === 'work'}
+                isWorkMode={isWorkMode}
                 lastTurnStartIdx={lastTurnStartIdx}
                 lastTurnRef={lastUserMsgRef}
                 lastUserPromptRef={lastUserPromptRef}
                 lastTurnChildren={
                   <LiveRunPane
-                    isWorkMode={appMode === 'work'}
+                    isWorkMode={isWorkMode}
                     showPendingThinkingShell={showPendingThinkingShell}
                     preserveLiveRunUi={preserveLiveRunUi}
                     leadingLiveCop={leadingLiveCop}
@@ -2716,7 +2723,7 @@ export const ChatView = memo(function ChatView() {
         ref={inputAreaRef}
         style={{
           '--chat-input-horizontal-padding': inputHorizontalPadding,
-          maxWidth: appMode === 'work' ? 1000 : 1200,
+          maxWidth: isWorkMode ? 1000 : 1200,
           margin: '0 auto',
           padding: '12px var(--chat-input-horizontal-padding) 8px',
           position: 'absolute',
@@ -2748,7 +2755,7 @@ export const ChatView = memo(function ChatView() {
             {showInputError && inputError && (
               <div
                 className="pointer-events-auto w-full"
-                style={{ maxWidth: appMode === 'work' ? undefined : '720px', margin: '0 auto' }}
+                style={{ maxWidth: isWorkMode ? undefined : '720px', margin: '0 auto' }}
               >
                 <RunErrorNotice
                   error={inputError}
@@ -2761,7 +2768,7 @@ export const ChatView = memo(function ChatView() {
             {queuedPrompts.length > 0 && (
               <div
                 className="pointer-events-auto w-full"
-                style={{ maxWidth: appMode === 'work' ? undefined : '720px', margin: '0 auto' }}
+                style={{ maxWidth: isWorkMode ? undefined : '720px', margin: '0 auto' }}
               >
                 <QueuedPromptNotice
                   items={queuedPrompts}
