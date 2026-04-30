@@ -619,12 +619,13 @@ func anthropicContentBlocks(parts []ContentPart) ([]map[string]any, error) {
 			blocks = append(blocks, block)
 		case "thinking":
 			signature := strings.TrimSpace(part.Signature)
-			block := map[string]any{
-				"type":     "thinking",
-				"thinking": part.Text,
+			if signature == "" {
+				continue
 			}
-			if signature != "" {
-				block["signature"] = signature
+			block := map[string]any{
+				"type":      "thinking",
+				"thinking":  part.Text,
+				"signature": signature,
 			}
 			blocks = append(blocks, block)
 		case "redacted_thinking":
