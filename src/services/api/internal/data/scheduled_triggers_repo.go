@@ -522,15 +522,16 @@ func (ScheduledTriggersRepository) ResolveHeartbeatThread(
 	)
 	if personaID != uuid.Nil {
 		err = db.QueryRow(ctx,
-			`SELECT t.id, t.account_id, t.created_by_user_id, t.deleted_at
-			   FROM threads t
-			   JOIN channel_group_threads cgt ON cgt.thread_id = t.id
-			  WHERE cgt.channel_id = $1
-			    AND cgt.platform_chat_id = $2
-			    AND cgt.persona_id = $3
-			    AND t.account_id = $4
-			    AND t.deleted_at IS NULL
-			  ORDER BY cgt.created_at DESC
+			`SELECT t.id, t.account_id, COALESCE(t.created_by_user_id, ch.owner_user_id), t.deleted_at
+				   FROM threads t
+				   JOIN channel_group_threads cgt ON cgt.thread_id = t.id
+				   JOIN channels ch ON ch.id = cgt.channel_id
+				  WHERE cgt.channel_id = $1
+				    AND cgt.platform_chat_id = $2
+				    AND cgt.persona_id = $3
+				    AND t.account_id = $4
+				    AND t.deleted_at IS NULL
+				  ORDER BY cgt.created_at DESC
 			  LIMIT 1`,
 			row.ChannelID,
 			platformSubjectID,
@@ -555,9 +556,10 @@ func (ScheduledTriggersRepository) ResolveHeartbeatThread(
 	}
 
 	err = db.QueryRow(ctx,
-		`SELECT t.id, t.account_id, t.created_by_user_id, t.deleted_at
+		`SELECT t.id, t.account_id, COALESCE(t.created_by_user_id, ch.owner_user_id), t.deleted_at
 		   FROM threads t
 		   JOIN channel_dm_threads cdt ON cdt.thread_id = t.id
+		   JOIN channels ch ON ch.id = cdt.channel_id
 		  WHERE cdt.channel_id = $1
 		    AND cdt.channel_identity_id = $2
 		    AND t.account_id = $3

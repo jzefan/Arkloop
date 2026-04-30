@@ -316,3 +316,68 @@ func TestScheduledTriggersRepositoryDeleteInactiveHeartbeatsKeepsActiveGroupIden
 		t.Fatalf("expected trigger to remain, deleted=%d", count)
 	}
 }
+
+func TestScheduledTriggersRepositoryResolveHeartbeatThreadUsesChannelOwnerForGroupThread(t *testing.T) {
+	repo, pool, ctx := setupScheduledTriggersRepo(t)
+	accountID := uuid.New()
+	ownerUserID := uuid.New()
+	projectID := uuid.New()
+	personaID := uuid.New()
+	channelID := uuid.New()
+	groupIdentityID := uuid.New()
+	threadID := uuid.New()
+
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO users (id, username, email, status)
+		VALUES ($1, $2, $3, 'active');
+		INSERT INTO accounts (id, slug, name, type, owner_user_id)
+		VALUES ($4, $5, 'Heartbeat Account', 'personal', $1);
+		INSERT INTO projects (id, account_id, name, visibility, created_at)
+		VALUES ($6, $4, 'Heartbeat Project', 'private', now());
+		INSERT INTO personas (
+			id, account_id, project_id, persona_key, version, display_name, prompt_md,
+			tool_allowlist, tool_denylist, budgets_json, roles_json, title_summarize_json,
+			is_active, prompt_cache_control, executor_type, executor_config_json, created_at, updated_at
+		) VALUES (
+			$7, $4, $6, 'group-persona', '1', 'Group Persona', 'hello',
+			'[]'::jsonb, '[]'::jsonb, '{}'::jsonb, '{}'::jsonb, '{}'::jsonb,
+			true, 'none', 'agent.simple', '{}'::jsonb, now(), now()
+		);
+		INSERT INTO channels (id, account_id, channel_type, persona_id, owner_user_id, webhook_secret, webhook_url, is_active, config_json)
+		VALUES ($8, $4, 'telegram', $7, $1, 'whsec', 'https://example.com', true, '{}'::jsonb);
+		INSERT INTO channel_identities (id, channel_type, platform_subject_id, display_name, metadata)
+		VALUES ($9, 'telegram', 'group-123', 'group', '{}'::jsonb);
+		INSERT INTO threads (id, account_id, created_by_user_id, project_id, title, is_private, created_at)
+		VALUES ($10, $4, NULL, $6, 'Group Thread', false, now());
+		INSERT INTO channel_group_threads (channel_id, platform_chat_id, persona_id, thread_id)
+		VALUES ($8, 'group-123', $7, $10);`,
+		ownerUserID,
+		"owner-"+ownerUserID.String(),
+		"owner-"+ownerUserID.String()+"@test.local",
+		accountID,
+		"heartbeat-"+accountID.String(),
+		projectID,
+		personaID,
+		channelID,
+		groupIdentityID,
+		threadID,
+	); err != nil {
+		t.Fatalf("seed heartbeat group thread: %v", err)
+	}
+
+	got, err := repo.ResolveHeartbeatThread(ctx, pool, ScheduledTriggerRow{
+		ChannelID:         channelID,
+		ChannelIdentityID: groupIdentityID,
+		PersonaKey:        "group-persona",
+		AccountID:         accountID,
+	})
+	if err != nil {
+		t.Fatalf("ResolveHeartbeatThread: %v", err)
+	}
+	if got == nil {
+		t.Fatal("expected heartbeat thread context")
+	}
+	if got.CreatedByUserID == nil || *got.CreatedByUserID != ownerUserID {
+		t.Fatalf("expected channel owner user id, got %#v", got.CreatedByUserID)
+	}
+}
