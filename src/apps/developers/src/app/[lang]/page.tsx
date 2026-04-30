@@ -6,6 +6,9 @@ import styles from './landing.module.css';
 
 type Lang = 'zh' | 'en';
 
+const SHOWCASE_MP4_SRC =
+  'https://raw.githubusercontent.com/qqqqqf-q/Arkloop/main/src/apps/developers/public/showcase.mp4';
+
 const CONTENT: Record<Lang, {
   heroTitle: string[];
   heroDesc: string;
@@ -239,7 +242,7 @@ export default function LandingPage({
               onError={() => setShowcaseState('error')}
               controls={false}
             >
-              <source src="/showcase.mp4" type="video/mp4" />
+              <source src={SHOWCASE_MP4_SRC} type="video/mp4" />
             </video>
             {showcaseState === 'loading' && (
               <div className={styles.showcaseLoading} aria-hidden />
