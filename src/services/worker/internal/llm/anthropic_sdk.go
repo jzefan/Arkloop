@@ -468,8 +468,12 @@ func anthropicSDKContentBlock(block map[string]any) (*anthropic.ContentBlockPara
 		return &anthropic.ContentBlockParamUnion{OfText: &param}, nil
 	case "thinking":
 		signature, _ := block["signature"].(string)
+		signature = strings.TrimSpace(signature)
+		if signature == "" {
+			return nil, nil
+		}
 		thinking, _ := block["thinking"].(string)
-		param := anthropic.NewThinkingBlock(strings.TrimSpace(signature), thinking)
+		param := anthropic.NewThinkingBlock(signature, thinking)
 		return &param, nil
 	case "redacted_thinking":
 		data, _ := block["data"].(string)

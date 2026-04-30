@@ -281,30 +281,41 @@ func TestAnthropicMessagesDeduplicatesRepeatedToolResultBlocks(t *testing.T) {
 	}
 }
 
-func TestAnthropicSDKGateway_ReplaysUnsignedThinkingViaRawMessages(t *testing.T) {
+func TestAnthropicSDKGateway_DropsUnsignedThinking(t *testing.T) {
 	_, messages, err := toAnthropicMessagesWithPlan([]Message{{
 		Role: "assistant",
 		Content: []ContentPart{
-			{Type: "thinking", Text: "keep"},
+			{Type: "thinking", Text: "drop"},
 			{Text: "done"},
+		},
+	}, {
+		Role:    "assistant",
+		Content: []ContentPart{{Type: "thinking", Text: "drop-only"}},
+	}, {
+		Role: "assistant",
+		Content: []ContentPart{
+			{Type: "thinking", Text: "keep", Signature: "sig_keep"},
+			{Text: "answer"},
 		},
 	}}, nil)
 	if err != nil {
 		t.Fatalf("toAnthropicMessagesWithPlan failed: %v", err)
 	}
-	if len(messages) != 1 {
+	if len(messages) != 2 {
 		t.Fatalf("unexpected messages: %#v", messages)
 	}
-	content := messages[0]["content"].([]map[string]any)
-	if len(content) != 2 || content[0]["type"] != "thinking" || content[0]["thinking"] != "keep" {
-		t.Fatalf("thinking not preserved: %#v", messages[0])
+	firstContent := messages[0]["content"].([]map[string]any)
+	if len(firstContent) != 1 || firstContent[0]["type"] != "text" || firstContent[0]["text"] != "done" {
+		t.Fatalf("unsigned thinking not dropped: %#v", messages[0])
 	}
-	if _, exists := content[0]["signature"]; exists {
-		t.Fatalf("unsigned thinking must not invent signature: %#v", content[0])
+
+	secondContent := messages[1]["content"].([]map[string]any)
+	if len(secondContent) != 2 || secondContent[0]["type"] != "thinking" || secondContent[0]["thinking"] != "keep" || secondContent[0]["signature"] != "sig_keep" {
+		t.Fatalf("signed thinking not preserved: %#v", messages[1])
 	}
 	payload := map[string]any{"messages": messages}
-	if !anthropicSDKMessagesRequireRawJSON(payload) {
-		t.Fatalf("unsigned thinking must force raw message payload")
+	if anthropicSDKMessagesRequireRawJSON(payload) {
+		t.Fatalf("signed thinking should use SDK params: %#v", payload)
 	}
 }
 
