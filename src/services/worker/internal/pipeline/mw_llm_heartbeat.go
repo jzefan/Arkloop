@@ -133,14 +133,14 @@ func NewHeartbeatPrepareMiddleware() RunMiddleware {
 			CacheEligible: false,
 		})
 
-		// SystemProtocolSnippet 保留在 system prefix：机制约束放 system 层
+		// 当前 run 的两阶段协议放在 runtime tail，避免污染可复用缓存前缀。
 		rc.UpsertPromptSegment(PromptSegment{
 			Name:          "heartbeat.system_protocol",
-			Target:        PromptTargetSystemPrefix,
-			Role:          "system",
+			Target:        PromptTargetRuntimeTail,
+			Role:          "user",
 			Text:          heartbeattool.SystemProtocolSnippet(),
-			Stability:     PromptStabilitySessionPrefix,
-			CacheEligible: true,
+			Stability:     PromptStabilityVolatileTail,
+			CacheEligible: false,
 		})
 
 		if rc.AllowlistSet == nil {
