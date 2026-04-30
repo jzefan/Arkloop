@@ -220,6 +220,7 @@ func (l *Loop) Run(
 			"message_count": len(messages),
 			"tool_count":    len(request.Tools),
 		})
+		prepareHeartbeatDecisionPhaseRequest(&turnRequest)
 		debugEnabled := runCtx.PipelineRC != nil && runCtx.PipelineRC.PromptCacheDebugEnabled
 
 		if promptCacheState != nil {
@@ -696,6 +697,7 @@ func (l *Loop) Run(
 			request.Tools = filterToolSpecs(request.Tools, func(spec llm.ToolSpec) bool {
 				return pipeline.IsHeartbeatDecisionToolName(spec.Name)
 			})
+			messages = stripImagePartsFromMessages(messages)
 		}
 
 		// end_reply: terminate run without further output
@@ -2233,6 +2235,125 @@ func isHeartbeatDecisionPhase(request *llm.Request) bool {
 	}
 	return strings.EqualFold(strings.TrimSpace(request.ToolChoice.Mode), "specific") &&
 		pipeline.IsHeartbeatDecisionToolName(request.ToolChoice.ToolName)
+}
+
+func prepareHeartbeatDecisionPhaseRequest(request *llm.Request) {
+	if !isHeartbeatDecisionPhase(request) {
+		return
+	}
+	request.Messages = heartbeatDecisionPhaseMessages(request.Messages)
+	if heartbeatTools := filterToolSpecs(request.Tools, func(spec llm.ToolSpec) bool {
+		return !pipeline.IsHeartbeatDecisionToolName(spec.Name)
+	}); len(heartbeatTools) > 0 {
+		request.Tools = heartbeatTools
+	}
+	request.PromptPlan = nil
+}
+
+func heartbeatDecisionPhaseMessages(messages []llm.Message) []llm.Message {
+	if len(messages) == 0 {
+		return nil
+	}
+	heartbeatIdx := -1
+	for i, msg := range messages {
+		if messageHasText(msg, "[SYSTEM_HEARTBEAT_CHECK]") {
+			heartbeatIdx = i
+			break
+		}
+	}
+	if heartbeatIdx < 0 {
+		heartbeatIdx = len(messages)
+	}
+
+	const historyLimit = 12
+	history := make([]llm.Message, 0, historyLimit)
+	for i := heartbeatIdx - 1; i >= 0 && len(history) < historyLimit; i-- {
+		cloned, ok := heartbeatDecisionVisibleMessage(messages[i])
+		if !ok {
+			continue
+		}
+		history = append(history, cloned)
+	}
+	out := make([]llm.Message, 0, len(history)+len(messages)-heartbeatIdx)
+	for i := len(history) - 1; i >= 0; i-- {
+		out = append(out, history[i])
+	}
+	for _, msg := range messages[heartbeatIdx:] {
+		if cloned, ok := heartbeatDecisionVisibleMessage(msg); ok {
+			out = append(out, cloned)
+		}
+	}
+	return out
+}
+
+func heartbeatDecisionVisibleMessage(msg llm.Message) (llm.Message, bool) {
+	role := strings.TrimSpace(msg.Role)
+	if role != "user" && role != "assistant" {
+		return llm.Message{}, false
+	}
+	parts := make([]llm.ContentPart, 0, len(msg.Content))
+	for _, part := range msg.Content {
+		if strings.TrimSpace(part.Text) == "" {
+			continue
+		}
+		parts = append(parts, llm.ContentPart{
+			Type:        part.Type,
+			Text:        part.Text,
+			TrustSource: part.TrustSource,
+		})
+	}
+	if len(parts) == 0 {
+		return llm.Message{}, false
+	}
+	return llm.Message{Role: role, Content: parts}, true
+}
+
+func stripImagePartsFromMessages(messages []llm.Message) []llm.Message {
+	if len(messages) == 0 {
+		return messages
+	}
+	out := make([]llm.Message, len(messages))
+	copy(out, messages)
+	for i := range out {
+		parts, changed := stripImageParts(out[i].Content)
+		if changed {
+			out[i].Content = parts
+		}
+	}
+	return out
+}
+
+func stripImageParts(parts []llm.ContentPart) ([]llm.ContentPart, bool) {
+	if len(parts) == 0 {
+		return parts, false
+	}
+	out := make([]llm.ContentPart, 0, len(parts))
+	changed := false
+	for _, part := range parts {
+		if part.Kind() != messagecontent.PartTypeImage {
+			out = append(out, part)
+			continue
+		}
+		changed = true
+		key := ""
+		if part.Attachment != nil {
+			key = strings.TrimSpace(part.Attachment.Key)
+		}
+		if key != "" {
+			out = append(out, llm.ContentPart{
+				Type:        messagecontent.PartTypeText,
+				Text:        "[attachment_key:" + key + "]",
+				TrustSource: part.TrustSource,
+			})
+		}
+	}
+	if len(out) == 0 {
+		out = append(out, llm.ContentPart{
+			Type: messagecontent.PartTypeText,
+			Text: "[image omitted]",
+		})
+	}
+	return out, changed
 }
 
 func heartbeatPromptCacheMarkerIndex(messages []llm.Message) int {
