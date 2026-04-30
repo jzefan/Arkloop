@@ -15,7 +15,6 @@ import (
 	"arkloop/services/api/internal/http/billingapi"
 	"arkloop/services/api/internal/http/catalogapi"
 	"arkloop/services/api/internal/http/conversationapi"
-	"arkloop/services/api/internal/http/llmproxyapi"
 	"arkloop/services/api/internal/http/platformapi"
 	"arkloop/services/api/internal/http/scheduledjobsapi"
 
@@ -26,7 +25,6 @@ import (
 	"arkloop/services/api/internal/featureflag"
 	"arkloop/services/api/internal/observability"
 	"arkloop/services/api/internal/personas"
-	"arkloop/services/shared/acptoken"
 	sharedconfig "arkloop/services/shared/config"
 	"arkloop/services/shared/discordbot"
 	"arkloop/services/shared/objectstore"
@@ -165,8 +163,6 @@ type HandlerConfig struct {
 
 	RepoPersonas       []personas.RepoPersona
 	PersonaSyncTrigger interface{ Trigger() }
-
-	ACPTokenValidator *acptoken.Validator
 }
 
 type artifactStore interface {
@@ -433,16 +429,6 @@ func NewHandler(cfg HandlerConfig) nethttp.Handler {
 			Pool:                  cfg.Pool,
 		})
 	}
-
-	llmproxyapi.RegisterRoutes(mux, llmproxyapi.Deps{
-		TokenValidator: cfg.ACPTokenValidator,
-		LlmCredRepo:    cfg.LlmCredentialsRepo,
-		LlmRoutesRepo:  cfg.LlmRoutesRepo,
-		SecretsRepo:    cfg.SecretsRepo,
-		Pool:           cfg.Pool,
-		RedisClient:    cfg.RedisClient,
-		RunEventRepo:   cfg.RunEventRepo,
-	})
 
 	notFound := nethttp.HandlerFunc(func(w nethttp.ResponseWriter, r *nethttp.Request) {
 		traceID := observability.TraceIDFromContext(r.Context())

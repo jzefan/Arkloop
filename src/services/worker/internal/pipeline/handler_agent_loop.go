@@ -21,7 +21,6 @@ import (
 	"arkloop/services/worker/internal/queue"
 	"arkloop/services/worker/internal/subagentctl"
 	"arkloop/services/worker/internal/tools"
-	"arkloop/services/worker/internal/tools/builtin/acptool"
 	"arkloop/services/worker/internal/tools/builtin/read"
 
 	"github.com/google/uuid"
@@ -103,11 +102,6 @@ func NewAgentLoopHandler(
 				return
 			}
 			read.CleanupRunFromExecutors(rc.ToolExecutors, rc.Run.ID.String())
-			cleanupCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			defer cancel()
-			if err := acptool.CleanupRunFromExecutors(cleanupCtx, rc.ToolExecutors, rc.Run.ID.String(), writer.terminalRunStatus); err != nil {
-				slog.Warn("acp cleanup failed", "run_id", rc.Run.ID.String(), "error", err.Error())
-			}
 			tools.CleanupPersistedToolOutputs(rc.Run.ThreadID.String())
 		}()
 		if isStaleSubAgentCallbackRun(rc.InputJSON) {

@@ -15,7 +15,6 @@ import (
 )
 
 var runtimeManagedToolNames = map[string]struct{}{
-	"acp_agent":            {},
 	"browser":              {},
 	"conversation_search":  {},
 	"create_artifact":      {},

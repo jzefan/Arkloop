@@ -51,7 +51,6 @@ const (
 	ProviderFirecracker = "firecracker"
 	ProviderDocker      = "docker"
 	ProviderVz          = "vz"
-	ProviderLocal       = "local"
 )
 
 type Config struct {
@@ -393,15 +392,12 @@ func (c Config) Validate() error {
 		return fmt.Errorf("addr invalid: %w", err)
 	}
 	switch c.Provider {
-	case ProviderFirecracker, ProviderDocker, ProviderVz, ProviderLocal:
+	case ProviderFirecracker, ProviderDocker, ProviderVz:
 	default:
-		return fmt.Errorf("provider must be %q, %q, %q, or %q", ProviderFirecracker, ProviderDocker, ProviderVz, ProviderLocal)
+		return fmt.Errorf("provider must be %q, %q, or %q", ProviderFirecracker, ProviderDocker, ProviderVz)
 	}
 	if c.WarmBrowser > 0 && !c.AllowEgress {
 		return fmt.Errorf("browser warm pool requires allow_egress=true")
-	}
-	if c.Provider == ProviderLocal {
-		return nil
 	}
 	if c.BootTimeoutSeconds <= 0 {
 		return fmt.Errorf("boot_timeout_seconds must be positive")
@@ -507,8 +503,6 @@ func (c Config) MaxLifetimeSecondsFor(tier string) int {
 		return c.MaxLifetimeSeconds
 	}
 }
-
-
 
 func writeConfigWarn(event string, err error) {
 	if err == nil {

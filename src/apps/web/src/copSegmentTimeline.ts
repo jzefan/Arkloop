@@ -67,9 +67,8 @@ export type TodoWriteRef = {
 const CODE_EXECUTION_TOOL_NAMES = new Set(['python_execute', 'exec_command', 'continue_process', 'terminate_process'])
 const TODO_TOOL_NAMES = new Set(['todo_write'])
 const SUB_AGENT_TOOL_NAMES = new Set([
-  'spawn_agent', 'acp_agent', 'spawn_acp',
+  'spawn_agent',
   'send_input', 'wait_agent', 'resume_agent', 'close_agent', 'interrupt_agent',
-  'send_acp', 'wait_acp', 'close_acp', 'interrupt_acp',
 ])
 const FILE_OP_TOOL_NAMES = new Set([
   'grep', 'glob', 'read_file', 'read', 'write_file', 'edit', 'edit_file',

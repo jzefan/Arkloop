@@ -72,7 +72,7 @@ func (s *stubProcessService) CloseSession(_ context.Context, sessionID, accountI
 
 func TestProcessRoutesAcceptNewProtocol(t *testing.T) {
 	svc := &stubProcessService{}
-	handler := NewHandler(nil, nil, nil, nil, svc, nil, nil, newTestLogger(), "")
+	handler := NewHandler(nil, nil, nil, nil, svc, nil, newTestLogger(), "")
 
 	execBody, _ := json.Marshal(map[string]any{
 		"session_id": "run_1",
@@ -139,7 +139,7 @@ func TestProcessRoutesAcceptNewProtocol(t *testing.T) {
 
 func TestProcessExecRouteRejectsInvalidMode(t *testing.T) {
 	svc := &stubProcessService{}
-	handler := NewHandler(nil, nil, nil, nil, svc, nil, nil, newTestLogger(), "")
+	handler := NewHandler(nil, nil, nil, nil, svc, nil, newTestLogger(), "")
 
 	body, _ := json.Marshal(map[string]any{
 		"session_id": "run_1",
@@ -160,7 +160,7 @@ func TestProcessExecRouteRejectsInvalidMode(t *testing.T) {
 }
 
 func TestLegacyProcessExecCommandRouteNotFound(t *testing.T) {
-	handler := NewHandler(nil, nil, nil, nil, &stubProcessService{}, nil, nil, newTestLogger(), "")
+	handler := NewHandler(nil, nil, nil, nil, &stubProcessService{}, nil, newTestLogger(), "")
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/process/exec_command", bytes.NewBufferString(`{}`))
 	rec := httptest.NewRecorder()

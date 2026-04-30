@@ -1,5 +1,4 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { ACP_DELEGATE_LAYER } from '@arkloop/shared'
 import {
   assistantTurnPlainText,
   buildAssistantTurnFromRunEvents,
@@ -164,17 +163,6 @@ describe('buildAssistantTurnFromRunEvents', () => {
         ],
       },
     ])
-  })
-
-  it('忽略 ACP delegate_layer 的 delta 与工具事件', () => {
-    const d = { delegate_layer: ACP_DELEGATE_LAYER }
-    const turn = buildAssistantTurnFromRunEvents([
-      ev('r1', 1, 'message.delta', { ...d, role: 'assistant', content_delta: 'inner' }),
-      ev('r1', 2, 'tool.call', { ...d, tool_name: 'read_file', tool_call_id: 'x', arguments: {} }),
-      ev('r1', 3, 'tool.result', { ...d, tool_name: 'read_file', tool_call_id: 'x', result: {} }),
-      ev('r1', 4, 'message.delta', { role: 'assistant', content_delta: 'host' }),
-    ])
-    expect(turn.segments).toEqual([{ type: 'text', content: 'host' }])
   })
 
   it('忽略 end_reply，不让它进入 cop 段', () => {

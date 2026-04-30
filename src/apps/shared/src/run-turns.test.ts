@@ -1,5 +1,4 @@
 import { describe, expect, it } from 'vitest'
-import { ACP_DELEGATE_LAYER } from './runEventDelegate'
 import { buildTurns, type RunEventRaw } from './run-turns'
 import { buildRequestThreadTurns } from './thread-turns'
 
@@ -926,95 +925,6 @@ time: "2026-04-04T06:21:00Z"
     })
     expect(turns[0]?.toolNames).toEqual(['web_fetch'])
     expect(turns[0]?.toolSchemaBytesMap).toEqual({ web_fetch: 1024 })
-  })
-
-  it('ignores ACP delegate deltas/tools and inner run.completed; keeps host acp_agent tool result', () => {
-    const delegate = { delegate_layer: ACP_DELEGATE_LAYER }
-    const turns = buildTurns([
-      makeEvent({
-        seq: 1,
-        type: 'llm.request',
-        data: {
-          llm_call_id: 'call_1',
-          provider_kind: 'openai',
-          api_mode: 'chat_completions',
-          payload: {
-            messages: [{ role: 'user', content: '用 opencode' }],
-          },
-        },
-      }),
-      makeEvent({
-        seq: 2,
-        type: 'message.delta',
-        data: { ...delegate, role: 'assistant', content_delta: 'inner stream noise' },
-      }),
-      makeEvent({
-        seq: 3,
-        type: 'tool.call',
-        data: {
-          ...delegate,
-          tool_call_id: 'inner_1',
-          tool_name: 'read_file',
-          arguments: {},
-        },
-      }),
-      makeEvent({
-        seq: 4,
-        type: 'tool.result',
-        data: {
-          ...delegate,
-          tool_call_id: 'inner_1',
-          tool_name: 'read_file',
-          result: { ok: true },
-        },
-      }),
-      makeEvent({
-        seq: 5,
-        type: 'run.completed',
-        data: { ...delegate, summary: 'inner done' },
-      }),
-      makeEvent({
-        seq: 6,
-        type: 'tool.call',
-        data: {
-          tool_call_id: 'host_acp',
-          tool_name: 'acp_agent',
-          arguments: { task: 'x' },
-        },
-      }),
-      makeEvent({
-        seq: 7,
-        type: 'tool.result',
-        data: {
-          tool_call_id: 'host_acp',
-          tool_name: 'acp_agent',
-          result: { output: '最终结果' },
-        },
-      }),
-      makeEvent({
-        seq: 8,
-        type: 'run.completed',
-        data: {},
-      }),
-    ])
-
-    expect(turns).toHaveLength(1)
-    expect(turns[0]?.assistantText).toBe('')
-    expect(turns[0]?.segments).toEqual([
-      {
-        kind: 'tool_call',
-        toolCallId: 'host_acp',
-        toolName: 'acp_agent',
-        argsJSON: { task: 'x' },
-      },
-      {
-        kind: 'tool_result',
-        toolCallId: 'host_acp',
-        toolName: 'acp_agent',
-        resultJSON: { output: '最终结果' },
-        errorClass: undefined,
-      },
-    ])
   })
 
   it('prefers the latest request size metrics over an earlier failed rewrite attempt', () => {

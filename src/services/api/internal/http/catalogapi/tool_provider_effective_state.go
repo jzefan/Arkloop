@@ -71,16 +71,6 @@ func resolveToolProviderRuntimeStatus(
 			}
 			return toolProviderRuntimeStatus{Status: toolProviderRuntimeStatusAvailable, Source: source}
 		}
-	case "acp":
-		if selected && snapshot.BuiltinAvailable("acp_agent") {
-			source := toolProviderRuntimeSourceProviderConfig
-			if sharedtoolruntime.SandboxAvailableFromEnv() || desktopSandboxAvailable() {
-				source = toolProviderRuntimeSourceSandbox
-			} else if desktopLocalACPAvailable() {
-				source = toolProviderRuntimeSourceLocal
-			}
-			return toolProviderRuntimeStatus{Status: toolProviderRuntimeStatusAvailable, Source: source}
-		}
 	default:
 		if selected && runtimeGroupAvailable(def.GroupName, available) {
 			return toolProviderRuntimeStatus{

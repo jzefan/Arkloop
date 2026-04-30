@@ -31,7 +31,7 @@ Arkloop 是**开源**、面向**对话式 AI Agent** 的平台：托管运行时
 4. **Prompt 注入防护**：语义级扫描等安全约束（具体策略以部署配置为准）。
 5. **渠道**：如 **Telegram** 等，消息进入与 Web 类似的 Worker 管道（详见 `channels_telegram` 文档）。
 6. **Persona**：每个 Agent 可独立配置系统提示、工具白名单、预算等；支持 **Lua**（`agent.lua`）自定义循环逻辑。
-7. **MCP / ACP**：Model Context Protocol 与 Agent Communication Protocol 支持。
+7. **MCP**：Model Context Protocol 工具扩展支持。
 8. **Skill**：可从 ClawHub 等导入，兼容 OpenClaw `SKILL.md` 格式。
 
 ## 内置 Persona 类型（仓库模板）

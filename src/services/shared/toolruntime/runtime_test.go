@@ -110,7 +110,6 @@ func TestResolveBuiltinUsesEnvAndProviders(t *testing.T) {
 
 	got := resolved.ToolNames()
 	want := []string{
-		"acp_agent",
 		"arkloop_help",
 		"artifact_guidelines",
 		"ask_user",
@@ -272,10 +271,10 @@ func TestRuntimeSnapshotMergeBuiltinToolNamesFromPreservesStubAndAddsBuiltins(t 
 	if err != nil {
 		t.Fatalf("BuildRuntimeSnapshot: %v", err)
 	}
-	stub := RuntimeSnapshot{ACPHostKind: "local"}
+	stub := RuntimeSnapshot{SandboxBaseURL: "http://sandbox.internal"}
 	merged := stub.MergeBuiltinToolNamesFrom(envLayer)
-	if merged.ACPHostKind != "local" {
-		t.Fatalf("lost stub ACPHostKind, got %q", merged.ACPHostKind)
+	if merged.SandboxBaseURL != "http://sandbox.internal" {
+		t.Fatalf("lost stub SandboxBaseURL, got %q", merged.SandboxBaseURL)
 	}
 	if !merged.BuiltinAvailable("grep") {
 		t.Fatal("expected grep from env merge (static filesystem tools)")
@@ -290,26 +289,6 @@ func TestResolveBuiltinWebFetchJinaRequiresProviderConfig(t *testing.T) {
 	})
 	if _, ok := resolved.ToolNameSet()["web_fetch"]; !ok {
 		t.Fatal("web_fetch should be present when jina provider is configured")
-	}
-}
-
-func TestResolveBuiltinAddsACPFromProviderConfig(t *testing.T) {
-	resolved := ResolveBuiltin(ResolveInput{
-		PlatformProviders: []ProviderConfig{
-			{
-				GroupName:    "acp",
-				ProviderName: "acp.opencode",
-				ConfigJSON: map[string]any{
-					"host_kind": "local",
-				},
-			},
-		},
-	})
-	if _, ok := resolved.ToolNameSet()["acp_agent"]; !ok {
-		t.Fatal("acp_agent should be present when ACP provider config resolves a host")
-	}
-	if resolved.ACPHostKind != "local" {
-		t.Fatalf("unexpected ACP host kind: %q", resolved.ACPHostKind)
 	}
 }
 

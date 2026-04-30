@@ -40,7 +40,6 @@ type RuntimeSnapshot struct {
 	BrowserEnabled         bool
 	SandboxBaseURL         string
 	SandboxAuthToken       string
-	ACPHostKind            string
 	DesktopExecutionMode   string
 	MemoryProvider         string
 	MemoryBaseURL          string
@@ -64,7 +63,6 @@ type SnapshotInput struct {
 type BuiltinAvailability struct {
 	toolNames              []string
 	SandboxBaseURL         string
-	ACPHostKind            string
 	MemoryProvider         string
 	MemoryBaseURL          string
 	MemoryAPIKey           string
@@ -111,7 +109,6 @@ func BuildRuntimeSnapshot(ctx context.Context, input SnapshotInput) (RuntimeSnap
 		BrowserEnabled:         browserEnabled,
 		SandboxBaseURL:         availability.SandboxBaseURL,
 		SandboxAuthToken:       strings.TrimSpace(os.Getenv(authTokenEnvName)),
-		ACPHostKind:            availability.ACPHostKind,
 		MemoryProvider:         availability.MemoryProvider,
 		MemoryBaseURL:          availability.MemoryBaseURL,
 		MemoryAPIKey:           availability.MemoryAPIKey,
@@ -123,7 +120,7 @@ func BuildRuntimeSnapshot(ctx context.Context, input SnapshotInput) (RuntimeSnap
 }
 
 // MergeBuiltinToolNamesFrom 合并 s 与 other 的「托管 builtin 工具名」集合。
-// Desktop 手写 Snapshot 只带 Sandbox/ACP；需与 BuildRuntimeSnapshot 产物合并后，
+// Desktop 手写 Snapshot 只带 Sandbox；需与 BuildRuntimeSnapshot 产物合并后，
 // filterAllowlistByRuntime 才能依据环境识别 web_search / web_fetch 等。
 func (s RuntimeSnapshot) MergeBuiltinToolNamesFrom(other RuntimeSnapshot) RuntimeSnapshot {
 	left := s.BuiltinToolNameSet()
@@ -215,11 +212,6 @@ func ResolveBuiltin(input ResolveInput) BuiltinAvailability {
 		}
 	}
 
-	acpHostKind := resolveACPHostKind(sandboxBaseURL, input.PlatformProviders)
-	if acpHostKind != "" {
-		available["acp_agent"] = struct{}{}
-	}
-
 	memoryProvider := normalizeMemoryProvider(strings.TrimSpace(input.Env.MemoryProvider))
 	memoryBaseURL := strings.TrimSpace(input.Env.MemoryBaseURL)
 	memoryAPIKey := strings.TrimSpace(input.Env.MemoryAPIKey)
@@ -275,7 +267,6 @@ func ResolveBuiltin(input ResolveInput) BuiltinAvailability {
 	return BuiltinAvailability{
 		toolNames:              names,
 		SandboxBaseURL:         sandboxBaseURL,
-		ACPHostKind:            acpHostKind,
 		MemoryProvider:         memoryProvider,
 		MemoryBaseURL:          memoryBaseURL,
 		MemoryAPIKey:           memoryAPIKey,
@@ -455,10 +446,8 @@ func (s RuntimeSnapshot) BuiltinAvailable(toolName string) bool {
 		return true
 	}
 	switch name {
-	case "acp_agent":
-		return strings.TrimSpace(s.ACPHostKind) != ""
 	case "exec_command", "continue_process", "terminate_process", "resize_process":
-		return strings.TrimSpace(s.SandboxBaseURL) != "" || strings.TrimSpace(s.ACPHostKind) == "local"
+		return strings.TrimSpace(s.SandboxBaseURL) != "" || strings.TrimSpace(s.DesktopExecutionMode) == "local"
 	default:
 		return false
 	}
@@ -516,31 +505,6 @@ func findProvider(providers []ProviderConfig, groupName string) *ProviderConfig 
 		return &providers[i]
 	}
 	return nil
-}
-
-func resolveACPHostKind(sandboxBaseURL string, providers []ProviderConfig) string {
-	if provider := findProvider(providers, "acp"); provider != nil {
-		if hostKind := normalizedACPHostKind(provider.ConfigJSON); hostKind != "" {
-			return hostKind
-		}
-	}
-	if sandboxBaseURL != "" {
-		return "sandbox"
-	}
-	return ""
-}
-
-func normalizedACPHostKind(config map[string]any) string {
-	if len(config) == 0 {
-		return ""
-	}
-	value, _ := config["host_kind"].(string)
-	switch strings.TrimSpace(strings.ToLower(value)) {
-	case "local", "sandbox":
-		return strings.TrimSpace(strings.ToLower(value))
-	default:
-		return ""
-	}
 }
 
 func normalizeBaseURL(raw string) string {

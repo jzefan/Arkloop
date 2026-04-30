@@ -39,7 +39,7 @@ type desktopTPList struct {
 	} `json:"groups"`
 }
 
-func TestDesktopToolProvidersListActivateAndConfigACP(t *testing.T) {
+func TestDesktopToolProvidersListActivateAndConfigWebSearch(t *testing.T) {
 	prevProbe := catalogapiTestSwapDesktopSandboxHealthProbe(func(addr string) bool {
 		return addr == ""
 	})
@@ -171,16 +171,17 @@ func TestDesktopToolProvidersListActivateAndConfigACP(t *testing.T) {
 		return w
 	}
 
-	act := put("/v1/tool-providers/acp/acp.opencode/activate", nil)
+	act := put("/v1/tool-providers/web_search/web_search.duckduckgo/activate", nil)
 	if act.Code != nethttp.StatusNoContent {
 		t.Fatalf("activate: %d %s", act.Code, act.Body.String())
 	}
 
 	cfgBody := map[string]any{
-		"command":    []string{"opencode", "acp"},
-		"extra_args": []string{"--experimental-acp"},
+		"mode":    "strict",
+		"region":  "global",
+		"profile": "desktop",
 	}
-	cfgResp := put("/v1/tool-providers/acp/acp.opencode/config", cfgBody)
+	cfgResp := put("/v1/tool-providers/web_search/web_search.duckduckgo/config", cfgBody)
 	if cfgResp.Code != nethttp.StatusNoContent {
 		t.Fatalf("config: %d %s", cfgResp.Code, cfgResp.Body.String())
 	}
@@ -201,16 +202,16 @@ func TestDesktopToolProvidersListActivateAndConfigACP(t *testing.T) {
 
 	var found bool
 	for _, g := range after.Groups {
-		if g.GroupName != "acp" {
+		if g.GroupName != "web_search" {
 			continue
 		}
 		for _, p := range g.Providers {
-			if p.ProviderName != "acp.opencode" {
+			if p.ProviderName != "web_search.duckduckgo" {
 				continue
 			}
 			found = true
 			if !p.IsActive {
-				t.Fatal("expected acp.opencode active")
+				t.Fatal("expected web_search.duckduckgo active")
 			}
 			if p.RuntimeState != "ready" {
 				t.Fatalf("expected runtime_state=ready, got %q", p.RuntimeState)
@@ -218,8 +219,8 @@ func TestDesktopToolProvidersListActivateAndConfigACP(t *testing.T) {
 			if p.RuntimeStatus != "available" {
 				t.Fatalf("expected runtime_status=available, got %q", p.RuntimeStatus)
 			}
-			if p.RuntimeSource != "local" {
-				t.Fatalf("expected runtime_source=local, got %q", p.RuntimeSource)
+			if p.RuntimeSource != "provider_config" {
+				t.Fatalf("expected runtime_source=provider_config, got %q", p.RuntimeSource)
 			}
 			if p.ConfigStatus != "active" {
 				t.Fatalf("expected config_status=active, got %q", p.ConfigStatus)
@@ -228,21 +229,16 @@ func TestDesktopToolProvidersListActivateAndConfigACP(t *testing.T) {
 			if err := json.Unmarshal(p.ConfigJSON, &parsed); err != nil {
 				t.Fatalf("config json: %v", err)
 			}
-			cmd, ok := parsed["command"].([]any)
-			if !ok || len(cmd) != 2 {
-				t.Fatalf("command: %#v", parsed["command"])
+			if parsed["mode"] != "strict" {
+				t.Fatalf("mode: %#v", parsed["mode"])
 			}
-			if cmd[0] != "opencode" || cmd[1] != "acp" {
-				t.Fatalf("command elems: %v", cmd)
-			}
-			xa, ok := parsed["extra_args"].([]any)
-			if !ok || len(xa) != 1 || xa[0] != "--experimental-acp" {
-				t.Fatalf("extra_args: %#v", parsed["extra_args"])
+			if parsed["profile"] != "desktop" {
+				t.Fatalf("profile: %#v", parsed["profile"])
 			}
 		}
 	}
 	if !found {
-		t.Fatal("acp.opencode not in list")
+		t.Fatal("web_search.duckduckgo not in list")
 	}
 }
 

@@ -8,7 +8,6 @@ import { CopTimeline } from './cop-timeline/CopTimeline'
 import type { WebSearchPhaseStep } from './cop-timeline/types'
 
 type Props = {
-  sourceTool?: 'acp_agent'
   nickname?: string
   role?: string
   personaId?: string
@@ -39,7 +38,6 @@ function maskFor(edge: ScrollEdge): string | undefined {
 }
 
 export function SubAgentBlock({
-  sourceTool,
   nickname,
   personaId,
   input,
@@ -60,10 +58,7 @@ export function SubAgentBlock({
 
   const displayOutput = output?.trim() ? output : error?.trim() ? error : undefined
   const emptyOutputLabel = status === 'completed' ? 'Sub-agent completed without text output' : t.agentNoOutput
-  const rawLabel =
-    sourceTool === 'acp_agent'
-      ? t.agentAcpAgent
-      : (nickname || personaId || t.agentSubAgent)
+  const rawLabel = nickname || personaId || t.agentSubAgent
   const streamTw = !!live
   const displayedLabel = useTypewriter(rawLabel, !streamTw)
   const inputTrimmed = input?.trim() ?? ''

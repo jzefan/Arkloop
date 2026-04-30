@@ -4,14 +4,6 @@ package catalogapi
 
 import sharedtoolruntime "arkloop/services/shared/toolruntime"
 
-func desktopSandboxAvailable() bool {
-	return false
-}
-
-func desktopLocalACPAvailable() bool {
-	return false
-}
-
 func desktopLocalMemoryAvailable() bool {
 	return false
 }

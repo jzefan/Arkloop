@@ -52,9 +52,6 @@ func TestBuildRuntimeSnapshotUsesResolverAndProviderLoader(t *testing.T) {
 	if snapshot.SandboxAuthToken != "sandbox-token" {
 		t.Fatalf("unexpected sandbox auth token: %q", snapshot.SandboxAuthToken)
 	}
-	if snapshot.ACPHostKind != "sandbox" {
-		t.Fatalf("unexpected ACP host kind: %q", snapshot.ACPHostKind)
-	}
 	if snapshot.MemoryBaseURL != memoryBaseURL {
 		t.Fatalf("unexpected memory base url: %q", snapshot.MemoryBaseURL)
 	}
@@ -66,9 +63,6 @@ func TestBuildRuntimeSnapshotUsesResolverAndProviderLoader(t *testing.T) {
 	}
 	if !snapshot.BuiltinAvailable("memory_search") {
 		t.Fatal("expected memory_search builtin to be visible")
-	}
-	if !snapshot.BuiltinAvailable("acp_agent") {
-		t.Fatal("expected acp_agent builtin to be visible")
 	}
 }
 
