@@ -355,11 +355,6 @@ func enforceAnthropicCacheControlLimit(payload map[string]any) {
 		delete(block, "cache_control")
 	}
 
-	if system, ok := payload["system"].([]map[string]any); ok {
-		for _, block := range system {
-			consume(block)
-		}
-	}
 	if messages, ok := payload["messages"].([]map[string]any); ok {
 		for _, message := range messages {
 			content, ok := message["content"].([]map[string]any)
@@ -369,6 +364,11 @@ func enforceAnthropicCacheControlLimit(payload map[string]any) {
 			for _, block := range content {
 				consume(block)
 			}
+		}
+	}
+	if system, ok := payload["system"].([]map[string]any); ok {
+		for _, block := range system {
+			consume(block)
 		}
 	}
 	if tools, ok := payload["tools"].([]map[string]any); ok {
