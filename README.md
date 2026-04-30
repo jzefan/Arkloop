@@ -24,6 +24,25 @@ Download the latest version from [GitHub Releases](https://github.com/qqqqqf-q/A
 
 The desktop app bundles the full runtime — no Docker, no configuration. Just open and use. Automatic updates via GitHub Releases.
 
+<details>
+<summary>macOS: app blocked (Move to Trash)</summary>
+
+Do **not** click **Move to Trash** when macOS warns that **Arkloop** cannot be verified.
+
+1. Choose **Done** or close the dialog.
+
+   ![Gatekeeper blocked Arkloop](./docs/readme/macos-gatekeeper-01-not-opened.png)
+
+2. Open **System Settings → Privacy & Security**. Under **Security**, find **Open Anyway** next to the **Arkloop** message and click it.
+
+   ![Privacy & Security, Open Anyway](./docs/readme/macos-gatekeeper-02-privacy-security.png)
+
+3. When the confirmation dialog appears, choose **Open Anyway** again.
+
+   ![Confirmation dialog](./docs/readme/macos-gatekeeper-03-confirm-open.png)
+
+</details>
+
 ## Contributing
 
 We welcome contributions of all kinds.
