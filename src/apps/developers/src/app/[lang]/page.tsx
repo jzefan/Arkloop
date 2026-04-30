@@ -1,6 +1,6 @@
 'use client';
 
-import { use, useState, useEffect } from 'react';
+import { use, useRef, useState, useEffect, useCallback } from 'react';
 import Link from 'next/link';
 import styles from './landing.module.css';
 
@@ -100,13 +100,58 @@ export default function LandingPage({
   const lang: Lang = rawLang === 'en' ? 'en' : 'zh';
   const [dlOpen, setDlOpen] = useState(false);
   const [showcaseState, setShowcaseState] = useState<ShowcaseState>('loading');
+  const showcaseVideoRef = useRef<HTMLVideoElement>(null);
   const c = CONTENT[lang];
+
+  const revealShowcase = useCallback(() => {
+    setShowcaseState((prev) => (prev === 'error' ? prev : 'ready'));
+  }, []);
 
   useEffect(() => {
     const id = window.setTimeout(() => {
       setShowcaseState((prev) => (prev === 'loading' ? 'ready' : prev));
-    }, 20000);
+    }, 25000);
     return () => window.clearTimeout(id);
+  }, []);
+
+  useEffect(() => {
+    const el = showcaseVideoRef.current;
+    if (!el) return;
+
+    el.defaultMuted = true;
+    el.muted = true;
+
+    const tryPlay = () => {
+      void el.play().catch(() => {});
+    };
+
+    tryPlay();
+
+    el.addEventListener('canplay', tryPlay);
+    el.addEventListener('loadeddata', tryPlay);
+
+    const onVis = () => {
+      if (document.visibilityState === 'visible') tryPlay();
+    };
+    document.addEventListener('visibilitychange', onVis);
+
+    let io: IntersectionObserver | null = null;
+    if (typeof IntersectionObserver !== 'undefined') {
+      io = new IntersectionObserver(
+        (entries) => {
+          if (entries.some((e) => e.isIntersecting)) tryPlay();
+        },
+        { threshold: 0.08 }
+      );
+      io.observe(el);
+    }
+
+    return () => {
+      el.removeEventListener('canplay', tryPlay);
+      el.removeEventListener('loadeddata', tryPlay);
+      document.removeEventListener('visibilitychange', onVis);
+      io?.disconnect();
+    };
   }, []);
 
   useEffect(() => {
@@ -181,21 +226,23 @@ export default function LandingPage({
         <div className={styles.showcaseFrame}>
           <div className={styles.showcaseFrameInner}>
             <video
+              ref={showcaseVideoRef}
               className={styles.showcaseVideo}
-              src="/showcase.mp4"
               autoPlay
               loop
               muted
               playsInline
               preload="auto"
-              onLoadedData={() => setShowcaseState((prev) => (prev === 'error' ? prev : 'ready'))}
+              onCanPlay={revealShowcase}
+              onPlaying={revealShowcase}
+              onLoadedData={revealShowcase}
               onError={() => setShowcaseState('error')}
-            />
-            {showcaseState !== 'error' && (
-              <div
-                className={`${styles.showcaseLoading} ${showcaseState === 'ready' ? styles.showcaseLoadingDone : ''}`}
-                aria-hidden
-              />
+              controls={false}
+            >
+              <source src="/showcase.mp4" type="video/mp4" />
+            </video>
+            {showcaseState === 'loading' && (
+              <div className={styles.showcaseLoading} aria-hidden />
             )}
             {showcaseState === 'error' && (
               <div className={styles.showcasePlaceholder} role="alert">
