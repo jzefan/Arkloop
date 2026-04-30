@@ -4,6 +4,7 @@ package pipeline
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -11,6 +12,7 @@ import (
 	"arkloop/services/shared/runkind"
 	"arkloop/services/worker/internal/data"
 	"arkloop/services/worker/internal/events"
+	"arkloop/services/worker/internal/llm"
 	"arkloop/services/worker/internal/queue"
 	"arkloop/services/worker/internal/routing"
 	"arkloop/services/worker/internal/testutil"
@@ -43,6 +45,14 @@ type captureExecutor struct {
 func (e *captureExecutor) Execute(ctx context.Context, rc *RunContext, emitter events.Emitter, yield func(events.RunEvent) error) error {
 	e.called = true
 	return yield(emitter.Emit("run.completed", map[string]any{}, nil, nil))
+}
+
+type assistantMessageExecutor struct {
+	message llm.Message
+}
+
+func (e assistantMessageExecutor) Execute(ctx context.Context, rc *RunContext, emitter events.Emitter, yield func(events.RunEvent) error) error {
+	return yield(emitter.Emit("run.completed", llm.StreamRunCompleted{AssistantMessage: &e.message}.ToDataJSON(), nil, nil))
 }
 
 type staticExecutorBuilder struct {
@@ -437,6 +447,72 @@ func TestAgentLoopHandlerShortCircuitsStaleCallbackRun(t *testing.T) {
 	}
 	if status != "completed" {
 		t.Fatalf("unexpected run status: %s", status)
+	}
+}
+
+func TestAgentLoopHandlerPersistsStickerPlaceholderForHistory(t *testing.T) {
+	ctx := context.Background()
+	db := testutil.SetupPostgresDatabase(t, "arkloop_sticker_placeholder_history")
+	pool, err := pgxpool.New(ctx, db.DSN)
+	if err != nil {
+		t.Fatalf("pgxpool.New: %v", err)
+	}
+	t.Cleanup(pool.Close)
+
+	accountID := uuid.New()
+	projectID := uuid.New()
+	threadID := uuid.New()
+	runID := uuid.New()
+	seedPipelineThread(t, pool, accountID, threadID, projectID)
+	seedPipelineRun(t, pool, accountID, threadID, runID, nil)
+
+	handler := NewAgentLoopHandler(data.RunsRepository{}, data.RunEventsRepository{}, data.MessagesRepository{}, nil, &stubJobQueue{}, data.UsageRecordsRepository{}, data.CreditsRepository{}, nil)
+	rc := &RunContext{
+		Run:       data.Run{ID: runID, AccountID: accountID, ThreadID: threadID},
+		Pool:      pool,
+		InputJSON: map[string]any{},
+		SelectedRoute: &routing.SelectedProviderRoute{
+			Route: routing.ProviderRouteRule{ID: "route-main", Model: "gpt-test", Multiplier: 1},
+		},
+		Emitter:       events.NewEmitter("trace-sticker"),
+		ToolExecutors: map[string]tools.Executor{},
+		CreditPerUSD:  1000,
+		ExecutorBuilder: staticExecutorBuilder{executor: assistantMessageExecutor{message: llm.Message{
+			Role:    "assistant",
+			Content: []llm.ContentPart{{Type: "text", Text: "[sticker:hash]"}},
+		}}},
+	}
+
+	if err := handler(ctx, rc); err != nil {
+		t.Fatalf("run handler: %v", err)
+	}
+	if len(rc.ChannelDeliverySegments) != 1 || rc.ChannelDeliverySegments[0].Kind != "sticker" || rc.ChannelDeliverySegments[0].StickerID != "hash" {
+		t.Fatalf("unexpected sticker delivery segments: %#v", rc.ChannelDeliverySegments)
+	}
+
+	var stored data.ThreadMessage
+	if err := pool.QueryRow(ctx,
+		`SELECT id, role, content, content_json
+		   FROM messages
+		  WHERE thread_id = $1 AND role = 'assistant' AND hidden = FALSE
+		  ORDER BY thread_seq DESC
+		  LIMIT 1`,
+		threadID,
+	).Scan(&stored.ID, &stored.Role, &stored.Content, &stored.ContentJSON); err != nil {
+		t.Fatalf("select persisted assistant: %v", err)
+	}
+	if stored.Content != "[sticker:hash]" {
+		t.Fatalf("expected persisted sticker placeholder, got %q", stored.Content)
+	}
+	if !strings.Contains(string(stored.ContentJSON), "[sticker:hash]") {
+		t.Fatalf("expected content_json to preserve sticker placeholder, got %s", string(stored.ContentJSON))
+	}
+	parts, err := BuildMessageParts(ctx, nil, stored)
+	if err != nil {
+		t.Fatalf("BuildMessageParts: %v", err)
+	}
+	if len(parts) != 1 || parts[0].Text != "[sticker:hash]" {
+		t.Fatalf("expected sticker placeholder in reconstructed history, got %#v", parts)
 	}
 }
 
