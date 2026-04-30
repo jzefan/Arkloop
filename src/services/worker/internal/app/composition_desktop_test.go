@@ -2378,6 +2378,70 @@ func TestDesktopCompletedRunPublishesAfterAssistantMessagePersisted(t *testing.T
 	}
 }
 
+func TestDesktopPersistFinalAssistantOutputPreservesStickerPlaceholderForHistory(t *testing.T) {
+	ctx := context.Background()
+
+	sqlitePool, err := sqliteadapter.AutoMigrate(ctx, filepath.Join(t.TempDir(), "desktop.db"))
+	if err != nil {
+		t.Fatalf("auto migrate sqlite: %v", err)
+	}
+	defer sqlitePool.Close()
+
+	db := sqlitepgx.New(sqlitePool.Unwrap())
+	accountID := uuid.New()
+	userID := uuid.New()
+	threadID := uuid.New()
+	runID := uuid.New()
+	seedDesktopRunBindingAccount(t, db, accountID, userID)
+	seedDesktopRunBindingThread(t, db, accountID, threadID, nil, &userID)
+	seedDesktopRunBindingRun(t, db, accountID, threadID, &userID, runID)
+
+	run := data.Run{ID: runID, AccountID: accountID, ThreadID: threadID}
+	writer := &desktopEventWriter{
+		db:                   db,
+		run:                  run,
+		traceID:              "desktop-sticker-history",
+		runsRepo:             data.DesktopRunsRepository{},
+		eventsRepo:           data.DesktopRunEventsRepository{},
+		completed:            true,
+		terminalStatus:       "completed",
+		visibleAssistantText: "[sticker:hash]",
+		assistantMessage:     &llm.Message{Role: "assistant", Content: []llm.ContentPart{{Type: "text", Text: "[sticker:hash]"}}},
+	}
+	rc := &pipeline.RunContext{Run: run, Emitter: events.NewEmitter("desktop-sticker-history")}
+	if err := desktopPersistFinalAssistantOutput(ctx, db, rc, writer, data.DesktopRunsRepository{}, data.DesktopRunEventsRepository{}); err != nil {
+		t.Fatalf("desktopPersistFinalAssistantOutput: %v", err)
+	}
+	if len(rc.ChannelDeliverySegments) != 1 || rc.ChannelDeliverySegments[0].Kind != "sticker" || rc.ChannelDeliverySegments[0].StickerID != "hash" {
+		t.Fatalf("unexpected sticker delivery segments: %#v", rc.ChannelDeliverySegments)
+	}
+
+	var stored data.ThreadMessage
+	if err := db.QueryRow(ctx,
+		`SELECT id, role, content, content_json
+		   FROM messages
+		  WHERE thread_id = $1 AND role = 'assistant' AND hidden = FALSE
+		  ORDER BY thread_seq DESC
+		  LIMIT 1`,
+		threadID,
+	).Scan(&stored.ID, &stored.Role, &stored.Content, &stored.ContentJSON); err != nil {
+		t.Fatalf("select persisted assistant: %v", err)
+	}
+	if stored.Content != "[sticker:hash]" {
+		t.Fatalf("expected persisted sticker placeholder, got %q", stored.Content)
+	}
+	if !strings.Contains(string(stored.ContentJSON), "[sticker:hash]") {
+		t.Fatalf("expected content_json to preserve sticker placeholder, got %s", string(stored.ContentJSON))
+	}
+	parts, err := pipeline.BuildMessageParts(ctx, nil, stored)
+	if err != nil {
+		t.Fatalf("BuildMessageParts: %v", err)
+	}
+	if len(parts) != 1 || parts[0].Text != "[sticker:hash]" {
+		t.Fatalf("expected sticker placeholder in reconstructed history, got %#v", parts)
+	}
+}
+
 func TestDesktopPersistFinalAssistantOutputWritesRunFailedWhenMessageInsertFails(t *testing.T) {
 	ctx := context.Background()
 

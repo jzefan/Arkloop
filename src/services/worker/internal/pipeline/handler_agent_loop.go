@@ -206,15 +206,15 @@ func NewAgentLoopHandler(
 					}
 				}
 				if len(deliverySegments) > 0 {
-					if strings.TrimSpace(remainderCleanOutput) != "" {
-						if writer.hasStreamedChunks() {
-							if err := writer.insertStreamRemainder(ctx, messagesRepo, rc.Run.AccountID, rc.Run.ThreadID, remainderCleanOutput); err != nil {
+					if writer.hasStreamedChunks() {
+						if rawRemainder := writer.telegramStreamRemainder(); strings.TrimSpace(rawRemainder) != "" {
+							if err := writer.insertStreamRemainder(ctx, messagesRepo, rc.Run.AccountID, rc.Run.ThreadID, rawRemainder); err != nil {
 								return err
 							}
-						} else {
-							if _, err := writer.InsertAssistantMessageText(ctx, messagesRepo, rc.Run.AccountID, rc.Run.ThreadID, fullCleanOutput, false); err != nil {
-								return err
-							}
+						}
+					} else if strings.TrimSpace(writer.AssistantOutput()) != "" {
+						if _, err := writer.InsertAssistantMessage(ctx, messagesRepo, rc.Run.AccountID, rc.Run.ThreadID, false); err != nil {
+							return err
 						}
 					}
 					rc.ChannelDeliverySegments = deliverySegments

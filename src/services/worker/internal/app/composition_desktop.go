@@ -4231,13 +4231,12 @@ func (w *desktopEventWriter) persistCompletedAssistantOutputInTx(ctx context.Con
 
 	message := w.finalAssistantMessage()
 	text := llm.VisibleMessageText(message)
-	_, deliverySegments := pipeline.PrepareStickerDeliveryOutputs(w.visibleAssistantOutputs())
-	if len(deliverySegments) > 0 {
-		text = pipeline.StripStickerPlaceholders(content)
+	if strings.TrimSpace(text) == "" && strings.TrimSpace(content) != "" {
 		message = llm.Message{
 			Role:    "assistant",
-			Content: []llm.TextPart{{Text: text}},
+			Content: []llm.TextPart{{Text: content}},
 		}
+		text = content
 	}
 	if strings.TrimSpace(text) == "" {
 		return nil
@@ -4351,19 +4350,22 @@ func desktopPersistFinalAssistantOutput(
 	if !w.assistantOutputPersisted {
 		if len(deliverySegments) > 0 {
 			if hasStreamedChunks {
-				if strings.TrimSpace(remainderCleanOutput) != "" {
+				if rawRemainder := w.telegramStreamRemainder(); strings.TrimSpace(rawRemainder) != "" {
 					metadata["stream_chunk"] = true
-					w.logAssistantMessagePersistDebug(ctx, "stream_remainder", desktopAssistantDebugCountsFromText(remainderCleanOutput), 0)
-					persistErr = persistDesktopStreamChunkMessageWithMetadata(ctx, db, rc.Run, remainderCleanOutput, metadata)
+					w.logAssistantMessagePersistDebug(ctx, "stream_remainder", desktopAssistantDebugCountsFromText(rawRemainder), 0)
+					persistErr = persistDesktopStreamChunkMessageWithMetadata(ctx, db, rc.Run, rawRemainder, metadata)
 				}
-			} else if strings.TrimSpace(fullCleanOutput) != "" {
-				message := llm.Message{
-					Role:    "assistant",
-					Content: []llm.TextPart{{Text: fullCleanOutput}},
+			} else if strings.TrimSpace(content) != "" {
+				message := w.finalAssistantMessage()
+				if strings.TrimSpace(llm.VisibleMessageText(message)) == "" {
+					message = llm.Message{
+						Role:    "assistant",
+						Content: []llm.TextPart{{Text: content}},
+					}
 				}
 				contentJSON, buildErr := llm.BuildAssistantThreadContentJSON(message)
 				if buildErr == nil {
-					w.logAssistantMessagePersistDebug(ctx, "final_text", desktopAssistantDebugCountsFromText(fullCleanOutput), len(contentJSON))
+					w.logAssistantMessagePersistDebug(ctx, "final_assistant", desktopAssistantDebugCountsFromMessage(message), len(contentJSON))
 				}
 				persistErr = desktopInsertAssistantMessage(ctx, db, rc.Run, message, metadata)
 			}
