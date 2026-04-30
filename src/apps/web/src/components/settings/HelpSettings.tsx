@@ -7,7 +7,7 @@ import { AutoResizeTextarea } from '@arkloop/shared'
 
 export function HelpContent({ label }: { label: string }) {
   const { locale } = useLocale()
-  const docsUrl = locale === 'en' ? 'https://arkloop.cn/en/docs/guide' : 'https://arkloop.cn/zh/docs/guide'
+  const docsUrl = locale === 'en' ? 'https://arkloop.io/en/docs/guide' : 'https://arkloop.io/zh/docs/guide'
 
   return (
     <div className="flex flex-col gap-2">

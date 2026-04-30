@@ -37,7 +37,7 @@ const generalSettingsCache = new Map<string, GeneralSettingsCacheEntry>()
 export function GeneralSettings({ me, accessToken, onLogout, onMeUpdated }: Props) {
   const { t, locale, setLocale } = useLocale()
   const ds = t.desktopSettings
-  const docsUrl = locale === 'en' ? 'https://arkloop.cn/en/docs/guide' : 'https://arkloop.cn/zh/docs/guide'
+  const docsUrl = locale === 'en' ? 'https://arkloop.io/en/docs/guide' : 'https://arkloop.io/zh/docs/guide'
   const localMode = isLocalMode()
   // 桌面壳或本地连接都不应出现「平台默认」文案（与 isDesktop 是否已挂 arkloop 解耦）
   const nonSaaSUi =
