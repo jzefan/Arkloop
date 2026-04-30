@@ -30,7 +30,7 @@ export default function Topbar({ lang }: { lang: Lang }) {
     <header className="topbar">
       <div className="topbar-inner">
         <Link href={`/${lang}`} className="brand">
-          Arkloop Developers
+          Arkloop
         </Link>
         <nav className="topnav">
           {NAV[lang].map((item) => (
