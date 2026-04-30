@@ -281,7 +281,15 @@ func TestAgentLoopHeartbeatDecisionReplyTrueStopsWithoutSecondLlmTurn(t *testing
 	emitter := events.NewEmitter("trace")
 	pipelineRC := &pipeline.RunContext{HeartbeatRun: true}
 	initialRequest := llm.Request{
-		Model:      "stub",
+		Model: "stub",
+		Messages: []llm.Message{
+			{Role: "user", Content: []llm.ContentPart{
+				{Type: messagecontent.PartTypeText, Text: "look"},
+				{Type: messagecontent.PartTypeImage, Attachment: &messagecontent.AttachmentRef{Key: "attachments/latest.png"}, Data: []byte("image")},
+			}},
+			{Role: "assistant", Content: []llm.ContentPart{{Text: "seen"}}},
+			{Role: "user", Content: []llm.ContentPart{{Text: "[SYSTEM_HEARTBEAT_CHECK]\ntime_utc: 2026-05-01T00:00:00Z"}}},
+		},
 		Tools:      []llm.ToolSpec{{Name: "echo", JSONSchema: map[string]any{"type": "object"}}, heartbeattool.Spec},
 		ToolChoice: &llm.ToolChoice{Mode: "specific", ToolName: heartbeattool.ToolName},
 	}
@@ -322,6 +330,12 @@ func TestAgentLoopHeartbeatDecisionReplyTrueStopsWithoutSecondLlmTurn(t *testing
 	}
 	if containsToolSpec(gateway.requests[1].Tools, heartbeattool.ToolName) {
 		t.Fatalf("expected Phase 2 to remove heartbeat_decision tool, got %#v", gateway.requests[1].Tools)
+	}
+	if requestHasImagePart(gateway.requests[1]) {
+		t.Fatalf("expected Phase 2 heartbeat reply request to strip images: %#v", gateway.requests[1].Messages)
+	}
+	if !requestHasText(gateway.requests[1], "[attachment_key:attachments/latest.png]") {
+		t.Fatalf("expected Phase 2 to retain attachment key placeholder: %#v", gateway.requests[1].Messages)
 	}
 	assertHasEvent(t, got, "run.completed")
 	for _, ev := range got {
@@ -2381,6 +2395,61 @@ func TestPrepareTurnRequestPromptCacheHeartbeatDecisionPhaseSkipsMessageCache(t 
 	}
 }
 
+func TestPrepareHeartbeatDecisionPhaseRequestShrinksPrompt(t *testing.T) {
+	messages := []llm.Message{
+		{Role: "system", Content: []llm.ContentPart{{Text: "large system prompt"}}},
+	}
+	for i := 0; i < 20; i++ {
+		messages = append(messages, llm.Message{Role: "user", Content: []llm.ContentPart{{Text: fmt.Sprintf("history %02d", i)}}})
+	}
+	messages = append(messages,
+		llm.Message{Role: "tool", Content: []llm.ContentPart{{Text: "tool result"}}},
+		llm.Message{Role: "user", Content: []llm.ContentPart{{Text: "[SYSTEM_HEARTBEAT_CHECK]\ntime_utc: 2026-04-30T11:20:38Z"}}},
+		llm.Message{Role: "user", Content: []llm.ContentPart{{Text: "call heartbeat_decision"}}},
+	)
+	request := llm.Request{
+		Messages: messages,
+		Tools: []llm.ToolSpec{
+			{Name: "echo", JSONSchema: map[string]any{"type": "object"}},
+			heartbeattool.Spec,
+		},
+		ToolChoice: &llm.ToolChoice{Mode: "specific", ToolName: heartbeattool.ToolName},
+		PromptPlan: &llm.PromptPlan{
+			SystemBlocks: []llm.PromptPlanBlock{{Text: "large system prompt", CacheEligible: true}},
+			MessageCache: llm.MessageCachePlan{
+				Enabled:            true,
+				MarkerMessageIndex: len(messages) - 1,
+			},
+		},
+	}
+
+	prepareHeartbeatDecisionPhaseRequest(&request)
+
+	if request.PromptPlan != nil {
+		t.Fatalf("expected prompt plan to be removed, got %#v", request.PromptPlan)
+	}
+	if len(request.Tools) != 1 || request.Tools[0].Name != heartbeattool.ToolName {
+		t.Fatalf("expected only heartbeat_decision tool, got %#v", request.Tools)
+	}
+	if len(request.Messages) != 14 {
+		t.Fatalf("unexpected shrunken message count: got %d", len(request.Messages))
+	}
+	for _, msg := range request.Messages {
+		if msg.Role == "system" || msg.Role == "tool" {
+			t.Fatalf("unexpected role in heartbeat decision request: %#v", msg)
+		}
+		if len(msg.ToolCalls) > 0 {
+			t.Fatalf("unexpected tool calls in heartbeat decision request: %#v", msg)
+		}
+	}
+	if !messageHasText(request.Messages[len(request.Messages)-2], "[SYSTEM_HEARTBEAT_CHECK]") {
+		t.Fatalf("expected heartbeat check to be retained, got %#v", request.Messages)
+	}
+	if request.Messages[0].Content[0].Text != "history 08" {
+		t.Fatalf("expected oldest retained history to be history 08, got %q", request.Messages[0].Content[0].Text)
+	}
+}
+
 func TestPrepareTurnRequestPromptCacheChannelSkipsLatestUserTail(t *testing.T) {
 	request := llm.Request{
 		Messages: []llm.Message{
@@ -2420,6 +2489,26 @@ func TestPrepareTurnRequestPromptCacheChannelSkipsLatestUserTail(t *testing.T) {
 func containsToolSpec(specs []llm.ToolSpec, name string) bool {
 	for _, spec := range specs {
 		if spec.Name == name {
+			return true
+		}
+	}
+	return false
+}
+
+func requestHasImagePart(request llm.Request) bool {
+	for _, msg := range request.Messages {
+		for _, part := range msg.Content {
+			if part.Kind() == messagecontent.PartTypeImage {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func requestHasText(request llm.Request, text string) bool {
+	for _, msg := range request.Messages {
+		if messageHasText(msg, text) {
 			return true
 		}
 	}
