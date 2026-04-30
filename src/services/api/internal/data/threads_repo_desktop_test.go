@@ -48,9 +48,12 @@ func TestThreadForkCopiesMessagesInDesktopMode(t *testing.T) {
 	}
 
 	userID := auth.DesktopUserID
-	thread, err := threadRepo.Create(ctx, auth.DesktopAccountID, &userID, project.ID, nil, false)
+	thread, err := threadRepo.CreateWithMode(ctx, auth.DesktopAccountID, &userID, project.ID, nil, false, data.ThreadModeWork)
 	if err != nil {
 		t.Fatalf("create thread: %v", err)
+	}
+	if thread.Mode != data.ThreadModeWork {
+		t.Fatalf("thread mode = %q", thread.Mode)
 	}
 
 	first, err := messageRepo.Create(ctx, auth.DesktopAccountID, thread.ID, "user", "before", &userID)
@@ -99,6 +102,9 @@ func TestThreadForkCopiesMessagesInDesktopMode(t *testing.T) {
 	forked, err := txThreadRepo.Fork(ctx, auth.DesktopAccountID, &userID, thread.ID, cutoff.ID, false)
 	if err != nil {
 		t.Fatalf("fork thread: %v", err)
+	}
+	if forked.Mode != data.ThreadModeWork {
+		t.Fatalf("forked mode = %q", forked.Mode)
 	}
 
 	pairs, err := txMessageRepo.CopyUpTo(ctx, auth.DesktopAccountID, thread.ID, forked.ID, cutoff.ID)

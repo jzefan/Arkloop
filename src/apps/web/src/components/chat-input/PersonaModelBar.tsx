@@ -1,6 +1,7 @@
 import { useRef, useState, useCallback, useEffect } from 'react'
 import { Plus, Paperclip, BookOpen, Search, Folder, FolderOpen, X, Check } from 'lucide-react'
 import type { SelectablePersona } from '../../api'
+import { updateThreadSidebarState } from '../../api'
 import { ModelPicker } from '../ModelPicker'
 import type { SettingsTab } from '../SettingsModal'
 import { getDesktopApi, isDesktop } from '@arkloop/shared/desktop'
@@ -17,6 +18,7 @@ import {
 } from '../../storage'
 import type { AppMode } from '../../storage'
 import { useLocale } from '../../contexts/LocaleContext'
+import { useThreadList } from '../../contexts/thread-list'
 
 type Props = {
   personas: SelectablePersona[]
@@ -70,6 +72,7 @@ export function PersonaModelBar({
   onMenuOpenChange,
 }: Props) {
   const { t } = useLocale()
+  const { threads, upsertThread } = useThreadList()
   const menuRef = useRef<HTMLDivElement>(null)
   const plusBtnRef = useRef<HTMLButtonElement>(null)
   const folderMenuRef = useRef<HTMLDivElement>(null)
@@ -82,6 +85,7 @@ export function PersonaModelBar({
   const isWorkMode = appMode === 'work'
   const showWorkFolderPicker = isWorkMode && isDesktop() && !hideWorkFolderPicker && !threadMessagesLoading && !threadHasMessages
   const effectiveFolderMenuOpen = folderMenuOpen && showWorkFolderPicker
+  const currentThread = workThreadId ? threads.find((thread) => thread.id === workThreadId) ?? null : null
 
   // close plus menu on outside click
   useEffect(() => {
@@ -122,13 +126,26 @@ export function PersonaModelBar({
 
   useEffect(() => {
     const syncWorkFolder = () => {
-      setWorkFolder(readActiveWorkFolder(workThreadId))
+      setWorkFolder(currentThread?.sidebar_work_folder ?? readActiveWorkFolder(workThreadId))
       setRecentFolders(readWorkRecentFolders())
     }
     syncWorkFolder()
     window.addEventListener('arkloop:work-folder-changed', syncWorkFolder)
     return () => window.removeEventListener('arkloop:work-folder-changed', syncWorkFolder)
-  }, [workThreadId])
+  }, [currentThread?.sidebar_work_folder, workThreadId])
+
+  const patchThreadWorkFolder = useCallback((threadId: string, folder: string | null, previous: string | null) => {
+    if (!accessToken) return
+    const thread = threads.find((item) => item.id === threadId)
+    if (thread) upsertThread({ ...thread, sidebar_work_folder: folder })
+    void updateThreadSidebarState(accessToken, threadId, { sidebar_work_folder: folder }).then((updated) => {
+      upsertThread(updated)
+    }).catch(() => {
+      if (previous) writeThreadWorkFolder(threadId, previous)
+      else clearThreadWorkFolder(threadId)
+      if (thread) upsertThread(thread)
+    })
+  }, [accessToken, threads, upsertThread])
 
   const handleSelectFolder = useCallback(async (path?: string) => {
     let folder = path
@@ -140,14 +157,16 @@ export function PersonaModelBar({
     }
     if (!folder) return
     if (workThreadId) {
+      const previous = readThreadWorkFolder(workThreadId)
       writeThreadWorkFolder(workThreadId, folder)
+      patchThreadWorkFolder(workThreadId, folder, previous)
     } else {
       writeWorkFolder(folder)
     }
     setWorkFolder(folder)
     setRecentFolders(readWorkRecentFolders())
     setFolderMenuOpen(false)
-  }, [workThreadId])
+  }, [patchThreadWorkFolder, workThreadId])
 
   return (
     <>
@@ -238,7 +257,9 @@ export function PersonaModelBar({
                     type="button"
                     onClick={() => {
                       if (workThreadId) {
+                        const previous = readThreadWorkFolder(workThreadId)
                         clearThreadWorkFolder(workThreadId)
+                        patchThreadWorkFolder(workThreadId, null, previous)
                       } else {
                         clearWorkFolder()
                       }

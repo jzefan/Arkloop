@@ -55,6 +55,7 @@ function ChatTitleMenuContent({ threadId }: { threadId: string | null }) {
   const currentTitle = currentThread
     ? ((currentThread.title ?? '').trim() || t.untitled)
     : null
+  const effectiveAppMode = currentThread?.mode === 'work' ? 'work' : currentThread?.mode === 'chat' ? 'chat' : appMode
   const privateThreadIds = threadList.privateThreadIds
 
   // load starred ids
@@ -260,7 +261,7 @@ function ChatTitleMenuContent({ threadId }: { threadId: string | null }) {
         <div className="flex items-center gap-2">
           {!isDesktop() && (
             <ModeSwitch
-              mode={appMode}
+              mode={effectiveAppMode}
               onChange={setAppMode}
               labels={{ chat: t.modeChat, work: t.modeWork }}
               availableModes={availableAppModes}
