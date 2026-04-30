@@ -949,6 +949,7 @@ func anthropicSDKErrorToGateway(err error, payloadBytes int, apiMode string, str
 		if apiErr.StatusCode == http.StatusRequestEntityTooLarge {
 			details = OversizeFailureDetails(payloadBytes, OversizePhaseProvider, details)
 		}
+		details = mergeProviderResponseCaptureDetails(details, responseCapture)
 		return GatewayError{ErrorClass: anthropicSDKErrorClass(apiErr, details), Message: message, Details: details}
 	}
 	details := sdkTransportErrorDetails(err, "anthropic", apiMode, streaming, true)

@@ -414,6 +414,9 @@ func TestAnthropicSDKGateway_APIErrorHasDiagnosticDetails(t *testing.T) {
 	if raw, _ := details["provider_error_body"].(string); !strings.Contains(raw, "too many tokens") || strings.Contains(raw, "HTTP/1.1") {
 		t.Fatalf("unexpected provider error body: %#v", details)
 	}
+	if tail, _ := details["provider_response_tail"].(string); !strings.Contains(tail, "too many tokens") || strings.Contains(tail, "HTTP/1.1") {
+		t.Fatalf("unexpected provider response tail: %#v", details)
+	}
 }
 
 func TestAnthropicSDKGateway_TruncatedJSONStreamHasDiagnosticDetails(t *testing.T) {
