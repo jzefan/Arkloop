@@ -14,10 +14,6 @@
 
 ---
 
-> **Early Access** — Arkloop is currently in early public access; all releases are Alpha. You may encounter bugs, data loss, API changes, or incomplete features. We are iterating rapidly, but stability has not been fully validated. If you are willing to use it at this stage and provide feedback, we greatly appreciate it.
-
-Arkloop is a design-focused open-source AI agent platform. Multi-model routing, sandboxed execution, persistent memory — a clean desktop app, ready out of the box.
-
 ## Download
 
 Download the latest version from [GitHub Releases](https://github.com/qqqqqf-q/Arkloop/releases), supporting macOS, Linux, and Windows.
