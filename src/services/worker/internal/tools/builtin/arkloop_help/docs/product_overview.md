@@ -13,7 +13,7 @@ Arkloop 是**开源**、面向**对话式 AI Agent** 的平台：托管运行时
 ## 分发与文档入口
 
 - **桌面客户端**：GitHub Releases，支持 macOS / Linux / Windows；安装包内含完整运行时，官方描述为无需 Docker、无需额外配置即可使用；更新可走 Releases 通道。
-- **在线文档（人类可读）**：英文指南 `https://arkloop.cn/en/docs/guide`，中文 `https://arkloop.cn/zh/docs/guide`（与 README 一致）。
+- **在线文档（人类可读）**：英文指南 `https://arkloop.io/en/docs/guide`，中文 `https://arkloop.io/zh/docs/guide`（与 README 一致）。
 - **本帮助**（`arkloop_help`）：与当前 **Worker/Desktop 二进制同版本** 打包的**精简事实**，回答「Arkloop 是什么、架构如何、桌面怎么配」时应**优先查本工具**，勿凭模型记忆杜撰技术细节。
 
 ## 源码与维护者社交

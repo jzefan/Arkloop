@@ -98,7 +98,7 @@ export type AppConfig = {
 
 export const DEFAULT_CONFIG: AppConfig = {
   mode: 'local',
-  saas: { baseUrl: 'https://api.arkloop.cn' },
+  saas: { baseUrl: 'https://api.arkloop.io' },
   selfHosted: { baseUrl: '' },
   local: { port: 19001, portMode: 'auto' },
   window: { width: 1280, height: 800 },

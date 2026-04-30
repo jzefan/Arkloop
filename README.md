@@ -63,7 +63,7 @@ Arkloop does what other AI chat tools do — multi-model support, tool calling, 
 - **MCP / ACP** — Model Context Protocol and Agent Communication Protocol support
 - **Skill Ecosystem** — Import skills from ClawHub, compatible with OpenClaw SKILL.md format
 
-Full documentation at [docs](https://arkloop.cn/en/docs/guide).
+Full documentation at [docs](https://arkloop.io/en/docs/guide).
 
 ## Architecture
 
@@ -100,8 +100,6 @@ bin/ci-local full          # Full check
 ## Security
 
 To report vulnerabilities, please email qingf622@outlook.com instead of opening a public issue. See [SECURITY.md](SECURITY.md) for our disclosure policy.
-
-> Huh? You're asking why we use a .cn domain? I don't really want to either -- I'd long assumed I'd use an .io domain, but the budget fell short, so that's on hold for now.
 
 ## License
 
