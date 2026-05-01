@@ -8,6 +8,7 @@ import {
   getSidecarStatus,
   getSidecarRuntime,
   downloadSidecar,
+  checkSidecarVersion,
   isSidecarAvailable,
   getDesktopAccessToken,
   getBridgeBaseUrl,
@@ -177,7 +178,7 @@ export function registerIpcHandlers(
   })
 
   ipcMain.handle('arkloop:sidecar:check-update', async () => {
-    return checkForUpdates()
+    return checkSidecarVersion()
   })
 
   ipcMain.handle('arkloop:updater:check', async () => {

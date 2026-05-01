@@ -264,6 +264,38 @@ describe('UpdateSettingsContent', () => {
     expect(container.textContent).toContain('module apply failed')
   })
 
+  it('未安装组件有远端版本时不显示更新入口', async () => {
+    const status = {
+      openviking: { current: null, latest: '99.99.99', available: false },
+      sandbox: {
+        kernel: { current: null, latest: '88.88.88', available: false },
+        rootfs: { current: null, latest: '77.77.77', available: false },
+      },
+      bins: {
+        rtk: { current: null, latest: '66.66.66', available: false },
+        opencli: { current: null, latest: '55.55.55', available: false },
+      },
+    }
+    getCachedUpdater.mockResolvedValue(status)
+    checkUpdater.mockResolvedValue(status)
+    const { UpdateSettingsContent, LocaleProvider } = await loadSubject()
+
+    await act(async () => {
+      root!.render(
+        <LocaleProvider>
+          <UpdateSettingsContent />
+        </LocaleProvider>,
+      )
+    })
+    await flushEffects()
+
+    expect(container.textContent).toContain('未安装')
+    expect(container.textContent).not.toContain('99.99.99')
+    const hasApplyButton = Array.from(container.querySelectorAll('button'))
+      .some((button) => button.textContent?.trim() === '更新到最新')
+    expect(hasApplyButton).toBe(false)
+  })
+
   it('没有组件更新数据时不显示占位横杠', async () => {
     checkUpdater.mockResolvedValueOnce(null)
     const { UpdateSettingsContent, LocaleProvider } = await loadSubject()

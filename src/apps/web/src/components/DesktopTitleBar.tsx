@@ -35,7 +35,7 @@ type Props = {
   showIncognitoToggle?: boolean
   isPrivateMode?: boolean
   onTogglePrivateMode?: () => void
-  hasComponentUpdates?: boolean
+  hasAppUpdate?: boolean
   appUpdateState?: AppUpdaterState | null
   onCheckAppUpdate?: () => void
   onDownloadApp?: () => void
@@ -52,7 +52,7 @@ export function DesktopTitleBar({
   showIncognitoToggle = true,
   isPrivateMode,
   onTogglePrivateMode,
-  hasComponentUpdates,
+  hasAppUpdate = false,
   appUpdateState,
   onCheckAppUpdate,
   onDownloadApp,
@@ -71,6 +71,9 @@ export function DesktopTitleBar({
   const isMac = desktopPlatform === 'darwin' || (!desktopPlatform && platformName.includes('mac'))
   const isWindows = desktopPlatform === 'win32' || (!desktopPlatform && platformName.includes('win'))
   const titleBarHeight = isWindows ? WINDOWS_TITLEBAR_HEIGHT : DESKTOP_TITLEBAR_HEIGHT
+  const hasActionableAppUpdate =
+    appUpdateState?.phase === 'available' ||
+    appUpdateState?.phase === 'downloaded'
 
   useEffect(() => {
     if (!isWindows) return
@@ -99,6 +102,7 @@ export function DesktopTitleBar({
   // 检查是否跳过了当前版本
   const isVersionSkipped = useMemo(() => {
     try {
+      if (appUpdateState?.phase !== 'available') return false
       // sessionStorage: 本次会话内跳过
       if (sessionStorage.getItem('arkloop:skip_update_once')) return true
       // localStorage: 永久跳过当前版本
@@ -108,7 +112,13 @@ export function DesktopTitleBar({
     } catch {
       return false
     }
-  }, [appUpdateState?.latestVersion])
+  }, [appUpdateState?.latestVersion, appUpdateState?.phase])
+
+  const updateButtonTitle = isVersionSkipped
+    ? t.updateSkipped
+    : appUpdateState?.phase === 'downloaded'
+      ? t.desktopSettings.appUpdateReady
+      : t.desktopSettings.appUpdateAvailable
 
   const togglePopover = useCallback(() => {
     setUpdatePopoverOpen((prev) => {
@@ -119,11 +129,11 @@ export function DesktopTitleBar({
             ? { top: rect.bottom + 6, right: window.innerWidth - rect.right }
             : { top: 50, right: 12 },
         )
-        onCheckAppUpdate?.()
+        if (!hasActionableAppUpdate) onCheckAppUpdate?.()
       }
       return !prev
     })
-  }, [onCheckAppUpdate])
+  }, [hasActionableAppUpdate, onCheckAppUpdate])
 
   // click outside to close
   useEffect(() => {
@@ -234,11 +244,11 @@ export function DesktopTitleBar({
               <Glasses size={17} />
             </button>
           )}
-          {hasComponentUpdates && onCheckAppUpdate && (
+          {hasAppUpdate && (
             <button
               ref={updateBtnRef}
               onClick={togglePopover}
-              title={isVersionSkipped ? t.updateSkipped : t.componentUpdatesAvailable}
+              title={updateButtonTitle}
               className={`relative flex h-8 w-8 items-center justify-center rounded-md transition-colors hover:bg-[var(--c-bg-deep)] ${
                 isVersionSkipped ? 'text-[var(--c-text-muted)]' : 'text-[var(--c-accent)]'
               }`}
@@ -374,6 +384,11 @@ const UpdatePopover = forwardRef<HTMLDivElement, UpdatePopoverProps>(function Up
     onClose?.()
   }, [latestVersion, onClose])
 
+  const handleOpenDetails = useCallback(() => {
+    onOpenSettings?.('updates')
+    onClose?.()
+  }, [onClose, onOpenSettings])
+
   const renderContent = () => {
     switch (phase) {
       case 'idle':
@@ -386,7 +401,7 @@ const UpdatePopover = forwardRef<HTMLDivElement, UpdatePopoverProps>(function Up
                 {ds?.appUpdateTitle ?? 'Desktop App'} v{state?.currentVersion ?? ''}
               </p>
             </div>
-            <Button variant="primary" size="md" onClick={() => onOpenSettings?.('updates')}>
+            <Button variant="primary" size="md" onClick={handleOpenDetails}>
               {ds?.appUpdateViewDetails ?? 'View update details'}
             </Button>
             <div className="flex gap-2">
@@ -433,6 +448,9 @@ const UpdatePopover = forwardRef<HTMLDivElement, UpdatePopoverProps>(function Up
                 {ds?.appUpdateDownload ?? 'Download'}
               </Button>
             )}
+            <Button variant="outline" size="md" className="justify-center" onClick={handleOpenDetails}>
+              {ds?.appUpdateViewDetails ?? 'View update details'}
+            </Button>
             <div className="flex gap-2">
               <button type="button" className={`${secondaryButtonSmCls} flex-1`} style={secondaryButtonBorderStyle} onClick={handleSkipOnce}>
                 {ds?.appUpdateSkipOnce ?? 'Skip for now'}
@@ -458,6 +476,9 @@ const UpdatePopover = forwardRef<HTMLDivElement, UpdatePopoverProps>(function Up
             <p className="text-sm text-[var(--c-text-primary)]">{ds?.appUpdateReady ?? 'Ready to install'}</p>
             <Button variant="primary" size="sm" onClick={onInstall}>
               {ds?.appUpdateInstall ?? 'Install'}
+            </Button>
+            <Button variant="outline" size="sm" className="justify-center" onClick={handleOpenDetails}>
+              {ds?.appUpdateViewDetails ?? 'View update details'}
             </Button>
           </div>
         )
