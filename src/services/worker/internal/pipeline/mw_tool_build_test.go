@@ -374,16 +374,16 @@ func TestToolBuildMiddleware_KeepsUserProviderTool(t *testing.T) {
 	}
 }
 
-func TestToolBuildMiddleware_BindsDuckduckgoProvider(t *testing.T) {
+func TestToolBuildMiddleware_BindsBasicSearchProvider(t *testing.T) {
 	registry := tools.NewRegistry()
 	if err := registry.Register(tools.AgentToolSpec{
-		Name:        "web_search.duckduckgo",
+		Name:        "web_search.basic",
 		LlmName:     "web_search",
 		Version:     "1",
 		Description: "search",
 		RiskLevel:   tools.RiskLevelLow,
 	}); err != nil {
-		t.Fatalf("register duckduckgo: %v", err)
+		t.Fatalf("register basic search: %v", err)
 	}
 
 	exec := &recordingExecutor{}
@@ -392,13 +392,13 @@ func TestToolBuildMiddleware_BindsDuckduckgoProvider(t *testing.T) {
 		Emitter:      events.NewEmitter("test"),
 		ToolRegistry: registry,
 		ToolExecutors: map[string]tools.Executor{
-			"web_search.duckduckgo": exec,
+			"web_search.basic": exec,
 		},
 		AllowlistSet: map[string]struct{}{
 			"web_search": {},
 		},
 		ActiveToolProviderByGroup: map[string]string{
-			"web_search": "web_search.duckduckgo",
+			"web_search": "web_search.basic",
 		},
 		ToolSpecs: []llm.ToolSpec{
 			{Name: "web_search"},
@@ -423,8 +423,8 @@ func TestToolBuildMiddleware_BindsDuckduckgoProvider(t *testing.T) {
 		if result.Error != nil {
 			t.Fatalf("unexpected error: %+v", result.Error)
 		}
-		if got := exec.CalledWith(); got != "web_search.duckduckgo" {
-			t.Fatalf("expected web_search.duckduckgo, got %q", got)
+		if got := exec.CalledWith(); got != "web_search.basic" {
+			t.Fatalf("expected web_search.basic, got %q", got)
 		}
 		return nil
 	})

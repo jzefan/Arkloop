@@ -53,8 +53,8 @@ var AgentSpecTavily = tools.AgentToolSpec{
 	SideEffects: false,
 }
 
-var AgentSpecDuckduckgo = tools.AgentToolSpec{
-	Name:        "web_search.duckduckgo",
+var AgentSpecBasic = tools.AgentToolSpec{
+	Name:        "web_search.basic",
 	LlmName:     "web_search",
 	Version:     "1",
 	Description: "search the internet and return summary results",

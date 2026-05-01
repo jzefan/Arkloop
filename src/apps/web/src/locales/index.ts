@@ -1062,10 +1062,10 @@ export interface LocaleStrings {
     fetchProviderJina: string;
     fetchProviderBasic: string;
     fetchProviderFirecrawl: string;
-    searchProviderDuckduckgo: string;
+    searchProviderBasic: string;
     searchProviderTavily: string;
     searchProviderSearxng: string;
-    searchProviderDuckduckgoDesc: string;
+    searchProviderBasicDesc: string;
     searchProviderTavilyDesc: string;
     searchProviderSearxngDesc: string;
     fetchProviderJinaDesc: string;

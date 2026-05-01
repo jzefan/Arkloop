@@ -5,7 +5,7 @@ export type LocalPortMode = 'auto' | 'manual'
 export type DesktopPlatform = 'win32' | 'darwin' | 'linux' | string
 
 export type FetchProvider = 'none' | 'jina' | 'basic' | 'firecrawl'
-export type SearchProvider = 'none' | 'duckduckgo' | 'tavily' | 'searxng'
+export type SearchProvider = 'none' | 'basic' | 'tavily' | 'searxng'
 
 export type ConnectorsConfig = {
   fetch: {

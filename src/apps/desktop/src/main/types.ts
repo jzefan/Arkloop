@@ -2,7 +2,7 @@ export type ConnectionMode = 'local' | 'saas' | 'self-hosted'
 export type LocalPortMode = 'auto' | 'manual'
 
 export type FetchProvider = 'none' | 'jina' | 'basic' | 'firecrawl'
-export type SearchProvider = 'none' | 'duckduckgo' | 'tavily' | 'searxng'
+export type SearchProvider = 'none' | 'basic' | 'tavily' | 'searxng'
 
 export type FetchConnectorConfig = {
   provider: FetchProvider
@@ -106,7 +106,7 @@ export const DEFAULT_CONFIG: AppConfig = {
   connectors_migrated: false,
   connectors: {
     fetch: { provider: 'none' },
-    search: { provider: 'none' },
+    search: { provider: 'basic' },
   },
   memory: { enabled: true, provider: 'notebook', memoryCommitEachTurn: true },
   network: {
