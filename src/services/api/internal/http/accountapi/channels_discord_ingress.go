@@ -78,6 +78,7 @@ type discordConnector struct {
 	pool                     data.DB
 	discordClient            *discordbot.Client
 	inputNotify              func(ctx context.Context, runID uuid.UUID)
+	bus                      eventbus.EventBus
 }
 
 type discordInteractionReply struct {
@@ -284,6 +285,7 @@ func (m *discordIngressManager) runSession(ctx context.Context, channelID uuid.U
 		pool:                     m.deps.Pool,
 		discordClient:            m.deps.DiscordClient,
 		inputNotify:              buildDiscordInputNotifier(m.deps.Pool, m.deps.Bus),
+		bus:                      m.deps.Bus,
 	}
 
 	session.AddHandler(func(s *discordgo.Session, evt *discordgo.MessageCreate) {
@@ -625,6 +627,7 @@ func (c discordConnector) persistDiscordInboundStageA(
 	if err := tx.Commit(ctx); err != nil {
 		return nil, err
 	}
+	notifyChannelInboundBurst(ctx, c.bus)
 	return &discordInboundStageAResult{finalState: inboundStatePendingDispatch}, nil
 }
 

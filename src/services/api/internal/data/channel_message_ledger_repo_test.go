@@ -149,6 +149,17 @@ func TestChannelMessageLedgerListDueInboundBatchesByChannel(t *testing.T) {
 	if items[0].BatchID != "batch-due" {
 		t.Fatalf("batch id = %q, want batch-due", items[0].BatchID)
 	}
+
+	pending, err := env.repo.ListPendingInboundBatchesByChannel(env.ctx, env.channelID, 8)
+	if err != nil {
+		t.Fatalf("ListPendingInboundBatchesByChannel: %v", err)
+	}
+	if len(pending) != 2 {
+		t.Fatalf("pending batches = %d, want 2", len(pending))
+	}
+	if pending[0].BatchID != "batch-due" || pending[1].BatchID != "batch-future" {
+		t.Fatalf("unexpected pending batch order: %q, %q", pending[0].BatchID, pending[1].BatchID)
+	}
 }
 
 func TestChannelMessageLedgerUpdateInboundMetadata(t *testing.T) {

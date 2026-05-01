@@ -106,9 +106,16 @@ func (c telegramConnector) persistTelegramInboundStageA(
 
 	// 消息到达 -> 递减 delay 重置 heartbeat cooldown（仅群聊）
 	var pendingHeartbeatNotify bool
+	var pendingInboundBurstNotify bool
 	defer func() {
-		if committed && pendingHeartbeatNotify && c.bus != nil {
+		if !committed || c.bus == nil {
+			return
+		}
+		if pendingHeartbeatNotify {
 			_ = c.bus.Publish(ctx, pgnotify.ChannelHeartbeat, "")
+		}
+		if pendingInboundBurstNotify {
+			notifyChannelInboundBurst(ctx, c.bus)
 		}
 	}()
 	if !incoming.IsPrivate() && groupIdentity != nil && c.scheduledTriggersRepo != nil {
@@ -498,6 +505,7 @@ func (c telegramConnector) persistTelegramInboundStageA(
 			return nil, err
 		}
 		if finalState == inboundStatePendingDispatch {
+			pendingInboundBurstNotify = true
 			if err := commitTx(); err != nil {
 				return nil, err
 			}
@@ -588,6 +596,7 @@ createRun:
 	if err := extendPendingInboundBurstWindowTx(ctx, ledgerRepoTx, ch.ID, threadID, now); err != nil {
 		return nil, err
 	}
+	pendingInboundBurstNotify = true
 	if err := commitTx(); err != nil {
 		return nil, err
 	}
