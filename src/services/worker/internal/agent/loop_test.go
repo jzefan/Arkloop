@@ -2430,7 +2430,7 @@ func TestPrepareTurnRequestPromptCacheHeartbeatDecisionPhaseSkipsMessageCache(t 
 	}
 }
 
-func TestPrepareHeartbeatDecisionPhaseRequestShrinksPrompt(t *testing.T) {
+func TestPrepareHeartbeatDecisionPhaseRequestKeepsPromptAndRestrictsTools(t *testing.T) {
 	messages := []llm.Message{
 		{Role: "system", Content: []llm.ContentPart{{Text: "large system prompt"}}},
 	}
@@ -2460,28 +2460,29 @@ func TestPrepareHeartbeatDecisionPhaseRequestShrinksPrompt(t *testing.T) {
 
 	prepareHeartbeatDecisionPhaseRequest(&request)
 
-	if request.PromptPlan != nil {
-		t.Fatalf("expected prompt plan to be removed, got %#v", request.PromptPlan)
+	if request.PromptPlan == nil || len(request.PromptPlan.SystemBlocks) != 1 {
+		t.Fatalf("expected prompt plan to be preserved, got %#v", request.PromptPlan)
+	}
+	if request.PromptPlan.SystemBlocks[0].Text != "large system prompt" {
+		t.Fatalf("expected system prompt block to be preserved, got %#v", request.PromptPlan.SystemBlocks)
 	}
 	if len(request.Tools) != 1 || request.Tools[0].Name != heartbeattool.ToolName {
 		t.Fatalf("expected only heartbeat_decision tool, got %#v", request.Tools)
 	}
-	if len(request.Messages) != 14 {
-		t.Fatalf("unexpected shrunken message count: got %d", len(request.Messages))
+	if len(request.Messages) != len(messages) {
+		t.Fatalf("expected messages to be preserved, got %d want %d", len(request.Messages), len(messages))
 	}
-	for _, msg := range request.Messages {
-		if msg.Role == "system" || msg.Role == "tool" {
-			t.Fatalf("unexpected role in heartbeat decision request: %#v", msg)
-		}
-		if len(msg.ToolCalls) > 0 {
-			t.Fatalf("unexpected tool calls in heartbeat decision request: %#v", msg)
-		}
+	if request.Messages[0].Role != "system" || request.Messages[0].Content[0].Text != "large system prompt" {
+		t.Fatalf("expected system message to be preserved, got %#v", request.Messages[0])
+	}
+	if request.Messages[21].Role != "tool" || request.Messages[21].Content[0].Text != "tool result" {
+		t.Fatalf("expected tool history to be preserved, got %#v", request.Messages[21])
 	}
 	if !messageHasText(request.Messages[len(request.Messages)-2], "[SYSTEM_HEARTBEAT_CHECK]") {
 		t.Fatalf("expected heartbeat check to be retained, got %#v", request.Messages)
 	}
-	if request.Messages[0].Content[0].Text != "history 08" {
-		t.Fatalf("expected oldest retained history to be history 08, got %q", request.Messages[0].Content[0].Text)
+	if request.Messages[1].Content[0].Text != "history 00" {
+		t.Fatalf("expected full history to be retained, got %q", request.Messages[1].Content[0].Text)
 	}
 }
 
