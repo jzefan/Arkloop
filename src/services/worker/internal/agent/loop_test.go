@@ -331,11 +331,8 @@ func TestAgentLoopHeartbeatDecisionReplyTrueStopsWithoutSecondLlmTurn(t *testing
 	if containsToolSpec(gateway.requests[1].Tools, heartbeattool.ToolName) {
 		t.Fatalf("expected Phase 2 to remove heartbeat_decision tool, got %#v", gateway.requests[1].Tools)
 	}
-	if requestHasImagePart(gateway.requests[1]) {
-		t.Fatalf("expected Phase 2 heartbeat reply request to strip images: %#v", gateway.requests[1].Messages)
-	}
-	if !requestHasText(gateway.requests[1], "[attachment_key:attachments/latest.png]") {
-		t.Fatalf("expected Phase 2 to retain attachment key placeholder: %#v", gateway.requests[1].Messages)
+	if !requestHasImagePart(gateway.requests[1]) {
+		t.Fatalf("expected Phase 2 heartbeat reply request to keep images: %#v", gateway.requests[1].Messages)
 	}
 	assertHasEvent(t, got, "run.completed")
 	for _, ev := range got {
@@ -2341,6 +2338,44 @@ func TestPrepareTurnRequestPromptCacheHeartbeatSkipsVolatileTail(t *testing.T) {
 	}
 }
 
+func TestPrepareTurnRequestPromptCacheHeartbeatStopsBeforeImageTail(t *testing.T) {
+	request := llm.Request{
+		Messages: []llm.Message{
+			{Role: "user", Content: []llm.ContentPart{{Text: "old user"}}},
+			{Role: "assistant", Content: []llm.ContentPart{{Text: "old reply"}}},
+			{Role: "user", Content: []llm.ContentPart{{Type: messagecontent.PartTypeImage, Attachment: &messagecontent.AttachmentRef{Key: "attachments/photo.png"}, Data: []byte("image")}}},
+			{Role: "assistant", Content: []llm.ContentPart{{Text: "reply after image"}}},
+			{Role: "user", Content: []llm.ContentPart{{Text: "[SYSTEM_HEARTBEAT_CHECK]\ntime_utc: 2026-04-30T11:20:38Z"}}},
+		},
+		PromptPlan: &llm.PromptPlan{
+			MessageCache: llm.MessageCachePlan{
+				Enabled:            true,
+				MarkerMessageIndex: 4,
+			},
+		},
+	}
+
+	prepareTurnRequestPromptCache(&request, RunContext{
+		PipelineRC: &pipeline.RunContext{
+			HeartbeatRun: true,
+			AgentConfig:  &pipeline.ResolvedAgentConfig{PromptCacheControl: "system_prompt"},
+		},
+	}, &promptCacheTurnState{StableMarkerIndex: -1})
+
+	if !request.PromptPlan.MessageCache.Enabled {
+		t.Fatalf("expected message cache enabled, got %#v", request.PromptPlan.MessageCache)
+	}
+	if got, want := request.PromptPlan.MessageCache.MarkerMessageIndex, 1; got != want {
+		t.Fatalf("unexpected marker index: got %d want %d", got, want)
+	}
+	if got, want := request.PromptPlan.MessageCache.ToolResultCacheCutIndex, 1; got != want {
+		t.Fatalf("unexpected tool result cut index: got %d want %d", got, want)
+	}
+	if !messageHasImagePart(request.Messages[2]) {
+		t.Fatalf("expected image to remain in request: %#v", request.Messages[2])
+	}
+}
+
 func TestPrepareTurnRequestPromptCacheHeartbeatRequiresStableBoundary(t *testing.T) {
 	request := llm.Request{
 		Messages: []llm.Message{
@@ -2486,6 +2521,47 @@ func TestPrepareTurnRequestPromptCacheChannelSkipsLatestUserTail(t *testing.T) {
 	}
 }
 
+func TestPrepareTurnRequestPromptCacheChannelStopsBeforeImageTail(t *testing.T) {
+	request := llm.Request{
+		Messages: []llm.Message{
+			{Role: "user", Content: []llm.ContentPart{{Text: "old user"}}},
+			{Role: "assistant", Content: []llm.ContentPart{{Text: "old reply"}}},
+			{Role: "user", Content: []llm.ContentPart{{Type: messagecontent.PartTypeImage, Attachment: &messagecontent.AttachmentRef{Key: "attachments/photo.png"}, Data: []byte("image")}}},
+			{Role: "assistant", Content: []llm.ContentPart{{Text: "reply after image"}}},
+			{Role: "user", Content: []llm.ContentPart{{Text: "latest telegram delivery"}}},
+		},
+		PromptPlan: &llm.PromptPlan{
+			MessageCache: llm.MessageCachePlan{
+				Enabled:            true,
+				MarkerMessageIndex: 4,
+			},
+		},
+	}
+
+	prepareTurnRequestPromptCache(&request, RunContext{
+		PipelineRC: &pipeline.RunContext{
+			ChannelContext: &pipeline.ChannelContext{
+				ChannelType:      "telegram",
+				ConversationType: "private",
+			},
+			AgentConfig: &pipeline.ResolvedAgentConfig{PromptCacheControl: "system_prompt"},
+		},
+	}, &promptCacheTurnState{StableMarkerIndex: -1})
+
+	if !request.PromptPlan.MessageCache.Enabled {
+		t.Fatalf("expected message cache enabled, got %#v", request.PromptPlan.MessageCache)
+	}
+	if got, want := request.PromptPlan.MessageCache.MarkerMessageIndex, 1; got != want {
+		t.Fatalf("unexpected marker index: got %d want %d", got, want)
+	}
+	if got, want := request.PromptPlan.MessageCache.ToolResultCacheCutIndex, 1; got != want {
+		t.Fatalf("unexpected tool result cut index: got %d want %d", got, want)
+	}
+	if !messageHasImagePart(request.Messages[2]) {
+		t.Fatalf("expected image to remain in request: %#v", request.Messages[2])
+	}
+}
+
 func containsToolSpec(specs []llm.ToolSpec, name string) bool {
 	for _, spec := range specs {
 		if spec.Name == name {
@@ -2501,15 +2577,6 @@ func requestHasImagePart(request llm.Request) bool {
 			if part.Kind() == messagecontent.PartTypeImage {
 				return true
 			}
-		}
-	}
-	return false
-}
-
-func requestHasText(request llm.Request, text string) bool {
-	for _, msg := range request.Messages {
-		if messageHasText(msg, text) {
-			return true
 		}
 	}
 	return false

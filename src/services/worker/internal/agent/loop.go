@@ -697,7 +697,6 @@ func (l *Loop) Run(
 			request.Tools = filterToolSpecs(request.Tools, func(spec llm.ToolSpec) bool {
 				return pipeline.IsHeartbeatDecisionToolName(spec.Name)
 			})
-			messages = stripImagePartsFromMessages(messages)
 		}
 
 		// end_reply: terminate run without further output
@@ -2218,15 +2217,15 @@ func promptCacheMarkerIndex(messages []llm.Message, runCtx RunContext) int {
 	if lastIdx < 0 {
 		return -1
 	}
+	markerIdx := lastIdx
 	if pipeline.IsHeartbeatRunContext(runCtx.PipelineRC) {
-		return heartbeatPromptCacheMarkerIndex(messages)
-	}
-	if isChannelRunContext(runCtx.PipelineRC) && strings.TrimSpace(messages[lastIdx].Role) == "user" {
+		markerIdx = heartbeatPromptCacheMarkerIndex(messages)
+	} else if isChannelRunContext(runCtx.PipelineRC) && strings.TrimSpace(messages[lastIdx].Role) == "user" {
 		if idx := lastAssistantMessageIndexBefore(messages, lastIdx); idx >= 0 {
-			return idx
+			markerIdx = idx
 		}
 	}
-	return lastIdx
+	return promptCacheMarkerBeforeImageTail(messages, markerIdx)
 }
 
 func isHeartbeatDecisionPhase(request *llm.Request) bool {
@@ -2308,54 +2307,6 @@ func heartbeatDecisionVisibleMessage(msg llm.Message) (llm.Message, bool) {
 	return llm.Message{Role: role, Content: parts}, true
 }
 
-func stripImagePartsFromMessages(messages []llm.Message) []llm.Message {
-	if len(messages) == 0 {
-		return messages
-	}
-	out := make([]llm.Message, len(messages))
-	copy(out, messages)
-	for i := range out {
-		parts, changed := stripImageParts(out[i].Content)
-		if changed {
-			out[i].Content = parts
-		}
-	}
-	return out
-}
-
-func stripImageParts(parts []llm.ContentPart) ([]llm.ContentPart, bool) {
-	if len(parts) == 0 {
-		return parts, false
-	}
-	out := make([]llm.ContentPart, 0, len(parts))
-	changed := false
-	for _, part := range parts {
-		if part.Kind() != messagecontent.PartTypeImage {
-			out = append(out, part)
-			continue
-		}
-		changed = true
-		key := ""
-		if part.Attachment != nil {
-			key = strings.TrimSpace(part.Attachment.Key)
-		}
-		if key != "" {
-			out = append(out, llm.ContentPart{
-				Type:        messagecontent.PartTypeText,
-				Text:        "[attachment_key:" + key + "]",
-				TrustSource: part.TrustSource,
-			})
-		}
-	}
-	if len(out) == 0 {
-		out = append(out, llm.ContentPart{
-			Type: messagecontent.PartTypeText,
-			Text: "[image omitted]",
-		})
-	}
-	return out, changed
-}
-
 func heartbeatPromptCacheMarkerIndex(messages []llm.Message) int {
 	heartbeatIdx := -1
 	for i, msg := range messages {
@@ -2368,6 +2319,41 @@ func heartbeatPromptCacheMarkerIndex(messages []llm.Message) int {
 		return len(messages) - 1
 	}
 	return lastAssistantMessageIndexBefore(messages, heartbeatIdx)
+}
+
+func promptCacheMarkerBeforeImageTail(messages []llm.Message, markerIdx int) int {
+	if markerIdx < 0 || len(messages) == 0 {
+		return markerIdx
+	}
+	if markerIdx >= len(messages) {
+		markerIdx = len(messages) - 1
+	}
+	firstImageIdx := firstImageMessageIndexAtOrBefore(messages, markerIdx)
+	if firstImageIdx < 0 {
+		return markerIdx
+	}
+	return lastAssistantMessageIndexBefore(messages, firstImageIdx)
+}
+
+func firstImageMessageIndexAtOrBefore(messages []llm.Message, maxIdx int) int {
+	if maxIdx >= len(messages) {
+		maxIdx = len(messages) - 1
+	}
+	for i := 0; i <= maxIdx; i++ {
+		if messageHasImagePart(messages[i]) {
+			return i
+		}
+	}
+	return -1
+}
+
+func messageHasImagePart(msg llm.Message) bool {
+	for _, part := range msg.Content {
+		if part.Kind() == messagecontent.PartTypeImage {
+			return true
+		}
+	}
+	return false
 }
 
 func lastAssistantMessageIndexBefore(messages []llm.Message, before int) int {
