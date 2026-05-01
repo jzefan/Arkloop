@@ -38,14 +38,6 @@ export function useInputPerfDebug() {
     commitDurationsRef.current.push(performance.now() - renderStartRef.current)
   })
 
-  useEffect(() => {
-    const handler = (e: Event) => {
-      enabledRef.current = !!(e as CustomEvent<boolean>).detail
-    }
-    window.addEventListener('arkloop:developer_show_debug_panel', handler as EventListener)
-    return () => window.removeEventListener('arkloop:developer_show_debug_panel', handler as EventListener)
-  }, [])
-
   // long task detection via PerformanceObserver
   useEffect(() => {
     if (typeof PerformanceObserver === 'undefined') return
@@ -66,7 +58,22 @@ export function useInputPerfDebug() {
 
   // fps counter + periodic emit
   useEffect(() => {
+    const clearSamples = () => {
+      renderCountRef.current = 0
+      onChangeDurationsRef.current = []
+      commitDurationsRef.current = []
+      longTasksRef.current = []
+      keystrokePaintRef.current = []
+      fpsFramesRef.current = 0
+      fpsRef.current = 0
+      lastFpsTimeRef.current = 0
+    }
+
     const fpsLoop = (now: number) => {
+      if (!enabledRef.current) {
+        rafRef.current = 0
+        return
+      }
       fpsFramesRef.current++
       const elapsed = now - lastFpsTimeRef.current
       if (elapsed >= 1000) {
@@ -76,9 +83,8 @@ export function useInputPerfDebug() {
       }
       rafRef.current = requestAnimationFrame(fpsLoop)
     }
-    rafRef.current = requestAnimationFrame(fpsLoop)
 
-    timerRef.current = setInterval(() => {
+    const emitSamples = () => {
       if (!enabledRef.current) return
       const onChange = onChangeDurationsRef.current
       const commits = commitDurationsRef.current
@@ -111,11 +117,41 @@ export function useInputPerfDebug() {
       commitDurationsRef.current = []
       longTasksRef.current = []
       keystrokePaintRef.current = []
-    }, EMIT_INTERVAL_MS)
+    }
+
+    const start = () => {
+      if (rafRef.current === 0) {
+        rafRef.current = requestAnimationFrame(fpsLoop)
+      }
+      if (timerRef.current === null) {
+        timerRef.current = setInterval(emitSamples, EMIT_INTERVAL_MS)
+      }
+    }
+
+    const stop = () => {
+      if (rafRef.current !== 0) {
+        cancelAnimationFrame(rafRef.current)
+        rafRef.current = 0
+      }
+      if (timerRef.current) {
+        clearInterval(timerRef.current)
+        timerRef.current = null
+      }
+      clearSamples()
+    }
+
+    const handler = (e: Event) => {
+      enabledRef.current = !!(e as CustomEvent<boolean>).detail
+      if (enabledRef.current) start()
+      else stop()
+    }
+
+    if (enabledRef.current) start()
+    window.addEventListener('arkloop:developer_show_debug_panel', handler as EventListener)
 
     return () => {
-      cancelAnimationFrame(rafRef.current)
-      if (timerRef.current) clearInterval(timerRef.current)
+      window.removeEventListener('arkloop:developer_show_debug_panel', handler as EventListener)
+      stop()
     }
   }, [])
 
