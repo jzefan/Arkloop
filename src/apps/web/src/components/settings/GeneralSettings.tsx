@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from 'react'
-import { Monitor, LogOut, HelpCircle, ArrowUpRight, Zap, Loader2, X } from 'lucide-react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { Monitor, LogOut, HelpCircle, ArrowUpRight, Zap, Loader2, X, Pencil, Check } from 'lucide-react'
 import type { MeResponse } from '../../api'
 import {
   listLlmProviders,
@@ -8,6 +8,7 @@ import {
   setSpawnProfile,
   deleteSpawnProfile,
   testLlmProviderModel,
+  updateMe,
 } from '../../api'
 import type { LlmProvider, SpawnProfile } from '../../api'
 import { useLocale } from '../../contexts/LocaleContext'
@@ -43,7 +44,6 @@ export function GeneralSettings({ me, accessToken, onLogout, onMeUpdated }: Prop
   const nonSaaSUi =
     getDesktopMode() !== null || isDesktop() || localMode
 
-  const [osUsername, setOsUsername] = useState<string | null>(null)
   const [generalData, setGeneralData] = useState(() => {
     const cached = generalSettingsCache.get(accessToken)
     return {
@@ -53,13 +53,26 @@ export function GeneralSettings({ me, accessToken, onLogout, onMeUpdated }: Prop
     }
   })
   const [savingTool, setSavingTool] = useState(false)
+  const [editingName, setEditingName] = useState(false)
+  const [draftName, setDraftName] = useState(me?.username ?? '')
+  const [savingName, setSavingName] = useState(false)
+  const [nameError, setNameError] = useState('')
+  const nameInputRef = useRef<HTMLInputElement>(null)
   const providers = generalData.providers
   const toolProfile = generalData.toolProfile
 
   useEffect(() => {
-    if (!localMode) return
-    getDesktopApi()?.app.getOsUsername?.().then(setOsUsername).catch(() => {})
-  }, [localMode])
+    if (!editingName) setDraftName(me?.username ?? '')
+  }, [editingName, me?.username])
+
+  useEffect(() => {
+    if (!editingName) return
+    const frame = requestAnimationFrame(() => {
+      nameInputRef.current?.focus()
+      nameInputRef.current?.select()
+    })
+    return () => cancelAnimationFrame(frame)
+  }, [editingName])
 
   useEffect(() => {
     let cancelled = false
@@ -284,14 +297,53 @@ export function GeneralSettings({ me, accessToken, onLogout, onMeUpdated }: Prop
     }
   }
 
-  const displayName = localMode ? (osUsername ?? me?.username ?? '?') : (me?.username ?? '?')
+  const displayName = me?.username ?? '?'
   const userInitial = displayName.charAt(0).toUpperCase()
+  const trimmedDraftName = draftName.trim()
+  const nameSaveDisabled = savingName || !trimmedDraftName
+
+  const startNameEdit = () => {
+    if (!me || savingName) return
+    setDraftName(me.username)
+    setNameError('')
+    setEditingName(true)
+  }
+
+  const cancelNameEdit = () => {
+    if (savingName) return
+    setDraftName(me?.username ?? '')
+    setNameError('')
+    setEditingName(false)
+  }
+
+  const saveNameEdit = async () => {
+    if (!me || nameSaveDisabled) return
+    if (trimmedDraftName === me.username) {
+      cancelNameEdit()
+      return
+    }
+    setSavingName(true)
+    setNameError('')
+    try {
+      const updated = await updateMe(accessToken, { username: trimmedDraftName })
+      onMeUpdated?.({
+        ...me,
+        username: updated.username,
+        timezone: updated.timezone === undefined ? me.timezone : updated.timezone,
+      })
+      setEditingName(false)
+    } catch {
+      setNameError(t.requestFailed)
+    } finally {
+      setSavingName(false)
+    }
+  }
 
   return (
     <div className="flex flex-col gap-6">
       {/* Profile */}
       <div
-        className="flex items-center gap-4 rounded-xl bg-[var(--c-bg-menu)] px-5 py-4"
+        className="group flex items-center gap-4 rounded-xl bg-[var(--c-bg-menu)] px-5 py-4"
         style={{ border: '0.5px solid var(--c-border-subtle)' }}
       >
         <div
@@ -301,9 +353,69 @@ export function GeneralSettings({ me, accessToken, onLogout, onMeUpdated }: Prop
           {userInitial}
         </div>
         <div className="flex min-w-0 flex-1 flex-col">
-          <span className="truncate text-base font-semibold text-[var(--c-text-heading)]">
-            {displayName === '?' ? t.loading : displayName}
-          </span>
+          {editingName ? (
+            <div className="flex min-w-0 flex-col gap-1.5">
+              <div className="flex min-w-0 items-center gap-1.5">
+                <input
+                  ref={nameInputRef}
+                  type="text"
+                  value={draftName}
+                  onChange={(e) => {
+                    setDraftName(e.target.value)
+                    setNameError('')
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') void saveNameEdit()
+                    if (e.key === 'Escape') cancelNameEdit()
+                  }}
+                  disabled={savingName}
+                  maxLength={256}
+                  className="h-8 min-w-0 max-w-[280px] flex-1 rounded-lg px-2.5 text-sm font-medium text-[var(--c-text-heading)] outline-none placeholder:text-[var(--c-text-tertiary)]"
+                  style={{ border: '0.5px solid var(--c-border-subtle)', background: 'var(--c-bg-page)' }}
+                />
+                <button
+                  type="button"
+                  onClick={() => void saveNameEdit()}
+                  disabled={nameSaveDisabled}
+                  className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-[var(--c-text-secondary)] transition-colors hover:bg-[var(--c-bg-deep)] hover:text-[var(--c-text-primary)] disabled:cursor-default disabled:opacity-40"
+                  title={t.profileSave}
+                  aria-label={t.profileSave}
+                >
+                  {savingName ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />}
+                </button>
+                <button
+                  type="button"
+                  onClick={cancelNameEdit}
+                  disabled={savingName}
+                  className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-[var(--c-text-tertiary)] transition-colors hover:bg-[var(--c-bg-deep)] hover:text-[var(--c-text-secondary)] disabled:cursor-default disabled:opacity-40"
+                  title={t.models.cancel}
+                  aria-label={t.models.cancel}
+                >
+                  <X size={14} />
+                </button>
+              </div>
+              {nameError && (
+                <span className="text-xs text-[var(--c-status-error-text)]">{nameError}</span>
+              )}
+            </div>
+          ) : (
+            <div className="flex min-w-0 items-center gap-1.5">
+              <span className="truncate text-base font-semibold text-[var(--c-text-heading)]">
+                {displayName === '?' ? t.loading : displayName}
+              </span>
+              {localMode && me && (
+                <button
+                  type="button"
+                  onClick={startNameEdit}
+                  className="pointer-events-none flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-[var(--c-text-tertiary)] opacity-0 transition-[opacity,background-color,color] hover:bg-[var(--c-bg-deep)] hover:text-[var(--c-text-secondary)] group-hover:pointer-events-auto group-hover:opacity-100 focus-visible:pointer-events-auto focus-visible:opacity-100"
+                  title={t.editProfile}
+                  aria-label={t.editProfile}
+                >
+                  <Pencil size={14} />
+                </button>
+              )}
+            </div>
+          )}
           {localMode ? (
             <span className="flex items-center gap-1 text-xs text-[var(--c-text-tertiary)]">
               <Monitor size={11} />
