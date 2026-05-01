@@ -65,15 +65,13 @@ Even if you're not a developer, just a regular user — if anything feels off wh
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for commit conventions and development workflow.
 
-## If you can, give us a Star
-![wkwUSiE3xZw1NeDrSFqJYDkkSEDULMfu](https://cdn.nodeimage.com/i/wkwUSiE3xZw1NeDrSFqJYDkkSEDULMfu.gif)
-
 ## Sponsors
 
-Thanks to the following friends for their financial support, keeping Arkloop going:
+Thanks to the following friends for their support, keeping Arkloop going:
 
-- [@Jinnkunn](https://github.com/Jinnkunn) — Domain sponsorship
-- @jeck — An iced Americano
+- [@Jinnkunn](https://github.com/Jinnkunn) — Bought me a domain
+- @jeck — Treated me to an iced Americano
+- @chuichui — Covered my AI costs for two weeks
 
 
 ## Contributors
@@ -81,6 +79,10 @@ Thanks to the following friends for their financial support, keeping Arkloop goi
 <a href="https://github.com/qqqqqf-q/Arkloop/graphs/contributors">
   <img src="https://contrib.rocks/image?repo=qqqqqf-q/Arkloop" />
 </a>
+
+
+## If you can, give us a Star
+![wkwUSiE3xZw1NeDrSFqJYDkkSEDULMfu](https://cdn.nodeimage.com/i/wkwUSiE3xZw1NeDrSFqJYDkkSEDULMfu.gif)
 
 ## Architecture
 
