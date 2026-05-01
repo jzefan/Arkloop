@@ -2041,7 +2041,7 @@ export function readFontSettingsFromStorage(): FontSettings {
     if (!raw) return { fontFamily: defaultFontFamily, codeFontFamily: 'jetbrains-mono', fontSize: 'normal' }
     const parsed = JSON.parse(raw) as Partial<FontSettings>
     return {
-      fontFamily: (['default', 'inter', 'system', 'serif', 'noto-sans', 'source-sans', 'custom'] as FontFamily[]).includes(parsed.fontFamily as FontFamily) ? parsed.fontFamily as FontFamily : defaultFontFamily,
+      fontFamily: (['default', 'inter', 'system', 'serif', 'noto-sans', 'source-sans', 'open-dyslexic', 'custom'] as FontFamily[]).includes(parsed.fontFamily as FontFamily) ? parsed.fontFamily as FontFamily : defaultFontFamily,
       codeFontFamily: (['jetbrains-mono', 'fira-code', 'cascadia-code', 'source-code-pro'] as CodeFontFamily[]).includes(parsed.codeFontFamily as CodeFontFamily) ? parsed.codeFontFamily as CodeFontFamily : 'jetbrains-mono',
       fontSize: (['compact', 'normal', 'relaxed'] as FontSize[]).includes(parsed.fontSize as FontSize) ? parsed.fontSize as FontSize : 'normal',
     }

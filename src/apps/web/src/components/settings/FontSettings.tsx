@@ -12,6 +12,7 @@ const BODY_FONTS: { value: FontFamily; label: string; fontFamily: string }[] = [
   { value: 'serif',       label: 'Serif',         fontFamily: "ui-serif, Georgia, serif" },
   { value: 'noto-sans',   label: 'Noto Sans',     fontFamily: "'Noto Sans', sans-serif" },
   { value: 'source-sans', label: 'Source Sans 3', fontFamily: "'Source Sans 3', sans-serif" },
+  { value: 'open-dyslexic', label: 'OpenDyslexic',  fontFamily: "'OpenDyslexicRegular', 'OpenDyslexic', sans-serif" },
 ]
 
 // Each entry has its own font stack so preview renders in the correct font
