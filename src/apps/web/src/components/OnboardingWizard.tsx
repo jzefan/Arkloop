@@ -1395,7 +1395,7 @@ export function OnboardingWizard({ onComplete }: Props) {
                     marginBottom: "24px",
                   }}
                 >
-                  {(["default", "terra", "github", "nord", "catppuccin", "tokyo-night"] as const).map((presetId) => {
+                  {(["default", "terra", "github", "nord", "catppuccin", "tokyo-night", "retina-burn"] as const).map((presetId) => {
                     const def = BUILTIN_PRESETS[presetId];
                     if (!def) return null;
                     const dark = def.dark ?? {};
@@ -1494,7 +1494,7 @@ export function OnboardingWizard({ onComplete }: Props) {
                             borderTop: "0.5px solid var(--c-border-subtle)",
                           }}
                         >
-                          {presetId === "default" ? "Default" : def.name}
+                          {presetId === "default" ? t.themePresetDefault : presetId === "retina-burn" ? t.themePresetRetinaBurn : def.name}
                         </div>
                       </button>
                     );

@@ -1,4 +1,4 @@
-export type ThemePreset = 'default' | 'terra' | 'github' | 'nord' | 'catppuccin' | 'tokyo-night' | 'custom'
+export type ThemePreset = 'default' | 'terra' | 'github' | 'nord' | 'catppuccin' | 'tokyo-night' | 'retina-burn' | 'custom'
 export type FontFamily = 'default' | 'inter' | 'system' | 'serif' | 'noto-sans' | 'source-sans' | 'custom'
 export type CodeFontFamily = 'jetbrains-mono' | 'fira-code' | 'cascadia-code' | 'source-code-pro'
 export type FontSize = 'compact' | 'normal' | 'relaxed'

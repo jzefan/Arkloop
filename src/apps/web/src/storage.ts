@@ -2061,7 +2061,7 @@ export function readThemePresetFromStorage(): ThemePreset {
   if (!canUseLocalStorage()) return 'default'
   try {
     const raw = localStorage.getItem(THEME_PRESET_KEY)
-    const valid: ThemePreset[] = ['default', 'terra', 'github', 'nord', 'catppuccin', 'tokyo-night', 'custom']
+    const valid: ThemePreset[] = ['default', 'terra', 'github', 'nord', 'catppuccin', 'tokyo-night', 'retina-burn', 'custom']
     return valid.includes(raw as ThemePreset) ? (raw as ThemePreset) : 'default'
   } catch {
     return 'default'
