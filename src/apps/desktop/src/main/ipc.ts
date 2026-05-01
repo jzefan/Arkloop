@@ -669,8 +669,8 @@ function providerNameToFetch(providerName: string): ConnectorsConfig['fetch']['p
 
 function providerNameToSearch(providerName: string): ConnectorsConfig['search']['provider'] {
   switch (providerName) {
-    case 'web_search.duckduckgo':
-      return 'duckduckgo'
+    case 'web_search.basic':
+      return 'basic'
     case 'web_search.searxng':
       return 'searxng'
     case 'web_search.tavily':
@@ -698,7 +698,7 @@ async function migrateLegacyConnectorsIfNeeded(config: AppConfig): Promise<void>
 }
 
 function hasLegacySearchConfig(connectors: ConnectorsConfig): boolean {
-  return connectors.search.provider === 'duckduckgo'
+  return connectors.search.provider === 'basic'
     || (connectors.search.provider === 'tavily' && Boolean(connectors.search.tavilyApiKey))
     || (connectors.search.provider === 'searxng' && Boolean(connectors.search.searxngBaseUrl))
 }
@@ -716,8 +716,8 @@ async function applyConnectorConfig(connectors: ConnectorsConfig): Promise<void>
 
 async function applySearchConnector(search: ConnectorsConfig['search']): Promise<void> {
   await deactivateToolProviderGroup('web_search')
-  if (search.provider === 'duckduckgo') {
-    await activateToolProvider('web_search', 'web_search.duckduckgo')
+  if (search.provider === 'basic') {
+    await activateToolProvider('web_search', 'web_search.basic')
     return
   }
   if (search.provider === 'tavily') {

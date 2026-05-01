@@ -2,6 +2,7 @@ package websearch
 
 import (
 	"context"
+	"net/url"
 	"strings"
 	"unicode/utf8"
 )
@@ -65,4 +66,16 @@ func truncateRunes(value string, maxChars int) string {
 		out = append(out, r)
 	}
 	return string(out)
+}
+
+func titleFromURL(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return ""
+	}
+	host := u.Hostname()
+	if host == "" {
+		return ""
+	}
+	return host
 }

@@ -232,7 +232,7 @@ func TestResolveBuiltinHidesWebToolsWhenNotConfigured(t *testing.T) {
 func TestResolveBuiltinAddsWebToolsFromPlatformProviders(t *testing.T) {
 	resolved := ResolveBuiltin(ResolveInput{
 		PlatformProviders: []ProviderConfig{
-			{GroupName: "web_search", ProviderName: "web_search.duckduckgo"},
+			{GroupName: "web_search", ProviderName: "web_search.basic"},
 			{GroupName: "web_fetch", ProviderName: "web_fetch.jina"},
 			{
 				GroupName:    "read",

@@ -42,7 +42,7 @@ async function loadDesktopSettingsSubject() {
           onboarding_completed: true,
           connectors: {
             fetch: { provider: 'basic' },
-            search: { provider: 'duckduckgo' },
+            search: { provider: 'basic' },
           },
           memory: { enabled: true, provider: 'notebook' },
           network: { proxyEnabled: false, requestTimeoutMs: 30000, retryCount: 1 },

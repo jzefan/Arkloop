@@ -12,7 +12,6 @@ import (
 )
 
 var toolProviderCatalog = []toolProviderDefinition{
-	{GroupName: "web_search", ProviderName: "web_search.duckduckgo"},
 	{GroupName: "web_search", ProviderName: "web_search.tavily", RequiresAPIKey: true},
 	{GroupName: "web_search", ProviderName: "web_search.searxng", RequiresBaseURL: true, AllowsInternalHTTP: true, DefaultBaseURL: "http://searxng:8080"},
 	{GroupName: "web_fetch", ProviderName: "web_fetch.jina"},

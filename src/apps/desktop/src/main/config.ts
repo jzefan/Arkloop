@@ -77,8 +77,8 @@ function normalizeFetchProvider(p: unknown): FetchProvider {
 }
 
 function normalizeSearchProvider(p: unknown): SearchProvider {
-  if (p === 'browser') return 'duckduckgo'
-  if (p === 'none' || p === 'tavily' || p === 'searxng' || p === 'duckduckgo') return p
+  if (p === 'browser' || p === 'duckduckgo') return 'basic'
+  if (p === 'none' || p === 'basic' || p === 'tavily' || p === 'searxng') return p
   return DEFAULT_CONFIG.connectors.search.provider
 }
 

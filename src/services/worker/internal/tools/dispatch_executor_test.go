@@ -146,10 +146,10 @@ func TestDispatchingExecutorFallbackDisplayDescriptionDoesNotCopyCommand(t *test
 	}
 }
 
-func TestDispatchingExecutorBindsDuckduckgoProviderName(t *testing.T) {
+func TestDispatchingExecutorBindsBasicSearchProviderName(t *testing.T) {
 	registry := NewRegistry()
 	if err := registry.Register(AgentToolSpec{
-		Name:        "web_search.duckduckgo",
+		Name:        "web_search.basic",
 		LlmName:     "web_search",
 		Version:     "1",
 		Description: "x",
@@ -158,12 +158,12 @@ func TestDispatchingExecutorBindsDuckduckgoProviderName(t *testing.T) {
 		t.Fatalf("register failed: %v", err)
 	}
 
-	allowlist := AllowlistFromNames([]string{"web_search.duckduckgo"})
+	allowlist := AllowlistFromNames([]string{"web_search.basic"})
 	policy := NewPolicyEnforcer(registry, allowlist)
 	dispatch := NewDispatchingExecutor(registry, policy)
 
 	exec := &recordingExecutor{}
-	if err := dispatch.Bind("web_search.duckduckgo", exec); err != nil {
+	if err := dispatch.Bind("web_search.basic", exec); err != nil {
 		t.Fatalf("bind failed: %v", err)
 	}
 
@@ -177,8 +177,8 @@ func TestDispatchingExecutorBindsDuckduckgoProviderName(t *testing.T) {
 	if result.Error != nil {
 		t.Fatalf("unexpected error: %+v", result.Error)
 	}
-	if got := exec.CalledWith(); got != "web_search.duckduckgo" {
-		t.Fatalf("expected web_search.duckduckgo, got %q", got)
+	if got := exec.CalledWith(); got != "web_search.basic" {
+		t.Fatalf("expected web_search.basic, got %q", got)
 	}
 }
 

@@ -716,3 +716,126 @@ func TestLlmRoutesProviderModelsMigration(t *testing.T) {
 		t.Fatal("expected unique constraint on credential default route")
 	}
 }
+
+func TestWebSearchBasicProviderMigration(t *testing.T) {
+	db := testutil.SetupPostgresDatabase(t, "migrate_web_search_basic")
+	ctx := context.Background()
+
+	sqlDB, err := openDB(db.DSN)
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	defer func() { _ = sqlDB.Close() }()
+
+	provider, err := newProvider(sqlDB)
+	if err != nil {
+		t.Fatalf("new provider: %v", err)
+	}
+	if _, err := provider.UpTo(ctx, 180); err != nil {
+		t.Fatalf("up to 180: %v", err)
+	}
+
+	accountID := uuid.New()
+	ownerID := uuid.New()
+	conflictOwnerID := uuid.New()
+	for _, userID := range []uuid.UUID{ownerID, conflictOwnerID} {
+		if _, err := sqlDB.ExecContext(ctx, `INSERT INTO users (id, username) VALUES ($1, $2)`, userID, "user-"+userID.String()[:8]); err != nil {
+			t.Fatalf("insert user %s: %v", userID, err)
+		}
+	}
+	if _, err := sqlDB.ExecContext(ctx, `
+		INSERT INTO accounts (id, slug, name, type, owner_user_id)
+		VALUES ($1, 'web-search-basic-migration', 'Web Search Basic Migration', 'personal', $2)
+	`, accountID, ownerID); err != nil {
+		t.Fatalf("insert account: %v", err)
+	}
+
+	seedToolProvider := func(ownerKind string, ownerUserID *uuid.UUID, providerName string, active bool, keyPrefix string, baseURL string, configJSON string) {
+		t.Helper()
+		var ownerArg any
+		if ownerUserID != nil {
+			ownerArg = *ownerUserID
+		}
+		_, err := sqlDB.ExecContext(ctx, `
+			INSERT INTO tool_provider_configs (
+				account_id, owner_kind, owner_user_id, group_name, provider_name,
+				is_active, key_prefix, base_url, config_json
+			) VALUES ($1, $2, $3, 'web_search', $4, $5, NULLIF($6, ''), NULLIF($7, ''), $8::jsonb)
+		`, accountID, ownerKind, ownerArg, providerName, active, keyPrefix, baseURL, configJSON)
+		if err != nil {
+			t.Fatalf("insert provider %s/%s: %v", ownerKind, providerName, err)
+		}
+	}
+	seedToolProvider("platform", nil, "web_search.duckduckgo", true, "old-platform", "https://old.example", `{"mode":"old"}`)
+	seedToolProvider("platform", nil, "web_search.basic", false, "", "", `{}`)
+	seedToolProvider("user", &ownerID, "web_search.duckduckgo", false, "", "", `{"only":"old"}`)
+	seedToolProvider("user", &conflictOwnerID, "web_search.duckduckgo", true, "old-user", "", `{"mode":"old"}`)
+	seedToolProvider("user", &conflictOwnerID, "web_search.basic", false, "", "https://target.example", `{"keep":true}`)
+
+	result, err := provider.UpByOne(ctx)
+	if err != nil {
+		t.Fatalf("apply 181: %v", err)
+	}
+	if result == nil || result.Source == nil || result.Source.Version != 181 {
+		t.Fatalf("expected migration 181, got %#v", result)
+	}
+
+	assertToolProviderCount(t, sqlDB, ctx, "web_search.duckduckgo", 0)
+	assertToolProviderCount(t, sqlDB, ctx, "web_search.basic", 3)
+
+	var platformActive bool
+	var platformKey, platformBase, platformMode string
+	if err := sqlDB.QueryRowContext(ctx, `
+		SELECT is_active, COALESCE(key_prefix, ''), COALESCE(base_url, ''), config_json->>'mode'
+		FROM tool_provider_configs
+		WHERE owner_kind = 'platform' AND provider_name = 'web_search.basic'
+	`).Scan(&platformActive, &platformKey, &platformBase, &platformMode); err != nil {
+		t.Fatalf("select platform row: %v", err)
+	}
+	if !platformActive || platformKey != "old-platform" || platformBase != "https://old.example" || platformMode != "old" {
+		t.Fatalf("platform row = active:%v key:%q base:%q mode:%q", platformActive, platformKey, platformBase, platformMode)
+	}
+
+	var userOnlyProvider string
+	if err := sqlDB.QueryRowContext(ctx, `
+		SELECT provider_name
+		FROM tool_provider_configs
+		WHERE owner_kind = 'user' AND owner_user_id = $1
+	`, ownerID).Scan(&userOnlyProvider); err != nil {
+		t.Fatalf("select user-only row: %v", err)
+	}
+	if userOnlyProvider != "web_search.basic" {
+		t.Fatalf("user-only provider = %q", userOnlyProvider)
+	}
+
+	var conflictActive bool
+	var conflictKey, conflictBase string
+	var conflictHasKeep, conflictHasMode bool
+	if err := sqlDB.QueryRowContext(ctx, `
+		SELECT is_active, COALESCE(key_prefix, ''), COALESCE(base_url, ''), config_json ? 'keep', config_json ? 'mode'
+		FROM tool_provider_configs
+		WHERE owner_kind = 'user' AND owner_user_id = $1 AND provider_name = 'web_search.basic'
+	`, conflictOwnerID).Scan(&conflictActive, &conflictKey, &conflictBase, &conflictHasKeep, &conflictHasMode); err != nil {
+		t.Fatalf("select conflict row: %v", err)
+	}
+	if !conflictActive || conflictKey != "old-user" || conflictBase != "https://target.example" || !conflictHasKeep || conflictHasMode {
+		t.Fatalf("conflict row = active:%v key:%q base:%q keep:%v mode:%v", conflictActive, conflictKey, conflictBase, conflictHasKeep, conflictHasMode)
+	}
+
+	if _, err := provider.Down(ctx); err != nil {
+		t.Fatalf("down 181: %v", err)
+	}
+	assertToolProviderCount(t, sqlDB, ctx, "web_search.basic", 0)
+	assertToolProviderCount(t, sqlDB, ctx, "web_search.duckduckgo", 3)
+}
+
+func assertToolProviderCount(t *testing.T, db *sql.DB, ctx context.Context, providerName string, want int) {
+	t.Helper()
+	var got int
+	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM tool_provider_configs WHERE provider_name = $1`, providerName).Scan(&got); err != nil {
+		t.Fatalf("count %s: %v", providerName, err)
+	}
+	if got != want {
+		t.Fatalf("provider %s count = %d, want %d", providerName, got, want)
+	}
+}
