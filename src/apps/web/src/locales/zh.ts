@@ -71,6 +71,7 @@ export const zh: LocaleStrings = {
   fontSizeRelaxed: "宽松",
   themePresetSection: "配色方案",
   themePresetDefault: "默认",
+  themePresetRetinaBurn: "辣眼睛",
   themeColorEditor: "颜色编辑器",
   colorGroupBackgrounds: "背景",
   colorGroupText: "文字",

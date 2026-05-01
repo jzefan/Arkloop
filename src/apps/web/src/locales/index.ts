@@ -91,6 +91,7 @@ export interface LocaleStrings {
   fontSizeRelaxed: string;
   themePresetSection: string;
   themePresetDefault: string;
+  themePresetRetinaBurn: string;
   themeColorEditor: string;
   colorGroupBackgrounds: string;
   colorGroupText: string;

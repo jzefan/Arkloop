@@ -95,6 +95,7 @@ export function ThemePresetPicker({ onEditColors }: { onEditColors: () => void }
     { id: 'nord',         name: 'Nord',               def: BUILTIN_PRESETS['nord'] },
     { id: 'catppuccin',   name: 'Catppuccin',         def: BUILTIN_PRESETS['catppuccin'] },
     { id: 'tokyo-night',  name: 'Tokyo Night',        def: BUILTIN_PRESETS['tokyo-night'] },
+    { id: 'retina-burn',  name: t.themePresetRetinaBurn, def: BUILTIN_PRESETS['retina-burn'] },
   ]
 
   const defaultDark = { '--c-bg-page': '#1e1d1c', '--c-bg-sidebar': '#242422', '--c-accent': '#faf9f6', '--c-text-primary': '#faf9f5' } as const

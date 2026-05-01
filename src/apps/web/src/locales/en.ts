@@ -71,6 +71,7 @@ export const en: LocaleStrings = {
   fontSizeRelaxed: "Relaxed",
   themePresetSection: "Color scheme",
   themePresetDefault: "Default",
+  themePresetRetinaBurn: "Retina Burn",
   themeColorEditor: "Color editor",
   colorGroupBackgrounds: "Backgrounds",
   colorGroupText: "Text",
