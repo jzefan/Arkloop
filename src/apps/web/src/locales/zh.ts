@@ -1129,7 +1129,7 @@ export const zh: LocaleStrings = {
     searchProviderBasic: "基础搜索",
     searchProviderTavily: "Tavily",
     searchProviderSearxng: "SearXNG",
-    searchProviderBasicDesc: "通过本地桌面运行时获取 Bing 结果，无需 API Key。",
+    searchProviderBasicDesc: "内置浏览器搜索，无需 API Key。",
     searchProviderTavilyDesc: "Tavily Search API，结果快且结构化，需要 API Key。",
     searchProviderSearxngDesc: "自托管 SearXNG，数据自主可控，需要配置 Base URL。",
     fetchProviderJinaDesc: "通过 Jina Reader 将页面转为干净 Markdown，免费层无需 API Key 即可使用。",

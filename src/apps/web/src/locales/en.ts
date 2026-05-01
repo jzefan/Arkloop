@@ -1075,7 +1075,7 @@ export const en: LocaleStrings = {
     searchProviderBasic: "Basic Search",
     searchProviderTavily: "Tavily",
     searchProviderSearxng: "SearXNG",
-    searchProviderBasicDesc: "Bing results through the local desktop runtime. No API key needed.",
+    searchProviderBasicDesc: "Built-in browser search. No API key needed.",
     searchProviderTavilyDesc: "Tavily Search API. Fast, structured results. Requires an API key.",
     searchProviderSearxngDesc: "Self-hosted SearXNG. Full control, no data sharing. Requires a base URL.",
     fetchProviderJinaDesc: "Converts pages to clean markdown via Jina Reader. Free tier works without any key.",
