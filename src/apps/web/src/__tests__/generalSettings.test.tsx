@@ -12,6 +12,7 @@ vi.mock('../api', async () => {
     deleteSpawnProfile: vi.fn(),
     resolveOpenVikingConfig: vi.fn(),
     testLlmProviderModel: vi.fn(),
+    updateMe: vi.fn(),
   }
 })
 
@@ -88,6 +89,12 @@ function deferred<T>(): Deferred<T> {
     resolve = nextResolve
   })
   return { promise, resolve }
+}
+
+function setInputValue(input: HTMLInputElement, value: string) {
+  const descriptor = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')
+  descriptor?.set?.call(input, value)
+  input.dispatchEvent(new Event('input', { bubbles: true }))
 }
 
 describe('GeneralSettings', () => {
@@ -221,5 +228,65 @@ describe('GeneralSettings', () => {
     expect(
       container.querySelector('[data-testid="tool-model-dropdown"]')?.getAttribute('data-disabled'),
     ).toBe('false')
+  })
+
+  it('本地模式用户卡片内联编辑后端用户名', async () => {
+    const { api, LocaleProvider, GeneralSettings } = await loadSubject()
+    vi.mocked(api.listLlmProviders).mockResolvedValue([])
+    vi.mocked(api.listSpawnProfiles).mockResolvedValue([])
+    vi.mocked(api.updateMe).mockResolvedValue({ username: 'renamed-user', timezone: 'Asia/Singapore' })
+    const onMeUpdated = vi.fn()
+
+    await act(async () => {
+      root.render(
+        <LocaleProvider>
+          <GeneralSettings
+            accessToken="token"
+            me={{
+              id: 'user-1',
+              username: 'desktop-user',
+              email_verified: true,
+              email_verification_required: false,
+              work_enabled: true,
+              timezone: 'Asia/Singapore',
+              account_timezone: null,
+            }}
+            onLogout={() => {}}
+            onMeUpdated={onMeUpdated}
+          />
+        </LocaleProvider>,
+      )
+    })
+
+    expect(container.textContent).toContain('desktop-user')
+    expect(container.textContent).not.toContain('alice')
+
+    const editButton = container.querySelector('button[aria-label="编辑"]') as HTMLButtonElement | null
+    expect(editButton).not.toBeNull()
+    expect(editButton?.className).toContain('group-hover:opacity-100')
+
+    await act(async () => {
+      editButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+
+    const input = container.querySelector('input') as HTMLInputElement | null
+    expect(input?.value).toBe('desktop-user')
+
+    await act(async () => {
+      setInputValue(input!, 'renamed-user')
+    })
+
+    const saveButton = container.querySelector('button[aria-label="保存"]') as HTMLButtonElement | null
+    expect(saveButton).not.toBeNull()
+
+    await act(async () => {
+      saveButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(api.updateMe).toHaveBeenCalledWith('token', { username: 'renamed-user' })
+    expect(onMeUpdated).toHaveBeenCalledWith(expect.objectContaining({ username: 'renamed-user' }))
+    expect(container.querySelector('input')).toBeNull()
   })
 })

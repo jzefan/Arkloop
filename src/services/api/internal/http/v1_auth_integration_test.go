@@ -406,6 +406,75 @@ func TestAuthRejectsAtSignForRegisterAndProfile(t *testing.T) {
 	assertErrorEnvelope(t, badProfile, nethttp.StatusUnprocessableEntity, "validation.error")
 }
 
+func TestAuthMeUpdatesUsernameFromUsersProfile(t *testing.T) {
+	env := newAuthResolveTestEnv(t, "api_go_auth_username_update")
+	ctx := context.Background()
+
+	if _, err := env.featureFlagsRepo.CreateFlag(ctx, "registration.open", nil, true); err != nil {
+		t.Fatalf("create registration.open flag: %v", err)
+	}
+
+	registerResp := doJSON(env.handler, nethttp.MethodPost, "/v1/auth/register", map[string]any{
+		"login":    "alice",
+		"password": "pwd12345",
+		"email":    "alice@test.com",
+	}, nil)
+	if registerResp.Code != nethttp.StatusCreated {
+		t.Fatalf("unexpected register status: %d body=%s", registerResp.Code, registerResp.Body.String())
+	}
+	registerPayload := decodeJSONBody[registerResponse](t, registerResp.Body.Bytes())
+
+	patchResp := doJSON(env.handler, nethttp.MethodPatch, "/v1/me", map[string]any{
+		"username": "  alice_display  ",
+	}, authHeader(registerPayload.AccessToken))
+	if patchResp.Code != nethttp.StatusOK {
+		t.Fatalf("unexpected patch status: %d body=%s", patchResp.Code, patchResp.Body.String())
+	}
+	patchPayload := decodeJSONBody[updateMeResponse](t, patchResp.Body.Bytes())
+	if patchPayload.Username != "alice_display" {
+		t.Fatalf("unexpected patch username: %q", patchPayload.Username)
+	}
+
+	var storedUsername string
+	var credentialLogin string
+	if err := env.pool.QueryRow(ctx, `
+		SELECT u.username, uc.login
+		  FROM users u
+		  JOIN user_credentials uc ON uc.user_id = u.id
+		 WHERE u.id = $1`,
+		registerPayload.UserID,
+	).Scan(&storedUsername, &credentialLogin); err != nil {
+		t.Fatalf("load stored username: %v", err)
+	}
+	if storedUsername != "alice_display" {
+		t.Fatalf("unexpected stored username: %q", storedUsername)
+	}
+	if credentialLogin != "alice" {
+		t.Fatalf("unexpected credential login: %q", credentialLogin)
+	}
+
+	meResp := doJSON(env.handler, nethttp.MethodGet, "/v1/me", nil, authHeader(registerPayload.AccessToken))
+	if meResp.Code != nethttp.StatusOK {
+		t.Fatalf("unexpected me status: %d body=%s", meResp.Code, meResp.Body.String())
+	}
+	mePayload := decodeJSONBody[meResponse](t, meResp.Body.Bytes())
+	if mePayload.Username != "alice_display" {
+		t.Fatalf("unexpected me username: %q", mePayload.Username)
+	}
+
+	loginResp := doJSON(env.handler, nethttp.MethodPost, "/v1/auth/login", map[string]any{
+		"login":    "alice",
+		"password": "pwd12345",
+	}, nil)
+	if loginResp.Code != nethttp.StatusOK {
+		t.Fatalf("unexpected login status: %d body=%s", loginResp.Code, loginResp.Body.String())
+	}
+	loginPayload := decodeJSONBody[loginResponse](t, loginResp.Body.Bytes())
+	if loginPayload.AccessToken == "" {
+		t.Fatalf("missing login token")
+	}
+}
+
 func TestAuthMeSupportsTimezoneUpdate(t *testing.T) {
 	type mePayload struct {
 		Username        string  `json:"username"`
