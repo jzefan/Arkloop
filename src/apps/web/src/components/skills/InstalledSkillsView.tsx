@@ -53,6 +53,17 @@ type Props = {
   accessToken: string
 }
 
+type ExternalSkillDirPayload = Omit<ExternalSkillDir, 'skills'> & {
+  skills?: ExternalSkillDir['skills'] | null
+}
+
+function normalizeExternalDirs(dirs: ExternalSkillDirPayload[] | null | undefined): ExternalSkillDir[] {
+  return (dirs ?? []).map((dir) => ({
+    ...dir,
+    skills: Array.isArray(dir.skills) ? dir.skills : [],
+  }))
+}
+
 export function InstalledSkillsView(props: Props) {
   const {
     items, loading, busySkillId, menuSkillId, setMenuSkillId,
@@ -74,7 +85,7 @@ export function InstalledSkillsView(props: Props) {
     setExternalError('')
     try {
       const res = await discoverExternalSkills(accessToken)
-      setDirs(res.dirs ?? [])
+      setDirs(normalizeExternalDirs(res.dirs))
     } catch {
       setExternalError(skillText.externalLoadFailed)
     } finally {
