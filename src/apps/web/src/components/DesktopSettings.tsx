@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { motion } from "framer-motion";
 import { DebugTrigger } from "@arkloop/shared";
 import {
@@ -117,6 +117,7 @@ type Props = {
   me: MeResponse | null;
   accessToken: string;
   initialSection?: DesktopSettingsKey;
+  sectionRequestId?: number;
   onClose: () => void;
   onLogout: () => void;
   onMeUpdated?: (me: MeResponse) => void;
@@ -135,6 +136,7 @@ export function DesktopSettings({
   me,
   accessToken,
   initialSection = "general",
+  sectionRequestId,
   onClose,
   onLogout,
   onMeUpdated,
@@ -178,6 +180,16 @@ export function DesktopSettings({
     activeKey === "chat" ||
     activeKey === "connection" ||
     activeKey === "voice";
+
+  const selectSection = useCallback((key: DesktopSettingsKey) => {
+    setActiveKey(key);
+    setScrolled(false);
+    if (scrollRef.current) scrollRef.current.scrollTop = 0;
+  }, []);
+
+  useEffect(() => {
+    selectSection(initialSection);
+  }, [initialSection, sectionRequestId, selectSection]);
 
   useEffect(() => {
     if (typeof performance !== "undefined") {
@@ -372,11 +384,7 @@ export function DesktopSettings({
     });
   });
 
-  const handleTabChange = (key: DesktopSettingsKey) => {
-    setActiveKey(key);
-    setScrolled(false);
-    if (scrollRef.current) scrollRef.current.scrollTop = 0;
-  };
+  const handleTabChange = selectSection;
 
   const renderNav = (entries: NavEntry[]) =>
     entries.map((entry) => {
