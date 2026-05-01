@@ -14,6 +14,8 @@
 
 ---
 
+Arkloop is a design-focused open-source AI Agent platform. Multi-model routing, sandboxed execution, persistent memory — a clean desktop app that works out of the box.
+
 ## Download
 
 Download the latest version from [GitHub Releases](https://github.com/qqqqqf-q/Arkloop/releases), supporting macOS, Linux, and Windows.
@@ -39,17 +41,6 @@ Do **not** click **Move to Trash** when macOS warns that **Arkloop** cannot be v
 
 </details>
 
-## Contributing
-
-We welcome contributions of all kinds.
-
-Even if you're not a developer, just a regular user — if anything feels off while using it, even a bit of spacing, a color, a tiny detail, or a big-picture direction — please [open an issue](https://github.com/qqqqqf-q/Arkloop/issues). We take every UX detail seriously, and your feedback makes the experience better for everyone.
-
-See [CONTRIBUTING.md](CONTRIBUTING.md) for commit conventions and development workflow.
-
-## If you can, give us a Star
-![wkwUSiE3xZw1NeDrSFqJYDkkSEDULMfu](https://cdn.nodeimage.com/i/wkwUSiE3xZw1NeDrSFqJYDkkSEDULMfu.gif)
-
 ## Features
 
 Arkloop does what other AI chat tools do — multi-model support, tool calling, code execution, memory — but we focus on doing it cleanly:
@@ -64,6 +55,32 @@ Arkloop does what other AI chat tools do — multi-model support, tool calling, 
 - **Skill Ecosystem** — Import skills from ClawHub, compatible with OpenClaw SKILL.md format
 
 Full documentation at [docs](https://arkloop.io/en/docs/guide).
+
+
+## Contributing
+
+We welcome contributions of all kinds.
+
+Even if you're not a developer, just a regular user — if anything feels off while using it, even a bit of spacing, a color, a tiny detail, or a big-picture direction — please [open an issue](https://github.com/qqqqqf-q/Arkloop/issues). We take every UX detail seriously, and your feedback makes the experience better for everyone.
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for commit conventions and development workflow.
+
+## If you can, give us a Star
+![wkwUSiE3xZw1NeDrSFqJYDkkSEDULMfu](https://cdn.nodeimage.com/i/wkwUSiE3xZw1NeDrSFqJYDkkSEDULMfu.gif)
+
+## Sponsors
+
+Thanks to the following friends for their financial support, keeping Arkloop going:
+
+- [@Jinnkunn](https://github.com/Jinnkunn) — Domain sponsorship
+- @jeck — An iced Americano
+
+
+## Contributors
+
+<a href="https://github.com/qqqqqf-q/Arkloop/graphs/contributors">
+  <img src="https://contrib.rocks/image?repo=qqqqqf-q/Arkloop" />
+</a>
 
 ## Architecture
 
@@ -91,11 +108,11 @@ bin/ci-local full          # Full check
 
 > The self-hosting deployment path is still in development. While included in the current release, availability is not guaranteed. We are not focusing on this during the Alpha phase. We plan to provide full server deployment support once the desktop version stabilizes.
 
-## Contributors
 
-<a href="https://github.com/qqqqqf-q/Arkloop/graphs/contributors">
-  <img src="https://contrib.rocks/image?repo=qqqqqf-q/Arkloop" />
-</a>
+
+## Star History
+
+[![Star History Chart](https://api.star-history.com/svg?repos=qqqqqf-q/Arkloop&type=date&legend=top-left)](https://www.star-history.com/#qqqqqf-q/Arkloop&type=date&legend=top-left)
 
 ## Security
 
