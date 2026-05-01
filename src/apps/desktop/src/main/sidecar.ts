@@ -9,6 +9,7 @@ import * as path from 'path'
 import { app } from 'electron'
 import type { LocalPortMode, MemoryConfig, NetworkConfig } from './types'
 import { appendSidecarLog, getDesktopLogPaths } from './logging'
+import { getBrowserSearchBaseUrl } from './browser-search'
 
 export type SidecarStatus = 'stopped' | 'starting' | 'running' | 'crashed'
 
@@ -746,6 +747,14 @@ function buildNetworkEnv(): Record<string, string> {
   return env
 }
 
+function buildBrowserSearchEnv(): Record<string, string> {
+  const baseUrl = getBrowserSearchBaseUrl()
+  if (!baseUrl) return {}
+  return {
+    ARKLOOP_DESKTOP_BROWSER_SEARCH_URL: `${baseUrl}/search`,
+  }
+}
+
 function buildBridgeEnv(bridgePort: number, projectDir: string | null): Record<string, string> {
   const env: Record<string, string> = {
     ARKLOOP_BRIDGE_ADDR: `127.0.0.1:${bridgePort}`,
@@ -1269,6 +1278,7 @@ async function launchOnPort(port: number, portMode: LocalPortMode): Promise<Side
       ...buildRuntimeResourceEnv(projectDir),
       ...buildWorkspaceEnv(projectDir),
       ...buildBridgeEnv(bridgePort, projectDir),
+      ...buildBrowserSearchEnv(),
       ...buildMemoryEnv(projectDir),
       ...buildNetworkEnv(),
       ARKLOOP_DESKTOP_TITLE_DEBUG: desktopTitleDebugFlag(),

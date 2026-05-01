@@ -13,6 +13,7 @@ import {
   setNetworkConfig,
   getSidecarRuntime,
   getBridgeBaseUrl,
+  getDesktopAccessToken,
   stopBridgeOpenvikingIfNeeded,
   ensureOpenCLI,
   type SidecarRuntime,
@@ -23,6 +24,7 @@ import { initVersionsFile } from './config'
 import { setupAppUpdater } from './app-updater'
 import { setupMainProcessLogging, getDesktopLogDir } from './logging'
 import { syncLocalVersions } from './updater'
+import { ensureBrowserSearchServer, closeBrowserSearchServer } from './browser-search'
 import type { AppConfig, ApplyConfigUpdateOptions } from './types'
 
 app.setName('Arkloop')
@@ -476,6 +478,11 @@ if (!hasSingleInstanceLock) {
       restartLocalSidecar,
       getSidecarRuntime: async () => getSidecarRuntime(),
     })
+    try {
+      await ensureBrowserSearchServer(getDesktopAccessToken())
+    } catch (error) {
+      console.error('[desktop] browser_search_server_start_failed', { error })
+    }
 
     const config = loadConfig()
 
@@ -545,5 +552,9 @@ if (!hasSingleInstanceLock) {
       }
       app.quit()
     })()
+  })
+
+  app.on('will-quit', () => {
+    void closeBrowserSearchServer()
   })
 }
