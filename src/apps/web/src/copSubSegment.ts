@@ -1,6 +1,6 @@
 import type { CopBlockItem } from './assistantTurnSegments'
 import { normalizeToolName, compactCommandLine } from './toolPresentation'
-import { isWebSearchToolName, webSearchQueriesFromArguments } from './webSearchTimelineFromRunEvent'
+import { isWebSearchToolName, webSearchQueriesFromArguments } from './webSearchTimelineFromAgentEvent'
 
 export type CopSegmentCategory = 'explore' | 'exec' | 'edit' | 'agent' | 'fetch' | 'search' | 'generic'
 

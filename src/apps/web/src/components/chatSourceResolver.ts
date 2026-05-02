@@ -1,4 +1,4 @@
-import type { MessageResponse } from '../api'
+import type { AgentMessage } from '../agent-ui'
 import type { WebSource } from '../storage'
 
 const WEB_CITATION_RE = /【\s*web\s*[:：]\s*\d+\s*】|\[\s*web\s*[:：]\s*\d+\s*\]|\bweb\s*[:：]\s*\d+\b/i
@@ -8,7 +8,7 @@ function hasWebCitation(content: string): boolean {
 }
 
 export function resolveMessageSourcesForRender(
-  messages: MessageResponse[],
+  messages: AgentMessage[],
   messageSourcesMap: Map<string, WebSource[]>,
 ): Map<string, WebSource[]> {
   const resolved = new Map<string, WebSource[]>()

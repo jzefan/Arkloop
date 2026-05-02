@@ -5,7 +5,7 @@ import { getDesktopApi, getDesktopAppVersion } from '@arkloop/shared/desktop'
 import { useToast } from '@arkloop/shared'
 import { useLocale } from '../../contexts/LocaleContext'
 import { getAccountSettings, updateAccountSettings } from '../../api'
-import { readDeveloperShowRunEvents, writeDeveloperShowRunEvents, readDeveloperShowDebugPanel, writeDeveloperShowDebugPanel, readDeveloperPipelineTraceEnabled, writeDeveloperPipelineTraceEnabled, readDeveloperPromptCacheDebugEnabled, writeDeveloperPromptCacheDebugEnabled } from '../../storage'
+import { readDeveloperShowRunDetailButton, writeDeveloperShowRunDetailButton, readDeveloperShowDebugPanel, writeDeveloperShowDebugPanel, readDeveloperPipelineTraceEnabled, writeDeveloperPipelineTraceEnabled, readDeveloperPromptCacheDebugEnabled, writeDeveloperPromptCacheDebugEnabled } from '../../storage'
 import { RunsSettings } from './RunsSettings'
 import { PillToggle } from '@arkloop/shared'
 import type { DesktopSettingsKey } from '../DesktopSettings'
@@ -42,7 +42,7 @@ export function DeveloperSettings({ accessToken, onNavigate }: Props) {
   const ds = t.desktopSettings
   const [appVersion, setAppVersion] = useState('')
   const [resetDone, setResetDone] = useState(false)
-  const [showRunEvents, setShowRunEvents] = useState(() => readDeveloperShowRunEvents())
+  const [showRunDetailButton, setShowRunDetailButton] = useState(() => readDeveloperShowRunDetailButton())
   const [showDebugPanel, setShowDebugPanel] = useState(() => readDeveloperShowDebugPanel())
   const [pipelineTraceEnabled, setPipelineTraceEnabled] = useState(() => readDeveloperPipelineTraceEnabled())
   const [pipelineTraceLoading, setPipelineTraceLoading] = useState(() => !!accessToken)
@@ -226,17 +226,17 @@ export function DeveloperSettings({ accessToken, onNavigate }: Props) {
         >
           <div>
             <div className="text-sm font-medium text-[var(--c-text-primary)]">
-              {ds.showRunEvents}
+              {ds.showRunDetailButton}
             </div>
             <div className="text-xs text-[var(--c-text-muted)]">
-              {ds.showRunEventsDesc}
+              {ds.showRunDetailButtonDesc}
             </div>
           </div>
           <PillToggle
-            checked={showRunEvents}
+            checked={showRunDetailButton}
             onChange={(next) => {
-              setShowRunEvents(next)
-              writeDeveloperShowRunEvents(next)
+              setShowRunDetailButton(next)
+              writeDeveloperShowRunDetailButton(next)
             }}
           />
         </div>

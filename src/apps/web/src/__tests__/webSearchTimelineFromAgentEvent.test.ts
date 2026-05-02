@@ -1,13 +1,13 @@
 import { describe, expect, it } from 'vitest'
 import {
-  applyRunEventToWebSearchSteps,
+  applyAgentEventToWebSearchSteps,
   COMPLETED_SEARCHING_LABEL,
   DEFAULT_SEARCHING_LABEL,
   isWebSearchToolName,
   webSearchQueriesFromArguments,
   webSearchSourcesFromResult,
-} from '../webSearchTimelineFromRunEvent'
-import type { RunEvent } from '../sse'
+} from '../webSearchTimelineFromAgentEvent'
+import type { AgentUIEvent } from '../agent-ui'
 
 describe('isWebSearchToolName', () => {
   it('接受常见供应商/模型命名变体', () => {
@@ -40,38 +40,38 @@ describe('webSearchSourcesFromResult', () => {
   })
 })
 
-describe('applyRunEventToWebSearchSteps', () => {
+describe('applyAgentEventToWebSearchSteps', () => {
   it('tool.call 与 tool.result 推进 searching 阶段', () => {
-    const call: RunEvent = {
-      type: 'tool.call',
-      seq: 1,
-      ts: '',
-      event_id: 'e1',
-      run_id: 'r',
+    const call: AgentUIEvent = {
+      type: 'tool-call',
+      order: 1,
+      timestamp: '',
+      id: 'e1',
+      streamId: 'r',
       data: {
         tool_name: 'WebSearch',
         tool_call_id: 'c1',
         arguments: { queries: ['q1'] },
       },
     }
-    const result: RunEvent = {
-      type: 'tool.result',
-      seq: 2,
-      ts: '',
-      event_id: 'e2',
-      run_id: 'r',
+    const result: AgentUIEvent = {
+      type: 'tool-result',
+      order: 2,
+      timestamp: '',
+      id: 'e2',
+      streamId: 'r',
       data: {
         tool_name: 'web_search',
         tool_call_id: 'c1',
         result: { results: [{ title: 't', url: 'https://x.test' }] },
       },
     }
-    let steps = applyRunEventToWebSearchSteps([], call)
+    let steps = applyAgentEventToWebSearchSteps([], call)
     expect(steps).toHaveLength(1)
     expect(steps[0]?.kind).toBe('searching')
     expect(steps[0]?.label).toBe(DEFAULT_SEARCHING_LABEL)
     expect(steps[0]?.queries).toEqual(['q1'])
-    steps = applyRunEventToWebSearchSteps(steps, result)
+    steps = applyAgentEventToWebSearchSteps(steps, result)
     expect(steps).toHaveLength(1)
     expect(steps[0]?.label).toBe(COMPLETED_SEARCHING_LABEL)
     expect(steps[0]?.sources).toEqual([{ title: 't', url: 'https://x.test', snippet: undefined }])
@@ -80,28 +80,28 @@ describe('applyRunEventToWebSearchSteps', () => {
   })
 
   it('多次 search 时只给对应 call 绑定自己的 sources', () => {
-    let steps = applyRunEventToWebSearchSteps([], {
-      type: 'tool.call',
-      seq: 10,
-      ts: '',
-      event_id: 'e1',
-      run_id: 'r',
+    let steps = applyAgentEventToWebSearchSteps([], {
+      type: 'tool-call',
+      order: 10,
+      timestamp: '',
+      id: 'e1',
+      streamId: 'r',
       data: { tool_name: 'web_search', tool_call_id: 's1', arguments: { query: 'first' } },
     })
-    steps = applyRunEventToWebSearchSteps(steps, {
-      type: 'tool.call',
-      seq: 11,
-      ts: '',
-      event_id: 'e2',
-      run_id: 'r',
+    steps = applyAgentEventToWebSearchSteps(steps, {
+      type: 'tool-call',
+      order: 11,
+      timestamp: '',
+      id: 'e2',
+      streamId: 'r',
       data: { tool_name: 'web_search', tool_call_id: 's2', arguments: { query: 'second' } },
     })
-    steps = applyRunEventToWebSearchSteps(steps, {
-      type: 'tool.result',
-      seq: 20,
-      ts: '',
-      event_id: 'e3',
-      run_id: 'r',
+    steps = applyAgentEventToWebSearchSteps(steps, {
+      type: 'tool-result',
+      order: 20,
+      timestamp: '',
+      id: 'e3',
+      streamId: 'r',
       data: {
         tool_name: 'web_search',
         tool_call_id: 's1',
@@ -114,24 +114,24 @@ describe('applyRunEventToWebSearchSteps', () => {
   })
 
   it('run.interrupted 也会把主会话搜索步骤收口为 done', () => {
-    const active = applyRunEventToWebSearchSteps([], {
-      type: 'tool.call',
-      seq: 1,
-      ts: '',
-      event_id: 'e1',
-      run_id: 'r',
+    const active = applyAgentEventToWebSearchSteps([], {
+      type: 'tool-call',
+      order: 1,
+      timestamp: '',
+      id: 'e1',
+      streamId: 'r',
       data: {
         tool_name: 'web_search',
         tool_call_id: 'host',
         arguments: { query: 'resume me' },
       },
     })
-    const interrupted = applyRunEventToWebSearchSteps(active, {
-      type: 'run.interrupted',
-      seq: 2,
-      ts: '',
-      event_id: 'e2',
-      run_id: 'r',
+    const interrupted = applyAgentEventToWebSearchSteps(active, {
+      type: 'run-interrupted',
+      order: 2,
+      timestamp: '',
+      id: 'e2',
+      streamId: 'r',
       data: {},
     })
     expect(interrupted).toHaveLength(1)

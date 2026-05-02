@@ -9,18 +9,11 @@ import { useMessageStore } from '../contexts/message-store'
 import { useRunLifecycle } from '../contexts/run-lifecycle'
 import { useStream } from '../contexts/stream'
 import {
-  cancelRun,
-  createMessage,
-  createRun,
-  editMessage,
   forkThread,
   isApiError,
-  provideInput,
-  retryMessage,
-  type MessageContent,
-  type MessageResponse,
   type RunReasoningMode,
 } from '../api'
+import { type AgentMessage, type AgentMessageContent, useAgentClient } from '../agent-ui'
 import { buildMessageRequest } from '../messageContent'
 import { createQueuedPrompt } from '../queuedPrompts'
 import {
@@ -44,6 +37,7 @@ export function useChatActions({ scrollToBottom }: UseChatActionsDeps) {
   const navigate = useNavigate()
   const { t } = useLocale()
   const { accessToken, logout: onLoggedOut } = useAuth()
+  const agentClient = useAgentClient()
   const { threads, addThread: onThreadCreated, markRunning: onRunStarted } = useThreadList()
   const { threadId } = useChatSession()
   const {
@@ -112,16 +106,25 @@ export function useChatActions({ scrollToBottom }: UseChatActionsDeps) {
     setTerminalRunHandoffStatus(null)
     setTerminalRunCoveredRunIds([])
     try {
-      const message = await createMessage(accessToken, threadId, buildMessageRequest(normalized, []))
+      const message = await agentClient.createMessage({
+        threadId,
+        request: buildMessageRequest(normalized, []),
+      })
       invalidateMessageSync()
       setUserEnterMessageId(message.id)
       setMessages((prev) => [...prev, message])
       noResponseMsgIdRef.current = message.id
       const workFolder = threads.find((thread) => thread.id === threadId)?.sidebar_work_folder ?? readThreadWorkFolder(threadId) ?? undefined
-      const run = await createRun(accessToken, threadId, personaKey, modelOverride, workFolder, readThreadReasoningMode(threadId) !== 'off' ? readThreadReasoningMode(threadId) as RunReasoningMode : undefined)
+      const run = await agentClient.createRun({
+        threadId,
+        personaId: personaKey,
+        modelOverride,
+        workDir: workFolder,
+        reasoningMode: readThreadReasoningMode(threadId) !== 'off' ? readThreadReasoningMode(threadId) as RunReasoningMode : undefined,
+      })
       if (personaKey === SEARCH_PERSONA_KEY) addSearchThreadId(threadId)
       resetSearchSteps()
-      setActiveRunId(run.run_id)
+      setActiveRunId(run.id)
       onRunStarted(threadId)
       scrollToBottom()
     } catch (err) {
@@ -134,8 +137,8 @@ export function useChatActions({ scrollToBottom }: UseChatActionsDeps) {
       setSending(false)
     }
   }, [
-    accessToken,
     activeRunId,
+    agentClient,
     invalidateMessageSync,
     markTerminalRunHistory,
     noResponseMsgIdRef,
@@ -181,7 +184,7 @@ export function useChatActions({ scrollToBottom }: UseChatActionsDeps) {
     }
   }, [sendMessageRef, setError])
 
-  const handleEditMessage = useCallback(async (original: MessageResponse, newContent: string) => {
+  const handleEditMessage = useCallback(async (original: AgentMessage, newContent: string) => {
     if (isStreaming || sending || !threadId) return
     setSending(true)
     setError(null)
@@ -193,34 +196,33 @@ export function useChatActions({ scrollToBottom }: UseChatActionsDeps) {
     setTerminalRunHandoffStatus(null)
     setTerminalRunCoveredRunIds([])
     try {
-      const nonTextParts = original.content_json?.parts?.filter((part) => part.type !== 'text') ?? []
-      const newContentJson: MessageContent | undefined = original.content_json
+      const nonTextParts = original.contentJson?.parts?.filter((part) => part.type !== 'text') ?? []
+      const newContentJson: AgentMessageContent | undefined = original.contentJson
         ? { parts: [{ type: 'text', text: newContent }, ...nonTextParts] }
         : undefined
       const personaKey = readSelectedPersonaKeyFromStorage() ?? undefined
       const modelOverride = readSelectedModelFromStorage() ?? undefined
       const reasoningMode = readThreadReasoningMode(threadId)
-      const run = await editMessage(
-        accessToken,
+      const run = await agentClient.editMessage({
         threadId,
-        original.id,
-        newContent,
-        newContentJson,
-        personaKey,
+        messageId: original.id,
+        content: newContent,
+        contentJson: newContentJson,
+        personaId: personaKey,
         modelOverride,
-        threads.find((thread) => thread.id === threadId)?.sidebar_work_folder ?? readThreadWorkFolder(threadId) ?? undefined,
-        reasoningMode !== 'off' ? reasoningMode as RunReasoningMode : undefined,
-      )
+        workDir: threads.find((thread) => thread.id === threadId)?.sidebar_work_folder ?? readThreadWorkFolder(threadId) ?? undefined,
+        reasoningMode: reasoningMode !== 'off' ? reasoningMode as RunReasoningMode : undefined,
+      })
       invalidateMessageSync()
       setMessages((prev) => {
         const index = prev.findIndex((message) => message.id === original.id)
         if (index === -1) return prev
         return prev.slice(0, index + 1).map((message, currentIndex) =>
-          currentIndex === index ? { ...message, content: newContent, content_json: newContentJson ?? message.content_json } : message,
+          currentIndex === index ? { ...message, content: newContent, contentJson: newContentJson ?? message.contentJson } : message,
         )
       })
       resetSearchSteps()
-      setActiveRunId(run.run_id)
+      setActiveRunId(run.id)
       onRunStarted(threadId)
       scrollToBottom()
     } catch (err) {
@@ -233,7 +235,7 @@ export function useChatActions({ scrollToBottom }: UseChatActionsDeps) {
       setSending(false)
     }
   }, [
-    accessToken,
+    agentClient,
     injectionBlockedRunIdRef,
     invalidateMessageSync,
     isStreaming,
@@ -255,7 +257,7 @@ export function useChatActions({ scrollToBottom }: UseChatActionsDeps) {
     threads,
   ])
 
-  const handleRetryUserMessage = useCallback(async (message: MessageResponse) => {
+  const handleRetryUserMessage = useCallback(async (message: AgentMessage) => {
     if (message.role !== 'user' || isStreaming || sending || !threadId) return
     const personaKey = readSelectedPersonaKeyFromStorage()
     const modelOverride = readSelectedModelFromStorage() ?? undefined
@@ -273,15 +275,14 @@ export function useChatActions({ scrollToBottom }: UseChatActionsDeps) {
     setTerminalRunCoveredRunIds([])
     try {
       const reasoningMode = readThreadReasoningMode(threadId)
-      const run = await retryMessage(
-        accessToken,
+      const run = await agentClient.retryMessage({
         threadId,
-        message.id,
-        personaKey,
+        messageId: message.id,
+        personaId: personaKey,
         modelOverride,
-        threads.find((thread) => thread.id === threadId)?.sidebar_work_folder ?? readThreadWorkFolder(threadId) ?? undefined,
-        reasoningMode !== 'off' ? reasoningMode as RunReasoningMode : undefined,
-      )
+        workDir: threads.find((thread) => thread.id === threadId)?.sidebar_work_folder ?? readThreadWorkFolder(threadId) ?? undefined,
+        reasoningMode: reasoningMode !== 'off' ? reasoningMode as RunReasoningMode : undefined,
+      })
       invalidateMessageSync()
       setMessages((prev) => {
         const index = prev.findIndex((item) => item.id === message.id)
@@ -289,7 +290,7 @@ export function useChatActions({ scrollToBottom }: UseChatActionsDeps) {
       })
       if (personaKey === SEARCH_PERSONA_KEY) addSearchThreadId(threadId)
       resetSearchSteps()
-      setActiveRunId(run.run_id)
+      setActiveRunId(run.id)
       onRunStarted(threadId)
       scrollToBottom()
     } catch (err) {
@@ -303,7 +304,7 @@ export function useChatActions({ scrollToBottom }: UseChatActionsDeps) {
       setSending(false)
     }
   }, [
-    accessToken,
+    agentClient,
     injectionBlockedRunIdRef,
     invalidateMessageSync,
     isStreaming,
@@ -355,7 +356,7 @@ export function useChatActions({ scrollToBottom }: UseChatActionsDeps) {
     setError(null)
     setInjectionBlocked(null)
     try {
-      await provideInput(accessToken, activeRunId, text)
+      await agentClient.provideInput(activeRunId, text)
       setCheckInDraft('')
       setAwaitingInput(false)
       setPendingUserInput(null)
@@ -369,7 +370,7 @@ export function useChatActions({ scrollToBottom }: UseChatActionsDeps) {
       setCheckInSubmitting(false)
     }
   }, [
-    accessToken,
+    agentClient,
     activeRunId,
     checkInDraft,
     checkInSubmitting,
@@ -387,7 +388,7 @@ export function useChatActions({ scrollToBottom }: UseChatActionsDeps) {
     setError(null)
     setInjectionBlocked(null)
     try {
-      await provideInput(accessToken, activeRunId, JSON.stringify(response.answers))
+      await agentClient.provideInput(activeRunId, JSON.stringify(response.answers))
       setPendingUserInput(null)
     } catch (err) {
       if (isApiError(err) && err.status === 401) {
@@ -396,14 +397,14 @@ export function useChatActions({ scrollToBottom }: UseChatActionsDeps) {
       }
       setError(normalizeError(err))
     }
-  }, [accessToken, activeRunId, onLoggedOut, setError, setInjectionBlocked, setPendingUserInput])
+  }, [agentClient, activeRunId, onLoggedOut, setError, setInjectionBlocked, setPendingUserInput])
 
   const handleUserInputDismiss = useCallback(async () => {
     if (!activeRunId || !pendingUserInput) return
     setError(null)
     setInjectionBlocked(null)
     try {
-      await provideInput(accessToken, activeRunId, JSON.stringify({}))
+      await agentClient.provideInput(activeRunId, JSON.stringify({}))
       setPendingUserInput(null)
     } catch (err) {
       if (isApiError(err) && err.status === 401) {
@@ -412,7 +413,7 @@ export function useChatActions({ scrollToBottom }: UseChatActionsDeps) {
       }
       setError(normalizeError(err))
     }
-  }, [accessToken, activeRunId, onLoggedOut, pendingUserInput, setError, setInjectionBlocked, setPendingUserInput])
+  }, [agentClient, activeRunId, onLoggedOut, pendingUserInput, setError, setInjectionBlocked, setPendingUserInput])
 
   const handleAsrError = useCallback((err: unknown) => {
     if (isApiError(err) && err.status === 401) {
@@ -435,7 +436,7 @@ export function useChatActions({ scrollToBottom }: UseChatActionsDeps) {
     setInjectionBlocked(null)
 
     let cancelSucceeded = false
-    void cancelRun(accessToken, runId, cancelBoundary)
+    void agentClient.cancelRun(runId, cancelBoundary)
       .then(() => {
         cancelSucceeded = true
       })
@@ -449,7 +450,7 @@ export function useChatActions({ scrollToBottom }: UseChatActionsDeps) {
         }
       })
   }, [
-    accessToken,
+    agentClient,
     activeRunId,
     cancelSubmitting,
     freezeCutoffRef,

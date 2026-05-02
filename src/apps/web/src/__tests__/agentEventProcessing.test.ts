@@ -1,15 +1,15 @@
 import { describe, expect, it } from 'vitest'
 import {
-  buildMessageArtifactsFromRunEvents,
-  buildMessageFileOpsFromRunEvents,
-  buildMessageCodeExecutionsFromRunEvents,
-  buildMessageSubAgentsFromRunEvents,
-  buildMessageThinkingFromRunEvents,
-  buildMessageWidgetsFromRunEvents,
+  buildMessageArtifactsFromAgentEvents,
+  buildMessageFileOpsFromAgentEvents,
+  buildMessageCodeExecutionsFromAgentEvents,
+  buildMessageSubAgentsFromAgentEvents,
+  buildMessageThinkingFromAgentEvents,
+  buildMessageWidgetsFromAgentEvents,
   findAssistantMessageForRun,
   patchCodeExecutionList,
-  selectFreshRunEvents,
-  runEventDismissesAssistantPlaceholder,
+  selectFreshAgentEvents,
+  agentEventDismissesAssistantPlaceholder,
   shouldRefetchCompletedRunMessages,
   shouldReplayMessageCodeExecutions,
   fileOpOutputFromResult,
@@ -18,9 +18,8 @@ import {
   applyCodeExecutionToolResult,
   firstVisibleCodeExecutionToolCallIndex,
   isWebFetchToolName,
-} from '../runEventProcessing'
-import type { MessageResponse } from '../api'
-import type { RunEvent } from '../sse'
+} from '../agentEventProcessing'
+import type { AgentMessage, AgentUIEvent } from '../agent-ui'
 
 function makeRunEvent(params: {
   runId: string
@@ -28,15 +27,15 @@ function makeRunEvent(params: {
   type: string
   data?: unknown
   errorClass?: string
-}): RunEvent {
+}): AgentUIEvent {
   return {
-    event_id: `evt_${params.seq}`,
-    run_id: params.runId,
-    seq: params.seq,
-    ts: '2024-01-01T00:00:00.000Z',
+    id: `evt_${params.seq}`,
+    streamId: params.runId,
+    order: params.seq,
+    timestamp: '2024-01-01T00:00:00.000Z',
     type: params.type,
     data: params.data ?? {},
-    error_class: params.errorClass,
+    errorCode: params.errorClass,
   }
 }
 
@@ -45,24 +44,24 @@ function makeMessage(params: {
   role: string
   content: string
   runId?: string
-}): MessageResponse {
+}): AgentMessage {
+  const createdAt = '2026-01-01T00:00:00.000Z'
   return {
     id: params.id,
-    account_id: 'acc_1',
-    thread_id: 'thread_1',
-    created_by_user_id: 'user_1',
-    role: params.role,
+    role: params.role === 'system' || params.role === 'user' || params.role === 'assistant' ? params.role : 'assistant',
     content: params.content,
-    created_at: '2026-01-01T00:00:00.000Z',
-    run_id: params.runId,
+    createdAt,
+    streamId: params.runId,
+    metadata: { createdAt, streamId: params.runId },
+    parts: params.content ? [{ type: 'text', text: params.content, state: 'done' }] : [],
   }
 }
 
-describe('selectFreshRunEvents', () => {
+describe('selectFreshAgentEvents', () => {
   it('应忽略旧 run 的尾部事件，避免误触发断开', () => {
-    const events = [makeRunEvent({ runId: 'run_1', seq: 1, type: 'run.completed' })]
+    const events = [makeRunEvent({ runId: 'run_1', seq: 1, type: 'run-completed' })]
 
-    const result = selectFreshRunEvents({
+    const result = selectFreshAgentEvents({
       events,
       activeRunId: 'run_2',
       processedCount: 0,
@@ -73,7 +72,7 @@ describe('selectFreshRunEvents', () => {
   })
 
   it('应在 events 被清空后重置 processedCount', () => {
-    const result = selectFreshRunEvents({
+    const result = selectFreshAgentEvents({
       events: [],
       activeRunId: 'run_1',
       processedCount: 10,
@@ -89,51 +88,51 @@ describe('selectFreshRunEvents', () => {
       makeRunEvent({
         runId: 'run_2',
         seq: 2,
-        type: 'message.delta',
+        type: 'assistant-delta',
         data: { content_delta: 'hi', role: 'assistant' },
       }),
-      makeRunEvent({ runId: 'run_2', seq: 3, type: 'run.completed' }),
+      makeRunEvent({ runId: 'run_2', seq: 3, type: 'run-completed' }),
     ]
 
-    const result = selectFreshRunEvents({
+    const result = selectFreshAgentEvents({
       events,
       activeRunId: 'run_2',
       processedCount: 0,
     })
 
-    expect(result.fresh.map((item) => item.seq)).toEqual([2, 3])
+    expect(result.fresh.map((item) => item.order)).toEqual([2, 3])
     expect(result.nextProcessedCount).toBe(3)
   })
 
   it('应从 processedCount 之后开始取新事件', () => {
     const events = [
       makeRunEvent({ runId: 'run_1', seq: 1, type: 'run.started' }),
-      makeRunEvent({ runId: 'run_1', seq: 2, type: 'message.delta' }),
+      makeRunEvent({ runId: 'run_1', seq: 2, type: 'assistant-delta' }),
     ]
 
-    const result = selectFreshRunEvents({
+    const result = selectFreshAgentEvents({
       events,
       activeRunId: 'run_1',
       processedCount: 1,
     })
 
-    expect(result.fresh.map((item) => item.seq)).toEqual([2])
+    expect(result.fresh.map((item) => item.order)).toEqual([2])
     expect(result.nextProcessedCount).toBe(2)
   })
 
   it('processedCount 超过 events.length 时重置为 0', () => {
     const events = [
       makeRunEvent({ runId: 'run_1', seq: 1, type: 'run.started' }),
-      makeRunEvent({ runId: 'run_1', seq: 2, type: 'message.delta' }),
+      makeRunEvent({ runId: 'run_1', seq: 2, type: 'assistant-delta' }),
     ]
 
-    const result = selectFreshRunEvents({
+    const result = selectFreshAgentEvents({
       events,
       activeRunId: 'run_1',
       processedCount: 999,
     })
 
-    expect(result.fresh.map((item) => item.seq)).toEqual([1, 2])
+    expect(result.fresh.map((item) => item.order)).toEqual([1, 2])
     expect(result.nextProcessedCount).toBe(2)
   })
 })
@@ -144,13 +143,13 @@ describe('firstVisibleCodeExecutionToolCallIndex', () => {
       makeRunEvent({
         runId: 'run_1',
         seq: 1,
-        type: 'tool.call',
+        type: 'tool-call',
         data: { tool_name: 'exec_command', tool_call_id: 'call_exec', arguments: { command: 'sleep 1' } },
       }),
       makeRunEvent({
         runId: 'run_1',
         seq: 2,
-        type: 'tool.result',
+        type: 'tool-result',
         data: { tool_name: 'exec_command', tool_call_id: 'call_exec', result: { exit_code: 0 } },
       }),
     ]
@@ -163,7 +162,7 @@ describe('firstVisibleCodeExecutionToolCallIndex', () => {
       makeRunEvent({
         runId: 'run_1',
         seq: 1,
-        type: 'tool.call',
+        type: 'tool-call',
         data: { tool_name: 'exec_command', tool_call_id: 'call_exec', arguments: { command: 'sleep 1' } },
       }),
     ]
@@ -172,13 +171,13 @@ describe('firstVisibleCodeExecutionToolCallIndex', () => {
   })
 })
 
-describe('buildMessageArtifactsFromRunEvents', () => {
+describe('buildMessageArtifactsFromAgentEvents', () => {
   it('应从任意 tool.result 中提取并去重 artifacts，而不是依赖工具白名单', () => {
     const events = [
       makeRunEvent({
         runId: 'run_1',
         seq: 1,
-        type: 'tool.result',
+        type: 'tool-result',
         data: {
           tool_name: 'image_generate',
           result: {
@@ -198,7 +197,7 @@ describe('buildMessageArtifactsFromRunEvents', () => {
       makeRunEvent({
         runId: 'run_1',
         seq: 2,
-        type: 'tool.result',
+        type: 'tool-result',
         data: {
           tool_name: 'image_generate',
           result: {
@@ -215,7 +214,7 @@ describe('buildMessageArtifactsFromRunEvents', () => {
       }),
     ]
 
-    expect(buildMessageArtifactsFromRunEvents(events)).toEqual([
+    expect(buildMessageArtifactsFromAgentEvents(events)).toEqual([
       {
         key: 'acc/run/generated-image.png',
         filename: 'generated-image.png',
@@ -243,7 +242,7 @@ describe('web fetch processing', () => {
     const call = makeRunEvent({
       runId: 'run_1',
       seq: 1,
-      type: 'tool.call',
+      type: 'tool-call',
       data: {
         tool_name: 'web_fetch.jina',
         tool_call_id: 'wf_1',
@@ -253,7 +252,7 @@ describe('web fetch processing', () => {
     const result = makeRunEvent({
       runId: 'run_1',
       seq: 2,
-      type: 'tool.result',
+      type: 'tool-result',
       data: {
         tool_name: 'web_fetch.jina',
         tool_call_id: 'wf_1',
@@ -275,7 +274,7 @@ describe('web fetch processing', () => {
     const call = makeRunEvent({
       runId: 'run_1',
       seq: 1,
-      type: 'tool.call',
+      type: 'tool-call',
       data: {
         resolved_tool_name: 'web_fetch.jina',
         tool_call_id: 'wf_legacy',
@@ -285,7 +284,7 @@ describe('web fetch processing', () => {
     const result = makeRunEvent({
       runId: 'run_1',
       seq: 2,
-      type: 'tool.result',
+      type: 'tool-result',
       data: {
         resolved_tool_name: 'web_fetch.jina',
         tool_call_id: 'wf_legacy',
@@ -307,13 +306,13 @@ describe('web fetch processing', () => {
     const call = makeRunEvent({
       runId: 'run_1',
       seq: 1,
-      type: 'tool.call',
+      type: 'tool-call',
       data: { tool_name: 'web_fetch', tool_call_id: 'wf_fail', arguments: { url: 'https://bad.test' } },
     })
     const result = makeRunEvent({
       runId: 'run_1',
       seq: 2,
-      type: 'tool.result',
+      type: 'tool-result',
       errorClass: 'fetch_failed',
       data: {
         tool_name: 'web_fetch',
@@ -331,34 +330,34 @@ describe('web fetch processing', () => {
   })
 })
 
-describe('runEventDismissesAssistantPlaceholder', () => {
+describe('agentEventDismissesAssistantPlaceholder', () => {
   it('segment / 空 delta 不关闭占位', () => {
     expect(
-      runEventDismissesAssistantPlaceholder(
+      agentEventDismissesAssistantPlaceholder(
         makeRunEvent({
           runId: 'r1',
           seq: 1,
-          type: 'run.segment.start',
-          data: { segment_id: 's1', kind: 'planning_round', display: { label: 'x' } },
+          type: 'segment-start',
+          data: { segment_id: 's1', type: 'planning_round', display: { label: 'x' } },
         }),
       ),
     ).toBe(false)
     expect(
-      runEventDismissesAssistantPlaceholder(
+      agentEventDismissesAssistantPlaceholder(
         makeRunEvent({
           runId: 'r1',
           seq: 2,
-          type: 'message.delta',
+          type: 'assistant-delta',
           data: { content_delta: '', role: 'assistant' },
         }),
       ),
     ).toBe(false)
     expect(
-      runEventDismissesAssistantPlaceholder(
+      agentEventDismissesAssistantPlaceholder(
         makeRunEvent({
           runId: 'r1',
           seq: 3,
-          type: 'message.delta',
+          type: 'assistant-delta',
           data: { content_delta: 'int', role: 'assistant', channel: 'thinking' },
         }),
       ),
@@ -367,21 +366,21 @@ describe('runEventDismissesAssistantPlaceholder', () => {
 
   it('助手正文 delta 与 tool 事件关闭占位', () => {
     expect(
-      runEventDismissesAssistantPlaceholder(
+      agentEventDismissesAssistantPlaceholder(
         makeRunEvent({
           runId: 'r1',
           seq: 1,
-          type: 'message.delta',
+          type: 'assistant-delta',
           data: { content_delta: 'hi', role: 'assistant' },
         }),
       ),
     ).toBe(true)
     expect(
-      runEventDismissesAssistantPlaceholder(makeRunEvent({ runId: 'r1', seq: 2, type: 'tool.call', data: {} })),
+      agentEventDismissesAssistantPlaceholder(makeRunEvent({ runId: 'r1', seq: 2, type: 'tool-call', data: {} })),
     ).toBe(true)
     expect(
-      runEventDismissesAssistantPlaceholder(
-        makeRunEvent({ runId: 'r1', seq: 3, type: 'tool.call.delta', data: { tool_call_index: 0, arguments_delta: '{' } }),
+      agentEventDismissesAssistantPlaceholder(
+        makeRunEvent({ runId: 'r1', seq: 3, type: 'tool-input-delta', data: { tool_call_index: 0, arguments_delta: '{' } }),
       ),
     ).toBe(true)
   })
@@ -428,19 +427,19 @@ describe('read tool provider mapping', () => {
       makeRunEvent({
         runId: 'r1',
         seq: 1,
-        type: 'tool.call',
+        type: 'tool-call',
         data: {
           tool_name: 'read',
           tool_call_id: 'c1',
           arguments: {
-            source: { kind: 'file_path', file_path: '/tmp/demo.txt' },
+            source: { type: 'file_path', file_path: '/tmp/demo.txt' },
           },
         },
       }),
       makeRunEvent({
         runId: 'r1',
         seq: 2,
-        type: 'tool.result',
+        type: 'tool-result',
         data: {
           tool_name: 'read',
           tool_call_id: 'c1',
@@ -449,7 +448,7 @@ describe('read tool provider mapping', () => {
       }),
     ]
 
-    expect(buildMessageFileOpsFromRunEvents(events)).toEqual([
+    expect(buildMessageFileOpsFromAgentEvents(events)).toEqual([
       expect.objectContaining({
         id: 'c1',
         toolName: 'read_file',
@@ -466,7 +465,7 @@ describe('read tool provider mapping', () => {
       makeRunEvent({
         runId: 'r1',
         seq: 1,
-        type: 'tool.call',
+        type: 'tool-call',
         data: {
           tool_name: 'read_file',
           tool_call_id: 'c_empty',
@@ -476,12 +475,12 @@ describe('read tool provider mapping', () => {
       makeRunEvent({
         runId: 'r1',
         seq: 2,
-        type: 'tool.result',
+        type: 'tool-result',
         data: { tool_name: 'read_file', tool_call_id: 'c_empty', result: {} },
       }),
     ]
 
-    expect(buildMessageFileOpsFromRunEvents(events)).toEqual([
+    expect(buildMessageFileOpsFromAgentEvents(events)).toEqual([
       expect.objectContaining({
         id: 'c_empty',
         toolName: 'read_file',
@@ -498,19 +497,19 @@ describe('read tool provider mapping', () => {
       makeRunEvent({
         runId: 'r1',
         seq: 1,
-        type: 'tool.call',
+        type: 'tool-call',
         data: {
           tool_name: 'read.minimax',
           tool_call_id: 'c2',
           arguments: {
-            source: { kind: 'file_path', file_path: '/tmp/demo.txt' },
+            source: { type: 'file_path', file_path: '/tmp/demo.txt' },
           },
         },
       }),
       makeRunEvent({
         runId: 'r1',
         seq: 2,
-        type: 'tool.result',
+        type: 'tool-result',
         data: {
           tool_name: 'read',
           tool_call_id: 'c2',
@@ -519,7 +518,7 @@ describe('read tool provider mapping', () => {
       }),
     ]
 
-    expect(buildMessageFileOpsFromRunEvents(events)).toEqual([
+    expect(buildMessageFileOpsFromAgentEvents(events)).toEqual([
       expect.objectContaining({
         id: 'c2',
         toolName: 'read_file',
@@ -532,13 +531,13 @@ describe('read tool provider mapping', () => {
   })
 })
 
-describe('buildMessageWidgetsFromRunEvents', () => {
+describe('buildMessageWidgetsFromAgentEvents', () => {
   it('应从 show_widget 的 tool.call 事件恢复 widget', () => {
     const events = [
       makeRunEvent({
         runId: 'run_1',
         seq: 1,
-        type: 'tool.call',
+        type: 'tool-call',
         data: {
           tool_name: 'show_widget',
           tool_call_id: 'call_widget',
@@ -551,7 +550,7 @@ describe('buildMessageWidgetsFromRunEvents', () => {
       makeRunEvent({
         runId: 'run_1',
         seq: 2,
-        type: 'tool.result',
+        type: 'tool-result',
         data: {
           tool_name: 'show_widget',
           tool_call_id: 'call_widget',
@@ -560,7 +559,7 @@ describe('buildMessageWidgetsFromRunEvents', () => {
       }),
     ]
 
-    expect(buildMessageWidgetsFromRunEvents(events)).toEqual([
+    expect(buildMessageWidgetsFromAgentEvents(events)).toEqual([
       {
         id: 'call_widget',
         title: '销售图表',
@@ -574,7 +573,7 @@ describe('buildMessageWidgetsFromRunEvents', () => {
       makeRunEvent({
         runId: 'run_1',
         seq: 1,
-        type: 'tool.call',
+        type: 'tool-call',
         data: {
           tool_name: 'show_widget',
           tool_call_id: 'call_widget',
@@ -587,7 +586,7 @@ describe('buildMessageWidgetsFromRunEvents', () => {
       makeRunEvent({
         runId: 'run_1',
         seq: 2,
-        type: 'tool.call',
+        type: 'tool-call',
         data: {
           tool_name: 'show_widget',
           tool_call_id: 'call_widget',
@@ -600,7 +599,7 @@ describe('buildMessageWidgetsFromRunEvents', () => {
       makeRunEvent({
         runId: 'run_1',
         seq: 3,
-        type: 'tool.call',
+        type: 'tool-call',
         data: {
           tool_name: 'show_widget',
           tool_call_id: 'call_missing',
@@ -611,7 +610,7 @@ describe('buildMessageWidgetsFromRunEvents', () => {
       }),
     ]
 
-    expect(buildMessageWidgetsFromRunEvents(events)).toEqual([
+    expect(buildMessageWidgetsFromAgentEvents(events)).toEqual([
       {
         id: 'call_widget',
         title: '默认标题',
@@ -621,19 +620,19 @@ describe('buildMessageWidgetsFromRunEvents', () => {
   })
 })
 
-describe('buildMessageCodeExecutionsFromRunEvents', () => {
+describe('buildMessageCodeExecutionsFromAgentEvents', () => {
   it('应将 continue_process 结果回填到原始 exec_command 记录', () => {
     const events = [
       makeRunEvent({
         runId: 'run_1',
         seq: 1,
-        type: 'tool.call',
+        type: 'tool-call',
         data: { tool_name: 'exec_command', tool_call_id: 'call_exec', arguments: { command: 'uname -a' } },
       }),
       makeRunEvent({
         runId: 'run_1',
         seq: 2,
-        type: 'tool.result',
+        type: 'tool-result',
         data: {
           tool_name: 'exec_command',
           tool_call_id: 'call_exec',
@@ -643,13 +642,13 @@ describe('buildMessageCodeExecutionsFromRunEvents', () => {
       makeRunEvent({
         runId: 'run_1',
         seq: 3,
-        type: 'tool.call',
+        type: 'tool-call',
         data: { tool_name: 'continue_process', tool_call_id: 'call_continue', arguments: { process_ref: 'proc_1', cursor: '1' } },
       }),
       makeRunEvent({
         runId: 'run_1',
         seq: 4,
-        type: 'tool.result',
+        type: 'tool-result',
         data: {
           tool_name: 'continue_process',
           tool_call_id: 'call_continue',
@@ -658,7 +657,7 @@ describe('buildMessageCodeExecutionsFromRunEvents', () => {
       }),
     ]
 
-    const executions = buildMessageCodeExecutionsFromRunEvents(events)
+    const executions = buildMessageCodeExecutionsFromAgentEvents(events)
     expect(executions).toHaveLength(1)
     expect(executions[0]).toMatchObject({
       id: 'call_exec',
@@ -677,13 +676,13 @@ describe('buildMessageCodeExecutionsFromRunEvents', () => {
       makeRunEvent({
         runId: 'run_1',
         seq: 1,
-        type: 'tool.call',
+        type: 'tool-call',
         data: { tool_name: 'exec_command', tool_call_id: 'call_exec', arguments: { command: 'uname -a' } },
       }),
       makeRunEvent({
         runId: 'run_1',
         seq: 2,
-        type: 'tool.result',
+        type: 'tool-result',
         data: {
           tool_name: 'exec_command',
           tool_call_id: 'call_exec',
@@ -692,7 +691,7 @@ describe('buildMessageCodeExecutionsFromRunEvents', () => {
       }),
     ]
 
-    const executions = buildMessageCodeExecutionsFromRunEvents(events)
+    const executions = buildMessageCodeExecutionsFromAgentEvents(events)
     expect(executions).toHaveLength(1)
     expect(executions[0]?.output).toBe('Linux\n')
     expect(executions[0]?.status).toBe('success')
@@ -703,13 +702,13 @@ describe('buildMessageCodeExecutionsFromRunEvents', () => {
       makeRunEvent({
         runId: 'run_1',
         seq: 1,
-        type: 'tool.call',
+        type: 'tool-call',
         data: { tool_name: 'exec_command', tool_call_id: 'call_exec', arguments: { command: 'echo hi' } },
       }),
       makeRunEvent({
         runId: 'run_1',
         seq: 2,
-        type: 'tool.result',
+        type: 'tool-result',
         data: {
           tool_name: 'exec_command',
           tool_call_id: 'call_exec',
@@ -719,7 +718,7 @@ describe('buildMessageCodeExecutionsFromRunEvents', () => {
       makeRunEvent({
         runId: 'run_1',
         seq: 3,
-        type: 'tool.result',
+        type: 'tool-result',
         data: {
           tool_name: 'continue_process',
           tool_call_id: 'call_continue',
@@ -728,7 +727,7 @@ describe('buildMessageCodeExecutionsFromRunEvents', () => {
       }),
     ]
 
-    const executions = buildMessageCodeExecutionsFromRunEvents(events)
+    const executions = buildMessageCodeExecutionsFromAgentEvents(events)
     expect(executions).toHaveLength(1)
     expect(executions[0]?.output).toBe('hi there')
     expect(executions[0]?.status).toBe('success')
@@ -739,7 +738,7 @@ describe('buildMessageCodeExecutionsFromRunEvents', () => {
       makeRunEvent({
         runId: 'run_1',
         seq: 1,
-        type: 'tool.result',
+        type: 'tool-result',
         data: {
           tool_name: 'continue_process',
           tool_call_id: 'call_continue',
@@ -748,7 +747,7 @@ describe('buildMessageCodeExecutionsFromRunEvents', () => {
       }),
     ]
 
-    const executions = buildMessageCodeExecutionsFromRunEvents(events)
+    const executions = buildMessageCodeExecutionsFromAgentEvents(events)
     expect(executions).toHaveLength(1)
     expect(executions[0]).toMatchObject({
       id: 'call_continue',
@@ -765,13 +764,13 @@ describe('buildMessageCodeExecutionsFromRunEvents', () => {
       makeRunEvent({
         runId: 'run_1',
         seq: 1,
-        type: 'tool.call',
+        type: 'tool-call',
         data: { tool_name: 'exec_command', tool_call_id: 'call_exec', arguments: { command: 'echo hi', mode: 'follow' } },
       }),
       makeRunEvent({
         runId: 'run_1',
         seq: 2,
-        type: 'tool.result',
+        type: 'tool-result',
         data: {
           tool_name: 'exec_command',
           tool_call_id: 'call_exec',
@@ -789,7 +788,7 @@ describe('buildMessageCodeExecutionsFromRunEvents', () => {
       }),
     ]
 
-    const executions = buildMessageCodeExecutionsFromRunEvents(events)
+    const executions = buildMessageCodeExecutionsFromAgentEvents(events)
     expect(executions[0]).toMatchObject({
       processRef: 'proc_1',
       mode: 'follow',
@@ -803,13 +802,13 @@ describe('buildMessageCodeExecutionsFromRunEvents', () => {
       makeRunEvent({
         runId: 'run_1',
         seq: 1,
-        type: 'tool.call',
+        type: 'tool-call',
         data: { tool_name: 'exec_command', tool_call_id: 'call_exec', arguments: { command: 'ls -la /workspace/' } },
       }),
       makeRunEvent({
         runId: 'run_1',
         seq: 2,
-        type: 'tool.result',
+        type: 'tool-result',
         errorClass: 'tool.args_invalid',
         data: {
           tool_name: 'exec_command',
@@ -822,7 +821,7 @@ describe('buildMessageCodeExecutionsFromRunEvents', () => {
       }),
     ]
 
-    const executions = buildMessageCodeExecutionsFromRunEvents(events)
+    const executions = buildMessageCodeExecutionsFromAgentEvents(events)
     expect(executions).toHaveLength(1)
     expect(executions[0]).toMatchObject({
       id: 'call_exec',
@@ -838,13 +837,13 @@ describe('buildMessageCodeExecutionsFromRunEvents', () => {
       makeRunEvent({
         runId: 'run_1',
         seq: 1,
-        type: 'tool.call',
+        type: 'tool-call',
         data: { tool_name: 'exec_command', tool_call_id: 'call_exec', arguments: { command: 'ls -la /workspace/' } },
       }),
       makeRunEvent({
         runId: 'run_1',
         seq: 2,
-        type: 'tool.result',
+        type: 'tool-result',
         data: {
           tool_name: 'exec_command',
           tool_call_id: 'call_exec',
@@ -853,7 +852,7 @@ describe('buildMessageCodeExecutionsFromRunEvents', () => {
       }),
     ]
 
-    const executions = buildMessageCodeExecutionsFromRunEvents(events)
+    const executions = buildMessageCodeExecutionsFromAgentEvents(events)
     expect(executions).toHaveLength(1)
     expect(executions[0]).toMatchObject({
       id: 'call_exec',
@@ -867,13 +866,13 @@ describe('buildMessageCodeExecutionsFromRunEvents', () => {
       makeRunEvent({
         runId: 'run_1',
         seq: 1,
-        type: 'tool.call',
+        type: 'tool-call',
         data: { tool_name: 'exec_command', tool_call_id: 'call_exec', arguments: { command: 'pwd' } },
       }),
       makeRunEvent({
         runId: 'run_1',
         seq: 2,
-        type: 'tool.result',
+        type: 'tool-result',
         data: {
           tool_name: 'exec_command',
           tool_call_id: 'call_exec',
@@ -887,7 +886,7 @@ describe('buildMessageCodeExecutionsFromRunEvents', () => {
       }),
     ]
 
-    const executions = buildMessageCodeExecutionsFromRunEvents(events)
+    const executions = buildMessageCodeExecutionsFromAgentEvents(events)
     expect(executions).toHaveLength(1)
     expect(executions[0]).toMatchObject({
       id: 'call_exec',
@@ -902,13 +901,13 @@ describe('buildMessageCodeExecutionsFromRunEvents', () => {
       makeRunEvent({
         runId: 'run_1',
         seq: 1,
-        type: 'tool.call',
+        type: 'tool-call',
         data: { tool_name: 'exec_command', tool_call_id: 'call_bad', arguments: { command: 'ls -la /workspace/', share_scope: 'run' } },
       }),
       makeRunEvent({
         runId: 'run_1',
         seq: 2,
-        type: 'tool.result',
+        type: 'tool-result',
         errorClass: 'tool.args_invalid',
         data: {
           tool_name: 'exec_command',
@@ -922,13 +921,13 @@ describe('buildMessageCodeExecutionsFromRunEvents', () => {
       makeRunEvent({
         runId: 'run_1',
         seq: 3,
-        type: 'tool.call',
+        type: 'tool-call',
         data: { tool_name: 'python_execute', tool_call_id: 'call_good', arguments: { code: 'print(1)' } },
       }),
       makeRunEvent({
         runId: 'run_1',
         seq: 4,
-        type: 'tool.result',
+        type: 'tool-result',
         data: {
           tool_name: 'python_execute',
           tool_call_id: 'call_good',
@@ -937,26 +936,26 @@ describe('buildMessageCodeExecutionsFromRunEvents', () => {
       }),
     ]
 
-    const executions = buildMessageCodeExecutionsFromRunEvents(events)
+    const executions = buildMessageCodeExecutionsFromAgentEvents(events)
     expect(executions).toHaveLength(2)
     expect(executions[0]).toMatchObject({ id: 'call_bad', status: 'failed' })
     expect(executions[1]).toMatchObject({ id: 'call_good', status: 'success' })
   })
 })
 
-describe('buildMessageFileOpsFromRunEvents', () => {
+describe('buildMessageFileOpsFromAgentEvents', () => {
   it('应将 load_tools 的 already_active 状态单独汇总', () => {
     const events = [
       makeRunEvent({
         runId: 'run_1',
         seq: 1,
-        type: 'tool.call',
+        type: 'tool-call',
         data: { tool_name: 'load_tools', tool_call_id: 'call_search', arguments: { queries: ['web_search'] } },
       }),
       makeRunEvent({
         runId: 'run_1',
         seq: 2,
-        type: 'tool.result',
+        type: 'tool-result',
         data: {
           tool_name: 'load_tools',
           tool_call_id: 'call_search',
@@ -970,7 +969,7 @@ describe('buildMessageFileOpsFromRunEvents', () => {
       }),
     ]
 
-    const ops = buildMessageFileOpsFromRunEvents(events)
+    const ops = buildMessageFileOpsFromAgentEvents(events)
     expect(ops).toHaveLength(1)
     expect(ops[0]?.output).toBe('loaded 1 (show_widget); already active 1 (web_search)')
   })
@@ -980,13 +979,13 @@ describe('buildMessageFileOpsFromRunEvents', () => {
       makeRunEvent({
         runId: 'run_1',
         seq: 1,
-        type: 'tool.call',
+        type: 'tool-call',
         data: { tool_name: 'load_tools', tool_call_id: 'call_search', arguments: { queries: ['web_search'] } },
       }),
       makeRunEvent({
         runId: 'run_1',
         seq: 2,
-        type: 'tool.result',
+        type: 'tool-result',
         data: {
           tool_name: 'load_tools',
           tool_call_id: 'call_search',
@@ -999,19 +998,19 @@ describe('buildMessageFileOpsFromRunEvents', () => {
       }),
     ]
 
-    const ops = buildMessageFileOpsFromRunEvents(events)
+    const ops = buildMessageFileOpsFromAgentEvents(events)
     expect(ops).toHaveLength(1)
     expect(ops[0]?.output).toBe('already active 1 (web_search)')
   })
 })
 
-describe('buildMessageSubAgentsFromRunEvents', () => {
+describe('buildMessageSubAgentsFromAgentEvents', () => {
   it('应在 spawn_agent 调用开始时创建条目，并在 wait_agent 后收敛为 completed', () => {
     const events = [
       makeRunEvent({
         runId: 'run_1',
         seq: 1,
-        type: 'tool.call',
+        type: 'tool-call',
         data: {
           tool_name: 'spawn_agent',
           tool_call_id: 'call_spawn',
@@ -1026,7 +1025,7 @@ describe('buildMessageSubAgentsFromRunEvents', () => {
       makeRunEvent({
         runId: 'run_1',
         seq: 2,
-        type: 'tool.result',
+        type: 'tool-result',
         data: {
           tool_name: 'spawn_agent',
           tool_call_id: 'call_spawn',
@@ -1039,7 +1038,7 @@ describe('buildMessageSubAgentsFromRunEvents', () => {
       makeRunEvent({
         runId: 'run_1',
         seq: 3,
-        type: 'tool.result',
+        type: 'tool-result',
         data: {
           tool_name: 'wait_agent',
           tool_call_id: 'call_wait',
@@ -1052,7 +1051,7 @@ describe('buildMessageSubAgentsFromRunEvents', () => {
       }),
     ]
 
-    const agents = buildMessageSubAgentsFromRunEvents(events)
+    const agents = buildMessageSubAgentsFromAgentEvents(events)
     expect(agents).toHaveLength(1)
     expect(agents[0]).toMatchObject({
       id: 'call_spawn',
@@ -1121,7 +1120,7 @@ describe('applyCodeExecutionToolResult', () => {
     const event = makeRunEvent({
       runId: 'run_1',
       seq: 10,
-      type: 'tool.result',
+      type: 'tool-result',
       data: {
         tool_name: 'continue_process',
         tool_call_id: 'call_continue',
@@ -1145,7 +1144,7 @@ describe('applyCodeExecutionToolResult', () => {
     const event = makeRunEvent({
       runId: 'run_1',
       seq: 2,
-      type: 'tool.result',
+      type: 'tool-result',
       data: { tool_name: 'exec_command', tool_call_id: 'call_exec', result: { exit_code: 0 } },
     })
 
@@ -1210,24 +1209,24 @@ describe('patchCodeExecutionList', () => {
   })
 })
 
-describe('buildMessageThinkingFromRunEvents', () => {
+describe('buildMessageThinkingFromAgentEvents', () => {
   it('应提取顶层 thinking 文本', () => {
     const events = [
       makeRunEvent({
         runId: 'run_1',
         seq: 1,
-        type: 'message.delta',
+        type: 'assistant-delta',
         data: { role: 'assistant', channel: 'thinking', content_delta: 'A' },
       }),
       makeRunEvent({
         runId: 'run_1',
         seq: 2,
-        type: 'message.delta',
+        type: 'assistant-delta',
         data: { role: 'assistant', channel: 'thinking', content_delta: 'B' },
       }),
     ]
 
-    const snapshot = buildMessageThinkingFromRunEvents(events)
+    const snapshot = buildMessageThinkingFromAgentEvents(events)
     expect(snapshot).not.toBeNull()
     expect(snapshot?.thinkingText).toBe('AB')
     expect(snapshot?.segments).toEqual([])
@@ -1238,36 +1237,36 @@ describe('buildMessageThinkingFromRunEvents', () => {
       makeRunEvent({
         runId: 'run_1',
         seq: 1,
-        type: 'run.segment.start',
-        data: { segment_id: 'seg_1', kind: 'planning_round', display: { mode: 'collapsed', label: 'Plan' } },
+        type: 'segment-start',
+        data: { segment_id: 'seg_1', type: 'planning_round', display: { mode: 'collapsed', label: 'Plan' } },
       }),
       makeRunEvent({
         runId: 'run_1',
         seq: 2,
-        type: 'message.delta',
+        type: 'assistant-delta',
         data: { role: 'assistant', content_delta: 'P1' },
       }),
       makeRunEvent({
         runId: 'run_1',
         seq: 3,
-        type: 'run.segment.end',
+        type: 'segment-end',
         data: { segment_id: 'seg_1' },
       }),
       makeRunEvent({
         runId: 'run_1',
         seq: 4,
-        type: 'run.segment.start',
-        data: { segment_id: 'seg_2', kind: 'planning_round', display: { mode: 'hidden', label: 'Hidden' } },
+        type: 'segment-start',
+        data: { segment_id: 'seg_2', type: 'planning_round', display: { mode: 'hidden', label: 'Hidden' } },
       }),
       makeRunEvent({
         runId: 'run_1',
         seq: 5,
-        type: 'message.delta',
+        type: 'assistant-delta',
         data: { role: 'assistant', content_delta: 'H1' },
       }),
     ]
 
-    const snapshot = buildMessageThinkingFromRunEvents(events)
+    const snapshot = buildMessageThinkingFromAgentEvents(events)
     expect(snapshot).not.toBeNull()
     expect(snapshot?.segments).toHaveLength(1)
     expect(snapshot?.segments[0]).toMatchObject({
@@ -1282,17 +1281,17 @@ describe('buildMessageThinkingFromRunEvents', () => {
       makeRunEvent({
         runId: 'run_1',
         seq: 1,
-        type: 'message.delta',
+        type: 'assistant-delta',
         data: { role: 'assistant', content_delta: 'Final answer' },
       }),
       makeRunEvent({
         runId: 'run_1',
         seq: 2,
-        type: 'run.completed',
+        type: 'run-completed',
       }),
     ]
 
-    const snapshot = buildMessageThinkingFromRunEvents(events)
+    const snapshot = buildMessageThinkingFromAgentEvents(events)
     expect(snapshot).toBeNull()
   })
 
@@ -1301,18 +1300,18 @@ describe('buildMessageThinkingFromRunEvents', () => {
       makeRunEvent({
         runId: 'run_1',
         seq: 1,
-        type: 'run.segment.start',
-        data: { kind: 'planning_round', display: { mode: 'collapsed', label: 'NoID' } },
+        type: 'segment-start',
+        data: { type: 'planning_round', display: { mode: 'collapsed', label: 'NoID' } },
       }),
       makeRunEvent({
         runId: 'run_1',
         seq: 2,
-        type: 'message.delta',
+        type: 'assistant-delta',
         data: { role: 'assistant', content_delta: 'orphaned delta' },
       }),
     ]
 
-    const snapshot = buildMessageThinkingFromRunEvents(events)
+    const snapshot = buildMessageThinkingFromAgentEvents(events)
     expect(snapshot).toBeNull()
   })
 
@@ -1321,30 +1320,30 @@ describe('buildMessageThinkingFromRunEvents', () => {
       makeRunEvent({
         runId: 'run_1',
         seq: 1,
-        type: 'run.segment.start',
-        data: { segment_id: 'seg_1', kind: 'planning_round', display: { mode: 'collapsed', label: 'Plan' } },
+        type: 'segment-start',
+        data: { segment_id: 'seg_1', type: 'planning_round', display: { mode: 'collapsed', label: 'Plan' } },
       }),
       makeRunEvent({
         runId: 'run_1',
         seq: 2,
-        type: 'message.delta',
+        type: 'assistant-delta',
         data: { role: 'user', content_delta: 'user message' },
       }),
       makeRunEvent({
         runId: 'run_1',
         seq: 3,
-        type: 'message.delta',
+        type: 'assistant-delta',
         data: { role: 'assistant', content_delta: 'valid' },
       }),
       makeRunEvent({
         runId: 'run_1',
         seq: 4,
-        type: 'run.segment.end',
+        type: 'segment-end',
         data: { segment_id: 'seg_1' },
       }),
     ]
 
-    const snapshot = buildMessageThinkingFromRunEvents(events)
+    const snapshot = buildMessageThinkingFromAgentEvents(events)
     expect(snapshot).not.toBeNull()
     expect(snapshot?.segments[0].content).toBe('valid')
   })
@@ -1354,18 +1353,18 @@ describe('buildMessageThinkingFromRunEvents', () => {
       makeRunEvent({
         runId: 'run_1',
         seq: 1,
-        type: 'message.delta',
+        type: 'assistant-delta',
         data: { role: 'assistant', channel: 'thinking', content_delta: '' },
       }),
       makeRunEvent({
         runId: 'run_1',
         seq: 2,
-        type: 'message.delta',
+        type: 'assistant-delta',
         data: { role: 'assistant', channel: 'thinking', content_delta: 'real' },
       }),
     ]
 
-    const snapshot = buildMessageThinkingFromRunEvents(events)
+    const snapshot = buildMessageThinkingFromAgentEvents(events)
     expect(snapshot).not.toBeNull()
     expect(snapshot?.thinkingText).toBe('real')
   })
@@ -1375,24 +1374,24 @@ describe('buildMessageThinkingFromRunEvents', () => {
       makeRunEvent({
         runId: 'run_1',
         seq: 1,
-        type: 'run.segment.start',
-        data: { segment_id: 'seg_1', kind: 'planning_round', display: { mode: 'collapsed', label: 'Plan' } },
+        type: 'segment-start',
+        data: { segment_id: 'seg_1', type: 'planning_round', display: { mode: 'collapsed', label: 'Plan' } },
       }),
       makeRunEvent({
         runId: 'run_1',
         seq: 2,
-        type: 'run.segment.end',
+        type: 'segment-end',
         data: { segment_id: 'seg_wrong' },
       }),
       makeRunEvent({
         runId: 'run_1',
         seq: 3,
-        type: 'message.delta',
+        type: 'assistant-delta',
         data: { role: 'assistant', content_delta: 'still in seg_1' },
       }),
     ]
 
-    const snapshot = buildMessageThinkingFromRunEvents(events)
+    const snapshot = buildMessageThinkingFromAgentEvents(events)
     expect(snapshot).not.toBeNull()
     expect(snapshot?.segments).toHaveLength(1)
     expect(snapshot?.segments[0].content).toBe('still in seg_1')
@@ -1403,12 +1402,12 @@ describe('buildMessageThinkingFromRunEvents', () => {
       makeRunEvent({
         runId: 'run_1',
         seq: 1,
-        type: 'message.delta',
+        type: 'assistant-delta',
         data: { role: 'assistant', channel: 'thinking', content_delta: 123 },
       }),
     ]
 
-    const snapshot = buildMessageThinkingFromRunEvents(events)
+    const snapshot = buildMessageThinkingFromAgentEvents(events)
     expect(snapshot).toBeNull()
   })
 })

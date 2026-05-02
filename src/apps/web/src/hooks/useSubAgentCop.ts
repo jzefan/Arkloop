@@ -1,15 +1,16 @@
 import { useEffect, useReducer, useRef } from 'react'
 import { pickLogicalToolName } from '@arkloop/shared'
-import { useSSE } from './useSSE'
+import { useAgentStream } from './useAgentStream'
+import { useAgentClient } from '../agent-ui'
 import type { WebSearchPhaseStep } from '../components/CopTimeline'
 import type { WebSource } from '../storage'
-import type { RunEvent } from '../sse'
+import type { AgentUIEvent } from '../agent-ui'
 import {
   COMPLETED_SEARCHING_LABEL,
   DEFAULT_SEARCHING_LABEL,
   isWebSearchToolName,
   webSearchQueriesFromArguments,
-} from '../webSearchTimelineFromRunEvent'
+} from '../webSearchTimelineFromAgentEvent'
 
 type CopState = {
   steps: WebSearchPhaseStep[]
@@ -110,8 +111,8 @@ function reducer(state: CopState, action: CopAction): CopState {
   }
 }
 
-function processEvent(event: RunEvent, dispatch: React.Dispatch<CopAction>): void {
-  if (event.type === 'run.segment.start') {
+function processEvent(event: AgentUIEvent, dispatch: React.Dispatch<CopAction>): void {
+  if (event.type === 'segment-start') {
     const obj = event.data as { segment_id?: unknown; kind?: unknown; display?: unknown }
     const segmentId = typeof obj.segment_id === 'string' ? obj.segment_id : ''
     const kind = typeof obj.kind === 'string' ? obj.kind : ''
@@ -125,18 +126,18 @@ function processEvent(event: RunEvent, dispatch: React.Dispatch<CopAction>): voi
     return
   }
 
-  if (event.type === 'run.segment.end') {
+  if (event.type === 'segment-end') {
     const obj = event.data as { segment_id?: unknown }
     const segmentId = typeof obj.segment_id === 'string' ? obj.segment_id : ''
     if (segmentId) dispatch({ type: 'segment_end', segmentId })
     return
   }
 
-  if (event.type === 'tool.call') {
+  if (event.type === 'tool-call') {
     const obj = event.data as { tool_call_id?: unknown; arguments?: unknown }
-    const toolName = pickLogicalToolName(event.data, event.tool_name)
+    const toolName = pickLogicalToolName(event.data, event.toolName)
     if (isWebSearchToolName(toolName)) {
-      const callId = typeof obj.tool_call_id === 'string' ? obj.tool_call_id : event.event_id
+      const callId = typeof obj.tool_call_id === 'string' ? obj.tool_call_id : event.id
       const args = obj.arguments as Record<string, unknown> | undefined
       const queries = webSearchQueriesFromArguments(args)
       dispatch({ type: 'web_search_call', callId, queries })
@@ -144,11 +145,11 @@ function processEvent(event: RunEvent, dispatch: React.Dispatch<CopAction>): voi
     return
   }
 
-  if (event.type === 'tool.result') {
+  if (event.type === 'tool-result') {
     const obj = event.data as { tool_call_id?: unknown; result?: unknown }
-    const toolName = pickLogicalToolName(event.data, event.tool_name)
+    const toolName = pickLogicalToolName(event.data, event.toolName)
     if (isWebSearchToolName(toolName)) {
-      const callId = typeof obj.tool_call_id === 'string' ? obj.tool_call_id : event.event_id
+      const callId = typeof obj.tool_call_id === 'string' ? obj.tool_call_id : event.id
       const result = obj.result as { results?: unknown[] } | undefined
       const sources: WebSource[] = Array.isArray(result?.results)
         ? (result.results as unknown[])
@@ -166,10 +167,10 @@ function processEvent(event: RunEvent, dispatch: React.Dispatch<CopAction>): voi
   }
 
   if (
-    event.type === 'run.completed' ||
-    event.type === 'run.failed' ||
-    event.type === 'run.cancelled' ||
-    event.type === 'run.interrupted'
+    event.type === 'run-completed' ||
+    event.type === 'run-failed' ||
+    event.type === 'run-cancelled' ||
+    event.type === 'run-interrupted'
   ) {
     dispatch({ type: 'complete' })
   }
@@ -179,16 +180,15 @@ export type SubAgentCopResult = CopState & { isStreaming: boolean }
 
 export function useSubAgentCop(params: {
   runId: string | undefined
-  accessToken: string
-  baseUrl?: string
   enabled: boolean
 }): SubAgentCopResult {
-  const { runId, accessToken, baseUrl = '', enabled } = params
+  const { runId, enabled } = params
+  const agentClient = useAgentClient()
   const [state, dispatch] = useReducer(reducer, initialState)
   const processedCountRef = useRef(0)
   const drainEventsRef = useRef<() => void>(() => {})
 
-  const sse = useSSE({ runId: runId ?? '', accessToken, baseUrl })
+  const sse = useAgentStream({ runId: runId ?? '', client: agentClient })
 
   const prevRunIdRef = useRef(runId)
   useEffect(() => {

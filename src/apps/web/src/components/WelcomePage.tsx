@@ -8,7 +8,8 @@ import { NotificationBell } from './NotificationBell'
 import { isDesktop } from '@arkloop/shared/desktop'
 import { DebugTrigger, useTimeZone } from '@arkloop/shared'
 import { buildDraftAttachmentRecords, restoreAttachmentFromDraftRecord } from '../draftAttachments'
-import { createThread, createMessage, createRun, uploadStagingAttachment, isApiError, type RunReasoningMode } from '../api'
+import { createThread, uploadStagingAttachment, isApiError, type RunReasoningMode } from '../api'
+import { useAgentClient } from '../agent-ui'
 import {
   type InputDraftScope,
   writeActiveThreadIdToStorage,
@@ -147,6 +148,7 @@ function buildGreeting(strings: WelcomeGreetingTexts, name: string | null, now: 
 
 export function WelcomePage() {
   const { accessToken, logout: onLoggedOut, me } = useAuth()
+  const agentClient = useAgentClient()
   const { timeZone } = useTimeZone()
   const { addThread: onThreadCreated, isPrivateMode, togglePrivateMode: onTogglePrivateMode } = useThreadList()
   const { isSearchMode, enterSearchMode: onEnterSearchMode, exitSearchMode: onExitSearchMode } = useSearchUI()
@@ -375,15 +377,17 @@ export function WelcomePage() {
           return await uploadStagingAttachment(accessToken, attachment.file)
         }),
       )
-      const userMessage = await createMessage(accessToken, thread.id, buildMessageRequest(text, uploaded))
-      const run = await createRun(
-        accessToken,
-        thread.id,
-        personaKey,
+      const userMessage = await agentClient.createMessage({
+        threadId: thread.id,
+        request: buildMessageRequest(text, uploaded),
+      })
+      const run = await agentClient.createRun({
+        threadId: thread.id,
+        personaId: personaKey,
         modelOverride,
-        readWorkFolder() ?? undefined,
-        readSelectedReasoningMode() !== 'off' ? readSelectedReasoningMode() as RunReasoningMode : undefined,
-      )
+        workDir: readWorkFolder() ?? undefined,
+        reasoningMode: readSelectedReasoningMode() !== 'off' ? readSelectedReasoningMode() as RunReasoningMode : undefined,
+      })
 
       if (personaKey === SEARCH_PERSONA_KEY) addSearchThreadId(thread.id)
       attachments.forEach((attachment) => revokeDraftAttachment(attachment))
@@ -396,7 +400,7 @@ export function WelcomePage() {
       onThreadCreated(thread)
       navigate(`/t/${thread.id}`, {
         state: {
-          initialRunId: run.run_id,
+          initialRunId: run.id,
           isSearch: personaKey === SEARCH_PERSONA_KEY,
           userEnterMessageId: userMessage.id,
           welcomeUserMessage: userMessage,

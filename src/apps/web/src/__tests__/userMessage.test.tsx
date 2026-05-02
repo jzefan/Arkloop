@@ -4,7 +4,7 @@ import { createRoot } from 'react-dom/client'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { LocaleProvider } from '../contexts/LocaleContext'
 import { UserMessage } from '../components/messagebubble/UserMessage'
-import type { MessageResponse } from '../api'
+import type { AgentMessage } from '../agent-ui'
 import {
   getUserPromptEnterScale,
   USER_PROMPT_ENTER_BASE_SCALE,
@@ -12,20 +12,20 @@ import {
   USER_PROMPT_MAX_WIDTH,
 } from '../components/messagebubble/utils'
 
-function makeMessage(overrides: Partial<MessageResponse>): MessageResponse {
+function makeMessage(overrides: Partial<AgentMessage>): AgentMessage {
+  const content = overrides.content ?? ''
   return {
     id: 'msg-1',
-    account_id: 'acc-1',
-    thread_id: 'thread-1',
-    created_by_user_id: 'user-1',
     role: 'user',
-    content: '',
-    created_at: '2026-03-24T00:00:00.000Z',
+    parts: content ? [{ type: 'text', text: content, state: 'done' }] : [],
+    content,
+    createdAt: '2026-03-24T00:00:00.000Z',
+    metadata: { createdAt: '2026-03-24T00:00:00.000Z' },
     ...overrides,
   }
 }
 
-function renderUserMessage(message: MessageResponse): string {
+function renderUserMessage(message: AgentMessage): string {
   return renderToStaticMarkup(
     <LocaleProvider>
       <UserMessage message={message} accessToken="token" />
@@ -57,17 +57,17 @@ afterEach(() => {
 describe('UserMessage attachments', () => {
   it('pasted 文件只显示 pasted card，不再重复渲染文件名 chip', () => {
     const html = renderUserMessage(makeMessage({
-      content_json: {
+      contentJson: {
         parts: [
           {
             type: 'file',
             attachment: {
               key: 'file-1',
               filename: 'pasted-1774270948.txt',
-              mime_type: 'text/plain',
+              mediaType: 'text/plain',
               size: 992,
             },
-            extracted_text: '第一行\n第二行',
+            extractedText: '第一行\n第二行',
           },
         ],
       },
@@ -79,17 +79,17 @@ describe('UserMessage attachments', () => {
 
   it('普通文件仍然显示下载 chip', () => {
     const html = renderUserMessage(makeMessage({
-      content_json: {
+      contentJson: {
         parts: [
           {
             type: 'file',
             attachment: {
               key: 'file-2',
               filename: 'notes.txt',
-              mime_type: 'text/plain',
+              mediaType: 'text/plain',
               size: 128,
             },
-            extracted_text: 'hello',
+            extractedText: 'hello',
           },
         ],
       },
@@ -128,13 +128,13 @@ describe('UserMessage attachments', () => {
             <UserMessage
               accessToken="token"
               message={makeMessage({
-                content_json: {
+                contentJson: {
                   parts: [{
                     type: 'image',
                     attachment: {
                       key: 'image-1',
                       filename: 'shot.png',
-                      mime_type: 'image/png',
+                      mediaType: 'image/png',
                       size: 128,
                     },
                   }],

@@ -47,6 +47,55 @@ import {
 const sseMock = vi.hoisted(() => {
   let events: unknown[] = []
   const eventListeners = new Set<() => void>()
+  const mapType = (type: string): string => {
+    switch (type) {
+      case 'message.delta': return 'assistant-delta'
+      case 'tool.call.delta': return 'tool-input-delta'
+      case 'tool.call': return 'tool-call'
+      case 'tool.result': return 'tool-result'
+      case 'terminal.stdout_delta':
+      case 'terminal.stderr_delta': return 'terminal-delta'
+      case 'run.segment.start': return 'segment-start'
+      case 'run.segment.end': return 'segment-end'
+      case 'run.context_compact': return 'context-compact'
+      case 'run.input_requested': return 'input-request'
+      case 'run.completed': return 'run-completed'
+      case 'run.failed': return 'run-failed'
+      case 'run.cancelled': return 'run-cancelled'
+      case 'run.interrupted': return 'run-interrupted'
+      case 'security.injection.blocked': return 'security-block'
+      case 'thread.title.updated': return 'thread-title'
+      case 'thread.collaboration_mode.updated':
+      case 'thread.collaboration.updated': return 'thread-collaboration'
+      case 'todo.updated': return 'todo-updated'
+      default: return type
+    }
+  }
+  const normalizeEvent = (item: unknown): unknown => {
+    if (!item || typeof item !== 'object') return item
+    const record = item as Record<string, unknown>
+    if (typeof record.id === 'string' && typeof record.streamId === 'string' && typeof record.order === 'number') {
+      return item
+    }
+    if (
+      typeof record.event_id === 'string' &&
+      typeof record.run_id === 'string' &&
+      typeof record.seq === 'number' &&
+      typeof record.type === 'string'
+    ) {
+      return {
+        id: record.event_id,
+        streamId: record.run_id,
+        order: record.seq,
+        timestamp: typeof record.ts === 'string' ? record.ts : '',
+        type: mapType(record.type),
+        data: record.data ?? {},
+        toolName: typeof record.tool_name === 'string' ? record.tool_name : undefined,
+        errorCode: typeof record.error_class === 'string' ? record.error_class : undefined,
+      }
+    }
+    return item
+  }
   const notifyEventListeners = () => {
     queueMicrotask(() => {
       for (const listener of eventListeners) {
@@ -61,7 +110,7 @@ const sseMock = vi.hoisted(() => {
       return events
     },
     set events(next: unknown[]) {
-      events = next
+      events = next.map(normalizeEvent)
       notifyEventListeners()
     },
     lastSeq: 0,
@@ -116,11 +165,11 @@ vi.mock('../api', async () => {
   }
 })
 
-vi.mock('../hooks/useSSE', () => ({
-  useSSE: () => sseMock,
+vi.mock('../hooks/useAgentStream', () => ({
+  useAgentStream: () => sseMock,
 }))
 
-vi.mock('../runEventProcessing', async () => await vi.importActual<typeof import('../runEventProcessing')>('../runEventProcessing'))
+vi.mock('../agentEventProcessing', async () => await vi.importActual<typeof import('../agentEventProcessing')>('../agentEventProcessing'))
 
 vi.mock('../storage', async () => {
   const actual = await vi.importActual<typeof import('../storage')>('../storage')

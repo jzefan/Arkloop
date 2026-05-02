@@ -46,8 +46,6 @@ export function SubAgentBlock({
   error,
   live,
   currentRunId,
-  accessToken = '',
-  baseUrl = '',
   onOpenPanel,
   typography = 'default',
 }: Props) {
@@ -68,8 +66,6 @@ export function SubAgentBlock({
 
   const cop = useSubAgentCop({
     runId: currentRunId,
-    accessToken,
-    baseUrl,
     enabled: expanded && !!currentRunId,
   })
 

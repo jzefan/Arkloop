@@ -8,11 +8,10 @@ import {
   useState,
   type ReactNode,
 } from 'react'
-import { useSSE, type UseSSEResult } from '../hooks/useSSE'
+import { useAgentStream, type UseAgentStreamResult } from '../hooks/useAgentStream'
 import { type AppError } from '@arkloop/shared'
-import { apiBaseUrl } from '@arkloop/shared/api'
+import { useAgentClient } from '../agent-ui'
 import type { UserInputRequest } from '../userInputTypes'
-import { useAuth } from './auth'
 import { useChatSession } from './chat-session'
 import type { QueuedPrompt } from '../queuedPrompts'
 
@@ -47,7 +46,7 @@ interface RunLifecycleContextValue {
   isStreaming: boolean
   sseRunId: string
 
-  sse: UseSSEResult
+  sse: UseAgentStreamResult
 
   setActiveRunId: (id: string | null) => void
   setSending: (v: boolean) => void
@@ -81,8 +80,8 @@ interface RunLifecycleContextValue {
 const Ctx = createContext<RunLifecycleContextValue | null>(null)
 
 export function RunLifecycleProvider({ children }: { children: ReactNode }) {
-  const { accessToken } = useAuth()
   const { threadId } = useChatSession()
+  const agentClient = useAgentClient()
 
   const [activeRunId, setActiveRunId] = useState<string | null>(null)
   const [sending, setSending] = useState(false)
@@ -121,8 +120,7 @@ export function RunLifecycleProvider({ children }: { children: ReactNode }) {
   const sseRunId = activeRunId ?? completedTitleTailRunId ?? ''
 
   // SSE
-  const baseUrl = apiBaseUrl()
-  const sse = useSSE({ runId: sseRunId, accessToken, baseUrl })
+  const sse = useAgentStream({ runId: sseRunId, client: agentClient })
 
   // --- actions ---
 

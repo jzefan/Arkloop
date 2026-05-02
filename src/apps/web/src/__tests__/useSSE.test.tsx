@@ -2,16 +2,12 @@ import { act } from 'react'
 import { createRoot } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { useSSE, type UseSSEResult } from '../hooks/useSSE'
+import { useAgentStream, type UseAgentStreamResult } from '../hooks/useAgentStream'
+import type { AgentClient } from '../agent-ui'
 
-const mockedCreateSSEClient = vi.hoisted(() => vi.fn())
 const mockedReadLastSeqFromStorage = vi.hoisted(() => vi.fn())
 const mockedWriteLastSeqToStorage = vi.hoisted(() => vi.fn())
 const mockedClearLastSeqInStorage = vi.hoisted(() => vi.fn())
-
-vi.mock('../sse', () => ({
-  createSSEClient: mockedCreateSSEClient,
-}))
 
 vi.mock('../storage', () => ({
   readLastSeqFromStorage: mockedReadLastSeqFromStorage,
@@ -23,29 +19,42 @@ vi.mock('../streamDebug', () => ({
   emitStreamDebug: vi.fn(),
 }))
 
-vi.mock('@arkloop/shared', () => ({
-  silentRefresh: vi.fn(async () => 'refreshed-token'),
-}))
+const mockedOpenMessageChunkStream = vi.fn()
 
-vi.mock('@arkloop/shared/desktop', () => ({
-  isLocalMode: vi.fn(() => true),
-}))
+function pendingStream(cancel: () => void = vi.fn()): ReadableStream<never> {
+  return new ReadableStream<never>({
+    cancel,
+  })
+}
+
+function createMockAgentClient(): AgentClient {
+  return {
+    listMessages: vi.fn(),
+    createMessage: vi.fn(),
+    createRun: vi.fn(),
+    editMessage: vi.fn(),
+    retryMessage: vi.fn(),
+    cancelRun: vi.fn(),
+    provideInput: vi.fn(),
+    openMessageChunkStream: mockedOpenMessageChunkStream,
+  }
+}
 
 function HookProbe({
   runId,
-  accessToken,
+  client,
   onSnapshot,
 }: {
   runId: string
-  accessToken: string
-  onSnapshot: (value: UseSSEResult) => void
+  client: AgentClient
+  onSnapshot: (value: UseAgentStreamResult) => void
 }) {
-  const value = useSSE({ runId, accessToken, baseUrl: 'http://api.test' })
+  const value = useAgentStream({ runId, client })
   onSnapshot(value)
   return null
 }
 
-describe('useSSE', () => {
+describe('useAgentStream', () => {
   const actEnvironment = globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
   const originalActEnvironment = actEnvironment.IS_REACT_ACT_ENVIRONMENT
 
@@ -63,30 +72,23 @@ describe('useSSE', () => {
   })
 
   it('切换 runId 后应关闭旧 client，并使用新 run 的 last seq 建连', async () => {
-    const firstClient = {
-      connect: vi.fn(async () => {}),
-      close: vi.fn(),
-      reconnect: vi.fn(async () => {}),
-    }
-    const secondClient = {
-      connect: vi.fn(async () => {}),
-      close: vi.fn(),
-      reconnect: vi.fn(async () => {}),
-    }
-    mockedCreateSSEClient
-      .mockReturnValueOnce(firstClient)
-      .mockReturnValueOnce(secondClient)
+    const firstCancel = vi.fn()
+    const secondCancel = vi.fn()
+    const agentClient = createMockAgentClient()
+    mockedOpenMessageChunkStream
+      .mockReturnValueOnce(pendingStream(firstCancel))
+      .mockReturnValueOnce(pendingStream(secondCancel))
     mockedReadLastSeqFromStorage.mockImplementation((runId: string) => (
       runId === 'run-1' ? 7 : 3
     ))
 
-    let latest: UseSSEResult | null = null
+    let latest: UseAgentStreamResult | null = null
     const container = document.createElement('div')
     document.body.appendChild(container)
     const root = createRoot(container)
 
     await act(async () => {
-      root.render(<HookProbe runId="run-1" accessToken="token" onSnapshot={(value) => { latest = value }} />)
+      root.render(<HookProbe runId="run-1" client={agentClient} onSnapshot={(value) => { latest = value }} />)
     })
 
     await act(async () => {
@@ -94,15 +96,13 @@ describe('useSSE', () => {
       await Promise.resolve()
     })
 
-    expect(mockedCreateSSEClient).toHaveBeenNthCalledWith(1, expect.objectContaining({
-      url: 'http://api.test/v1/runs/run-1/events',
-      afterSeq: 7,
-      accessToken: 'token',
+    expect(mockedOpenMessageChunkStream).toHaveBeenNthCalledWith(1, 'run-1', expect.objectContaining({
+      cursor: 7,
+      live: true,
     }))
-    expect(firstClient.connect).toHaveBeenCalledTimes(1)
 
     await act(async () => {
-      root.render(<HookProbe runId="run-2" accessToken="token" onSnapshot={(value) => { latest = value }} />)
+      root.render(<HookProbe runId="run-2" client={agentClient} onSnapshot={(value) => { latest = value }} />)
     })
 
     await act(async () => {
@@ -110,49 +110,33 @@ describe('useSSE', () => {
       await Promise.resolve()
     })
 
-    expect(firstClient.close).toHaveBeenCalledTimes(1)
-    expect(mockedCreateSSEClient).toHaveBeenNthCalledWith(2, expect.objectContaining({
-      url: 'http://api.test/v1/runs/run-2/events',
-      afterSeq: 3,
-      accessToken: 'token',
+    expect(firstCancel).toHaveBeenCalledTimes(1)
+    expect(mockedOpenMessageChunkStream).toHaveBeenNthCalledWith(2, 'run-2', expect.objectContaining({
+      cursor: 3,
+      live: true,
     }))
-    expect(secondClient.connect).toHaveBeenCalledTimes(1)
 
     act(() => root.unmount())
+    expect(secondCancel).toHaveBeenCalledTimes(1)
     container.remove()
   })
 
-  it('run 切换后 reconnect 只应作用于当前 client', async () => {
-    const firstClient = {
-      connect: vi.fn(async () => {}),
-      close: vi.fn(),
-      reconnect: vi.fn(async () => {}),
-    }
-    const secondClient = {
-      connect: vi.fn(async () => {}),
-      close: vi.fn(),
-      reconnect: vi.fn(async () => {}),
-    }
-    mockedCreateSSEClient
-      .mockReturnValueOnce(firstClient)
-      .mockReturnValueOnce(secondClient)
+  it('reconnect 应重建当前 run 的 chunk stream', async () => {
+    const firstCancel = vi.fn()
+    const secondCancel = vi.fn()
+    const agentClient = createMockAgentClient()
+    mockedOpenMessageChunkStream
+      .mockReturnValueOnce(pendingStream(firstCancel))
+      .mockReturnValueOnce(pendingStream(secondCancel))
     mockedReadLastSeqFromStorage.mockReturnValue(0)
 
-    let latest: UseSSEResult | null = null
+    let latest: UseAgentStreamResult | null = null
     const container = document.createElement('div')
     document.body.appendChild(container)
     const root = createRoot(container)
 
     await act(async () => {
-      root.render(<HookProbe runId="run-1" accessToken="token" onSnapshot={(value) => { latest = value }} />)
-    })
-    await act(async () => {
-      latest?.connect()
-      await Promise.resolve()
-    })
-
-    await act(async () => {
-      root.render(<HookProbe runId="run-2" accessToken="token" onSnapshot={(value) => { latest = value }} />)
+      root.render(<HookProbe runId="run-1" client={agentClient} onSnapshot={(value) => { latest = value }} />)
     })
     await act(async () => {
       latest?.connect()
@@ -164,10 +148,14 @@ describe('useSSE', () => {
       await Promise.resolve()
     })
 
-    expect(firstClient.reconnect).not.toHaveBeenCalled()
-    expect(secondClient.reconnect).toHaveBeenCalledTimes(1)
+    expect(firstCancel).toHaveBeenCalledTimes(1)
+    expect(mockedOpenMessageChunkStream).toHaveBeenNthCalledWith(2, 'run-1', expect.objectContaining({
+      cursor: 0,
+      live: true,
+    }))
 
     act(() => root.unmount())
+    expect(secondCancel).toHaveBeenCalledTimes(1)
     container.remove()
   })
 })

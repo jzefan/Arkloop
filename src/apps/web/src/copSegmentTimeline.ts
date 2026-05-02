@@ -9,7 +9,7 @@ import type {
   WebSource,
 } from './storage'
 import type { WebSearchPhaseStep } from './components/CopTimeline'
-import { isWebFetchToolName } from './runEventProcessing'
+import { isWebFetchToolName } from './agentEventProcessing'
 import { exploreGroupLabel, isExploreFileOp, type ExploreGroupRef } from './toolPresentation'
 import {
   DEFAULT_SEARCHING_LABEL,
@@ -17,7 +17,7 @@ import {
   isWebSearchToolName,
   webSearchQueriesFromArguments,
   webSearchSourcesFromResult,
-} from './webSearchTimelineFromRunEvent'
+} from './webSearchTimelineFromAgentEvent'
 
 type CopSegment = Extract<AssistantTurnSegment, { type: 'cop' }>
 export type GenericToolCallRef = {

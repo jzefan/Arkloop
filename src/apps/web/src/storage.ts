@@ -5,6 +5,7 @@ import type { Theme } from '@arkloop/shared/contexts/theme'
 import type { UploadedThreadAttachment } from './api'
 import type { FontFamily, CodeFontFamily, FontSize, ThemePreset, ThemeDefinition } from './themes/types'
 import type { AssistantTurnSegment, AssistantTurnUi, CopBlockItem, TurnToolCallRef } from './assistantTurnSegments'
+import type { AgentUIEvent } from './agent-ui/contract'
 
 export {
   readAccessToken as readAccessTokenFromStorage,
@@ -1628,20 +1629,20 @@ export function clearThreadRunHandoff(threadId: string): void {
 
 // -- Developer Settings --
 
-const DEVELOPER_SHOW_RUN_EVENTS_KEY = 'arkloop:web:developer_show_run_events'
+const DEVELOPER_SHOW_RUN_DETAIL_BUTTON_KEY = 'arkloop:web:developer_show_run_detail_button'
 
-export function readDeveloperShowRunEvents(): boolean {
+export function readDeveloperShowRunDetailButton(): boolean {
   if (!canUseLocalStorage()) return false
   try {
-    return localStorage.getItem(DEVELOPER_SHOW_RUN_EVENTS_KEY) === 'true'
+    return localStorage.getItem(DEVELOPER_SHOW_RUN_DETAIL_BUTTON_KEY) === 'true'
   } catch { return false }
 }
 
-export function writeDeveloperShowRunEvents(value: boolean): void {
+export function writeDeveloperShowRunDetailButton(value: boolean): void {
   if (!canUseLocalStorage()) return
   try {
-    localStorage.setItem(DEVELOPER_SHOW_RUN_EVENTS_KEY, value ? 'true' : 'false')
-    window.dispatchEvent(new CustomEvent('arkloop:developer_show_run_events', { detail: value }))
+    localStorage.setItem(DEVELOPER_SHOW_RUN_DETAIL_BUTTON_KEY, value ? 'true' : 'false')
+    window.dispatchEvent(new CustomEvent('arkloop:developer_show_run_detail_button', { detail: value }))
   } catch { /* ignore */ }
 }
 
@@ -1711,45 +1712,123 @@ export function writeDeveloperPromptCacheDebugEnabled(value: boolean): void {
   } catch { /* ignore */ }
 }
 
-// -- Per-message run events (for inline debug display) --
+// -- Per-message agent events (for inline debug display) --
 
-export type MsgRunEvent = {
-  event_id: string
-  run_id: string
-  seq: number
-  ts: string
-  type: string
-  data: unknown
-  tool_name?: string
-  error_class?: string
+export type MessageAgentEvent = AgentUIEvent
+
+function normalizeStoredEventType(type: string): string {
+  switch (type) {
+    case 'message.delta':
+      return 'assistant-delta'
+    case 'tool.call.delta':
+      return 'tool-input-delta'
+    case 'tool.call':
+      return 'tool-call'
+    case 'tool.result':
+      return 'tool-result'
+    case 'terminal.stdout_delta':
+    case 'terminal.stderr_delta':
+      return 'terminal-delta'
+    case 'run.segment.start':
+      return 'segment-start'
+    case 'run.segment.end':
+      return 'segment-end'
+    case 'run.context_compact':
+      return 'context-compact'
+    case 'run.input_requested':
+      return 'input-request'
+    case 'run.completed':
+      return 'run-completed'
+    case 'run.failed':
+      return 'run-failed'
+    case 'run.cancelled':
+      return 'run-cancelled'
+    case 'run.interrupted':
+      return 'run-interrupted'
+    case 'security.injection.blocked':
+      return 'security-block'
+    case 'thread.title.updated':
+      return 'thread-title'
+    case 'thread.collaboration_mode.updated':
+    case 'thread.collaboration.updated':
+      return 'thread-collaboration'
+    case 'todo.updated':
+      return 'todo-updated'
+    default:
+      return type
+  }
 }
 
-function messageRunEventsKey(messageId: string): string {
+function normalizeStoredAgentEvent(item: unknown): MessageAgentEvent | null {
+  if (!item || typeof item !== 'object') return null
+  const record = item as Record<string, unknown>
+  if (
+    typeof record.id === 'string' &&
+    typeof record.streamId === 'string' &&
+    typeof record.order === 'number' &&
+    typeof record.type === 'string'
+  ) {
+    return item as MessageAgentEvent
+  }
+  if (
+    typeof record.id === 'string' &&
+    typeof record.streamId === 'string' &&
+    typeof record.sequence === 'number' &&
+    typeof record.kind === 'string'
+  ) {
+    return {
+      id: record.id,
+      streamId: record.streamId,
+      order: record.sequence,
+      timestamp: typeof record.timestamp === 'string' ? record.timestamp : '',
+      type: normalizeStoredEventType(record.kind),
+      data: record.payload,
+      toolName: typeof record.toolName === 'string' ? record.toolName : undefined,
+      errorCode: typeof record.errorCode === 'string' ? record.errorCode : undefined,
+    }
+  }
+  if (
+    typeof record.event_id === 'string' &&
+    typeof record.run_id === 'string' &&
+    typeof record.seq === 'number' &&
+    typeof record.type === 'string'
+  ) {
+    return {
+      id: record.event_id,
+      streamId: record.run_id,
+      order: record.seq,
+      timestamp: typeof record.ts === 'string' ? record.ts : '',
+      type: normalizeStoredEventType(record.type),
+      data: record.data,
+      toolName: typeof record.tool_name === 'string' ? record.tool_name : undefined,
+      errorCode: typeof record.error_class === 'string' ? record.error_class : undefined,
+    }
+  }
+  return null
+}
+
+function messageAgentEventsKey(messageId: string): string {
   return `arkloop:web:msg_run_events:${messageId}`
 }
 
-export function readMsgRunEvents(messageId: string): MsgRunEvent[] | null {
+export function readMessageAgentEvents(messageId: string): MessageAgentEvent[] | null {
   if (!canUseLocalStorage() || !messageId) return null
   try {
-    const raw = localStorage.getItem(messageRunEventsKey(messageId))
+    const raw = localStorage.getItem(messageAgentEventsKey(messageId))
     if (!raw) return null
     const parsed = JSON.parse(raw) as unknown
     if (!Array.isArray(parsed)) return null
-    const events = parsed.filter(
-      (item): item is MsgRunEvent =>
-        item != null &&
-        typeof item === 'object' &&
-        typeof (item as Record<string, unknown>).event_id === 'string' &&
-        typeof (item as Record<string, unknown>).type === 'string',
-    )
+    const events = parsed
+      .map(normalizeStoredAgentEvent)
+      .filter((item): item is MessageAgentEvent => item != null)
     return events.length > 0 ? events : null
   } catch { return null }
 }
 
-export function writeMsgRunEvents(messageId: string, events: MsgRunEvent[]): void {
+export function writeMessageAgentEvents(messageId: string, events: MessageAgentEvent[]): void {
   if (!canUseLocalStorage() || !messageId || events.length === 0) return
   try {
-    writeEphemeralStorageItem(messageRunEventsKey(messageId), JSON.stringify(events))
+    writeEphemeralStorageItem(messageAgentEventsKey(messageId), JSON.stringify(events))
   } catch { /* ignore */ }
 }
 

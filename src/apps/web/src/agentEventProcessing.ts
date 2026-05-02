@@ -1,6 +1,6 @@
 import { canonicalToolName, pickLogicalToolName } from '@arkloop/shared'
-import type { MessageResponse, ThreadRunResponse } from './api'
-import type { RunEvent } from './sse'
+import type { ThreadRunResponse } from './api'
+import type { AgentMessage, AgentUIEvent } from './agent-ui'
 import type { ArtifactRef, BrowserActionRef, CodeExecutionRef, FileOpRef, MessageThinkingRef, SubAgentRef, WebFetchRef, WidgetRef } from './storage'
 import { presentationForTool } from './toolPresentation'
 
@@ -44,10 +44,10 @@ function pickToolName(data: unknown): string {
   return pickLogicalToolName(data)
 }
 
-function pickToolCallId(event: RunEvent): string {
-  if (!event.data || typeof event.data !== 'object') return event.event_id
+function pickToolCallId(event: AgentUIEvent): string {
+  if (!event.data || typeof event.data !== 'object') return event.id
   const raw = (event.data as { tool_call_id?: unknown }).tool_call_id
-  return typeof raw === 'string' && raw.trim() !== '' ? raw : event.event_id
+  return typeof raw === 'string' && raw.trim() !== '' ? raw : event.id
 }
 
 export function extractArtifacts(result: unknown): ArtifactRef[] {
@@ -67,11 +67,11 @@ export function extractArtifacts(result: unknown): ArtifactRef[] {
     }))
 }
 
-export function buildMessageArtifactsFromRunEvents(events: RunEvent[]): ArtifactRef[] {
+export function buildMessageArtifactsFromAgentEvents(events: AgentUIEvent[]): ArtifactRef[] {
   const artifacts: ArtifactRef[] = []
   const seen = new Set<string>()
   for (const event of events) {
-    if (event.type !== 'tool.result') continue
+    if (event.type !== 'tool-result') continue
     const obj = event.data as { result?: unknown }
     for (const artifact of extractArtifacts(obj.result)) {
       if (seen.has(artifact.key)) continue
@@ -196,11 +196,11 @@ function codeExecutionEmptyLabel(language: CodeExecutionRef['language'] | null, 
   return 'Completed with no output'
 }
 
-function extractCodeExecutionError(event: RunEvent): CodeExecutionErrorDetails {
+function extractCodeExecutionError(event: AgentUIEvent): CodeExecutionErrorDetails {
   if (!event.data || typeof event.data !== 'object') {
     return {
-      errorClass: typeof event.error_class === 'string' ? event.error_class : undefined,
-      errorMessage: typeof event.error_class === 'string' && event.error_class === 'process.cursor_expired'
+      errorClass: typeof event.errorCode === 'string' ? event.errorCode : undefined,
+      errorMessage: typeof event.errorCode === 'string' && event.errorCode === 'process.cursor_expired'
         ? 'cursor 已过期'
         : undefined,
     }
@@ -208,8 +208,8 @@ function extractCodeExecutionError(event: RunEvent): CodeExecutionErrorDetails {
   const rawError = (event.data as { error?: unknown }).error
   if (!rawError || typeof rawError !== 'object') {
     return {
-      errorClass: typeof event.error_class === 'string' ? event.error_class : undefined,
-      errorMessage: typeof event.error_class === 'string' && event.error_class === 'process.cursor_expired'
+      errorClass: typeof event.errorCode === 'string' ? event.errorCode : undefined,
+      errorMessage: typeof event.errorCode === 'string' && event.errorCode === 'process.cursor_expired'
         ? 'cursor 已过期'
         : undefined,
     }
@@ -217,7 +217,7 @@ function extractCodeExecutionError(event: RunEvent): CodeExecutionErrorDetails {
   const typed = rawError as { error_class?: unknown; message?: unknown }
   const errorClass = typeof typed.error_class === 'string'
     ? typed.error_class
-    : typeof event.error_class === 'string' ? event.error_class : undefined
+    : typeof event.errorCode === 'string' ? event.errorCode : undefined
   const errorMessage = typeof typed.message === 'string'
     ? typed.message
     : errorClass === 'process.cursor_expired' ? 'cursor 已过期' : undefined
@@ -233,7 +233,7 @@ function pickExecutionRunning(result: unknown): boolean {
 }
 
 function resolveCodeExecutionStatus(params: {
-  event: RunEvent
+  event: AgentUIEvent
   result: unknown
   exitCode?: number
 }): CodeExecutionRef['status'] {
@@ -340,10 +340,10 @@ function patchExecution(
 // applyTerminalDelta applies a terminal output delta event to update running executions.
 export function applyTerminalDelta(
   executions: CodeExecutionRef[],
-  event: RunEvent,
+  event: AgentUIEvent,
 ): CodeExecutionDeltaPatch {
   const eventType = event.type
-  if (eventType !== 'terminal.stdout_delta' && eventType !== 'terminal.stderr_delta') {
+  if (eventType !== 'terminal-delta') {
     return { nextExecutions: executions }
   }
 
@@ -386,9 +386,9 @@ export function applyTerminalDelta(
 
 export function applyCodeExecutionToolCall(
   executions: CodeExecutionRef[],
-  event: RunEvent,
+  event: AgentUIEvent,
 ): CodeExecutionToolCallPatch {
-  if (event.type !== 'tool.call') {
+  if (event.type !== 'tool-call') {
     return { nextExecutions: executions }
   }
 
@@ -421,7 +421,7 @@ export function applyCodeExecutionToolCall(
     code,
     displayDescription,
     status: 'running',
-    seq: event.seq,
+    seq: event.order,
   }
   return {
     appended,
@@ -431,9 +431,9 @@ export function applyCodeExecutionToolCall(
 
 export function applyCodeExecutionToolResult(
   executions: CodeExecutionRef[],
-  event: RunEvent,
+  event: AgentUIEvent,
 ): CodeExecutionToolResultPatch {
-  if (event.type !== 'tool.result') {
+  if (event.type !== 'tool-result') {
     return { nextExecutions: executions }
   }
 
@@ -536,28 +536,28 @@ export function applyCodeExecutionToolResult(
   }
 }
 
-export function buildMessageCodeExecutionsFromRunEvents(events: RunEvent[]): CodeExecutionRef[] {
+export function buildMessageCodeExecutionsFromAgentEvents(events: AgentUIEvent[]): CodeExecutionRef[] {
   let executions: CodeExecutionRef[] = []
   for (const event of events) {
-    if (event.type === 'tool.call') {
+    if (event.type === 'tool-call') {
       executions = applyCodeExecutionToolCall(executions, event).nextExecutions
       continue
     }
-    if (event.type === 'tool.result') {
+    if (event.type === 'tool-result') {
       executions = applyCodeExecutionToolResult(executions, event).nextExecutions
       continue
     }
-    if (event.type === 'terminal.stdout_delta' || event.type === 'terminal.stderr_delta') {
+    if (event.type === 'terminal-delta') {
       executions = applyTerminalDelta(executions, event).nextExecutions
     }
   }
   return executions
 }
 
-export function firstVisibleCodeExecutionToolCallIndex(events: RunEvent[]): number {
+export function firstVisibleCodeExecutionToolCallIndex(events: AgentUIEvent[]): number {
   return events.findIndex((event, index) => {
     if (index >= events.length - 1) return false
-    if (event.type !== 'tool.call') return false
+    if (event.type !== 'tool-call') return false
     return CODE_EXECUTION_TOOL_NAMES.has(pickToolName(event.data))
   })
 }
@@ -581,11 +581,11 @@ export function shouldReplayMessageCodeExecutions(executions: CodeExecutionRef[]
   return executions.some((item) => item.language === 'shell' && item.mode !== 'buffered' && !item.processRef)
 }
 
-export function selectFreshRunEvents(params: {
-  events: RunEvent[]
+export function selectFreshAgentEvents(params: {
+  events: AgentUIEvent[]
   activeRunId: string
   processedCount: number
-}): { fresh: RunEvent[]; nextProcessedCount: number } {
+}): { fresh: AgentUIEvent[]; nextProcessedCount: number } {
   const { events, activeRunId } = params
   const normalizedProcessedCount = params.processedCount > events.length ? 0 : params.processedCount
 
@@ -596,24 +596,24 @@ export function selectFreshRunEvents(params: {
   const slice = events.slice(normalizedProcessedCount)
   return {
     fresh: slice
-      .filter((event) => event.run_id === activeRunId)
-      .sort((left, right) => left.seq - right.seq || left.ts.localeCompare(right.ts)),
+      .filter((event) => event.streamId === activeRunId)
+      .sort((left, right) => left.order - right.order || left.timestamp.localeCompare(right.timestamp)),
     nextProcessedCount: events.length,
   }
 }
 
 /** 首包「处理中」占位：仅此类事件表示用户可见的助手正文或工具链路（segment / thinking delta 等不算）。 */
-export function runEventDismissesAssistantPlaceholder(event: RunEvent): boolean {
+export function agentEventDismissesAssistantPlaceholder(event: AgentUIEvent): boolean {
   switch (event.type) {
-    case 'message.delta': {
+    case 'assistant-delta': {
       const obj = event.data as { content_delta?: unknown; role?: unknown; channel?: unknown }
       if (obj.role != null && obj.role !== 'assistant') return false
       if (obj.channel === 'thinking') return false
       return typeof obj.content_delta === 'string' && obj.content_delta.length > 0
     }
-    case 'tool.call':
-    case 'tool.call.delta':
-    case 'tool.result':
+    case 'tool-call':
+    case 'tool-input-delta':
+    case 'tool-result':
       return true
     default:
       return false
@@ -621,16 +621,16 @@ export function runEventDismissesAssistantPlaceholder(event: RunEvent): boolean 
 }
 
 export function findAssistantMessageForRun(
-  messages: MessageResponse[],
+  messages: AgentMessage[],
   runId: string | null | undefined,
-): MessageResponse | undefined {
+): AgentMessage | undefined {
   const normalizedRunId = typeof runId === 'string' ? runId.trim() : ''
   if (!normalizedRunId) return undefined
 
   for (let index = messages.length - 1; index >= 0; index--) {
     const message = messages[index]
     if (message.role !== 'assistant') continue
-    if (typeof message.run_id === 'string' && message.run_id === normalizedRunId) {
+    if (typeof message.streamId === 'string' && message.streamId === normalizedRunId) {
       return message
     }
   }
@@ -638,7 +638,7 @@ export function findAssistantMessageForRun(
 }
 
 export function shouldRefetchCompletedRunMessages(params: {
-  messages: MessageResponse[]
+  messages: AgentMessage[]
   latestRun: Pick<ThreadRunResponse, 'run_id' | 'status'> | null | undefined
 }): boolean {
   const { messages, latestRun } = params
@@ -657,13 +657,13 @@ function extractWidgetArguments(data: unknown): { title?: string; html?: string 
   }
 }
 
-export function buildMessageWidgetsFromRunEvents(events: RunEvent[]): WidgetRef[] {
+export function buildMessageWidgetsFromAgentEvents(events: AgentUIEvent[]): WidgetRef[] {
   const widgets: WidgetRef[] = []
   const seen = new Set<string>()
 
   for (const event of events) {
-    if (event.type !== 'tool.call') continue
-    const toolName = pickLogicalToolName(event.data, event.tool_name)
+    if (event.type !== 'tool-call') continue
+    const toolName = pickLogicalToolName(event.data, event.toolName)
     if (toolName !== 'show_widget') continue
 
     const { title, html } = extractWidgetArguments(event.data)
@@ -683,7 +683,7 @@ export function buildMessageWidgetsFromRunEvents(events: RunEvent[]): WidgetRef[
   return widgets
 }
 
-export function buildMessageThinkingFromRunEvents(events: RunEvent[]): MessageThinkingRef | null {
+export function buildMessageThinkingFromAgentEvents(events: AgentUIEvent[]): MessageThinkingRef | null {
   let topLevelThinking = ''
   let activeSegmentId: string | null = null
   const segments: Array<{
@@ -696,7 +696,7 @@ export function buildMessageThinkingFromRunEvents(events: RunEvent[]): MessageTh
   const indexBySegmentId = new Map<string, number>()
 
   for (const event of events) {
-    if (event.type === 'run.segment.start') {
+    if (event.type === 'segment-start') {
       const obj = event.data as { segment_id?: unknown; kind?: unknown; display?: unknown }
       const segmentId = typeof obj.segment_id === 'string' ? obj.segment_id : ''
       if (!segmentId) continue
@@ -711,7 +711,7 @@ export function buildMessageThinkingFromRunEvents(events: RunEvent[]): MessageTh
       continue
     }
 
-    if (event.type === 'run.segment.end') {
+    if (event.type === 'segment-end') {
       const obj = event.data as { segment_id?: unknown }
       const segmentId = typeof obj.segment_id === 'string' ? obj.segment_id : ''
       if (segmentId && activeSegmentId === segmentId) {
@@ -720,7 +720,7 @@ export function buildMessageThinkingFromRunEvents(events: RunEvent[]): MessageTh
       continue
     }
 
-    if (event.type !== 'message.delta') continue
+    if (event.type !== 'assistant-delta') continue
     const obj = event.data as { content_delta?: unknown; role?: unknown; channel?: unknown }
     if (obj.role != null && obj.role !== 'assistant') continue
     if (typeof obj.content_delta !== 'string' || obj.content_delta === '') continue
@@ -800,9 +800,9 @@ function extractBrowserOutput(result: unknown): { output?: string; exitCode?: nu
 
 export function applyBrowserToolCall(
   actions: BrowserActionRef[],
-  event: RunEvent,
+  event: AgentUIEvent,
 ): BrowserActionToolCallPatch {
-  if (event.type !== 'tool.call') return { nextActions: actions }
+  if (event.type !== 'tool-call') return { nextActions: actions }
   const toolName = pickToolName(event.data)
   if (toolName !== 'browser') return { nextActions: actions }
 
@@ -819,9 +819,9 @@ export function applyBrowserToolCall(
 
 export function applyBrowserToolResult(
   actions: BrowserActionRef[],
-  event: RunEvent,
+  event: AgentUIEvent,
 ): BrowserActionToolResultPatch {
-  if (event.type !== 'tool.result') return { nextActions: actions }
+  if (event.type !== 'tool-result') return { nextActions: actions }
   const toolName = pickToolName(event.data)
   if (toolName !== 'browser') return { nextActions: actions }
 
@@ -860,12 +860,12 @@ export function applyBrowserToolResult(
   return { updated: appended, nextActions: [...actions, appended] }
 }
 
-export function buildMessageBrowserActionsFromRunEvents(events: RunEvent[]): BrowserActionRef[] {
+export function buildMessageBrowserActionsFromAgentEvents(events: AgentUIEvent[]): BrowserActionRef[] {
   let actions: BrowserActionRef[] = []
   for (const event of events) {
-    if (event.type === 'tool.call') {
+    if (event.type === 'tool-call') {
       actions = applyBrowserToolCall(actions, event).nextActions
-    } else if (event.type === 'tool.result') {
+    } else if (event.type === 'tool-result') {
       actions = applyBrowserToolResult(actions, event).nextActions
     }
   }
@@ -936,9 +936,9 @@ function findAgentBySubAgentId(agents: SubAgentRef[], subAgentId: string): numbe
 
 export function applySubAgentToolCall(
   agents: SubAgentRef[],
-  event: RunEvent,
+  event: AgentUIEvent,
 ): SubAgentToolCallPatch {
-  if (event.type !== 'tool.call') return { nextAgents: agents }
+  if (event.type !== 'tool-call') return { nextAgents: agents }
   const toolName = pickToolName(event.data)
   if (!SUB_AGENT_CALL_TOOL_NAMES.has(toolName)) return { nextAgents: agents }
 
@@ -951,16 +951,16 @@ export function applySubAgentToolCall(
     personaId: fields.personaId,
     contextMode: fields.contextMode,
     input: fields.input,
-    seq: event.seq,
+    seq: event.order,
   }
   return { appended, nextAgents: [...agents, appended] }
 }
 
 export function applySubAgentToolResult(
   agents: SubAgentRef[],
-  event: RunEvent,
+  event: AgentUIEvent,
 ): SubAgentToolResultPatch {
-  if (event.type !== 'tool.result') return { nextAgents: agents }
+  if (event.type !== 'tool-result') return { nextAgents: agents }
   const toolName = pickToolName(event.data)
   if (!SUB_AGENT_RESULT_TOOL_NAMES.has(toolName)) return { nextAgents: agents }
 
@@ -1030,12 +1030,12 @@ export function applySubAgentToolResult(
   return { updated, nextAgents: agents.map((a, i) => i === targetIdx ? updated : a) }
 }
 
-export function buildMessageSubAgentsFromRunEvents(events: RunEvent[]): SubAgentRef[] {
+export function buildMessageSubAgentsFromAgentEvents(events: AgentUIEvent[]): SubAgentRef[] {
   let agents: SubAgentRef[] = []
   for (const event of events) {
-    if (event.type === 'tool.call') {
+    if (event.type === 'tool-call') {
       agents = applySubAgentToolCall(agents, event).nextAgents
-    } else if (event.type === 'tool.result') {
+    } else if (event.type === 'tool-result') {
       agents = applySubAgentToolResult(agents, event).nextAgents
     }
   }
@@ -1403,9 +1403,9 @@ function summarizeLoadToolsResult(result: Record<string, unknown>): string | und
 
 export function applyFileOpToolCall(
   ops: FileOpRef[],
-  event: RunEvent,
+  event: AgentUIEvent,
 ): FileOpToolCallPatch {
-  if (event.type !== 'tool.call') return { nextOps: ops }
+  if (event.type !== 'tool-call') return { nextOps: ops }
   const rawToolName = pickToolName(event.data)
   const toolName = normalizeFileOpToolName(rawToolName)
   if (!FILE_OP_TOOL_NAMES.has(rawToolName) && !FILE_OP_TOOL_NAMES.has(toolName)) return { nextOps: ops }
@@ -1426,7 +1426,7 @@ export function applyFileOpToolCall(
     toolName,
     label: overrideLabel ?? presentation.description,
     status: 'running',
-    seq: event.seq,
+    seq: event.order,
     filePath: pickReadFilePath(args) || (typeof args.file_path === 'string' ? args.file_path : undefined),
     pattern: typeof args.pattern === 'string' ? args.pattern : typeof args.query === 'string' ? args.query : undefined,
     operation: typeof args.operation === 'string' ? args.operation : undefined,
@@ -1440,9 +1440,9 @@ export function applyFileOpToolCall(
 
 export function applyFileOpToolResult(
   ops: FileOpRef[],
-  event: RunEvent,
+  event: AgentUIEvent,
 ): FileOpToolResultPatch {
-  if (event.type !== 'tool.result') return { nextOps: ops }
+  if (event.type !== 'tool-result') return { nextOps: ops }
   const rawToolName = pickToolName(event.data)
   const toolName = normalizeFileOpToolName(rawToolName)
   if (!FILE_OP_TOOL_NAMES.has(rawToolName) && !FILE_OP_TOOL_NAMES.has(toolName)) return { nextOps: ops }
@@ -1472,12 +1472,12 @@ export function applyFileOpToolResult(
   }
 }
 
-export function buildMessageFileOpsFromRunEvents(events: RunEvent[]): FileOpRef[] {
+export function buildMessageFileOpsFromAgentEvents(events: AgentUIEvent[]): FileOpRef[] {
   let ops: FileOpRef[] = []
   for (const event of events) {
-    if (event.type === 'tool.call') {
+    if (event.type === 'tool-call') {
       ops = applyFileOpToolCall(ops, event).nextOps
-    } else if (event.type === 'tool.result') {
+    } else if (event.type === 'tool-result') {
       ops = applyFileOpToolResult(ops, event).nextOps
     }
   }
@@ -1498,9 +1498,9 @@ type WebFetchToolResultPatch = {
 
 export function applyWebFetchToolCall(
   fetches: WebFetchRef[],
-  event: RunEvent,
+  event: AgentUIEvent,
 ): WebFetchToolCallPatch {
-  if (event.type !== 'tool.call') return { nextFetches: fetches }
+  if (event.type !== 'tool-call') return { nextFetches: fetches }
   const toolName = pickToolName(event.data)
   if (!isWebFetchToolName(toolName)) return { nextFetches: fetches }
 
@@ -1512,16 +1512,16 @@ export function applyWebFetchToolCall(
     id: pickToolCallId(event),
     url,
     status: 'fetching',
-    seq: event.seq,
+    seq: event.order,
   }
   return { appended, nextFetches: [...fetches, appended] }
 }
 
 export function applyWebFetchToolResult(
   fetches: WebFetchRef[],
-  event: RunEvent,
+  event: AgentUIEvent,
 ): WebFetchToolResultPatch {
-  if (event.type !== 'tool.result') return { nextFetches: fetches }
+  if (event.type !== 'tool-result') return { nextFetches: fetches }
   const toolName = pickToolName(event.data)
   if (!isWebFetchToolName(toolName)) return { nextFetches: fetches }
 
@@ -1531,7 +1531,7 @@ export function applyWebFetchToolResult(
     : undefined
   const result = data?.result as Record<string, unknown> | undefined
   const error = extractCodeExecutionError(event)
-  const hasError = !!(event.error_class || error.errorClass || error.errorMessage)
+  const hasError = !!(event.errorCode || error.errorClass || error.errorMessage)
   const title = typeof result?.title === 'string' ? result.title : undefined
   const statusCode = typeof result?.status_code === 'number' ? result.status_code : undefined
 
@@ -1543,7 +1543,7 @@ export function applyWebFetchToolResult(
     title,
     statusCode,
     status: hasError ? 'failed' : 'done',
-    ...(hasError ? { errorMessage: error.errorMessage ?? error.errorClass ?? event.error_class } : {}),
+    ...(hasError ? { errorMessage: error.errorMessage ?? error.errorClass ?? event.errorCode } : {}),
   }
   return {
     updated,
@@ -1551,24 +1551,24 @@ export function applyWebFetchToolResult(
   }
 }
 
-export function buildMessageWebFetchesFromRunEvents(events: RunEvent[]): WebFetchRef[] {
+export function buildMessageWebFetchesFromAgentEvents(events: AgentUIEvent[]): WebFetchRef[] {
   let fetches: WebFetchRef[] = []
   for (const event of events) {
-    if (event.type === 'tool.call') {
+    if (event.type === 'tool-call') {
       fetches = applyWebFetchToolCall(fetches, event).nextFetches
-    } else if (event.type === 'tool.result') {
+    } else if (event.type === 'tool-result') {
       fetches = applyWebFetchToolResult(fetches, event).nextFetches
     }
   }
   return fetches
 }
 
-export function buildTodosFromRunEvents(
-  events: RunEvent[],
+export function buildTodosFromAgentEvents(
+  events: AgentUIEvent[],
 ): Array<{ id: string; content: string; activeForm?: string; status: string }> {
   for (let i = events.length - 1; i >= 0; i--) {
     const event = events[i]
-    if (event.type !== 'todo.updated') continue
+    if (event.type !== 'todo-updated') continue
     const obj = event.data as { todos?: unknown }
     if (!Array.isArray(obj?.todos)) continue
     return (obj.todos as unknown[]).flatMap((t) => {

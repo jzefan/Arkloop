@@ -1,19 +1,27 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { silentRefresh } from '@arkloop/shared'
-import { isLocalMode } from '@arkloop/shared/desktop'
-import { createSSEClient, type RunEvent, type SSEClient, type SSEClientState } from '../sse'
+import {
+  agentUIEventFromChunk,
+  type AgentClient,
+  type AgentStreamState,
+  type AgentUIEvent,
+  type AgentUIMessageChunk,
+} from '../agent-ui'
 import { clearLastSeqInStorage, readLastSeqFromStorage, writeLastSeqToStorage } from '../storage'
 import { emitStreamDebug } from '../streamDebug'
 
-export type UseSSEOptions = {
-  runId: string
-  accessToken: string
-  baseUrl?: string
+type ActiveChunkStream = {
+  abortController: AbortController
+  reader: ReadableStreamDefaultReader<AgentUIMessageChunk>
 }
 
-export type UseSSEResult = {
-  events: RunEvent[]
-  state: SSEClientState
+export type UseAgentStreamOptions = {
+  runId: string
+  client: AgentClient
+}
+
+export type UseAgentStreamResult = {
+  events: AgentUIEvent[]
+  state: AgentStreamState
   lastSeq: number
   error: Error | null
   subscribeEvents: (listener: () => void) => () => void
@@ -24,28 +32,20 @@ export type UseSSEResult = {
   reset: () => void
 }
 
-/**
- * SSE 订阅 Hook
- * 管理 run 事件流的订阅与状态
- */
-export function useSSE(options: UseSSEOptions): UseSSEResult {
-  const { runId, accessToken, baseUrl = '' } = options
+export function useAgentStream(options: UseAgentStreamOptions): UseAgentStreamResult {
+  const { runId, client: agentClient } = options
 
-  const [state, setState] = useState<SSEClientState>('idle')
+  const [state, setState] = useState<AgentStreamState>('idle')
   const [error, setError] = useState<Error | null>(null)
 
-  const clientRef = useRef<SSEClient | null>(null)
-  const eventsRef = useRef<RunEvent[]>([])
+  const clientRef = useRef<ActiveChunkStream | null>(null)
+  const eventsRef = useRef<AgentUIEvent[]>([])
   const eventListenersRef = useRef(new Set<() => void>())
-  const seenSeqsRef = useRef<Set<number>>(new Set())
+  const seenOrdersRef = useRef<Set<number>>(new Set())
   const cursorRef = useRef(0)
   const connectedRunIdRef = useRef('')
   const lastStorageWriteRef = useRef(0)
   const storageTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-
-  // 构建 SSE URL
-  const normalizedBaseUrl = baseUrl.replace(/\/$/, '')
-  const sseUrl = `${normalizedBaseUrl}/v1/runs/${runId}/events`
 
   const notifyEventListeners = useCallback(() => {
     for (const listener of eventListenersRef.current) {
@@ -53,21 +53,19 @@ export function useSSE(options: UseSSEOptions): UseSSEResult {
     }
   }, [])
 
-  const handleEvent = useCallback((event: RunEvent) => {
-    // 去重：避免重连时重复展示
-    if (seenSeqsRef.current.has(event.seq)) return
-    seenSeqsRef.current.add(event.seq)
+  const handleEvent = useCallback((event: AgentUIEvent) => {
+    if (seenOrdersRef.current.has(event.order)) return
+    seenOrdersRef.current.add(event.order)
 
     eventsRef.current.push(event)
 
-    if (typeof event.seq === 'number' && event.seq >= 0) {
-      cursorRef.current = event.seq
+    if (typeof event.order === 'number' && event.order >= 0) {
+      cursorRef.current = event.order
 
-      // 限频写入：避免 streaming/catch-up 时每条事件都写一次 localStorage
       const now = Date.now()
       if (now - lastStorageWriteRef.current > 1000) {
         lastStorageWriteRef.current = now
-        writeLastSeqToStorage(runId, event.seq)
+        writeLastSeqToStorage(runId, event.order)
         if (storageTimerRef.current) {
           clearTimeout(storageTimerRef.current)
           storageTimerRef.current = null
@@ -83,14 +81,13 @@ export function useSSE(options: UseSSEOptions): UseSSEResult {
     notifyEventListeners()
   }, [notifyEventListeners, runId])
 
-  const handleStateChange = useCallback((newState: SSEClientState) => {
+  const handleStateChange = useCallback((newState: AgentStreamState) => {
     setState(newState)
-    emitStreamDebug('run-sse:state', {
+    emitStreamDebug('agent-stream:state', {
       runId,
       state: newState,
-      lastSeq: cursorRef.current,
-    }, 'run-sse')
-    // 重连成功后清除之前的网络错误，避免瞬时错误持续显示
+      cursor: cursorRef.current,
+    }, 'agent-stream')
     if (newState === 'connected') {
       setError(null)
     }
@@ -98,78 +95,87 @@ export function useSSE(options: UseSSEOptions): UseSSEResult {
 
   const handleError = useCallback((err: Error) => {
     setError(err)
-    emitStreamDebug('run-sse:error', {
+    emitStreamDebug('agent-stream:error', {
       runId,
       name: err.name,
       message: err.message,
-      lastSeq: cursorRef.current,
-    }, 'run-sse')
+      cursor: cursorRef.current,
+    }, 'agent-stream')
   }, [runId])
 
-  const handleTokenRefresh = useCallback(async (): Promise<string> => {
-    if (isLocalMode()) return accessToken
-    return await silentRefresh()
-  }, [accessToken])
+  const closeActiveStream = useCallback(() => {
+    const active = clientRef.current
+    if (!active) return
+    clientRef.current = null
+    active.abortController.abort()
+    void active.reader.cancel().catch(() => {})
+  }, [])
 
   const connect = useCallback(() => {
-    if (!runId || !accessToken) return
+    if (!runId) return
 
-    if (clientRef.current) {
-      clientRef.current.close()
-    }
-
+    closeActiveStream()
     setError(null)
 
     if (connectedRunIdRef.current !== runId) {
       connectedRunIdRef.current = runId
       cursorRef.current = 0
       eventsRef.current = []
-      seenSeqsRef.current.clear()
+      seenOrdersRef.current.clear()
       notifyEventListeners()
     }
 
     const stored = readLastSeqFromStorage(runId)
     const nextCursor = Math.max(cursorRef.current, stored)
     cursorRef.current = nextCursor
-    emitStreamDebug('run-sse:connect', {
+    emitStreamDebug('agent-stream:connect', {
       runId,
-      afterSeq: nextCursor,
-      url: sseUrl,
-    }, 'run-sse')
+      cursor: nextCursor,
+    }, 'agent-stream')
 
-    const client = createSSEClient({
-      url: sseUrl,
-      accessToken,
-      afterSeq: cursorRef.current,
-      follow: true,
-      onEvent: handleEvent,
+    const abortController = new AbortController()
+    const stream = agentClient.openMessageChunkStream(runId, {
+      cursor: cursorRef.current,
+      live: true,
       onStateChange: handleStateChange,
       onError: handleError,
-      onTokenRefresh: handleTokenRefresh,
+      signal: abortController.signal,
     })
+    const reader = stream.getReader()
+    clientRef.current = { abortController, reader }
 
-    clientRef.current = client
-    void client.connect()
-  }, [sseUrl, accessToken, runId, handleEvent, handleStateChange, handleError, handleTokenRefresh, notifyEventListeners])
+    void (async () => {
+      try {
+        while (true) {
+          const { done, value } = await reader.read()
+          if (done) break
+          const event = agentUIEventFromChunk(value)
+          if (event) handleEvent(event)
+        }
+      } catch (err) {
+        if (abortController.signal.aborted) return
+        handleError(err instanceof Error ? err : new Error(String(err)))
+      }
+    })()
+  }, [agentClient, closeActiveStream, handleError, handleEvent, handleStateChange, notifyEventListeners, runId])
 
   const disconnect = useCallback(() => {
-    clientRef.current?.close()
-    clientRef.current = null
+    closeActiveStream()
     setError(null)
-    emitStreamDebug('run-sse:disconnect', {
+    emitStreamDebug('agent-stream:disconnect', {
       runId,
-      lastSeq: cursorRef.current,
-    }, 'run-sse')
-  }, [runId])
+      cursor: cursorRef.current,
+    }, 'agent-stream')
+  }, [closeActiveStream, runId])
 
   const reconnect = useCallback(() => {
     setError(null)
-    emitStreamDebug('run-sse:reconnect', {
+    emitStreamDebug('agent-stream:reconnect', {
       runId,
-      lastSeq: cursorRef.current,
-    }, 'run-sse')
-    void clientRef.current?.reconnect()
-  }, [runId])
+      cursor: cursorRef.current,
+    }, 'agent-stream')
+    connect()
+  }, [connect, runId])
 
   const clearEvents = useCallback(() => {
     eventsRef.current = []
@@ -180,7 +186,7 @@ export function useSSE(options: UseSSEOptions): UseSSEResult {
     clearLastSeqInStorage(runId)
     cursorRef.current = 0
     eventsRef.current = []
-    seenSeqsRef.current.clear()
+    seenOrdersRef.current.clear()
     setError(null)
     setState('idle')
     notifyEventListeners()
@@ -193,14 +199,12 @@ export function useSSE(options: UseSSEOptions): UseSSEResult {
     }
   }, [])
 
-  // 组件卸载时断开连接
   useEffect(() => {
     return () => {
       disconnect()
     }
   }, [disconnect])
 
-  // 卸载时 flush 待落盘的 seq
   useEffect(() => {
     return () => {
       if (storageTimerRef.current) {

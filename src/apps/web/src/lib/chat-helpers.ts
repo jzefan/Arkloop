@@ -2,7 +2,7 @@ import type { AppError } from '../components/ErrorCallout'
 import { isApiError } from '../api'
 import { SSEApiError } from '../sse'
 import {
-  buildAssistantTurnFromRunEvents,
+  buildAssistantTurnFromAgentEvents,
   assistantTurnPlainText,
   copSegmentCalls,
   type AssistantTurnSegment,
@@ -11,16 +11,16 @@ import {
 import type { WebSearchPhaseStep } from '../components/CopTimeline'
 import { timelineStepDisplayLabel } from '../components/cop-timeline/types'
 import type { StreamingArtifactEntry } from '../components/ArtifactStreamBlock'
-import type { MessageSearchStepRef, WidgetRef, MsgRunEvent, ThreadRunHandoffRef } from '../storage'
+import type { MessageSearchStepRef, WidgetRef, MessageAgentEvent, ThreadRunHandoffRef } from '../storage'
 
 const TERMINAL_RUN_EVENT_TYPES = new Set([
-  'run.completed',
-  'run.cancelled',
-  'run.failed',
-  'run.interrupted',
+  'run-completed',
+  'run-cancelled',
+  'run-failed',
+  'run-interrupted',
 ])
 
-export function isTerminalRunEventType(type: string): boolean {
+export function isTerminalAgentEventType(type: string): boolean {
   return TERMINAL_RUN_EVENT_TYPES.has(type)
 }
 
@@ -55,17 +55,17 @@ export function mergeVisibleSegmentsIntoAssistantTurn(
   return { segments: merged }
 }
 
-export function buildFrozenAssistantTurnFromRunEvents(events: MsgRunEvent[]): AssistantTurnUi {
-  return buildAssistantTurnFromRunEvents(events)
+export function buildFrozenAssistantTurnFromAgentEvents(events: MessageAgentEvent[]): AssistantTurnUi {
+  return buildAssistantTurnFromAgentEvents(events)
 }
 
-export function interruptedErrorFromRunEvents(
+export function interruptedErrorFromAgentEvents(
   events: ReadonlyArray<{ type: string; data: unknown }>,
   fallbackMessage: string,
 ): AppError {
   for (let i = events.length - 1; i >= 0; i -= 1) {
     const event = events[i]
-    if (!event || event.type !== 'run.interrupted') {
+    if (!event || event.type !== 'run-interrupted') {
       continue
     }
     const data = event.data
@@ -90,13 +90,13 @@ export function interruptedErrorFromRunEvents(
   return { message: fallbackMessage }
 }
 
-export function failedErrorFromRunEvents(
+export function failedErrorFromAgentEvents(
   events: ReadonlyArray<{ type: string; data: unknown }>,
   fallbackMessage: string,
 ): AppError {
   for (let i = events.length - 1; i >= 0; i -= 1) {
     const event = events[i]
-    if (!event || event.type !== 'run.failed') {
+    if (!event || event.type !== 'run-failed') {
       continue
     }
     const data = event.data

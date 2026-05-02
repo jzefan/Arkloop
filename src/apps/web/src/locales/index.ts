@@ -974,8 +974,8 @@ export interface LocaleStrings {
     pipelineTraceDesc: string;
     promptCacheDebug: string;
     promptCacheDebugDesc: string;
-    showRunEvents: string;
-    showRunEventsDesc: string;
+    showRunDetailButton: string;
+    showRunDetailButtonDesc: string;
     showDebugPanel: string;
     showDebugPanelDesc: string;
     viewRunDetail: string;
