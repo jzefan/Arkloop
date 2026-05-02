@@ -81,8 +81,8 @@ export function interruptedErrorFromAgentEvents(
         : fallbackMessage,
       code: typeof payload.code === 'string'
         ? payload.code
-        : typeof payload.error_class === 'string'
-          ? payload.error_class
+        : typeof payload.errorClass === 'string'
+          ? payload.errorClass
           : undefined,
       details,
     }
@@ -112,11 +112,11 @@ export function failedErrorFromAgentEvents(
         : fallbackMessage,
       code: typeof payload.code === 'string'
         ? payload.code
-        : typeof payload.error_class === 'string'
-          ? payload.error_class
+        : typeof payload.errorClass === 'string'
+          ? payload.errorClass
           : undefined,
-      traceId: typeof payload.trace_id === 'string'
-        ? payload.trace_id
+      traceId: typeof payload.traceId === 'string'
+        ? payload.traceId
         : undefined,
       details,
     }

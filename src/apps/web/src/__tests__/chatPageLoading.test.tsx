@@ -71,11 +71,138 @@ const sseMock = vi.hoisted(() => {
       default: return type
     }
   }
+  const asRecord = (value: unknown): Record<string, unknown> | undefined =>
+    value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : undefined
+  const stringField = (record: Record<string, unknown> | undefined, ...keys: string[]): string | undefined => {
+    for (const key of keys) {
+      const value = record?.[key]
+      if (typeof value === 'string') return value
+    }
+    return undefined
+  }
+  const numberField = (record: Record<string, unknown> | undefined, ...keys: string[]): number | undefined => {
+    for (const key of keys) {
+      const value = record?.[key]
+      if (typeof value === 'number') return value
+    }
+    return undefined
+  }
+  const normalizeToolName = (record: Record<string, unknown> | undefined, fallback?: string): string | undefined =>
+    stringField(record, 'toolName', 'tool_name', 'resolved_tool_name') ?? fallback
+  const normalizeEventData = (
+    type: string,
+    rawType: string,
+    eventId: string,
+    data: unknown,
+    fallbackToolName?: string,
+    errorCode?: string,
+  ): unknown => {
+    const record = asRecord(data)
+    switch (type) {
+      case 'assistant-delta':
+        return {
+          ...(stringField(record, 'role') ? { role: stringField(record, 'role') } : {}),
+          ...(stringField(record, 'channel') ? { channel: stringField(record, 'channel') } : {}),
+          delta: stringField(record, 'delta', 'content_delta') ?? '',
+        }
+      case 'tool-input-delta':
+        return {
+          ...(numberField(record, 'toolCallIndex', 'tool_call_index') != null
+            ? { toolCallIndex: numberField(record, 'toolCallIndex', 'tool_call_index') }
+            : {}),
+          ...(stringField(record, 'toolCallId', 'tool_call_id')
+            ? { toolCallId: stringField(record, 'toolCallId', 'tool_call_id') }
+            : {}),
+          ...(normalizeToolName(record) ? { toolName: normalizeToolName(record) } : {}),
+          delta: stringField(record, 'delta', 'arguments_delta') ?? '',
+        }
+      case 'tool-call':
+        return {
+          toolCallId: stringField(record, 'toolCallId', 'tool_call_id') ?? eventId,
+          toolName: normalizeToolName(record, fallbackToolName) ?? 'tool',
+          input: record && 'input' in record ? record.input : record?.arguments,
+          ...(stringField(record, 'displayDescription', 'display_description')
+            ? { displayDescription: stringField(record, 'displayDescription', 'display_description') }
+            : {}),
+        }
+      case 'tool-result': {
+        const rawError = asRecord(record?.error)
+        const error = rawError || errorCode
+          ? {
+              ...(stringField(rawError, 'errorClass', 'error_class') ? { errorClass: stringField(rawError, 'errorClass', 'error_class') } : {}),
+              ...(stringField(rawError, 'message') ? { message: stringField(rawError, 'message') } : {}),
+              ...(errorCode ? { errorClass: errorCode } : {}),
+            }
+          : undefined
+        return {
+          toolCallId: stringField(record, 'toolCallId', 'tool_call_id') ?? eventId,
+          ...(normalizeToolName(record, fallbackToolName) ? { toolName: normalizeToolName(record, fallbackToolName) } : {}),
+          output: record && 'output' in record ? record.output : record?.result,
+          ...(error ? { error } : {}),
+        }
+      }
+      case 'terminal-delta':
+        return {
+          ...(stringField(record, 'processRef', 'process_ref') ? { processRef: stringField(record, 'processRef', 'process_ref') } : {}),
+          ...(stringField(record, 'chunk') ? { chunk: stringField(record, 'chunk') } : {}),
+          stream: rawType === 'terminal.stderr_delta' ? 'stderr' : stringField(record, 'stream') === 'stderr' ? 'stderr' : 'stdout',
+        }
+      case 'segment-start':
+        return {
+          segmentId: stringField(record, 'segmentId', 'segment_id') ?? '',
+          kind: stringField(record, 'kind', 'type') ?? 'planning_round',
+          ...(record?.display ? { display: record.display } : {}),
+        }
+      case 'segment-end':
+        return { segmentId: stringField(record, 'segmentId', 'segment_id') ?? '' }
+      case 'thread-title':
+        return {
+          ...(stringField(record, 'threadId', 'thread_id') ? { threadId: stringField(record, 'threadId', 'thread_id') } : {}),
+          ...(stringField(record, 'title') ? { title: stringField(record, 'title') } : {}),
+        }
+      case 'thread-collaboration':
+        return {
+          ...(stringField(record, 'threadId', 'thread_id') ? { threadId: stringField(record, 'threadId', 'thread_id') } : {}),
+          ...(stringField(record, 'collaborationMode', 'collaboration_mode')
+            ? { collaborationMode: stringField(record, 'collaborationMode', 'collaboration_mode') }
+            : {}),
+          ...(numberField(record, 'collaborationModeRevision', 'collaboration_mode_revision') != null
+            ? { collaborationModeRevision: numberField(record, 'collaborationModeRevision', 'collaboration_mode_revision') }
+            : {}),
+        }
+      case 'run-failed':
+      case 'run-interrupted':
+        return {
+          ...(stringField(record, 'message') ? { message: stringField(record, 'message') } : {}),
+          ...(stringField(record, 'code') ? { code: stringField(record, 'code') } : {}),
+          ...(stringField(record, 'errorClass', 'error_class') ? { errorClass: stringField(record, 'errorClass', 'error_class') } : {}),
+          ...(record?.details ? { details: record.details } : {}),
+          ...(errorCode ? { errorClass: errorCode } : {}),
+        }
+      default:
+        return data ?? {}
+    }
+  }
   const normalizeEvent = (item: unknown): unknown => {
     if (!item || typeof item !== 'object') return item
     const record = item as Record<string, unknown>
     if (typeof record.id === 'string' && typeof record.streamId === 'string' && typeof record.order === 'number') {
-      return item
+      const type = typeof record.type === 'string' ? mapType(record.type) : record.type
+      if (typeof type !== 'string') return item
+      const data = normalizeEventData(
+        type,
+        type,
+        record.id,
+        record.data ?? {},
+        typeof record.toolName === 'string' ? record.toolName : undefined,
+        typeof record.errorCode === 'string' ? record.errorCode : undefined,
+      )
+      return {
+        ...record,
+        type,
+        data,
+        toolName: normalizeToolName(asRecord(data), typeof record.toolName === 'string' ? record.toolName : undefined),
+      }
     }
     if (
       typeof record.event_id === 'string' &&
@@ -83,14 +210,23 @@ const sseMock = vi.hoisted(() => {
       typeof record.seq === 'number' &&
       typeof record.type === 'string'
     ) {
+      const type = mapType(record.type)
+      const data = normalizeEventData(
+        type,
+        record.type,
+        record.event_id,
+        record.data ?? {},
+        typeof record.tool_name === 'string' ? record.tool_name : undefined,
+        typeof record.error_class === 'string' ? record.error_class : undefined,
+      )
       return {
         id: record.event_id,
         streamId: record.run_id,
         order: record.seq,
         timestamp: typeof record.ts === 'string' ? record.ts : '',
-        type: mapType(record.type),
-        data: record.data ?? {},
-        toolName: typeof record.tool_name === 'string' ? record.tool_name : undefined,
+        type,
+        data,
+        toolName: normalizeToolName(asRecord(data), typeof record.tool_name === 'string' ? record.tool_name : undefined),
         errorCode: typeof record.error_class === 'string' ? record.error_class : undefined,
       }
     }

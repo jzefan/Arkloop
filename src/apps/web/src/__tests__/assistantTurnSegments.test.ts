@@ -8,16 +8,31 @@ import {
   foldAssistantTurnEvent,
   requestAssistantTurnThinkingBreak,
 } from '../assistantTurnSegments'
-import type { AgentUIEvent } from '../agent-ui'
+import {
+  normalizeAgentEventData,
+  normalizeAgentEventToolName,
+  normalizeAgentEventType,
+  type AgentUIEvent,
+} from '../agent-ui'
 
 function ev(runId: string, seq: number, type: string, data?: unknown, errorClass?: string): AgentUIEvent {
+  const id = `evt_${seq}`
+  const normalizedType = normalizeAgentEventType(type)
+  const normalizedData = normalizeAgentEventData({
+    type: normalizedType,
+    rawType: type,
+    eventId: id,
+    data: data ?? {},
+    errorCode: errorClass,
+  })
   return {
-    id: `evt_${seq}`,
+    id,
     streamId: runId,
     order: seq,
     timestamp: `2026-03-20T00:00:${String(seq).padStart(2, '0')}.000Z`,
-    type: type,
-    data: data ?? {},
+    type: normalizedType,
+    data: normalizedData,
+    toolName: normalizeAgentEventToolName({ type: normalizedType, data: normalizedData }),
     errorCode: errorClass,
   }
 }

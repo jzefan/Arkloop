@@ -26,6 +26,11 @@ import type {
   AgentOpenMessageChunkStreamOptions,
   AgentUIMessageChunk,
 } from './contract'
+import {
+  normalizeAgentEventData,
+  normalizeAgentEventToolName,
+  normalizeAgentEventType,
+} from './event-data'
 
 export type CreateArkloopAgentClientOptions = {
   accessToken: string
@@ -147,76 +152,150 @@ function toAgentMessage(message: MessageResponse): AgentMessage {
   }
 }
 
-function toAgentUIEventType(type: string): AgentUIEvent['type'] {
-  switch (type) {
-    case 'message.delta':
-      return 'assistant-delta'
-    case 'tool.call.delta':
-      return 'tool-input-delta'
-    case 'tool.call':
-      return 'tool-call'
-    case 'tool.result':
-      return 'tool-result'
-    case 'terminal.stdout_delta':
-    case 'terminal.stderr_delta':
-      return 'terminal-delta'
-    case 'run.segment.start':
-      return 'segment-start'
-    case 'run.segment.end':
-      return 'segment-end'
-    case 'run.context_compact':
-      return 'context-compact'
-    case 'run.input_requested':
-      return 'input-request'
-    case 'run.completed':
-      return 'run-completed'
-    case 'run.failed':
-      return 'run-failed'
-    case 'run.cancelled':
-      return 'run-cancelled'
-    case 'run.interrupted':
-      return 'run-interrupted'
-    case 'security.injection.blocked':
-      return 'security-block'
-    case 'thread.title.updated':
-      return 'thread-title'
-    case 'thread.collaboration_mode.updated':
-    case 'thread.collaboration.updated':
-      return 'thread-collaboration'
-    case 'todo.updated':
-      return 'todo-updated'
-    default:
-      return type
-  }
-}
-
 function toAgentUIEvent(event: RunEvent): AgentUIEvent {
-  const terminalStream = event.type === 'terminal.stdout_delta'
-    ? 'stdout'
-    : event.type === 'terminal.stderr_delta' ? 'stderr' : undefined
-  const data = terminalStream && event.data && typeof event.data === 'object'
-    ? { ...(event.data as Record<string, unknown>), stream: terminalStream }
-    : event.data
+  const type = normalizeAgentEventType(event.type)
+  const data = normalizeAgentEventData({
+    type,
+    rawType: event.type,
+    eventId: event.event_id,
+    data: event.data,
+    toolName: event.tool_name,
+    errorCode: event.error_class,
+  })
 
   return {
     id: event.event_id,
     streamId: event.run_id,
     order: event.seq,
     timestamp: event.ts,
-    type: toAgentUIEventType(event.type),
+    type,
     data,
-    toolName: event.tool_name,
+    toolName: normalizeAgentEventToolName({ type, data, fallback: event.tool_name }),
     errorCode: event.error_class,
   }
 }
 
-function readStringField(value: unknown, field: string): string | undefined {
-  if (!value || typeof value !== 'object') return undefined
-  const raw = (value as Record<string, unknown>)[field]
-  return typeof raw === 'string' ? raw : undefined
+type MessageChunkLifecycle = {
+  textStarted: boolean
+  reasoningStarted: boolean
+  toolInputStarted: Set<string>
+  pendingToolInputDeltasByIndex: Map<number, { toolName?: string; deltas: string[] }>
 }
 
-function runEventToMessageChunks(event: RunEvent): AgentUIMessageChunk[] {
+function createMessageChunkLifecycle(): MessageChunkLifecycle {
+  return {
+    textStarted: false,
+    reasoningStarted: false,
+    toolInputStarted: new Set(),
+    pendingToolInputDeltasByIndex: new Map(),
+  }
+}
+
+function enqueueTextDelta(
+  chunks: AgentUIMessageChunk[],
+  state: MessageChunkLifecycle,
+  delta: string,
+): void {
+  if (!state.textStarted) {
+    chunks.push({ type: 'text-start', id: 'text' })
+    state.textStarted = true
+  }
+  chunks.push({ type: 'text-delta', id: 'text', delta })
+}
+
+function enqueueReasoningDelta(
+  chunks: AgentUIMessageChunk[],
+  state: MessageChunkLifecycle,
+  delta: string,
+): void {
+  if (!state.reasoningStarted) {
+    chunks.push({ type: 'reasoning-start', id: 'reasoning' })
+    state.reasoningStarted = true
+  }
+  chunks.push({ type: 'reasoning-delta', id: 'reasoning', delta })
+}
+
+function finalizeOpenContentChunks(
+  chunks: AgentUIMessageChunk[],
+  state: MessageChunkLifecycle,
+): void {
+  if (state.reasoningStarted) {
+    chunks.push({ type: 'reasoning-end', id: 'reasoning' })
+    state.reasoningStarted = false
+  }
+  if (state.textStarted) {
+    chunks.push({ type: 'text-end', id: 'text' })
+    state.textStarted = false
+  }
+}
+
+function enqueueToolInputDelta(
+  chunks: AgentUIMessageChunk[],
+  state: MessageChunkLifecycle,
+  params: {
+    toolCallId: string
+    toolName: string
+    delta: string
+  },
+): void {
+  if (!state.toolInputStarted.has(params.toolCallId)) {
+    chunks.push({
+      type: 'tool-input-start',
+      toolCallId: params.toolCallId,
+      toolName: params.toolName,
+      dynamic: true,
+    })
+    state.toolInputStarted.add(params.toolCallId)
+  }
+  chunks.push({
+    type: 'tool-input-delta',
+    toolCallId: params.toolCallId,
+    inputTextDelta: params.delta,
+  })
+}
+
+function bufferToolInputDelta(
+  state: MessageChunkLifecycle,
+  params: {
+    toolCallIndex: number
+    toolName?: string
+    delta: string
+  },
+): void {
+  const pending = state.pendingToolInputDeltasByIndex.get(params.toolCallIndex) ?? { deltas: [] }
+  if (params.toolName) pending.toolName = params.toolName
+  pending.deltas.push(params.delta)
+  state.pendingToolInputDeltasByIndex.set(params.toolCallIndex, pending)
+}
+
+function drainPendingToolInputDeltas(
+  chunks: AgentUIMessageChunk[],
+  state: MessageChunkLifecycle,
+  params: {
+    toolCallId: string
+    toolName: string
+    toolCallIndex?: number
+  },
+): void {
+  let pendingIndex = params.toolCallIndex
+  if (pendingIndex == null && state.pendingToolInputDeltasByIndex.size === 1) {
+    pendingIndex = [...state.pendingToolInputDeltasByIndex.keys()][0]
+  }
+  if (pendingIndex == null) return
+
+  const pending = state.pendingToolInputDeltasByIndex.get(pendingIndex)
+  if (!pending) return
+  for (const delta of pending.deltas) {
+    enqueueToolInputDelta(chunks, state, {
+      toolCallId: params.toolCallId,
+      toolName: pending.toolName ?? params.toolName,
+      delta,
+    })
+  }
+  state.pendingToolInputDeltasByIndex.delete(pendingIndex)
+}
+
+function runEventToMessageChunks(event: RunEvent, state: MessageChunkLifecycle): AgentUIMessageChunk[] {
   const uiEvent = toAgentUIEvent(event)
   const chunks: AgentUIMessageChunk[] = [{
     type: 'data-agent-event',
@@ -225,51 +304,107 @@ function runEventToMessageChunks(event: RunEvent): AgentUIMessageChunk[] {
     transient: true,
   }]
 
-  if (event.type === 'message.delta') {
-    const delta = readStringField(event.data, 'content_delta')
-    const role = readStringField(event.data, 'role')
-    const channel = readStringField(event.data, 'channel')
-    if (!delta || (role && role !== 'assistant')) return []
-    const id = channel === 'thinking' ? 'reasoning' : 'text'
-    chunks.push(channel === 'thinking'
-      ? { type: 'reasoning-delta', id, delta }
-      : { type: 'text-delta', id, delta })
+  if (uiEvent.type === 'assistant-delta') {
+    const data = uiEvent.data as { delta?: unknown; role?: unknown; channel?: unknown }
+    const delta = typeof data.delta === 'string' ? data.delta : ''
+    const role = typeof data.role === 'string' ? data.role : undefined
+    const channel = typeof data.channel === 'string' ? data.channel : undefined
+    if (!delta || (role && role !== 'assistant')) return chunks
+    if (channel === 'thinking') {
+      enqueueReasoningDelta(chunks, state, delta)
+    } else {
+      enqueueTextDelta(chunks, state, delta)
+    }
     return chunks
   }
 
-  if (event.type === 'tool.call') {
-    const toolCallId = readStringField(event.data, 'tool_call_id') ?? event.event_id
-    const toolName = event.tool_name ?? readStringField(event.data, 'tool_name') ?? 'tool'
-    const input = event.data && typeof event.data === 'object'
-      ? (event.data as Record<string, unknown>).arguments
-      : undefined
-    chunks.push({ type: 'tool-input-available', toolCallId, toolName, input })
-    return chunks
-  }
-
-  if (event.type === 'tool.result') {
-    const toolCallId = readStringField(event.data, 'tool_call_id') ?? event.event_id
-    const output = event.data && typeof event.data === 'object'
-      ? (event.data as Record<string, unknown>).result
-      : event.data
-    if (event.error_class) {
-      chunks.push({ type: 'tool-output-error', toolCallId, errorText: event.error_class })
+  if (uiEvent.type === 'tool-input-delta') {
+    const data = uiEvent.data as {
+      toolCallIndex?: number
+      toolCallId?: string
+      toolName?: string
+      delta?: string
+    }
+    if (!data.delta) return chunks
+    if (!data.toolCallId) {
+      if (data.toolCallIndex != null) {
+        bufferToolInputDelta(state, {
+          toolCallIndex: data.toolCallIndex,
+          toolName: data.toolName,
+          delta: data.delta,
+        })
+      }
       return chunks
     }
-    chunks.push({ type: 'tool-output-available', toolCallId, output })
+    drainPendingToolInputDeltas(chunks, state, {
+      toolCallId: data.toolCallId,
+      toolName: data.toolName ?? 'tool',
+      toolCallIndex: data.toolCallIndex,
+    })
+    enqueueToolInputDelta(chunks, state, {
+      toolCallId: data.toolCallId,
+      toolName: data.toolName ?? 'tool',
+      delta: data.delta,
+    })
     return chunks
   }
 
-  if (event.type === 'run.completed') {
+  if (uiEvent.type === 'tool-call') {
+    const data = uiEvent.data as {
+      toolCallId: string
+      toolName: string
+      input: unknown
+      displayDescription?: string
+      toolCallIndex?: number
+    }
+    const toolCallId = data.toolCallId
+    const toolName = data.toolName || uiEvent.toolName || 'tool'
+    drainPendingToolInputDeltas(chunks, state, {
+      toolCallId,
+      toolName,
+      toolCallIndex: data.toolCallIndex,
+    })
+    chunks.push({
+      type: 'tool-input-available',
+      toolCallId,
+      toolName,
+      input: data.input,
+    })
+    state.toolInputStarted.delete(toolCallId)
+    return chunks
+  }
+
+  if (uiEvent.type === 'tool-result') {
+    const data = uiEvent.data as {
+      toolCallId: string
+      output: unknown
+      error?: { message?: string; errorClass?: string; code?: string }
+    }
+    if (data.error || uiEvent.errorCode) {
+      chunks.push({
+        type: 'tool-output-error',
+        toolCallId: data.toolCallId,
+        errorText: data.error?.message ?? data.error?.errorClass ?? data.error?.code ?? uiEvent.errorCode ?? 'tool error',
+      })
+      return chunks
+    }
+    chunks.push({ type: 'tool-output-available', toolCallId: data.toolCallId, output: data.output })
+    return chunks
+  }
+
+  if (uiEvent.type === 'run-completed') {
+    finalizeOpenContentChunks(chunks, state)
     chunks.push({ type: 'finish', finishReason: 'stop' })
     return chunks
   }
-  if (event.type === 'run.failed') {
+  if (uiEvent.type === 'run-failed') {
+    finalizeOpenContentChunks(chunks, state)
     chunks.push({ type: 'finish', finishReason: 'error' })
     return chunks
   }
-  if (event.type === 'run.cancelled' || event.type === 'run.interrupted') {
-    chunks.push({ type: 'abort', reason: toAgentUIEventType(event.type) })
+  if (uiEvent.type === 'run-cancelled' || uiEvent.type === 'run-interrupted') {
+    finalizeOpenContentChunks(chunks, state)
+    chunks.push({ type: 'abort', reason: uiEvent.type })
     return chunks
   }
 
@@ -278,27 +413,30 @@ function runEventToMessageChunks(event: RunEvent): AgentUIMessageChunk[] {
 
 function enqueueStreamStart(controller: ReadableStreamDefaultController<AgentUIMessageChunk>): void {
   controller.enqueue({ type: 'start' })
-  controller.enqueue({ type: 'text-start', id: 'text' })
-  controller.enqueue({ type: 'reasoning-start', id: 'reasoning' })
 }
 
-function enqueueStreamEnd(controller: ReadableStreamDefaultController<AgentUIMessageChunk>): void {
-  controller.enqueue({ type: 'reasoning-end', id: 'reasoning' })
-  controller.enqueue({ type: 'text-end', id: 'text' })
+function enqueueStreamEnd(
+  controller: ReadableStreamDefaultController<AgentUIMessageChunk>,
+  state: MessageChunkLifecycle,
+): void {
+  const chunks: AgentUIMessageChunk[] = []
+  finalizeOpenContentChunks(chunks, state)
+  for (const chunk of chunks) controller.enqueue(chunk)
 }
 
 function runEventsToMessageChunkStream(eventsPromise: Promise<RunEvent[]>): ReadableStream<AgentUIMessageChunk> {
   return new ReadableStream<AgentUIMessageChunk>({
     async start(controller) {
+      const lifecycle = createMessageChunkLifecycle()
       enqueueStreamStart(controller)
       try {
         const events = await eventsPromise
         for (const event of events) {
-          for (const chunk of runEventToMessageChunks(event)) {
+          for (const chunk of runEventToMessageChunks(event, lifecycle)) {
             controller.enqueue(chunk)
           }
         }
-        enqueueStreamEnd(controller)
+        enqueueStreamEnd(controller, lifecycle)
         controller.close()
       } catch (error) {
         controller.enqueue({
@@ -382,6 +520,7 @@ export function createArkloopAgentClient({
 
       return new ReadableStream<AgentUIMessageChunk>({
         start(controller) {
+          const lifecycle = createMessageChunkLifecycle()
           enqueueStreamStart(controller)
           const signal = options?.signal
           if (signal?.aborted) {
@@ -414,7 +553,7 @@ export function createArkloopAgentClient({
             },
             onEvent: (event) => {
               if (closed) return
-              for (const chunk of runEventToMessageChunks(event)) {
+              for (const chunk of runEventToMessageChunks(event, lifecycle)) {
                 controller.enqueue(chunk)
               }
             },
@@ -431,7 +570,7 @@ export function createArkloopAgentClient({
               signal?.removeEventListener('abort', abort)
               if (closed) return
               closed = true
-              enqueueStreamEnd(controller)
+              enqueueStreamEnd(controller, lifecycle)
               controller.close()
             })
         },

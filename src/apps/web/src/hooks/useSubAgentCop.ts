@@ -1,7 +1,12 @@
 import { useEffect, useReducer, useRef } from 'react'
 import { pickLogicalToolName } from '@arkloop/shared'
 import { useAgentStream } from './useAgentStream'
-import { useAgentClient } from '../agent-ui'
+import {
+  agentEventDataRecord,
+  agentEventToolInput,
+  agentEventToolOutput,
+  useAgentClient,
+} from '../agent-ui'
 import type { WebSearchPhaseStep } from '../components/CopTimeline'
 import type { WebSource } from '../storage'
 import type { AgentUIEvent } from '../agent-ui'
@@ -113,8 +118,8 @@ function reducer(state: CopState, action: CopAction): CopState {
 
 function processEvent(event: AgentUIEvent, dispatch: React.Dispatch<CopAction>): void {
   if (event.type === 'segment-start') {
-    const obj = event.data as { segment_id?: unknown; kind?: unknown; display?: unknown }
-    const segmentId = typeof obj.segment_id === 'string' ? obj.segment_id : ''
+    const obj = agentEventDataRecord(event.data) ?? {}
+    const segmentId = typeof obj?.segmentId === 'string' ? obj.segmentId : ''
     const kind = typeof obj.kind === 'string' ? obj.kind : ''
     if (!segmentId || !kind.startsWith('search_')) return
     const display = (obj.display ?? {}) as { label?: unknown; queries?: unknown }
@@ -127,18 +132,18 @@ function processEvent(event: AgentUIEvent, dispatch: React.Dispatch<CopAction>):
   }
 
   if (event.type === 'segment-end') {
-    const obj = event.data as { segment_id?: unknown }
-    const segmentId = typeof obj.segment_id === 'string' ? obj.segment_id : ''
+    const obj = agentEventDataRecord(event.data)
+    const segmentId = typeof obj?.segmentId === 'string' ? obj.segmentId : ''
     if (segmentId) dispatch({ type: 'segment_end', segmentId })
     return
   }
 
   if (event.type === 'tool-call') {
-    const obj = event.data as { tool_call_id?: unknown; arguments?: unknown }
+    const obj = agentEventDataRecord(event.data)
     const toolName = pickLogicalToolName(event.data, event.toolName)
     if (isWebSearchToolName(toolName)) {
-      const callId = typeof obj.tool_call_id === 'string' ? obj.tool_call_id : event.id
-      const args = obj.arguments as Record<string, unknown> | undefined
+      const callId = typeof obj?.toolCallId === 'string' ? obj.toolCallId : event.id
+      const args = agentEventToolInput(event.data)
       const queries = webSearchQueriesFromArguments(args)
       dispatch({ type: 'web_search_call', callId, queries })
     }
@@ -146,11 +151,11 @@ function processEvent(event: AgentUIEvent, dispatch: React.Dispatch<CopAction>):
   }
 
   if (event.type === 'tool-result') {
-    const obj = event.data as { tool_call_id?: unknown; result?: unknown }
+    const obj = agentEventDataRecord(event.data)
     const toolName = pickLogicalToolName(event.data, event.toolName)
     if (isWebSearchToolName(toolName)) {
-      const callId = typeof obj.tool_call_id === 'string' ? obj.tool_call_id : event.id
-      const result = obj.result as { results?: unknown[] } | undefined
+      const callId = typeof obj?.toolCallId === 'string' ? obj.toolCallId : event.id
+      const result = agentEventToolOutput(event.data) as { results?: unknown[] } | undefined
       const sources: WebSource[] = Array.isArray(result?.results)
         ? (result.results as unknown[])
             .filter((r): r is Record<string, unknown> => r != null && typeof r === 'object')

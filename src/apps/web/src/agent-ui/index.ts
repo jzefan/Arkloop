@@ -16,6 +16,7 @@ export type {
   AgentStreamState,
   AgentTransport,
   AgentUIEvent,
+  AgentUIEventData,
   AgentUIEventType,
   AgentUIMessage,
   AgentUIMessageChunk,
@@ -35,3 +36,11 @@ export {
   agentUIEventFromChunk,
   readAgentUIEvents,
 } from './event-stream'
+export {
+  agentEventDataRecord,
+  agentEventToolInput,
+  agentEventToolOutput,
+  normalizeAgentEventData,
+  normalizeAgentEventToolName,
+  normalizeAgentEventType,
+} from './event-data'

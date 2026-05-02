@@ -19,7 +19,13 @@ import {
   firstVisibleCodeExecutionToolCallIndex,
   isWebFetchToolName,
 } from '../agentEventProcessing'
-import type { AgentMessage, AgentUIEvent } from '../agent-ui'
+import {
+  normalizeAgentEventData,
+  normalizeAgentEventToolName,
+  normalizeAgentEventType,
+  type AgentMessage,
+  type AgentUIEvent,
+} from '../agent-ui'
 
 function makeRunEvent(params: {
   runId: string
@@ -28,13 +34,23 @@ function makeRunEvent(params: {
   data?: unknown
   errorClass?: string
 }): AgentUIEvent {
+  const id = `evt_${params.seq}`
+  const type = normalizeAgentEventType(params.type)
+  const data = normalizeAgentEventData({
+    type,
+    rawType: params.type,
+    eventId: id,
+    data: params.data ?? {},
+    errorCode: params.errorClass,
+  })
   return {
-    id: `evt_${params.seq}`,
+    id,
     streamId: params.runId,
     order: params.seq,
     timestamp: '2024-01-01T00:00:00.000Z',
-    type: params.type,
-    data: params.data ?? {},
+    type,
+    data,
+    toolName: normalizeAgentEventToolName({ type, data }),
     errorCode: params.errorClass,
   }
 }

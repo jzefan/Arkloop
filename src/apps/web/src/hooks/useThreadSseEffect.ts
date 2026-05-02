@@ -50,7 +50,12 @@ import type { MessageAgentEvent } from '../storage'
 import { getInjectionBlockMessage, shouldSuppressLiveAgentEventAfterInjectionBlock } from '../liveRunSecurity'
 import type { RequestedSchema } from '../userInputTypes'
 import { noteShowWidgetDelta } from '../streamDebug'
-import type { AgentMessage } from '../agent-ui'
+import {
+  agentEventDataRecord,
+  agentEventToolInput,
+  agentEventToolOutput,
+  type AgentMessage,
+} from '../agent-ui'
 
 function isUnauthorizedStreamError(error: unknown): boolean {
   return !!error && typeof error === 'object' && (error as { status?: unknown }).status === 401
@@ -316,8 +321,8 @@ export function useThreadSseEffect({
       }
 
       if (event.type === 'segment-start') {
-        const obj = event.data as { segment_id?: unknown; kind?: unknown; display?: unknown }
-        const segmentId = typeof obj.segment_id === 'string' ? obj.segment_id : ''
+        const obj = agentEventDataRecord(event.data) ?? {}
+        const segmentId = typeof obj?.segmentId === 'string' ? obj.segmentId : ''
         const kind = typeof obj.kind === 'string' ? obj.kind : 'planning_round'
         const display = (obj.display ?? {}) as { mode?: unknown; label?: unknown; queries?: unknown }
         const mode = typeof display.mode === 'string' ? display.mode : 'collapsed'
@@ -336,7 +341,7 @@ export function useThreadSseEffect({
       }
 
       if (event.type === 'context-compact') {
-        const obj = event.data as { phase?: unknown; op?: unknown; dropped_prefix?: unknown }
+        const obj = agentEventDataRecord(event.data) ?? {}
         const op = typeof obj.op === 'string' ? obj.op : undefined
         const phase = typeof obj.phase === 'string' ? obj.phase : undefined
 
@@ -361,7 +366,7 @@ export function useThreadSseEffect({
           }
         } else if (op === 'trim') {
           if (phase === 'completed') {
-            const dropped = typeof obj.dropped_prefix === 'number' ? obj.dropped_prefix : 0
+            const dropped = typeof obj.droppedPrefix === 'number' ? obj.droppedPrefix : 0
             if (dropped > 0) {
               clearContextCompactHideTimer()
               setContextCompactBar({ type: 'trim', status: 'done', dropped })
@@ -376,14 +381,14 @@ export function useThreadSseEffect({
       }
 
       if (event.type === 'todo-updated') {
-        const obj = event.data as { todos?: unknown }
+        const obj = agentEventDataRecord(event.data) ?? {}
         if (Array.isArray(obj.todos)) {
           const items = (obj.todos as unknown[]).flatMap((t) => {
             if (!t || typeof t !== 'object') return []
-            const item = t as { id?: unknown; content?: unknown; status?: unknown }
+            const item = t as { id?: unknown; content?: unknown; status?: unknown; activeForm?: unknown }
             if (typeof item.id !== 'string' || typeof item.content !== 'string' || typeof item.status !== 'string') return []
-            const activeForm = typeof (t as { active_form?: unknown }).active_form === 'string'
-              ? (t as { active_form: string }).active_form.trim()
+            const activeForm = typeof item.activeForm === 'string'
+              ? item.activeForm.trim()
               : ''
             return [{ id: item.id, content: item.content, ...(activeForm ? { activeForm } : {}), status: item.status }]
           })
@@ -394,8 +399,8 @@ export function useThreadSseEffect({
       }
 
       if (event.type === 'segment-end') {
-        const obj = event.data as { segment_id?: unknown }
-        const segmentId = typeof obj.segment_id === 'string' ? obj.segment_id : ''
+        const obj = agentEventDataRecord(event.data) ?? {}
+        const segmentId = typeof obj?.segmentId === 'string' ? obj.segmentId : ''
         if (segmentId && activeSegmentIdRef.current === segmentId) {
           activeSegmentIdRef.current = null
         }
@@ -408,10 +413,10 @@ export function useThreadSseEffect({
 
       if (event.type === 'assistant-delta') {
         noResponseMsgIdRef.current = null
-        const obj = event.data as { content_delta?: unknown; role?: unknown; channel?: unknown }
+        const obj = agentEventDataRecord(event.data) ?? {}
         if (obj.role != null && obj.role !== 'assistant') continue
-        if (typeof obj.content_delta !== 'string' || !obj.content_delta) continue
-        const delta = obj.content_delta
+        if (typeof obj.delta !== 'string' || !obj.delta) continue
+        const delta = obj.delta
         const channel = typeof obj.channel === 'string' ? obj.channel : ''
         const isThinking = channel === 'thinking'
         const eventSeq = typeof event.order === 'number' ? event.order : 0
@@ -448,18 +453,18 @@ export function useThreadSseEffect({
       }
 
       if (event.type === 'tool-input-delta') {
-        const obj = event.data as { tool_call_index?: number; tool_call_id?: string; tool_name?: string; arguments_delta?: string }
-        const idx = typeof obj.tool_call_index === 'number' ? obj.tool_call_index : -1
-        if (idx >= 0 && typeof obj.arguments_delta === 'string') {
+        const obj = agentEventDataRecord(event.data) ?? {}
+        const idx = typeof obj?.toolCallIndex === 'number' ? obj.toolCallIndex : -1
+        if (idx >= 0 && typeof obj.delta === 'string') {
           let entry = streamingArtifactsRef.current.find((e) => e.toolCallIndex === idx)
           if (!entry) {
             entry = { toolCallIndex: idx, argumentsBuffer: '', complete: false }
             streamingArtifactsRef.current = [...streamingArtifactsRef.current, entry]
           }
-          if (obj.tool_call_id) entry.toolCallId = obj.tool_call_id
-          if (obj.tool_name) entry.toolName = canonicalToolName(obj.tool_name)
-          entry.argumentsBuffer += obj.arguments_delta
-          const isShowWidgetDelta = entry.toolName === 'show_widget' || canonicalToolName(obj.tool_name ?? '') === 'show_widget'
+          if (typeof obj.toolCallId === 'string') entry.toolCallId = obj.toolCallId
+          if (typeof obj.toolName === 'string') entry.toolName = canonicalToolName(obj.toolName)
+          entry.argumentsBuffer += obj.delta
+          const isShowWidgetDelta = entry.toolName === 'show_widget' || canonicalToolName(typeof obj.toolName === 'string' ? obj.toolName : '') === 'show_widget'
 
           if (entry.toolName === 'show_widget' || (!entry.toolName && entry.argumentsBuffer.includes('"widget_code"'))) {
             const parsed = extractPartialWidgetFields(entry.argumentsBuffer)
@@ -493,7 +498,7 @@ export function useThreadSseEffect({
       if (event.type === 'tool-call') {
         setPendingThinking(false)
         seenFirstToolCallInRunRef.current = true
-        const obj = event.data as { llm_name?: unknown; tool_call_id?: unknown; arguments?: unknown }
+        const obj = agentEventDataRecord(event.data) ?? {}
         const toolName = pickLogicalToolName(event.data, event.toolName)
         const codeExecutionCall = applyCodeExecutionToolCall(currentRunCodeExecutionsRef.current, event)
         if (codeExecutionCall.appended) {
@@ -531,8 +536,8 @@ export function useThreadSseEffect({
           setTopLevelWebFetches((prev) => [...prev, webFetchCall.appended!])
         }
         if (toolName === 'show_widget') {
-          const args = obj.arguments as Record<string, unknown> | undefined
-          const callId = typeof obj.tool_call_id === 'string' ? obj.tool_call_id : undefined
+          const args = agentEventToolInput(event.data)
+          const callId = typeof obj?.toolCallId === 'string' ? obj.toolCallId : undefined
           let entry = callId
             ? streamingArtifactsRef.current.find((e) => e.toolCallId === callId)
             : undefined
@@ -560,8 +565,8 @@ export function useThreadSseEffect({
           setStreamingArtifacts([...streamingArtifactsRef.current])
         }
         if (toolName === 'create_artifact') {
-          const args = obj.arguments as Record<string, unknown> | undefined
-          const callId = typeof obj.tool_call_id === 'string' ? obj.tool_call_id : undefined
+          const args = agentEventToolInput(event.data)
+          const callId = typeof obj?.toolCallId === 'string' ? obj.toolCallId : undefined
           let entry = callId
             ? streamingArtifactsRef.current.find((e) => e.toolCallId === callId)
             : undefined
@@ -611,20 +616,20 @@ export function useThreadSseEffect({
       }
 
       if (event.type === 'tool-result') {
-        const obj = event.data as { tool_call_id?: unknown; result?: unknown; error?: unknown }
+        const obj = agentEventDataRecord(event.data) ?? {}
         const resultToolName = pickLogicalToolName(event.data, event.toolName)
         if (isWebSearchToolName(resultToolName)) {
-          const newSources = webSearchSourcesFromResult(obj.result)
+          const newSources = webSearchSourcesFromResult(agentEventToolOutput(event.data))
           if (newSources && newSources.length > 0) {
             currentRunSourcesRef.current = [...currentRunSourcesRef.current, ...newSources]
           }
         }
-        const result = obj.result as { artifacts?: unknown[]; stdout?: unknown; stderr?: unknown; exit_code?: unknown; output?: unknown } | undefined
+        const result = agentEventToolOutput(event.data) as { artifacts?: unknown[]; stdout?: unknown; stderr?: unknown; exit_code?: unknown; output?: unknown } | undefined
         const newArtifacts = extractArtifacts(result)
         if (newArtifacts.length > 0) {
           currentRunArtifactsRef.current = [...currentRunArtifactsRef.current, ...newArtifacts]
           if (resultToolName === 'create_artifact') {
-            const callId = typeof obj.tool_call_id === 'string' ? obj.tool_call_id : undefined
+            const callId = typeof obj?.toolCallId === 'string' ? obj.toolCallId : undefined
             for (const art of newArtifacts) {
               const entry = callId
                 ? streamingArtifactsRef.current.find((e) => e.toolCallId === callId)
@@ -693,8 +698,8 @@ export function useThreadSseEffect({
       }
 
       if (event.type === 'thread-title') {
-        const obj = event.data as { thread_id?: unknown; title?: unknown }
-        const tid = typeof obj.thread_id === 'string' ? obj.thread_id : threadId
+        const obj = agentEventDataRecord(event.data) ?? {}
+        const tid = typeof obj?.threadId === 'string' ? obj.threadId : threadId
         const title = typeof obj.title === 'string' ? obj.title : ''
         if (tid && title) onThreadTitleUpdated(tid, title)
         if (event.streamId && event.streamId === completedTitleTailRunId) {
@@ -704,10 +709,10 @@ export function useThreadSseEffect({
       }
 
       if (event.type === 'thread-collaboration') {
-        const obj = event.data as { thread_id?: unknown; collaboration_mode?: unknown; collaboration_mode_revision?: unknown }
-        const tid = typeof obj.thread_id === 'string' ? obj.thread_id : threadId
-        const collaborationMode = obj.collaboration_mode === 'plan' ? 'plan' : obj.collaboration_mode === 'default' ? 'default' : null
-        const revision = typeof obj.collaboration_mode_revision === 'number' ? obj.collaboration_mode_revision : undefined
+        const obj = agentEventDataRecord(event.data) ?? {}
+        const tid = typeof obj?.threadId === 'string' ? obj.threadId : threadId
+        const collaborationMode = obj.collaborationMode === 'plan' ? 'plan' : obj.collaborationMode === 'default' ? 'default' : null
+        const revision = typeof obj.collaborationModeRevision === 'number' ? obj.collaborationModeRevision : undefined
         if (tid && collaborationMode) {
           onThreadCollaborationModeUpdated(tid, collaborationMode, revision)
         }
@@ -722,7 +727,7 @@ export function useThreadSseEffect({
         )
         if (hasRunContinued) continue
 
-        const data = event.data as Record<string, unknown> | undefined
+        const data = agentEventDataRecord(event.data)
         const message = data?.message as string | undefined
         const schema = data?.requestedSchema as RequestedSchema | undefined
         if (message && schema && schema.properties && Object.keys(schema.properties).length > 0) {
@@ -731,7 +736,7 @@ export function useThreadSseEffect({
             required: Array.isArray(schema.required) ? schema.required : undefined,
           }
           setPendingUserInput({
-            request_id: (data?.request_id as string) ?? '',
+            request_id: (data?.requestId as string) ?? '',
             message,
             requestedSchema: safeSchema,
           })
@@ -936,8 +941,8 @@ export function useThreadSseEffect({
           preserveSearchSteps: true,
           handoffRunCache: runHasRecoverableOutput && !localAssistant ? runCache : undefined,
         })
-        const obj = event.data as { message?: unknown; error_class?: unknown; code?: unknown; details?: unknown }
-        const errorClass = typeof obj?.error_class === 'string' ? obj.error_class : undefined
+        const obj = agentEventDataRecord(event.data)
+        const errorClass = typeof obj?.errorClass === 'string' ? obj.errorClass : undefined
         const details = (obj?.details && typeof obj.details === 'object' && !Array.isArray(obj.details))
           ? obj.details as Record<string, unknown>
           : undefined
@@ -1003,8 +1008,8 @@ export function useThreadSseEffect({
           preserveSearchSteps: true,
           handoffRunCache: runHasRecoverableOutput && !localAssistant ? runCache : undefined,
         })
-        const obj = event.data as { message?: unknown; error_class?: unknown; code?: unknown; details?: unknown }
-        const errorClass = typeof obj?.error_class === 'string' ? obj.error_class : undefined
+        const obj = agentEventDataRecord(event.data)
+        const errorClass = typeof obj?.errorClass === 'string' ? obj.errorClass : undefined
         const details = (obj?.details && typeof obj.details === 'object' && !Array.isArray(obj.details))
           ? obj.details as Record<string, unknown>
           : undefined

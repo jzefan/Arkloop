@@ -1,6 +1,11 @@
 import { canonicalToolName, pickLogicalToolName } from '@arkloop/shared'
 import type { ThreadRunResponse } from './api'
 import type { AgentMessage, AgentUIEvent } from './agent-ui'
+import {
+  agentEventDataRecord,
+  agentEventToolInput,
+  agentEventToolOutput,
+} from './agent-ui/event-data'
 import type { ArtifactRef, BrowserActionRef, CodeExecutionRef, FileOpRef, MessageThinkingRef, SubAgentRef, WebFetchRef, WidgetRef } from './storage'
 import { presentationForTool } from './toolPresentation'
 
@@ -40,13 +45,16 @@ type CodeExecutionDeltaPatch = {
   updated?: CodeExecutionRef
 }
 
-function pickToolName(data: unknown): string {
-  return pickLogicalToolName(data)
+function pickToolName(data: unknown, fallbackToolName?: string): string {
+  const record = data && typeof data === 'object' && !Array.isArray(data)
+    ? data as Record<string, unknown>
+    : undefined
+  const stableToolName = typeof record?.toolName === 'string' ? record.toolName : undefined
+  return canonicalToolName(stableToolName ?? pickLogicalToolName(data, fallbackToolName))
 }
 
 function pickToolCallId(event: AgentUIEvent): string {
-  if (!event.data || typeof event.data !== 'object') return event.id
-  const raw = (event.data as { tool_call_id?: unknown }).tool_call_id
+  const raw = agentEventDataRecord(event.data)?.toolCallId
   return typeof raw === 'string' && raw.trim() !== '' ? raw : event.id
 }
 
@@ -72,8 +80,7 @@ export function buildMessageArtifactsFromAgentEvents(events: AgentUIEvent[]): Ar
   const seen = new Set<string>()
   for (const event of events) {
     if (event.type !== 'tool-result') continue
-    const obj = event.data as { result?: unknown }
-    for (const artifact of extractArtifacts(obj.result)) {
+    for (const artifact of extractArtifacts(agentEventToolOutput(event.data))) {
       if (seen.has(artifact.key)) continue
       seen.add(artifact.key)
       artifacts.push(artifact)
@@ -197,7 +204,8 @@ function codeExecutionEmptyLabel(language: CodeExecutionRef['language'] | null, 
 }
 
 function extractCodeExecutionError(event: AgentUIEvent): CodeExecutionErrorDetails {
-  if (!event.data || typeof event.data !== 'object') {
+  const data = agentEventDataRecord(event.data)
+  if (!data) {
     return {
       errorClass: typeof event.errorCode === 'string' ? event.errorCode : undefined,
       errorMessage: typeof event.errorCode === 'string' && event.errorCode === 'process.cursor_expired'
@@ -205,7 +213,7 @@ function extractCodeExecutionError(event: AgentUIEvent): CodeExecutionErrorDetai
         : undefined,
     }
   }
-  const rawError = (event.data as { error?: unknown }).error
+  const rawError = data.error
   if (!rawError || typeof rawError !== 'object') {
     return {
       errorClass: typeof event.errorCode === 'string' ? event.errorCode : undefined,
@@ -214,9 +222,9 @@ function extractCodeExecutionError(event: AgentUIEvent): CodeExecutionErrorDetai
         : undefined,
     }
   }
-  const typed = rawError as { error_class?: unknown; message?: unknown }
-  const errorClass = typeof typed.error_class === 'string'
-    ? typed.error_class
+  const typed = rawError as { errorClass?: unknown; message?: unknown }
+  const errorClass = typeof typed.errorClass === 'string'
+    ? typed.errorClass
     : typeof event.errorCode === 'string' ? event.errorCode : undefined
   const errorMessage = typeof typed.message === 'string'
     ? typed.message
@@ -347,8 +355,8 @@ export function applyTerminalDelta(
     return { nextExecutions: executions }
   }
 
-  const data = event.data as { process_ref?: unknown; chunk?: unknown }
-  const processRef = typeof data?.process_ref === 'string' ? data.process_ref : undefined
+  const data = agentEventDataRecord(event.data)
+  const processRef = typeof data?.processRef === 'string' ? data.processRef : undefined
   const chunk = typeof data?.chunk === 'string' ? data.chunk : undefined
   if (!processRef || !chunk) {
     return { nextExecutions: executions }
@@ -392,7 +400,7 @@ export function applyCodeExecutionToolCall(
     return { nextExecutions: executions }
   }
 
-  const toolName = pickToolName(event.data)
+  const toolName = pickToolName(event.data, event.toolName)
   if (!CODE_EXECUTION_TOOL_NAMES.has(toolName)) {
     return { nextExecutions: executions }
   }
@@ -402,15 +410,11 @@ export function applyCodeExecutionToolCall(
     return { nextExecutions: executions }
   }
 
-  const args = event.data && typeof event.data === 'object'
-    ? (event.data as { arguments?: unknown }).arguments as Record<string, unknown> | undefined
-    : undefined
+  const args = agentEventToolInput(event.data)
   const code = typeof args?.code === 'string' ? args.code
     : typeof args?.command === 'string' ? args.command
     : undefined
-  const displayDescriptionRaw = event.data && typeof event.data === 'object'
-    ? (event.data as { display_description?: unknown }).display_description
-    : undefined
+  const displayDescriptionRaw = agentEventDataRecord(event.data)?.displayDescription
   const displayDescription = typeof displayDescriptionRaw === 'string' && displayDescriptionRaw.trim() !== ''
     ? displayDescriptionRaw.trim()
     : undefined
@@ -437,15 +441,12 @@ export function applyCodeExecutionToolResult(
     return { nextExecutions: executions }
   }
 
-  const toolName = pickToolName(event.data)
+  const toolName = pickToolName(event.data, event.toolName)
   if (!CODE_EXECUTION_RESULT_TOOL_NAMES.has(toolName)) {
     return { nextExecutions: executions }
   }
 
-  const data = event.data && typeof event.data === 'object'
-    ? event.data as { result?: unknown; tool_call_id?: unknown }
-    : undefined
-  const result = data?.result
+  const result = agentEventToolOutput(event.data)
   const processRef = pickProcessRef(result)
   const toolCallId = pickToolCallId(event)
   const outputPatch = extractCodeExecutionOutput(result)
@@ -558,7 +559,7 @@ export function firstVisibleCodeExecutionToolCallIndex(events: AgentUIEvent[]): 
   return events.findIndex((event, index) => {
     if (index >= events.length - 1) return false
     if (event.type !== 'tool-call') return false
-    return CODE_EXECUTION_TOOL_NAMES.has(pickToolName(event.data))
+    return CODE_EXECUTION_TOOL_NAMES.has(pickToolName(event.data, event.toolName))
   })
 }
 
@@ -606,10 +607,10 @@ export function selectFreshAgentEvents(params: {
 export function agentEventDismissesAssistantPlaceholder(event: AgentUIEvent): boolean {
   switch (event.type) {
     case 'assistant-delta': {
-      const obj = event.data as { content_delta?: unknown; role?: unknown; channel?: unknown }
+      const obj = agentEventDataRecord(event.data) ?? {}
       if (obj.role != null && obj.role !== 'assistant') return false
       if (obj.channel === 'thinking') return false
-      return typeof obj.content_delta === 'string' && obj.content_delta.length > 0
+      return typeof obj.delta === 'string' && obj.delta.length > 0
     }
     case 'tool-call':
     case 'tool-input-delta':
@@ -647,8 +648,7 @@ export function shouldRefetchCompletedRunMessages(params: {
 }
 
 function extractWidgetArguments(data: unknown): { title?: string; html?: string } {
-  if (!data || typeof data !== 'object') return {}
-  const args = (data as { arguments?: unknown }).arguments
+  const args = agentEventToolInput(data)
   if (!args || typeof args !== 'object') return {}
   const typed = args as Record<string, unknown>
   return {
@@ -663,7 +663,7 @@ export function buildMessageWidgetsFromAgentEvents(events: AgentUIEvent[]): Widg
 
   for (const event of events) {
     if (event.type !== 'tool-call') continue
-    const toolName = pickLogicalToolName(event.data, event.toolName)
+    const toolName = pickToolName(event.data, event.toolName)
     if (toolName !== 'show_widget') continue
 
     const { title, html } = extractWidgetArguments(event.data)
@@ -697,8 +697,8 @@ export function buildMessageThinkingFromAgentEvents(events: AgentUIEvent[]): Mes
 
   for (const event of events) {
     if (event.type === 'segment-start') {
-      const obj = event.data as { segment_id?: unknown; kind?: unknown; display?: unknown }
-      const segmentId = typeof obj.segment_id === 'string' ? obj.segment_id : ''
+      const obj = agentEventDataRecord(event.data) ?? {}
+      const segmentId = typeof obj?.segmentId === 'string' ? obj.segmentId : ''
       if (!segmentId) continue
       const kind = typeof obj.kind === 'string' ? obj.kind : 'planning_round'
       const display = (obj.display ?? {}) as { mode?: unknown; label?: unknown }
@@ -712,8 +712,8 @@ export function buildMessageThinkingFromAgentEvents(events: AgentUIEvent[]): Mes
     }
 
     if (event.type === 'segment-end') {
-      const obj = event.data as { segment_id?: unknown }
-      const segmentId = typeof obj.segment_id === 'string' ? obj.segment_id : ''
+      const obj = agentEventDataRecord(event.data) ?? {}
+      const segmentId = typeof obj?.segmentId === 'string' ? obj.segmentId : ''
       if (segmentId && activeSegmentId === segmentId) {
         activeSegmentId = null
       }
@@ -721,10 +721,10 @@ export function buildMessageThinkingFromAgentEvents(events: AgentUIEvent[]): Mes
     }
 
     if (event.type !== 'assistant-delta') continue
-    const obj = event.data as { content_delta?: unknown; role?: unknown; channel?: unknown }
+    const obj = agentEventDataRecord(event.data) ?? {}
     if (obj.role != null && obj.role !== 'assistant') continue
-    if (typeof obj.content_delta !== 'string' || obj.content_delta === '') continue
-    const delta = obj.content_delta
+    if (typeof obj.delta !== 'string' || obj.delta === '') continue
+    const delta = obj.delta
 
     if (activeSegmentId) {
       const idx = indexBySegmentId.get(activeSegmentId)
@@ -803,12 +803,10 @@ export function applyBrowserToolCall(
   event: AgentUIEvent,
 ): BrowserActionToolCallPatch {
   if (event.type !== 'tool-call') return { nextActions: actions }
-  const toolName = pickToolName(event.data)
+  const toolName = pickToolName(event.data, event.toolName)
   if (toolName !== 'browser') return { nextActions: actions }
 
-  const args = event.data && typeof event.data === 'object'
-    ? (event.data as { arguments?: unknown }).arguments
-    : undefined
+  const args = agentEventToolInput(event.data)
   const command = extractBrowserCommand(args)
   const appended: BrowserActionRef = {
     id: pickToolCallId(event),
@@ -822,13 +820,10 @@ export function applyBrowserToolResult(
   event: AgentUIEvent,
 ): BrowserActionToolResultPatch {
   if (event.type !== 'tool-result') return { nextActions: actions }
-  const toolName = pickToolName(event.data)
+  const toolName = pickToolName(event.data, event.toolName)
   if (toolName !== 'browser') return { nextActions: actions }
 
-  const data = event.data && typeof event.data === 'object'
-    ? event.data as { result?: unknown; tool_call_id?: unknown }
-    : undefined
-  const result = data?.result
+  const result = agentEventToolOutput(event.data)
   const toolCallId = pickToolCallId(event)
   const { output, exitCode, url } = extractBrowserOutput(result)
   const screenshotArtifact = extractBrowserScreenshotArtifact(result)
@@ -890,8 +885,7 @@ const SUB_AGENT_RESULT_TOOL_NAMES = new Set([
 ])
 
 function extractSpawnArguments(data: unknown): Partial<SubAgentRef> {
-  if (!data || typeof data !== 'object') return {}
-  const args = (data as { arguments?: unknown }).arguments
+  const args = agentEventToolInput(data)
   if (!args || typeof args !== 'object') return {}
   const typed = args as Record<string, unknown>
   return {
@@ -904,25 +898,22 @@ function extractSpawnArguments(data: unknown): Partial<SubAgentRef> {
 }
 
 function extractSubAgentResult(data: unknown): Record<string, unknown> {
-  if (!data || typeof data !== 'object') return {}
-  const result = (data as { result?: unknown }).result
+  const result = agentEventToolOutput(data)
   if (!result || typeof result !== 'object') return {}
   return result as Record<string, unknown>
 }
 
 function extractSubAgentError(data: unknown): string | undefined {
-  if (!data || typeof data !== 'object') return undefined
-  const rawError = (data as { error?: unknown }).error
+  const rawError = agentEventDataRecord(data)?.error
   if (!rawError || typeof rawError !== 'object') return undefined
-  const typed = rawError as { message?: unknown; error_class?: unknown }
+  const typed = rawError as { message?: unknown; errorClass?: unknown }
   if (typeof typed.message === 'string') return typed.message
-  if (typeof typed.error_class === 'string') return typed.error_class
+  if (typeof typed.errorClass === 'string') return typed.errorClass
   return undefined
 }
 
 function hasSubAgentError(data: unknown): boolean {
-  if (!data || typeof data !== 'object') return false
-  const rawError = (data as { error?: unknown }).error
+  const rawError = agentEventDataRecord(data)?.error
   return rawError != null && typeof rawError === 'object'
 }
 
@@ -939,7 +930,7 @@ export function applySubAgentToolCall(
   event: AgentUIEvent,
 ): SubAgentToolCallPatch {
   if (event.type !== 'tool-call') return { nextAgents: agents }
-  const toolName = pickToolName(event.data)
+  const toolName = pickToolName(event.data, event.toolName)
   if (!SUB_AGENT_CALL_TOOL_NAMES.has(toolName)) return { nextAgents: agents }
 
   const fields = extractSpawnArguments(event.data)
@@ -961,7 +952,7 @@ export function applySubAgentToolResult(
   event: AgentUIEvent,
 ): SubAgentToolResultPatch {
   if (event.type !== 'tool-result') return { nextAgents: agents }
-  const toolName = pickToolName(event.data)
+  const toolName = pickToolName(event.data, event.toolName)
   if (!SUB_AGENT_RESULT_TOOL_NAMES.has(toolName)) return { nextAgents: agents }
 
   const toolCallId = pickToolCallId(event)
@@ -1406,16 +1397,12 @@ export function applyFileOpToolCall(
   event: AgentUIEvent,
 ): FileOpToolCallPatch {
   if (event.type !== 'tool-call') return { nextOps: ops }
-  const rawToolName = pickToolName(event.data)
+  const rawToolName = pickToolName(event.data, event.toolName)
   const toolName = normalizeFileOpToolName(rawToolName)
   if (!FILE_OP_TOOL_NAMES.has(rawToolName) && !FILE_OP_TOOL_NAMES.has(toolName)) return { nextOps: ops }
 
-  const args = event.data && typeof event.data === 'object'
-    ? (event.data as { arguments?: unknown }).arguments as Record<string, unknown> | undefined ?? {}
-    : {}
-  const eventDisplayDescription = event.data && typeof event.data === 'object'
-    ? (event.data as { display_description?: unknown }).display_description
-    : undefined
+  const args = agentEventToolInput(event.data) ?? {}
+  const eventDisplayDescription = agentEventDataRecord(event.data)?.displayDescription
   const overrideLabel = typeof eventDisplayDescription === 'string' && eventDisplayDescription.trim() !== ''
     ? eventDisplayDescription.trim()
     : undefined
@@ -1443,15 +1430,12 @@ export function applyFileOpToolResult(
   event: AgentUIEvent,
 ): FileOpToolResultPatch {
   if (event.type !== 'tool-result') return { nextOps: ops }
-  const rawToolName = pickToolName(event.data)
+  const rawToolName = pickToolName(event.data, event.toolName)
   const toolName = normalizeFileOpToolName(rawToolName)
   if (!FILE_OP_TOOL_NAMES.has(rawToolName) && !FILE_OP_TOOL_NAMES.has(toolName)) return { nextOps: ops }
 
   const toolCallId = pickToolCallId(event)
-  const data = event.data && typeof event.data === 'object'
-    ? event.data as { result?: unknown }
-    : undefined
-  const result = data?.result
+  const result = agentEventToolOutput(event.data)
   const error = extractCodeExecutionError(event)
   const hasError = !!(error.errorClass || error.errorMessage)
 
@@ -1501,12 +1485,10 @@ export function applyWebFetchToolCall(
   event: AgentUIEvent,
 ): WebFetchToolCallPatch {
   if (event.type !== 'tool-call') return { nextFetches: fetches }
-  const toolName = pickToolName(event.data)
+  const toolName = pickToolName(event.data, event.toolName)
   if (!isWebFetchToolName(toolName)) return { nextFetches: fetches }
 
-  const args = event.data && typeof event.data === 'object'
-    ? (event.data as { arguments?: unknown }).arguments as Record<string, unknown> | undefined ?? {}
-    : {}
+  const args = agentEventToolInput(event.data) ?? {}
   const url = typeof args.url === 'string' ? args.url : ''
   const appended: WebFetchRef = {
     id: pickToolCallId(event),
@@ -1522,14 +1504,11 @@ export function applyWebFetchToolResult(
   event: AgentUIEvent,
 ): WebFetchToolResultPatch {
   if (event.type !== 'tool-result') return { nextFetches: fetches }
-  const toolName = pickToolName(event.data)
+  const toolName = pickToolName(event.data, event.toolName)
   if (!isWebFetchToolName(toolName)) return { nextFetches: fetches }
 
   const toolCallId = pickToolCallId(event)
-  const data = event.data && typeof event.data === 'object'
-    ? event.data as { result?: unknown }
-    : undefined
-  const result = data?.result as Record<string, unknown> | undefined
+  const result = agentEventToolOutput(event.data) as Record<string, unknown> | undefined
   const error = extractCodeExecutionError(event)
   const hasError = !!(event.errorCode || error.errorClass || error.errorMessage)
   const title = typeof result?.title === 'string' ? result.title : undefined
@@ -1569,19 +1548,19 @@ export function buildTodosFromAgentEvents(
   for (let i = events.length - 1; i >= 0; i--) {
     const event = events[i]
     if (event.type !== 'todo-updated') continue
-    const obj = event.data as { todos?: unknown }
+    const obj = agentEventDataRecord(event.data)
     if (!Array.isArray(obj?.todos)) continue
     return (obj.todos as unknown[]).flatMap((t) => {
       if (!t || typeof t !== 'object') return []
-      const item = t as { id?: unknown; content?: unknown; status?: unknown }
+      const item = t as { id?: unknown; content?: unknown; status?: unknown; activeForm?: unknown }
       if (
         typeof item.id !== 'string' ||
         typeof item.content !== 'string' ||
         typeof item.status !== 'string'
       )
         return []
-      const activeForm = typeof (item as { active_form?: unknown }).active_form === 'string'
-        ? (item as { active_form: string }).active_form.trim()
+      const activeForm = typeof item.activeForm === 'string'
+        ? item.activeForm.trim()
         : ''
       return [{ id: item.id, content: item.content, ...(activeForm ? { activeForm } : {}), status: item.status }]
     })

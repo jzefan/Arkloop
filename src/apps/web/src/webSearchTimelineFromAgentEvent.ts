@@ -1,7 +1,12 @@
 import { canonicalToolName, pickLogicalToolName } from '@arkloop/shared'
 import type { WebSearchPhaseStep } from './components/CopTimeline'
 import type { WebSource } from './storage'
-import type { AgentUIEvent } from './agent-ui'
+import {
+  agentEventDataRecord,
+  agentEventToolInput,
+  agentEventToolOutput,
+  type AgentUIEvent,
+} from './agent-ui'
 
 export const DEFAULT_SEARCHING_LABEL = 'Searching'
 export const COMPLETED_SEARCHING_LABEL = 'Search completed'
@@ -56,8 +61,8 @@ export function applyAgentEventToWebSearchSteps(
   event: AgentUIEvent,
 ): WebSearchPhaseStep[] {
   if (event.type === 'segment-start') {
-    const obj = event.data as { segment_id?: unknown; kind?: unknown; display?: unknown }
-    const segmentId = typeof obj.segment_id === 'string' ? obj.segment_id : ''
+    const obj = agentEventDataRecord(event.data) ?? {}
+    const segmentId = typeof obj?.segmentId === 'string' ? obj.segmentId : ''
     const kind = typeof obj.kind === 'string' ? obj.kind : ''
     if (!segmentId || !kind.startsWith('search_')) return steps
     if (kind === 'search_planning') return steps
@@ -81,8 +86,8 @@ export function applyAgentEventToWebSearchSteps(
   }
 
   if (event.type === 'segment-end') {
-    const obj = event.data as { segment_id?: unknown }
-    const segmentId = typeof obj.segment_id === 'string' ? obj.segment_id : ''
+    const obj = agentEventDataRecord(event.data)
+    const segmentId = typeof obj?.segmentId === 'string' ? obj.segmentId : ''
     if (!segmentId) return steps
     return steps.map((s) =>
       s.id === segmentId ? { ...s, status: 'done' as const } : s,
@@ -90,12 +95,12 @@ export function applyAgentEventToWebSearchSteps(
   }
 
   if (event.type === 'tool-call') {
-    const obj = event.data as { tool_call_id?: unknown; arguments?: unknown }
+    const obj = agentEventDataRecord(event.data)
     const toolName = pickLogicalToolName(event.data, event.toolName)
     if (!isWebSearchToolName(toolName)) return steps
-    const callId = typeof obj.tool_call_id === 'string' ? obj.tool_call_id : event.id
+    const callId = typeof obj?.toolCallId === 'string' ? obj.toolCallId : event.id
     if (steps.some((s) => s.id === callId)) return steps
-    const args = obj.arguments as Record<string, unknown> | undefined
+    const args = agentEventToolInput(event.data)
     const queries = webSearchQueriesFromArguments(args)
     const step: WebSearchPhaseStep = {
       id: callId,
@@ -109,11 +114,11 @@ export function applyAgentEventToWebSearchSteps(
   }
 
   if (event.type === 'tool-result') {
-    const obj = event.data as { tool_call_id?: unknown; result?: unknown }
+    const obj = agentEventDataRecord(event.data)
     const toolName = pickLogicalToolName(event.data, event.toolName)
     if (!isWebSearchToolName(toolName)) return steps
-    const callId = typeof obj.tool_call_id === 'string' ? obj.tool_call_id : event.id
-    const sources = webSearchSourcesFromResult(obj.result)
+    const callId = typeof obj?.toolCallId === 'string' ? obj.toolCallId : event.id
+    const sources = webSearchSourcesFromResult(agentEventToolOutput(event.data))
     const next = steps.map((s) =>
       s.id === callId
         ? {

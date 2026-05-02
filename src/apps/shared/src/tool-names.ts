@@ -20,8 +20,12 @@ export function pickLogicalToolName(
 ): string {
   if (data && typeof data === 'object') {
     const typed = data as {
+      toolName?: unknown
       tool_name?: unknown
       resolved_tool_name?: unknown
+    }
+    if (typeof typed.toolName === 'string' && typed.toolName.trim() !== '') {
+      return canonicalToolName(typed.toolName)
     }
     if (typeof typed.tool_name === 'string' && typed.tool_name.trim() !== '') {
       return canonicalToolName(typed.tool_name)

@@ -244,13 +244,137 @@ export type AgentUIEventType =
   | 'todo-updated'
   | string
 
+export type AgentAssistantDeltaData = {
+  role?: string
+  channel?: string
+  delta: string
+}
+
+export type AgentToolInputDeltaData = {
+  toolCallIndex?: number
+  toolCallId?: string
+  toolName?: string
+  delta: string
+}
+
+export type AgentToolCallData = {
+  toolCallId: string
+  toolCallIndex?: number
+  toolName: string
+  input: unknown
+  displayDescription?: string
+  llmName?: string
+}
+
+export type AgentToolResultErrorData = {
+  errorClass?: string
+  message?: string
+  code?: string
+  details?: Record<string, unknown>
+}
+
+export type AgentToolResultData = {
+  toolCallId: string
+  toolName?: string
+  output: unknown
+  error?: AgentToolResultErrorData
+}
+
+export type AgentTerminalDeltaData = {
+  processRef?: string
+  chunk?: string
+  stream: 'stdout' | 'stderr'
+}
+
+export type AgentSegmentDisplayData = {
+  mode?: string
+  label?: string
+  queries?: string[]
+}
+
+export type AgentSegmentStartData = {
+  segmentId: string
+  kind: string
+  display?: AgentSegmentDisplayData
+}
+
+export type AgentSegmentEndData = {
+  segmentId: string
+}
+
+export type AgentContextCompactData = {
+  op?: string
+  phase?: string
+  droppedPrefix?: number
+}
+
+export type AgentInputRequestData = {
+  requestId?: string
+  message?: string
+  requestedSchema?: unknown
+}
+
+export type AgentSecurityBlockData = {
+  message?: string
+}
+
+export type AgentThreadTitleData = {
+  threadId?: string
+  title?: string
+}
+
+export type AgentThreadCollaborationData = {
+  threadId?: string
+  collaborationMode?: string
+  collaborationModeRevision?: number
+}
+
+export type AgentTodoItemData = {
+  id: string
+  content: string
+  status: string
+  activeForm?: string
+}
+
+export type AgentTodoUpdatedData = {
+  todos: AgentTodoItemData[]
+}
+
+export type AgentRunErrorData = {
+  message?: string
+  code?: string
+  errorClass?: string
+  traceId?: string
+  details?: Record<string, unknown>
+}
+
+export type AgentUIEventData =
+  | AgentAssistantDeltaData
+  | AgentToolInputDeltaData
+  | AgentToolCallData
+  | AgentToolResultData
+  | AgentTerminalDeltaData
+  | AgentSegmentStartData
+  | AgentSegmentEndData
+  | AgentContextCompactData
+  | AgentInputRequestData
+  | AgentSecurityBlockData
+  | AgentThreadTitleData
+  | AgentThreadCollaborationData
+  | AgentTodoUpdatedData
+  | AgentRunErrorData
+  | Record<string, unknown>
+  | string
+  | null
+  | undefined
+
 export type AgentUIEvent = {
   id: string
   streamId: string
   order: number
   timestamp: string
   type: AgentUIEventType
-  data: unknown
+  data: AgentUIEventData
   toolName?: string
   errorCode?: string
 }

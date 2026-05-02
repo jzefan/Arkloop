@@ -6,6 +6,11 @@ import type { UploadedThreadAttachment } from './api'
 import type { FontFamily, CodeFontFamily, FontSize, ThemePreset, ThemeDefinition } from './themes/types'
 import type { AssistantTurnSegment, AssistantTurnUi, CopBlockItem, TurnToolCallRef } from './assistantTurnSegments'
 import type { AgentUIEvent } from './agent-ui/contract'
+import {
+  normalizeAgentEventData,
+  normalizeAgentEventToolName,
+  normalizeAgentEventType,
+} from './agent-ui/event-data'
 
 export {
   readAccessToken as readAccessTokenFromStorage,
@@ -1716,49 +1721,6 @@ export function writeDeveloperPromptCacheDebugEnabled(value: boolean): void {
 
 export type MessageAgentEvent = AgentUIEvent
 
-function normalizeStoredEventType(type: string): string {
-  switch (type) {
-    case 'message.delta':
-      return 'assistant-delta'
-    case 'tool.call.delta':
-      return 'tool-input-delta'
-    case 'tool.call':
-      return 'tool-call'
-    case 'tool.result':
-      return 'tool-result'
-    case 'terminal.stdout_delta':
-    case 'terminal.stderr_delta':
-      return 'terminal-delta'
-    case 'run.segment.start':
-      return 'segment-start'
-    case 'run.segment.end':
-      return 'segment-end'
-    case 'run.context_compact':
-      return 'context-compact'
-    case 'run.input_requested':
-      return 'input-request'
-    case 'run.completed':
-      return 'run-completed'
-    case 'run.failed':
-      return 'run-failed'
-    case 'run.cancelled':
-      return 'run-cancelled'
-    case 'run.interrupted':
-      return 'run-interrupted'
-    case 'security.injection.blocked':
-      return 'security-block'
-    case 'thread.title.updated':
-      return 'thread-title'
-    case 'thread.collaboration_mode.updated':
-    case 'thread.collaboration.updated':
-      return 'thread-collaboration'
-    case 'todo.updated':
-      return 'todo-updated'
-    default:
-      return type
-  }
-}
-
 function normalizeStoredAgentEvent(item: unknown): MessageAgentEvent | null {
   if (!item || typeof item !== 'object') return null
   const record = item as Record<string, unknown>
@@ -1768,7 +1730,28 @@ function normalizeStoredAgentEvent(item: unknown): MessageAgentEvent | null {
     typeof record.order === 'number' &&
     typeof record.type === 'string'
   ) {
-    return item as MessageAgentEvent
+    const type = normalizeAgentEventType(record.type)
+    const data = normalizeAgentEventData({
+      type,
+      eventId: record.id,
+      data: record.data,
+      toolName: typeof record.toolName === 'string' ? record.toolName : undefined,
+      errorCode: typeof record.errorCode === 'string' ? record.errorCode : undefined,
+    })
+    return {
+      id: record.id,
+      streamId: record.streamId,
+      order: record.order,
+      timestamp: typeof record.timestamp === 'string' ? record.timestamp : '',
+      type,
+      data,
+      toolName: normalizeAgentEventToolName({
+        type,
+        data,
+        fallback: typeof record.toolName === 'string' ? record.toolName : undefined,
+      }),
+      errorCode: typeof record.errorCode === 'string' ? record.errorCode : undefined,
+    }
   }
   if (
     typeof record.id === 'string' &&
@@ -1776,14 +1759,27 @@ function normalizeStoredAgentEvent(item: unknown): MessageAgentEvent | null {
     typeof record.sequence === 'number' &&
     typeof record.kind === 'string'
   ) {
+    const type = normalizeAgentEventType(record.kind)
+    const data = normalizeAgentEventData({
+      type,
+      rawType: record.kind,
+      eventId: record.id,
+      data: record.payload,
+      toolName: typeof record.toolName === 'string' ? record.toolName : undefined,
+      errorCode: typeof record.errorCode === 'string' ? record.errorCode : undefined,
+    })
     return {
       id: record.id,
       streamId: record.streamId,
       order: record.sequence,
       timestamp: typeof record.timestamp === 'string' ? record.timestamp : '',
-      type: normalizeStoredEventType(record.kind),
-      data: record.payload,
-      toolName: typeof record.toolName === 'string' ? record.toolName : undefined,
+      type,
+      data,
+      toolName: normalizeAgentEventToolName({
+        type,
+        data,
+        fallback: typeof record.toolName === 'string' ? record.toolName : undefined,
+      }),
       errorCode: typeof record.errorCode === 'string' ? record.errorCode : undefined,
     }
   }
@@ -1793,14 +1789,27 @@ function normalizeStoredAgentEvent(item: unknown): MessageAgentEvent | null {
     typeof record.seq === 'number' &&
     typeof record.type === 'string'
   ) {
+    const type = normalizeAgentEventType(record.type)
+    const data = normalizeAgentEventData({
+      type,
+      rawType: record.type,
+      eventId: record.event_id,
+      data: record.data,
+      toolName: typeof record.tool_name === 'string' ? record.tool_name : undefined,
+      errorCode: typeof record.error_class === 'string' ? record.error_class : undefined,
+    })
     return {
       id: record.event_id,
       streamId: record.run_id,
       order: record.seq,
       timestamp: typeof record.ts === 'string' ? record.ts : '',
-      type: normalizeStoredEventType(record.type),
-      data: record.data,
-      toolName: typeof record.tool_name === 'string' ? record.tool_name : undefined,
+      type,
+      data,
+      toolName: normalizeAgentEventToolName({
+        type,
+        data,
+        fallback: typeof record.tool_name === 'string' ? record.tool_name : undefined,
+      }),
       errorCode: typeof record.error_class === 'string' ? record.error_class : undefined,
     }
   }

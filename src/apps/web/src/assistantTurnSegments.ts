@@ -15,6 +15,11 @@ import {
   type CopBlockItem,
   type TurnToolCallRef,
 } from '../../shared/src/assistantTurn'
+import {
+  agentEventDataRecord,
+  agentEventToolInput,
+  agentEventToolOutput,
+} from './agent-ui/event-data'
 import type { AgentUIEvent } from './agent-ui/contract'
 
 export {
@@ -50,6 +55,44 @@ function toAssistantTurnEventType(type: string): string {
   }
 }
 
+function toAssistantTurnEventData(event: AgentUIEvent): unknown {
+  const data = agentEventDataRecord(event.data)
+  switch (event.type) {
+    case 'assistant-delta':
+      return {
+        role: data?.role,
+        channel: data?.channel,
+        content_delta: data?.delta,
+      }
+    case 'tool-call':
+      return {
+        tool_call_id: data?.toolCallId,
+        tool_name: data?.toolName ?? event.toolName,
+        arguments: agentEventToolInput(event.data),
+        display_description: data?.displayDescription,
+      }
+    case 'tool-result':
+      return {
+        tool_call_id: data?.toolCallId,
+        tool_name: data?.toolName ?? event.toolName,
+        result: agentEventToolOutput(event.data),
+        error: data?.error,
+      }
+    case 'segment-start':
+      return {
+        segment_id: data?.segmentId,
+        kind: data?.kind,
+        display: data?.display,
+      }
+    case 'segment-end':
+      return {
+        segment_id: data?.segmentId,
+      }
+    default:
+      return event.data
+  }
+}
+
 function toAssistantTurnEvent(event: AgentUIEvent): AssistantTurnEvent {
   return {
     event_id: event.id,
@@ -57,7 +100,7 @@ function toAssistantTurnEvent(event: AgentUIEvent): AssistantTurnEvent {
     seq: event.order,
     ts: event.timestamp,
     type: toAssistantTurnEventType(event.type),
-    data: event.data,
+    data: toAssistantTurnEventData(event),
     tool_name: event.toolName,
     error_class: event.errorCode,
   }
