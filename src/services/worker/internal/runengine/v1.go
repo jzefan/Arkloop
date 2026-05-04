@@ -667,11 +667,7 @@ func (e *EngineV1) resolveCompactMaintenanceRoute(
 		}
 		return &selected, e.auxGateway, windowTokens, nil
 	}
-	resolved, err := pipeline.ResolveGatewayConfigFromSelectedRoute(selected, false, llmMaxResponseBytes)
-	if err != nil {
-		return nil, nil, 0, err
-	}
-	gateway, err := llm.NewGatewayFromResolvedConfig(resolved)
+	gateway, err := pipeline.GatewayFromSelectedRoute(selected, e.auxGateway, false, llmMaxResponseBytes)
 	if err != nil {
 		return nil, nil, 0, err
 	}

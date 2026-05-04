@@ -1,16 +1,21 @@
 package catalogapi
 
 import (
+	"context"
 	"log/slog"
 	nethttp "net/http"
 
 	"arkloop/services/api/internal/audit"
 	"arkloop/services/api/internal/auth"
 	"arkloop/services/api/internal/data"
+	"arkloop/services/api/internal/llmproviders"
 	repopersonas "arkloop/services/api/internal/personas"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
+
+type LlmProviderListAugmenter func(ctx context.Context, accountID uuid.UUID, scope string, userID uuid.UUID) ([]llmproviders.Provider, error)
 
 type Deps struct {
 	AuthService                  *auth.Service
@@ -44,6 +49,7 @@ type Deps struct {
 	ArtifactStoreAvailable       bool
 	Logger                       *slog.Logger
 	MCPDiscoveryService          MCPDiscoverySourceService
+	LlmProviderListAugmenter     LlmProviderListAugmenter
 }
 
 type personaSyncTrigger interface {
@@ -51,7 +57,7 @@ type personaSyncTrigger interface {
 }
 
 func RegisterRoutes(mux *nethttp.ServeMux, deps Deps) {
-	mux.HandleFunc("/v1/llm-providers", llmProvidersEntry(deps.AuthService, deps.AccountMembershipRepo, deps.LlmCredentialsRepo, deps.LlmRoutesRepo, deps.SecretsRepo, deps.ProjectRepo, deps.Pool))
+	mux.HandleFunc("/v1/llm-providers", llmProvidersEntry(deps.AuthService, deps.AccountMembershipRepo, deps.LlmCredentialsRepo, deps.LlmRoutesRepo, deps.SecretsRepo, deps.ProjectRepo, deps.Pool, deps.LlmProviderListAugmenter))
 	mux.HandleFunc("/v1/llm-providers/", llmProviderEntry(deps.AuthService, deps.AccountMembershipRepo, deps.LlmCredentialsRepo, deps.LlmRoutesRepo, deps.SecretsRepo, deps.ProjectRepo, deps.Pool))
 	mux.HandleFunc("/v1/asr-credentials", asrCredentialsEntry(deps.AuthService, deps.AccountMembershipRepo, deps.AsrCredentialsRepo, deps.SecretsRepo, deps.Pool))
 	mux.HandleFunc("/v1/asr-credentials/", asrCredentialEntry(deps.AuthService, deps.AccountMembershipRepo, deps.AsrCredentialsRepo))

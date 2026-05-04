@@ -1296,6 +1296,9 @@ export interface LocaleStrings {
     editProvider: string;
     deleteProvider: string;
     deleteProviderConfirm: string;
+    localProvider: string;
+    readOnlyProvider: string;
+    authModeOAuth: string;
     providerName: string;
     providerNamePlaceholder: string;
     vendor: string;
@@ -1319,6 +1322,8 @@ export interface LocaleStrings {
     importModels: string;
     importing: string;
     importDone: (count: number) => string;
+    modelVisible: string;
+    modelHidden: string;
     modelName: string;
     modelNamePlaceholder: string;
     priority: string;

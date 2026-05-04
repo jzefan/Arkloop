@@ -33,6 +33,7 @@ import (
 	"arkloop/services/shared/desktop"
 	"arkloop/services/shared/discordbot"
 	"arkloop/services/shared/eventbus"
+	"arkloop/services/shared/localproviders"
 	"arkloop/services/shared/objectstore"
 	"arkloop/services/shared/telegrambot"
 )
@@ -306,6 +307,7 @@ func NewHandler(cfg HandlerConfig) nethttp.Handler {
 		ArtifactStoreAvailable:       cfg.ArtifactStore != nil,
 		Logger:                       cfg.Logger,
 		MCPDiscoveryService:          cfg.MCPDiscoveryService,
+		LlmProviderListAugmenter:     catalogapi.NewLocalProviderListAugmenter(localproviders.NewResolver(localproviders.Options{})),
 	})
 
 	billingapi.RegisterRoutes(mux, billingapi.Deps{

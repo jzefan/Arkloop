@@ -22,6 +22,7 @@ import (
 	sharedencryption "arkloop/services/shared/encryption"
 	"arkloop/services/shared/eventbus"
 	sharedexec "arkloop/services/shared/executionconfig"
+	"arkloop/services/shared/localproviders"
 	"arkloop/services/shared/objectstore"
 	"arkloop/services/shared/onebotclient"
 	"arkloop/services/shared/rollout"
@@ -4892,6 +4893,14 @@ func loadDesktopRoutingConfig(ctx context.Context, db data.DesktopDB) (routing.P
 		creds = append(creds, cred)
 		credMap[c.id] = cred
 	}
+	localCfg := routing.AppendLocalProviders(routing.ProviderRoutingConfig{}, localproviders.NewResolver(localproviders.Options{}).ProviderStatuses(ctx))
+	for _, cred := range localCfg.Credentials {
+		if _, exists := credMap[cred.ID]; exists {
+			continue
+		}
+		creds = append(creds, cred)
+		credMap[cred.ID] = cred
+	}
 	if len(creds) == 0 {
 		return routing.ProviderRoutingConfig{}, fmt.Errorf("no active credentials found in database")
 	}
@@ -4949,6 +4958,7 @@ func loadDesktopRoutingConfig(ctx context.Context, db data.DesktopDB) (routing.P
 	}
 	routeRows.Close()
 	tx.Rollback(ctx)
+	routes = append(routes, localCfg.Routes...)
 
 	if len(routes) == 0 {
 		return routing.ProviderRoutingConfig{}, fmt.Errorf("no routes found in database")

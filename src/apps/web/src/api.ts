@@ -1640,6 +1640,9 @@ export type LlmProvider = {
   account_id?: string | null
   scope: string
   provider: string
+  source?: string
+  read_only?: boolean
+  auth_mode?: string
   name: string
   key_prefix: string | null
   base_url: string | null

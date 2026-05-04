@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	sharedent "arkloop/services/shared/entitlement"
+	"arkloop/services/shared/localproviders"
 	"arkloop/services/worker/internal/data"
 	"arkloop/services/worker/internal/llm"
 	"arkloop/services/worker/internal/routing"
@@ -215,6 +216,16 @@ func NewRoutingMiddleware(
 		)
 		if selected.Credential.ProviderKind == routing.ProviderKindStub {
 			gateway = auxGateway
+		} else if isLocalProviderKind(selected.Credential.ProviderKind) {
+			gateway, gatewayErr = gatewayFromSelectedRoute(*selected, auxGateway, emitDebugEvents, rc.LlmMaxResponseBytes)
+			if gatewayErr == nil {
+				resolvedCfg, resolveErr := ResolveGatewayConfigFromSelectedRoute(*selected, emitDebugEvents, rc.LlmMaxResponseBytes)
+				if resolveErr == nil {
+					estimateProviderReqBytes = func(req llm.Request) (int, error) {
+						return llm.EstimateProviderPayloadBytes(resolvedCfg, req)
+					}
+				}
+			}
 		} else {
 			resolvedCfg, resolveErr := ResolveGatewayConfigFromSelectedRoute(*selected, emitDebugEvents, rc.LlmMaxResponseBytes)
 			if resolveErr != nil {
@@ -346,6 +357,14 @@ func GatewayFromSelectedRoute(selected routing.SelectedProviderRoute, auxGateway
 	if selected.Credential.ProviderKind == routing.ProviderKindStub {
 		return auxGateway, nil
 	}
+	if isLocalProviderKind(selected.Credential.ProviderKind) {
+		return &localProviderGateway{
+			selected:            selected,
+			emitDebugEvents:     emitDebugEvents,
+			llmMaxResponseBytes: llmMaxResponseBytes,
+			resolver:            localproviders.NewResolver(localproviders.Options{}),
+		}, nil
+	}
 	resolved, err := ResolveGatewayConfigFromSelectedRoute(selected, emitDebugEvents, llmMaxResponseBytes)
 	if err != nil {
 		return nil, err
@@ -356,6 +375,9 @@ func GatewayFromSelectedRoute(selected routing.SelectedProviderRoute, auxGateway
 func ResolveGatewayConfigFromSelectedRoute(selected routing.SelectedProviderRoute, emitDebugEvents bool, llmMaxResponseBytes int) (llm.ResolvedGatewayConfig, error) {
 	credential := selected.Credential
 	advancedJSON := providerPayloadAdvancedJSON(mergeAdvancedJSON(credential.AdvancedJSON, selected.Route.AdvancedJSON))
+	if isLocalProviderKind(credential.ProviderKind) {
+		return resolveLocalProviderGatewayConfig(selected, localproviders.Credential{ProviderID: localProviderIDFromKind(credential.ProviderKind), AuthMode: localproviders.AuthModeAPIKey}, advancedJSON, emitDebugEvents, llmMaxResponseBytes)
+	}
 	apiKey, err := resolveAPIKey(credential)
 	if err != nil {
 		return llm.ResolvedGatewayConfig{}, err
@@ -413,6 +435,149 @@ func ResolveGatewayConfigFromSelectedRoute(selected routing.SelectedProviderRout
 		return llm.ResolvedGatewayConfig{}, fmt.Errorf("stub route does not resolve to protocol config")
 	default:
 		return llm.ResolvedGatewayConfig{}, fmt.Errorf("unknown provider_kind: %s", credential.ProviderKind)
+	}
+}
+
+func ResolveGatewayConfigFromSelectedRouteForRequest(ctx context.Context, selected routing.SelectedProviderRoute, emitDebugEvents bool, llmMaxResponseBytes int) (llm.ResolvedGatewayConfig, error) {
+	if !isLocalProviderKind(selected.Credential.ProviderKind) {
+		return ResolveGatewayConfigFromSelectedRoute(selected, emitDebugEvents, llmMaxResponseBytes)
+	}
+	providerID := localProviderIDFromKind(selected.Credential.ProviderKind)
+	credential, err := localproviders.NewResolver(localproviders.Options{}).Resolve(ctx, providerID, localproviders.ResolveOptions{Refresh: true})
+	if err != nil {
+		return llm.ResolvedGatewayConfig{}, err
+	}
+	advancedJSON := providerPayloadAdvancedJSON(mergeAdvancedJSON(selected.Credential.AdvancedJSON, selected.Route.AdvancedJSON))
+	return resolveLocalProviderGatewayConfig(selected, credential, advancedJSON, emitDebugEvents, llmMaxResponseBytes)
+}
+
+type localProviderGateway struct {
+	selected            routing.SelectedProviderRoute
+	emitDebugEvents     bool
+	llmMaxResponseBytes int
+	resolver            *localproviders.Resolver
+}
+
+func (g *localProviderGateway) Stream(ctx context.Context, request llm.Request, yield func(llm.StreamEvent) error) error {
+	providerID := localProviderIDFromKind(g.selected.Credential.ProviderKind)
+	credential, err := g.resolver.Resolve(ctx, providerID, localproviders.ResolveOptions{Refresh: true})
+	if err != nil {
+		return yield(llm.StreamRunFailed{Error: llm.GatewayError{ErrorClass: llm.ErrorClassConfigMissing, Message: "local provider credential unavailable"}})
+	}
+	advancedJSON := providerPayloadAdvancedJSON(mergeAdvancedJSON(g.selected.Credential.AdvancedJSON, g.selected.Route.AdvancedJSON))
+	resolved, err := resolveLocalProviderGatewayConfig(g.selected, credential, advancedJSON, g.emitDebugEvents, g.llmMaxResponseBytes)
+	if err != nil {
+		return yield(llm.StreamRunFailed{Error: llm.GatewayError{ErrorClass: llm.ErrorClassConfigInvalid, Message: "local provider configuration invalid", Details: map[string]any{"reason": err.Error()}}})
+	}
+	inner, err := llm.NewGatewayFromResolvedConfig(resolved)
+	if err != nil {
+		return yield(llm.StreamRunFailed{Error: llm.GatewayError{ErrorClass: llm.ErrorClassConfigInvalid, Message: "local provider gateway initialization failed"}})
+	}
+	if credential.ProviderID == localproviders.ClaudeCodeProviderID && credential.AuthMode == localproviders.AuthModeOAuth {
+		request = withClaudeCodeIdentityPrompt(request)
+	}
+	return inner.Stream(ctx, request, yield)
+}
+
+func resolveLocalProviderGatewayConfig(
+	selected routing.SelectedProviderRoute,
+	credential localproviders.Credential,
+	advancedJSON map[string]any,
+	emitDebugEvents bool,
+	llmMaxResponseBytes int,
+) (llm.ResolvedGatewayConfig, error) {
+	transport := llm.TransportConfig{
+		EmitDebugEvents:  emitDebugEvents,
+		MaxResponseBytes: llmMaxResponseBytes,
+	}
+	switch credential.ProviderID {
+	case localproviders.ClaudeCodeProviderID:
+		protocol, err := llm.ResolveAnthropicProtocolConfig(advancedJSON)
+		if err != nil {
+			return llm.ResolvedGatewayConfig{}, err
+		}
+		if credential.AuthMode == localproviders.AuthModeOAuth {
+			transport.APIKey = credential.AccessToken
+			transport.AuthScheme = "bearer"
+			transport.DefaultHeaders = map[string]string{
+				"anthropic-beta": "claude-code-20250219,oauth-2025-04-20,fine-grained-tool-streaming-2025-05-14,interleaved-thinking-2025-05-14",
+				"user-agent":     "claude-cli/2.1.2 (external, cli)",
+				"x-app":          "cli",
+			}
+		} else {
+			transport.APIKey = credential.APIKey
+		}
+		return llm.ResolvedGatewayConfig{
+			ProtocolKind: llm.ProtocolKindAnthropicMessages,
+			Model:        selected.Route.Model,
+			Transport:    transport,
+			Anthropic:    &protocol,
+		}, nil
+	case localproviders.CodexProviderID:
+		apiMode := "auto"
+		if credential.AuthMode == localproviders.AuthModeOAuth {
+			transport.APIKey = credential.AccessToken
+			transport.BaseURL = "https://chatgpt.com/backend-api"
+			transport.DefaultHeaders = map[string]string{}
+			if strings.TrimSpace(credential.AccountID) != "" {
+				transport.DefaultHeaders["chatgpt-account-id"] = strings.TrimSpace(credential.AccountID)
+			}
+			protocol, err := llm.ResolveOpenAIProtocolConfig("responses", advancedJSON)
+			if err != nil {
+				return llm.ResolvedGatewayConfig{}, err
+			}
+			protocol.PrimaryKind = llm.ProtocolKindOpenAICodexResponses
+			protocol.FallbackKind = nil
+			return llm.ResolvedGatewayConfig{
+				ProtocolKind: llm.ProtocolKindOpenAICodexResponses,
+				Model:        selected.Route.Model,
+				Transport:    transport,
+				OpenAI:       &protocol,
+			}, nil
+		} else {
+			transport.APIKey = credential.APIKey
+		}
+		protocol, err := llm.ResolveOpenAIProtocolConfig(apiMode, advancedJSON)
+		if err != nil {
+			return llm.ResolvedGatewayConfig{}, err
+		}
+		return llm.ResolvedGatewayConfig{
+			ProtocolKind: protocol.PrimaryKind,
+			Model:        selected.Route.Model,
+			Transport:    transport,
+			OpenAI:       &protocol,
+		}, nil
+	default:
+		return llm.ResolvedGatewayConfig{}, fmt.Errorf("unknown local provider: %s", credential.ProviderID)
+	}
+}
+
+func withClaudeCodeIdentityPrompt(request llm.Request) llm.Request {
+	block := llm.PromptPlanBlock{
+		Name:   "claude_code_identity",
+		Target: llm.PromptTargetSystemPrefix,
+		Role:   "system",
+		Text:   "You are Claude Code, Anthropic's official CLI for Claude.",
+	}
+	if request.PromptPlan == nil {
+		request.PromptPlan = &llm.PromptPlan{}
+	}
+	request.PromptPlan.SystemBlocks = append([]llm.PromptPlanBlock{block}, request.PromptPlan.SystemBlocks...)
+	return request
+}
+
+func isLocalProviderKind(kind routing.ProviderKind) bool {
+	return kind == routing.ProviderKindClaudeLocal || kind == routing.ProviderKindCodexLocal
+}
+
+func localProviderIDFromKind(kind routing.ProviderKind) string {
+	switch kind {
+	case routing.ProviderKindClaudeLocal:
+		return localproviders.ClaudeCodeProviderID
+	case routing.ProviderKindCodexLocal:
+		return localproviders.CodexProviderID
+	default:
+		return ""
 	}
 }
 

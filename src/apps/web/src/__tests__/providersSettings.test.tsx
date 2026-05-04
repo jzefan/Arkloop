@@ -198,6 +198,56 @@ describe('ProvidersSettings', () => {
 
     expect(deleteLlmProvider).toHaveBeenNthCalledWith(2, 'token', 'provider-2')
   })
+
+  it('本地只读供应商不显示写操作入口', async () => {
+    listLlmProviders.mockResolvedValueOnce([
+      {
+        id: 'claude-code-local',
+        name: 'Claude Code (Local)',
+        provider: 'claude_code_local',
+        source: 'local',
+        read_only: true,
+        auth_mode: 'api_key',
+        openai_api_mode: null,
+        base_url: null,
+        advanced_json: {},
+        models: [
+          {
+            id: 'model-1',
+            provider_id: 'claude-code-local',
+            model: 'claude-sonnet-4-6',
+            priority: 0,
+            is_default: true,
+            show_in_picker: true,
+            tags: [],
+            when: {},
+            multiplier: 1,
+          },
+        ],
+      },
+    ])
+
+    const { ProvidersSettings, LocaleProvider } = await loadSubject()
+
+    await act(async () => {
+      root!.render(
+        <LocaleProvider>
+          <ProvidersSettings accessToken="token" />
+        </LocaleProvider>,
+      )
+    })
+    await flushEffects()
+
+    expect(container.textContent).toContain('Claude Code (Local)')
+    expect(container.textContent).toContain('本地')
+    expect(container.textContent).toContain('只读')
+    expect(container.textContent).toContain('已启用')
+    expect(container.textContent).not.toContain('测试')
+    expect(container.textContent).not.toContain('添加模型')
+    expect(container.querySelector('input[type="password"]')).toBeNull()
+    expect(container.querySelector('button.button-secondary')).toBeNull()
+    expect(container.querySelector('[role="switch"]')).toBeNull()
+  })
 })
 
 async function openProviderDeleteConfirm() {
