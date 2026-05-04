@@ -21,6 +21,7 @@ type ProtocolKind string
 const (
 	ProtocolKindOpenAIChatCompletions ProtocolKind = "openai_chat_completions"
 	ProtocolKindOpenAIResponses       ProtocolKind = "openai_responses"
+	ProtocolKindOpenAICodexResponses  ProtocolKind = "openai_codex_responses"
 	ProtocolKindAnthropicMessages     ProtocolKind = "anthropic_messages"
 	ProtocolKindGeminiGenerateContent ProtocolKind = "gemini_generate_content"
 
@@ -29,6 +30,7 @@ const (
 
 type TransportConfig struct {
 	APIKey           string
+	AuthScheme       string
 	BaseURL          string
 	DefaultHeaders   map[string]string
 	EmitDebugEvents  bool
@@ -609,6 +611,17 @@ func NewGatewayFromResolvedConfig(cfg ResolvedGatewayConfig) (Gateway, error) {
 			Protocol:  *cfg.OpenAI,
 		}
 		return NewOpenAIGatewaySDK(gatewayCfg), nil
+	case ProtocolKindOpenAICodexResponses:
+		protocol := OpenAIProtocolConfig{PrimaryKind: ProtocolKindOpenAICodexResponses}
+		if cfg.OpenAI != nil {
+			protocol = *cfg.OpenAI
+			protocol.PrimaryKind = ProtocolKindOpenAICodexResponses
+		}
+		gatewayCfg := OpenAICodexResponsesGatewayConfig{
+			Transport: cfg.Transport,
+			Protocol:  protocol,
+		}
+		return NewOpenAICodexResponsesGateway(gatewayCfg), nil
 	case ProtocolKindAnthropicMessages:
 		if cfg.Anthropic == nil {
 			return nil, fmt.Errorf("missing anthropic protocol config")

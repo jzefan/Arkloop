@@ -1394,6 +1394,9 @@ export const en: LocaleStrings = {
     deleteProvider: "Delete provider",
     deleteProviderConfirm:
       "This will remove the provider and all its models. Continue?",
+    localProvider: "Local",
+    readOnlyProvider: "Read-only",
+    authModeOAuth: "OAuth",
     providerName: "Provider name",
     providerNamePlaceholder: "e.g. My OpenAI",
     vendor: "Vendor",
@@ -1417,6 +1420,8 @@ export const en: LocaleStrings = {
     importModels: "Import models",
     importing: "Importing...",
     importDone: (count) => `Imported ${count} model(s)`,
+    modelVisible: "Enabled",
+    modelHidden: "Hidden",
     modelName: "Model name",
     modelNamePlaceholder: "e.g. gpt-4o",
     priority: "Priority",

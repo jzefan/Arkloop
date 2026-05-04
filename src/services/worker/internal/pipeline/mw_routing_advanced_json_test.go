@@ -3,6 +3,7 @@ package pipeline
 import (
 	"testing"
 
+	"arkloop/services/shared/localproviders"
 	"arkloop/services/worker/internal/llm"
 	"arkloop/services/worker/internal/routing"
 )
@@ -92,6 +93,61 @@ func TestResolveGatewayConfigFromSelectedRoute_OpenAIAuto(t *testing.T) {
 	}
 	if routing.RouteContextWindowTokens(selected.Route) != 200000 {
 		t.Fatalf("expected route metadata to remain available locally")
+	}
+}
+
+func TestResolveLocalProviderGatewayConfigClaudeOAuth(t *testing.T) {
+	selected := routing.SelectedProviderRoute{
+		Route: routing.ProviderRouteRule{ID: "local-claude", Model: "claude-sonnet-4-6"},
+		Credential: routing.ProviderCredential{
+			ID:           localproviders.ClaudeCodeProviderID,
+			ProviderKind: routing.ProviderKindClaudeLocal,
+		},
+	}
+	resolved, err := resolveLocalProviderGatewayConfig(selected, localproviders.Credential{
+		ProviderID:  localproviders.ClaudeCodeProviderID,
+		AuthMode:    localproviders.AuthModeOAuth,
+		AccessToken: "oauth-access",
+	}, map[string]any{}, true, 8192)
+	if err != nil {
+		t.Fatalf("resolveLocalProviderGatewayConfig: %v", err)
+	}
+	if resolved.ProtocolKind != llm.ProtocolKindAnthropicMessages || resolved.Transport.AuthScheme != "bearer" {
+		t.Fatalf("unexpected resolved config: %#v", resolved)
+	}
+	if resolved.Transport.APIKey != "oauth-access" || resolved.Transport.DefaultHeaders["x-app"] != "cli" {
+		t.Fatalf("unexpected transport: %#v", resolved.Transport)
+	}
+	if resolved.Transport.DefaultHeaders["anthropic-beta"] == "" {
+		t.Fatalf("expected anthropic beta header")
+	}
+}
+
+func TestResolveLocalProviderGatewayConfigCodexOAuth(t *testing.T) {
+	selected := routing.SelectedProviderRoute{
+		Route: routing.ProviderRouteRule{ID: "local-codex", Model: "gpt-5.3-codex"},
+		Credential: routing.ProviderCredential{
+			ID:           localproviders.CodexProviderID,
+			ProviderKind: routing.ProviderKindCodexLocal,
+		},
+	}
+	resolved, err := resolveLocalProviderGatewayConfig(selected, localproviders.Credential{
+		ProviderID:  localproviders.CodexProviderID,
+		AuthMode:    localproviders.AuthModeOAuth,
+		AccessToken: "oauth-access",
+		AccountID:   "acc_123",
+	}, map[string]any{}, true, 8192)
+	if err != nil {
+		t.Fatalf("resolveLocalProviderGatewayConfig: %v", err)
+	}
+	if resolved.ProtocolKind != llm.ProtocolKindOpenAICodexResponses {
+		t.Fatalf("unexpected protocol kind: %s", resolved.ProtocolKind)
+	}
+	if resolved.Transport.BaseURL != "https://chatgpt.com/backend-api" || resolved.Transport.APIKey != "oauth-access" {
+		t.Fatalf("unexpected transport: %#v", resolved.Transport)
+	}
+	if resolved.Transport.DefaultHeaders["chatgpt-account-id"] != "acc_123" {
+		t.Fatalf("unexpected headers: %#v", resolved.Transport.DefaultHeaders)
 	}
 }
 

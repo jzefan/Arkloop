@@ -56,6 +56,9 @@ type llmProviderResponse struct {
 	Scope         string                     `json:"scope"`
 	Provider      string                     `json:"provider"`
 	Name          string                     `json:"name"`
+	Source        string                     `json:"source,omitempty"`
+	ReadOnly      bool                       `json:"read_only,omitempty"`
+	AuthMode      string                     `json:"auth_mode,omitempty"`
 	KeyPrefix     *string                    `json:"key_prefix"`
 	BaseURL       *string                    `json:"base_url"`
 	OpenAIAPIMode *string                    `json:"openai_api_mode"`
@@ -130,13 +133,14 @@ func llmProvidersEntry(
 	secretsRepo *data.SecretsRepository,
 	projectRepo *data.ProjectRepository,
 	pool data.TxStarter,
+	augmenter LlmProviderListAugmenter,
 ) func(nethttp.ResponseWriter, *nethttp.Request) {
 	service := llmproviders.NewService(pool, credRepo, routeRepo, secretsRepo, projectRepo)
 	return func(w nethttp.ResponseWriter, r *nethttp.Request) {
 		traceID := observability.TraceIDFromContext(r.Context())
 		switch r.Method {
 		case nethttp.MethodGet:
-			listLlmProviders(w, r, traceID, authService, membershipRepo, service)
+			listLlmProviders(w, r, traceID, authService, membershipRepo, service, augmenter)
 		case nethttp.MethodPost:
 			createLlmProvider(w, r, traceID, authService, membershipRepo, service)
 		default:
@@ -167,6 +171,13 @@ func llmProviderEntry(
 		providerID, err := uuid.Parse(parts[0])
 		if err != nil {
 			httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "invalid provider id", traceID, nil)
+			return
+		}
+		if isLocalProviderUUID(providerID) && isLocalProviderMutation(parts, r.Method) {
+			if _, ok := authenticateLLMProviderActor(w, r, traceID, authService, membershipRepo); !ok {
+				return
+			}
+			writeLocalProviderReadOnly(w, traceID)
 			return
 		}
 
@@ -223,6 +234,23 @@ func llmProviderEntry(
 	}
 }
 
+func isLocalProviderMutation(parts []string, method string) bool {
+	switch {
+	case len(parts) == 1:
+		return method == nethttp.MethodPatch || method == nethttp.MethodDelete
+	case len(parts) == 2 && parts[1] == "models":
+		return method == nethttp.MethodPost
+	case len(parts) == 3 && parts[1] == "models":
+		return method == nethttp.MethodPatch || method == nethttp.MethodDelete
+	default:
+		return false
+	}
+}
+
+func writeLocalProviderReadOnly(w nethttp.ResponseWriter, traceID string) {
+	httpkit.WriteError(w, nethttp.StatusForbidden, "llm_providers.read_only", "provider is read-only", traceID, nil)
+}
+
 func listLlmProviders(
 	w nethttp.ResponseWriter,
 	r *nethttp.Request,
@@ -230,6 +258,7 @@ func listLlmProviders(
 	authService *auth.Service,
 	membershipRepo *data.AccountMembershipRepository,
 	service *llmproviders.Service,
+	augmenter LlmProviderListAugmenter,
 ) {
 	actor, ok := authenticateLLMProviderActor(w, r, traceID, authService, membershipRepo)
 	if !ok {
@@ -243,6 +272,14 @@ func listLlmProviders(
 	if err != nil {
 		writeLlmProviderServiceError(r.Context(), w, traceID, err)
 		return
+	}
+	if augmenter != nil {
+		extra, err := augmenter(r.Context(), actor.AccountID, scope, actor.UserID)
+		if err != nil {
+			writeLlmProviderServiceError(r.Context(), w, traceID, err)
+			return
+		}
+		providers = append(providers, extra...)
 	}
 	resp := make([]llmProviderResponse, 0, len(providers))
 	for _, provider := range providers {
@@ -1275,6 +1312,9 @@ func toLlmProviderResponse(provider llmproviders.Provider) llmProviderResponse {
 		Scope:         scope,
 		Provider:      provider.Credential.Provider,
 		Name:          provider.Credential.Name,
+		Source:        provider.Source,
+		ReadOnly:      provider.ReadOnly,
+		AuthMode:      provider.AuthMode,
 		KeyPrefix:     provider.Credential.KeyPrefix,
 		BaseURL:       provider.Credential.BaseURL,
 		OpenAIAPIMode: provider.Credential.OpenAIAPIMode,

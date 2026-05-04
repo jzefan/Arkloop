@@ -65,8 +65,12 @@ func NewAnthropicGatewaySDK(cfg AnthropicGatewayConfig) Gateway {
 	cfg.MaxResponseBytes = normalizedTransport.cfg.MaxResponseBytes
 	cfg.BaseURL = normalizedTransport.cfg.BaseURL
 
+	authOption := option.WithAPIKey(strings.TrimSpace(normalizedTransport.cfg.APIKey))
+	if strings.EqualFold(strings.TrimSpace(normalizedTransport.cfg.AuthScheme), "bearer") {
+		authOption = option.WithAuthToken(strings.TrimSpace(normalizedTransport.cfg.APIKey))
+	}
 	opts := []option.RequestOption{
-		option.WithAPIKey(strings.TrimSpace(normalizedTransport.cfg.APIKey)),
+		authOption,
 		option.WithBaseURL(sdkBaseURL(normalizedTransport)),
 		option.WithHTTPClient(sdkHTTPClient(normalizedTransport)),
 		option.WithHeader("anthropic-version", protocol.Version),

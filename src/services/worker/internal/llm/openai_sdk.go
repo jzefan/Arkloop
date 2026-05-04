@@ -248,11 +248,19 @@ func (g *openAISDKGateway) chatPayload(request Request, llmCallID string) (map[s
 }
 
 func (g *openAISDKGateway) responsesPayload(request Request, llmCallID string) (map[string]any, int, StreamLlmRequest, error) {
+	payload, err := buildOpenAIResponsesPayload(request, g.protocol, g.quirks)
+	if err != nil {
+		return nil, 0, StreamLlmRequest{}, err
+	}
+	return g.providerRequest(request, llmCallID, "responses", "/responses", payload)
+}
+
+func buildOpenAIResponsesPayload(request Request, protocol OpenAIProtocolConfig, quirks *QuirkStore) (map[string]any, error) {
 	PrepareRequestModelInputImages(&request)
 	instructions, inputMessages := splitOpenAIResponsesInstructions(request.Messages)
 	input, err := toOpenAIResponsesInput(inputMessages)
 	if err != nil {
-		return nil, 0, StreamLlmRequest{}, err
+		return nil, err
 	}
 	payload := map[string]any{"model": request.Model, "input": input, "stream": true}
 	if instructions != "" {
@@ -268,14 +276,16 @@ func (g *openAISDKGateway) responsesPayload(request Request, llmCallID string) (
 		payload["tools"] = toOpenAIResponsesTools(request.Tools)
 		payload["tool_choice"] = openAIResponsesToolChoice(request.ToolChoice)
 	}
-	for k, v := range g.protocol.AdvancedPayloadJSON {
+	for k, v := range protocol.AdvancedPayloadJSON {
 		if _, exists := payload[k]; !exists {
 			payload[k] = v
 		}
 	}
 	applyOpenAIResponsesReasoningMode(payload, request.ReasoningMode)
-	g.quirks.ApplyAll(payload, openAIQuirks)
-	return g.providerRequest(request, llmCallID, "responses", "/responses", payload)
+	if quirks != nil {
+		quirks.ApplyAll(payload, openAIQuirks)
+	}
+	return payload, nil
 }
 
 func (g *openAISDKGateway) providerRequest(request Request, llmCallID string, apiMode string, path string, payload map[string]any) (map[string]any, int, StreamLlmRequest, error) {
@@ -491,6 +501,8 @@ type openAISDKResponsesState struct {
 	ctx                context.Context
 	llmCallID          string
 	yield              func(StreamEvent) error
+	providerKind       string
+	apiMode            string
 	visible            strings.Builder
 	thinking           strings.Builder
 	completed          bool
@@ -500,11 +512,15 @@ type openAISDKResponsesState struct {
 }
 
 func newOpenAISDKResponsesState(ctx context.Context, id string, yield func(StreamEvent) error) *openAISDKResponsesState {
-	return &openAISDKResponsesState{ctx: ctx, llmCallID: id, yield: yield, toolBuffers: map[int]*openAIResponsesToolBuffer{}, toolBufferByItemID: map[string]*openAIResponsesToolBuffer{}}
+	return &openAISDKResponsesState{ctx: ctx, llmCallID: id, yield: yield, providerKind: "openai", apiMode: "responses", toolBuffers: map[int]*openAIResponsesToolBuffer{}, toolBufferByItemID: map[string]*openAIResponsesToolBuffer{}}
 }
 func (s *openAISDKResponsesState) handle(event responses.ResponseStreamEventUnion) error {
+	return s.handleRaw(event.RawJSON())
+}
+
+func (s *openAISDKResponsesState) handleRaw(raw string) error {
 	var root map[string]any
-	_ = json.Unmarshal([]byte(event.RawJSON()), &root)
+	_ = json.Unmarshal([]byte(raw), &root)
 	typ, _ := root["type"].(string)
 	if delta := openAIResponsesToolArgumentsDelta(root, s.toolBuffers, s.toolBufferByItemID); delta != nil {
 		if err := s.yield(*delta); err != nil {
@@ -562,8 +578,8 @@ func (s *openAISDKResponsesState) handle(event responses.ResponseStreamEventUnio
 		}
 		s.completed = true
 		logProviderCompletionDebug(s.ctx, providerCompletionDebug{
-			ProviderKind:     "openai",
-			APIMode:          "responses",
+			ProviderKind:     s.providerKind,
+			APIMode:          s.apiMode,
 			LlmCallID:        s.llmCallID,
 			AssistantMessage: &assistantMessage,
 			ToolCallCount:    len(toolCalls),
