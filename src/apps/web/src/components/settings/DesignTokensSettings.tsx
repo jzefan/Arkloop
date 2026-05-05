@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
+import { createPortal } from 'react-dom'
 import {
   AlertTriangle,
   BookOpen,
@@ -18,7 +19,7 @@ import {
   X,
   Zap,
 } from 'lucide-react'
-import { PillToggle } from '@arkloop/shared'
+import { ConfirmDialog, PillToggle } from '@arkloop/shared'
 import { SettingsSectionHeader } from './_SettingsSectionHeader'
 import { SettingsInput } from './_SettingsInput'
 import { SettingsStatusBadge } from './_SettingsStatusBadge'
@@ -180,6 +181,21 @@ const compositionRules = [
   {
     title: 'Document Reader',
     body: '阅读完整 Impression 或单条 Note 时进入 reader/modal；完整正文不提前暴露在资源列表里。',
+  },
+]
+
+const overlayRules = [
+  {
+    title: 'Modal',
+    body: '需要阻断背景页面时使用；标题、关闭、表单和底部操作必须形成稳定结构。',
+  },
+  {
+    title: 'Confirm dialog',
+    body: '删除、清空、重置这类确认动作使用更小弹窗；危险操作只在确认态加强。',
+  },
+  {
+    title: 'Overlay',
+    body: '背景只负责降噪，不改变真实页面布局；弹出层的 surface 和边框必须来自系统变量。',
   },
 ]
 
@@ -403,13 +419,16 @@ function TokenInput({
   className,
   placeholder,
   defaultValue,
+  type = 'text',
 }: {
   className?: string
   placeholder?: string
   defaultValue?: string
+  type?: string
 }) {
   return (
     <input
+      type={type}
       className={[
         'h-[32px] w-full border-[0.65px] [border-color:color-mix(in_srgb,var(--c-border)_64%,var(--c-bg-input)_36%)] bg-[var(--c-bg-input)] px-3 text-sm font-[450] text-[var(--c-text-primary)] outline-none placeholder:font-[350] placeholder:text-[var(--c-text-muted)] transition-colors duration-[180ms] hover:[border-color:color-mix(in_srgb,var(--c-border)_72%,var(--c-text-primary)_28%)] focus:[border-color:color-mix(in_srgb,var(--c-border)_72%,var(--c-text-primary)_28%)]',
         controlRadius,
@@ -425,10 +444,12 @@ function TokenSelect({
   value,
   options,
   onChange,
+  triggerClassName,
 }: {
   value: string
   options: Array<{ value: string; label: string }>
   onChange: (value: string) => void
+  triggerClassName?: string
 }) {
   const [open, setOpen] = useState(false)
   const [highlighted, setHighlighted] = useState(value)
@@ -459,7 +480,8 @@ function TokenSelect({
         className={[
           'flex h-[32px] w-full items-center justify-between border-[0.65px] bg-[var(--c-bg-input)] px-3 text-sm font-[450] text-[var(--c-text-primary)] [background-clip:padding-box] transition-colors duration-[180ms] hover:bg-[var(--c-bg-deep)]',
           controlRadius,
-        ].join(' ')}
+          triggerClassName,
+        ].filter(Boolean).join(' ')}
         style={{ borderColor: selectBorderColor }}
       >
         <span className="truncate">{currentLabel}</span>
@@ -946,7 +968,7 @@ function ImpressionMock() {
               UI grammar discussion
               {'\n'}Provider settings
               {'\n'}Notebook entries
-              {'\n'}Decision tokens
+              {'\n'}Design tokens
             </>
           }
         />
@@ -1265,6 +1287,139 @@ function CompositionsPreview() {
   )
 }
 
+function ModalActionButton({
+  variant,
+  children,
+  onClick,
+}: {
+  variant: 'primary' | 'secondary'
+  children: ReactNode
+  onClick?: () => void
+}) {
+  const classes = variant === 'primary'
+    ? 'min-w-[54px] bg-[var(--c-btn-bg)] text-[var(--c-btn-text)] hover:[box-shadow:inset_0_0_0_999px_rgba(255,255,255,0.07),0_0_0_0.2px_var(--c-btn-bg)] active:[box-shadow:inset_0_0_0_999px_rgba(0,0,0,0.04)]'
+    : 'min-w-[54px] border-[0.65px] [border-color:color-mix(in_srgb,var(--c-border)_91%,var(--c-text-primary)_9%)] bg-[var(--c-bg-input)] text-[color-mix(in_srgb,var(--c-text-secondary)_72%,var(--c-text-primary)_28%)] hover:border-transparent hover:bg-[var(--c-bg-deep)] hover:text-[var(--c-text-primary)]'
+
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={[
+        'inline-flex h-[35px] items-center justify-center rounded-[7px] px-3 text-sm font-[450] transition-colors duration-[180ms]',
+        classes,
+      ].join(' ')}
+    >
+      {children}
+    </button>
+  )
+}
+
+function ProviderModalPreview({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const [providerType, setProviderType] = useState('responses')
+
+  if (!open) return null
+
+  const fieldLabelCls = 'mb-1.5 block text-[12px] font-medium text-[var(--c-text-secondary)]'
+  const modalFieldCls = 'h-[35px] px-3.5 text-sm'
+
+  return createPortal(
+    <div
+      className="overlay-fade-in fixed inset-0 z-[60] flex items-center justify-center"
+      style={{ background: 'rgba(0, 0, 0, 0.58)' }}
+      onClick={(event) => {
+        if (event.target === event.currentTarget) onClose()
+      }}
+    >
+      <div
+        className="design-token-modal-enter flex w-[510px] flex-col gap-5 rounded-[17px] p-7"
+        style={{ background: 'var(--c-bg-menu)', border: '0.5px solid var(--c-border-subtle)' }}
+      >
+        <div className="flex items-center justify-between">
+          <h3 className="text-[19px] font-semibold leading-none text-[var(--c-text-heading)]">添加供应商</h3>
+          <button
+            type="button"
+            aria-label="关闭"
+            onClick={onClose}
+            className="-mr-2 flex h-8 w-8 items-center justify-center rounded-[7px] text-[color-mix(in_srgb,var(--c-border)_72%,var(--c-text-primary)_28%)] transition-colors duration-[160ms] hover:bg-[var(--c-bg-sub)] hover:text-[var(--c-text-primary)]"
+          >
+            <X size={16} />
+          </button>
+        </div>
+
+        <div className="grid grid-cols-2 gap-x-4 gap-y-4">
+          <div>
+            <label className={fieldLabelCls}>供应商名称</label>
+            <TokenInput className={modalFieldCls} placeholder="My Provider" />
+          </div>
+          <div>
+            <label className={fieldLabelCls}>类型</label>
+            <TokenSelect
+              value={providerType}
+              onChange={setProviderType}
+              triggerClassName={modalFieldCls}
+              options={[
+                { value: 'responses', label: 'OpenAI (Responses)' },
+                { value: 'chat', label: 'OpenAI compatible' },
+                { value: 'local', label: 'Local provider' },
+              ]}
+            />
+          </div>
+          <div className="col-span-2">
+            <label className={fieldLabelCls}>API Key</label>
+            <TokenInput className={modalFieldCls} type="password" placeholder="sk-..." />
+          </div>
+          <div className="col-span-2">
+            <label className={fieldLabelCls}>Base URL</label>
+            <TokenInput className={modalFieldCls} placeholder="https://api.openai.com/v1" />
+          </div>
+        </div>
+
+        <div className="mt-2 flex items-center justify-end gap-2">
+          <ModalActionButton variant="secondary" onClick={onClose}>取消</ModalActionButton>
+          <ModalActionButton variant="primary">保存</ModalActionButton>
+        </div>
+      </div>
+    </div>,
+    document.body,
+  )
+}
+
+function OverlaysPreview() {
+  const [modalOpen, setModalOpen] = useState(false)
+  const [confirmOpen, setConfirmOpen] = useState(false)
+
+  return (
+    <TokenPageSection
+      eyebrow="Overlays"
+      title="弹出层样式"
+      description="弹窗和确认框在设置页里高频出现，先在这里统一 surface、overlay、圆角、阴影和进出场。"
+    >
+      <RuleGrid rules={overlayRules} />
+
+      <SpecCard title="Dialog triggers">
+        <div className="flex flex-wrap items-center gap-2">
+          <SettingsButton variant="secondary" icon={<Plus size={14} />} onClick={() => setModalOpen(true)}>
+            添加供应商
+          </SettingsButton>
+          <SettingsButton variant="danger" icon={<Trash2 size={14} />} onClick={() => setConfirmOpen(true)}>
+            删除全部模型
+          </SettingsButton>
+        </div>
+      </SpecCard>
+
+      <ProviderModalPreview open={modalOpen} onClose={() => setModalOpen(false)} />
+      <ConfirmDialog
+        open={confirmOpen}
+        onClose={() => setConfirmOpen(false)}
+        onConfirm={() => setConfirmOpen(false)}
+        title="删除全部模型"
+        message="这会删除该供应商下的所有模型，确定继续？"
+        confirmLabel="Delete all"
+      />
+    </TokenPageSection>
+  )
+}
+
 function PageGrammarPreview() {
   return (
     <TokenPageSection
@@ -1458,13 +1613,14 @@ export function DesignTokensSettings() {
   return (
     <div className={pageShell}>
       <SettingsSectionHeader
-        title="Decision Tokens"
+        title="Design Tokens"
         description="当前样式、真实样本和页面语法的可视化合约。"
       />
 
       <FoundationsPreview />
       <PrimitivesPreview />
       <CompositionsPreview />
+      <OverlaysPreview />
       <FeedbackPreview />
       <PageGrammarPreview />
     </div>
