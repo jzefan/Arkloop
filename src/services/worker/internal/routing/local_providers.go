@@ -49,6 +49,9 @@ func localProviderRoutes(status localproviders.ProviderStatus) (ProviderCredenti
 	}
 	routes := make([]ProviderRouteRule, 0, len(status.Models))
 	for _, model := range status.Models {
+		if model.Hidden {
+			continue
+		}
 		routes = append(routes, ProviderRouteRule{
 			ID:            localRouteID(status.ID, model.ID),
 			Model:         model.ID,

@@ -38,7 +38,14 @@ import type { AvailableModel, LlmProvider, LlmProviderModel } from "../api";
 import type { AgentImportDiscovery, ImportItemKey, ImportSourceKind } from "@arkloop/shared/desktop";
 import { routeAdvancedJsonFromAvailableCatalog } from "@arkloop/shared/llm/available-catalog-advanced-json";
 
-type Step = "welcome" | "mode" | "provider" | "appearance" | "import" | "complete";
+type Step =
+  | "welcome"
+  | "mode"
+  | "providerChoice"
+  | "provider"
+  | "appearance"
+  | "import"
+  | "complete";
 
 type Vendor = "openai_responses" | "openai_chat_completions" | "anthropic" | "gemini";
 type VerifyStatus = "idle" | "verifying" | "verified" | "failed";
@@ -98,6 +105,11 @@ const VENDOR_URLS: Record<Vendor, string> = {
   openai_chat_completions: "https://api.openai.com/v1",
   anthropic: "https://api.anthropic.com/v1",
   gemini: "https://generativelanguage.googleapis.com/v1beta",
+};
+
+const LOCAL_PROVIDER_ORDER: Record<string, number> = {
+  claude_code_local: 1,
+  codex_local: 2,
 };
 
 const RECOMMENDED_PATTERNS: Record<Vendor, string[]> = {
@@ -176,6 +188,17 @@ function providerMatches(
     normalizeMode(provider.openai_api_mode) ===
       normalizeMode(vendorOpt.openai_api_mode)
   );
+}
+
+function isLocalBridgeProvider(provider: LlmProvider): boolean {
+  return (
+    Object.prototype.hasOwnProperty.call(LOCAL_PROVIDER_ORDER, provider.provider) &&
+    (provider.source === "local" || provider.read_only === true)
+  );
+}
+
+function localProviderLabel(provider: LlmProvider): string {
+  return provider.name.replace(/\s*\(Local\)$/i, "");
 }
 
 function mergeConfiguredModels(
@@ -469,6 +492,9 @@ export function OnboardingWizard({ onComplete }: Props) {
   const [baseUrl, setBaseUrl] = useState(VENDOR_URLS.openai_responses);
   const [verifyStatus, setVerifyStatus] = useState<VerifyStatus>("idle");
   const [providerError, setProviderError] = useState<AppError | null>(null);
+  const [detectedLocalProviders, setDetectedLocalProviders] = useState<
+    LlmProvider[]
+  >([]);
 
   // Model state
   const [modelImportStatus, setModelImportStatus] =
@@ -534,21 +560,31 @@ export function OnboardingWizard({ onComplete }: Props) {
     importSources.find((source) => source.kind === selectedImportSource) ?? null;
   const hasImportDetailStep = selectedImportSourceData !== null;
 
+  const hasLocalProviderChoice = detectedLocalProviders.length > 0;
+  const detectedLocalProviderNames = useMemo(
+    () => detectedLocalProviders.map(localProviderLabel).join(" / "),
+    [detectedLocalProviders],
+  );
+
   const stepMeta = useMemo(() => {
-    const total = hasImportDetailStep ? 5 : hasImportStep ? 4 : 3;
+    const choiceOffset = hasLocalProviderChoice ? 1 : 0;
+    const total = (hasImportDetailStep ? 5 : hasImportStep ? 4 : 3) + choiceOffset;
+    const providerChoiceStep = hasImportDetailStep ? 4 : hasImportStep ? 3 : 2;
     switch (step) {
       case "appearance":
         return { n: 1, total };
       case "import":
         return { n: hasImportDetailStep ? 3 : 2, total };
+      case "providerChoice":
+        return { n: providerChoiceStep, total };
       case "provider":
-        return { n: hasImportDetailStep ? 4 : hasImportStep ? 3 : 2, total };
+        return { n: providerChoiceStep + choiceOffset, total };
       case "complete":
         return { n: total, total };
       default:
         return null;
     }
-  }, [hasImportDetailStep, hasImportStep, step]);
+  }, [hasImportDetailStep, hasImportStep, hasLocalProviderChoice, step]);
 
   const providerVerified =
     step === "provider" && verifyStatus === "verified" && !!createdProviderId;
@@ -650,6 +686,48 @@ export function OnboardingWizard({ onComplete }: Props) {
     }
   }, [step, sidecarReady]);
 
+  const findDetectedLocalProviders = useCallback(async (): Promise<
+    LlmProvider[]
+  > => {
+    const accessToken = await getLocalSessionAccessToken();
+    if (!accessToken) return [];
+
+    const providers = await listLlmProviders(accessToken);
+    return providers
+      .filter(isLocalBridgeProvider)
+      .sort(
+        (a, b) =>
+          (LOCAL_PROVIDER_ORDER[a.provider] ?? 99) -
+            (LOCAL_PROVIDER_ORDER[b.provider] ?? 99) ||
+          a.name.localeCompare(b.name),
+      );
+  }, []);
+
+  const enterProviderSetup = useCallback(async () => {
+    try {
+      const providers = await findDetectedLocalProviders();
+      setDetectedLocalProviders(providers);
+      setStep(providers.length > 0 ? "providerChoice" : "provider");
+    } catch {
+      setDetectedLocalProviders([]);
+      setStep("provider");
+    }
+  }, [findDetectedLocalProviders]);
+
+  const handleBackFromProviderChoice = useCallback(() => {
+    setStep(hasImportStep ? "import" : "appearance");
+  }, [hasImportStep]);
+
+  const handleBackFromProviderForm = useCallback(() => {
+    setStep(
+      hasLocalProviderChoice
+        ? "providerChoice"
+        : hasImportStep
+          ? "import"
+          : "appearance",
+    );
+  }, [hasImportStep, hasLocalProviderChoice]);
+
   const handleWelcomeNext = useCallback(() => {
     setStep("appearance");
   }, []);
@@ -658,8 +736,12 @@ export function OnboardingWizard({ onComplete }: Props) {
     setSelectedImportSource(null);
     setProviderImportedFromAgent(false);
     setImportError(null);
-    setStep(hasImportStep ? "import" : "provider");
-  }, [hasImportStep]);
+    if (hasImportStep) {
+      setStep("import");
+      return;
+    }
+    void enterProviderSetup();
+  }, [enterProviderSetup, hasImportStep]);
 
   const handleImportItemToggle = useCallback(
     (source: ImportSourceKind, item: ImportItemKey) => {
@@ -702,25 +784,25 @@ export function OnboardingWizard({ onComplete }: Props) {
         throw new Error(result.errors[0] ?? t.requestFailed);
       }
       setProviderImportedFromAgent(result.imported.providers > 0);
-      setStep("provider");
+      await enterProviderSetup();
     } catch (error) {
       setImportError(normalizeError(error, t.requestFailed));
     } finally {
       setImportingAgent(false);
     }
-  }, [api, ensureSidecar, importSelections, importingAgent, selectedImportSourceData, t.requestFailed]);
+  }, [api, ensureSidecar, enterProviderSetup, importSelections, importingAgent, selectedImportSourceData, t.requestFailed]);
 
   const handleSkipImport = useCallback(() => {
     setProviderImportedFromAgent(false);
     setImportError(null);
-    setStep("provider");
-  }, []);
+    void enterProviderSetup();
+  }, [enterProviderSetup]);
 
   const handleModeSelectLocal = useCallback(async () => {
     if (!api) return;
-    setStep("provider"); // immediate, no wait
     api.config.get().then((current) => api.config.set({ ...current, mode: "local" })).catch(() => {});
-  }, [api]);
+    await enterProviderSetup();
+  }, [api, enterProviderSetup]);
 
   const upsertProviderCredential =
     useCallback(async (): Promise<LlmProvider> => {
@@ -1192,6 +1274,61 @@ export function OnboardingWizard({ onComplete }: Props) {
               </div>
             </Reveal>
 
+            {/* Provider entry */}
+            <Reveal active={step === "providerChoice"}>
+              <div>
+                <div
+                  style={{
+                    fontSize: "18px",
+                    fontWeight: 500,
+                    color: "var(--c-text-heading)",
+                    marginBottom: "4px",
+                  }}
+                >
+                  {ob.localProviderChoiceTitle}
+                </div>
+                <div
+                  style={{
+                    fontSize: "13px",
+                    color: "var(--c-placeholder)",
+                    marginBottom: "20px",
+                  }}
+                >
+                  {ob.localProviderChoiceDesc}
+                </div>
+                <div
+                  style={{
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: "10px",
+                    marginBottom: "16px",
+                  }}
+                >
+                  <ModeCard
+                    icon={<HardDrive size={18} />}
+                    title={ob.localProviderUseDetected(
+                      detectedLocalProviderNames,
+                    )}
+                    desc={ob.localProviderDetectedDesc}
+                    onClick={() => setStep("complete")}
+                  />
+                  <ModeCard
+                    icon={<Settings size={18} />}
+                    title={ob.localProviderManual}
+                    desc={ob.localProviderManualDesc}
+                    onClick={() => setStep("provider")}
+                  />
+                </div>
+                <button
+                  type="button"
+                  onClick={handleBackFromProviderChoice}
+                  className="onb-btn-ghost" style={ghostBtn}
+                >
+                  {ob.back}
+                </button>
+              </div>
+            </Reveal>
+
             {/* Provider configuration */}
             <Reveal active={step === "provider"}>
               <div>
@@ -1356,7 +1493,13 @@ export function OnboardingWizard({ onComplete }: Props) {
 
                     <button
                       type="button"
-                      onClick={() => setStep(verifyStatus === "verified" ? (hasImportStep ? "import" : "appearance") : "complete")}
+                      onClick={() => {
+                        if (verifyStatus === "verified") {
+                          handleBackFromProviderForm();
+                          return;
+                        }
+                        setStep("complete");
+                      }}
                       className={providerImportedFromAgent && verifyStatus !== "verified" ? "onb-btn-primary" : "onb-btn-ghost"}
                       style={
                         providerImportedFromAgent && verifyStatus !== "verified"

@@ -19,6 +19,13 @@ func TestAppendLocalProvidersAddsSyntheticCredentialAndRoutes(t *testing.T) {
 			ToolCalling:     true,
 			Reasoning:       true,
 			Priority:        900,
+		}, {
+			ID:            "gpt-hidden",
+			ContextLength: 400000,
+			ToolCalling:   true,
+			Reasoning:     true,
+			Hidden:        true,
+			Priority:      1000,
 		}},
 	}})
 

@@ -890,8 +890,6 @@ function ModelsSection({ provider, accessToken, onChanged, p, readOnly = false }
               onEdit={setEditingModel}
               onDelete={handleDeleteModel}
               readOnly={readOnly}
-              visibleLabel={p.modelVisible}
-              hiddenLabel={p.modelHidden}
             />
           ))
         )}
@@ -1012,14 +1010,12 @@ function ModelsSection({ provider, accessToken, onChanged, p, readOnly = false }
   )
 }
 
-const ModelRow = memo(function ModelRow({ pm, onToggle, onEdit, onDelete, readOnly = false, visibleLabel, hiddenLabel }: {
+const ModelRow = memo(function ModelRow({ pm, onToggle, onEdit, onDelete, readOnly = false }: {
   pm: LlmProviderModel
   onToggle: (id: string, current: boolean) => void
   onEdit: (pm: LlmProviderModel) => void
   onDelete: (id: string) => void
   readOnly?: boolean
-  visibleLabel: string
-  hiddenLabel: string
 }) {
   return (
     <div
@@ -1034,9 +1030,7 @@ const ModelRow = memo(function ModelRow({ pm, onToggle, onEdit, onDelete, readOn
       </div>
       <div className="flex w-full shrink-0 items-center justify-end gap-1.5 sm:w-auto">
         {readOnly ? (
-          <span className="rounded-md px-2 py-0.5 text-xs font-medium text-[var(--c-text-muted)]" style={{ background: 'var(--c-bg-sub)' }}>
-            {pm.show_in_picker ? visibleLabel : hiddenLabel}
-          </span>
+          <PillToggle checked={pm.show_in_picker} onChange={() => onToggle(pm.id, pm.show_in_picker)} />
         ) : (
           <>
             <PillToggle checked={pm.show_in_picker} onChange={() => onToggle(pm.id, pm.show_in_picker)} />

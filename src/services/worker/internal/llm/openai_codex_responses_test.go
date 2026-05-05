@@ -41,8 +41,12 @@ func TestOpenAICodexResponsesGateway_SendsBackendRequestAndCompletes(t *testing.
 	})
 
 	var completed *StreamRunCompleted
+	maxOutputTokens := 4096
+	temperature := 0.7
 	if err := gateway.Stream(context.Background(), Request{
-		Model: "gpt-5.3-codex",
+		Model:           "gpt-5.3-codex",
+		MaxOutputTokens: &maxOutputTokens,
+		Temperature:     &temperature,
 		Messages: []Message{
 			{Role: "system", Content: []TextPart{{Text: "policy"}}},
 			{Role: "user", Content: []TextPart{{Text: "hello"}}},
@@ -78,6 +82,12 @@ func TestOpenAICodexResponsesGateway_SendsBackendRequestAndCompletes(t *testing.
 	if captured["store"] != false || captured["tool_choice"] != "auto" || captured["parallel_tool_calls"] != true {
 		t.Fatalf("missing codex payload defaults: %#v", captured)
 	}
+	if _, exists := captured["max_output_tokens"]; exists {
+		t.Fatalf("codex backend does not accept max_output_tokens: %#v", captured)
+	}
+	if _, exists := captured["temperature"]; exists {
+		t.Fatalf("codex backend does not accept temperature: %#v", captured)
+	}
 	text, _ := captured["text"].(map[string]any)
 	if text["verbosity"] != "medium" {
 		t.Fatalf("unexpected text verbosity: %#v", captured["text"])
@@ -91,6 +101,62 @@ func TestOpenAICodexResponsesGateway_SendsBackendRequestAndCompletes(t *testing.
 	}
 	if completed.Usage == nil || completed.Usage.InputTokens == nil || *completed.Usage.InputTokens != 1 {
 		t.Fatalf("unexpected usage: %#v", completed.Usage)
+	}
+}
+
+func TestOpenAICodexResponsesGateway_StripsUnsupportedOpenAIFields(t *testing.T) {
+	t.Setenv("ARKLOOP_OUTBOUND_ALLOW_LOOPBACK_HTTP", "true")
+
+	var captured map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&captured); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte(openAISDKSSE([]string{
+			`{"type":"response.completed","response":{"id":"resp_1","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"ok"}]}]}}`,
+		})))
+	}))
+	defer server.Close()
+
+	gateway := NewOpenAICodexResponsesGateway(OpenAICodexResponsesGatewayConfig{
+		Transport: TransportConfig{
+			APIKey:  "oauth-access",
+			BaseURL: server.URL + "/backend-api/codex",
+			DefaultHeaders: map[string]string{
+				"chatgpt-account-id": "acc_123",
+			},
+		},
+		Protocol: OpenAIProtocolConfig{AdvancedPayloadJSON: map[string]any{
+			"top_p":               0.9,
+			"metadata":            map[string]any{"debug": true},
+			"prompt_cache_key":    "conversation-1",
+			"client_metadata":     map[string]any{"installation_id": "install_1"},
+			"parallel_tool_calls": false,
+		}},
+	})
+
+	temperature := 0.7
+	maxOutputTokens := 4096
+	if err := gateway.Stream(context.Background(), Request{
+		Model:           "gpt-5.3-codex",
+		Temperature:     &temperature,
+		MaxOutputTokens: &maxOutputTokens,
+		Messages:        []Message{{Role: "user", Content: []TextPart{{Text: "hello"}}}},
+	}, func(event StreamEvent) error { return nil }); err != nil {
+		t.Fatalf("stream: %v", err)
+	}
+
+	for _, key := range []string{"temperature", "max_output_tokens", "top_p", "metadata"} {
+		if _, exists := captured[key]; exists {
+			t.Fatalf("unsupported key %s reached codex payload: %#v", key, captured)
+		}
+	}
+	if captured["prompt_cache_key"] != "conversation-1" || captured["client_metadata"] == nil {
+		t.Fatalf("expected codex allowlisted metadata to remain: %#v", captured)
+	}
+	if captured["parallel_tool_calls"] != false {
+		t.Fatalf("expected explicit parallel_tool_calls to remain: %#v", captured)
 	}
 }
 

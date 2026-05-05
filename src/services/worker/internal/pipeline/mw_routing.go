@@ -492,6 +492,9 @@ func resolveLocalProviderGatewayConfig(
 	}
 	switch credential.ProviderID {
 	case localproviders.ClaudeCodeProviderID:
+		if strings.TrimSpace(credential.BaseURL) != "" {
+			transport.BaseURL = strings.TrimSpace(credential.BaseURL)
+		}
 		protocol, err := llm.ResolveAnthropicProtocolConfig(advancedJSON)
 		if err != nil {
 			return llm.ResolvedGatewayConfig{}, err
@@ -611,7 +614,13 @@ func providerPayloadAdvancedJSON(raw map[string]any) map[string]any {
 
 func isInternalAdvancedJSONKey(key string) bool {
 	switch key {
-	case "available_catalog", "openviking_backend", "openviking_extra_headers":
+	case "available_catalog",
+		"openviking_backend",
+		"openviking_extra_headers",
+		"source",
+		"local_provider_id",
+		"auth_mode",
+		"read_only":
 		return true
 	default:
 		return false

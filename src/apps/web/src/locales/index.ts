@@ -1557,6 +1557,12 @@ export interface LocaleStrings {
     localRetryDownload: string;
     localDownloadComplete: string;
     localStarting: string;
+    localProviderChoiceTitle: string;
+    localProviderChoiceDesc: string;
+    localProviderUseDetected: (providers: string) => string;
+    localProviderDetectedDesc: string;
+    localProviderManual: string;
+    localProviderManualDesc: string;
     localProviderTitle: string;
     localProviderDesc: string;
     localProviderVendor: string;

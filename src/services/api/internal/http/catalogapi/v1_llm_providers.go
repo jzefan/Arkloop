@@ -19,6 +19,7 @@ import (
 	"arkloop/services/api/internal/data"
 	"arkloop/services/api/internal/llmproviders"
 	"arkloop/services/api/internal/observability"
+	"arkloop/services/shared/localproviders"
 	sharedoutbound "arkloop/services/shared/outboundurl"
 
 	"github.com/google/uuid"
@@ -173,12 +174,23 @@ func llmProviderEntry(
 			httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "invalid provider id", traceID, nil)
 			return
 		}
-		if isLocalProviderUUID(providerID) && isLocalProviderMutation(parts, r.Method) {
-			if _, ok := authenticateLLMProviderActor(w, r, traceID, authService, membershipRepo); !ok {
+		if isLocalProviderUUID(providerID) {
+			if len(parts) == 3 && parts[1] == "models" && r.Method == nethttp.MethodPatch {
+				modelID, err := uuid.Parse(parts[2])
+				if err != nil {
+					httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "invalid model id", traceID, nil)
+					return
+				}
+				patchLocalProviderModel(w, r, traceID, providerID, modelID, authService, membershipRepo)
 				return
 			}
-			writeLocalProviderReadOnly(w, traceID)
-			return
+			if isLocalProviderMutation(parts, r.Method) {
+				if _, ok := authenticateLLMProviderActor(w, r, traceID, authService, membershipRepo); !ok {
+					return
+				}
+				writeLocalProviderReadOnly(w, traceID)
+				return
+			}
 		}
 
 		switch {
@@ -234,6 +246,99 @@ func llmProviderEntry(
 	}
 }
 
+func patchLocalProviderModel(
+	w nethttp.ResponseWriter,
+	r *nethttp.Request,
+	traceID string,
+	providerID uuid.UUID,
+	modelID uuid.UUID,
+	authService *auth.Service,
+	membershipRepo *data.AccountMembershipRepository,
+) {
+	actor, ok := authenticateLLMProviderActor(w, r, traceID, authService, membershipRepo)
+	if !ok {
+		return
+	}
+	body, err := decodeRawJSONMap(r)
+	if err != nil {
+		httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "request validation failed", traceID, nil)
+		return
+	}
+	if !localProviderModelPatchOnlyTogglesPicker(body) {
+		writeLocalProviderReadOnly(w, traceID)
+		return
+	}
+	showInPicker, showInPickerSet, err := readOptionalBool(body, "show_in_picker")
+	if err != nil {
+		httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "show_in_picker must be a boolean", traceID, nil)
+		return
+	}
+	if !showInPickerSet || showInPicker == nil {
+		httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "show_in_picker is required", traceID, nil)
+		return
+	}
+	scopeText, _, err := readOptionalString(body, "scope")
+	if err != nil {
+		httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "scope must be a string", traceID, nil)
+		return
+	}
+	if scopeText == nil {
+		scope := data.LlmRouteScopeUser
+		scopeText = &scope
+	}
+	scope, ok := resolveLlmProviderScope(w, r, traceID, actor, scopeText)
+	if !ok {
+		return
+	}
+	if scope != data.LlmRouteScopeUser {
+		httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "local provider scope must be user", traceID, nil)
+		return
+	}
+	localProviderID, ok := localProviderIDFromUUID(providerID)
+	if !ok {
+		httpkit.WriteError(w, nethttp.StatusNotFound, "not_found", "provider not found", traceID, nil)
+		return
+	}
+	resolver := localproviders.NewResolver(localproviders.Options{})
+	status, model, ok := findLocalProviderModel(r.Context(), resolver, localProviderID, modelID)
+	if !ok {
+		writeLlmProviderServiceError(r.Context(), w, traceID, llmproviders.ModelNotFoundError{ID: modelID})
+		return
+	}
+	if err := resolver.SetModelVisible(localProviderID, model.ID, *showInPicker); err != nil {
+		httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "failed to update model", traceID, nil)
+		return
+	}
+	model.Hidden = !*showInPicker
+	model.Default = model.Default && !model.Hidden
+	route := localRouteFromModel(status, providerID, model, time.Now().UTC())
+	httpkit.WriteJSON(w, traceID, nethttp.StatusOK, toLlmProviderModelResponse(route, status.Provider))
+}
+
+func localProviderModelPatchOnlyTogglesPicker(body map[string]json.RawMessage) bool {
+	for key := range body {
+		if key != "scope" && key != "show_in_picker" {
+			return false
+		}
+	}
+	return true
+}
+
+func findLocalProviderModel(ctx context.Context, resolver *localproviders.Resolver, providerID string, modelID uuid.UUID) (localproviders.ProviderStatus, localproviders.Model, bool) {
+	for _, status := range resolver.ProviderStatuses(ctx) {
+		if status.ID != providerID {
+			continue
+		}
+		for _, model := range status.Models {
+			if localRouteUUID(providerID, model.ID) == modelID {
+				return status, model, true
+			}
+		}
+		return status, localproviders.Model{}, false
+	}
+	return localproviders.ProviderStatus{}, localproviders.Model{}, false
+}
+
 func isLocalProviderMutation(parts []string, method string) bool {
 	switch {
 	case len(parts) == 1:
@@ -241,7 +346,7 @@ func isLocalProviderMutation(parts []string, method string) bool {
 	case len(parts) == 2 && parts[1] == "models":
 		return method == nethttp.MethodPost
 	case len(parts) == 3 && parts[1] == "models":
-		return method == nethttp.MethodPatch || method == nethttp.MethodDelete
+		return method == nethttp.MethodDelete
 	default:
 		return false
 	}

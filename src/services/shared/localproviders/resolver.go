@@ -17,6 +17,7 @@ import (
 	osuser "os/user"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -25,14 +26,20 @@ import (
 var ErrCredentialUnavailable = errors.New("local provider credential unavailable")
 
 const (
-	claudeConfigDirEnv       = "CLAUDE_CONFIG_DIR"
-	claudeAnthropicAuthEnv   = "ANTHROPIC_AUTH_TOKEN"
-	claudeOAuthTokenEnv      = "CLAUDE_CODE_OAUTH_TOKEN"
-	claudeAnthropicAPIKeyEnv = "ANTHROPIC_API_KEY"
-	claudeServiceBase        = "Claude Code"
-	claudeOAuthServiceSuffix = "-credentials"
-	claudeOAuthClientID      = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
-	claudeOAuthScopes        = "org:create_api_key user:profile user:inference"
+	claudeConfigDirEnv        = "CLAUDE_CONFIG_DIR"
+	claudeAnthropicAuthEnv    = "ANTHROPIC_AUTH_TOKEN"
+	claudeAnthropicBaseURLEnv = "ANTHROPIC_BASE_URL"
+	claudeOAuthTokenEnv       = "CLAUDE_CODE_OAUTH_TOKEN"
+	claudeAnthropicAPIKeyEnv  = "ANTHROPIC_API_KEY"
+	claudeModelEnv            = "ANTHROPIC_MODEL"
+	claudeReasoningModelEnv   = "ANTHROPIC_REASONING_MODEL"
+	claudeDefaultOpusEnv      = "ANTHROPIC_DEFAULT_OPUS_MODEL"
+	claudeDefaultSonnetEnv    = "ANTHROPIC_DEFAULT_SONNET_MODEL"
+	claudeDefaultHaikuEnv     = "ANTHROPIC_DEFAULT_HAIKU_MODEL"
+	claudeServiceBase         = "Claude Code"
+	claudeOAuthServiceSuffix  = "-credentials"
+	claudeOAuthClientID       = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
+	claudeOAuthScopes         = "org:create_api_key user:profile user:inference"
 
 	codexHomeEnv              = "CODEX_HOME"
 	codexAPIKeyEnv            = "CODEX_API_KEY"
@@ -42,6 +49,8 @@ const (
 	defaultRefreshExpiry      = time.Hour
 	defaultResolverCacheTTL   = 30 * time.Second
 	claudeAPIKeyHelperSetting = "apiKeyHelper"
+	arkloopDataDirEnv         = "ARKLOOP_DATA_DIR"
+	localProviderPrefsFile    = "local-provider-preferences.json"
 )
 
 var (
@@ -71,6 +80,7 @@ type Credential struct {
 	ProviderKind string
 	AuthMode     string
 	APIKey       string
+	BaseURL      string
 	AccessToken  string
 	RefreshToken string
 	ExpiresAt    time.Time
@@ -97,18 +107,30 @@ type Resolver struct {
 }
 
 type credentialStore struct {
-	kind        string
-	path        string
-	service     string
-	account     string
-	root        map[string]any
-	fingerprint fileFingerprint
+	kind         string
+	path         string
+	service      string
+	account      string
+	root         map[string]any
+	fingerprint  fileFingerprint
+	fingerprints []fileFingerprint
 }
 
 type cachedCredential struct {
-	credential  Credential
-	expiresAt   time.Time
+	credential   Credential
+	expiresAt    time.Time
+	fingerprints []fileFingerprint
+}
+
+type claudeSettings struct {
+	env         map[string]string
+	model       string
 	fingerprint fileFingerprint
+	ok          bool
+}
+
+type localProviderPreferences struct {
+	HiddenModels map[string]map[string]bool `json:"hidden_models"`
 }
 
 type keychainLookup struct {
@@ -184,7 +206,7 @@ func (r *Resolver) ProviderStatuses(ctx context.Context) []ProviderStatus {
 			DisplayName: ClaudeCodeDisplayName,
 			Provider:    ClaudeCodeProviderKind,
 			AuthMode:    credential.AuthMode,
-			Models:      ClaudeCodeModels(),
+			Models:      resolver.applyModelPreferences(ClaudeCodeProviderID, resolver.claudeCodeModels()),
 		})
 	}
 	if credential, err := resolver.Resolve(ctx, CodexProviderID, ResolveOptions{}); err == nil {
@@ -193,10 +215,84 @@ func (r *Resolver) ProviderStatuses(ctx context.Context) []ProviderStatus {
 			DisplayName: CodexDisplayName,
 			Provider:    CodexProviderKind,
 			AuthMode:    credential.AuthMode,
-			Models:      CodexModels(),
+			Models:      resolver.applyModelPreferences(CodexProviderID, resolver.codexModels()),
 		})
 	}
 	return statuses
+}
+
+func (r *Resolver) codexModels() []Model {
+	for _, path := range r.codexModelCatalogPaths() {
+		if models := readCodexModelCatalog(path); len(models) > 0 {
+			return models
+		}
+	}
+	return CodexModels()
+}
+
+func (r *Resolver) claudeCodeModels() []Model {
+	settings := r.readClaudeSettings()
+	if models := r.claudeConfiguredModels(settings); len(models) > 0 {
+		return models
+	}
+	if models := r.claudeGatewayModels(settings); len(models) > 0 {
+		return models
+	}
+	return applyClaudeSelectedModel(ClaudeCodeModels(), settings.model)
+}
+
+func (r *Resolver) SetModelVisible(providerID string, modelID string, visible bool) error {
+	resolver := r.ensure()
+	providerID = strings.TrimSpace(providerID)
+	modelID = strings.TrimSpace(modelID)
+	if providerID == "" || modelID == "" {
+		return fmt.Errorf("%w: empty local provider model", ErrCredentialUnavailable)
+	}
+	prefs := resolver.readLocalProviderPreferences()
+	if prefs.HiddenModels == nil {
+		prefs.HiddenModels = map[string]map[string]bool{}
+	}
+	if visible {
+		if models := prefs.HiddenModels[providerID]; models != nil {
+			delete(models, modelID)
+			if len(models) == 0 {
+				delete(prefs.HiddenModels, providerID)
+			}
+		}
+	} else {
+		if prefs.HiddenModels[providerID] == nil {
+			prefs.HiddenModels[providerID] = map[string]bool{}
+		}
+		prefs.HiddenModels[providerID][modelID] = true
+	}
+	return resolver.writeLocalProviderPreferences(prefs)
+}
+
+func (r *Resolver) applyModelPreferences(providerID string, models []Model) []Model {
+	prefs := r.readLocalProviderPreferences()
+	hidden := prefs.HiddenModels[providerID]
+	if len(hidden) == 0 {
+		return models
+	}
+	firstVisible := -1
+	hasVisibleDefault := false
+	for index := range models {
+		models[index].Hidden = hidden[models[index].ID]
+		if models[index].Hidden {
+			models[index].Default = false
+			continue
+		}
+		if firstVisible < 0 {
+			firstVisible = index
+		}
+		if models[index].Default {
+			hasVisibleDefault = true
+		}
+	}
+	if !hasVisibleDefault && firstVisible >= 0 {
+		models[firstVisible].Default = true
+	}
+	return models
 }
 
 func (r *Resolver) Resolve(ctx context.Context, providerID string, options ResolveOptions) (Credential, error) {
@@ -290,9 +386,11 @@ func (r *Resolver) cachedCredential(providerID string) (Credential, bool) {
 	}
 	r.mu.Unlock()
 
-	if entry.fingerprint.ok && !entry.fingerprint.matches() {
-		r.invalidateProvider(providerID)
-		return Credential{}, false
+	for _, fingerprint := range entry.fingerprints {
+		if fingerprint.ok && !fingerprint.matches() {
+			r.invalidateProvider(providerID)
+			return Credential{}, false
+		}
 	}
 	return entry.credential, true
 }
@@ -303,9 +401,9 @@ func (r *Resolver) storeCachedCredential(credential Credential) {
 	}
 	r.mu.Lock()
 	r.credentialCache[credential.ProviderID] = cachedCredential{
-		credential:  credential,
-		expiresAt:   r.now().Add(r.cacheTTL),
-		fingerprint: credential.store.fingerprint,
+		credential:   credential,
+		expiresAt:    r.now().Add(r.cacheTTL),
+		fingerprints: credential.store.allFingerprints(),
 	}
 	r.mu.Unlock()
 }
@@ -317,24 +415,49 @@ func (r *Resolver) invalidateProvider(providerID string) {
 	r.mu.Unlock()
 }
 
+func (r *Resolver) claudeEnvValue(settings claudeSettings, key string) (string, fileFingerprint) {
+	if value := strings.TrimSpace(r.getenv(key)); value != "" {
+		return value, fileFingerprint{}
+	}
+	if !settings.ok {
+		return "", fileFingerprint{}
+	}
+	return strings.TrimSpace(settings.env[key]), settings.fingerprint
+}
+
+func (r *Resolver) applyClaudeEnvironment(credential Credential, settings claudeSettings) Credential {
+	if baseURL, fingerprint := r.claudeEnvValue(settings, claudeAnthropicBaseURLEnv); baseURL != "" {
+		credential.BaseURL = baseURL
+		credential.store.addFingerprint(fingerprint)
+	}
+	return credential
+}
+
 func (r *Resolver) resolveClaudeCode(ctx context.Context) (Credential, error) {
-	if token := strings.TrimSpace(r.getenv(claudeAnthropicAuthEnv)); token != "" {
-		return Credential{ProviderID: ClaudeCodeProviderID, ProviderKind: ClaudeCodeProviderKind, AuthMode: AuthModeOAuth, AccessToken: token}, nil
+	settings := r.readClaudeSettings()
+	if token, fingerprint := r.claudeEnvValue(settings, claudeAnthropicAuthEnv); token != "" {
+		credential := Credential{ProviderID: ClaudeCodeProviderID, ProviderKind: ClaudeCodeProviderKind, AuthMode: AuthModeOAuth, AccessToken: token}
+		credential.store.addFingerprint(fingerprint)
+		return r.applyClaudeEnvironment(credential, settings), nil
 	}
-	if token := strings.TrimSpace(r.getenv(claudeOAuthTokenEnv)); token != "" {
-		return Credential{ProviderID: ClaudeCodeProviderID, ProviderKind: ClaudeCodeProviderKind, AuthMode: AuthModeOAuth, AccessToken: token}, nil
+	if token, fingerprint := r.claudeEnvValue(settings, claudeOAuthTokenEnv); token != "" {
+		credential := Credential{ProviderID: ClaudeCodeProviderID, ProviderKind: ClaudeCodeProviderKind, AuthMode: AuthModeOAuth, AccessToken: token}
+		credential.store.addFingerprint(fingerprint)
+		return r.applyClaudeEnvironment(credential, settings), nil
 	}
-	if key := strings.TrimSpace(r.getenv(claudeAnthropicAPIKeyEnv)); key != "" {
-		return Credential{ProviderID: ClaudeCodeProviderID, ProviderKind: ClaudeCodeProviderKind, AuthMode: AuthModeAPIKey, APIKey: key}, nil
+	if key, fingerprint := r.claudeEnvValue(settings, claudeAnthropicAPIKeyEnv); key != "" {
+		credential := Credential{ProviderID: ClaudeCodeProviderID, ProviderKind: ClaudeCodeProviderKind, AuthMode: AuthModeAPIKey, APIKey: key}
+		credential.store.addFingerprint(fingerprint)
+		return r.applyClaudeEnvironment(credential, settings), nil
 	}
 	if r.claudeAPIKeyHelperConfigured() {
 		return Credential{}, fmt.Errorf("%w: %s apiKeyHelper configured", ErrCredentialUnavailable, ClaudeCodeProviderID)
 	}
 	if oauth, ok := r.readClaudeOAuth(ctx); ok {
-		return oauth, nil
+		return r.applyClaudeEnvironment(oauth, settings), nil
 	}
 	if credential, ok := r.readClaudeAPIKey(ctx); ok {
-		return credential, nil
+		return r.applyClaudeEnvironment(credential, settings), nil
 	}
 	return Credential{}, fmt.Errorf("%w: %s", ErrCredentialUnavailable, ClaudeCodeProviderID)
 }
@@ -722,6 +845,118 @@ func (r *Resolver) claudeSettingsPaths() []string {
 	return []string{filepath.Join(r.claudeConfigDir(), "settings.json")}
 }
 
+func (r *Resolver) readClaudeSettings() claudeSettings {
+	for _, path := range r.claudeSettingsPaths() {
+		root, fingerprint, ok := readJSONFileWithFingerprint(path)
+		if !ok {
+			continue
+		}
+		settings := claudeSettings{
+			env:         map[string]string{},
+			model:       stringValue(root["model"]),
+			fingerprint: fingerprint,
+			ok:          true,
+		}
+		rawEnv, _ := root["env"].(map[string]any)
+		for key, value := range rawEnv {
+			if text := stringValue(value); text != "" {
+				settings.env[key] = text
+			}
+		}
+		return settings
+	}
+	return claudeSettings{env: map[string]string{}}
+}
+
+func (r *Resolver) claudeConfiguredModels(settings claudeSettings) []Model {
+	keys := []string{
+		claudeModelEnv,
+		claudeReasoningModelEnv,
+		claudeDefaultOpusEnv,
+		claudeDefaultSonnetEnv,
+		claudeDefaultHaikuEnv,
+	}
+	models := make([]Model, 0, len(keys))
+	seen := make(map[string]int, len(keys))
+	for _, key := range keys {
+		id, _ := r.claudeEnvValue(settings, key)
+		if id == "" {
+			continue
+		}
+		if index, exists := seen[id]; exists {
+			models[index].Reasoning = true
+			continue
+		}
+		seen[id] = len(models)
+		models = append(models, Model{
+			ID:              id,
+			ContextLength:   200000,
+			MaxOutputTokens: 8192,
+			ToolCalling:     true,
+			Reasoning:       true,
+			Default:         len(models) == 0,
+			Priority:        1000 - len(models)*10,
+		})
+	}
+	return models
+}
+
+func (r *Resolver) claudeGatewayModels(settings claudeSettings) []Model {
+	baseURL, _ := r.claudeEnvValue(settings, claudeAnthropicBaseURLEnv)
+	if baseURL == "" {
+		return nil
+	}
+	path := filepath.Join(r.claudeConfigDir(), "cache", "gateway-models.json")
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return nil
+	}
+	var cache struct {
+		BaseURL string `json:"baseUrl"`
+		Models  []struct {
+			ID              string `json:"id"`
+			ContextLength   int    `json:"context_length"`
+			MaxOutputTokens int    `json:"max_output_tokens"`
+		} `json:"models"`
+	}
+	if err := json.Unmarshal(raw, &cache); err != nil {
+		return nil
+	}
+	if normalizeClaudeBaseURL(cache.BaseURL) != normalizeClaudeBaseURL(baseURL) {
+		return nil
+	}
+	models := make([]Model, 0, len(cache.Models))
+	seen := make(map[string]struct{}, len(cache.Models))
+	for _, entry := range cache.Models {
+		id := strings.TrimSpace(entry.ID)
+		if id == "" {
+			continue
+		}
+		if _, exists := seen[id]; exists {
+			continue
+		}
+		seen[id] = struct{}{}
+		contextLength := entry.ContextLength
+		if contextLength <= 0 {
+			contextLength = 200000
+		}
+		maxOutputTokens := entry.MaxOutputTokens
+		if maxOutputTokens <= 0 {
+			maxOutputTokens = 8192
+		}
+		models = append(models, Model{
+			ID:              id,
+			ContextLength:   contextLength,
+			MaxOutputTokens: maxOutputTokens,
+			ToolCalling:     true,
+			Reasoning:       true,
+			Default:         len(models) == 0,
+			Priority:        1000 - len(models)*10,
+		})
+	}
+	return applyClaudeSelectedModel(models, settings.model)
+}
+
 func (r *Resolver) claudeAPIKeyHelperConfigured() bool {
 	for _, path := range r.claudeSettingsPaths() {
 		root, ok := readJSONFile(path)
@@ -757,6 +992,138 @@ func (r *Resolver) codexHome() string {
 		return realpathOrSelf(expandHome(configured, r.homeDir))
 	}
 	return realpathOrSelf(filepath.Join(r.homeDir, ".codex"))
+}
+
+func (r *Resolver) arkloopDataDir() string {
+	if configured := strings.TrimSpace(r.getenv(arkloopDataDirEnv)); configured != "" {
+		return expandHome(configured, r.homeDir)
+	}
+	return filepath.Join(r.homeDir, ".arkloop")
+}
+
+func (r *Resolver) localProviderPreferencesPath() string {
+	return filepath.Join(r.arkloopDataDir(), localProviderPrefsFile)
+}
+
+func (r *Resolver) readLocalProviderPreferences() localProviderPreferences {
+	raw, err := os.ReadFile(r.localProviderPreferencesPath())
+	if err != nil {
+		return localProviderPreferences{HiddenModels: map[string]map[string]bool{}}
+	}
+	var prefs localProviderPreferences
+	if err := json.Unmarshal(raw, &prefs); err != nil {
+		return localProviderPreferences{HiddenModels: map[string]map[string]bool{}}
+	}
+	if prefs.HiddenModels == nil {
+		prefs.HiddenModels = map[string]map[string]bool{}
+	}
+	return prefs
+}
+
+func (r *Resolver) writeLocalProviderPreferences(prefs localProviderPreferences) error {
+	path := r.localProviderPreferencesPath()
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return err
+	}
+	encoded, err := json.MarshalIndent(prefs, "", "  ")
+	if err != nil {
+		return err
+	}
+	encoded = append(encoded, '\n')
+	return os.WriteFile(path, encoded, 0o600)
+}
+
+func (r *Resolver) codexModelCatalogPaths() []string {
+	codexHome := r.codexHome()
+	paths, _ := filepath.Glob(filepath.Join(codexHome, "model-catalog*.json"))
+	sort.SliceStable(paths, func(i, j int) bool {
+		left, leftErr := os.Stat(paths[i])
+		right, rightErr := os.Stat(paths[j])
+		if leftErr == nil && rightErr == nil {
+			return left.ModTime().After(right.ModTime())
+		}
+		return paths[i] > paths[j]
+	})
+	if _, err := os.Stat(filepath.Join(codexHome, "models_cache.json")); err == nil {
+		paths = append(paths, filepath.Join(codexHome, "models_cache.json"))
+	}
+	return paths
+}
+
+type codexModelCatalogFile struct {
+	Models []codexModelCatalogEntry `json:"models"`
+}
+
+type codexModelCatalogEntry struct {
+	Slug               string `json:"slug"`
+	ContextWindow      int    `json:"context_window"`
+	MaxContextWindow   int    `json:"max_context_window"`
+	MaxOutputTokens    int    `json:"max_output_tokens"`
+	Priority           *int   `json:"priority"`
+	Visibility         string `json:"visibility"`
+	SupportedReasoning []any  `json:"supported_reasoning_levels"`
+}
+
+func readCodexModelCatalog(path string) []Model {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return nil
+	}
+	var catalog codexModelCatalogFile
+	if err := json.Unmarshal(raw, &catalog); err != nil || len(catalog.Models) == 0 {
+		return nil
+	}
+	entries := append([]codexModelCatalogEntry(nil), catalog.Models...)
+	sort.SliceStable(entries, func(i, j int) bool {
+		left, right := codexCatalogPriority(entries[i]), codexCatalogPriority(entries[j])
+		if left == right {
+			return entries[i].Slug < entries[j].Slug
+		}
+		return left < right
+	})
+	models := make([]Model, 0, len(entries))
+	seen := make(map[string]struct{}, len(entries))
+	for _, entry := range entries {
+		id := strings.TrimSpace(entry.Slug)
+		if id == "" || strings.EqualFold(strings.TrimSpace(entry.Visibility), "hide") {
+			continue
+		}
+		if _, exists := seen[id]; exists {
+			continue
+		}
+		seen[id] = struct{}{}
+		contextLength := entry.ContextWindow
+		if contextLength <= 0 {
+			contextLength = entry.MaxContextWindow
+		}
+		if contextLength <= 0 {
+			contextLength = 272000
+		}
+		models = append(models, Model{
+			ID:              id,
+			ContextLength:   contextLength,
+			MaxOutputTokens: entry.MaxOutputTokens,
+			ToolCalling:     true,
+			Reasoning:       codexCatalogReasoning(entry),
+			Default:         len(models) == 0,
+			Priority:        1000 - len(models)*10,
+		})
+	}
+	return models
+}
+
+func codexCatalogPriority(entry codexModelCatalogEntry) int {
+	if entry.Priority == nil {
+		return 1_000_000
+	}
+	return *entry.Priority
+}
+
+func codexCatalogReasoning(entry codexModelCatalogEntry) bool {
+	if len(entry.SupportedReasoning) > 0 {
+		return true
+	}
+	return strings.HasPrefix(entry.Slug, "gpt-5")
 }
 
 func (r *Resolver) readKeychainJSON(ctx context.Context, service string, account string) (map[string]any, bool) {
@@ -967,6 +1334,44 @@ func expandHome(path string, homeDir string) string {
 	return path
 }
 
+func normalizeClaudeBaseURL(baseURL string) string {
+	return strings.TrimRight(strings.TrimSpace(baseURL), "/")
+}
+
+func applyClaudeSelectedModel(models []Model, selected string) []Model {
+	selected = strings.ToLower(strings.TrimSpace(selected))
+	if selected == "" || len(models) == 0 {
+		return models
+	}
+	match := -1
+	for index, model := range models {
+		if claudeModelMatchesSelection(model.ID, selected) {
+			match = index
+			break
+		}
+	}
+	if match < 0 {
+		return models
+	}
+	for index := range models {
+		models[index].Default = index == match
+	}
+	return models
+}
+
+func claudeModelMatchesSelection(modelID string, selected string) bool {
+	modelID = strings.ToLower(strings.TrimSpace(modelID))
+	if modelID == selected {
+		return true
+	}
+	switch selected {
+	case "opus", "sonnet", "haiku":
+		return strings.Contains(modelID, selected)
+	default:
+		return false
+	}
+}
+
 func cloneMap(in map[string]any) map[string]any {
 	out := make(map[string]any, len(in))
 	for k, v := range in {
@@ -977,6 +1382,25 @@ func cloneMap(in map[string]any) map[string]any {
 		}
 	}
 	return out
+}
+
+func (s *credentialStore) addFingerprint(fingerprint fileFingerprint) {
+	if fingerprint.ok {
+		s.fingerprints = append(s.fingerprints, fingerprint)
+	}
+}
+
+func (s credentialStore) allFingerprints() []fileFingerprint {
+	fingerprints := make([]fileFingerprint, 0, 1+len(s.fingerprints))
+	if s.fingerprint.ok {
+		fingerprints = append(fingerprints, s.fingerprint)
+	}
+	for _, fingerprint := range s.fingerprints {
+		if fingerprint.ok {
+			fingerprints = append(fingerprints, fingerprint)
+		}
+	}
+	return fingerprints
 }
 
 func currentUsername() string {

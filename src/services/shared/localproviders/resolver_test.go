@@ -112,6 +112,71 @@ func TestResolverClaudeExternalAPIKeyPrecedesOAuthStore(t *testing.T) {
 	}
 }
 
+func TestResolverDetectsClaudeCodeSettingsEnv(t *testing.T) {
+	home := t.TempDir()
+	writeTestJSON(t, filepath.Join(home, ".claude", "settings.json"), map[string]any{
+		"env": map[string]any{
+			"ANTHROPIC_AUTH_TOKEN":           "oauth-local",
+			"ANTHROPIC_BASE_URL":             "https://gateway.local",
+			"ANTHROPIC_MODEL":                "accounts/fireworks/models/deepseek-v4-pro",
+			"ANTHROPIC_REASONING_MODEL":      "accounts/fireworks/models/deepseek-v4-pro",
+			"ANTHROPIC_DEFAULT_SONNET_MODEL": "accounts/fireworks/models/deepseek-v4-pro",
+			"ANTHROPIC_DEFAULT_HAIKU_MODEL":  "accounts/fireworks/models/deepseek-v4-pro",
+			"ANTHROPIC_DEFAULT_OPUS_MODEL":   "accounts/fireworks/models/deepseek-v4-pro",
+		},
+	})
+
+	resolver := NewResolver(Options{HomeDir: home, DisableKeychain: true, Env: map[string]string{}})
+	credential, err := resolver.Resolve(context.Background(), ClaudeCodeProviderID, ResolveOptions{})
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if credential.AuthMode != AuthModeOAuth || credential.AccessToken != "oauth-local" {
+		t.Fatalf("unexpected credential: %#v", credential)
+	}
+	if credential.BaseURL != "https://gateway.local" {
+		t.Fatalf("expected base url from Claude Code settings, got %q", credential.BaseURL)
+	}
+
+	statuses := resolver.ProviderStatuses(context.Background())
+	if len(statuses) != 1 || statuses[0].ID != ClaudeCodeProviderID {
+		t.Fatalf("unexpected statuses: %#v", statuses)
+	}
+	models := statuses[0].Models
+	if len(models) != 1 || models[0].ID != "accounts/fireworks/models/deepseek-v4-pro" || !models[0].Default {
+		t.Fatalf("unexpected models: %#v", models)
+	}
+}
+
+func TestResolverClaudeProcessEnvPrecedesSettingsEnv(t *testing.T) {
+	home := t.TempDir()
+	writeTestJSON(t, filepath.Join(home, ".claude", "settings.json"), map[string]any{
+		"env": map[string]any{
+			"ANTHROPIC_AUTH_TOKEN": "settings-token",
+			"ANTHROPIC_BASE_URL":   "https://settings.local",
+		},
+	})
+
+	resolver := NewResolver(Options{
+		HomeDir:         home,
+		DisableKeychain: true,
+		Env: map[string]string{
+			"ANTHROPIC_AUTH_TOKEN": "env-token",
+			"ANTHROPIC_BASE_URL":   "https://env.local",
+		},
+	})
+	credential, err := resolver.Resolve(context.Background(), ClaudeCodeProviderID, ResolveOptions{})
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if credential.AuthMode != AuthModeOAuth || credential.AccessToken != "env-token" {
+		t.Fatalf("unexpected credential: %#v", credential)
+	}
+	if credential.BaseURL != "https://env.local" {
+		t.Fatalf("expected base url from process env, got %q", credential.BaseURL)
+	}
+}
+
 func TestResolverClaudeAPIKeyHelperBlocksManagedStores(t *testing.T) {
 	home := t.TempDir()
 	writeTestJSON(t, filepath.Join(home, ".claude", "settings.json"), map[string]any{
@@ -505,6 +570,68 @@ func TestProviderStatusesReturnNoSecrets(t *testing.T) {
 	raw, _ := json.Marshal(statuses)
 	if strings.Contains(string(raw), "sk-") {
 		t.Fatalf("provider status leaked credential: %s", raw)
+	}
+}
+
+func TestProviderStatusesUseCodexModelCatalog(t *testing.T) {
+	home := t.TempDir()
+	writeTestJSON(t, filepath.Join(home, ".codex", "auth.json"), map[string]any{"OPENAI_API_KEY": "sk-local"})
+	writeTestJSON(t, filepath.Join(home, ".codex", "model-catalog.test.json"), map[string]any{
+		"models": []any{
+			map[string]any{"slug": "codex-auto-review", "visibility": "hide", "priority": 1},
+			map[string]any{"slug": "gpt-5.5", "visibility": "list", "priority": 0, "context_window": 272000},
+			map[string]any{"slug": "gpt-5.3-codex-spark", "visibility": "list", "priority": 2, "context_window": 128000},
+		},
+	})
+
+	resolver := NewResolver(Options{HomeDir: home, DisableKeychain: true, Env: map[string]string{}})
+	statuses := resolver.ProviderStatuses(context.Background())
+	if len(statuses) != 1 || statuses[0].ID != CodexProviderID {
+		t.Fatalf("unexpected statuses: %#v", statuses)
+	}
+	models := statuses[0].Models
+	if len(models) != 2 {
+		t.Fatalf("expected hidden model to be skipped, got %#v", models)
+	}
+	if models[0].ID != "gpt-5.5" || !models[0].Default || models[0].ContextLength != 272000 {
+		t.Fatalf("unexpected first model: %#v", models[0])
+	}
+	if models[1].ID != "gpt-5.3-codex-spark" || models[1].ContextLength != 128000 {
+		t.Fatalf("unexpected second model: %#v", models[1])
+	}
+}
+
+func TestProviderStatusesApplyLocalModelVisibility(t *testing.T) {
+	home := t.TempDir()
+	writeTestJSON(t, filepath.Join(home, ".codex", "auth.json"), map[string]any{"OPENAI_API_KEY": "sk-local"})
+	writeTestJSON(t, filepath.Join(home, ".codex", "model-catalog.test.json"), map[string]any{
+		"models": []any{
+			map[string]any{"slug": "gpt-5.5", "visibility": "list", "priority": 0, "context_window": 272000},
+			map[string]any{"slug": "gpt-5.4", "visibility": "list", "priority": 1, "context_window": 272000},
+		},
+	})
+
+	resolver := NewResolver(Options{HomeDir: home, DisableKeychain: true, Env: map[string]string{}})
+	if err := resolver.SetModelVisible(CodexProviderID, "gpt-5.5", false); err != nil {
+		t.Fatalf("SetModelVisible: %v", err)
+	}
+	statuses := resolver.ProviderStatuses(context.Background())
+	if len(statuses) != 1 || len(statuses[0].Models) != 2 {
+		t.Fatalf("unexpected statuses: %#v", statuses)
+	}
+	if !statuses[0].Models[0].Hidden || statuses[0].Models[0].Default {
+		t.Fatalf("expected first model hidden and non-default: %#v", statuses[0].Models[0])
+	}
+	if statuses[0].Models[1].Hidden || !statuses[0].Models[1].Default {
+		t.Fatalf("expected second model promoted to default: %#v", statuses[0].Models[1])
+	}
+
+	if err := resolver.SetModelVisible(CodexProviderID, "gpt-5.5", true); err != nil {
+		t.Fatalf("SetModelVisible true: %v", err)
+	}
+	statuses = resolver.ProviderStatuses(context.Background())
+	if statuses[0].Models[0].Hidden {
+		t.Fatalf("expected first model visible again: %#v", statuses[0].Models[0])
 	}
 }
 

@@ -76,8 +76,8 @@ func localRouteFromModel(status localproviders.ProviderStatus, providerUUID uuid
 		CredentialID: providerUUID,
 		Model:        model.ID,
 		Priority:     model.Priority,
-		IsDefault:    model.Default,
-		ShowInPicker: true,
+		IsDefault:    model.Default && !model.Hidden,
+		ShowInPicker: !model.Hidden,
 		Tags:         []string{},
 		WhenJSON:     json.RawMessage("{}"),
 		AdvancedJSON: advancedJSON,
@@ -102,6 +102,17 @@ func localProviderUUID(providerID string) uuid.UUID {
 func isLocalProviderUUID(providerID uuid.UUID) bool {
 	return providerID == localProviderUUID(localproviders.ClaudeCodeProviderID) ||
 		providerID == localProviderUUID(localproviders.CodexProviderID)
+}
+
+func localProviderIDFromUUID(providerID uuid.UUID) (string, bool) {
+	switch providerID {
+	case localProviderUUID(localproviders.ClaudeCodeProviderID):
+		return localproviders.ClaudeCodeProviderID, true
+	case localProviderUUID(localproviders.CodexProviderID):
+		return localproviders.CodexProviderID, true
+	default:
+		return "", false
+	}
 }
 
 func localRouteUUID(providerID string, modelID string) uuid.UUID {

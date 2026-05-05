@@ -23,6 +23,7 @@ type Model struct {
 	ToolCalling     bool
 	Reasoning       bool
 	Default         bool
+	Hidden          bool
 	Priority        int
 }
 
@@ -37,21 +38,85 @@ type ProviderStatus struct {
 func ClaudeCodeModels() []Model {
 	return []Model{
 		{
-			ID:              "claude-sonnet-4-6",
+			ID:              "claude-opus-4-6",
 			ContextLength:   200000,
-			MaxOutputTokens: 64000,
+			MaxOutputTokens: 8192,
 			ToolCalling:     true,
 			Reasoning:       true,
 			Default:         true,
 			Priority:        900,
 		},
 		{
+			ID:              "claude-opus-4-6-fast",
+			ContextLength:   200000,
+			MaxOutputTokens: 8192,
+			ToolCalling:     true,
+			Reasoning:       true,
+			Priority:        880,
+		},
+		{
+			ID:              "claude-opus-4-5",
+			ContextLength:   200000,
+			MaxOutputTokens: 8192,
+			ToolCalling:     true,
+			Reasoning:       true,
+			Priority:        860,
+		},
+		{
+			ID:              "claude-opus-4-1",
+			ContextLength:   200000,
+			MaxOutputTokens: 8192,
+			ToolCalling:     true,
+			Reasoning:       true,
+			Priority:        840,
+		},
+		{
+			ID:              "claude-sonnet-4-6",
+			ContextLength:   200000,
+			MaxOutputTokens: 8192,
+			ToolCalling:     true,
+			Reasoning:       true,
+			Priority:        820,
+		},
+		{
 			ID:              "claude-sonnet-4-5",
 			ContextLength:   200000,
-			MaxOutputTokens: 64000,
+			MaxOutputTokens: 8192,
 			ToolCalling:     true,
 			Reasoning:       true,
 			Priority:        800,
+		},
+		{
+			ID:              "claude-sonnet-4-20250514",
+			ContextLength:   200000,
+			MaxOutputTokens: 8192,
+			ToolCalling:     true,
+			Reasoning:       true,
+			Priority:        780,
+		},
+		{
+			ID:              "claude-3-7-sonnet-20250219",
+			ContextLength:   200000,
+			MaxOutputTokens: 8192,
+			ToolCalling:     true,
+			Reasoning:       true,
+			Priority:        760,
+		},
+		{
+			ID:              "claude-haiku-4-5",
+			ContextLength:   200000,
+			MaxOutputTokens: 8192,
+			ToolCalling:     true,
+			Reasoning:       true,
+			Priority:        740,
+		},
+		{
+			ID:              "claude-3-5-haiku-20241022",
+			ContextLength:   200000,
+			MaxOutputTokens: 8192,
+			ToolCalling:     true,
+			Reasoning:       false,
+			Priority:        720,
 		},
 	}
 }
@@ -59,29 +124,47 @@ func ClaudeCodeModels() []Model {
 func CodexModels() []Model {
 	return []Model{
 		{
-			ID:              "gpt-5.3-codex",
-			ContextLength:   400000,
-			MaxOutputTokens: 128000,
-			ToolCalling:     true,
-			Reasoning:       true,
-			Default:         true,
-			Priority:        900,
+			ID:            "gpt-5.4",
+			ContextLength: 272000,
+			ToolCalling:   true,
+			Reasoning:     true,
+			Default:       true,
+			Priority:      900,
 		},
 		{
-			ID:              "gpt-5.3-codex-spark",
-			ContextLength:   400000,
-			MaxOutputTokens: 128000,
-			ToolCalling:     true,
-			Reasoning:       true,
-			Priority:        800,
+			ID:            "gpt-5.5",
+			ContextLength: 272000,
+			ToolCalling:   true,
+			Reasoning:     true,
+			Priority:      880,
 		},
 		{
-			ID:              "gpt-5.2-codex",
-			ContextLength:   400000,
-			MaxOutputTokens: 128000,
-			ToolCalling:     true,
-			Reasoning:       true,
-			Priority:        700,
+			ID:            "gpt-5.4-mini",
+			ContextLength: 272000,
+			ToolCalling:   true,
+			Reasoning:     true,
+			Priority:      860,
+		},
+		{
+			ID:            "gpt-5.3-codex",
+			ContextLength: 272000,
+			ToolCalling:   true,
+			Reasoning:     true,
+			Priority:      840,
+		},
+		{
+			ID:            "gpt-5.3-codex-spark",
+			ContextLength: 128000,
+			ToolCalling:   true,
+			Reasoning:     true,
+			Priority:      820,
+		},
+		{
+			ID:            "gpt-5.2",
+			ContextLength: 272000,
+			ToolCalling:   true,
+			Reasoning:     true,
+			Priority:      700,
 		},
 	}
 }

@@ -282,6 +282,7 @@ func normalizeOpenAICodexResponsesBaseURL(baseURL string) string {
 }
 
 func applyOpenAICodexResponsesPayloadDefaults(payload map[string]any) {
+	filterOpenAICodexResponsesPayload(payload)
 	payload["stream"] = true
 	payload["store"] = false
 	ensureOpenAICodexTextVerbosity(payload)
@@ -293,6 +294,36 @@ func applyOpenAICodexResponsesPayloadDefaults(payload map[string]any) {
 		payload["parallel_tool_calls"] = true
 	}
 	applyOpenAICodexToolDefaults(payload["tools"])
+}
+
+func filterOpenAICodexResponsesPayload(payload map[string]any) {
+	for key := range payload {
+		if !isOpenAICodexResponsesPayloadKey(key) {
+			delete(payload, key)
+		}
+	}
+}
+
+func isOpenAICodexResponsesPayloadKey(key string) bool {
+	switch key {
+	case "model",
+		"instructions",
+		"input",
+		"tools",
+		"tool_choice",
+		"parallel_tool_calls",
+		"reasoning",
+		"store",
+		"stream",
+		"include",
+		"service_tier",
+		"prompt_cache_key",
+		"text",
+		"client_metadata":
+		return true
+	default:
+		return false
+	}
 }
 
 func ensureOpenAICodexTextVerbosity(payload map[string]any) {
