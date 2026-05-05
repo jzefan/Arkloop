@@ -8,15 +8,15 @@ type Props = {
 }
 
 const styles: Record<Variant, string> = {
-  success: 'bg-green-500/10 text-green-400',
-  warning: 'bg-amber-500/10 text-amber-400',
-  error:   'bg-rose-500/10 text-rose-400',
+  success: 'bg-[var(--c-status-ok-bg)] text-[var(--c-status-ok-text)]',
+  warning: 'bg-[var(--c-status-warn-bg)] text-[var(--c-status-warn-text)]',
+  error:   'bg-[var(--c-status-danger-bg)] text-[var(--c-status-danger-text)]',
   neutral: 'bg-[var(--c-bg-deep)] text-[var(--c-text-muted)]',
 }
 
 export function SettingsStatusBadge({ variant, children }: Props) {
   return (
-    <span className={`inline-flex items-center rounded-md px-2 py-0.5 text-xs font-medium ${styles[variant]}`}>
+    <span className={`inline-flex items-center rounded-full px-2.5 py-[2px] text-[12px] font-[450] leading-[16px] ${styles[variant]}`}>
       {children}
     </span>
   )
