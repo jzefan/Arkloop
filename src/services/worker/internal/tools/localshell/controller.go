@@ -62,7 +62,7 @@ const (
 	processRingBytes   = 1 << 20
 	defaultProcessHome = "/tmp"
 	defaultProcessTmp  = "/tmp"
-	defaultProcessPath = "/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+	defaultUnixProcessPath = "/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 	defaultProcessLang = "C.UTF-8"
 	processUserName    = "arkloop"
 )
@@ -295,13 +295,23 @@ func (c *ProcessController) runBuffered(req ExecCommandRequest) (*Response, erro
 	cmd.SysProcAttr = procSysProcAttr()
 
 	var stdout, stderr safeBuf
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
+	stdoutPipe, err := cmd.StdoutPipe()
+	if err != nil {
+		return nil, err
+	}
+	stderrPipe, err := cmd.StderrPipe()
+	if err != nil {
+		return nil, err
+	}
 
 	timeout := time.Duration(NormalizeTimeoutMs(ModeBuffered, req.TimeoutMs)) * time.Millisecond
 	if err := cmd.Start(); err != nil {
 		return nil, err
 	}
+	var copyWG sync.WaitGroup
+	copyWG.Add(2)
+	go copyProcessOutput(&copyWG, &stdout, wrapProcessOutputReadCloser(stdoutPipe))
+	go copyProcessOutput(&copyWG, &stderr, wrapProcessOutputReadCloser(stderrPipe))
 	done := make(chan error, 1)
 	go func() {
 		done <- cmd.Wait()
@@ -309,6 +319,7 @@ func (c *ProcessController) runBuffered(req ExecCommandRequest) (*Response, erro
 
 	select {
 	case err := <-done:
+		copyWG.Wait()
 		exitCode := exitCodeFromError(err)
 		return &Response{
 			Status:     StatusExited,
@@ -320,15 +331,17 @@ func (c *ProcessController) runBuffered(req ExecCommandRequest) (*Response, erro
 		}, nil
 	case <-time.After(timeout):
 		// promote to managed background process instead of killing
-		proc, promoteErr := c.promoteToManaged(req, cmd, &stdout, &stderr, done)
+		proc, promoteErr := c.promoteToManaged(req, cmd, &stdout, &stderr, done, &copyWG)
 		if promoteErr != nil {
 			// fallback: kill as before
 			_ = terminateProcessTree(cmd, syscall.SIGTERM)
 			select {
 			case <-done:
+				copyWG.Wait()
 			case <-time.After(processKillGrace):
 				_ = terminateProcessTree(cmd, syscall.SIGKILL)
 				<-done
+				copyWG.Wait()
 			}
 			exitCode := 124
 			return &Response{
@@ -359,6 +372,7 @@ func (c *ProcessController) promoteToManaged(
 	stdout *safeBuf,
 	stderr *safeBuf,
 	done <-chan error,
+	copyWG *sync.WaitGroup,
 ) (*managedProcess, error) {
 	ref, err := newProcessRef()
 	if err != nil {
@@ -434,6 +448,9 @@ func (c *ProcessController) promoteToManaged(
 				}
 				proc.mu.Unlock()
 			case exitErr := <-done:
+				if copyWG != nil {
+					copyWG.Wait()
+				}
 				// final drain after process exit; writer goroutines are done
 				proc.mu.Lock()
 				drainIncrement()
@@ -454,6 +471,12 @@ func (c *ProcessController) promoteToManaged(
 	c.mu.Unlock()
 
 	return proc, nil
+}
+
+func copyProcessOutput(wg *sync.WaitGroup, dst io.Writer, src io.ReadCloser) {
+	defer wg.Done()
+	defer src.Close()
+	_, _ = io.Copy(dst, src)
 }
 
 func (c *ProcessController) startManaged(req ExecCommandRequest) (*managedProcess, error) {
@@ -514,8 +537,8 @@ func (c *ProcessController) startManaged(req ExecCommandRequest) (*managedProces
 			return nil, err
 		}
 		proc.readerWG.Add(2)
-		go c.readStream(proc, StreamStdout, stdout)
-		go c.readStream(proc, StreamStderr, stderr)
+		go c.readStream(proc, StreamStdout, wrapProcessOutputReadCloser(stdout))
+		go c.readStream(proc, StreamStderr, wrapProcessOutputReadCloser(stderr))
 	}
 
 	if req.Mode != ModePTY && cmd.Process == nil {
@@ -769,7 +792,7 @@ func buildOutputRef(processRef string, cursor uint64, next uint64) string {
 
 func resolveProcessShellCommand(command string) (string, []string) {
 	if runtime.GOOS == "windows" {
-		return "cmd.exe", []string{"/c", command}
+		return windowsComSpec(), []string{"/d", "/s", "/c", command}
 	}
 	if _, err := os.Stat("/bin/bash"); err == nil {
 		return "/bin/bash", []string{"--noprofile", "--norc", "-lc", command}
@@ -789,16 +812,35 @@ func resolveProcessCwd(cwd string) string {
 
 func buildProcessEnv(extra map[string]*string, includeTerm bool) []string {
 	env := map[string]string{
-		"HOME":                    processHomeDir(),
 		"PATH":                    processPath(),
-		"LANG":                    defaultProcessLang,
-		"TMPDIR":                  processTempDir(),
 		"PYTHONDONTWRITEBYTECODE": "1",
-		"USER":                    processUserName,
-		"LOGNAME":                 processUserName,
 	}
-	if includeTerm {
-		env["TERM"] = "xterm-256color"
+	if runtime.GOOS == "windows" {
+		home := processHomeDir()
+		temp := processTempDir()
+		env["HOME"] = home
+		env["USERPROFILE"] = home
+		env["TEMP"] = temp
+		env["TMP"] = temp
+		if systemRoot := strings.TrimSpace(os.Getenv("SystemRoot")); systemRoot != "" {
+			env["SystemRoot"] = systemRoot
+			env["WINDIR"] = systemRoot
+		}
+		if comSpec := strings.TrimSpace(windowsComSpec()); comSpec != "" {
+			env["ComSpec"] = comSpec
+		}
+		if pathext := strings.TrimSpace(os.Getenv("PATHEXT")); pathext != "" {
+			env["PATHEXT"] = pathext
+		}
+	} else {
+		env["HOME"] = processHomeDir()
+		env["LANG"] = defaultProcessLang
+		env["TMPDIR"] = processTempDir()
+		env["USER"] = processUserName
+		env["LOGNAME"] = processUserName
+		if includeTerm {
+			env["TERM"] = "xterm-256color"
+		}
 	}
 	for key, value := range extra {
 		key = strings.TrimSpace(key)
@@ -823,6 +865,16 @@ func buildProcessEnv(extra map[string]*string, includeTerm bool) []string {
 	return result
 }
 
+func windowsComSpec() string {
+	if comSpec := strings.TrimSpace(os.Getenv("ComSpec")); comSpec != "" {
+		return comSpec
+	}
+	if systemRoot := strings.TrimSpace(os.Getenv("SystemRoot")); systemRoot != "" {
+		return filepath.Join(systemRoot, "System32", "cmd.exe")
+	}
+	return "cmd.exe"
+}
+
 func processHomeDir() string {
 	if home, err := os.UserHomeDir(); err == nil && strings.TrimSpace(home) != "" {
 		return strings.TrimSpace(home)
@@ -835,7 +887,20 @@ func processPath() string {
 	if home, err := os.UserHomeDir(); err == nil && strings.TrimSpace(home) != "" {
 		entries = append(entries, filepath.Join(strings.TrimSpace(home), ".arkloop", "bin"))
 	}
-	entries = append(entries, filepath.SplitList(defaultProcessPath)...)
+	if runtime.GOOS == "windows" {
+		if hostPath := strings.TrimSpace(os.Getenv("PATH")); hostPath != "" {
+			entries = append(entries, filepath.SplitList(hostPath)...)
+		} else if systemRoot := strings.TrimSpace(os.Getenv("SystemRoot")); systemRoot != "" {
+			entries = append(entries,
+				filepath.Join(systemRoot, "System32"),
+				systemRoot,
+				filepath.Join(systemRoot, "System32", "Wbem"),
+				filepath.Join(systemRoot, "System32", "WindowsPowerShell", "v1.0"),
+			)
+		}
+	} else {
+		entries = append(entries, filepath.SplitList(defaultUnixProcessPath)...)
+	}
 	return strings.Join(uniqueProcessPathEntries(entries), string(os.PathListSeparator))
 }
 

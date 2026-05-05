@@ -4,6 +4,7 @@ package localshell
 
 import (
 	"context"
+	"runtime"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -407,7 +408,17 @@ func TestBuildProcessEnvDoesNotInheritHostEnvironment(t *testing.T) {
 	if !strings.Contains(joined, "PATH="+expectedBin+string(filepath.ListSeparator)) {
 		t.Fatalf("expected desktop bin in PATH, got %q", joined)
 	}
-	if !strings.Contains(joined, "LANG="+defaultProcessLang) {
+	if runtime.GOOS == "windows" {
+		if !strings.Contains(joined, "SystemRoot=") {
+			t.Fatalf("expected SystemRoot in env, got %q", joined)
+		}
+		if !strings.Contains(joined, "ComSpec=") {
+			t.Fatalf("expected ComSpec in env, got %q", joined)
+		}
+		if !strings.Contains(joined, "TEMP=") || !strings.Contains(joined, "TMP=") {
+			t.Fatalf("expected Windows temp vars in env, got %q", joined)
+		}
+	} else if !strings.Contains(joined, "LANG="+defaultProcessLang) {
 		t.Fatalf("expected sanitized LANG in env, got %q", joined)
 	}
 	if !strings.Contains(joined, "PYTHONDONTWRITEBYTECODE=1") {

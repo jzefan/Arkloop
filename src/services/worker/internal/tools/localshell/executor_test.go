@@ -20,3 +20,17 @@ func TestSanitizeLocalEnvPatchesUnsetsHostSpecificVariables(t *testing.T) {
 		t.Fatalf("expected HOME to remain allowed, got %#v", patches["HOME"])
 	}
 }
+
+func TestSanitizeOutputPreservesWindowsCRLF(t *testing.T) {
+	got := sanitizeOutput("hello\r\n")
+	if got != "hello\n" {
+		t.Fatalf("expected CRLF output to be preserved, got %q", got)
+	}
+}
+
+func TestSanitizeOutputKeepsLastCarriageReturnSegment(t *testing.T) {
+	got := sanitizeOutput("step 1\rstep 2\rfinal")
+	if got != "final" {
+		t.Fatalf("expected carriage-return overwrite to keep final segment, got %q", got)
+	}
+}

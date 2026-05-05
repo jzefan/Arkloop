@@ -561,8 +561,15 @@ func readIntArg(args map[string]any, key string) int {
 func sanitizeOutput(s string) string {
 	lines := strings.Split(s, "\n")
 	for i, line := range lines {
+		line = strings.TrimSuffix(line, "\r")
 		parts := strings.Split(line, "\r")
-		lines[i] = parts[len(parts)-1]
+		for j := len(parts) - 1; j >= 0; j-- {
+			if parts[j] != "" {
+				line = parts[j]
+				break
+			}
+		}
+		lines[i] = line
 	}
 	s = strings.Join(lines, "\n")
 
