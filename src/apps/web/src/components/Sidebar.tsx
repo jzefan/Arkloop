@@ -289,6 +289,7 @@ export function Sidebar({
   const [gtdSomedayIds, setGtdSomedayIds] = useState<Set<string>>(() => readGtdSomedayThreadIds())
   const [gtdArchivedIds, setGtdArchivedIds] = useState<Set<string>>(() => readGtdArchivedThreadIds())
   const [pinnedIds, setPinnedIds] = useState<Set<string>>(() => readPinnedThreadIds())
+  const pinnedIdsRef = useRef(pinnedIds)
   const [expandedPaths, setExpandedPaths] = useState<Set<string>>(() => readExpandedProjectPaths())
   const [expandedLimits, setExpandedLimits] = useState<Record<string, number>>({})
   const [expandedGtdBuckets, setExpandedGtdBuckets] = useState<Set<GtdBucket>>(() => defaultGtdExpandedBuckets())
@@ -739,13 +740,18 @@ export function Sidebar({
   const markGtdSomeday = useCallback((id: string) => moveGtdThread(id, 'someday'), [moveGtdThread])
   const archiveGtdThread = useCallback((id: string) => moveGtdThread(id, 'archived'), [moveGtdThread])
 
-  const applyPinnedLocal = useCallback((id: string, pinned: boolean) => {
-    const next = new Set(readPinnedThreadIds())
-    if (pinned) next.add(id)
-    else next.delete(id)
+  const replacePinnedIds = useCallback((next: Set<string>) => {
+    pinnedIdsRef.current = next
     writePinnedThreadIds(next)
     setPinnedIds(next)
   }, [])
+
+  const applyPinnedLocal = useCallback((id: string, pinned: boolean) => {
+    const next = new Set(pinnedIdsRef.current)
+    if (pinned) next.add(id)
+    else next.delete(id)
+    replacePinnedIds(next)
+  }, [replacePinnedIds])
 
   const togglePin = useCallback((id: string) => {
     const nextPinned = !effectivePinnedIds.has(id)
@@ -1073,18 +1079,16 @@ export function Sidebar({
       await deleteThread(accessToken, id)
       // 清理 GTD 和 Pin 的本地状态
       applyGtdBucketLocal(id, null)
-      setPinnedIds((prev: Set<string>) => {
-        if (!prev.has(id)) return prev
-        const next = new Set(prev)
+      if (pinnedIdsRef.current.has(id)) {
+        const next = new Set(pinnedIdsRef.current)
         next.delete(id)
-        writePinnedThreadIds(next)
-        return next
-      })
+        replacePinnedIds(next)
+      }
       onThreadDeleted(id)
     } catch {
       // 失败静默
     }
-  }, [accessToken, applyGtdBucketLocal, onThreadDeleted])
+  }, [accessToken, applyGtdBucketLocal, onThreadDeleted, replacePinnedIds])
 
   // 进入编辑模式后自动聚焦 input
   useEffect(() => {
@@ -1134,6 +1138,7 @@ export function Sidebar({
 
   // 新建线程时 addThread 会更新 localStorage 中的 GTD Inbox，
   // 但 Sidebar 的 gtdInboxIds state 不会感知，需要在线程列表变化时同步。
+  // pinnedIds 不能在这里从 storage 反向覆盖，否则 storage 不可用时会丢失会话内状态。
   useEffect(() => {
     let cancelled = false
     window.queueMicrotask(() => {
@@ -1143,7 +1148,6 @@ export function Sidebar({
       setGtdWaitingIds(readGtdWaitingThreadIds())
       setGtdSomedayIds(readGtdSomedayThreadIds())
       setGtdArchivedIds(readGtdArchivedThreadIds())
-      setPinnedIds(readPinnedThreadIds())
     })
     return () => { cancelled = true }
   }, [threads])
