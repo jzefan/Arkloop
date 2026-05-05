@@ -314,12 +314,12 @@ func (c *ProcessController) runBuffered(req ExecCommandRequest) (*Response, erro
 	go copyProcessOutput(&copyWG, &stderr, wrapProcessOutputReadCloser(stderrPipe))
 	done := make(chan error, 1)
 	go func() {
+		copyWG.Wait()
 		done <- cmd.Wait()
 	}()
 
 	select {
 	case err := <-done:
-		copyWG.Wait()
 		exitCode := exitCodeFromError(err)
 		return &Response{
 			Status:     StatusExited,
@@ -331,17 +331,15 @@ func (c *ProcessController) runBuffered(req ExecCommandRequest) (*Response, erro
 		}, nil
 	case <-time.After(timeout):
 		// promote to managed background process instead of killing
-		proc, promoteErr := c.promoteToManaged(req, cmd, &stdout, &stderr, done, &copyWG)
+		proc, promoteErr := c.promoteToManaged(req, cmd, &stdout, &stderr, done)
 		if promoteErr != nil {
 			// fallback: kill as before
 			_ = terminateProcessTree(cmd, syscall.SIGTERM)
 			select {
 			case <-done:
-				copyWG.Wait()
 			case <-time.After(processKillGrace):
 				_ = terminateProcessTree(cmd, syscall.SIGKILL)
 				<-done
-				copyWG.Wait()
 			}
 			exitCode := 124
 			return &Response{
@@ -372,7 +370,6 @@ func (c *ProcessController) promoteToManaged(
 	stdout *safeBuf,
 	stderr *safeBuf,
 	done <-chan error,
-	copyWG *sync.WaitGroup,
 ) (*managedProcess, error) {
 	ref, err := newProcessRef()
 	if err != nil {
@@ -448,9 +445,6 @@ func (c *ProcessController) promoteToManaged(
 				}
 				proc.mu.Unlock()
 			case exitErr := <-done:
-				if copyWG != nil {
-					copyWG.Wait()
-				}
 				// final drain after process exit; writer goroutines are done
 				proc.mu.Lock()
 				drainIncrement()
