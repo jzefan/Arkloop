@@ -22,6 +22,7 @@ import type {
   AgentMessageContentPart,
   AgentUIMessagePart,
   AgentRun,
+  AgentOpenEventStreamOptions,
   AgentUIEvent,
   AgentOpenMessageChunkStreamOptions,
   AgentUIMessageChunk,
@@ -295,14 +296,8 @@ function drainPendingToolInputDeltas(
   state.pendingToolInputDeltasByIndex.delete(pendingIndex)
 }
 
-function runEventToMessageChunks(event: RunEvent, state: MessageChunkLifecycle): AgentUIMessageChunk[] {
-  const uiEvent = toAgentUIEvent(event)
-  const chunks: AgentUIMessageChunk[] = [{
-    type: 'data-agent-event',
-    id: uiEvent.id,
-    data: uiEvent,
-    transient: true,
-  }]
+function agentEventToMessageChunks(uiEvent: AgentUIEvent, state: MessageChunkLifecycle): AgentUIMessageChunk[] {
+  const chunks: AgentUIMessageChunk[] = []
 
   if (uiEvent.type === 'assistant-delta') {
     const data = uiEvent.data as { delta?: unknown; role?: unknown; channel?: unknown }
@@ -424,15 +419,44 @@ function enqueueStreamEnd(
   for (const chunk of chunks) controller.enqueue(chunk)
 }
 
-function runEventsToMessageChunkStream(eventsPromise: Promise<RunEvent[]>): ReadableStream<AgentUIMessageChunk> {
-  return new ReadableStream<AgentUIMessageChunk>({
+function runEventsToEventStream(eventsPromise: Promise<RunEvent[]>): ReadableStream<AgentUIEvent> {
+  return new ReadableStream<AgentUIEvent>({
     async start(controller) {
-      const lifecycle = createMessageChunkLifecycle()
-      enqueueStreamStart(controller)
       try {
         const events = await eventsPromise
         for (const event of events) {
-          for (const chunk of runEventToMessageChunks(event, lifecycle)) {
+          controller.enqueue(toAgentUIEvent(event))
+        }
+        controller.close()
+      } catch (error) {
+        controller.error(error)
+      }
+    },
+  })
+}
+
+function eventStreamToMessageChunkStream(
+  eventStream: ReadableStream<AgentUIEvent>,
+): ReadableStream<AgentUIMessageChunk> {
+  let reader: ReadableStreamDefaultReader<AgentUIEvent> | null = null
+
+  return new ReadableStream<AgentUIMessageChunk>({
+    async start(controller) {
+      const lifecycle = createMessageChunkLifecycle()
+      reader = eventStream.getReader()
+      enqueueStreamStart(controller)
+      try {
+        while (true) {
+          const { done, value } = await reader.read()
+          if (done) break
+          const chunks: AgentUIMessageChunk[] = [{
+            type: 'data-agent-event',
+            id: value.id,
+            data: value,
+            transient: true,
+          }]
+          const projected = agentEventToMessageChunks(value, lifecycle)
+          for (const chunk of [...chunks, ...projected]) {
             controller.enqueue(chunk)
           }
         }
@@ -444,7 +468,13 @@ function runEventsToMessageChunkStream(eventsPromise: Promise<RunEvent[]>): Read
           errorText: error instanceof Error ? error.message : String(error),
         })
         controller.close()
+      } finally {
+        reader?.releaseLock()
+        reader = null
       }
+    },
+    cancel() {
+      void reader?.cancel().catch(() => {})
     },
   })
 }
@@ -454,6 +484,78 @@ export function createArkloopAgentClient({
   baseUrl,
   refreshAccessToken,
 }: CreateArkloopAgentClientOptions): AgentClient {
+  const openEventStream = (
+    streamId: string,
+    options?: AgentOpenEventStreamOptions,
+  ): ReadableStream<AgentUIEvent> => {
+    if (options?.live === false) {
+      return runEventsToEventStream(listRunEvents(accessToken, streamId, {
+        afterSeq: options.cursor,
+        follow: false,
+      }))
+    }
+
+    let client: ReturnType<typeof createSSEClient> | null = null
+    let closed = false
+    const abort = () => {
+      closed = true
+      client?.close()
+    }
+
+    return new ReadableStream<AgentUIEvent>({
+      start(controller) {
+        const signal = options?.signal
+        if (signal?.aborted) {
+          abort()
+          controller.close()
+          return
+        }
+        signal?.addEventListener('abort', abort, { once: true })
+
+        client = createSSEClient({
+          url: buildStreamUrl(baseUrl, streamId),
+          accessToken,
+          afterSeq: options?.cursor,
+          follow: options?.live ?? true,
+          maxRetries: options?.maxRetries,
+          retryDelayMs: options?.retryDelayMs,
+          maxRetryDelayMs: options?.maxRetryDelayMs,
+          readTimeoutMs: options?.readTimeoutMs,
+          maxAuthRetries: options?.maxAuthRetries,
+          onTokenRefresh: refreshAccessToken,
+          onStateChange: options?.onStateChange,
+          onError: (error) => {
+            options?.onError?.(error)
+            if (!closed) {
+              controller.error(error)
+            }
+          },
+          onEvent: (event) => {
+            if (closed) return
+            controller.enqueue(toAgentUIEvent(event))
+          },
+        })
+
+        void client.connect()
+          .catch((error: unknown) => {
+            if (closed) return
+            const err = error instanceof Error ? error : new Error(String(error))
+            options?.onError?.(err)
+            controller.error(err)
+          })
+          .finally(() => {
+            signal?.removeEventListener('abort', abort)
+            if (closed) return
+            closed = true
+            controller.close()
+          })
+      },
+      cancel() {
+        abort()
+      },
+    })
+  }
+
   return {
     listMessages: async (threadId, limit) => (
       await (limit == null
@@ -500,84 +602,10 @@ export function createArkloopAgentClient({
     provideInput: async (streamId, value) => {
       await provideInput(accessToken, streamId, value)
     },
+    openEventStream,
     openMessageChunkStream: (
       streamId: string,
       options?: AgentOpenMessageChunkStreamOptions,
-    ) => {
-      if (options?.live === false) {
-        return runEventsToMessageChunkStream(listRunEvents(accessToken, streamId, {
-          afterSeq: options.cursor,
-          follow: false,
-        }))
-      }
-
-      let client: ReturnType<typeof createSSEClient> | null = null
-      let closed = false
-      const abort = () => {
-        closed = true
-        client?.close()
-      }
-
-      return new ReadableStream<AgentUIMessageChunk>({
-        start(controller) {
-          const lifecycle = createMessageChunkLifecycle()
-          enqueueStreamStart(controller)
-          const signal = options?.signal
-          if (signal?.aborted) {
-            abort()
-            controller.close()
-            return
-          }
-          signal?.addEventListener('abort', abort, { once: true })
-
-          client = createSSEClient({
-            url: buildStreamUrl(baseUrl, streamId),
-            accessToken,
-            afterSeq: options?.cursor,
-            follow: options?.live ?? true,
-            maxRetries: options?.maxRetries,
-            retryDelayMs: options?.retryDelayMs,
-            maxRetryDelayMs: options?.maxRetryDelayMs,
-            readTimeoutMs: options?.readTimeoutMs,
-            maxAuthRetries: options?.maxAuthRetries,
-            onTokenRefresh: refreshAccessToken,
-            onStateChange: options?.onStateChange,
-            onError: (error) => {
-              options?.onError?.(error)
-              if (!closed) {
-                controller.enqueue({
-                  type: 'error',
-                  errorText: error.message,
-                })
-              }
-            },
-            onEvent: (event) => {
-              if (closed) return
-              for (const chunk of runEventToMessageChunks(event, lifecycle)) {
-                controller.enqueue(chunk)
-              }
-            },
-          })
-
-          void client.connect()
-            .catch((error: unknown) => {
-              if (closed) return
-              const err = error instanceof Error ? error : new Error(String(error))
-              options?.onError?.(err)
-              controller.enqueue({ type: 'error', errorText: err.message })
-            })
-            .finally(() => {
-              signal?.removeEventListener('abort', abort)
-              if (closed) return
-              closed = true
-              enqueueStreamEnd(controller, lifecycle)
-              controller.close()
-            })
-        },
-        cancel() {
-          abort()
-        },
-      })
-    },
+    ) => eventStreamToMessageChunkStream(openEventStream(streamId, options)),
   }
 }

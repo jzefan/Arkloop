@@ -3,7 +3,7 @@ import { createRoot } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { useAgentStream, type UseAgentStreamResult } from '../hooks/useAgentStream'
-import type { AgentClient } from '../agent-ui'
+import type { AgentClient, AgentUIEvent } from '../agent-ui'
 
 const mockedReadLastSeqFromStorage = vi.hoisted(() => vi.fn())
 const mockedWriteLastSeqToStorage = vi.hoisted(() => vi.fn())
@@ -19,11 +19,20 @@ vi.mock('../streamDebug', () => ({
   emitStreamDebug: vi.fn(),
 }))
 
-const mockedOpenMessageChunkStream = vi.fn()
+const mockedOpenEventStream = vi.fn()
 
 function pendingStream(cancel: () => void = vi.fn()): ReadableStream<never> {
   return new ReadableStream<never>({
     cancel,
+  })
+}
+
+function eventStream(event: AgentUIEvent): ReadableStream<AgentUIEvent> {
+  return new ReadableStream<AgentUIEvent>({
+    start(controller) {
+      controller.enqueue(event)
+      controller.close()
+    },
   })
 }
 
@@ -36,7 +45,8 @@ function createMockAgentClient(): AgentClient {
     retryMessage: vi.fn(),
     cancelRun: vi.fn(),
     provideInput: vi.fn(),
-    openMessageChunkStream: mockedOpenMessageChunkStream,
+    openEventStream: mockedOpenEventStream,
+    openMessageChunkStream: vi.fn(),
   }
 }
 
@@ -75,7 +85,7 @@ describe('useAgentStream', () => {
     const firstCancel = vi.fn()
     const secondCancel = vi.fn()
     const agentClient = createMockAgentClient()
-    mockedOpenMessageChunkStream
+    mockedOpenEventStream
       .mockReturnValueOnce(pendingStream(firstCancel))
       .mockReturnValueOnce(pendingStream(secondCancel))
     mockedReadLastSeqFromStorage.mockImplementation((runId: string) => (
@@ -96,7 +106,7 @@ describe('useAgentStream', () => {
       await Promise.resolve()
     })
 
-    expect(mockedOpenMessageChunkStream).toHaveBeenNthCalledWith(1, 'run-1', expect.objectContaining({
+    expect(mockedOpenEventStream).toHaveBeenNthCalledWith(1, 'run-1', expect.objectContaining({
       cursor: 7,
       live: true,
     }))
@@ -111,7 +121,7 @@ describe('useAgentStream', () => {
     })
 
     expect(firstCancel).toHaveBeenCalledTimes(1)
-    expect(mockedOpenMessageChunkStream).toHaveBeenNthCalledWith(2, 'run-2', expect.objectContaining({
+    expect(mockedOpenEventStream).toHaveBeenNthCalledWith(2, 'run-2', expect.objectContaining({
       cursor: 3,
       live: true,
     }))
@@ -121,11 +131,11 @@ describe('useAgentStream', () => {
     container.remove()
   })
 
-  it('reconnect 应重建当前 run 的 chunk stream', async () => {
+  it('reconnect 应重建当前 run 的 event stream', async () => {
     const firstCancel = vi.fn()
     const secondCancel = vi.fn()
     const agentClient = createMockAgentClient()
-    mockedOpenMessageChunkStream
+    mockedOpenEventStream
       .mockReturnValueOnce(pendingStream(firstCancel))
       .mockReturnValueOnce(pendingStream(secondCancel))
     mockedReadLastSeqFromStorage.mockReturnValue(0)
@@ -149,13 +159,52 @@ describe('useAgentStream', () => {
     })
 
     expect(firstCancel).toHaveBeenCalledTimes(1)
-    expect(mockedOpenMessageChunkStream).toHaveBeenNthCalledWith(2, 'run-1', expect.objectContaining({
+    expect(mockedOpenEventStream).toHaveBeenNthCalledWith(2, 'run-1', expect.objectContaining({
       cursor: 0,
       live: true,
     }))
 
     act(() => root.unmount())
     expect(secondCancel).toHaveBeenCalledTimes(1)
+    container.remove()
+  })
+
+  it('读取 event stream 后应通知订阅者并更新事件队列', async () => {
+    const agentClient = createMockAgentClient()
+    const event: AgentUIEvent = {
+      id: 'evt-1',
+      streamId: 'run-1',
+      order: 1,
+      timestamp: '2026-05-05T00:00:00Z',
+      type: 'assistant-delta',
+      data: { role: 'assistant', delta: 'hi' },
+    }
+    mockedOpenEventStream.mockReturnValueOnce(eventStream(event))
+    mockedReadLastSeqFromStorage.mockReturnValue(0)
+
+    let latest: UseAgentStreamResult | null = null
+    const listener = vi.fn()
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const root = createRoot(container)
+
+    await act(async () => {
+      root.render(<HookProbe runId="run-1" client={agentClient} onSnapshot={(value) => { latest = value }} />)
+    })
+    const unsubscribe = latest!.subscribeEvents(listener)
+
+    await act(async () => {
+      latest?.connect()
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(listener).toHaveBeenCalled()
+    expect((latest as UseAgentStreamResult | null)?.events).toEqual([event])
+    expect(mockedWriteLastSeqToStorage).toHaveBeenCalledWith('run-1', 1)
+
+    unsubscribe()
+    act(() => root.unmount())
     container.remove()
   })
 })

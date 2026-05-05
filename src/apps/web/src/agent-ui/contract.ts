@@ -473,6 +473,8 @@ export type AgentOpenMessageChunkStreamOptions = {
   maxAuthRetries?: number
 }
 
+export type AgentOpenEventStreamOptions = AgentOpenMessageChunkStreamOptions
+
 export type AgentChatRequestOptions = {
   headers?: HeadersInit
   body?: Record<string, unknown>
@@ -501,6 +503,10 @@ export type AgentClient = {
   retryMessage: (input: AgentRetryMessageInput) => Promise<AgentRun>
   cancelRun: (streamId: string, lastSeenSequence?: number) => Promise<void>
   provideInput: (streamId: string, value: string) => Promise<void>
+  openEventStream: (
+    streamId: string,
+    options?: AgentOpenEventStreamOptions,
+  ) => ReadableStream<AgentUIEvent>
   openMessageChunkStream: (
     streamId: string,
     options?: AgentOpenMessageChunkStreamOptions,

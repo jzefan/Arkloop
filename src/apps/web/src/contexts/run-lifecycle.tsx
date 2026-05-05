@@ -193,7 +193,7 @@ export function RunLifecycleProvider({ children }: { children: ReactNode }) {
     }
   }, [clearContextCompactHideTimer])
 
-  // activeRunId 变化 -> 连接 SSE、重置 refs
+  // activeRunId 变化 -> 重置本轮 stream 状态
   useEffect(() => {
     if (!activeRunId) return
     clearCompletedTitleTail()
@@ -203,7 +203,6 @@ export function RunLifecycleProvider({ children }: { children: ReactNode }) {
     sseTerminalFallbackArmedRef.current = false
     seenFirstToolCallInRunRef.current = false
     sse.reset()
-    sse.connect()
     processedEventCountRef.current = 0
     lastVisibleNonTerminalSeqRef.current = 0
     setCancelSubmitting(false)

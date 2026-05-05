@@ -1,17 +1,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
-  agentUIEventFromChunk,
   type AgentClient,
   type AgentStreamState,
   type AgentUIEvent,
-  type AgentUIMessageChunk,
 } from '../agent-ui'
 import { clearLastSeqInStorage, readLastSeqFromStorage, writeLastSeqToStorage } from '../storage'
 import { emitStreamDebug } from '../streamDebug'
 
 type ActiveChunkStream = {
   abortController: AbortController
-  reader: ReadableStreamDefaultReader<AgentUIMessageChunk>
+  reader: ReadableStreamDefaultReader<AgentUIEvent>
 }
 
 export type UseAgentStreamOptions = {
@@ -134,7 +132,7 @@ export function useAgentStream(options: UseAgentStreamOptions): UseAgentStreamRe
     }, 'agent-stream')
 
     const abortController = new AbortController()
-    const stream = agentClient.openMessageChunkStream(runId, {
+    const stream = agentClient.openEventStream(runId, {
       cursor: cursorRef.current,
       live: true,
       onStateChange: handleStateChange,
@@ -149,8 +147,7 @@ export function useAgentStream(options: UseAgentStreamOptions): UseAgentStreamRe
         while (true) {
           const { done, value } = await reader.read()
           if (done) break
-          const event = agentUIEventFromChunk(value)
-          if (event) handleEvent(event)
+          handleEvent(value)
         }
       } catch (err) {
         if (abortController.signal.aborted) return

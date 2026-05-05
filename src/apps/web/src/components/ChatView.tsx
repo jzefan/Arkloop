@@ -857,7 +857,6 @@ export const ChatView = memo(function ChatView() {
     markTerminalRunHistory: markTerminalRunHistoryState,
     clearCompletedTitleTail: clearCompletedTitleTailState,
     sse,
-    sseRunId,
     isStreaming,
     processedEventCountRef,
     freezeCutoffRef,
@@ -1631,7 +1630,7 @@ export const ChatView = memo(function ChatView() {
     setPendingIncognito(false)
   }, [threadId, clearCompletedTitleTail, resetAssistantTurnLive])
 
-  // 连接 SSE
+  // 新 run 启动时重置 ChatView 局部渲染状态；stream 连接由 RunLifecycleProvider 统一持有。
   useEffect(() => {
     if (!activeRunId) return
     clearCompletedTitleTail()
@@ -1640,8 +1639,6 @@ export const ChatView = memo(function ChatView() {
     sseTerminalFallbackRunIdRef.current = activeRunId
     sseTerminalFallbackArmedRef.current = false
     seenFirstToolCallInRunRef.current = false
-    sse.reset()
-    sse.connect()
     processedEventCountRef.current = 0
     lastVisibleNonTerminalSeqRef.current = 0
     const shouldCarryRunningHandoff =
@@ -1671,13 +1668,7 @@ export const ChatView = memo(function ChatView() {
       setStreamingArtifacts([])
     }
     setCancelSubmitting(false)
-  }, [activeRunId, baseUrl, clearCompletedTitleTail, resetAssistantTurnLive, threadId])
-
-  useEffect(() => {
-    if (!sseRunId) return
-    sse.connect()
-    return () => { sse.disconnect() }
-  }, [sseRunId, baseUrl])
+  }, [activeRunId, clearCompletedTitleTail, resetAssistantTurnLive, threadId])
 
   useEffect(() => {
     if (!activeRunId) {
@@ -1716,20 +1707,6 @@ export const ChatView = memo(function ChatView() {
       sseTerminalFallbackArmedRef.current = true
     }
   }, [activeRunId, sse.state])
-
-  // 页面从后台回到前台时，若 SSE 已断开则重连
-  useEffect(() => {
-    const onVisibilityChange = () => {
-      if (document.visibilityState !== 'visible') return
-      if (!sseRunId) return
-      const s = sse.state
-      if (s === 'closed' || s === 'error' || s === 'idle') {
-        sse.reconnect()
-      }
-    }
-    document.addEventListener('visibilitychange', onVisibilityChange)
-    return () => document.removeEventListener('visibilitychange', onVisibilityChange)
-  }, [sseRunId, sse.state, sse.reconnect])
 
   const chatInputRef = useRef<ChatInputHandle>(null)
   const attachmentsRef = useRef(attachments)
