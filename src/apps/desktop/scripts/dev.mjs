@@ -67,8 +67,14 @@ function normalizeDevUrl(url) {
   return url.endsWith('/') ? url.slice(0, -1) : url
 }
 
+const ANSI_ESCAPE_PATTERN = /\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])/g
+
+function stripAnsi(value) {
+  return value.replace(ANSI_ESCAPE_PATTERN, '')
+}
+
 function parseViteDevUrl(output) {
-  const match = output.match(/https?:\/\/(?:localhost|127\.0\.0\.1|\[::1\]):\d+\/?/)
+  const match = stripAnsi(output).match(/https?:\/\/(?:localhost|127\.0\.0\.1|\[::1\]):\d+\/?/)
   return match ? normalizeDevUrl(match[0]) : null
 }
 
