@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import {
   AlertTriangle,
   BookOpen,
@@ -22,7 +22,6 @@ import { PillToggle } from '@arkloop/shared'
 import { TabBar } from '@arkloop/shared/components/prompt-injection'
 import { SettingsSectionHeader } from './_SettingsSectionHeader'
 import { SettingsInput } from './_SettingsInput'
-import { SettingsSelect } from './_SettingsSelect'
 import { SettingsStatusBadge } from './_SettingsStatusBadge'
 import { ProviderSelectCard } from './ProviderSelectCard'
 
@@ -37,6 +36,8 @@ const previewPanel = `${specPanel} p-5`
 const labelCls = 'text-[11px] font-semibold uppercase tracking-wider text-[var(--c-text-muted)]'
 const mutedText = 'text-sm leading-relaxed text-[var(--c-text-secondary)]'
 const ruleText = 'text-xs leading-relaxed text-[var(--c-text-muted)]'
+const controlRadius = 'rounded-[6.5px]'
+const selectBorderColor = 'color-mix(in srgb, var(--c-border) 78%, var(--c-bg-input) 22%)'
 
 const toastText: Record<ToastVariant, string> = {
   success: 'text-[var(--c-status-success-text)]',
@@ -394,7 +395,109 @@ function SearchInput({ placeholder = 'Search' }: { placeholder?: string }) {
   return (
     <div className="relative">
       <Search size={14} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[var(--c-text-muted)]" />
-      <SettingsInput className="h-9 pl-8" placeholder={placeholder} />
+      <TokenInput className="pl-8" placeholder={placeholder} />
+    </div>
+  )
+}
+
+function TokenInput({
+  className,
+  placeholder,
+  defaultValue,
+}: {
+  className?: string
+  placeholder?: string
+  defaultValue?: string
+}) {
+  return (
+    <input
+      className={[
+        'h-[32px] w-full border-[0.65px] [border-color:color-mix(in_srgb,var(--c-border)_64%,var(--c-bg-input)_36%)] bg-[var(--c-bg-input)] px-3 text-sm font-[450] text-[var(--c-text-primary)] outline-none placeholder:font-[350] placeholder:text-[var(--c-text-muted)] transition-colors duration-[180ms] hover:[border-color:color-mix(in_srgb,var(--c-border)_72%,var(--c-text-primary)_28%)] focus:[border-color:color-mix(in_srgb,var(--c-border)_72%,var(--c-text-primary)_28%)]',
+        controlRadius,
+        className,
+      ].filter(Boolean).join(' ')}
+      placeholder={placeholder}
+      defaultValue={defaultValue}
+    />
+  )
+}
+
+function TokenSelect({
+  value,
+  options,
+  onChange,
+}: {
+  value: string
+  options: Array<{ value: string; label: string }>
+  onChange: (value: string) => void
+}) {
+  const [open, setOpen] = useState(false)
+  const [highlighted, setHighlighted] = useState(value)
+  const menuRef = useRef<HTMLDivElement>(null)
+  const buttonRef = useRef<HTMLButtonElement>(null)
+  const currentLabel = options.find((option) => option.value === value)?.label ?? value
+
+  useEffect(() => {
+    if (!open) return
+    setHighlighted(value)
+    const handler = (event: MouseEvent) => {
+      if (
+        menuRef.current?.contains(event.target as Node) ||
+        buttonRef.current?.contains(event.target as Node)
+      ) return
+      setOpen(false)
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [open, value])
+
+  return (
+    <div className="relative">
+      <button
+        ref={buttonRef}
+        type="button"
+        onClick={() => setOpen((next) => !next)}
+        className={[
+          'flex h-[32px] w-full items-center justify-between border-[0.65px] bg-[var(--c-bg-input)] px-3 text-sm font-[450] text-[var(--c-text-primary)] [background-clip:padding-box] transition-colors duration-[180ms] hover:bg-[var(--c-bg-deep)]',
+          controlRadius,
+        ].join(' ')}
+        style={{ borderColor: selectBorderColor }}
+      >
+        <span className="truncate">{currentLabel}</span>
+        <ChevronDownIcon />
+      </button>
+
+      {open && (
+        <div
+          ref={menuRef}
+          className="dropdown-menu absolute left-0 top-[calc(100%+6px)] z-50 max-h-[220px] w-full overflow-y-auto border-[0.65px] bg-[var(--c-bg-menu)] p-1"
+          style={{
+            borderColor: selectBorderColor,
+            borderRadius: 10,
+            boxShadow: 'var(--c-dropdown-shadow)',
+          }}
+        >
+          {options.map((option) => {
+            const selected = option.value === value
+            const active = option.value === highlighted
+            return (
+              <button
+                key={option.value}
+                type="button"
+                onMouseEnter={() => setHighlighted(option.value)}
+                onClick={() => { onChange(option.value); setOpen(false) }}
+                className={[
+                  'flex w-full items-center justify-between rounded-[6.5px] px-3 py-2 text-sm font-[450] transition-colors duration-[140ms]',
+                  active ? 'bg-[var(--c-bg-deep)] text-[var(--c-text-primary)]' : 'bg-[var(--c-bg-menu)] text-[var(--c-text-secondary)]',
+                ].join(' ')}
+              >
+                <span className="truncate">{option.label}</span>
+                {selected && <Check size={13} className="ml-2 shrink-0" />}
+              </button>
+            )
+          })}
+        </div>
+      )}
     </div>
   )
 }
@@ -495,7 +598,7 @@ function CurrentSettingsMock() {
           description="Used by background utility tasks."
           control={(
             <div className="w-[240px]">
-              <SettingsSelect
+              <TokenSelect
                 value={model}
                 options={[
                   { value: 'default', label: 'Platform default' },
@@ -992,11 +1095,11 @@ function PrimitivesPreview() {
           <div className="grid gap-3 sm:grid-cols-2">
             <div>
               <div className="mb-1.5 text-xs font-medium text-[var(--c-text-secondary)]">Text field</div>
-              <SettingsInput placeholder="https://api.example.com/v1" />
+              <TokenInput placeholder="https://api.example.com/v1" />
             </div>
             <div>
               <div className="mb-1.5 text-xs font-medium text-[var(--c-text-secondary)]">Select</div>
-              <SettingsSelect
+              <TokenSelect
                 value={model}
                 options={[
                   { value: 'default', label: 'Platform default' },
