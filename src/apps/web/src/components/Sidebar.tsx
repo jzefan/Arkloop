@@ -740,12 +740,11 @@ export function Sidebar({
   const archiveGtdThread = useCallback((id: string) => moveGtdThread(id, 'archived'), [moveGtdThread])
 
   const applyPinnedLocal = useCallback((id: string, pinned: boolean) => {
-    setPinnedIds((prev: Set<string>) => {
-      const next = new Set(prev)
-      if (pinned) next.add(id); else next.delete(id)
-      writePinnedThreadIds(next)
-      return next
-    })
+    const next = new Set(readPinnedThreadIds())
+    if (pinned) next.add(id)
+    else next.delete(id)
+    writePinnedThreadIds(next)
+    setPinnedIds(next)
   }, [])
 
   const togglePin = useCallback((id: string) => {
