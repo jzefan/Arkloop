@@ -1498,7 +1498,7 @@ export function Sidebar({
       <aside
       ref={asideRef}
       className={[
-        'theme-background flex h-full shrink-0 flex-col overflow-hidden bg-[var(--c-bg-sidebar)]',
+        'theme-surface-sidebar flex h-full shrink-0 flex-col overflow-hidden bg-[var(--c-bg-sidebar)]',
         collapsed ? 'w-[48px]' : narrow ? 'w-[224px]' : desktopMode ? 'w-[284px]' : 'w-[304px]',
       ].join(' ')}
       style={{
