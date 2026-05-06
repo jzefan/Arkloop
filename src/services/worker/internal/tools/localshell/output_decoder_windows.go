@@ -3,7 +3,7 @@
 package localshell
 
 import (
-	"io"
+	"bytes"
 
 	"golang.org/x/sys/windows"
 	"golang.org/x/text/encoding"
@@ -15,28 +15,67 @@ import (
 	"golang.org/x/text/transform"
 )
 
-func wrapProcessOutputWriter(dst io.Writer) io.Writer {
-	enc := windowsProcessOutputEncoding()
-	if enc == nil {
-		return dst
-	}
-	return transform.NewWriter(dst, enc.NewDecoder())
+type processOutputDecoder struct {
+	enc         encoding.Encoding
+	transformer transform.Transformer
+	pending     []byte
 }
 
-func wrapProcessOutputReadCloser(src io.ReadCloser) io.ReadCloser {
-	enc := windowsProcessOutputEncoding()
-	if enc == nil {
-		return src
-	}
-	return decodedReadCloser{
-		Reader: transform.NewReader(src, enc.NewDecoder()),
-		Closer: src,
-	}
+func newProcessOutputDecoder() *processOutputDecoder {
+	return &processOutputDecoder{}
 }
 
-type decodedReadCloser struct {
-	io.Reader
-	io.Closer
+func (d *processOutputDecoder) Decode(chunk []byte) string {
+	return d.decode(chunk, false)
+}
+
+func (d *processOutputDecoder) Flush() string {
+	if len(d.pending) == 0 {
+		return ""
+	}
+	pending := append([]byte(nil), d.pending...)
+	d.pending = nil
+	return d.decode(pending, true)
+}
+
+func (d *processOutputDecoder) decode(chunk []byte, atEOF bool) string {
+	enc := windowsProcessOutputEncoding()
+	if enc == nil {
+		d.enc = nil
+		d.transformer = nil
+		d.pending = nil
+		return string(chunk)
+	}
+	if d.enc != enc || d.transformer == nil {
+		d.enc = enc
+		d.transformer = enc.NewDecoder()
+		d.pending = nil
+	}
+
+	src := append(append([]byte(nil), d.pending...), chunk...)
+	d.pending = nil
+	var out bytes.Buffer
+	dst := make([]byte, max(len(src)*4, 4096))
+	for len(src) > 0 {
+		nDst, nSrc, err := d.transformer.Transform(dst, src, atEOF)
+		if nDst > 0 {
+			out.Write(dst[:nDst])
+		}
+		src = src[nSrc:]
+		if err == nil {
+			break
+		}
+		if err == transform.ErrShortDst {
+			continue
+		}
+		if err == transform.ErrShortSrc && !atEOF {
+			d.pending = append(d.pending[:0], src...)
+			break
+		}
+		out.Write(src)
+		break
+	}
+	return out.String()
 }
 
 func windowsProcessOutputEncoding() encoding.Encoding {

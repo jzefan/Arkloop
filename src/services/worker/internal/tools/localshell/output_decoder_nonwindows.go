@@ -2,12 +2,16 @@
 
 package localshell
 
-import "io"
+type processOutputDecoder struct{}
 
-func wrapProcessOutputWriter(dst io.Writer) io.Writer {
-	return dst
+func newProcessOutputDecoder() *processOutputDecoder {
+	return &processOutputDecoder{}
 }
 
-func wrapProcessOutputReadCloser(src io.ReadCloser) io.ReadCloser {
-	return src
+func (d *processOutputDecoder) Decode(chunk []byte) string {
+	return string(chunk)
+}
+
+func (d *processOutputDecoder) Flush() string {
+	return ""
 }

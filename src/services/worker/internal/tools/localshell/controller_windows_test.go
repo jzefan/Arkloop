@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"golang.org/x/text/transform"
 	"golang.org/x/text/encoding/simplifiedchinese"
+	"golang.org/x/text/transform"
 )
 
 func TestProcessControllerBufferedCommandReturnsStdoutOnWindows(t *testing.T) {

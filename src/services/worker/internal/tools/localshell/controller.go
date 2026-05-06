@@ -55,16 +55,16 @@ func (s *safeBuf) String() string {
 }
 
 const (
-	processStartupWait = 150 * time.Millisecond
-	processDrainGrace  = 100 * time.Millisecond
-	processKillGrace   = 2 * time.Second
-	processPollTick    = 100 * time.Millisecond
-	processRingBytes   = 1 << 20
-	defaultProcessHome = "/tmp"
-	defaultProcessTmp  = "/tmp"
+	processStartupWait     = 150 * time.Millisecond
+	processDrainGrace      = 100 * time.Millisecond
+	processKillGrace       = 2 * time.Second
+	processPollTick        = 100 * time.Millisecond
+	processRingBytes       = 1 << 20
+	defaultProcessHome     = "/tmp"
+	defaultProcessTmp      = "/tmp"
 	defaultUnixProcessPath = "/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
-	defaultProcessLang = "C.UTF-8"
-	processUserName    = "arkloop"
+	defaultProcessLang     = "C.UTF-8"
+	processUserName        = "arkloop"
 )
 
 var processTerminalRetention = 30 * time.Second
@@ -310,8 +310,8 @@ func (c *ProcessController) runBuffered(req ExecCommandRequest) (*Response, erro
 	}
 	var copyWG sync.WaitGroup
 	copyWG.Add(2)
-	go copyProcessOutput(&copyWG, &stdout, wrapProcessOutputReadCloser(stdoutPipe))
-	go copyProcessOutput(&copyWG, &stderr, wrapProcessOutputReadCloser(stderrPipe))
+	go copyProcessOutput(&copyWG, &stdout, stdoutPipe)
+	go copyProcessOutput(&copyWG, &stderr, stderrPipe)
 	done := make(chan error, 1)
 	go func() {
 		copyWG.Wait()
@@ -470,7 +470,20 @@ func (c *ProcessController) promoteToManaged(
 func copyProcessOutput(wg *sync.WaitGroup, dst io.Writer, src io.ReadCloser) {
 	defer wg.Done()
 	defer src.Close()
-	_, _ = io.Copy(dst, src)
+	decoder := newProcessOutputDecoder()
+	buf := make([]byte, 4096)
+	for {
+		n, err := src.Read(buf)
+		if n > 0 {
+			_, _ = io.WriteString(dst, decoder.Decode(buf[:n]))
+		}
+		if err != nil {
+			if tail := decoder.Flush(); tail != "" {
+				_, _ = io.WriteString(dst, tail)
+			}
+			return
+		}
+	}
 }
 
 func (c *ProcessController) startManaged(req ExecCommandRequest) (*managedProcess, error) {
@@ -531,8 +544,8 @@ func (c *ProcessController) startManaged(req ExecCommandRequest) (*managedProces
 			return nil, err
 		}
 		proc.readerWG.Add(2)
-		go c.readStream(proc, StreamStdout, wrapProcessOutputReadCloser(stdout))
-		go c.readStream(proc, StreamStderr, wrapProcessOutputReadCloser(stderr))
+		go c.readStream(proc, StreamStdout, stdout)
+		go c.readStream(proc, StreamStderr, stderr)
 	}
 
 	if req.Mode != ModePTY && cmd.Process == nil {
@@ -603,16 +616,23 @@ func (c *ProcessController) readStream(proc *managedProcess, stream string, read
 	defer proc.readerWG.Done()
 	defer reader.Close()
 
+	decoder := newProcessOutputDecoder()
 	buf := make([]byte, 4096)
 	for {
 		n, err := reader.Read(buf)
 		if n > 0 {
 			proc.mu.Lock()
-			proc.output.Append(stream, string(buf[:n]))
+			proc.output.Append(stream, decoder.Decode(buf[:n]))
 			notifyLocked(proc)
 			proc.mu.Unlock()
 		}
 		if err != nil {
+			if tail := decoder.Flush(); tail != "" {
+				proc.mu.Lock()
+				proc.output.Append(stream, tail)
+				notifyLocked(proc)
+				proc.mu.Unlock()
+			}
 			return
 		}
 	}
@@ -631,11 +651,11 @@ func (c *ProcessController) waitForExit(proc *managedProcess, timeoutMs int) {
 		})
 	}
 
+	proc.readerWG.Wait()
 	err := proc.cmd.Wait()
 	if timer != nil {
 		timer.Stop()
 	}
-	proc.readerWG.Wait()
 	time.Sleep(processDrainGrace)
 
 	proc.mu.Lock()
