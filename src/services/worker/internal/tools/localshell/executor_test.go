@@ -21,6 +21,21 @@ func TestSanitizeLocalEnvPatchesUnsetsHostSpecificVariables(t *testing.T) {
 	}
 }
 
+func TestSanitizeLocalEnvPatchesKeepsWindowsRuntimeVariables(t *testing.T) {
+	t.Setenv("SystemRoot", `C:\Windows`)
+	t.Setenv("WINDIR", `C:\Windows`)
+	t.Setenv("ComSpec", `C:\Windows\System32\cmd.exe`)
+	t.Setenv("PATHEXT", ".COM;.EXE;.BAT;.CMD")
+	t.Setenv("USERPROFILE", `C:\Users\arkloop`)
+
+	patches := sanitizeLocalEnvPatches(nil)
+	for _, key := range []string{"SystemRoot", "WINDIR", "ComSpec", "PATHEXT", "USERPROFILE"} {
+		if value, ok := patches[key]; ok {
+			t.Fatalf("expected %s to remain allowed, got %#v", key, value)
+		}
+	}
+}
+
 func TestSanitizeOutputPreservesWindowsCRLF(t *testing.T) {
 	got := sanitizeOutput("hello\r\n")
 	if got != "hello\n" {

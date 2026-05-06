@@ -96,6 +96,7 @@ type managedProcess struct {
 	output            *ItemBuffer
 	updateCh          chan struct{}
 	readerWG          sync.WaitGroup
+	outputReaders     []io.Closer
 
 	// promoted buffered process: safe buffers for final drain
 	promotedStdout    *safeBuf
@@ -295,27 +296,33 @@ func (c *ProcessController) runBuffered(req ExecCommandRequest) (*Response, erro
 	cmd.SysProcAttr = procSysProcAttr()
 
 	var stdout, stderr safeBuf
-	stdoutPipe, err := cmd.StdoutPipe()
+	stdoutRead, stdoutWrite, err := os.Pipe()
 	if err != nil {
 		return nil, err
 	}
-	stderrPipe, err := cmd.StderrPipe()
+	stderrRead, stderrWrite, err := os.Pipe()
 	if err != nil {
+		closeClosers(stdoutRead, stdoutWrite)
 		return nil, err
 	}
+	cmd.Stdout = stdoutWrite
+	cmd.Stderr = stderrWrite
 
 	timeout := time.Duration(NormalizeTimeoutMs(ModeBuffered, req.TimeoutMs)) * time.Millisecond
 	if err := cmd.Start(); err != nil {
+		closeClosers(stdoutRead, stdoutWrite, stderrRead, stderrWrite)
 		return nil, err
 	}
+	closeClosers(stdoutWrite, stderrWrite)
 	var copyWG sync.WaitGroup
 	copyWG.Add(2)
-	go copyProcessOutput(&copyWG, &stdout, stdoutPipe)
-	go copyProcessOutput(&copyWG, &stderr, stderrPipe)
+	go copyProcessOutput(&copyWG, &stdout, stdoutRead)
+	go copyProcessOutput(&copyWG, &stderr, stderrRead)
 	done := make(chan error, 1)
 	go func() {
-		copyWG.Wait()
-		done <- cmd.Wait()
+		err := cmd.Wait()
+		waitForOutputReaders(&copyWG, processDrainGrace, stdoutRead, stderrRead)
+		done <- err
 	}()
 
 	select {
@@ -522,30 +529,38 @@ func (c *ProcessController) startManaged(req ExecCommandRequest) (*managedProces
 		}
 		proc.stdin = file
 		proc.ptyFile = file
+		proc.outputReaders = []io.Closer{file}
 		proc.readerWG.Add(1)
 		go c.readStream(proc, StreamPTY, file)
 	default:
-		stdout, err := cmd.StdoutPipe()
+		stdoutRead, stdoutWrite, err := os.Pipe()
 		if err != nil {
 			return nil, err
 		}
-		stderr, err := cmd.StderrPipe()
+		stderrRead, stderrWrite, err := os.Pipe()
 		if err != nil {
+			closeClosers(stdoutRead, stdoutWrite)
 			return nil, err
 		}
+		cmd.Stdout = stdoutWrite
+		cmd.Stderr = stderrWrite
 		if proc.allowStdin {
 			stdin, err := cmd.StdinPipe()
 			if err != nil {
+				closeClosers(stdoutRead, stdoutWrite, stderrRead, stderrWrite)
 				return nil, err
 			}
 			proc.stdin = stdin
 		}
 		if err := cmd.Start(); err != nil {
+			closeClosers(stdoutRead, stdoutWrite, stderrRead, stderrWrite)
 			return nil, err
 		}
+		closeClosers(stdoutWrite, stderrWrite)
+		proc.outputReaders = []io.Closer{stdoutRead, stderrRead}
 		proc.readerWG.Add(2)
-		go c.readStream(proc, StreamStdout, stdout)
-		go c.readStream(proc, StreamStderr, stderr)
+		go c.readStream(proc, StreamStdout, stdoutRead)
+		go c.readStream(proc, StreamStderr, stderrRead)
 	}
 
 	if req.Mode != ModePTY && cmd.Process == nil {
@@ -651,12 +666,11 @@ func (c *ProcessController) waitForExit(proc *managedProcess, timeoutMs int) {
 		})
 	}
 
-	proc.readerWG.Wait()
 	err := proc.cmd.Wait()
 	if timer != nil {
 		timer.Stop()
 	}
-	time.Sleep(processDrainGrace)
+	waitForOutputReaders(&proc.readerWG, processDrainGrace, proc.outputReaders...)
 
 	proc.mu.Lock()
 	defer proc.mu.Unlock()
@@ -775,6 +789,29 @@ func killProcessLocked(proc *managedProcess, status string) {
 	time.AfterFunc(processKillGrace, func() {
 		_ = killProcessGroupHard(pid)
 	})
+}
+
+func waitForOutputReaders(wg *sync.WaitGroup, wait time.Duration, readers ...io.Closer) {
+	done := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+		return
+	case <-time.After(wait):
+		closeClosers(readers...)
+		<-done
+	}
+}
+
+func closeClosers(closers ...io.Closer) {
+	for _, closer := range closers {
+		if closer != nil {
+			_ = closer.Close()
+		}
+	}
 }
 
 func notifyLocked(proc *managedProcess) {

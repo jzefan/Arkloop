@@ -4,8 +4,8 @@ package localshell
 
 import (
 	"context"
-	"runtime"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -32,6 +32,72 @@ func TestProcessControllerBufferedCommandCompletes(t *testing.T) {
 	}
 	if resp.ProcessRef != "" {
 		t.Fatalf("buffered mode should not expose process_ref, got %q", resp.ProcessRef)
+	}
+}
+
+func TestProcessControllerBufferedExitsWhenBackgroundChildKeepsStdoutOpen(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses POSIX shell background process semantics")
+	}
+	controller := NewProcessController()
+
+	started := time.Now()
+	resp, err := controller.ExecCommand(ExecCommandRequest{
+		Command:   "printf 'done\\n'; (sleep 3) &",
+		Mode:      ModeBuffered,
+		TimeoutMs: 5000,
+		Cwd:       t.TempDir(),
+	})
+	if err != nil {
+		t.Fatalf("exec failed: %v", err)
+	}
+	if resp.Status != StatusExited {
+		t.Fatalf("expected exited status, got %#v", resp)
+	}
+	if !strings.Contains(resp.Stdout, "done") {
+		t.Fatalf("expected stdout to contain done, got %#v", resp.Stdout)
+	}
+	if elapsed := time.Since(started); elapsed > 1500*time.Millisecond {
+		t.Fatalf("process waited for inherited stdout pipe: %s", elapsed)
+	}
+}
+
+func TestProcessControllerFollowExitsWhenBackgroundChildKeepsStdoutOpen(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses POSIX shell background process semantics")
+	}
+	controller := NewProcessController()
+
+	started := time.Now()
+	resp, err := controller.ExecCommand(ExecCommandRequest{
+		Command:   "printf 'done\\n'; (sleep 3) &",
+		Mode:      ModeFollow,
+		TimeoutMs: 5000,
+		Cwd:       t.TempDir(),
+	})
+	if err != nil {
+		t.Fatalf("exec failed: %v", err)
+	}
+	stdout := resp.Stdout
+	if resp.Status == StatusRunning {
+		resp, err = controller.ContinueProcess(ContinueProcessRequest{
+			ProcessRef: resp.ProcessRef,
+			Cursor:     resp.NextCursor,
+			WaitMs:     1000,
+		})
+		if err != nil {
+			t.Fatalf("continue failed: %v", err)
+		}
+		stdout += resp.Stdout
+	}
+	if resp.Status != StatusExited {
+		t.Fatalf("expected exited status, got %#v", resp)
+	}
+	if !strings.Contains(stdout, "done") {
+		t.Fatalf("expected stdout to contain done, got %#v", stdout)
+	}
+	if elapsed := time.Since(started); elapsed > 1500*time.Millisecond {
+		t.Fatalf("process waited for inherited stdout pipe: %s", elapsed)
 	}
 }
 
