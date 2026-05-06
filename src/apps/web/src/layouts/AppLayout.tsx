@@ -265,7 +265,8 @@ export function AppLayout() {
 
   return (
     <TimeZoneProvider userTimeZone={me?.timezone ?? null} accountTimeZone={me?.account_timezone ?? null}>
-      <div className="flex h-screen flex-col overflow-hidden bg-[var(--c-bg-page)]">
+      <div className="theme-background-root app-viewport flex flex-col overflow-hidden bg-[var(--c-bg-page)]">
+        <div className="theme-background-layer" aria-hidden="true" />
         {desktop && (
           <DesktopTitleBar
             sidebarCollapsed={sidebarCollapsed}

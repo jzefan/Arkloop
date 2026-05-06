@@ -91,6 +91,7 @@ export interface LocaleStrings {
   fontSizeRelaxed: string;
   themePresetSection: string;
   themePresetDefault: string;
+  themePresetCustomBackground: string;
   themePresetRetinaBurn: string;
   themeColorEditor: string;
   colorGroupBackgrounds: string;
@@ -111,6 +112,19 @@ export interface LocaleStrings {
   exportTheme: string;
   deleteCustomTheme: string;
   myThemes: string;
+  backgroundImageSection: string;
+  backgroundImageUpload: string;
+  backgroundImageReplace: string;
+  backgroundImageRemove: string;
+  backgroundImageEmpty: string;
+  backgroundImageInvalid: string;
+  backgroundImageTooLarge: string;
+  backgroundImageLoadFailed: string;
+  backgroundImageSaveFailed: string;
+  backgroundImageOpacity: string;
+  backgroundImageReset: string;
+  backgroundImageCancel: string;
+  backgroundImageApply: string;
   skills: {
     title: string;
     subtitle: string;
