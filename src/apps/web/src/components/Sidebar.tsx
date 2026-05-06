@@ -79,6 +79,14 @@ function defaultGtdExpandedBuckets(): Set<GtdBucket> {
   return new Set(GTD_BUCKETS)
 }
 
+function areStringSetsEqual(left: Set<string>, right: Set<string>): boolean {
+  if (left.size !== right.size) return false
+  for (const value of left) {
+    if (!right.has(value)) return false
+  }
+  return true
+}
+
 function normalizeGtdBucket(value: ThreadResponse['sidebar_gtd_bucket']): GtdBucket | null {
   return value && GTD_BUCKETS.includes(value) ? value : null
 }
@@ -289,6 +297,7 @@ export function Sidebar({
   const [gtdSomedayIds, setGtdSomedayIds] = useState<Set<string>>(() => readGtdSomedayThreadIds())
   const [gtdArchivedIds, setGtdArchivedIds] = useState<Set<string>>(() => readGtdArchivedThreadIds())
   const [pinnedIds, setPinnedIds] = useState<Set<string>>(() => readPinnedThreadIds())
+  const pinnedIdsRef = useRef(pinnedIds)
   const [expandedPaths, setExpandedPaths] = useState<Set<string>>(() => readExpandedProjectPaths())
   const [expandedLimits, setExpandedLimits] = useState<Record<string, number>>({})
   const [expandedGtdBuckets, setExpandedGtdBuckets] = useState<Set<GtdBucket>>(() => defaultGtdExpandedBuckets())
@@ -739,14 +748,18 @@ export function Sidebar({
   const markGtdSomeday = useCallback((id: string) => moveGtdThread(id, 'someday'), [moveGtdThread])
   const archiveGtdThread = useCallback((id: string) => moveGtdThread(id, 'archived'), [moveGtdThread])
 
-  const applyPinnedLocal = useCallback((id: string, pinned: boolean) => {
-    setPinnedIds((prev: Set<string>) => {
-      const next = new Set(prev)
-      if (pinned) next.add(id); else next.delete(id)
-      writePinnedThreadIds(next)
-      return next
-    })
+  const replacePinnedIds = useCallback((next: Set<string>) => {
+    pinnedIdsRef.current = next
+    writePinnedThreadIds(next)
+    setPinnedIds(next)
   }, [])
+
+  const applyPinnedLocal = useCallback((id: string, pinned: boolean) => {
+    const next = new Set(pinnedIdsRef.current)
+    if (pinned) next.add(id)
+    else next.delete(id)
+    replacePinnedIds(next)
+  }, [replacePinnedIds])
 
   const togglePin = useCallback((id: string) => {
     const nextPinned = !effectivePinnedIds.has(id)
@@ -1074,18 +1087,16 @@ export function Sidebar({
       await deleteThread(accessToken, id)
       // 清理 GTD 和 Pin 的本地状态
       applyGtdBucketLocal(id, null)
-      setPinnedIds((prev: Set<string>) => {
-        if (!prev.has(id)) return prev
-        const next = new Set(prev)
+      if (pinnedIdsRef.current.has(id)) {
+        const next = new Set(pinnedIdsRef.current)
         next.delete(id)
-        writePinnedThreadIds(next)
-        return next
-      })
+        replacePinnedIds(next)
+      }
       onThreadDeleted(id)
     } catch {
       // 失败静默
     }
-  }, [accessToken, applyGtdBucketLocal, onThreadDeleted])
+  }, [accessToken, applyGtdBucketLocal, onThreadDeleted, replacePinnedIds])
 
   // 进入编辑模式后自动聚焦 input
   useEffect(() => {
@@ -1144,10 +1155,27 @@ export function Sidebar({
       setGtdWaitingIds(readGtdWaitingThreadIds())
       setGtdSomedayIds(readGtdSomedayThreadIds())
       setGtdArchivedIds(readGtdArchivedThreadIds())
-      setPinnedIds(readPinnedThreadIds())
     })
     return () => { cancelled = true }
   }, [threads])
+
+  useEffect(() => {
+    let cancelled = false
+    window.queueMicrotask(() => {
+      if (cancelled) return
+      const storedPinnedIds = readPinnedThreadIds()
+      const next = new Set(pinnedIdsRef.current)
+      for (const thread of threads) {
+        if (thread.sidebar_pinned_at || storedPinnedIds.has(thread.id)) {
+          next.add(thread.id)
+        } else {
+          next.delete(thread.id)
+        }
+      }
+      if (!areStringSetsEqual(next, pinnedIdsRef.current)) replacePinnedIds(next)
+    })
+    return () => { cancelled = true }
+  }, [replacePinnedIds, threads])
 
   useEffect(() => {
     if (!isPerfDebugEnabled()) return
