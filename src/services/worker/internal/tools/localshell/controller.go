@@ -629,7 +629,7 @@ func (c *ProcessController) waitForSnapshot(proc *managedProcess, cursor uint64,
 
 func (c *ProcessController) readStream(proc *managedProcess, stream string, reader io.ReadCloser) {
 	defer proc.readerWG.Done()
-	defer reader.Close()
+	defer closeProcessReader(proc, reader)
 
 	decoder := newProcessOutputDecoder()
 	buf := make([]byte, 4096)
@@ -670,7 +670,7 @@ func (c *ProcessController) waitForExit(proc *managedProcess, timeoutMs int) {
 	if timer != nil {
 		timer.Stop()
 	}
-	waitForOutputReaders(&proc.readerWG, processDrainGrace, proc.outputReaders...)
+	waitForProcessOutputReaders(proc, processDrainGrace)
 
 	proc.mu.Lock()
 	defer proc.mu.Unlock()
@@ -803,6 +803,46 @@ func waitForOutputReaders(wg *sync.WaitGroup, wait time.Duration, readers ...io.
 	case <-time.After(wait):
 		closeClosers(readers...)
 		<-done
+	}
+}
+
+func waitForProcessOutputReaders(proc *managedProcess, wait time.Duration) {
+	done := make(chan struct{})
+	go func() {
+		proc.readerWG.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+		return
+	case <-time.After(wait):
+		proc.mu.Lock()
+		closeProcessOutputReadersLocked(proc)
+		proc.mu.Unlock()
+		<-done
+	}
+}
+
+func closeProcessReader(proc *managedProcess, reader io.Closer) {
+	proc.mu.Lock()
+	defer proc.mu.Unlock()
+	closeProcessReaderLocked(proc, reader)
+}
+
+func closeProcessOutputReadersLocked(proc *managedProcess) {
+	for _, reader := range proc.outputReaders {
+		closeProcessReaderLocked(proc, reader)
+	}
+	proc.outputReaders = nil
+}
+
+func closeProcessReaderLocked(proc *managedProcess, reader io.Closer) {
+	if reader == nil {
+		return
+	}
+	_ = reader.Close()
+	if proc.ptyFile != nil && reader == proc.ptyFile {
+		proc.ptyFile = nil
 	}
 }
 
