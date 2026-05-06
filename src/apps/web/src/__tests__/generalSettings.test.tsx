@@ -125,8 +125,10 @@ describe('GeneralSettings', () => {
     return { api, LocaleProvider, GeneralSettings }
   }
 
-  it('只渲染通用页里的真实基础偏好', async () => {
+  it('渲染通用页基础偏好与工具模型', async () => {
     const { api, LocaleProvider, GeneralSettings } = await loadSubject()
+    vi.mocked(api.listLlmProviders).mockResolvedValue([])
+    vi.mocked(api.listSpawnProfiles).mockResolvedValue([])
 
     await act(async () => {
       root.render(
@@ -142,9 +144,9 @@ describe('GeneralSettings', () => {
     expect(container.querySelector('[data-testid="language-content"]')).not.toBeNull()
     expect(container.querySelector('[data-testid="timezone-settings"]')).not.toBeNull()
     expect(container.querySelector('[data-testid="theme-mode-picker"]')).toBeNull()
-    expect(container.querySelector('[data-testid="tool-model-dropdown"]')).toBeNull()
-    expect(api.listLlmProviders).not.toHaveBeenCalled()
-    expect(api.listSpawnProfiles).not.toHaveBeenCalled()
+    expect(container.querySelector('[data-testid="tool-model-dropdown"]')).not.toBeNull()
+    expect(api.listLlmProviders).toHaveBeenCalledWith('token')
+    expect(api.listSpawnProfiles).toHaveBeenCalledWith('token')
   })
 
   it('本地模式用户卡片内联编辑后端用户名', async () => {

@@ -21,6 +21,7 @@ import { SettingsButton, SettingsIconButton } from './_SettingsButton'
 import { SettingsInput } from './_SettingsInput'
 import { SettingsSelect } from './_SettingsSelect'
 import { SettingsSwitch } from './_SettingsSwitch'
+import { ToolModelSettingControl } from './ToolModelSettingControl'
 
 type Props = {
   me: MeResponse | null
@@ -563,6 +564,15 @@ export function GeneralSettings({ me, accessToken, onLogout, onMeUpdated }: Prop
 
       <GeneralSection title={ds.backgroundToolsSection}>
         <GeneralCard>
+          <GeneralRow
+            title={ds.toolModel}
+            description={ds.toolModelDesc}
+            control={(
+              <div className="w-full min-w-[220px] sm:w-[320px]">
+                <ToolModelSettingControl accessToken={accessToken} />
+              </div>
+            )}
+          />
           <GeneralSwitchRow
             title={ds.keepScreenAwake}
             description={ds.keepScreenAwakeDesc}

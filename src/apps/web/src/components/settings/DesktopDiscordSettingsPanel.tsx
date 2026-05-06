@@ -62,7 +62,7 @@ export function DesktopDiscordSettingsPanel({
   const [allowedChannelIDs, setAllowedChannelIDs] = useState(readStringArrayConfig(channel, 'allowed_channel_ids'))
   const [allowedChannelInput, setAllowedChannelInput] = useState('')
   const [verifying, setVerifying] = useState(false)
-  const [, setVerifyResult] = useState<{ ok: boolean; message: string } | null>(null)
+  const [verifyResult, setVerifyResult] = useState<{ ok: boolean; message: string } | null>(null)
   const [bindCode, setBindCode] = useState<string | null>(null)
   const [generatingCode, setGeneratingCode] = useState(false)
   const [bindings, setBindings] = useState<ChannelBindingResponse[]>([])
@@ -479,6 +479,14 @@ export function DesktopDiscordSettingsPanel({
         onSave={() => void handleSave()}
         onVerify={() => void handleVerify()}
       />
+      {verifyResult && (
+        <p
+          className="px-1 text-xs"
+          style={{ color: verifyResult.ok ? 'var(--c-status-success)' : 'var(--c-status-error)' }}
+        >
+          {verifyResult.message}
+        </p>
+      )}
     </div>
   )
 }

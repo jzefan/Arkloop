@@ -19,6 +19,7 @@ import {
   Code2,
   Loader2,
   Shield,
+  Info,
 } from "lucide-react";
 import { getDesktopApi } from "@arkloop/shared/desktop";
 import type { MeResponse } from "../api";
@@ -46,6 +47,7 @@ import { ModulesSettings } from "./settings/ModulesSettings";
 import { DeveloperSettings } from "./settings/DeveloperSettings";
 import { DesktopPromptInjectionSettings } from "./settings/DesktopPromptInjectionSettings";
 import { DesignTokensSettings } from "./settings/DesignTokensSettings";
+import { AboutSettings } from "./settings/AboutSettings";
 import { beginPerfTrace, endPerfTrace, isPerfDebugEnabled, recordPerfValue } from "../perfDebug";
 import { useDevTools } from "../hooks/useDevTools";
 
@@ -97,6 +99,7 @@ const NAV_ENTRIES: NavEntry[] = [
   { key: "tools",      icon: Wrench },
   { key: "personas",   icon: Bot },
   { key: "routing",    icon: Route },
+  { key: "about",      icon: Info },
   { key: "advanced",   icon: SlidersHorizontal },
 ];
 
@@ -442,14 +445,7 @@ export function DesktopSettings({
       case "tools":
         return <ToolsSettings accessToken={accessToken} />;
       case "about":
-        return (
-          <GeneralSettings
-            me={me}
-            accessToken={accessToken}
-            onLogout={onLogout}
-            onMeUpdated={onMeUpdated}
-          />
-        );
+        return <AboutSettings accessToken={accessToken} />;
       case "advanced":
         return (
           <AdvancedSettings

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   type ChannelResponse,
   type LlmProvider,
@@ -68,9 +68,13 @@ export function DesktopFeishuSettingsPanel({
   const [triggerKeywords, setTriggerKeywords] = useState(readStringArrayConfig(channel, 'trigger_keywords'))
   const [triggerKeywordInput, setTriggerKeywordInput] = useState('')
   const [verifying, setVerifying] = useState(false)
-  const [, setVerifyResult] = useState<{ ok: boolean; message: string } | null>(null)
+  const [verifyResult, setVerifyResult] = useState<{ ok: boolean; message: string } | null>(null)
+  const previousChannelIDRef = useRef(channel?.id ?? null)
 
   useEffect(() => {
+    const nextChannelID = channel?.id ?? null
+    const channelChanged = previousChannelIDRef.current !== nextChannelID
+    previousChannelIDRef.current = nextChannelID
     setEnabled(channel?.is_active ?? false)
     setPersonaID(resolvePersonaID(personas, channel?.persona_id))
     setAppID(readStringConfig(channel, 'app_id'))
@@ -85,7 +89,7 @@ export function DesktopFeishuSettingsPanel({
     setAllowedChatInput('')
     setTriggerKeywords(readStringArrayConfig(channel, 'trigger_keywords'))
     setTriggerKeywordInput('')
-    setVerifyResult(null)
+    if (channelChanged) setVerifyResult(null)
   }, [channel, personas])
 
   const modelOptions = useMemo(() => buildModelOptions(providers), [providers])
@@ -242,8 +246,8 @@ export function DesktopFeishuSettingsPanel({
           result.application_name?.trim() || '',
           result.bot_user_id?.trim() || '',
         ].filter(Boolean)
-        setVerifyResult({ ok: true, message: parts.join(' · ') || ds.connectorVerifyOk })
         await reload()
+        setVerifyResult({ ok: true, message: parts.join(' · ') || ds.connectorVerifyOk })
       } else {
         setVerifyResult({ ok: false, message: result.error ?? ds.connectorVerifyFail })
       }
@@ -458,6 +462,14 @@ export function DesktopFeishuSettingsPanel({
         onSave={() => void handleSave()}
         onVerify={() => void handleVerify()}
       />
+      {verifyResult && (
+        <p
+          className="px-1 text-xs"
+          style={{ color: verifyResult.ok ? 'var(--c-status-success)' : 'var(--c-status-error)' }}
+        >
+          {verifyResult.message}
+        </p>
+      )}
     </div>
   )
 }
