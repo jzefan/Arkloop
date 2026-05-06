@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	nethttp "net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -417,6 +418,15 @@ func TestLlmProvidersAvailableModelsAnthropicHeadersAndAuthFailure(t *testing.T)
 
 	failedResp := doJSON(env.handler, nethttp.MethodGet, "/v1/llm-providers/"+provider.ID+"/available-models", nil, authHeader(env.adminToken))
 	assertErrorEnvelope(t, failedResp, nethttp.StatusUnprocessableEntity, "llm_providers.upstream_auth_failed")
+	failedPayload := decodeJSONBody[ErrorEnvelope](t, failedResp.Body.Bytes())
+	details, ok := failedPayload.Details.(map[string]any)
+	if !ok {
+		t.Fatalf("unexpected error details: %#v", failedPayload.Details)
+	}
+	rawError, _ := details["raw_error"].(string)
+	if !strings.Contains(rawError, "bad key") {
+		t.Fatalf("raw_error did not include upstream body: %#v", details)
+	}
 	if lastAPIKey != "sk-ant-123456" {
 		t.Fatalf("unexpected anthropic api key header: %q", lastAPIKey)
 	}

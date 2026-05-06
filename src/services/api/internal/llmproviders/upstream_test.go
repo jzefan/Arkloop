@@ -4,12 +4,30 @@ import (
 	"context"
 	nethttp "net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"arkloop/services/api/internal/data"
 	sharedoutbound "arkloop/services/shared/outboundurl"
 	"github.com/google/uuid"
 )
+
+func TestClassifyCatalogStatusIncludesAuthResponseBody(t *testing.T) {
+	err := classifyCatalogStatus(nethttp.StatusForbidden, []byte("{\"error\":{\"message\":\"invalid api key\"}}"))
+	upstreamErr, ok := err.(*UpstreamListModelsError)
+	if !ok {
+		t.Fatalf("expected UpstreamListModelsError, got %T: %v", err, err)
+	}
+	if upstreamErr.Kind != "auth" {
+		t.Fatalf("Kind = %q, want auth", upstreamErr.Kind)
+	}
+	if upstreamErr.StatusCode != nethttp.StatusForbidden {
+		t.Fatalf("StatusCode = %d, want %d", upstreamErr.StatusCode, nethttp.StatusForbidden)
+	}
+	if upstreamErr.Err == nil || !strings.Contains(upstreamErr.Err.Error(), "invalid api key") {
+		t.Fatalf("raw error did not include upstream body: %v", upstreamErr.Err)
+	}
+}
 
 func TestListUpstreamModelsRejectsUnsafeBaseURL(t *testing.T) {
 	baseURL := "https://10.0.0.1/v1"

@@ -567,11 +567,12 @@ func upstreamNetworkError(err error) error {
 }
 
 func classifyCatalogStatus(status int, body []byte) error {
-	if status == nethttp.StatusUnauthorized || status == nethttp.StatusForbidden {
-		return &UpstreamListModelsError{Kind: "auth", StatusCode: status, Err: fmt.Errorf("status=%d", status)}
-	}
 	if status >= 200 && status < 300 {
 		return nil
+	}
+	bodyText := strings.TrimSpace(string(body))
+	if status == nethttp.StatusUnauthorized || status == nethttp.StatusForbidden {
+		return &UpstreamListModelsError{Kind: "auth", StatusCode: status, Err: catalogStatusError(status, bodyText)}
 	}
 	kind := "upstream"
 	if status >= 400 && status < 500 {
@@ -580,6 +581,13 @@ func classifyCatalogStatus(status int, body []byte) error {
 	return &UpstreamListModelsError{
 		Kind:       kind,
 		StatusCode: status,
-		Err:        fmt.Errorf("status=%d body=%s", status, strings.TrimSpace(string(body))),
+		Err:        catalogStatusError(status, bodyText),
 	}
+}
+
+func catalogStatusError(status int, body string) error {
+	if body == "" {
+		return fmt.Errorf("status=%d", status)
+	}
+	return fmt.Errorf("status=%d body=%s", status, body)
 }
