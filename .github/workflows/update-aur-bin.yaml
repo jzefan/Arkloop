@@ -38,7 +38,9 @@ jobs:
 
     steps:
       - name: Install tools
-        run: pacman -Syu --noconfirm --needed base-devel curl git jq openssh
+        run: |
+          pacman -Syu --noconfirm --needed base-devel curl git jq openssh
+          useradd -m builder
 
       - name: Resolve release asset
         id: release
@@ -119,7 +121,8 @@ jobs:
             -e "s|\${PKGURL}|${{ steps.release.outputs.asset_url }}|g" \
             -e "s|\${PKGSHA256}|${{ steps.release.outputs.sha256 }}|g" \
             aur-files/PKGBUILD
-          (cd aur-files && makepkg --printsrcinfo > .SRCINFO)
+          chown -R builder:builder aur-files
+          runuser -u builder -- bash -lc 'cd "$1" && makepkg --printsrcinfo' bash "$PWD/aur-files" > aur-files/.SRCINFO
 
       - name: Push to AUR
         run: |
@@ -133,7 +136,7 @@ jobs:
           chmod 600 ~/.ssh/aur
           ssh-keyscan aur.archlinux.org >> ~/.ssh/known_hosts
 
-          git clone "ssh://aur@aur.archlinux.org/${AUR_PACKAGE}.git" aur-repo
+          GIT_SSH_COMMAND="ssh -i ${HOME}/.ssh/aur -o IdentitiesOnly=yes" git clone "ssh://aur@aur.archlinux.org/${AUR_PACKAGE}.git" aur-repo
           cp aur-files/PKGBUILD aur-files/.SRCINFO aur-repo/
           cd aur-repo
 
@@ -147,4 +150,4 @@ jobs:
 
           git add PKGBUILD .SRCINFO
           git commit -m "Update to ${{ steps.release.outputs.version }}"
-          GIT_SSH_COMMAND='ssh -i ~/.ssh/aur -o IdentitiesOnly=yes' git push origin master
+          GIT_SSH_COMMAND="ssh -i ${HOME}/.ssh/aur -o IdentitiesOnly=yes" git push origin master
