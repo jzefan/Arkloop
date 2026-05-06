@@ -12,7 +12,7 @@ type Toast = {
 
 const variantText: Record<ToastVariant, string> = {
   success: 'text-[var(--c-status-ok-text)]',
-  error: 'text-[#ea4d3c]',
+  error: 'text-[var(--c-danger-action-text)]',
   warn: 'text-[var(--c-status-warn-text)]',
   neutral: 'text-[var(--c-text-secondary)]',
 }

@@ -1,11 +1,9 @@
-import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
-import { createPortal } from 'react-dom'
+import { useState, type ReactNode } from 'react'
 import {
   AlertTriangle,
   BookOpen,
   Brain,
   Check,
-  Copy,
   Download,
   FileText,
   Layers,
@@ -21,13 +19,15 @@ import {
 } from 'lucide-react'
 import { ConfirmDialog, PillToggle } from '@arkloop/shared'
 import { SettingsSectionHeader } from './_SettingsSectionHeader'
-import { SettingsInput } from './_SettingsInput'
+import { SettingsButton, SettingsCopyButton, SettingsIconButton, settingsDangerText, settingsSecondaryFrameBorder } from './_SettingsButton'
+import { SettingsInput, SettingsSearchInput } from './_SettingsInput'
+import { SettingsModalFrame } from './_SettingsModalFrame'
+import { SettingsSegmentedControl } from './_SettingsSegmentedControl'
+import { SettingsSelect } from './_SettingsSelect'
 import { SettingsStatusBadge } from './_SettingsStatusBadge'
 import { ProviderSelectCard } from './ProviderSelectCard'
 
-type ButtonVariant = 'primary' | 'secondary' | 'danger'
 type CanvasSize = 'narrow' | 'wide'
-type StatusVariant = 'success' | 'warning' | 'error' | 'neutral'
 type ToastVariant = 'success' | 'error' | 'warn' | 'neutral'
 
 const pageShell = 'flex flex-col gap-8'
@@ -36,16 +36,14 @@ const previewPanel = `${specPanel} p-5`
 const labelCls = 'text-[11px] font-semibold uppercase tracking-wider text-[var(--c-text-muted)]'
 const mutedText = 'text-sm leading-relaxed text-[var(--c-text-secondary)]'
 const ruleText = 'text-xs leading-relaxed text-[var(--c-text-muted)]'
-const controlRadius = 'rounded-[6.5px]'
-const selectBorderColor = 'color-mix(in srgb, var(--c-border) 78%, var(--c-bg-input) 22%)'
-const secondaryFrameBorder = 'color-mix(in srgb, var(--c-border) 91%, var(--c-text-primary) 9%)'
-const dangerText = '#ea4d3c'
+const secondaryFrameBorder = settingsSecondaryFrameBorder
+const dangerText = settingsDangerText
 const dangerSurface = `color-mix(in srgb, var(--c-bg-menu) 96%, ${dangerText} 4%)`
 const dangerBorder = `color-mix(in srgb, var(--c-border-subtle) 84%, ${dangerText} 16%)`
 
 const toastText: Record<ToastVariant, string> = {
   success: 'text-[var(--c-status-ok-text)]',
-  error: 'text-[#ea4d3c]',
+  error: 'text-[var(--c-danger-action-text)]',
   warn: 'text-[var(--c-status-warn-text)]',
   neutral: 'text-[var(--c-text-secondary)]',
 }
@@ -65,17 +63,18 @@ const toastBorder: Record<ToastVariant, string> = {
 }
 
 const radiusScale = [
-  { name: 'Control', value: '8px', use: 'button, icon button' },
-  { name: 'Input', value: '10px', use: 'input, select, search' },
+  { name: 'Control', value: '6.5px', use: 'button, icon button' },
+  { name: 'Input', value: '6.5px', use: 'input, select, search' },
   { name: 'Row', value: '10px', use: 'setting row, resource row' },
   { name: 'Section', value: '14px', use: 'settings section' },
-  { name: 'Modal', value: '18px', use: 'reader and resource modal' },
+  { name: 'Modal', value: '17px', use: 'dialog surface' },
   { name: 'Pill', value: '999px', use: 'badge, segmented control' },
 ]
 
 const densityScale = [
-  { name: 'Control sm', value: '32px', use: 'toolbar action' },
-  { name: 'Control md', value: '36px', use: 'default field' },
+  { name: 'Control', value: '32px', use: 'toolbar action, default button' },
+  { name: 'Modal action', value: '35px', use: 'dialog footer button' },
+  { name: 'Field', value: '32px', use: 'default input and select' },
   { name: 'Row compact', value: '48px', use: 'resource list' },
   { name: 'Row standard', value: '60px', use: 'setting row' },
   { name: 'Canvas narrow', value: '760px', use: 'simple settings' },
@@ -95,7 +94,8 @@ const colorRoles = [
   { role: 'Border strong', token: '--c-border', use: 'focus and selected' },
   { role: 'Action', token: '--c-btn-bg', use: 'primary button fill' },
   { role: 'Action text', token: '--c-btn-text', use: 'primary button label' },
-  { role: 'Danger', token: '--c-status-danger-text', use: 'destructive intent' },
+  { role: 'Danger action', token: '--c-danger-action-text', use: 'destructive hover and toast text' },
+  { role: 'Danger status', token: '--c-status-danger-text', use: 'status badge text' },
   { role: 'Warning', token: '--c-status-warn-text', use: 'recoverable issue' },
   { role: 'Success', token: '--c-status-ok-text', use: 'ready state' },
 ]
@@ -252,99 +252,6 @@ function RuleGrid({ rules }: { rules: Array<{ title: string; body: string }> }) 
   )
 }
 
-function SettingsButton({
-  variant = 'secondary',
-  children,
-  icon,
-  disabled,
-  onClick,
-}: {
-  variant?: ButtonVariant
-  children: ReactNode
-  icon?: ReactNode
-  disabled?: boolean
-  onClick?: () => void
-}) {
-  const styles: Record<ButtonVariant, string> = {
-    primary:
-      'inline-flex h-[32px] items-center justify-center gap-1.5 rounded-[6.5px] px-3.5 text-sm font-[450] text-[var(--c-btn-text)] transition-[box-shadow] duration-150 hover:[box-shadow:inset_0_0_0_999px_rgba(255,255,255,0.07),0_0_0_0.2px_var(--c-btn-bg)] active:[box-shadow:inset_0_0_0_999px_rgba(0,0,0,0.04)] disabled:cursor-not-allowed disabled:opacity-40',
-    secondary:
-      'inline-flex h-[32px] items-center justify-center gap-1.5 rounded-[6.5px] border-[0.65px] [border-color:color-mix(in_srgb,var(--c-border)_91%,var(--c-text-primary)_9%)] bg-[var(--c-bg-input)] px-3.5 text-sm font-[450] text-[color-mix(in_srgb,var(--c-text-secondary)_72%,var(--c-text-primary)_28%)] [background-clip:padding-box] transition-colors duration-[180ms] hover:border-transparent hover:bg-[var(--c-bg-deep)] hover:text-[var(--c-text-primary)] disabled:cursor-not-allowed disabled:opacity-40',
-    danger:
-      'inline-flex h-[32px] items-center justify-center gap-1.5 rounded-[6.5px] border-[0.65px] [border-color:color-mix(in_srgb,var(--c-border)_91%,var(--c-text-primary)_9%)] bg-[var(--c-bg-input)] px-3.5 text-sm font-[450] text-[var(--c-text-muted)] [background-clip:padding-box] transition-colors duration-[180ms] hover:border-transparent hover:bg-[var(--c-bg-deep)] hover:text-[#ea4d3c] disabled:cursor-not-allowed disabled:opacity-40',
-  }
-
-  return (
-    <button
-      type="button"
-      disabled={disabled}
-      onClick={onClick}
-      className={styles[variant]}
-      style={variant === 'primary' ? { background: 'var(--c-btn-bg)' } : undefined}
-    >
-      {icon}
-      <span className="truncate">{children}</span>
-    </button>
-  )
-}
-
-function IconButton({
-  children,
-  label,
-  danger = false,
-}: {
-  children: ReactNode
-  label: string
-  danger?: boolean
-}) {
-  return (
-    <button
-      type="button"
-      aria-label={label}
-      title={label}
-      className={[
-        'inline-flex h-[32px] w-[32px] items-center justify-center rounded-[6.5px] border-[0.65px] [border-color:color-mix(in_srgb,var(--c-border)_91%,var(--c-text-primary)_9%)] bg-[var(--c-bg-input)] [background-clip:padding-box] text-[color-mix(in_srgb,var(--c-text-secondary)_72%,var(--c-text-primary)_28%)] transition-colors duration-[180ms] hover:border-transparent hover:bg-[var(--c-bg-deep)]',
-        danger ? 'hover:text-[#ea4d3c]' : 'hover:text-[var(--c-text-primary)]',
-      ].join(' ')}
-    >
-      {children}
-    </button>
-  )
-}
-
-function CopyStateButton() {
-  const [copied, setCopied] = useState(false)
-  const contentRef = useRef<HTMLSpanElement>(null)
-  const [width, setWidth] = useState<number | null>(null)
-
-  const handleCopyPreview = () => {
-    setCopied(true)
-    window.setTimeout(() => setCopied(false), 1200)
-  }
-
-  useLayoutEffect(() => {
-    if (!contentRef.current) return
-    setWidth(Math.ceil(contentRef.current.getBoundingClientRect().width))
-  }, [copied])
-
-  return (
-    <button
-      type="button"
-      onClick={handleCopyPreview}
-      className="inline-flex h-[32px] items-center justify-center overflow-hidden rounded-[6.5px] border-[0.65px] [border-color:color-mix(in_srgb,var(--c-border)_91%,var(--c-text-primary)_9%)] bg-[var(--c-bg-input)] text-sm font-[450] text-[color-mix(in_srgb,var(--c-text-secondary)_72%,var(--c-text-primary)_28%)] [background-clip:padding-box] transition-[width,background-color,border-color,color] duration-[220ms] ease-out hover:border-transparent hover:bg-[var(--c-bg-deep)] hover:text-[var(--c-text-primary)]"
-      style={{ width: width === null ? undefined : width }}
-    >
-      <span
-        ref={contentRef}
-        className="inline-flex items-center justify-center gap-1.5 whitespace-nowrap px-3.5"
-      >
-        {copied ? <Check size={14} /> : <Copy size={14} />}
-        {copied ? 'Copied' : 'Copy'}
-      </span>
-    </button>
-  )
-}
-
 function SettingsCanvas({
   size = 'narrow',
   children,
@@ -408,199 +315,6 @@ function SettingRow({
       <div className="shrink-0">{control}</div>
     </div>
   )
-}
-
-function SearchInput({ placeholder = 'Search' }: { placeholder?: string }) {
-  return (
-    <div className="relative">
-      <Search size={14} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[var(--c-text-muted)]" />
-      <TokenInput className="pl-8" placeholder={placeholder} />
-    </div>
-  )
-}
-
-function TokenInput({
-  className,
-  placeholder,
-  defaultValue,
-  type = 'text',
-}: {
-  className?: string
-  placeholder?: string
-  defaultValue?: string
-  type?: string
-}) {
-  return (
-    <input
-      type={type}
-      className={[
-        'h-[32px] w-full border-[0.65px] [border-color:color-mix(in_srgb,var(--c-border)_64%,var(--c-bg-input)_36%)] bg-[var(--c-bg-input)] px-3 text-sm font-[450] text-[var(--c-text-primary)] outline-none placeholder:font-[350] placeholder:text-[var(--c-text-muted)] transition-colors duration-[180ms] hover:[border-color:color-mix(in_srgb,var(--c-border)_72%,var(--c-text-primary)_28%)] focus:[border-color:color-mix(in_srgb,var(--c-border)_72%,var(--c-text-primary)_28%)]',
-        controlRadius,
-        className,
-      ].filter(Boolean).join(' ')}
-      placeholder={placeholder}
-      defaultValue={defaultValue}
-    />
-  )
-}
-
-function TokenSelect({
-  value,
-  options,
-  onChange,
-  triggerClassName,
-}: {
-  value: string
-  options: Array<{ value: string; label: string }>
-  onChange: (value: string) => void
-  triggerClassName?: string
-}) {
-  const [open, setOpen] = useState(false)
-  const [highlighted, setHighlighted] = useState(value)
-  const menuRef = useRef<HTMLDivElement>(null)
-  const buttonRef = useRef<HTMLButtonElement>(null)
-  const currentLabel = options.find((option) => option.value === value)?.label ?? value
-
-  useEffect(() => {
-    if (!open) return
-    setHighlighted(value)
-    const handler = (event: MouseEvent) => {
-      if (
-        menuRef.current?.contains(event.target as Node) ||
-        buttonRef.current?.contains(event.target as Node)
-      ) return
-      setOpen(false)
-    }
-    document.addEventListener('mousedown', handler)
-    return () => document.removeEventListener('mousedown', handler)
-  }, [open, value])
-
-  return (
-    <div className="relative">
-      <button
-        ref={buttonRef}
-        type="button"
-        onClick={() => setOpen((next) => !next)}
-        className={[
-          'flex h-[32px] w-full items-center justify-between border-[0.65px] bg-[var(--c-bg-input)] px-3 text-sm font-[450] text-[var(--c-text-primary)] [background-clip:padding-box] transition-colors duration-[180ms] hover:bg-[var(--c-bg-deep)]',
-          controlRadius,
-          triggerClassName,
-        ].filter(Boolean).join(' ')}
-        style={{ borderColor: selectBorderColor }}
-      >
-        <span className="truncate">{currentLabel}</span>
-        <ChevronDownIcon />
-      </button>
-
-      {open && (
-        <div
-          ref={menuRef}
-          className="dropdown-menu absolute left-0 top-[calc(100%+6px)] z-50 max-h-[220px] w-full overflow-y-auto border-[0.65px] bg-[var(--c-bg-menu)] p-1"
-          style={{
-            borderColor: selectBorderColor,
-            borderRadius: 10,
-            boxShadow: 'var(--c-dropdown-shadow)',
-          }}
-        >
-          {options.map((option) => {
-            const selected = option.value === value
-            const active = option.value === highlighted
-            return (
-              <button
-                key={option.value}
-                type="button"
-                onMouseEnter={() => setHighlighted(option.value)}
-                onClick={() => { onChange(option.value); setOpen(false) }}
-                className={[
-                  'flex w-full items-center justify-between rounded-[6.5px] px-3 py-2 text-sm font-[450] transition-colors duration-[140ms]',
-                  active ? 'bg-[var(--c-bg-deep)] text-[var(--c-text-primary)]' : 'bg-[var(--c-bg-menu)] text-[var(--c-text-secondary)]',
-                ].join(' ')}
-              >
-                <span className="truncate">{option.label}</span>
-                {selected && <Check size={13} className="ml-2 shrink-0" />}
-              </button>
-            )
-          })}
-        </div>
-      )}
-    </div>
-  )
-}
-
-function CapsuleSegmentedControl<T extends string>({
-  value,
-  options,
-  onChange,
-}: {
-  value: T
-  options: Array<{ value: T; label: string }>
-  onChange: (value: T) => void
-}) {
-  const containerRef = useRef<HTMLDivElement>(null)
-  const [pill, setPill] = useState({ left: 0, width: 0 })
-  const [animate, setAnimate] = useState(false)
-
-  useLayoutEffect(() => {
-    const container = containerRef.current
-    if (!container) return
-    const measure = () => {
-      const button = container.querySelector<HTMLButtonElement>(`[data-capsule="${value}"]`)
-      if (!button) return
-      setPill({ left: button.offsetLeft, width: button.offsetWidth })
-    }
-    measure()
-    const observer = new ResizeObserver(measure)
-    observer.observe(container)
-    return () => observer.disconnect()
-  }, [value])
-
-  useLayoutEffect(() => {
-    const id = requestAnimationFrame(() => setAnimate(true))
-    return () => cancelAnimationFrame(id)
-  }, [])
-
-  return (
-    <div
-      ref={containerRef}
-      className="relative inline-flex w-fit gap-0.5 rounded-[7.5px] bg-[var(--c-bg-deep)] p-[2px]"
-    >
-      <span
-        className="pointer-events-none absolute bottom-[2px] top-[2px] rounded-[6.25px] border-[0.5px] border-[var(--c-border-subtle)] bg-[var(--c-bg-menu)] shadow-[0_1px_2px_rgba(0,0,0,0.04)]"
-        style={{
-          left: pill.left,
-          width: pill.width,
-          transition: animate ? 'left 180ms cubic-bezier(0.22, 1, 0.36, 1), width 180ms cubic-bezier(0.22, 1, 0.36, 1)' : 'none',
-        }}
-      />
-      {options.map((option) => {
-        const active = option.value === value
-        return (
-          <button
-            key={option.value}
-            type="button"
-            data-capsule={option.value}
-            onClick={() => onChange(option.value)}
-            className={[
-              'group relative z-10 overflow-hidden rounded-[6.25px] px-[10px] py-[5px] text-[12.5px] font-[450] leading-[19px] transition-colors duration-[160ms]',
-              active ? 'text-[var(--c-text-primary)]' : 'text-[var(--c-text-muted)] hover:text-[var(--c-text-primary)]',
-            ].join(' ')}
-            style={{
-              minWidth: 0,
-            }}
-          >
-            {!active && (
-              <span className="pointer-events-none absolute inset-0 bg-transparent transition-[background-color,box-shadow] duration-[160ms] ease-out group-hover:bg-[color-mix(in_srgb,var(--c-bg-deep)_90%,var(--c-text-primary)_10%)] group-hover:shadow-[inset_0_0_0_0.5px_var(--c-border-subtle)] group-active:bg-[color-mix(in_srgb,var(--c-bg-deep)_84%,var(--c-text-primary)_16%)] group-active:shadow-[inset_0_1px_2px_rgba(0,0,0,0.08)]" />
-            )}
-            <span className="relative z-10">{option.label}</span>
-          </button>
-        )
-      })}
-    </div>
-  )
-}
-
-function StatusBadge({ variant, children }: { variant: StatusVariant; children: ReactNode }) {
-  return <SettingsStatusBadge variant={variant}>{children}</SettingsStatusBadge>
 }
 
 function SwatchCell({ role, token, use }: { role: string; token: string; use: string }) {
@@ -695,7 +409,7 @@ function CurrentSettingsMock() {
           description="Used by background utility tasks."
           control={(
             <div className="w-[240px]">
-              <TokenSelect
+              <SettingsSelect
                 value={model}
                 options={[
                   { value: 'default', label: 'Platform default' },
@@ -1177,14 +891,14 @@ function PrimitivesPreview() {
             <SettingsButton variant="primary">Save</SettingsButton>
             <SettingsButton variant="secondary" icon={<Plus size={14} />}>Add provider</SettingsButton>
             <SettingsButton variant="secondary" icon={<RefreshCw size={14} />}>Refresh</SettingsButton>
-            <CopyStateButton />
+            <SettingsCopyButton />
             <SettingsButton variant="danger" icon={<Trash2 size={14} />}>Delete</SettingsButton>
             <SettingsButton disabled>Disabled</SettingsButton>
           </div>
           <div className="flex items-center gap-1">
-            <IconButton label="Settings"><Settings size={15} /></IconButton>
-            <IconButton label="Refresh"><RefreshCw size={15} /></IconButton>
-            <IconButton label="Delete" danger><Trash2 size={15} /></IconButton>
+            <SettingsIconButton label="Settings"><Settings size={15} /></SettingsIconButton>
+            <SettingsIconButton label="Refresh"><RefreshCw size={15} /></SettingsIconButton>
+            <SettingsIconButton label="Delete" danger><Trash2 size={15} /></SettingsIconButton>
           </div>
         </SpecCard>
 
@@ -1192,11 +906,11 @@ function PrimitivesPreview() {
           <div className="grid gap-3 sm:grid-cols-2">
             <div>
               <div className="mb-1.5 text-xs font-medium text-[var(--c-text-secondary)]">Text field</div>
-              <TokenInput placeholder="https://api.example.com/v1" />
+              <SettingsInput placeholder="https://api.example.com/v1" />
             </div>
             <div>
               <div className="mb-1.5 text-xs font-medium text-[var(--c-text-secondary)]">Select</div>
-              <TokenSelect
+              <SettingsSelect
                 value={model}
                 options={[
                   { value: 'default', label: 'Platform default' },
@@ -1208,7 +922,7 @@ function PrimitivesPreview() {
             </div>
             <div className="sm:col-span-2">
               <div className="mb-1.5 text-xs font-medium text-[var(--c-text-secondary)]">Search field</div>
-              <SearchInput placeholder="Search models" />
+              <SettingsSearchInput placeholder="Search models" />
             </div>
           </div>
         </SpecCard>
@@ -1219,7 +933,7 @@ function PrimitivesPreview() {
               <PillToggle checked={enabled} onChange={setEnabled} />
               <span className="text-sm text-[var(--c-text-secondary)]">Enabled</span>
             </div>
-            <CapsuleSegmentedControl
+            <SettingsSegmentedControl
               options={[
                 { value: 'system', label: 'System' },
                 { value: 'light', label: 'Light' },
@@ -1233,10 +947,10 @@ function PrimitivesPreview() {
 
         <SpecCard title="Status badges">
           <div className="flex flex-wrap gap-2">
-            <StatusBadge variant="success">ready</StatusBadge>
-            <StatusBadge variant="neutral">local</StatusBadge>
-            <StatusBadge variant="warning">missing</StatusBadge>
-            <StatusBadge variant="error">error</StatusBadge>
+            <SettingsStatusBadge variant="success">ready</SettingsStatusBadge>
+            <SettingsStatusBadge variant="neutral">local</SettingsStatusBadge>
+            <SettingsStatusBadge variant="warning">missing</SettingsStatusBadge>
+            <SettingsStatusBadge variant="error">error</SettingsStatusBadge>
           </div>
         </SpecCard>
       </div>
@@ -1291,76 +1005,34 @@ function CompositionsPreview() {
   )
 }
 
-function ModalActionButton({
-  variant,
-  children,
-  onClick,
-}: {
-  variant: 'primary' | 'secondary'
-  children: ReactNode
-  onClick?: () => void
-}) {
-  const classes = variant === 'primary'
-    ? 'min-w-[54px] bg-[var(--c-btn-bg)] text-[var(--c-btn-text)] hover:[box-shadow:inset_0_0_0_999px_rgba(255,255,255,0.07),0_0_0_0.2px_var(--c-btn-bg)] active:[box-shadow:inset_0_0_0_999px_rgba(0,0,0,0.04)]'
-    : 'min-w-[54px] border-[0.65px] [border-color:color-mix(in_srgb,var(--c-border)_91%,var(--c-text-primary)_9%)] bg-[var(--c-bg-input)] text-[color-mix(in_srgb,var(--c-text-secondary)_72%,var(--c-text-primary)_28%)] hover:border-transparent hover:bg-[var(--c-bg-deep)] hover:text-[var(--c-text-primary)]'
-
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={[
-        'inline-flex h-[35px] items-center justify-center rounded-[7px] px-3 text-sm font-[450] transition-colors duration-[180ms]',
-        classes,
-      ].join(' ')}
-    >
-      {children}
-    </button>
-  )
-}
-
 function ProviderModalPreview({ open, onClose }: { open: boolean; onClose: () => void }) {
   const [providerType, setProviderType] = useState('responses')
 
-  if (!open) return null
-
   const fieldLabelCls = 'mb-1 block text-[12px] font-medium text-[var(--c-text-secondary)]'
-  const modalFieldCls = 'h-[35px] px-3.5 text-sm'
 
-  return createPortal(
-    <div
-      className="overlay-fade-in fixed inset-0 z-[60] flex items-center justify-center"
-      style={{ background: 'rgba(0, 0, 0, 0.58)' }}
-      onClick={(event) => {
-        if (event.target === event.currentTarget) onClose()
-      }}
+  return (
+    <SettingsModalFrame
+      open={open}
+      title="添加供应商"
+      onClose={onClose}
+      footer={(
+        <>
+          <SettingsButton size="modal" variant="secondary" onClick={onClose}>取消</SettingsButton>
+          <SettingsButton size="modal" variant="primary">保存</SettingsButton>
+        </>
+      )}
     >
-      <div
-        className="design-token-modal-enter flex w-[510px] flex-col rounded-[17px] p-7"
-        style={{ background: 'var(--c-bg-menu)', border: '0.5px solid var(--c-border-subtle)' }}
-      >
-        <div className="flex items-center justify-between">
-          <h3 className="text-[19px] font-semibold leading-none text-[var(--c-text-heading)]">添加供应商</h3>
-          <button
-            type="button"
-            aria-label="关闭"
-            onClick={onClose}
-            className="-mr-2 flex h-8 w-8 items-center justify-center rounded-[7px] text-[color-mix(in_srgb,var(--c-border)_72%,var(--c-text-primary)_28%)] transition-colors duration-[160ms] hover:bg-[var(--c-bg-sub)] hover:text-[var(--c-text-primary)]"
-          >
-            <X size={16} />
-          </button>
-        </div>
-
         <div className="mt-6 grid grid-cols-2 gap-x-4 gap-y-4">
           <div>
             <label className={fieldLabelCls}>供应商名称</label>
-            <TokenInput className={modalFieldCls} placeholder="My Provider" />
+            <SettingsInput variant="md" placeholder="My Provider" />
           </div>
           <div>
             <label className={fieldLabelCls}>类型</label>
-            <TokenSelect
+            <SettingsSelect
               value={providerType}
               onChange={setProviderType}
-              triggerClassName={modalFieldCls}
+              triggerClassName="h-[35px] px-3.5"
               options={[
                 { value: 'responses', label: 'OpenAI (Responses)' },
                 { value: 'chat', label: 'OpenAI compatible' },
@@ -1370,21 +1042,14 @@ function ProviderModalPreview({ open, onClose }: { open: boolean; onClose: () =>
           </div>
           <div className="col-span-2">
             <label className={fieldLabelCls}>API Key</label>
-            <TokenInput className={modalFieldCls} type="password" placeholder="sk-..." />
+            <SettingsInput variant="md" type="password" placeholder="sk-..." />
           </div>
           <div className="col-span-2">
             <label className={fieldLabelCls}>Base URL</label>
-            <TokenInput className={modalFieldCls} placeholder="https://api.openai.com/v1" />
+            <SettingsInput variant="md" placeholder="https://api.openai.com/v1" />
           </div>
         </div>
-
-        <div className="mt-7 flex items-center justify-end gap-2">
-          <ModalActionButton variant="secondary" onClick={onClose}>取消</ModalActionButton>
-          <ModalActionButton variant="primary">保存</ModalActionButton>
-        </div>
-      </div>
-    </div>,
-    document.body,
+    </SettingsModalFrame>
   )
 }
 

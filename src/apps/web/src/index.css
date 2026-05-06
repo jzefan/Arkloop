@@ -156,6 +156,7 @@ button:not(:disabled) {
   --c-status-error-text: #f87171;
   --c-status-warning-text: #fbbf24;
   --c-status-success-text: #4ade80;
+  --c-danger-action-text: #ea4d3c;
   --c-status-danger-bg: rgba(239, 68, 68, 0.10);
   --c-status-danger-text: #f87171;
   --c-status-warn-bg: rgba(245, 158, 11, 0.12);
@@ -300,6 +301,7 @@ button:not(:disabled) {
     --c-status-error-text: #dc2626;
     --c-status-warning-text: #d97706;
     --c-status-success-text: #16a34a;
+    --c-danger-action-text: #ea4d3c;
     --c-status-danger-bg: #F1DEDB;
     --c-status-danger-text: #8A3327;
     --c-status-warn-bg: #F0E7D5;
@@ -425,6 +427,7 @@ button:not(:disabled) {
   --c-status-error-text: #dc2626;
   --c-status-warning-text: #d97706;
   --c-status-success-text: #16a34a;
+  --c-danger-action-text: #ea4d3c;
   --c-status-danger-bg: #F1DEDB;
   --c-status-danger-text: #8A3327;
   --c-status-warn-bg: #F0E7D5;
