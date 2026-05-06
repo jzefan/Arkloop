@@ -888,6 +888,8 @@ export interface LocaleStrings {
     // general settings
     profileSection: string;
     localModeLabel: string;
+    languageRegionSection: string;
+    supportSection: string;
     appearanceSection: string;
     // placeholder pages
     mcpTitle: string;

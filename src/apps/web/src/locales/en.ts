@@ -961,6 +961,8 @@ export const en: LocaleStrings = {
     managementHeader: "Management",
     profileSection: "Profile",
     localModeLabel: "Local mode",
+    languageRegionSection: "Language & Region",
+    supportSection: "Support",
     appearanceSection: "Appearance",
     mcpTitle: "MCP Servers",
     mcpDesc:

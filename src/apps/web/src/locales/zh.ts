@@ -951,6 +951,8 @@ export const zh: LocaleStrings = {
     managementHeader: "管理",
     profileSection: "个人资料",
     localModeLabel: "本地模式",
+    languageRegionSection: "语言与区域",
+    supportSection: "支持",
     appearanceSection: "外观",
     mcpTitle: "MCP 服务器",
     mcpDesc: "配置 Model Context Protocol 服务器以扩展智能体能力。",

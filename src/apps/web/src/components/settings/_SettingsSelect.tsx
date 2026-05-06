@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { Check, ChevronDown } from 'lucide-react'
 import type { CSSProperties } from 'react'
+import { getAdaptiveMenuLeft, settingsSelectBorderColor } from './_SettingsSelectUtils'
 
 export type SettingsSelectOption = { value: string; label: string }
 
@@ -12,9 +13,8 @@ type Props = {
   disabled?: boolean
   placeholder?: string
   triggerClassName?: string
+  fitContent?: boolean
 }
-
-export const settingsSelectBorderColor = 'color-mix(in srgb, var(--c-border) 78%, var(--c-bg-input) 22%)'
 
 export function SettingsSelect({
   value,
@@ -23,6 +23,7 @@ export function SettingsSelect({
   disabled,
   placeholder,
   triggerClassName,
+  fitContent = false,
 }: Props) {
   const [open, setOpen] = useState(false)
   const [highlighted, setHighlighted] = useState(value)
@@ -32,7 +33,6 @@ export function SettingsSelect({
 
   useEffect(() => {
     if (!open) return
-    setHighlighted(value)
     const handler = (e: MouseEvent) => {
       if (
         menuRef.current?.contains(e.target as Node) ||
@@ -47,12 +47,22 @@ export function SettingsSelect({
   const handleOpen = () => {
     if (disabled) return
     if (!open && btnRef.current) {
+      setHighlighted(value)
       const rect = btnRef.current.getBoundingClientRect()
+      const viewportWidth = typeof window === 'undefined' ? rect.width + 32 : window.innerWidth
+      const longestLabel = Math.max(
+        currentLabel.length,
+        ...options.map((option) => option.label.length),
+      )
+      const estimatedMenuWidth = fitContent
+        ? Math.min(Math.max(rect.width, longestLabel * 8 + 56), 320)
+        : rect.width
+      const width = Math.min(estimatedMenuWidth, Math.max(160, viewportWidth - 32))
       setMenuStyle({
         position: 'fixed',
         top: rect.bottom + 6,
-        left: rect.left,
-        width: rect.width,
+        left: getAdaptiveMenuLeft(rect, width, viewportWidth),
+        width,
         zIndex: 9999,
       })
     }
@@ -108,7 +118,8 @@ export function SettingsSelect({
         disabled={disabled}
         onClick={handleOpen}
         className={[
-          'flex h-[32px] w-full items-center justify-between rounded-[6.5px] border-[0.65px] bg-[var(--c-bg-input)] px-3 text-sm font-[450] text-[var(--c-text-primary)] [background-clip:padding-box] transition-colors duration-[180ms] hover:bg-[var(--c-bg-deep)] disabled:cursor-not-allowed disabled:opacity-50',
+          fitContent ? 'inline-flex max-w-full' : 'flex w-full',
+          'h-[32px] items-center justify-between rounded-[6.5px] border-[0.65px] bg-[var(--c-bg-input)] px-3 text-sm font-[450] text-[var(--c-text-primary)] [background-clip:padding-box] transition-colors duration-[180ms] hover:bg-[var(--c-bg-deep)] disabled:cursor-not-allowed disabled:opacity-50',
           triggerClassName,
         ].filter(Boolean).join(' ')}
         style={{ borderColor: settingsSelectBorderColor }}

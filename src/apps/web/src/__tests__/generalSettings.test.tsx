@@ -18,6 +18,7 @@ vi.mock('../api', async () => {
 
 vi.mock('@arkloop/shared/desktop', () => ({
   getDesktopMode: () => 'desktop',
+  getDesktopAppVersion: () => '0.0.0-test',
   isDesktop: () => true,
   isLocalMode: () => true,
   getDesktopApi: () => ({
@@ -78,19 +79,6 @@ vi.mock('../components/settings/SettingsModelDropdown', () => ({
   ),
 }))
 
-type Deferred<T> = {
-  promise: Promise<T>
-  resolve: (value: T) => void
-}
-
-function deferred<T>(): Deferred<T> {
-  let resolve!: (value: T) => void
-  const promise = new Promise<T>((nextResolve) => {
-    resolve = nextResolve
-  })
-  return { promise, resolve }
-}
-
 function setInputValue(input: HTMLInputElement, value: string) {
   const descriptor = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')
   descriptor?.set?.call(input, value)
@@ -129,12 +117,8 @@ describe('GeneralSettings', () => {
     return { api, LocaleProvider, GeneralSettings }
   }
 
-  it('首次加载时显示加载态，而不是主对话占位', async () => {
+  it('只渲染通用页里的真实基础偏好', async () => {
     const { api, LocaleProvider, GeneralSettings } = await loadSubject()
-    const providersRequest = deferred<Awaited<ReturnType<typeof api.listLlmProviders>>>()
-    const profilesRequest = deferred<Awaited<ReturnType<typeof api.listSpawnProfiles>>>()
-    vi.mocked(api.listLlmProviders).mockReturnValue(providersRequest.promise)
-    vi.mocked(api.listSpawnProfiles).mockReturnValue(profilesRequest.promise)
 
     await act(async () => {
       root.render(
@@ -144,90 +128,15 @@ describe('GeneralSettings', () => {
       )
     })
 
-    const dropdown = container.querySelector('[data-testid="tool-model-dropdown"]')
-    expect(dropdown?.getAttribute('data-placeholder')).toBe('加载中...')
-    expect(dropdown?.getAttribute('data-disabled')).toBe('true')
-  })
-
-  it('重新打开时直接复用上次的工具模型值', async () => {
-    const { api, LocaleProvider, GeneralSettings } = await loadSubject()
-    vi.mocked(api.listLlmProviders).mockResolvedValue([
-      {
-        id: 'provider-1',
-        scope: 'user',
-        provider: 'openrouter',
-        name: 'openrouter',
-        key_prefix: null,
-        base_url: 'https://openrouter.ai/api/v1',
-        openai_api_mode: 'openai',
-        created_at: '2026-04-09T00:00:00Z',
-        models: [
-          {
-            id: 'model-1',
-            provider_id: 'provider-1',
-            model: 'google/gemma-4-26b-a4b-it',
-            priority: 0,
-            is_default: true,
-            show_in_picker: true,
-            tags: [],
-            when: {},
-            multiplier: 1,
-          },
-        ],
-      },
-    ])
-    vi.mocked(api.listSpawnProfiles).mockResolvedValue([
-      {
-        profile: 'tool',
-        resolved_model: 'openrouter^google/gemma-4-26b-a4b-it',
-        has_override: true,
-        auto_model: 'openrouter^google/gemma-4-26b-a4b-it',
-      },
-    ])
-
-    await act(async () => {
-      root.render(
-        <LocaleProvider>
-          <GeneralSettings accessToken="token" me={null} onLogout={() => {}} />
-        </LocaleProvider>,
-      )
-    })
-
-    await act(async () => {
-      await Promise.resolve()
-    })
-
-    expect(
-      container.querySelector('[data-testid="tool-model-dropdown"]')?.getAttribute('data-value'),
-    ).toBe('openrouter^google/gemma-4-26b-a4b-it')
-
-    const nextProvidersRequest = deferred<Awaited<ReturnType<typeof api.listLlmProviders>>>()
-    const nextProfilesRequest = deferred<Awaited<ReturnType<typeof api.listSpawnProfiles>>>()
-    vi.mocked(api.listLlmProviders).mockReturnValue(nextProvidersRequest.promise)
-    vi.mocked(api.listSpawnProfiles).mockReturnValue(nextProfilesRequest.promise)
-
-    await act(async () => {
-      root.unmount()
-    })
-
-    container = document.createElement('div')
-    document.body.appendChild(container)
-    root = createRoot(container)
-
-    await act(async () => {
-      root.render(
-        <LocaleProvider>
-          <GeneralSettings accessToken="token" me={null} onLogout={() => {}} />
-        </LocaleProvider>,
-      )
-    })
-
-    expect(
-      container.querySelector('[data-testid="tool-model-dropdown"]')?.getAttribute('data-value'),
-    ).toBe('openrouter^google/gemma-4-26b-a4b-it')
-    expect(
-      container.querySelector('[data-testid="tool-model-dropdown"]')?.getAttribute('data-disabled'),
-    ).toBe('false')
+    expect(container.textContent).toContain('通用')
+    expect(container.textContent).toContain('语言与区域')
+    expect(container.textContent).toContain('支持')
+    expect(container.querySelector('[data-testid="language-content"]')).not.toBeNull()
+    expect(container.querySelector('[data-testid="timezone-settings"]')).not.toBeNull()
+    expect(container.querySelector('[data-testid="theme-mode-picker"]')).toBeNull()
+    expect(container.querySelector('[data-testid="tool-model-dropdown"]')).toBeNull()
+    expect(api.listLlmProviders).not.toHaveBeenCalled()
+    expect(api.listSpawnProfiles).not.toHaveBeenCalled()
   })
 
   it('本地模式用户卡片内联编辑后端用户名', async () => {

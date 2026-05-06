@@ -19,12 +19,15 @@ import {
   normalizeTimeZone,
 } from '@arkloop/shared'
 import { settingsInputCls } from './_SettingsInput'
-import { settingsSelectBorderColor } from './_SettingsSelect'
+import { getAdaptiveMenuLeft, settingsSelectBorderColor } from './_SettingsSelectUtils'
 
 type Props = {
   me: MeResponse | null
   accessToken: string
   onMeUpdated?: (me: MeResponse) => void
+  showLabel?: boolean
+  className?: string
+  triggerClassName?: string
 }
 
 /** 与 SettingsModelDropdown 菜单内选项一致 */
@@ -46,6 +49,8 @@ const PRELOAD_FALLBACK_DELAY_MS = 16
 const MENU_MAX_HEIGHT_PX = 220
 const MENU_ROW_ESTIMATE_PX = 36
 const MENU_OVERSCAN_ROWS = 6
+const MENU_WIDTH_MIN_PX = 260
+const MENU_WIDTH_MAX_PX = 460
 
 type IdleDeadlineLike = {
   didTimeout: boolean
@@ -133,7 +138,25 @@ function preloadOffsets(value: Date): Promise<void> {
   return offsetPreloadPromise
 }
 
-export function TimeZoneSettings({ me, accessToken, onMeUpdated }: Props) {
+function estimateMenuWidth(baseWidth: number, labels: string[], viewportWidth: number): number {
+  const longestLabel = Math.max(...labels.map((label) => label.length), 0)
+  const estimatedContentWidth = longestLabel * 7 + 116
+  const availableWidth = Math.max(MENU_WIDTH_MIN_PX, viewportWidth - 32)
+  return Math.min(
+    Math.max(baseWidth, estimatedContentWidth, MENU_WIDTH_MIN_PX),
+    MENU_WIDTH_MAX_PX,
+    availableWidth,
+  )
+}
+
+export function TimeZoneSettings({
+  me,
+  accessToken,
+  onMeUpdated,
+  showLabel = true,
+  className,
+  triggerClassName,
+}: Props) {
   const { t } = useLocale()
   const { addToast } = useToast()
   const [open, setOpen] = useState(false)
@@ -257,11 +280,19 @@ export function TimeZoneSettings({ me, accessToken, onMeUpdated }: Props) {
     setListScrollTop(0)
     if (btnRef.current) {
       const rect = btnRef.current.getBoundingClientRect()
+      const viewportWidth = typeof window === 'undefined' ? rect.width + 32 : window.innerWidth
+      const menuLabels = [
+        t.timezoneUseDevice,
+        ...(accountZone ? [t.timezoneUseAccountDefault] : []),
+        ...getSupportedZonesCached(),
+      ]
+      const width = estimateMenuWidth(rect.width, menuLabels, viewportWidth)
       setMenuStyle({
         position: 'fixed',
         top: rect.bottom + 4,
-        left: rect.left,
-        width: rect.width,
+        left: getAdaptiveMenuLeft(rect, width, viewportWidth),
+        width,
+        minWidth: rect.width,
         zIndex: 9999,
       })
     }
@@ -419,9 +450,11 @@ export function TimeZoneSettings({ me, accessToken, onMeUpdated }: Props) {
   ) : null
 
   return (
-    <div className="flex flex-col gap-2">
-      <span className="text-sm font-medium text-[var(--c-text-heading)]">{t.timezone}</span>
-      <div className="relative w-[240px]">
+    <div className={`flex flex-col gap-2${className ? ` ${className}` : ''}`}>
+      {showLabel && (
+        <span className="text-sm font-medium text-[var(--c-text-heading)]">{t.timezone}</span>
+      )}
+      <div className={`relative inline-flex max-w-full${triggerClassName ? ` ${triggerClassName}` : ''}`}>
         <button
           ref={btnRef}
           type="button"
@@ -429,7 +462,7 @@ export function TimeZoneSettings({ me, accessToken, onMeUpdated }: Props) {
           onClick={handleToggle}
           onFocus={() => prepareTimeZoneMenu()}
           onMouseEnter={() => prepareTimeZoneMenu()}
-          className="flex h-9 w-full items-center justify-between rounded-[6.5px] border-[0.65px] bg-[var(--c-bg-input)] px-3 text-sm font-[450] text-[var(--c-text-primary)] [background-clip:padding-box] transition-colors duration-[180ms] hover:bg-[var(--c-bg-deep)] disabled:cursor-not-allowed disabled:opacity-50"
+          className="inline-flex h-9 max-w-[360px] items-center justify-between rounded-[6.5px] border-[0.65px] bg-[var(--c-bg-input)] px-3 text-sm font-[450] text-[var(--c-text-primary)] [background-clip:padding-box] transition-colors duration-[180ms] hover:bg-[var(--c-bg-deep)] disabled:cursor-not-allowed disabled:opacity-50"
           style={{
             borderColor: settingsSelectBorderColor,
           }}

@@ -20,19 +20,26 @@ export function LanguageContent({
   locale,
   setLocale,
   label,
+  showLabel = true,
+  triggerClassName = 'h-9 w-[240px]',
 }: {
   locale: Locale
   setLocale: (l: Locale) => void
   label: string
+  showLabel?: boolean
+  triggerClassName?: string
 }) {
   return (
     <div className="flex flex-col gap-2">
-      <span className="text-sm font-medium text-[var(--c-text-heading)]">{label}</span>
+      {showLabel && (
+        <span className="text-sm font-medium text-[var(--c-text-heading)]">{label}</span>
+      )}
       <SettingsSelect
         value={locale}
         options={LOCALE_OPTIONS}
         onChange={(value) => setLocale(value as Locale)}
-        triggerClassName="h-9 w-[240px]"
+        triggerClassName={triggerClassName}
+        fitContent
       />
     </div>
   )
