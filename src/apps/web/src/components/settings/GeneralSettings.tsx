@@ -1,14 +1,26 @@
-import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from 'react'
 import { Monitor, LogOut, HelpCircle, ArrowUpRight, Loader2, X, Pencil, Check, RefreshCw } from 'lucide-react'
 import type { MeResponse } from '../../api'
 import { updateMe } from '../../api'
 import { useLocale } from '../../contexts/LocaleContext'
-import { getDesktopApi, getDesktopAppVersion, isLocalMode, type AppUpdaterState } from '@arkloop/shared/desktop'
+import {
+  getDesktopApi,
+  getDesktopAppVersion,
+  isLocalMode,
+  type AppUpdaterState,
+  type CloseWindowBehavior,
+  type DesktopConfig,
+  type DesktopPreferencesConfig,
+  type StartupOpenMode,
+} from '@arkloop/shared/desktop'
+import { useToast } from '@arkloop/shared'
 import { openExternal } from '../../openExternal'
 import { LanguageContent } from './AppearanceSettings'
 import { TimeZoneSettings } from './TimeZoneSettings'
 import { SettingsButton, SettingsIconButton } from './_SettingsButton'
 import { SettingsInput } from './_SettingsInput'
+import { SettingsSelect } from './_SettingsSelect'
+import { SettingsSwitch } from './_SettingsSwitch'
 
 type Props = {
   me: MeResponse | null
@@ -23,6 +35,22 @@ function getAppUpdaterApi() {
 
 function isAppUpdaterBusy(state: AppUpdaterState | null) {
   return state?.phase === 'checking' || state?.phase === 'downloading'
+}
+
+const defaultDesktopPreferences: DesktopPreferencesConfig = {
+  startupOpen: 'last-workspace',
+  closeBehavior: 'keep-in-background',
+  launchAtLogin: false,
+  desktopNotifications: true,
+  productUpdateNotifications: true,
+  keepScreenAwake: false,
+}
+
+function desktopPreferencesFromConfig(config: DesktopConfig | null): DesktopPreferencesConfig {
+  return {
+    ...defaultDesktopPreferences,
+    ...(config?.desktop ?? {}),
+  }
 }
 
 function GeneralSection({
@@ -52,26 +80,85 @@ function GeneralRow({
   title,
   description,
   control,
+  disabled,
+  onClick,
 }: {
   title: string
   description?: ReactNode
   control: ReactNode
+  disabled?: boolean
+  onClick?: () => void
 }) {
+  const interactive = onClick !== undefined
+
+  const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    if (!interactive || disabled) return
+    if (event.key !== 'Enter' && event.key !== ' ') return
+    event.preventDefault()
+    onClick()
+  }
+
   return (
-    <div className="relative grid gap-3 px-5 py-4 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center sm:gap-6 [&+&]:before:absolute [&+&]:before:left-5 [&+&]:before:right-5 [&+&]:before:top-0 [&+&]:before:h-px [&+&]:before:bg-[var(--c-border-subtle)] [&+&]:before:content-['']">
+    <div
+      role={interactive ? 'button' : undefined}
+      tabIndex={interactive && !disabled ? 0 : undefined}
+      onClick={disabled ? undefined : onClick}
+      onKeyDown={handleKeyDown}
+      className={[
+        'group/general-row relative grid items-center gap-3 px-5 py-4 outline-none transition-colors duration-[160ms] sm:grid-cols-[minmax(0,1fr)_auto] sm:gap-6 [&+&]:before:absolute [&+&]:before:left-5 [&+&]:before:right-5 [&+&]:before:top-0 [&+&]:before:h-px [&+&]:before:bg-[var(--c-border-subtle)] [&+&]:before:content-[\'\']',
+        interactive && !disabled ? 'cursor-pointer hover:bg-[var(--c-bg-deep)]/25 focus-visible:ring-2 focus-visible:ring-[var(--c-accent)]' : '',
+        disabled ? 'cursor-not-allowed opacity-50' : '',
+      ].filter(Boolean).join(' ')}
+    >
       <div className="min-w-0">
         <div className="text-[13px] font-medium text-[var(--c-text-primary)]">{title}</div>
         {description && (
           <div className="mt-1 text-xs leading-5 text-[var(--c-text-tertiary)]">{description}</div>
         )}
       </div>
-      <div className="min-w-0 sm:justify-self-end">{control}</div>
+      <div className="flex min-w-0 items-center sm:justify-self-end">{control}</div>
     </div>
+  )
+}
+
+function GeneralSwitchRow({
+  title,
+  description,
+  checked,
+  onChange,
+  disabled,
+  saving,
+}: {
+  title: string
+  description?: ReactNode
+  checked: boolean
+  onChange: (next: boolean) => void
+  disabled?: boolean
+  saving?: boolean
+}) {
+  const handleChange = (next: boolean) => {
+    if (saving || disabled) return
+    onChange(next)
+  }
+
+  return (
+    <GeneralRow
+      title={title}
+      description={description}
+      disabled={disabled}
+      onClick={() => handleChange(!checked)}
+      control={(
+        <div className="shrink-0" onClick={(event) => event.stopPropagation()}>
+          <SettingsSwitch checked={checked} onChange={handleChange} disabled={disabled} />
+        </div>
+      )}
+    />
   )
 }
 
 export function GeneralSettings({ me, accessToken, onLogout, onMeUpdated }: Props) {
   const { t, locale, setLocale } = useLocale()
+  const { addToast } = useToast()
   const ds = t.desktopSettings
   const docsUrl = locale === 'en' ? 'https://arkloop.io/en/docs/guide' : 'https://arkloop.io/zh/docs/guide'
   const localMode = isLocalMode()
@@ -82,8 +169,12 @@ export function GeneralSettings({ me, accessToken, onLogout, onMeUpdated }: Prop
   const [appUpdateState, setAppUpdateState] = useState<AppUpdaterState | null>(null)
   const [checkingUpdate, setCheckingUpdate] = useState(false)
   const [updateError, setUpdateError] = useState('')
+  const [desktopConfig, setDesktopConfig] = useState<DesktopConfig | null>(null)
+  const [savingDesktopPref, setSavingDesktopPref] = useState<keyof DesktopPreferencesConfig | null>(null)
+  const savingDesktopPrefRef = useRef<keyof DesktopPreferencesConfig | null>(null)
   const nameInputRef = useRef<HTMLInputElement>(null)
   const localVersion = getDesktopAppVersion() ?? ''
+  const desktopPrefs = desktopPreferencesFromConfig(desktopConfig)
 
   useEffect(() => {
     if (!editingName) setDraftName(me?.username ?? '')
@@ -107,6 +198,22 @@ export function GeneralSettings({ me, accessToken, onLogout, onMeUpdated }: Prop
     }).catch(() => {})
     const unsub = api.onState((state) => {
       setAppUpdateState(state)
+    })
+    return () => {
+      active = false
+      unsub()
+    }
+  }, [])
+
+  useEffect(() => {
+    const api = getDesktopApi()
+    if (!api?.config) return
+    let active = true
+    void api.config.get().then((config) => {
+      if (active) setDesktopConfig(config)
+    }).catch(() => {})
+    const unsub = api.config.onChanged((config) => {
+      setDesktopConfig(config)
     })
     return () => {
       active = false
@@ -155,6 +262,34 @@ export function GeneralSettings({ me, accessToken, onLogout, onMeUpdated }: Prop
       setSavingName(false)
     }
   }
+
+  const updateDesktopPreference = useCallback(async <K extends keyof DesktopPreferencesConfig>(
+    key: K,
+    value: DesktopPreferencesConfig[K],
+  ) => {
+    if (savingDesktopPrefRef.current) return
+    const api = getDesktopApi()
+    if (!api?.config) return
+    savingDesktopPrefRef.current = key
+    setSavingDesktopPref(key)
+    try {
+      const current = await api.config.get()
+      const next: DesktopConfig = {
+        ...current,
+        desktop: {
+          ...desktopPreferencesFromConfig(current),
+          [key]: value,
+        },
+      }
+      setDesktopConfig(next)
+      await api.config.set(next)
+    } catch {
+      addToast(t.requestFailed, 'error')
+    } finally {
+      savingDesktopPrefRef.current = null
+      setSavingDesktopPref(null)
+    }
+  }, [addToast, t.requestFailed])
 
   const checkUpdates = useCallback(async () => {
     const api = getAppUpdaterApi()
@@ -360,6 +495,80 @@ export function GeneralSettings({ me, accessToken, onLogout, onMeUpdated }: Prop
                 showLabel={false}
               />
             )}
+          />
+        </GeneralCard>
+      </GeneralSection>
+
+      <GeneralSection title={ds.startupWindowSection}>
+        <GeneralCard>
+          <GeneralRow
+            title={ds.startupOpen}
+            control={(
+              <SettingsSelect
+                value={desktopPrefs.startupOpen}
+                options={[
+                  { value: 'last-workspace', label: ds.startupOpenLastWorkspace },
+                  { value: 'home', label: ds.startupOpenHome },
+                ]}
+                onChange={(value) => void updateDesktopPreference('startupOpen', value as StartupOpenMode)}
+                disabled={savingDesktopPref === 'startupOpen'}
+                triggerClassName="h-9"
+                fitContent
+              />
+            )}
+          />
+          <GeneralRow
+            title={ds.closeWindow}
+            control={(
+              <SettingsSelect
+                value={desktopPrefs.closeBehavior}
+                options={[
+                  { value: 'keep-in-background', label: ds.closeWindowKeepBackground },
+                  { value: 'quit', label: ds.closeWindowQuit },
+                ]}
+                onChange={(value) => void updateDesktopPreference('closeBehavior', value as CloseWindowBehavior)}
+                disabled={savingDesktopPref === 'closeBehavior'}
+                triggerClassName="h-9"
+                fitContent
+              />
+            )}
+          />
+          <GeneralSwitchRow
+            title={ds.launchAtLogin}
+            checked={desktopPrefs.launchAtLogin}
+            onChange={(next) => void updateDesktopPreference('launchAtLogin', next)}
+            saving={savingDesktopPref === 'launchAtLogin'}
+          />
+        </GeneralCard>
+      </GeneralSection>
+
+      <GeneralSection title={ds.notificationsSection}>
+        <GeneralCard>
+          <GeneralSwitchRow
+            title={ds.desktopNotifications}
+            description={ds.desktopNotificationsDesc}
+            checked={desktopPrefs.desktopNotifications}
+            onChange={(next) => void updateDesktopPreference('desktopNotifications', next)}
+            saving={savingDesktopPref === 'desktopNotifications'}
+          />
+          <GeneralSwitchRow
+            title={ds.productUpdateNotifications}
+            description={ds.productUpdateNotificationsDesc}
+            checked={desktopPrefs.productUpdateNotifications}
+            onChange={(next) => void updateDesktopPreference('productUpdateNotifications', next)}
+            saving={savingDesktopPref === 'productUpdateNotifications'}
+          />
+        </GeneralCard>
+      </GeneralSection>
+
+      <GeneralSection title={ds.backgroundToolsSection}>
+        <GeneralCard>
+          <GeneralSwitchRow
+            title={ds.keepScreenAwake}
+            description={ds.keepScreenAwakeDesc}
+            checked={desktopPrefs.keepScreenAwake}
+            onChange={(next) => void updateDesktopPreference('keepScreenAwake', next)}
+            saving={savingDesktopPref === 'keepScreenAwake'}
           />
         </GeneralCard>
       </GeneralSection>

@@ -28,6 +28,7 @@ type Props = {
   showLabel?: boolean
   className?: string
   triggerClassName?: string
+  triggerButtonClassName?: string
 }
 
 /** 与 SettingsModelDropdown 菜单内选项一致 */
@@ -156,6 +157,7 @@ export function TimeZoneSettings({
   showLabel = true,
   className,
   triggerClassName,
+  triggerButtonClassName,
 }: Props) {
   const { t } = useLocale()
   const { addToast } = useToast()
@@ -462,13 +464,16 @@ export function TimeZoneSettings({
           onClick={handleToggle}
           onFocus={() => prepareTimeZoneMenu()}
           onMouseEnter={() => prepareTimeZoneMenu()}
-          className="inline-flex h-9 max-w-[360px] items-center justify-between rounded-[6.5px] border-[0.65px] bg-[var(--c-bg-input)] px-3 text-sm font-[450] text-[var(--c-text-primary)] [background-clip:padding-box] transition-colors duration-[180ms] hover:bg-[var(--c-bg-deep)] disabled:cursor-not-allowed disabled:opacity-50"
+          className={[
+            'inline-flex h-9 max-w-[360px] items-center justify-between rounded-[6.5px] border-[0.65px] bg-[var(--c-bg-input)] px-3 text-sm font-[450] text-[var(--c-text-primary)] [background-clip:padding-box] transition-colors duration-[180ms] hover:bg-[var(--c-bg-deep)] disabled:cursor-not-allowed disabled:opacity-50',
+            triggerButtonClassName,
+          ].filter(Boolean).join(' ')}
           style={{
             borderColor: settingsSelectBorderColor,
           }}
         >
           <span className="min-w-0 truncate text-left">{triggerLabel}</span>
-          <ChevronDown size={13} className="ml-2 shrink-0" />
+          <ChevronDown size={13} className="ml-2 shrink-0 text-[var(--c-text-muted)] opacity-80" />
         </button>
         {menu && createPortal(menu, document.body)}
       </div>

@@ -891,6 +891,22 @@ export interface LocaleStrings {
     languageRegionSection: string;
     supportSection: string;
     appearanceSection: string;
+    startupWindowSection: string;
+    startupOpen: string;
+    startupOpenLastWorkspace: string;
+    startupOpenHome: string;
+    closeWindow: string;
+    closeWindowKeepBackground: string;
+    closeWindowQuit: string;
+    launchAtLogin: string;
+    notificationsSection: string;
+    desktopNotifications: string;
+    desktopNotificationsDesc: string;
+    productUpdateNotifications: string;
+    productUpdateNotificationsDesc: string;
+    backgroundToolsSection: string;
+    keepScreenAwake: string;
+    keepScreenAwakeDesc: string;
     // placeholder pages
     mcpTitle: string;
     mcpDesc: string;

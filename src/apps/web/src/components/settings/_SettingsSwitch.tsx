@@ -9,8 +9,8 @@ type Props = {
 }
 
 const sizes = {
-  default: { track: 36, thumb: 16, gap: 2, travel: 16 },
-  sm: { track: 28, thumb: 12, gap: 2, travel: 12 },
+  default: { target: 32, track: 36, thumb: 16, gap: 2, travel: 16 },
+  sm: { target: 28, track: 28, thumb: 12, gap: 2, travel: 12 },
 } as const
 
 export function SettingsSwitch({ checked, onChange, disabled, forceHover, size = 'default' }: Props) {
@@ -25,6 +25,7 @@ export function SettingsSwitch({ checked, onChange, disabled, forceHover, size =
         'group relative inline-flex shrink-0 items-center',
         disabled ? 'cursor-not-allowed opacity-50' : 'cursor-pointer',
       ].join(' ')}
+      style={{ height: s.target }}
     >
       <input
         type="checkbox"
@@ -36,7 +37,9 @@ export function SettingsSwitch({ checked, onChange, disabled, forceHover, size =
       <span
         className={[
           'block rounded-full transition-[background-color,box-shadow] duration-[180ms]',
-          !disabled ? 'group-hover:[box-shadow:0_0_0_1px_color-mix(in_srgb,var(--c-accent)_68%,transparent)]' : '',
+          !disabled
+            ? 'group-hover:[box-shadow:0_0_0_1px_color-mix(in_srgb,var(--c-accent)_68%,transparent)] group-hover/general-row:[box-shadow:0_0_0_1px_color-mix(in_srgb,var(--c-accent)_68%,transparent)] group-hover/switch-card:[box-shadow:0_0_0_1px_color-mix(in_srgb,var(--c-accent)_68%,transparent)]'
+            : '',
           forceHover && !disabled ? '[box-shadow:0_0_0_1px_color-mix(in_srgb,var(--c-accent)_68%,transparent)]' : '',
         ].join(' ')}
         style={{
@@ -52,7 +55,7 @@ export function SettingsSwitch({ checked, onChange, disabled, forceHover, size =
         style={{
           width: s.thumb,
           height: s.thumb,
-          top: s.gap,
+          top: (s.target - s.thumb) / 2,
           left: s.gap,
           background: checked ? 'var(--c-btn-text)' : 'var(--c-bg-input)',
           transform: checked ? `translateX(${s.travel}px)` : 'translateX(0)',

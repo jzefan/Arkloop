@@ -29,6 +29,14 @@ vi.mock('@arkloop/shared/desktop', () => ({
   }),
 }))
 
+vi.mock('@arkloop/shared', async () => {
+  const actual = await vi.importActual<typeof import('@arkloop/shared')>('@arkloop/shared')
+  return {
+    ...actual,
+    useToast: () => ({ addToast: vi.fn() }),
+  }
+})
+
 vi.mock('../api-bridge', () => ({
   bridgeClient: {
     getExecutionMode: vi.fn(),
@@ -178,7 +186,7 @@ describe('GeneralSettings', () => {
       editButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
     })
 
-    const input = container.querySelector('input') as HTMLInputElement | null
+    const input = container.querySelector('input[type="text"]') as HTMLInputElement | null
     expect(input?.value).toBe('desktop-user')
 
     await act(async () => {
@@ -196,6 +204,6 @@ describe('GeneralSettings', () => {
 
     expect(api.updateMe).toHaveBeenCalledWith('token', { username: 'renamed-user' })
     expect(onMeUpdated).toHaveBeenCalledWith(expect.objectContaining({ username: 'renamed-user' }))
-    expect(container.querySelector('input')).toBeNull()
+    expect(container.querySelector('input[type="text"]')).toBeNull()
   })
 })

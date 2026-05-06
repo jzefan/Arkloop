@@ -870,7 +870,17 @@ export function MemorySettings({ accessToken }: Props) {
       <SettingsSectionHeader title={ds.memorySettingsTitle} description={ds.memorySettingsDesc} />
 
       {/* Enable Memory + Auto-summarize compound card */}
-      <div className="rounded-xl border-[0.5px] border-[var(--c-border-subtle)] bg-[var(--c-bg-menu)]">
+      <div
+        className="group/switch-card rounded-xl border-[0.5px] border-[var(--c-border-subtle)] bg-[var(--c-bg-menu)]"
+        onMouseEnter={() => {
+          setEnableCardHovered(true)
+          setSummarizeCardHovered(true)
+        }}
+        onMouseLeave={() => {
+          setEnableCardHovered(false)
+          setSummarizeCardHovered(false)
+        }}
+      >
         <div
           role="button"
           tabIndex={0}

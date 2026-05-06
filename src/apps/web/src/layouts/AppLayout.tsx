@@ -11,7 +11,7 @@ import { NotificationsPanel } from '../components/NotificationsPanel'
 import { EmailVerificationGate } from '../components/EmailVerificationGate'
 import { useLocale } from '../contexts/LocaleContext'
 import { getMe } from '../api'
-import { writeSelectedPersonaKeyToStorage, DEFAULT_PERSONA_KEY } from '../storage'
+import { writeActiveThreadIdToStorage, writeSelectedPersonaKeyToStorage, DEFAULT_PERSONA_KEY } from '../storage'
 import { useAuth } from '../contexts/auth'
 import { useThreadList } from '../contexts/thread-list'
 import {
@@ -167,6 +167,7 @@ export function AppLayout() {
   const desktop = isDesktop()
 
   const [appUpdateState, setAppUpdateState] = useState<import('@arkloop/shared/desktop').AppUpdaterState | null>(null)
+  const [productUpdateNotifications, setProductUpdateNotifications] = useState(true)
 
   // app updater
   useEffect(() => {
@@ -175,6 +176,18 @@ export function AppLayout() {
     if (!api?.appUpdater) return
     void api.appUpdater.getState().then(setAppUpdateState).catch(() => {})
     return api.appUpdater.onState(setAppUpdateState)
+  }, [desktop])
+
+  useEffect(() => {
+    if (!desktop) return
+    const api = getDesktopApi()
+    if (!api?.config) return
+    void api.config.get()
+      .then((config) => setProductUpdateNotifications(config.desktop?.productUpdateNotifications ?? true))
+      .catch(() => {})
+    return api.config.onChanged((config) => {
+      setProductUpdateNotifications(config.desktop?.productUpdateNotifications ?? true)
+    })
   }, [desktop])
 
   const handleCheckAppUpdate = useCallback(() => {
@@ -199,6 +212,12 @@ export function AppLayout() {
   const pathnameSearchOpen = location.pathname.endsWith('/search')
   const isSearchOpen = searchOverlayOpen || pathnameSearchOpen
   const currentThreadId = location.pathname.match(/^\/t\/([^/]+)/)?.[1] ?? null
+
+  useEffect(() => {
+    if (!currentThreadId) return
+    writeActiveThreadIdToStorage(currentThreadId)
+  }, [currentThreadId])
+
   const currentThread = useMemo(
     () => currentThreadId ? threads.find((thread) => thread.id === currentThreadId) ?? null : null,
     [currentThreadId, threads],
@@ -260,8 +279,9 @@ export function AppLayout() {
     isPrivateMode || pendingIncognitoMode ||
     (currentThreadId != null && privateThreadIds.has(currentThreadId))
   const hasAppUpdate =
-    appUpdateState?.phase === 'available' ||
-    appUpdateState?.phase === 'downloaded'
+    productUpdateNotifications &&
+    (appUpdateState?.phase === 'available' ||
+      appUpdateState?.phase === 'downloaded')
 
   return (
     <TimeZoneProvider userTimeZone={me?.timezone ?? null} accountTimeZone={me?.account_timezone ?? null}>
