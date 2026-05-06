@@ -1,8 +1,8 @@
 import { Loader2, MoreHorizontal, Pencil, RefreshCw, Trash2 } from 'lucide-react'
-import { PillToggle } from '@arkloop/shared'
 import { DropdownAction } from '../skills/DropdownAction'
 import { statusVariant, type MCPCopy } from './types'
 import type { MCPInstall } from '../../api'
+import { SettingsSwitch } from '../settings/_SettingsSwitch'
 
 type Props = {
   installs: MCPInstall[]
@@ -109,7 +109,7 @@ export function MCPInstallList({
             </div>
 
             <div className="flex shrink-0 items-center" onClick={(e) => e.stopPropagation()}>
-              <PillToggle
+              <SettingsSwitch
                 checked={install.workspace_state?.enabled ?? false}
                 disabled={busy}
                 onChange={() => onToggle(install)}

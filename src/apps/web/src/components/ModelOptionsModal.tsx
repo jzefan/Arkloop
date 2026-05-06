@@ -1,7 +1,6 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import { createPortal } from 'react-dom'
-import { Brain, ChevronDown, Eye, Image as ImageIcon, Loader2, Wrench, X } from 'lucide-react'
-import { AutoResizeTextarea, FormField, PillToggle } from '@arkloop/shared'
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
+import { Brain, Eye, Image as ImageIcon, Loader2, Wrench } from 'lucide-react'
+import { AutoResizeTextarea, FormField } from '@arkloop/shared'
 import type { AvailableModel, LlmProviderModel } from '../api'
 import {
   AVAILABLE_CATALOG_ADVANCED_KEY,
@@ -10,6 +9,11 @@ import {
   routeAdvancedJsonFromAvailableCatalog,
   stripAvailableCatalogFromAdvancedJson,
 } from '@arkloop/shared/llm/available-catalog-advanced-json'
+import { SettingsButton } from './settings/_SettingsButton'
+import { SettingsInput, settingsInputCls } from './settings/_SettingsInput'
+import { SettingsModalFrame } from './settings/_SettingsModalFrame'
+import { SettingsSelect } from './settings/_SettingsSelect'
+import { SettingsSwitch } from './settings/_SettingsSwitch'
 
 type Labels = {
   modelOptionsTitle: string
@@ -76,7 +80,7 @@ type DraftState = {
 }
 
 const TEXTAREA_CLS =
-  'w-full rounded-lg border border-[var(--c-border-subtle)] bg-[var(--c-bg-input)] px-3 py-2 text-sm text-[var(--c-text-primary)] outline-none placeholder:text-[var(--c-text-muted)] transition-colors duration-150 focus:border-[var(--c-border)]'
+  `${settingsInputCls('md')} h-auto min-h-[180px] resize-y py-2 font-mono text-[13px] leading-relaxed`
 
 function normalizePositiveIntegerInput(value: string): string {
   const trimmed = value.trim()
@@ -226,7 +230,6 @@ export function ModelOptionsModal({
   const [draft, setDraft] = useState<DraftState>(() => deriveDraft(model))
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
-  const overlayRef = useRef<HTMLDivElement>(null)
 
   const autoCatalog = useMemo(() => deriveAutoCatalog(model, availableModels), [model, availableModels])
 
@@ -381,39 +384,22 @@ export function ModelOptionsModal({
 
   if (!open) return null
 
-  return createPortal(
-    <div
-      ref={overlayRef}
-      className="overlay-fade-in fixed inset-0 z-[60] flex items-center justify-center"
-      style={{ background: 'var(--c-overlay)' }}
-      onClick={(e) => { if (e.target === overlayRef.current) handleClose() }}
+  return (
+    <SettingsModalFrame
+      open={open}
+      title={isCreate ? labels.addModelTitle : labels.modelOptionsTitle}
+      onClose={handleClose}
+      width={760}
     >
-      <div
-        className="modal-enter flex w-full max-w-[760px] flex-col gap-5 rounded-[14px] p-6"
-        style={{ background: 'var(--c-bg-page)', border: '0.5px solid var(--c-border-subtle)', maxHeight: '85vh', margin: '0 20px', overflowY: 'auto' }}
-      >
-        {/* Header */}
-        <div className="flex items-center justify-between">
-          <h3 className="text-[15px] font-semibold text-[var(--c-text-heading)]">{isCreate ? labels.addModelTitle : labels.modelOptionsTitle}</h3>
-          <button
-            type="button"
-            onClick={handleClose}
-            disabled={saving}
-            className="flex h-7 w-7 items-center justify-center rounded-md text-[var(--c-text-muted)] transition-colors duration-150 hover:bg-[var(--c-bg-sub)] hover:text-[var(--c-text-secondary)] disabled:opacity-50"
-          >
-            <X size={14} />
-          </button>
-        </div>
-
         {(isCreate || model) && (
-          <div className="space-y-5">
+          <div className="mt-6 max-h-[calc(85vh-160px)] space-y-5 overflow-y-auto pr-1">
             {isCreate ? (
               <FormField label={labels.modelNameLabel}>
-                <input
+                <SettingsInput
+                  variant="md"
                   value={draft.modelName}
                   onChange={(e) => setDraft((prev) => ({ ...prev, modelName: e.target.value }))}
                   placeholder={labels.modelNamePlaceholder}
-                  className="w-full rounded-lg border border-[var(--c-border-subtle)] bg-[var(--c-bg-input)] px-3 py-2 text-sm text-[var(--c-text-primary)] outline-none placeholder:text-[var(--c-text-muted)] transition-colors duration-150 focus:border-[var(--c-border)]"
                   autoFocus
                 />
               </FormField>
@@ -428,7 +414,7 @@ export function ModelOptionsModal({
               <h4 className="text-sm font-medium text-[var(--c-text-primary)]">{labels.modelCapabilities}</h4>
 
               <FormField label={labels.modelType ?? 'Model Type'}>
-                <ModelTypeDropdown
+                <SettingsSelect
                   value={draft.modelType}
                   options={[
                     { value: 'chat', label: labels.modelTypeChat ?? 'Chat' },
@@ -477,31 +463,31 @@ export function ModelOptionsModal({
 
               <div className="grid gap-3 md:grid-cols-2">
                 <FormField label={labels.contextWindow}>
-                  <input
+                  <SettingsInput
+                    variant="md"
                     value={draft.contextWindow}
                     onChange={(e) => setDraft((prev) => ({ ...prev, contextWindow: e.target.value }))}
                     placeholder="e.g. 128000"
-                    className="w-full rounded-lg border border-[var(--c-border-subtle)] bg-[var(--c-bg-input)] px-3 py-2 text-sm text-[var(--c-text-primary)] outline-none placeholder:text-[var(--c-text-muted)] transition-colors duration-150 focus:border-[var(--c-border)]"
                     inputMode="numeric"
                   />
                 </FormField>
                 <FormField label={labels.maxOutputTokens}>
-                  <input
+                  <SettingsInput
+                    variant="md"
                     value={draft.maxOutputTokens}
                     onChange={(e) => setDraft((prev) => ({ ...prev, maxOutputTokens: e.target.value }))}
                     placeholder="e.g. 32768"
-                    className="w-full rounded-lg border border-[var(--c-border-subtle)] bg-[var(--c-bg-input)] px-3 py-2 text-sm text-[var(--c-text-primary)] outline-none placeholder:text-[var(--c-text-muted)] transition-colors duration-150 focus:border-[var(--c-border)]"
                     inputMode="numeric"
                   />
                 </FormField>
               </div>
               <div className="grid gap-3 md:grid-cols-2">
                 <FormField label={labels.defaultTemperature ?? 'Default Temperature'}>
-                  <input
+                  <SettingsInput
+                    variant="md"
                     value={draft.defaultTemperature}
                     onChange={(e) => setDraft((prev) => ({ ...prev, defaultTemperature: e.target.value }))}
                     placeholder="e.g. 0.7"
-                    className="w-full rounded-lg border border-[var(--c-border-subtle)] bg-[var(--c-bg-input)] px-3 py-2 text-sm text-[var(--c-text-primary)] outline-none placeholder:text-[var(--c-text-muted)] transition-colors duration-150 focus:border-[var(--c-border)]"
                     inputMode="decimal"
                   />
                 </FormField>
@@ -524,32 +510,27 @@ export function ModelOptionsModal({
 
             <div className="flex items-center justify-between pt-1">
               {!isCreate ? (
-                <button
-                  type="button"
+                <SettingsButton
                   onClick={handleReset}
                   disabled={saving}
-                  className="rounded-lg bg-[var(--c-bg-page)] px-4 py-2 text-sm font-medium text-[var(--c-text-secondary)] transition-colors duration-150 hover:bg-[var(--c-bg-sub)] disabled:opacity-50"
-                  style={{ border: '0.5px solid var(--c-border-subtle)' }}
+                  size="modal"
                 >
                   {labels.reset}
-                </button>
+                </SettingsButton>
               ) : <div />}
               <div className="flex items-center gap-2">
-                <button
-                  type="button"
+                <SettingsButton
                   onClick={handleClose}
                   disabled={saving}
-                  className="rounded-lg bg-[var(--c-bg-page)] px-4 py-2 text-sm font-medium text-[var(--c-text-secondary)] transition-colors duration-150 hover:bg-[var(--c-bg-sub)] disabled:opacity-50"
-                  style={{ border: '0.5px solid var(--c-border-subtle)' }}
+                  size="modal"
                 >
                   {labels.cancel}
-                </button>
-                <button
-                  type="button"
+                </SettingsButton>
+                <SettingsButton
+                  variant="primary"
                   onClick={() => void handleSave()}
                   disabled={saving}
-                  className="inline-flex items-center justify-center rounded-lg px-4 py-2 text-sm font-medium text-[var(--c-btn-text)] transition-[filter] duration-150 hover:[filter:brightness(1.12)] active:[filter:brightness(0.95)] disabled:opacity-50"
-                  style={{ background: 'var(--c-btn-bg)' }}
+                  size="modal"
                 >
                   <span className="relative flex items-center justify-center">
                     <span className={`flex items-center gap-1.5 transition-opacity duration-150 ${saving ? 'opacity-0' : 'opacity-100'}`}>{labels.save}</span>
@@ -557,14 +538,12 @@ export function ModelOptionsModal({
                       <Loader2 size={14} className="animate-spin" />
                     </span>
                   </span>
-                </button>
+                </SettingsButton>
               </div>
             </div>
           </div>
         )}
-      </div>
-    </div>,
-    document.body,
+    </SettingsModalFrame>
   )
 }
 
@@ -593,78 +572,8 @@ function CapabilityTile({
         <span className="text-sm font-medium">{label}</span>
       </div>
       <span onClick={(e) => e.stopPropagation()}>
-        <PillToggle checked={checked} onChange={disabled ? () => {} : onChange} />
+        <SettingsSwitch checked={checked} onChange={disabled ? () => {} : onChange} />
       </span>
     </button>
-  )
-}
-
-function ModelTypeDropdown({ value, options, onChange }: {
-  value: string
-  options: { value: string; label: string }[]
-  onChange: (v: string) => void
-}) {
-  const [open, setOpen] = useState(false)
-  const [hovered, setHovered] = useState(false)
-  const ref = useRef<HTMLDivElement>(null)
-  const currentLabel = options.find((o) => o.value === value)?.label ?? value
-
-  useEffect(() => {
-    if (!open) return
-    const handler = (e: MouseEvent) => {
-      if (ref.current?.contains(e.target as Node)) return
-      setOpen(false)
-    }
-    document.addEventListener('mousedown', handler)
-    return () => document.removeEventListener('mousedown', handler)
-  }, [open])
-
-  return (
-    <div ref={ref} className="relative">
-      <button
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        onMouseEnter={() => setHovered(true)}
-        onMouseLeave={() => setHovered(false)}
-        className="flex h-9 w-full items-center justify-between rounded-lg px-3 text-sm"
-        style={{
-          border: `0.5px solid ${hovered ? 'var(--c-border-mid)' : 'var(--c-border-subtle)'}`,
-          background: hovered ? 'var(--c-bg-deep)' : 'var(--c-bg-page)',
-          color: 'var(--c-text-secondary)',
-          transition: 'border-color 0.15s, background-color 0.15s',
-        }}
-      >
-        <span className="truncate">{currentLabel}</span>
-        <ChevronDown size={13} className="ml-2 shrink-0" />
-      </button>
-      {open && (
-        <div
-          className="absolute left-0 top-[calc(100%+4px)] z-30 w-full overflow-hidden rounded-lg dropdown-menu"
-          style={{
-            border: '0.5px solid var(--c-border-subtle)',
-            borderRadius: '10px',
-            padding: '4px',
-            background: 'var(--c-bg-menu)',
-            boxShadow: 'var(--c-dropdown-shadow)',
-          }}
-        >
-          {options.map((opt) => (
-            <button
-              key={opt.value}
-              type="button"
-              onClick={() => { onChange(opt.value); setOpen(false) }}
-              className="flex w-full items-center px-3 py-2 text-sm transition-colors bg-[var(--c-bg-menu)] hover:bg-[var(--c-bg-deep)]"
-              style={{
-                borderRadius: '8px',
-                fontWeight: value === opt.value ? 600 : 400,
-                color: value === opt.value ? 'var(--c-text-heading)' : 'var(--c-text-secondary)',
-              }}
-            >
-              {opt.label}
-            </button>
-          ))}
-        </div>
-      )}
-    </div>
   )
 }

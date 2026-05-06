@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
-  ChevronDown,
   ChevronRight,
   Github,
   Loader2,
@@ -8,7 +7,7 @@ import {
   Search,
   Upload,
 } from 'lucide-react'
-import { Modal, TabBar } from '@arkloop/shared'
+import { ConfirmDialog, Modal } from '@arkloop/shared'
 import {
   type InstalledSkill,
   type MarketSkill,
@@ -37,7 +36,10 @@ import { InstalledSkillsView } from './skills/InstalledSkillsView'
 import { MarketplaceView } from './skills/MarketplaceView'
 import { BuiltinSkillsView } from './skills/BuiltinSkillsView'
 import { SkillDetailModal } from './skills/SkillDetailModal'
-import { primaryButtonSmCls, secondaryButtonBorderStyle, secondaryButtonSmCls } from './buttonStyles'
+import { SettingsSegmentedControl } from './settings/_SettingsSegmentedControl'
+import { SettingsInput } from './settings/_SettingsInput'
+import { SettingsButton } from './settings/_SettingsButton'
+import { SettingsSwitch } from './settings/_SettingsSwitch'
 
 type Props = {
   accessToken: string
@@ -62,6 +64,10 @@ export function SkillsSettingsContent({ accessToken, onTrySkill }: Props) {
   const [uploadOpen, setUploadOpen] = useState(false)
   const [githubOpen, setGitHubOpen] = useState(false)
   const [candidateState, setCandidateState] = useState<CandidateState | null>(null)
+  const [riskConfirm, setRiskConfirm] = useState<{
+    message: string
+    resolve: (value: boolean) => void
+  } | null>(null)
   const [file, setFile] = useState<File | null>(null)
   const [installAfterImport, setInstallAfterImport] = useState(true)
   const [uploading, setUploading] = useState(false)
@@ -175,10 +181,15 @@ export function SkillsSettingsContent({ accessToken, onTrySkill }: Props) {
     return updated
   }, [accessToken, defaultSkills])
 
-  const shouldConfirmRisk = useCallback((skill: { display_name: string; scan_status?: SkillPackageResponse['scan_status']; scan_summary?: string; scan_has_warnings?: boolean }) => {
+  const confirmRisk = useCallback((skill: { display_name: string; scan_status?: SkillPackageResponse['scan_status']; scan_summary?: string; scan_has_warnings?: boolean }) => {
     const status = skill.scan_status ?? (skill.scan_has_warnings ? 'suspicious' : 'unknown')
-    if (status !== 'suspicious' && status !== 'malicious') return true
-    return window.confirm(skillText.riskConfirm(skill.display_name, skillText.scanStatusLabel(status), skill.scan_summary))
+    if (status !== 'suspicious' && status !== 'malicious') return Promise.resolve(true)
+    return new Promise<boolean>((resolve) => {
+      setRiskConfirm({
+        message: skillText.riskConfirm(skill.display_name, skillText.scanStatusLabel(status), skill.scan_summary),
+        resolve,
+      })
+    })
   }, [skillText])
 
   const ensureInstalledAndDefault = useCallback(async (skill: SkillPackageResponse) => {
@@ -201,7 +212,7 @@ export function SkillsSettingsContent({ accessToken, onTrySkill }: Props) {
       }
       if (item.installed && item.version) {
         const version = item.version
-        if (!shouldConfirmRisk(item)) return
+        if (!(await confirmRisk(item))) return
         await syncDefaultSkills((current) => [...current, { skill_key: item.skill_key, version }])
         await refreshInstalled()
         return
@@ -213,7 +224,7 @@ export function SkillsSettingsContent({ accessToken, onTrySkill }: Props) {
         detail_url: item.detail_url,
         repository_url: item.repository_url,
       })
-      if (!shouldConfirmRisk(imported)) return
+      if (!(await confirmRisk(imported))) return
       await ensureInstalledAndDefault(imported)
     } catch (err) {
       const apiErr = isApiError(err) ? err : null
@@ -225,7 +236,7 @@ export function SkillsSettingsContent({ accessToken, onTrySkill }: Props) {
     } finally {
       setBusySkillId(null)
     }
-  }, [accessToken, ensureInstalledAndDefault, refreshBuiltin, refreshInstalled, shouldConfirmRisk, skillText.importFailed, skillText.repositoryMissing, syncDefaultSkills])
+  }, [accessToken, confirmRisk, ensureInstalledAndDefault, refreshBuiltin, refreshInstalled, skillText.importFailed, skillText.repositoryMissing, syncDefaultSkills])
 
   const handleRemove = useCallback(async (item: ViewSkill) => {
     if (!item.version) return
@@ -401,23 +412,22 @@ export function SkillsSettingsContent({ accessToken, onTrySkill }: Props) {
 
   return (
     <div className="flex flex-col gap-4">
-      {/* TabBar + 搜索 + 添加 */}
+      {/* 分段切换 + 搜索 + 添加 */}
       <div className="flex flex-wrap items-center gap-2">
-        <TabBar<SkillTab>
-          tabs={tabItems}
-          active={viewMode}
+        <SettingsSegmentedControl<SkillTab>
+          options={tabItems.map((item) => ({ value: item.key, label: item.label }))}
+          value={viewMode}
           onChange={(tab) => { setViewMode(tab); setQuery('') }}
         />
         <div className="flex-1" />
         <div className="relative min-w-[220px]">
           <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--c-text-tertiary)]" />
-          <input
+          <SettingsInput
             ref={searchInputRef}
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder={viewMode === 'marketplace' ? skillText.searchPlaceholderMarketplace : skillText.searchPlaceholder}
-            className="h-9 w-full rounded-lg pl-9 pr-3 text-sm text-[var(--c-text-heading)] outline-none placeholder:text-[var(--c-text-tertiary)]"
-            style={{ border: '0.5px solid var(--c-border-subtle)', background: 'var(--c-bg-page)' }}
+            className="h-9 pl-9 pr-3"
           />
           {viewMode === 'marketplace' && marketLoading && (
             <Loader2 size={14} className="absolute right-3 top-1/2 -translate-y-1/2 animate-spin text-[var(--c-text-tertiary)]" />
@@ -425,16 +435,13 @@ export function SkillsSettingsContent({ accessToken, onTrySkill }: Props) {
         </div>
 
         <div className="relative" ref={addMenuRef}>
-          <button
-            type="button"
+          <SettingsButton
+            variant="primary"
             onClick={() => setShowAddMenu((v) => !v)}
-            className={primaryButtonSmCls}
-            style={{ background: 'var(--c-btn-bg)', color: 'var(--c-btn-text)' }}
+            icon={<PackagePlus size={14} />}
           >
-            <PackagePlus size={14} />
             {skillText.add}
-            <ChevronDown size={13} />
-          </button>
+          </SettingsButton>
           {showAddMenu && (
             <div
               className="dropdown-menu absolute right-0 top-[calc(100%+4px)] z-50"
@@ -496,6 +503,22 @@ export function SkillsSettingsContent({ accessToken, onTrySkill }: Props) {
         />
       )}
 
+      <ConfirmDialog
+        open={riskConfirm != null}
+        title={skillText.scanStatusLabel('suspicious')}
+        message={riskConfirm?.message ?? ''}
+        confirmLabel={locale === 'zh' ? '继续' : 'Continue'}
+        cancelLabel={skillText.cancelAction}
+        onClose={() => {
+          riskConfirm?.resolve(false)
+          setRiskConfirm(null)
+        }}
+        onConfirm={() => {
+          riskConfirm?.resolve(true)
+          setRiskConfirm(null)
+        }}
+      />
+
       {/* 上传对话框 */}
       <Modal
         open={uploadOpen}
@@ -522,35 +545,30 @@ export function SkillsSettingsContent({ accessToken, onTrySkill }: Props) {
               />
             </label>
           </div>
-          <label className="flex items-center gap-2 text-sm text-[var(--c-text-secondary)]">
-            <input
-              type="checkbox"
+          <label className="flex items-center justify-between gap-3 text-sm text-[var(--c-text-secondary)]">
+            <span>{skillText.uploadImmediateInstall}</span>
+            <SettingsSwitch
               checked={installAfterImport}
-              onChange={(e) => setInstallAfterImport(e.target.checked)}
-              className="h-3.5 w-3.5 rounded"
-              style={{ accentColor: 'var(--c-text-heading)' }}
+              onChange={setInstallAfterImport}
+              size="sm"
             />
-            {skillText.uploadImmediateInstall}
           </label>
           <div className="flex items-center justify-end gap-2">
-            <button
-              type="button"
+            <SettingsButton
+              size="modal"
               onClick={() => setUploadOpen(false)}
-              className={secondaryButtonSmCls}
-              style={secondaryButtonBorderStyle}
             >
               {skillText.cancelAction}
-            </button>
-            <button
-              type="button"
+            </SettingsButton>
+            <SettingsButton
+              variant="primary"
+              size="modal"
               onClick={() => void handleUploadImport()}
               disabled={!file || uploading}
-              className="flex items-center gap-1.5 rounded-lg px-4 py-2 text-sm font-medium transition-colors disabled:opacity-50"
-              style={{ background: 'var(--c-btn-bg)', color: 'var(--c-btn-text)' }}
+              icon={uploading ? <Loader2 size={14} className="animate-spin" /> : undefined}
             >
-              {uploading && <Loader2 size={14} className="animate-spin" />}
               {uploading ? skillText.uploading : skillText.uploadAction}
-            </button>
+            </SettingsButton>
           </div>
         </div>
       </Modal>
@@ -565,43 +583,38 @@ export function SkillsSettingsContent({ accessToken, onTrySkill }: Props) {
         <div className="flex flex-col gap-4">
           <div className="flex flex-col gap-2">
             <span className="text-sm font-medium text-[var(--c-text-heading)]">{skillText.githubUrlLabel}</span>
-            <input
+            <SettingsInput
+              variant="md"
               value={githubUrl}
               onChange={(e) => setGitHubUrl(e.target.value)}
               placeholder={skillText.githubUrlPlaceholder}
-              className="h-9 w-full rounded-lg px-3 text-sm text-[var(--c-text-heading)] outline-none placeholder:text-[var(--c-text-tertiary)]"
-              style={{ border: '0.5px solid var(--c-border-subtle)', background: 'var(--c-bg-page)' }}
             />
           </div>
           <div className="flex flex-col gap-2">
             <span className="text-sm font-medium text-[var(--c-text-heading)]">{skillText.githubRefLabel}</span>
-            <input
+            <SettingsInput
+              variant="md"
               value={githubRef}
               onChange={(e) => setGitHubRef(e.target.value)}
               placeholder="main"
-              className="h-9 w-full rounded-lg px-3 text-sm text-[var(--c-text-heading)] outline-none placeholder:text-[var(--c-text-tertiary)]"
-              style={{ border: '0.5px solid var(--c-border-subtle)', background: 'var(--c-bg-page)' }}
             />
           </div>
           <div className="flex items-center justify-end gap-2">
-            <button
-              type="button"
+            <SettingsButton
+              size="modal"
               onClick={() => setGitHubOpen(false)}
-              className={secondaryButtonSmCls}
-              style={secondaryButtonBorderStyle}
             >
               {skillText.cancelAction}
-            </button>
-            <button
-              type="button"
+            </SettingsButton>
+            <SettingsButton
+              variant="primary"
+              size="modal"
               onClick={() => void handleGitHubImport()}
               disabled={!githubUrl.trim() || importing}
-              className="flex items-center gap-1.5 rounded-lg px-4 py-2 text-sm font-medium transition-colors disabled:opacity-50"
-              style={{ background: 'var(--c-btn-bg)', color: 'var(--c-btn-text)' }}
+              icon={importing ? <Loader2 size={14} className="animate-spin" /> : undefined}
             >
-              {importing && <Loader2 size={14} className="animate-spin" />}
               {importing ? skillText.importing : skillText.githubAction}
-            </button>
+            </SettingsButton>
           </div>
         </div>
       </Modal>

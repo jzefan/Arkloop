@@ -29,17 +29,17 @@ function PresetCard({ name, dark, active, onClick }: PresetCardProps) {
       onMouseLeave={() => setHovered(false)}
       className="relative flex flex-col overflow-hidden rounded-xl"
       style={{
-        border: `0.5px solid ${active || hovered ? 'var(--c-border-mid)' : 'var(--c-border-subtle)'}`,
-        outline: active ? '1.5px solid var(--c-select-ring)' : 'none',
-        outlineOffset: '-1px',
+        border: active
+          ? '1.5px solid var(--c-btn-bg)'
+          : `1.5px solid ${hovered ? 'var(--c-input-border-color-hover)' : 'var(--c-input-border-color)'}`,
         width: '120px',
         background: 'var(--c-bg-page)',
-        transition: 'border-color 0.15s',
+        transition: 'border-color 0.14s ease-out',
       }}
     >
       {/* Mini preview */}
       <div
-        className="flex w-full"
+        className="relative flex w-full"
         style={{ height: '60px', background: bg, position: 'relative', overflow: 'hidden' }}
       >
         <div style={{ width: '28px', height: '100%', background: sidebar }} />
@@ -59,10 +59,10 @@ function PresetCard({ name, dark, active, onClick }: PresetCardProps) {
         </div>
         {active && (
           <div
-            className="absolute right-1 top-1 flex items-center justify-center rounded-full"
-            style={{ width: '16px', height: '16px', background: 'var(--c-select-ring)' }}
+            className="absolute right-1 top-1 z-10 flex items-center justify-center rounded-full"
+            style={{ width: '16px', height: '16px', background: 'var(--c-btn-bg)' }}
           >
-            <Check size={10} style={{ color: '#fff' }} strokeWidth={3} />
+            <Check size={10} style={{ color: 'var(--c-btn-text)' }} strokeWidth={3} />
           </div>
         )}
       </div>

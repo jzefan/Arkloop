@@ -16,7 +16,6 @@ import {
   verifyChannel,
 } from '../../api'
 import { useLocale } from '../../contexts/LocaleContext'
-import { PillToggle } from '@arkloop/shared'
 import {
   BindingsCard,
   buildModelOptions,
@@ -30,6 +29,7 @@ import {
   StatusBadge,
   TokenField,
 } from './DesktopChannelSettingsShared'
+import { SettingsSwitch } from './_SettingsSwitch'
 
 type Props = {
   accessToken: string
@@ -289,7 +289,6 @@ export function DesktopTelegramSettingsPanel({
 
   const handleUnbind = async (binding: ChannelBindingResponse) => {
     if (!channel) return
-    if (!confirm(ct.unbindConfirm)) return
     try {
       await deleteChannelBinding(accessToken, channel.id, binding.binding_id)
       const nextBindings = await listChannelBindings(accessToken, channel.id)
@@ -383,7 +382,7 @@ export function DesktopTelegramSettingsPanel({
               </div>
             </div>
 
-            <PillToggle checked={enabled} onChange={(next) => { setEnabled(next); setSaved(false) }} />
+            <SettingsSwitch checked={enabled} onChange={(next) => { setEnabled(next); setSaved(false) }} />
           </div>
 
           <div className="grid gap-4 md:grid-cols-2">

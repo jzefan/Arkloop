@@ -38,12 +38,13 @@ export function SettingsButton({
   ...props
 }: SettingsButtonProps) {
   const framed = variant !== 'primary'
+  const hasChildren = children !== undefined && children !== null && children !== false && children !== ''
 
   return (
     <button
       type="button"
       className={[
-        'inline-flex items-center justify-center gap-1.5 text-sm font-[450] disabled:cursor-not-allowed disabled:opacity-40',
+        'inline-flex items-center justify-center gap-1.5 text-sm font-[450] disabled:cursor-not-allowed disabled:opacity-40 [&>svg]:h-4 [&>svg]:w-4 [&>svg]:shrink-0',
         sizeClasses[size],
         variantClasses[variant],
         variant === 'danger' ? 'hover:text-[var(--c-danger-action-text)]' : '',
@@ -57,7 +58,7 @@ export function SettingsButton({
       {...props}
     >
       {icon}
-      <span className="truncate">{children}</span>
+      {hasChildren && <span className="truncate">{children}</span>}
     </button>
   )
 }
@@ -82,7 +83,7 @@ export function SettingsIconButton({
       aria-label={label}
       title={label}
       className={[
-        'inline-flex h-[32px] w-[32px] items-center justify-center rounded-[6.5px] bg-[var(--c-bg-input)] [background-clip:padding-box] text-[color-mix(in_srgb,var(--c-text-secondary)_72%,var(--c-text-primary)_28%)] transition-colors duration-[180ms] hover:border-transparent hover:bg-[var(--c-bg-deep)]',
+        'inline-flex h-[32px] w-[32px] items-center justify-center rounded-[6.5px] bg-[var(--c-bg-input)] [background-clip:padding-box] text-[color-mix(in_srgb,var(--c-text-secondary)_72%,var(--c-text-primary)_28%)] transition-colors duration-[180ms] hover:border-transparent hover:bg-[var(--c-bg-deep)] [&>svg]:h-4 [&>svg]:w-4 [&>svg]:shrink-0',
         danger ? 'hover:text-[var(--c-danger-action-text)]' : 'hover:text-[var(--c-text-primary)]',
         className,
       ].filter(Boolean).join(' ')}

@@ -18,8 +18,9 @@ import { LanguageContent, ThemeModePicker } from './AppearanceSettings'
 import { bridgeClient, checkBridgeAvailable } from '../../api-bridge'
 import { SettingsModelDropdown } from './SettingsModelDropdown'
 import { AnimatedCheck } from '../AnimatedCheck'
-import { secondaryButtonBorderStyle } from '../buttonStyles'
 import { TimeZoneSettings } from './TimeZoneSettings'
+import { SettingsButton, SettingsIconButton } from './_SettingsButton'
+import { SettingsInput } from './_SettingsInput'
 
 type Props = {
   me: MeResponse | null
@@ -356,7 +357,7 @@ export function GeneralSettings({ me, accessToken, onLogout, onMeUpdated }: Prop
           {editingName ? (
             <div className="flex min-w-0 flex-col gap-1.5">
               <div className="flex min-w-0 items-center gap-1.5">
-                <input
+                <SettingsInput
                   ref={nameInputRef}
                   type="text"
                   value={draftName}
@@ -370,29 +371,22 @@ export function GeneralSettings({ me, accessToken, onLogout, onMeUpdated }: Prop
                   }}
                   disabled={savingName}
                   maxLength={256}
-                  className="h-8 min-w-0 max-w-[280px] flex-1 rounded-lg px-2.5 text-sm font-medium text-[var(--c-text-heading)] outline-none placeholder:text-[var(--c-text-tertiary)]"
-                  style={{ border: '0.5px solid var(--c-border-subtle)', background: 'var(--c-bg-page)' }}
+                  className="min-w-0 max-w-[280px] flex-1"
                 />
-                <button
-                  type="button"
+                <SettingsIconButton
+                  label={t.profileSave}
                   onClick={() => void saveNameEdit()}
                   disabled={nameSaveDisabled}
-                  className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-[var(--c-text-secondary)] transition-colors hover:bg-[var(--c-bg-deep)] hover:text-[var(--c-text-primary)] disabled:cursor-default disabled:opacity-40"
-                  title={t.profileSave}
-                  aria-label={t.profileSave}
                 >
                   {savingName ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />}
-                </button>
-                <button
-                  type="button"
+                </SettingsIconButton>
+                <SettingsIconButton
+                  label={t.models.cancel}
                   onClick={cancelNameEdit}
                   disabled={savingName}
-                  className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-[var(--c-text-tertiary)] transition-colors hover:bg-[var(--c-bg-deep)] hover:text-[var(--c-text-secondary)] disabled:cursor-default disabled:opacity-40"
-                  title={t.models.cancel}
-                  aria-label={t.models.cancel}
                 >
                   <X size={14} />
-                </button>
+                </SettingsIconButton>
               </div>
               {nameError && (
                 <span className="text-xs text-[var(--c-status-error-text)]">{nameError}</span>
@@ -451,15 +445,14 @@ export function GeneralSettings({ me, accessToken, onLogout, onMeUpdated }: Prop
                 onChange={handleToolModelChange}
               />
             </div>
-            <button
-              type="button"
+            <SettingsIconButton
+              label={ds.toolModel}
               onClick={() => {
                 if (toolModelTestResult?.success) { setToolModelTestResult(null); return }
                 void handleTestToolModel()
               }}
               disabled={testingToolModel || (!toolModelSelection && !toolModelTestResult)}
-              className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-[var(--c-text-muted)] transition-colors hover:bg-[var(--c-bg-sub)] hover:text-[var(--c-text-secondary)] disabled:cursor-not-allowed disabled:opacity-40"
-              style={secondaryButtonBorderStyle}
+              className="h-9 w-9"
             >
               {testingToolModel
                 ? <Loader2 size={14} className="animate-spin" />
@@ -468,17 +461,16 @@ export function GeneralSettings({ me, accessToken, onLogout, onMeUpdated }: Prop
                     ? <AnimatedCheck size={14} color="var(--c-status-success-text)" />
                     : <X size={14} className="text-[var(--c-status-error-text)]" />
                   : <Zap size={14} strokeWidth={1.5} />}
-            </button>
+            </SettingsIconButton>
             {toolModelTestResult && !toolModelTestResult.success && !testingToolModel && (
               <div className="relative">
-                <button
-                  type="button"
+                <SettingsButton
+                  variant="danger"
                   onClick={() => setShowTestError((v) => !v)}
-                  className="inline-flex h-9 shrink-0 items-center gap-1 rounded-lg px-2.5 text-xs text-[var(--c-status-error-text)] transition-colors hover:bg-[var(--c-bg-sub)]"
-                  style={secondaryButtonBorderStyle}
+                  className="h-9 shrink-0 text-xs"
                 >
                   Error
-                </button>
+                </SettingsButton>
                 {showTestError && (
                   <>
                     <div className="fixed inset-0 z-40" onClick={() => setShowTestError(false)} />

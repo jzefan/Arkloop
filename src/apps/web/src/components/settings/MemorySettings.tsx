@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef, useLayoutEffect } from 'react'
 import { FileText, RefreshCw, Settings, AlertTriangle, Brain, Check, ChevronRight } from 'lucide-react'
-import { PillToggle, Modal } from '@arkloop/shared'
+import { Modal } from '@arkloop/shared'
 import { ProviderSelectCard } from './ProviderSelectCard'
 import { SpinnerIcon } from '@arkloop/shared/components/auth-ui'
 import { useLocale } from '../../contexts/LocaleContext'
@@ -13,6 +13,7 @@ import { MemoryConfigModal } from './MemoryConfigModal'
 import { listMemoryErrors, type MemoryErrorEvent } from '../../api'
 import { PastedContentModal } from '../PastedContentModal'
 import { getDesktopMemoryApi } from '../../desktopMemoryApi'
+import { SettingsSwitch } from './_SettingsSwitch'
 
 // ---------------------------------------------------------------------------
 // Status dot — shows health on the provider card
@@ -889,7 +890,7 @@ export function MemorySettings({ accessToken }: Props) {
             <p className="mt-0.5 text-xs text-[var(--c-text-muted)]">{ds.memoryEnabledDesc}</p>
           </div>
           <div className="shrink-0" onClick={(e) => e.stopPropagation()}>
-            <PillToggle
+            <SettingsSwitch
               checked={enabled}
               onChange={(next) => { if (memConfig) void saveConfig({ ...memConfig, enabled: next }) }}
               forceHover={enableCardHovered}
@@ -917,7 +918,7 @@ export function MemorySettings({ accessToken }: Props) {
               <p className="mt-0.5 text-xs text-[var(--c-text-muted)]">{ds.memoryAutoSummarizeDesc}</p>
             </div>
             <div className="shrink-0" onClick={(e) => e.stopPropagation()}>
-              <PillToggle
+              <SettingsSwitch
                 checked={memConfig.memoryCommitEachTurn !== false}
                 onChange={(next) => void saveConfig({ ...memConfig, memoryCommitEachTurn: next })}
                 forceHover={summarizeCardHovered}

@@ -14,7 +14,7 @@ type Props = {
   triggerClassName?: string
 }
 
-const selectBorderColor = 'color-mix(in srgb, var(--c-border) 78%, var(--c-bg-input) 22%)'
+export const settingsSelectBorderColor = 'color-mix(in srgb, var(--c-border) 78%, var(--c-bg-input) 22%)'
 
 export function SettingsSelect({
   value,
@@ -67,7 +67,7 @@ export function SettingsSelect({
       className="dropdown-menu"
       style={{
         ...menuStyle,
-        border: `0.65px solid ${selectBorderColor}`,
+        border: `0.65px solid ${settingsSelectBorderColor}`,
         borderRadius: 10,
         padding: '4px',
         background: 'var(--c-bg-menu)',
@@ -111,7 +111,7 @@ export function SettingsSelect({
           'flex h-[32px] w-full items-center justify-between rounded-[6.5px] border-[0.65px] bg-[var(--c-bg-input)] px-3 text-sm font-[450] text-[var(--c-text-primary)] [background-clip:padding-box] transition-colors duration-[180ms] hover:bg-[var(--c-bg-deep)] disabled:cursor-not-allowed disabled:opacity-50',
           triggerClassName,
         ].filter(Boolean).join(' ')}
-        style={{ borderColor: selectBorderColor }}
+        style={{ borderColor: settingsSelectBorderColor }}
       >
         <span className="truncate">{currentLabel}</span>
         <ChevronDown size={13} className="ml-2 shrink-0 text-[var(--c-text-muted)]" />

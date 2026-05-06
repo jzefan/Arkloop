@@ -1281,15 +1281,16 @@ button:not(:disabled) {
 @keyframes modal-enter {
   from {
     opacity: 0;
-    transform: scale(0.92) translateY(12px);
+    transform: scale(0.93);
   }
   to {
     opacity: 1;
-    transform: scale(1) translateY(0);
+    transform: scale(1);
   }
 }
 .modal-enter {
-  animation: modal-enter 0.16s cubic-bezier(0.16, 1, 0.3, 1);
+  transform-origin: center;
+  animation: modal-enter 0.24s cubic-bezier(0.22, 1, 0.36, 1);
   will-change: transform, opacity;
 }
 @keyframes overlay-fade-in {

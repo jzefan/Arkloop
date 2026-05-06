@@ -1,4 +1,5 @@
 import { Search } from 'lucide-react'
+import { forwardRef } from 'react'
 import type { InputHTMLAttributes } from 'react'
 
 type Props = {
@@ -22,14 +23,18 @@ export function settingsInputCls(variant: 'sm' | 'md' = 'sm') {
   return `${base} ${sizes[variant]}`
 }
 
-export function SettingsInput({ variant = 'sm', className, ...rest }: Props) {
+export const SettingsInput = forwardRef<HTMLInputElement, Props>(function SettingsInput(
+  { variant = 'sm', className, ...rest },
+  ref,
+) {
   return (
     <input
+      ref={ref}
       className={`${settingsInputCls(variant)}${className ? ` ${className}` : ''}`}
       {...rest}
     />
   )
-}
+})
 
 export function SettingsSearchInput({
   placeholder = 'Search',

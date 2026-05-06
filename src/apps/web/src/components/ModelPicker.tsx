@@ -1,10 +1,10 @@
 import { useRef, useEffect, useState, useCallback, useLayoutEffect } from 'react'
 import { ChevronDown, Brain, Check } from 'lucide-react'
-import { PillToggle } from '@arkloop/shared'
 import { listLlmProviders, type LlmProvider } from '../api'
 import { useLocale } from '../contexts/LocaleContext'
 import { isDesktop } from '@arkloop/shared/desktop'
 import { getAvailableCatalogFromAdvancedJson } from '@arkloop/shared/llm/available-catalog-advanced-json'
+import { SettingsSwitch } from './settings/_SettingsSwitch'
 
 const REASONING_LEVELS = ['off', 'minimal', 'low', 'medium', 'high', 'max'] as const
 const SUBMENU_INSET_LEFT = 10
@@ -485,7 +485,7 @@ export function ModelPicker({ accessToken, value, onChange, onAddApiKey, variant
                   >
                     <span>{mp.thinking}</span>
                     <span onClick={(e) => e.stopPropagation()} style={{ lineHeight: 0 }}>
-                      <PillToggle
+                      <SettingsSwitch
                         checked={thinkingEnabled !== 'off'}
                         onChange={(v) => {
                           if (v) onThinkingChange('medium')

@@ -1,20 +1,23 @@
-import { useEffect, useRef, useState } from 'react'
-import { Check, ChevronDown, Eye, EyeOff, Link2, Loader2, Plus, X } from 'lucide-react'
+import { useState } from 'react'
+import { Check, Eye, EyeOff, Link2, Loader2, Plus, X } from 'lucide-react'
+import { ConfirmDialog } from '@arkloop/shared'
 import type { ChannelBindingResponse, ChannelResponse, LlmProvider, Persona } from '../../api'
 import { DEFAULT_PERSONA_KEY } from '../../storage'
 import { useLocale } from '../../contexts/LocaleContext'
 import { secondaryButtonBorderStyle, secondaryButtonSmCls } from '../buttonStyles'
+import { settingsInputCls } from './_SettingsInput'
+import { SettingsSelect } from './_SettingsSelect'
 
 export type ModelOption = { value: string; label: string }
 
 export const inputCls =
-  'w-full rounded-lg border border-[var(--c-border-subtle)] bg-[var(--c-bg-input)] px-3 py-2 text-sm text-[var(--c-text-primary)] outline-none placeholder:text-[var(--c-text-muted)] focus:border-[var(--c-border)] transition-colors'
+  settingsInputCls('md')
 
 export const secondaryButtonCls =
-  'button-secondary inline-flex items-center gap-1.5 rounded-lg px-4 py-2 text-sm font-medium text-[var(--c-text-secondary)] transition-colors disabled:opacity-50'
+  'button-secondary inline-flex h-[32px] items-center justify-center gap-1.5 rounded-[6.5px] bg-[var(--c-bg-input)] px-3.5 text-sm font-[450] text-[color-mix(in_srgb,var(--c-text-secondary)_72%,var(--c-text-primary)_28%)] [background-clip:padding-box] transition-colors duration-[180ms] hover:border-transparent hover:bg-[var(--c-bg-deep)] hover:text-[var(--c-text-primary)] disabled:cursor-not-allowed disabled:opacity-40'
 
 export const primaryButtonCls =
-  'inline-flex items-center gap-1.5 rounded-lg px-4 py-2 text-sm font-medium transition-colors hover:opacity-90 disabled:opacity-50'
+  'inline-flex h-[32px] items-center justify-center gap-1.5 rounded-[6.5px] bg-[var(--c-btn-bg)] px-3.5 text-sm font-[450] text-[var(--c-btn-text)] transition-[box-shadow] duration-150 hover:[box-shadow:inset_0_0_0_999px_rgba(255,255,255,0.07),0_0_0_0.2px_var(--c-btn-bg)] active:[box-shadow:inset_0_0_0_999px_rgba(0,0,0,0.04)] disabled:cursor-not-allowed disabled:opacity-40'
 
 export function ModelDropdown({
   value,
@@ -31,89 +34,19 @@ export function ModelDropdown({
   onChange: (v: string) => void
   showEmpty?: boolean
 }) {
-  const [open, setOpen] = useState(false)
-  const [hovered, setHovered] = useState(false)
-  const menuRef = useRef<HTMLDivElement>(null)
-  const btnRef = useRef<HTMLButtonElement>(null)
-
-  const currentLabel = options.find((option) => option.value === value)?.label ?? (value || placeholder)
-
-  useEffect(() => {
-    if (!open) return
-    const handleMouseDown = (event: MouseEvent) => {
-      if (menuRef.current?.contains(event.target as Node) || btnRef.current?.contains(event.target as Node)) return
-      setOpen(false)
-    }
-    document.addEventListener('mousedown', handleMouseDown)
-    return () => document.removeEventListener('mousedown', handleMouseDown)
-  }, [open])
+  const selectOptions = showEmpty && placeholder
+    ? [{ value: '', label: placeholder }, ...options]
+    : options
 
   return (
-    <div className="relative">
-      <button
-        ref={btnRef}
-        type="button"
-        disabled={disabled}
-        onClick={() => setOpen((current) => !current)}
-        onMouseEnter={() => setHovered(true)}
-        onMouseLeave={() => setHovered(false)}
-        className="flex h-9 w-full items-center justify-between rounded-lg px-3 text-sm transition-colors disabled:cursor-not-allowed disabled:opacity-50"
-        style={{
-          border: '0.5px solid var(--c-border-subtle)',
-          background: hovered && !disabled ? 'var(--c-bg-deep)' : 'var(--c-bg-page)',
-          color: 'var(--c-text-secondary)',
-          transition: 'border-color 0.15s, background-color 0.15s',
-        }}
-      >
-        <span className="truncate">{currentLabel}</span>
-        <ChevronDown size={13} className="ml-2 shrink-0" />
-      </button>
-
-      {open && (
-        <div
-          ref={menuRef}
-          className="dropdown-menu absolute left-0 top-[calc(100%+4px)] z-50"
-          style={{
-            border: '0.5px solid var(--c-border-subtle)',
-            borderRadius: '10px',
-            padding: '4px',
-            background: 'var(--c-bg-menu)',
-            width: '100%',
-            boxShadow: 'var(--c-dropdown-shadow)',
-            maxHeight: '220px',
-            overflowY: 'auto',
-          }}
-        >
-          {showEmpty && (
-            <button
-              type="button"
-              onClick={() => {
-                onChange('')
-                setOpen(false)
-              }}
-              className="flex w-full items-center px-3 py-2 text-sm transition-colors bg-[var(--c-bg-menu)] hover:bg-[var(--c-bg-deep)]"
-              style={{ borderRadius: '8px', fontWeight: !value ? 600 : 400, color: !value ? 'var(--c-text-heading)' : 'var(--c-text-secondary)' }}
-            >
-              {placeholder}
-            </button>
-          )}
-          {options.map(({ value: optionValue, label }) => (
-            <button
-              key={optionValue}
-              type="button"
-              onClick={() => {
-                onChange(optionValue)
-                setOpen(false)
-              }}
-              className="flex w-full items-center px-3 py-2 text-sm transition-colors bg-[var(--c-bg-menu)] hover:bg-[var(--c-bg-deep)]"
-              style={{ borderRadius: '8px', fontWeight: value === optionValue ? 600 : 400, color: value === optionValue ? 'var(--c-text-heading)' : 'var(--c-text-secondary)' }}
-            >
-              {label}
-            </button>
-          ))}
-        </div>
-      )}
-    </div>
+    <SettingsSelect
+      value={value}
+      options={selectOptions}
+      placeholder={placeholder}
+      disabled={disabled}
+      onChange={onChange}
+      triggerClassName="h-9"
+    />
   )
 }
 
@@ -304,6 +237,8 @@ function BindingHeartbeatEditor({
   adminLabel,
   setOwnerLabel,
   unbindLabel,
+  unbindConfirmLabel,
+  cancelLabel,
   onMakeOwner,
   onUnbind,
   onOwnerUnbindAttempt,
@@ -319,68 +254,94 @@ function BindingHeartbeatEditor({
   adminLabel: string
   setOwnerLabel: string
   unbindLabel: string
+  unbindConfirmLabel: string
+  cancelLabel: string
   onSaveHeartbeat: (binding: ChannelBindingResponse, next: { enabled: boolean; interval: number; model: string }) => Promise<void>
   onMakeOwner: (binding: ChannelBindingResponse) => Promise<void>
   onUnbind: (binding: ChannelBindingResponse) => Promise<void>
   onOwnerUnbindAttempt: () => void
 }) {
   const [promotingOwner, setPromotingOwner] = useState(false)
+  const [confirmUnbind, setConfirmUnbind] = useState(false)
+  const [unbinding, setUnbinding] = useState(false)
+
+  const handleConfirmUnbind = async () => {
+    setUnbinding(true)
+    try {
+      await onUnbind(binding)
+      setConfirmUnbind(false)
+    } finally {
+      setUnbinding(false)
+    }
+  }
 
   return (
-    <div
-      data-binding-id={binding.binding_id}
-      className="rounded-xl px-4 py-4"
-      style={{ border: '0.5px solid var(--c-border-subtle)', background: 'var(--c-bg-page)' }}
-    >
-      <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-        <div className="min-w-0">
-          <div className="flex flex-wrap items-center gap-2">
-            <div className="truncate text-sm font-medium text-[var(--c-text-heading)]">
-              {binding.display_name || binding.platform_subject_id}
+    <>
+      <div
+        data-binding-id={binding.binding_id}
+        className="rounded-xl px-4 py-4"
+        style={{ border: '0.5px solid var(--c-border-subtle)', background: 'var(--c-bg-page)' }}
+      >
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="truncate text-sm font-medium text-[var(--c-text-heading)]">
+                {binding.display_name || binding.platform_subject_id}
+              </div>
+              <BindingRoleBadge active={binding.is_owner} label={binding.is_owner ? ownerLabel : adminLabel} />
             </div>
-            <BindingRoleBadge active={binding.is_owner} label={binding.is_owner ? ownerLabel : adminLabel} />
+            <div className="mt-1 truncate text-xs text-[var(--c-text-muted)]">
+              {binding.platform_subject_id}
+            </div>
           </div>
-          <div className="mt-1 truncate text-xs text-[var(--c-text-muted)]">
-            {binding.platform_subject_id}
-          </div>
-        </div>
 
-        <div className="flex shrink-0 flex-wrap items-center gap-2">
-          {!binding.is_owner && (
+          <div className="flex shrink-0 flex-wrap items-center gap-2">
+            {!binding.is_owner && (
+              <button
+                type="button"
+                disabled={promotingOwner}
+                aria-label={`${setOwnerLabel} ${binding.display_name || binding.platform_subject_id}`}
+                onClick={async () => {
+                  setPromotingOwner(true)
+                  try {
+                    await onMakeOwner(binding)
+                  } finally {
+                    setPromotingOwner(false)
+                  }
+                }}
+                className="rounded-md px-2.5 py-1 text-xs font-medium text-[var(--c-text-secondary)] transition-colors hover:bg-[var(--c-bg-deep)]"
+              >
+                {setOwnerLabel}
+              </button>
+            )}
             <button
               type="button"
-              disabled={promotingOwner}
-              aria-label={`${setOwnerLabel} ${binding.display_name || binding.platform_subject_id}`}
-              onClick={async () => {
-                setPromotingOwner(true)
-                try {
-                  await onMakeOwner(binding)
-                } finally {
-                  setPromotingOwner(false)
+              aria-label={`${unbindLabel} ${binding.display_name || binding.platform_subject_id}`}
+              onClick={() => {
+                if (binding.is_owner) {
+                  onOwnerUnbindAttempt()
+                  return
                 }
+                setConfirmUnbind(true)
               }}
               className="rounded-md px-2.5 py-1 text-xs font-medium text-[var(--c-text-secondary)] transition-colors hover:bg-[var(--c-bg-deep)]"
             >
-              {setOwnerLabel}
+              {unbindLabel}
             </button>
-          )}
-          <button
-            type="button"
-            aria-label={`${unbindLabel} ${binding.display_name || binding.platform_subject_id}`}
-            onClick={() => {
-              if (binding.is_owner) {
-                onOwnerUnbindAttempt()
-                return
-              }
-              void onUnbind(binding)
-            }}
-            className="rounded-md px-2.5 py-1 text-xs font-medium text-[var(--c-text-secondary)] transition-colors hover:bg-[var(--c-bg-deep)]"
-          >
-            {unbindLabel}
-          </button>
+          </div>
         </div>
       </div>
-    </div>
+      <ConfirmDialog
+        open={confirmUnbind}
+        title={unbindLabel}
+        message={unbindConfirmLabel}
+        confirmLabel={unbindLabel}
+        cancelLabel={cancelLabel}
+        loading={unbinding}
+        onClose={() => setConfirmUnbind(false)}
+        onConfirm={() => void handleConfirmUnbind()}
+      />
+    </>
   )
 }
 
@@ -481,6 +442,8 @@ export function BindingsCard({
                 adminLabel={adminLabel}
                 setOwnerLabel={setOwnerLabel}
                 unbindLabel={unbindLabel}
+                unbindConfirmLabel={t.channels.unbindConfirm}
+                cancelLabel={t.channels.cancel}
                 onSaveHeartbeat={onSaveHeartbeat}
                 onMakeOwner={onMakeOwner}
                 onUnbind={onUnbind}
@@ -530,7 +493,6 @@ export function SaveActions({
         onClick={onSave}
         disabled={saving || !canSave}
         className={primaryButtonCls}
-        style={{ background: 'var(--c-btn-bg)', color: 'var(--c-btn-text)' }}
       >
         {saving && <Loader2 size={13} className="animate-spin" />}
         {!saving && saved && <Check size={13} />}
@@ -542,7 +504,7 @@ export function SaveActions({
           onClick={onVerify}
           disabled={verifying || saving}
           className={secondaryButtonCls}
-          style={{ border: '0.5px solid var(--c-border-subtle)' }}
+          style={secondaryButtonBorderStyle}
         >
           {verifying && <Loader2 size={13} className="animate-spin" />}
           {verifying ? verifyingLabel : verifyLabel}

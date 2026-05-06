@@ -11,7 +11,6 @@ import {
 } from '../../api'
 import { CopyIconButton } from '../CopyIconButton'
 import { useLocale } from '../../contexts/LocaleContext'
-import { PillToggle } from '@arkloop/shared'
 import {
   buildModelOptions,
   inputCls,
@@ -25,6 +24,8 @@ import {
   StatusBadge,
   TokenField,
 } from './DesktopChannelSettingsShared'
+import { SettingsSwitch } from './_SettingsSwitch'
+import { SettingsSelect } from './_SettingsSelect'
 
 type Props = {
   accessToken: string
@@ -319,7 +320,7 @@ export function DesktopFeishuSettingsPanel({
               </div>
             </div>
 
-            <PillToggle checked={enabled} onChange={(next) => { setEnabled(next); setSaved(false) }} />
+            <SettingsSwitch checked={enabled} onChange={(next) => { setEnabled(next); setSaved(false) }} />
           </div>
 
           {channel?.webhook_url && (
@@ -357,17 +358,18 @@ export function DesktopFeishuSettingsPanel({
               <label className="mb-1.5 block text-xs font-medium text-[var(--c-text-secondary)]">
                 {ct.feishuDomain}
               </label>
-              <select
+              <SettingsSelect
                 value={domain}
-                onChange={(event) => {
-                  setDomain(event.target.value)
+                onChange={(value) => {
+                  setDomain(value)
                   setSaved(false)
                 }}
-                className={inputCls}
-              >
-                <option value="feishu">{ct.feishuDomainFeishu}</option>
-                <option value="lark">{ct.feishuDomainLark}</option>
-              </select>
+                options={[
+                  { value: 'feishu', label: ct.feishuDomainFeishu },
+                  { value: 'lark', label: ct.feishuDomainLark },
+                ]}
+                triggerClassName="h-9"
+              />
             </div>
 
             <TokenField

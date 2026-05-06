@@ -188,13 +188,13 @@ function FontOptionButton({
       onMouseLeave={() => setHovered(false)}
       className={className}
       style={{
-        border: `0.5px solid ${active || hovered ? 'var(--c-border-mid)' : 'var(--c-border-subtle)'}`,
-        outline: active ? '1.5px solid var(--c-accent)' : 'none',
-        outlineOffset: '-1px',
-        background: active ? 'var(--c-bg-deep)' : hovered ? 'var(--c-bg-deep)' : 'var(--c-bg-page)',
-        color: active ? 'var(--c-text-heading)' : hovered ? 'var(--c-text-primary)' : 'var(--c-text-secondary)',
+        border: active
+          ? '1.5px solid var(--c-btn-bg)'
+          : `1.5px solid ${hovered ? 'var(--c-input-border-color-hover)' : 'var(--c-input-border-color)'}`,
+        background: 'var(--c-bg-page)',
+        color: active ? 'var(--c-text-heading)' : 'var(--c-text-secondary)',
         fontWeight: active ? 500 : 400,
-        transition: 'border-color 0.15s, background-color 0.15s, outline-color 0.15s',
+        transition: 'border-color 0.14s ease-out',
         ...style,
       }}
     >

@@ -10,14 +10,13 @@ import {
   List,
   Plus,
   RefreshCw,
-  Search,
   Settings,
   SlidersHorizontal,
   Trash2,
   X,
   Zap,
 } from 'lucide-react'
-import { ConfirmDialog, PillToggle } from '@arkloop/shared'
+import { ConfirmDialog } from '@arkloop/shared'
 import { SettingsSectionHeader } from './_SettingsSectionHeader'
 import { SettingsButton, SettingsCopyButton, SettingsIconButton, settingsDangerText, settingsSecondaryFrameBorder } from './_SettingsButton'
 import { SettingsInput, SettingsSearchInput } from './_SettingsInput'
@@ -26,6 +25,7 @@ import { SettingsSegmentedControl } from './_SettingsSegmentedControl'
 import { SettingsSelect } from './_SettingsSelect'
 import { SettingsStatusBadge } from './_SettingsStatusBadge'
 import { ProviderSelectCard } from './ProviderSelectCard'
+import { SettingsSwitch } from './_SettingsSwitch'
 
 type CanvasSize = 'narrow' | 'wide'
 type ToastVariant = 'success' | 'error' | 'warn' | 'neutral'
@@ -401,7 +401,7 @@ function CurrentSettingsMock() {
         <SettingRow
           title="Enable auto compact"
           description="Compress earlier turns when context usage grows."
-          control={<PillToggle checked={autoCompact} onChange={setAutoCompact} />}
+          control={<SettingsSwitch checked={autoCompact} onChange={setAutoCompact} />}
         />
         <div className="border-t border-[var(--c-border-subtle)]" />
         <SettingRow
@@ -567,28 +567,16 @@ function NotebookMock() {
               </span>
             </div>
             <div className="flex items-center gap-1">
-              <button className="shrink-0 rounded-lg p-1.5 text-[var(--c-text-muted)] transition-colors hover:text-[var(--c-text-secondary)]">
+              <SettingsIconButton label="Refresh">
                 <RefreshCw size={14} />
-              </button>
-              <button className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs text-red-400 transition-colors hover:bg-red-500/10">
-                <Trash2 size={12} />
+              </SettingsIconButton>
+              <SettingsButton variant="danger" icon={<Trash2 size={12} />}>
                 Clear all
-              </button>
+              </SettingsButton>
             </div>
           </div>
 
-          <div
-            className="flex items-center gap-2 rounded-lg px-3 py-2"
-            style={{ border: '0.5px solid var(--c-border-subtle)', background: 'var(--c-bg-input)' }}
-          >
-            <Search size={14} className="shrink-0 text-[var(--c-text-muted)]" />
-            <input
-              type="text"
-              readOnly
-              placeholder="Search notebook"
-              className="min-w-0 flex-1 bg-transparent text-sm text-[var(--c-text-primary)] placeholder:text-[var(--c-text-muted)] outline-none"
-            />
-          </div>
+          <SettingsSearchInput readOnly placeholder="Search notebook" />
 
           <div className="flex flex-col gap-2">
             {[
@@ -743,13 +731,13 @@ function ProviderMasterDetailMock() {
           </div>
         </div>
         <div className="border-t border-[var(--c-border-subtle)] px-3 py-3">
-          <button
-            className="flex h-10 w-full items-center justify-center gap-1.5 rounded-lg text-[13px] font-medium text-[var(--c-text-secondary)] transition-colors hover:bg-[var(--c-bg-deep)]"
-            style={{ border: '0.5px solid var(--c-border-subtle)' }}
+          <SettingsButton
+            variant="secondary"
+            className="w-full"
+            icon={<Plus size={14} />}
           >
-            <Plus size={14} />
             添加供应商
-          </button>
+          </SettingsButton>
         </div>
       </div>
 
@@ -760,14 +748,11 @@ function ProviderMasterDetailMock() {
           <div className="space-y-4">
             <div>
               <label className="mb-1 block text-xs font-medium text-[var(--c-text-tertiary)]">类型</label>
-              <button
-                type="button"
-                className="flex w-full items-center justify-between rounded-lg bg-[var(--c-bg-input)] px-3 py-1.5 text-sm text-[var(--c-text-primary)] transition-colors hover:bg-[var(--c-bg-deep)]"
-                style={{ border: '1px solid var(--c-border-subtle)' }}
-              >
-                <span className="truncate">OpenAI (Responses)</span>
-                <ChevronDownIcon />
-              </button>
+              <SettingsSelect
+                value="responses"
+                options={[{ value: 'responses', label: 'OpenAI (Responses)' }]}
+                onChange={() => {}}
+              />
             </div>
             <div>
               <label className="mb-1 block text-xs font-medium text-[var(--c-text-tertiary)]">供应商名称</label>
@@ -785,49 +770,30 @@ function ProviderMasterDetailMock() {
           </div>
 
           <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--c-border-subtle)] pb-4">
-            <button className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--c-border-subtle)] px-3 py-1.5 text-xs font-medium text-[var(--c-text-muted)] transition-colors duration-150 hover:border-red-500/30 hover:text-red-500">
+            <SettingsIconButton label="Delete provider" danger>
               <Trash2 size={12} />
-            </button>
-            <button
-              className="flex items-center justify-center rounded-lg px-4 py-1.5 text-sm font-medium text-[var(--c-btn-text)] transition-[filter] duration-150 hover:[filter:brightness(1.12)] active:[filter:brightness(0.95)]"
-              style={{ background: 'var(--c-btn-bg)' }}
-            >
+            </SettingsIconButton>
+            <SettingsButton variant="primary">
               保存
-            </button>
+            </SettingsButton>
           </div>
 
           <div>
             <div className="flex flex-wrap items-center justify-between gap-3">
               <h4 className="text-sm font-medium text-[var(--c-text-primary)]">模型</h4>
               <div className="flex flex-wrap items-center gap-2">
-                <button
-                  type="button"
-                  className="inline-flex h-8 items-center justify-center gap-1.5 rounded-lg px-2.5 text-sm font-medium text-[var(--c-text-muted)] transition-colors hover:border-red-500/30 hover:text-red-500"
-                  style={{ border: '0.5px solid var(--c-border-subtle)' }}
-                >
+                <SettingsIconButton label="Delete all" danger>
                   <Trash2 size={12} />
-                </button>
-                <button
-                  type="button"
-                  className="button-secondary inline-flex h-8 items-center justify-center gap-1.5 rounded-lg px-3 text-sm font-medium text-[var(--c-text-secondary)] transition-colors"
-                  style={{ border: '0.5px solid var(--c-border-subtle)' }}
-                >
+                </SettingsIconButton>
+                <SettingsIconButton label="Import models">
                   <Download size={12} />
-                </button>
-                <button
-                  type="button"
-                  className="button-secondary inline-flex h-8 items-center justify-center gap-1.5 rounded-lg px-3 text-sm font-medium text-[var(--c-text-secondary)] transition-colors"
-                  style={{ border: '0.5px solid var(--c-border-subtle)' }}
-                >
-                  <Zap size={12} />
+                </SettingsIconButton>
+                <SettingsButton variant="secondary" icon={<Zap size={12} />}>
                   测试
-                </button>
-                <button
-                  className="button-primary inline-flex h-8 items-center justify-center gap-1.5 rounded-lg px-4 text-sm font-medium text-[var(--c-btn-text)] transition-[filter]"
-                  style={{ background: 'var(--c-btn-bg)' }}
-                >
+                </SettingsButton>
+                <SettingsButton variant="primary">
                   添加模型
-                </button>
+                </SettingsButton>
               </div>
             </div>
 
@@ -846,13 +812,13 @@ function ProviderMasterDetailMock() {
                     <p className="truncate text-sm font-medium text-[var(--c-text-primary)]">{model}</p>
                   </div>
                   <div className="flex w-full shrink-0 items-center justify-end gap-1.5 sm:w-auto">
-                    <PillToggle checked onChange={() => {}} />
-                    <button className="rounded-md p-1.5 text-[var(--c-text-muted)] transition-colors duration-150 hover:bg-[var(--c-bg-sub)] hover:text-[var(--c-text-secondary)]">
+                    <SettingsSwitch checked onChange={() => {}} />
+                    <SettingsIconButton label="Model options">
                       <SlidersHorizontal size={14} />
-                    </button>
-                    <button className="rounded-md p-1.5 text-[var(--c-text-muted)] transition-colors duration-150 hover:bg-[var(--c-bg-sub)] hover:text-red-500">
+                    </SettingsIconButton>
+                    <SettingsIconButton label="Delete model" danger>
                       <Trash2 size={14} />
-                    </button>
+                    </SettingsIconButton>
                   </div>
                 </div>
               ))}
@@ -861,14 +827,6 @@ function ProviderMasterDetailMock() {
         </div>
       </div>
     </div>
-  )
-}
-
-function ChevronDownIcon() {
-  return (
-    <svg className="ml-2 h-[13px] w-[13px] shrink-0 text-[var(--c-text-muted)]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-      <path d="m6 9 6 6 6-6" />
-    </svg>
   )
 }
 
@@ -930,7 +888,7 @@ function PrimitivesPreview() {
         <SpecCard title="Switches and segmented controls">
           <div className="flex flex-wrap items-center gap-4">
             <div className="flex items-center gap-3">
-              <PillToggle checked={enabled} onChange={setEnabled} />
+              <SettingsSwitch checked={enabled} onChange={setEnabled} />
               <span className="text-sm text-[var(--c-text-secondary)]">Enabled</span>
             </div>
             <SettingsSegmentedControl

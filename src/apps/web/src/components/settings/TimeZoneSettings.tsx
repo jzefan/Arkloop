@@ -18,6 +18,8 @@ import {
   listSupportedTimeZones,
   normalizeTimeZone,
 } from '@arkloop/shared'
+import { settingsInputCls } from './_SettingsInput'
+import { settingsSelectBorderColor } from './_SettingsSelect'
 
 type Props = {
   me: MeResponse | null
@@ -27,7 +29,7 @@ type Props = {
 
 /** 与 SettingsModelDropdown 菜单内选项一致 */
 const ROW_CLS =
-  'flex w-full items-center justify-between gap-2 px-3 py-2 text-sm transition-colors bg-[var(--c-bg-menu)] hover:bg-[var(--c-bg-deep)]'
+  'flex w-full items-center justify-between gap-2 px-3 py-2 text-sm font-[450] transition-colors bg-[var(--c-bg-menu)] hover:bg-[var(--c-bg-deep)]'
 
 type MenuRow = {
   key: string
@@ -136,7 +138,6 @@ export function TimeZoneSettings({ me, accessToken, onMeUpdated }: Props) {
   const { addToast } = useToast()
   const [open, setOpen] = useState(false)
   const [search, setSearch] = useState('')
-  const [hovered, setHovered] = useState(false)
   const [saving, setSaving] = useState(false)
   const [menuStyle, setMenuStyle] = useState<CSSProperties>({})
   const [labelNow, setLabelNow] = useState(() => new Date())
@@ -358,7 +359,7 @@ export function TimeZoneSettings({ me, accessToken, onMeUpdated }: Props) {
       className="dropdown-menu"
       style={{
         ...menuStyle,
-        border: '0.5px solid var(--c-border-subtle)',
+        border: `0.65px solid ${settingsSelectBorderColor}`,
         borderRadius: '10px',
         padding: '4px',
         background: 'var(--c-bg-menu)',
@@ -366,22 +367,18 @@ export function TimeZoneSettings({ me, accessToken, onMeUpdated }: Props) {
         boxSizing: 'border-box',
         display: 'flex',
         flexDirection: 'column',
+        gap: '4px',
         overflow: 'hidden',
         maxHeight: 'min(320px, calc(100vh - 120px))',
       }}
     >
-      <div className="shrink-0 px-1 pb-0.5 pt-0.5">
+      <div className="shrink-0 px-1 py-0.5">
         <input
           ref={searchRef}
           type="text"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          className="w-full rounded-md px-3 py-1.5 text-sm outline-none"
-          style={{
-            border: '0.5px solid var(--c-border-subtle)',
-            background: 'var(--c-bg-deep)',
-            color: 'var(--c-text-primary)',
-          }}
+          className={settingsInputCls('sm')}
         />
       </div>
       <div
@@ -400,9 +397,10 @@ export function TimeZoneSettings({ me, accessToken, onMeUpdated }: Props) {
             type="button"
             className={ROW_CLS}
             style={{
-              borderRadius: '8px',
-              fontWeight: row.active ? 600 : 400,
+              borderRadius: '6.5px',
+              fontWeight: 450,
               color: row.active ? 'var(--c-text-heading)' : 'var(--c-text-secondary)',
+              background: row.active ? 'var(--c-bg-deep)' : 'var(--c-bg-menu)',
             }}
             onClick={() => {
               setOpen(false)
@@ -430,17 +428,10 @@ export function TimeZoneSettings({ me, accessToken, onMeUpdated }: Props) {
           disabled={saving}
           onClick={handleToggle}
           onFocus={() => prepareTimeZoneMenu()}
-          onMouseEnter={() => {
-            setHovered(true)
-            prepareTimeZoneMenu()
-          }}
-          onMouseLeave={() => setHovered(false)}
-          className="flex h-9 w-full items-center justify-between rounded-lg px-3 text-sm disabled:cursor-not-allowed disabled:opacity-50"
+          onMouseEnter={() => prepareTimeZoneMenu()}
+          className="flex h-9 w-full items-center justify-between rounded-[6.5px] border-[0.65px] bg-[var(--c-bg-input)] px-3 text-sm font-[450] text-[var(--c-text-primary)] [background-clip:padding-box] transition-colors duration-[180ms] hover:bg-[var(--c-bg-deep)] disabled:cursor-not-allowed disabled:opacity-50"
           style={{
-            border: `0.5px solid ${hovered && !saving ? 'var(--c-border-mid)' : 'var(--c-border-subtle)'}`,
-            background: hovered && !saving ? 'var(--c-bg-deep)' : 'var(--c-bg-page)',
-            color: 'var(--c-text-secondary)',
-            transition: 'border-color 0.15s, background-color 0.15s',
+            borderColor: settingsSelectBorderColor,
           }}
         >
           <span className="min-w-0 truncate text-left">{triggerLabel}</span>
