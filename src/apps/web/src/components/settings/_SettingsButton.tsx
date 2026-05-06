@@ -66,29 +66,36 @@ export function SettingsButton({
 type SettingsIconButtonProps = {
   label: string
   danger?: boolean
+  variant?: 'framed' | 'plain'
   children: ReactNode
 } & ButtonHTMLAttributes<HTMLButtonElement>
 
 export function SettingsIconButton({
   label,
   danger = false,
+  variant = 'framed',
   children,
   className,
   style,
   ...props
 }: SettingsIconButtonProps) {
+  const framed = variant === 'framed'
+
   return (
     <button
       type="button"
       aria-label={label}
       title={label}
       className={[
-        'inline-flex h-[32px] w-[32px] items-center justify-center rounded-[6.5px] bg-[var(--c-bg-input)] [background-clip:padding-box] text-[color-mix(in_srgb,var(--c-text-secondary)_72%,var(--c-text-primary)_28%)] transition-colors duration-[180ms] hover:border-transparent hover:bg-[var(--c-bg-deep)] [&>svg]:h-4 [&>svg]:w-4 [&>svg]:shrink-0',
+        'inline-flex h-[32px] w-[32px] items-center justify-center rounded-[6.5px] text-[color-mix(in_srgb,var(--c-text-secondary)_72%,var(--c-text-primary)_28%)] transition-colors duration-[180ms] [&>svg]:h-4 [&>svg]:w-4 [&>svg]:shrink-0',
+        framed
+          ? 'bg-[var(--c-bg-input)] [background-clip:padding-box] hover:border-transparent hover:bg-[var(--c-bg-deep)]'
+          : 'bg-transparent hover:bg-[color-mix(in_srgb,var(--c-bg-deep)_58%,transparent)]',
         danger ? 'hover:text-[var(--c-danger-action-text)]' : 'hover:text-[var(--c-text-primary)]',
         className,
       ].filter(Boolean).join(' ')}
       style={{
-        border: `0.65px solid ${settingsSecondaryFrameBorder}`,
+        ...(framed ? { border: `0.65px solid ${settingsSecondaryFrameBorder}` } : undefined),
         ...style,
       }}
       {...props}

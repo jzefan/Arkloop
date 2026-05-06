@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { Brain, Eye, Image as ImageIcon, Loader2, Wrench } from 'lucide-react'
 import { AutoResizeTextarea, FormField } from '@arkloop/shared'
 import type { AvailableModel, LlmProviderModel } from '../api'
@@ -77,6 +77,11 @@ type DraftState = {
   maxOutputTokens: string
   defaultTemperature: string
   providerOptionsJSON: string
+}
+
+type SavePayload = {
+  advancedJSON: Record<string, unknown> | null
+  tags: string[]
 }
 
 const TEXTAREA_CLS =
@@ -217,6 +222,55 @@ function buildCatalog(model: LlmProviderModel, draft: DraftState): Record<string
   return Object.keys(nextCatalog).length > 0 ? nextCatalog : null
 }
 
+function buildEditPayload(
+  model: LlmProviderModel,
+  draft: DraftState,
+  labels: Labels,
+): { payload: SavePayload; nextDraft: DraftState } {
+  const contextWindow = normalizePositiveIntegerInput(draft.contextWindow)
+  const maxOutputTokens = normalizePositiveIntegerInput(draft.maxOutputTokens)
+  const defaultTemperature = normalizeFloatInput(draft.defaultTemperature)
+  if (
+    (contextWindow && !/^\d+$/.test(contextWindow)) ||
+    (maxOutputTokens && !/^\d+$/.test(maxOutputTokens)) ||
+    (defaultTemperature && !/^-?\d+(?:\.\d+)?$/.test(defaultTemperature))
+  ) {
+    throw new Error(labels.invalidNumber)
+  }
+
+  let providerOptions: Record<string, unknown> = {}
+  try {
+    const parsed = JSON.parse(draft.providerOptionsJSON.trim() || '{}') as unknown
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      throw new Error(labels.invalidJson)
+    }
+    providerOptions = { ...(parsed as Record<string, unknown>) }
+  } catch {
+    throw new Error(labels.invalidJson)
+  }
+
+  if (AVAILABLE_CATALOG_ADVANCED_KEY in providerOptions) {
+    delete providerOptions[AVAILABLE_CATALOG_ADVANCED_KEY]
+  }
+
+  const nextType = draft.modelType.trim() || 'chat'
+  const nextDraft: DraftState = {
+    ...draft,
+    modelType: nextType,
+    embedding: nextType === 'embedding',
+    contextWindow,
+    maxOutputTokens,
+    defaultTemperature,
+  }
+  const catalog = buildCatalog(model, nextDraft)
+  const advancedJSON = mergeAvailableCatalogIntoAdvancedJson(catalog, providerOptions)
+  const tags = nextDraft.embedding
+    ? Array.from(new Set([...model.tags.filter((tag) => tag !== 'embedding'), 'embedding']))
+    : model.tags.filter((tag) => tag !== 'embedding')
+
+  return { payload: { advancedJSON, tags }, nextDraft }
+}
+
 export function ModelOptionsModal({
   open,
   mode = 'edit',
@@ -230,6 +284,7 @@ export function ModelOptionsModal({
   const [draft, setDraft] = useState<DraftState>(() => deriveDraft(model))
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
+  const lastSavedSignatureRef = useRef('')
 
   const autoCatalog = useMemo(() => deriveAutoCatalog(model, availableModels), [model, availableModels])
 
@@ -237,10 +292,20 @@ export function ModelOptionsModal({
 
   useEffect(() => {
     if (!open) return
-    setDraft(deriveDraft(model))
+    const nextDraft = deriveDraft(model)
+    setDraft(nextDraft)
     setError('')
     setSaving(false)
-  }, [open, model])
+    if (mode !== 'create' && model) {
+      try {
+        lastSavedSignatureRef.current = JSON.stringify(buildEditPayload(model, nextDraft, labels).payload)
+      } catch {
+        lastSavedSignatureRef.current = ''
+      }
+    } else {
+      lastSavedSignatureRef.current = ''
+    }
+  }, [open, model, mode])
 
   useEffect(() => {
     if (!open) return
@@ -290,6 +355,38 @@ export function ModelOptionsModal({
   }
 
   const isCreate = mode === 'create'
+
+  useEffect(() => {
+    if (!open || isCreate || !model) return
+    const id = window.setTimeout(() => {
+      let built: { payload: SavePayload; nextDraft: DraftState }
+      try {
+        built = buildEditPayload(model, draft, labels)
+      } catch (err) {
+        setError(err instanceof Error ? err.message : labels.invalidJson)
+        return
+      }
+
+      const signature = JSON.stringify(built.payload)
+      if (signature === lastSavedSignatureRef.current) {
+        setError('')
+        return
+      }
+
+      setSaving(true)
+      setError('')
+      void onSave(built.payload)
+        .then(() => {
+          lastSavedSignatureRef.current = signature
+          setDraft(built.nextDraft)
+        })
+        .catch((err) => {
+          setError(err instanceof Error ? err.message : labels.invalidJson)
+        })
+        .finally(() => setSaving(false))
+    }, 650)
+    return () => window.clearTimeout(id)
+  }, [draft, isCreate, labels.invalidJson, labels.invalidNumber, model, onSave, open])
 
   const handleSave = async () => {
     const contextWindow = normalizePositiveIntegerInput(draft.contextWindow)
@@ -363,16 +460,12 @@ export function ModelOptionsModal({
       setSaving(false)
     } else {
       if (!model) return
-      const catalog = buildCatalog(model, nextDraft)
-      const advancedJSON = mergeAvailableCatalogIntoAdvancedJson(catalog, providerOptions)
-      const nextTags = nextDraft.embedding
-        ? Array.from(new Set([...model.tags.filter((tag) => tag !== 'embedding'), 'embedding']))
-        : model.tags.filter((tag) => tag !== 'embedding')
+      const { payload } = buildEditPayload(model, nextDraft, labels)
 
       setSaving(true)
       setError('')
       try {
-        await onSave({ advancedJSON, tags: nextTags })
+        await onSave(payload)
       } catch (err) {
         setError(err instanceof Error ? err.message : labels.invalidJson)
         setSaving(false)
@@ -411,7 +504,18 @@ export function ModelOptionsModal({
             )}
 
             <section className="space-y-3">
-              <h4 className="text-sm font-medium text-[var(--c-text-primary)]">{labels.modelCapabilities}</h4>
+              <div className="flex items-center justify-between gap-3">
+                <h4 className="text-sm font-medium text-[var(--c-text-primary)]">{labels.modelCapabilities}</h4>
+                {!isCreate && (
+                  <SettingsButton
+                    onClick={handleReset}
+                    disabled={saving}
+                    size="modal"
+                  >
+                    {labels.reset}
+                  </SettingsButton>
+                )}
+              </div>
 
               <FormField label={labels.modelType ?? 'Model Type'}>
                 <SettingsSelect
@@ -508,16 +612,8 @@ export function ModelOptionsModal({
             </FormField>
             <p className="text-xs text-[var(--c-text-muted)]">{labels.providerOptionsHint}</p>
 
-            <div className="flex items-center justify-between pt-1">
-              {!isCreate ? (
-                <SettingsButton
-                  onClick={handleReset}
-                  disabled={saving}
-                  size="modal"
-                >
-                  {labels.reset}
-                </SettingsButton>
-              ) : <div />}
+            {isCreate && (
+            <div className="flex items-center justify-end pt-1">
               <div className="flex items-center gap-2">
                 <SettingsButton
                   onClick={handleClose}
@@ -541,6 +637,7 @@ export function ModelOptionsModal({
                 </SettingsButton>
               </div>
             </div>
+            )}
           </div>
         )}
     </SettingsModalFrame>

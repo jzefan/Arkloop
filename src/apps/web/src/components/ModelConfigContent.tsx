@@ -531,7 +531,6 @@ function ModelsSection({
         advanced_json: payload.advancedJSON,
         tags: payload.tags,
       })
-      setEditingModel(null)
       onChanged()
     } catch (e) {
       throw new Error(isApiError(e) ? e.message : m.saveFailed)

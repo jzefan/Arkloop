@@ -385,9 +385,9 @@ export function GeneralSettings({ me, accessToken, onLogout, onMeUpdated }: Prop
   })()
 
   return (
-    <div className="mx-auto flex w-full max-w-[740px] flex-col gap-7 pb-8">
+    <div className="mx-auto flex w-full max-w-[760px] flex-col gap-6 px-1 pb-8">
       <div>
-        <h2 className="pl-1.5 text-[22px] font-semibold tracking-normal text-[var(--c-text-heading)]">
+        <h2 className="text-[24px] font-semibold leading-tight tracking-normal text-[var(--c-text-heading)]">
           {ds.general}
         </h2>
       </div>

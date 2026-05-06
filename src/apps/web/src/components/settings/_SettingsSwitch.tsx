@@ -22,7 +22,7 @@ export function SettingsSwitch({ checked, onChange, disabled, forceHover, size =
   return (
     <label
       className={[
-        'group relative inline-flex shrink-0 items-center',
+        'group/switch relative inline-flex shrink-0 items-center',
         disabled ? 'cursor-not-allowed opacity-50' : 'cursor-pointer',
       ].join(' ')}
       style={{ height: s.target }}
@@ -38,7 +38,7 @@ export function SettingsSwitch({ checked, onChange, disabled, forceHover, size =
         className={[
           'block rounded-full transition-[background-color,box-shadow] duration-[180ms]',
           !disabled
-            ? 'group-hover:[box-shadow:0_0_0_1px_color-mix(in_srgb,var(--c-accent)_68%,transparent)] group-hover/general-row:[box-shadow:0_0_0_1px_color-mix(in_srgb,var(--c-accent)_68%,transparent)] group-hover/switch-card:[box-shadow:0_0_0_1px_color-mix(in_srgb,var(--c-accent)_68%,transparent)]'
+            ? 'group-hover/switch:[box-shadow:0_0_0_1px_color-mix(in_srgb,var(--c-accent)_68%,transparent)]'
             : '',
           forceHover && !disabled ? '[box-shadow:0_0_0_1px_color-mix(in_srgb,var(--c-accent)_68%,transparent)]' : '',
         ].join(' ')}

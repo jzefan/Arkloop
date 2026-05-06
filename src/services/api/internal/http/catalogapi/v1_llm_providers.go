@@ -204,6 +204,12 @@ func llmProviderEntry(
 			default:
 				httpkit.WriteMethodNotAllowed(w, r)
 			}
+		case len(parts) == 2 && parts[1] == "copy":
+			if r.Method != nethttp.MethodPost {
+				httpkit.WriteMethodNotAllowed(w, r)
+				return
+			}
+			copyLlmProvider(w, r, traceID, providerID, authService, membershipRepo, service)
 		case len(parts) == 2 && parts[1] == "models":
 			if r.Method != nethttp.MethodPost {
 				httpkit.WriteMethodNotAllowed(w, r)
@@ -348,6 +354,8 @@ func isLocalProviderMutation(parts []string, method string) bool {
 	switch {
 	case len(parts) == 1:
 		return method == nethttp.MethodPatch || method == nethttp.MethodDelete
+	case len(parts) == 2 && parts[1] == "copy":
+		return method == nethttp.MethodPost
 	case len(parts) == 2 && parts[1] == "models":
 		return method == nethttp.MethodPost
 	case len(parts) == 3 && parts[1] == "models":
@@ -442,6 +450,31 @@ func createLlmProvider(
 		OpenAIAPIMode: normalizeOptionalString(req.OpenAIAPIMode),
 		AdvancedJSON:  req.AdvancedJSON,
 	})
+	if err != nil {
+		writeLlmProviderServiceError(r.Context(), w, traceID, err)
+		return
+	}
+	httpkit.WriteJSON(w, traceID, nethttp.StatusCreated, toLlmProviderResponse(provider))
+}
+
+func copyLlmProvider(
+	w nethttp.ResponseWriter,
+	r *nethttp.Request,
+	traceID string,
+	providerID uuid.UUID,
+	authService *auth.Service,
+	membershipRepo *data.AccountMembershipRepository,
+	service *llmproviders.Service,
+) {
+	actor, ok := authenticateLLMProviderActor(w, r, traceID, authService, membershipRepo)
+	if !ok {
+		return
+	}
+	scope, ok := resolveLlmProviderScope(w, r, traceID, actor, nil)
+	if !ok {
+		return
+	}
+	provider, err := service.CopyProvider(r.Context(), actor.AccountID, providerID, scope, &actor.UserID)
 	if err != nil {
 		writeLlmProviderServiceError(r.Context(), w, traceID, err)
 		return

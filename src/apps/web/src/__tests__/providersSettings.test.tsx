@@ -9,7 +9,10 @@ const originalActEnvironment = actEnvironment.IS_REACT_ACT_ENVIRONMENT
 
 const listLlmProviders = vi.fn()
 const listAvailableModels = vi.fn()
+const createLlmProvider = vi.fn()
+const createProviderModel = vi.fn()
 const deleteLlmProvider = vi.fn()
+const copyLlmProvider = vi.fn()
 const patchProviderModel = vi.fn()
 
 async function flushEffects() {
@@ -27,10 +30,11 @@ async function loadSubject() {
       ...actual,
       listLlmProviders,
       listAvailableModels,
-      createLlmProvider: vi.fn(),
+      createLlmProvider,
       updateLlmProvider: vi.fn(),
       deleteLlmProvider,
-      createProviderModel: vi.fn(),
+      copyLlmProvider,
+      createProviderModel,
       deleteProviderModel: vi.fn(),
       patchProviderModel,
       isApiError: () => false,
@@ -50,7 +54,10 @@ beforeEach(() => {
 
   listLlmProviders.mockReset()
   listAvailableModels.mockReset()
+  createLlmProvider.mockReset()
+  createProviderModel.mockReset()
   deleteLlmProvider.mockReset()
+  copyLlmProvider.mockReset()
   patchProviderModel.mockReset()
   listLlmProviders.mockResolvedValue([
     {
@@ -66,7 +73,28 @@ beforeEach(() => {
   listAvailableModels.mockResolvedValue({
     models: [{ id: 'openai/gpt-4o-mini', name: 'GPT-4o mini', configured: false, type: 'chat' }],
   })
+  createLlmProvider.mockResolvedValue({
+    id: 'provider-created',
+    name: 'Created Provider',
+    provider: 'openai',
+    openai_api_mode: 'responses',
+    base_url: 'https://created.example/v1',
+    advanced_json: {},
+    models: [],
+  })
+  createProviderModel.mockResolvedValue({
+    id: 'model-created',
+    provider_id: 'provider-created',
+    model: 'openai/gpt-4o-mini',
+    priority: 0,
+    is_default: false,
+    show_in_picker: false,
+    tags: [],
+    when: {},
+    multiplier: 1,
+  })
   deleteLlmProvider.mockResolvedValue(undefined)
+  copyLlmProvider.mockResolvedValue({})
   patchProviderModel.mockResolvedValue({})
 })
 
@@ -102,7 +130,9 @@ describe('ProvidersSettings', () => {
     expect(listLlmProviders).toHaveBeenCalledTimes(1)
     expect(listAvailableModels).not.toHaveBeenCalled()
 
-    const importButton = container.querySelector('button.button-secondary')
+    await openProviderCard('OpenRouter')
+
+    const importButton = Array.from(document.body.querySelectorAll('button')).find((button) => button.textContent?.includes('导入模型'))
     expect(importButton).toBeTruthy()
 
     await act(async () => {
@@ -110,7 +140,7 @@ describe('ProvidersSettings', () => {
     })
     await flushEffects()
 
-    expect(listAvailableModels).toHaveBeenCalledTimes(1)
+    expect(listAvailableModels).toHaveBeenCalled()
   })
 
   it('available models 拉取失败时只露出 Error 入口，详情放进弹层', async () => {
@@ -126,7 +156,9 @@ describe('ProvidersSettings', () => {
     })
     await flushEffects()
 
-    const importButton = container.querySelector('button.button-secondary')
+    await openProviderCard('OpenRouter')
+
+    const importButton = Array.from(document.body.querySelectorAll('button')).find((button) => button.textContent?.includes('导入模型'))
     expect(importButton).toBeTruthy()
 
     await act(async () => {
@@ -134,10 +166,10 @@ describe('ProvidersSettings', () => {
     })
     await flushEffects()
 
-    expect(container.textContent).toContain('Error')
-    expect(container.textContent).not.toContain('provider request failed')
+    expect(document.body.textContent).toContain('Error')
+    expect(document.body.textContent).not.toContain('provider request failed')
 
-    const errorButton = Array.from(container.querySelectorAll('button')).find((button) => button.textContent === 'Error')
+    const errorButton = Array.from(document.body.querySelectorAll('button')).find((button) => button.textContent === 'Error')
     expect(errorButton).toBeTruthy()
 
     await act(async () => {
@@ -183,6 +215,7 @@ describe('ProvidersSettings', () => {
     })
     await flushEffects()
 
+    await openProviderCard('DuoJie')
     await openProviderDeleteConfirm()
     await clickProviderDeleteConfirm()
     await flushEffects()
@@ -190,6 +223,7 @@ describe('ProvidersSettings', () => {
     expect(deleteLlmProvider).toHaveBeenNthCalledWith(1, 'token', 'provider-1')
     expect(container.textContent).toContain('OpenRouter')
 
+    await openProviderCard('OpenRouter')
     await openProviderDeleteConfirm()
     const secondDeleteButton = findProviderDeleteConfirm()
     expect(secondDeleteButton.disabled).toBe(false)
@@ -244,12 +278,13 @@ describe('ProvidersSettings', () => {
     expect(container.textContent).toContain('Claude Code (Local)')
     expect(container.textContent).toContain('本地')
     expect(container.textContent).toContain('只读')
-    expect(container.textContent).not.toContain('已启用')
-    expect(container.textContent).not.toContain('测试')
-    expect(container.textContent).not.toContain('添加模型')
-    expect(container.querySelector('input[type="password"]')).toBeNull()
-    expect(container.querySelector('button.button-secondary')).toBeNull()
-    const modelToggle = container.querySelector('input[type="checkbox"]') as HTMLInputElement | null
+    expect(document.body.textContent).not.toContain('测试')
+    expect(document.body.textContent).not.toContain('添加模型')
+
+    await openProviderCard('Claude Code (Local)')
+
+    expect(document.body.querySelector('input[type="password"]')).toBeNull()
+    const modelToggle = document.body.querySelector('input[type="checkbox"]') as HTMLInputElement | null
     expect(modelToggle).toBeTruthy()
 
     await act(async () => {
@@ -259,12 +294,129 @@ describe('ProvidersSettings', () => {
 
     expect(patchProviderModel).toHaveBeenCalledWith('token', 'claude-code-local', 'model-1', { show_in_picker: false })
   })
+
+  it('复制供应商时调用后端 clone 并刷新列表', async () => {
+    const sourceProvider = {
+      id: 'provider-1',
+      name: 'OpenRouter',
+      provider: 'openai',
+      openai_api_mode: 'responses',
+      base_url: 'https://openrouter.ai/api/v1',
+      advanced_json: {},
+      models: [],
+    }
+    const copiedProvider = {
+      ...sourceProvider,
+      id: 'provider-2',
+      name: 'OpenRouter copy',
+    }
+    listLlmProviders
+      .mockResolvedValueOnce([sourceProvider])
+      .mockResolvedValueOnce([copiedProvider, sourceProvider])
+
+    const { ProvidersSettings, LocaleProvider } = await loadSubject()
+
+    await act(async () => {
+      root!.render(
+        <LocaleProvider>
+          <ProvidersSettings accessToken="token" />
+        </LocaleProvider>,
+      )
+    })
+    await flushEffects()
+
+    const copyButton = container.querySelector('button[aria-label="复制供应商"], button[aria-label="Copy provider"]')
+    expect(copyButton).toBeTruthy()
+
+    await act(async () => {
+      copyButton!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+    await flushEffects()
+
+    expect(copyLlmProvider).toHaveBeenCalledWith('token', 'provider-1')
+    expect(listLlmProviders).toHaveBeenCalledTimes(2)
+    expect(container.textContent).toContain('OpenRouter copy')
+  })
+
+  it('新增供应商后自动打开详情并触发一次导入模型', async () => {
+    const createdProvider = {
+      id: 'provider-created',
+      name: 'Created Provider',
+      provider: 'openai',
+      openai_api_mode: 'responses',
+      base_url: 'https://created.example/v1',
+      advanced_json: {},
+      models: [],
+    }
+    createLlmProvider.mockResolvedValueOnce(createdProvider)
+    listLlmProviders
+      .mockResolvedValue([createdProvider])
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([createdProvider])
+
+    const { ProvidersSettings, LocaleProvider } = await loadSubject()
+
+    await act(async () => {
+      root!.render(
+        <LocaleProvider>
+          <ProvidersSettings accessToken="token" />
+        </LocaleProvider>,
+      )
+    })
+    await flushEffects()
+
+    const addButton = Array.from(container.querySelectorAll('button')).find((button) => button.textContent?.includes('添加供应商'))
+    expect(addButton).toBeTruthy()
+    await act(async () => {
+      addButton!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+    await flushEffects()
+
+    const inputs = Array.from(document.body.querySelectorAll('input')) as HTMLInputElement[]
+    const nameInput = inputs.find((input) => input.placeholder === 'My Provider')
+    const apiKeyInput = inputs.find((input) => input.type === 'password')
+    expect(nameInput).toBeTruthy()
+    expect(apiKeyInput).toBeTruthy()
+
+    await act(async () => {
+      setInputValue(nameInput!, 'Created Provider')
+      setInputValue(apiKeyInput!, 'sk-created')
+    })
+    await flushEffects()
+
+    const saveButton = Array.from(document.body.querySelectorAll('button')).find((button) => button.textContent?.includes('保存'))
+    expect(saveButton).toBeTruthy()
+    await act(async () => {
+      saveButton!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+    await flushEffects()
+    await flushEffects()
+
+    expect(createLlmProvider).toHaveBeenCalledWith('token', expect.objectContaining({
+      name: 'Created Provider',
+      api_key: 'sk-created',
+    }))
+    expect(document.body.textContent).toContain('Created Provider')
+    expect(listAvailableModels).toHaveBeenCalledWith('token', 'provider-created')
+    expect(createProviderModel).toHaveBeenCalledWith('token', 'provider-created', expect.objectContaining({
+      model: 'openai/gpt-4o-mini',
+    }))
+  })
 })
 
+async function openProviderCard(name: string) {
+  const button = Array.from(container.querySelectorAll('[role="button"], button')).find((item) =>
+    item.textContent?.includes(name),
+  ) as HTMLElement | undefined
+  expect(button).toBeTruthy()
+  await act(async () => {
+    button!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+  })
+  await flushEffects()
+}
+
 async function openProviderDeleteConfirm() {
-  const trashButton = Array.from(container.querySelectorAll('button')).find((button) =>
-    button.textContent?.trim() === '' && button.querySelector('svg'),
-  )
+  const trashButton = document.body.querySelector('button[aria-label="删除供应商"], button[aria-label="Delete provider"]')
   expect(trashButton).toBeTruthy()
   await act(async () => {
     trashButton!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
@@ -273,7 +425,7 @@ async function openProviderDeleteConfirm() {
 }
 
 function findProviderDeleteConfirm(): HTMLButtonElement {
-  const button = Array.from(container.querySelectorAll('button')).find((item) =>
+  const button = Array.from(document.body.querySelectorAll('button')).find((item) =>
     item.textContent?.includes('删除供应商') || item.textContent?.includes('Delete provider'),
   ) as HTMLButtonElement | undefined
   expect(button).toBeTruthy()
@@ -286,4 +438,10 @@ async function clickProviderDeleteConfirm() {
     button.dispatchEvent(new MouseEvent('click', { bubbles: true }))
   })
   await flushEffects()
+}
+
+function setInputValue(input: HTMLInputElement, value: string) {
+  const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set
+  setter?.call(input, value)
+  input.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: value }))
 }

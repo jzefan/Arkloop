@@ -48,7 +48,7 @@ export function SettingsModalFrame({
           border: '0.5px solid var(--c-border-subtle)',
         }}
       >
-        <div className="flex items-center justify-between">
+        <div className="flex w-full items-center justify-between">
           <h3 className="text-[19px] font-semibold leading-none text-[var(--c-text-heading)]">{title}</h3>
           <button
             type="button"

@@ -1333,8 +1333,15 @@ export interface LocaleStrings {
   // admin providers/models settings (ported from console-lite)
   adminProviders: {
     title: string;
+    providersPageTitle?: string;
+    providersPageDesc?: string;
+    filterAll?: string;
+    filterEnabled?: string;
+    filterLocal?: string;
+    filterCloud?: string;
     addProvider: string;
     editProvider: string;
+    copyProvider?: string;
     deleteProvider: string;
     deleteProviderConfirm: string;
     localProvider: string;
@@ -1385,6 +1392,7 @@ export interface LocaleStrings {
     openVikingBackendAzure: string;
     openVikingBackendVolcengine: string;
     openVikingBackendLiteLLM: string;
+    providerConfig?: string;
     advancedConfig: string;
     searchProviders: string;
     testModel?: string;

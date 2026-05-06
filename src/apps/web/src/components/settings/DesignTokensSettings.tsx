@@ -802,22 +802,22 @@ function ProviderMasterDetailMock() {
               <SettingsInput placeholder="搜索供应商..." />
             </div>
 
-            <div className="mt-2 space-y-1 overflow-y-auto" style={{ maxHeight: '320px' }}>
+            <div className="mt-2 overflow-y-auto" style={{ maxHeight: '320px' }}>
               {['mimo-v2.5', 'mimo-v2.5-pro'].map((model) => (
                 <div
                   key={model}
-                  className="group flex flex-wrap items-center justify-between gap-2 rounded-lg border border-[var(--c-border-subtle)] px-4 py-2.5"
+                  className="group relative flex flex-wrap items-center justify-between gap-2 px-0 py-3 [&+&]:before:absolute [&+&]:before:left-0 [&+&]:before:right-0 [&+&]:before:top-0 [&+&]:before:h-px [&+&]:before:bg-[var(--c-border-subtle)] [&+&]:before:content-['']"
                   style={{ contentVisibility: 'auto', containIntrinsicBlockSize: '52px' }}
                 >
                   <div className="min-w-0 flex flex-1 items-center gap-1.5">
                     <p className="truncate text-sm font-medium text-[var(--c-text-primary)]">{model}</p>
                   </div>
-                  <div className="flex w-full shrink-0 items-center justify-end gap-1.5 sm:w-auto">
+                  <div className="flex w-full shrink-0 items-center justify-end gap-2 sm:w-auto">
                     <SettingsSwitch checked onChange={() => {}} />
-                    <SettingsIconButton label="Model options">
+                    <SettingsIconButton variant="plain" label="Model options">
                       <SlidersHorizontal size={14} />
                     </SettingsIconButton>
-                    <SettingsIconButton label="Delete model" danger>
+                    <SettingsIconButton variant="plain" label="Delete model" danger>
                       <Trash2 size={14} />
                     </SettingsIconButton>
                   </div>
@@ -859,6 +859,11 @@ function PrimitivesPreview() {
             <SettingsIconButton label="Settings"><Settings size={15} /></SettingsIconButton>
             <SettingsIconButton label="Refresh"><RefreshCw size={15} /></SettingsIconButton>
             <SettingsIconButton label="Delete" danger><Trash2 size={15} /></SettingsIconButton>
+          </div>
+          <div className="flex items-center gap-1">
+            <SettingsIconButton variant="plain" label="Plain settings"><Settings size={15} /></SettingsIconButton>
+            <SettingsIconButton variant="plain" label="Plain refresh"><RefreshCw size={15} /></SettingsIconButton>
+            <SettingsIconButton variant="plain" label="Plain delete" danger><Trash2 size={15} /></SettingsIconButton>
           </div>
         </SpecCard>
 

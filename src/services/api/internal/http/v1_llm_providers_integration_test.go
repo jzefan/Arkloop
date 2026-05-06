@@ -314,6 +314,60 @@ func TestLlmProvidersCRUDAndDefaultPromotion(t *testing.T) {
 	}
 }
 
+func TestLlmProvidersCopyProviderCopiesSecretAndModels(t *testing.T) {
+	env := setupLlmProvidersTestEnv(t)
+
+	createProviderResp := doJSON(env.handler, nethttp.MethodPost, "/v1/llm-providers?scope=user", map[string]any{
+		"name":            "openai-source",
+		"provider":        "openai",
+		"api_key":         "sk-copy-source-123",
+		"base_url":        "https://example.test/v1",
+		"openai_api_mode": "responses",
+	}, authHeader(env.adminToken))
+	if createProviderResp.Code != nethttp.StatusCreated {
+		t.Fatalf("create provider: %d %s", createProviderResp.Code, createProviderResp.Body.String())
+	}
+	provider := decodeJSONBody[llmProviderResponse](t, createProviderResp.Body.Bytes())
+
+	createModelResp := doJSON(env.handler, nethttp.MethodPost, "/v1/llm-providers/"+provider.ID+"/models?scope=user", map[string]any{
+		"model":          "gpt-4o",
+		"priority":       7,
+		"show_in_picker": true,
+		"tags":           []string{"chat"},
+		"advanced_json": map[string]any{
+			"copied": true,
+		},
+	}, authHeader(env.adminToken))
+	if createModelResp.Code != nethttp.StatusCreated {
+		t.Fatalf("create model: %d %s", createModelResp.Code, createModelResp.Body.String())
+	}
+
+	copyProviderResp := doJSON(env.handler, nethttp.MethodPost, "/v1/llm-providers/"+provider.ID+"/copy?scope=user", nil, authHeader(env.adminToken))
+	if copyProviderResp.Code != nethttp.StatusCreated {
+		t.Fatalf("copy provider: %d %s", copyProviderResp.Code, copyProviderResp.Body.String())
+	}
+	copied := decodeJSONBody[llmProviderResponse](t, copyProviderResp.Body.Bytes())
+	if copied.ID == provider.ID || copied.Name != "openai-source copy" {
+		t.Fatalf("unexpected copied provider: %#v", copied)
+	}
+	if copied.BaseURL == nil || *copied.BaseURL != "https://example.test/v1" {
+		t.Fatalf("unexpected copied base_url: %#v", copied.BaseURL)
+	}
+	if copied.KeyPrefix == nil || *copied.KeyPrefix != "sk-copy-" {
+		t.Fatalf("unexpected copied key prefix: %#v", copied.KeyPrefix)
+	}
+	if len(copied.Models) != 1 {
+		t.Fatalf("unexpected copied models: %#v", copied.Models)
+	}
+	model := copied.Models[0]
+	if model.ProviderID != copied.ID || model.Model != "gpt-4o" || model.Priority != 7 || !model.ShowInPicker || !model.IsDefault {
+		t.Fatalf("unexpected copied model: %#v", model)
+	}
+	if len(model.Tags) != 1 || model.Tags[0] != "chat" || model.AdvancedJSON["copied"] != true {
+		t.Fatalf("unexpected copied model metadata: %#v", model)
+	}
+}
+
 func TestLlmProvidersAvailableModelsOpenAI(t *testing.T) {
 	env := setupLlmProvidersTestEnv(t)
 	var authorization string
