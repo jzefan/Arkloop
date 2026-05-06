@@ -1319,7 +1319,7 @@ function ProviderModalPreview({ open, onClose }: { open: boolean; onClose: () =>
 
   if (!open) return null
 
-  const fieldLabelCls = 'mb-1.5 block text-[12px] font-medium text-[var(--c-text-secondary)]'
+  const fieldLabelCls = 'mb-1 block text-[12px] font-medium text-[var(--c-text-secondary)]'
   const modalFieldCls = 'h-[35px] px-3.5 text-sm'
 
   return createPortal(
@@ -1331,7 +1331,7 @@ function ProviderModalPreview({ open, onClose }: { open: boolean; onClose: () =>
       }}
     >
       <div
-        className="design-token-modal-enter flex w-[510px] flex-col gap-5 rounded-[17px] p-7"
+        className="design-token-modal-enter flex w-[510px] flex-col rounded-[17px] p-7"
         style={{ background: 'var(--c-bg-menu)', border: '0.5px solid var(--c-border-subtle)' }}
       >
         <div className="flex items-center justify-between">
@@ -1346,7 +1346,7 @@ function ProviderModalPreview({ open, onClose }: { open: boolean; onClose: () =>
           </button>
         </div>
 
-        <div className="grid grid-cols-2 gap-x-4 gap-y-4">
+        <div className="mt-6 grid grid-cols-2 gap-x-4 gap-y-4">
           <div>
             <label className={fieldLabelCls}>供应商名称</label>
             <TokenInput className={modalFieldCls} placeholder="My Provider" />
@@ -1374,7 +1374,7 @@ function ProviderModalPreview({ open, onClose }: { open: boolean; onClose: () =>
           </div>
         </div>
 
-        <div className="mt-2 flex items-center justify-end gap-2">
+        <div className="mt-7 flex items-center justify-end gap-2">
           <ModalActionButton variant="secondary" onClick={onClose}>取消</ModalActionButton>
           <ModalActionButton variant="primary">保存</ModalActionButton>
         </div>
