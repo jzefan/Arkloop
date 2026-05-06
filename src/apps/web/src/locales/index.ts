@@ -179,6 +179,9 @@ export interface LocaleStrings {
     deleteConflict: string;
     candidatesTitle: string;
     chooseCandidate: string;
+    selectAllCandidates: string;
+    clearAllCandidates: string;
+    importSelectedCandidates: (count: number) => string;
     installSuccess: (name: string) => string;
     removeSuccess: (name: string) => string;
     updateSuccess: (name: string) => string;

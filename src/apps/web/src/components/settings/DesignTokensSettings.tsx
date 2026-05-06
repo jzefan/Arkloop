@@ -26,6 +26,7 @@ import { SettingsSelect } from './_SettingsSelect'
 import { SettingsStatusBadge } from './_SettingsStatusBadge'
 import { ProviderSelectCard } from './ProviderSelectCard'
 import { SettingsSwitch } from './_SettingsSwitch'
+import { SettingsCheckboxList } from './_SettingsCheckboxList'
 
 type CanvasSize = 'narrow' | 'wide'
 type ToastVariant = 'success' | 'error' | 'warn' | 'neutral'
@@ -834,6 +835,7 @@ function PrimitivesPreview() {
   const [enabled, setEnabled] = useState(true)
   const [model, setModel] = useState('default')
   const [mode, setMode] = useState('system')
+  const [selectedSkills, setSelectedSkills] = useState(['skill-a'])
 
   return (
     <TokenPageSection
@@ -910,6 +912,31 @@ function PrimitivesPreview() {
             <SettingsStatusBadge variant="warning">missing</SettingsStatusBadge>
             <SettingsStatusBadge variant="error">error</SettingsStatusBadge>
           </div>
+        </SpecCard>
+
+        <SpecCard title="Checkbox list">
+          <div className="flex items-center justify-between gap-3">
+            <div className="text-xs text-[var(--c-text-tertiary)]">Multi-select resource rows</div>
+            <SettingsButton
+              size="modal"
+              onClick={() => {
+                setSelectedSkills(
+                  selectedSkills.length === 3 ? [] : ['skill-a', 'skill-b', 'skill-c'],
+                )
+              }}
+            >
+              {selectedSkills.length === 3 ? 'Clear all' : 'Select all'}
+            </SettingsButton>
+          </div>
+          <SettingsCheckboxList
+            options={[
+              { value: 'skill-a', title: 'GitHub Issues', description: 'skills/github-issues', meta: 'github@1' },
+              { value: 'skill-b', title: 'Pull Request Review', description: 'skills/pr-review', meta: 'review@1' },
+              { value: 'skill-c', title: 'Release Notes', description: 'skills/release-notes', meta: 'release@1' },
+            ]}
+            selectedValues={selectedSkills}
+            onChange={setSelectedSkills}
+          />
         </SpecCard>
       </div>
     </TokenPageSection>
