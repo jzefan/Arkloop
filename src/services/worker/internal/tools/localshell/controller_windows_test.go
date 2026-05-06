@@ -61,3 +61,14 @@ func TestProcessOutputEncodingForCodePage936DecodesChinese(t *testing.T) {
 		t.Fatalf("expected decoded text preserved, got %q", decoded)
 	}
 }
+
+func TestWindowsProcessOutputEncodingHonorsUtf8ConsoleCodePage(t *testing.T) {
+	consoleCodePage := uint32(65001)
+	if processOutputEncodingForCodePage(consoleCodePage) != nil {
+		t.Fatal("expected UTF-8 console code page to bypass decoder")
+	}
+	acp := uint32(1252)
+	if processOutputEncodingForCodePage(acp) == nil {
+		t.Fatal("expected ACP decoder to exist for fallback code page")
+	}
+}

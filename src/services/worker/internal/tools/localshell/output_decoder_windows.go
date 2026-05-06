@@ -40,15 +40,17 @@ type decodedReadCloser struct {
 }
 
 func windowsProcessOutputEncoding() encoding.Encoding {
-	codePages := []uint32{}
-	if codePage, err := windows.GetConsoleOutputCP(); err == nil {
-		codePages = append(codePages, codePage)
-	}
-	codePages = append(codePages, windows.GetACP())
-	for _, codePage := range codePages {
-		if enc := processOutputEncodingForCodePage(codePage); enc != nil {
+	if consoleCodePage, err := windows.GetConsoleOutputCP(); err == nil {
+		if consoleCodePage == 65001 {
+			// Console output is already UTF-8. Do not fall back to ACP decoders.
+			return nil
+		}
+		if enc := processOutputEncodingForCodePage(consoleCodePage); enc != nil {
 			return enc
 		}
+	}
+	if enc := processOutputEncodingForCodePage(windows.GetACP()); enc != nil {
+		return enc
 	}
 	return nil
 }
