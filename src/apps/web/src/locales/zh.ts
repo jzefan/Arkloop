@@ -790,7 +790,7 @@ export const zh: LocaleStrings = {
   modelPicker: {
     defaultLabel: '默认',
     addProviderFirst: '请先在供应商中添加 API Key',
-    addApiKey: '添加 API Key',
+    addModel: '添加模型',
     byokSection: '你的 API Key',
     noByok: '无匹配模型',
     searchPlaceholder: '搜索...',

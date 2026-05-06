@@ -796,7 +796,7 @@ export const en: LocaleStrings = {
   modelPicker: {
     defaultLabel: 'Default',
     addProviderFirst: 'Add an API key under Providers first',
-    addApiKey: 'Add API Key',
+    addModel: 'Add Model',
     byokSection: 'Your API Keys',
     noByok: 'No matching models',
     searchPlaceholder: 'Search...',

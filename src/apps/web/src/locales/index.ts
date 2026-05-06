@@ -772,7 +772,7 @@ export interface LocaleStrings {
   modelPicker: {
     defaultLabel: string
     addProviderFirst: string
-    addApiKey: string
+    addModel: string
     byokSection: string
     noByok: string
     searchPlaceholder: string
