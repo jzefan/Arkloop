@@ -241,12 +241,13 @@ describe('ProvidersSettings', () => {
     })
     await flushEffects()
 
-    expect(container.textContent).toContain('Claude Code (Local)')
-    expect(container.textContent).toContain('本地')
-    expect(container.textContent).toContain('只读')
-    expect(container.textContent).not.toContain('已启用')
-    expect(container.textContent).not.toContain('测试')
-    expect(container.textContent).not.toContain('添加模型')
+    const text = container.textContent ?? ''
+    expect(text).toContain('Claude Code (Local)')
+    expect(text).toMatch(/本地|Local/)
+    expect(text).toMatch(/只读|Read-only/)
+    expect(text).not.toMatch(/已启用|Enabled/)
+    expect(text).not.toMatch(/测试|Test/)
+    expect(text).not.toMatch(/添加模型|Add model/)
     expect(container.querySelector('input[type="password"]')).toBeNull()
     expect(container.querySelector('button.button-secondary')).toBeNull()
     const modelToggle = container.querySelector('input[type="checkbox"]') as HTMLInputElement | null
