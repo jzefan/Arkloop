@@ -13,7 +13,7 @@ import (
 )
 
 func TestClassifyCatalogStatusIncludesAuthResponseBody(t *testing.T) {
-	err := classifyCatalogStatus(nethttp.StatusForbidden, []byte("{\"error\":{\"message\":\"invalid api key\"}}"))
+	err := classifyCatalogStatus(nethttp.StatusForbidden, []byte(`{"error":{"message":"invalid api key"}}`))
 	upstreamErr, ok := err.(*UpstreamListModelsError)
 	if !ok {
 		t.Fatalf("expected UpstreamListModelsError, got %T: %v", err, err)
@@ -30,6 +30,8 @@ func TestClassifyCatalogStatusIncludesAuthResponseBody(t *testing.T) {
 }
 
 func TestListUpstreamModelsRejectsUnsafeBaseURL(t *testing.T) {
+	t.Setenv(sharedoutbound.ProtectionEnabledEnv, "true")
+
 	baseURL := "https://10.0.0.1/v1"
 	accountID := uuid.New()
 	provider := data.LlmCredential{
@@ -53,8 +55,9 @@ func TestListUpstreamModelsRejectsUnsafeBaseURL(t *testing.T) {
 	}
 }
 
-func TestListUpstreamModelsAllowsLoopbackHTTPInTests(t *testing.T) {
-	t.Setenv(sharedoutbound.AllowLoopbackHTTPEnv, "true")
+func TestListUpstreamModelsAllowsLoopbackWhenProtectionDisabled(t *testing.T) {
+	t.Setenv(sharedoutbound.ProtectionEnabledEnv, "false")
+
 	server := httptest.NewServer(nethttp.HandlerFunc(func(w nethttp.ResponseWriter, r *nethttp.Request) {
 		if r.URL.Path != "/v1/models" {
 			t.Fatalf("unexpected path: %s", r.URL.Path)

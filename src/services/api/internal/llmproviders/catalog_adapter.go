@@ -183,7 +183,8 @@ func listOpenRouterEmbeddingModels(ctx context.Context, cfg CatalogProtocolConfi
 }
 
 func fetchCatalogJSON(ctx context.Context, url string, decorate func(*nethttp.Request)) ([]byte, int, error) {
-	if err := sharedoutbound.DefaultPolicy().ValidateRequestURL(url); err != nil {
+	policy := sharedoutbound.DefaultPolicy()
+	if err := policy.ValidateRequestURL(url); err != nil {
 		return nil, 0, &UpstreamListModelsError{Kind: "request", Err: err}
 	}
 
@@ -195,7 +196,7 @@ func fetchCatalogJSON(ctx context.Context, url string, decorate func(*nethttp.Re
 		decorate(req)
 	}
 
-	resp, err := sharedoutbound.DefaultPolicy().NewHTTPClient(availableModelsTimeout).Do(req)
+	resp, err := policy.NewHTTPClient(availableModelsTimeout).Do(req)
 	if err != nil {
 		return nil, 0, upstreamNetworkError(err)
 	}
@@ -242,7 +243,8 @@ type anthropicCatalogAdapter struct{}
 func (anthropicCatalogAdapter) ListModels(ctx context.Context, cfg CatalogProtocolConfig) ([]AvailableModel, error) {
 	path := anthropicCatalogPath(cfg.BaseURL)
 	modelsURL := strings.TrimRight(cfg.BaseURL, "/") + path
-	if err := sharedoutbound.DefaultPolicy().ValidateRequestURL(modelsURL); err != nil {
+	policy := sharedoutbound.DefaultPolicy()
+	if err := policy.ValidateRequestURL(modelsURL); err != nil {
 		return nil, &UpstreamListModelsError{Kind: "request", Err: err}
 	}
 
@@ -257,7 +259,7 @@ func (anthropicCatalogAdapter) ListModels(ctx context.Context, cfg CatalogProtoc
 		req.Header.Set(key, value)
 	}
 
-	resp, err := sharedoutbound.DefaultPolicy().NewHTTPClient(availableModelsTimeout).Do(req)
+	resp, err := policy.NewHTTPClient(availableModelsTimeout).Do(req)
 	if err != nil {
 		return nil, upstreamNetworkError(err)
 	}
@@ -350,7 +352,8 @@ type geminiCatalogAdapter struct{}
 
 func (geminiCatalogAdapter) ListModels(ctx context.Context, cfg CatalogProtocolConfig) ([]AvailableModel, error) {
 	modelsURL := strings.TrimRight(cfg.BaseURL, "/") + "/models"
-	if err := sharedoutbound.DefaultPolicy().ValidateRequestURL(modelsURL); err != nil {
+	policy := sharedoutbound.DefaultPolicy()
+	if err := policy.ValidateRequestURL(modelsURL); err != nil {
 		return nil, &UpstreamListModelsError{Kind: "request", Err: err}
 	}
 
@@ -361,7 +364,7 @@ func (geminiCatalogAdapter) ListModels(ctx context.Context, cfg CatalogProtocolC
 	req.Header.Set("x-goog-api-key", cfg.APIKey)
 	req.Header.Set("Accept", "application/json")
 
-	resp, err := sharedoutbound.DefaultPolicy().NewHTTPClient(availableModelsTimeout).Do(req)
+	resp, err := policy.NewHTTPClient(availableModelsTimeout).Do(req)
 	if err != nil {
 		return nil, upstreamNetworkError(err)
 	}

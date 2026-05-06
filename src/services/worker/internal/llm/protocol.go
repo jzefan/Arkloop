@@ -125,7 +125,8 @@ func newProtocolTransport(cfg TransportConfig, defaultBaseURL string, normalize 
 		baseURL = normalize(baseURL)
 	}
 
-	normalizedBaseURL, baseURLErr := sharedoutbound.DefaultPolicy().NormalizeBaseURL(baseURL)
+	policy := sharedoutbound.DefaultPolicy()
+	normalizedBaseURL, baseURLErr := policy.NormalizeBaseURL(baseURL)
 	if baseURLErr == nil {
 		baseURL = normalizedBaseURL
 	}
@@ -138,7 +139,7 @@ func newProtocolTransport(cfg TransportConfig, defaultBaseURL string, normalize 
 
 	return protocolTransport{
 		cfg:        cfg,
-		client:     newProtocolHTTPClient(sharedoutbound.DefaultPolicy(), timeout),
+		client:     newProtocolHTTPClient(policy, timeout),
 		baseURLErr: baseURLErr,
 	}
 }

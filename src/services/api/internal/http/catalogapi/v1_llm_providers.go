@@ -1242,10 +1242,11 @@ func doTestHTTPPost(ctx context.Context, url, apiKey, authPrefix string, payload
 }
 
 func doTestRequest(req *nethttp.Request) error {
-	if err := sharedoutbound.DefaultPolicy().ValidateRequestURL(req.URL.String()); err != nil {
+	policy := sharedoutbound.DefaultPolicy()
+	if err := policy.ValidateRequestURL(req.URL.String()); err != nil {
 		return err
 	}
-	resp, err := sharedoutbound.DefaultPolicy().NewHTTPClient(testTimeout).Do(req)
+	resp, err := policy.NewHTTPClient(testTimeout).Do(req)
 	if err != nil {
 		return err
 	}

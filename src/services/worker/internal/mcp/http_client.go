@@ -13,6 +13,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	sharedoutbound "arkloop/services/shared/outboundurl"
 )
 
 // HTTPClient 实现 Client 接口，支持 streamable_http 和 http_sse 两种传输。
@@ -32,7 +34,7 @@ func NewHTTPClient(server ServerConfig) (*HTTPClient, error) {
 	if err != nil {
 		return nil, fmt.Errorf("mcp: invalid server url: %w", err)
 	}
-	if err := validateURL(u); err != nil {
+	if err := validateURL(u, sharedoutbound.DefaultPolicy()); err != nil {
 		return nil, fmt.Errorf("mcp: server url blocked: %w", err)
 	}
 
