@@ -79,6 +79,14 @@ function defaultGtdExpandedBuckets(): Set<GtdBucket> {
   return new Set(GTD_BUCKETS)
 }
 
+function areStringSetsEqual(left: Set<string>, right: Set<string>): boolean {
+  if (left.size !== right.size) return false
+  for (const value of left) {
+    if (!right.has(value)) return false
+  }
+  return true
+}
+
 function normalizeGtdBucket(value: ThreadResponse['sidebar_gtd_bucket']): GtdBucket | null {
   return value && GTD_BUCKETS.includes(value) ? value : null
 }
@@ -1138,7 +1146,6 @@ export function Sidebar({
 
   // 新建线程时 addThread 会更新 localStorage 中的 GTD Inbox，
   // 但 Sidebar 的 gtdInboxIds state 不会感知，需要在线程列表变化时同步。
-  // pinnedIds 不能在这里从 storage 反向覆盖，否则 storage 不可用时会丢失会话内状态。
   useEffect(() => {
     let cancelled = false
     window.queueMicrotask(() => {
@@ -1151,6 +1158,24 @@ export function Sidebar({
     })
     return () => { cancelled = true }
   }, [threads])
+
+  useEffect(() => {
+    let cancelled = false
+    window.queueMicrotask(() => {
+      if (cancelled) return
+      const storedPinnedIds = readPinnedThreadIds()
+      const next = new Set(pinnedIdsRef.current)
+      for (const thread of threads) {
+        if (thread.sidebar_pinned_at || storedPinnedIds.has(thread.id)) {
+          next.add(thread.id)
+        } else {
+          next.delete(thread.id)
+        }
+      }
+      if (!areStringSetsEqual(next, pinnedIdsRef.current)) replacePinnedIds(next)
+    })
+    return () => { cancelled = true }
+  }, [replacePinnedIds, threads])
 
   useEffect(() => {
     if (!isPerfDebugEnabled()) return
