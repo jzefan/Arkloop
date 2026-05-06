@@ -442,9 +442,6 @@ function AddProviderModal({ accessToken, p, onClose, onCreated }: {
               className={fieldInputCls}
               maxLength={500}
             />
-            {baseUrl.trim() && !baseUrl.trim().startsWith('https://') && !baseUrl.trim().startsWith('http://') && (
-              <span className="mt-1 block text-xs text-[var(--c-text-muted)]">需以 https:// 开头</span>
-            )}
           </div>
         </div>
 
@@ -589,9 +586,6 @@ function ProviderDetail({ provider, accessToken, onUpdated, onDeleted, p }: {
             className={INPUT_CLS}
             maxLength={500}
           />
-          {formBaseUrl.trim() && !formBaseUrl.trim().startsWith('https://') && !formBaseUrl.trim().startsWith('http://') && (
-            <p className="mt-1 text-xs text-[var(--c-text-muted)]">需以 https:// 开头</p>
-          )}
         </LabelField>
       </div>
 
