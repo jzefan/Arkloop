@@ -4,6 +4,7 @@ import { useAppearance } from '../../contexts/AppearanceContext'
 import type { FontFamily, CodeFontFamily, FontSize } from '../../themes/types'
 import { useLocale } from '../../contexts/LocaleContext'
 import { Search, ChevronDown } from 'lucide-react'
+import { SettingsSelect } from './_SettingsSelect'
 
 const BODY_FONTS: { value: FontFamily; label: string; fontFamily: string }[] = [
   { value: 'default',     label: 'Default',       fontFamily: "'MiSans Adjusted', system-ui, sans-serif" },
@@ -203,7 +204,7 @@ function FontOptionButton({
   )
 }
 
-export function FontSettings() {
+export function FontSettings({ showTitle = true }: { showTitle?: boolean }) {
   const { t } = useLocale()
   const {
     fontFamily, setFontFamily,
@@ -220,7 +221,9 @@ export function FontSettings() {
 
   return (
     <div className="flex flex-col gap-5">
-      <span className="text-sm font-medium text-[var(--c-text-heading)]">{t.fontSection}</span>
+      {showTitle && (
+        <span className="text-sm font-medium text-[var(--c-text-heading)]">{t.fontSection}</span>
+      )}
 
       {/* Body font — preset buttons */}
       <div className="flex flex-col gap-2">
@@ -298,6 +301,93 @@ export function FontSettings() {
           })}
         </div>
       </div>
+    </div>
+  )
+}
+
+function DesktopFontRow({
+  title,
+  control,
+}: {
+  title: string
+  control: ReactNode
+}) {
+  return (
+    <div className="relative grid items-center gap-3 px-5 py-4 sm:grid-cols-[minmax(0,1fr)_auto] sm:gap-6 [&+&]:before:absolute [&+&]:before:left-5 [&+&]:before:right-5 [&+&]:before:top-0 [&+&]:before:h-px [&+&]:before:bg-[var(--c-border-subtle)] [&+&]:before:content-['']">
+      <div className="min-w-0 text-[13px] font-medium text-[var(--c-text-primary)]">{title}</div>
+      <div className="flex min-w-0 items-center sm:justify-self-end">{control}</div>
+    </div>
+  )
+}
+
+export function DesktopFontSettings() {
+  const { t } = useLocale()
+  const {
+    fontFamily, setFontFamily,
+    customBodyFont, setCustomBodyFont,
+    codeFontFamily, setCodeFontFamily,
+    fontSize, setFontSize,
+  } = useAppearance()
+
+  const bodyOptions = [
+    ...BODY_FONTS.map((font) => ({ value: font.value, label: font.label, fontFamily: font.fontFamily })),
+    {
+      value: 'custom',
+      label: customBodyFont || 'Custom system font',
+      fontFamily: customBodyFont ? `'${customBodyFont}', system-ui, sans-serif` : undefined,
+    },
+  ]
+  const codeOptions = CODE_FONTS.map((font) => ({
+    value: font.value,
+    label: font.label,
+    fontFamily: font.fontFamily,
+  }))
+  const sizeOptions: { value: FontSize; label: string }[] = [
+    { value: 'compact', label: t.fontSizeCompact },
+    { value: 'normal', label: t.fontSizeNormal },
+    { value: 'relaxed', label: t.fontSizeRelaxed },
+  ]
+
+  return (
+    <div className="overflow-hidden rounded-xl border border-[var(--c-border-subtle)] bg-[var(--c-bg-menu)]">
+      <DesktopFontRow
+        title={t.fontBody}
+        control={(
+          <SettingsSelect
+            value={fontFamily}
+            options={bodyOptions}
+            onChange={(value) => setFontFamily(value as FontFamily)}
+            fitContent
+          />
+        )}
+      />
+      {fontFamily === 'custom' && (
+        <div className="border-t border-[var(--c-border-subtle)] px-5 py-4">
+          <SystemFontPicker value={customBodyFont} onSelect={setCustomBodyFont} />
+        </div>
+      )}
+      <DesktopFontRow
+        title={t.fontCode}
+        control={(
+          <SettingsSelect
+            value={codeFontFamily}
+            options={codeOptions}
+            onChange={(value) => setCodeFontFamily(value as CodeFontFamily)}
+            fitContent
+          />
+        )}
+      />
+      <DesktopFontRow
+        title={t.fontSize}
+        control={(
+          <SettingsSelect
+            value={fontSize}
+            options={sizeOptions}
+            onChange={(value) => setFontSize(value as FontSize)}
+            fitContent
+          />
+        )}
+      />
     </div>
   )
 }

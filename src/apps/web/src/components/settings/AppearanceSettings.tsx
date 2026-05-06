@@ -152,7 +152,7 @@ function SystemPreview() {
   )
 }
 
-export function ThemeModePicker() {
+export function ThemeModePicker({ showLabel = true }: { showLabel?: boolean }) {
   const { t } = useLocale()
   const { theme, setTheme } = useTheme()
   const [hoveredValue, setHoveredValue] = useState<Theme | null>(null)
@@ -165,7 +165,9 @@ export function ThemeModePicker() {
 
   return (
     <div className="flex flex-col gap-2">
-      <span className="text-sm font-medium text-[var(--c-text-heading)]">{t.appearance}</span>
+      {showLabel && (
+        <span className="text-sm font-medium text-[var(--c-text-heading)]">{t.appearance}</span>
+      )}
       <div className="flex gap-3">
         {options.map(({ value, label, Preview }) => {
           const active = theme === value
@@ -260,7 +262,7 @@ function GtdPreview() {
   )
 }
 
-export function SidebarGroupingPicker() {
+export function SidebarGroupingPicker({ showLabel = true }: { showLabel?: boolean }) {
   const { t } = useLocale()
   const [gtdEnabled, setGtdEnabled] = useState(() => readGtdEnabled())
   const [hoveredValue, setHoveredValue] = useState<boolean | null>(null)
@@ -272,8 +274,12 @@ export function SidebarGroupingPicker() {
 
   return (
     <div className="flex flex-col gap-2">
-      <span className="text-sm font-medium text-[var(--c-text-heading)]">{t.sidebarGrouping}</span>
-      <span className="text-xs text-[var(--c-text-tertiary)]">{t.sidebarGroupingDesc}</span>
+      {showLabel && (
+        <>
+          <span className="text-sm font-medium text-[var(--c-text-heading)]">{t.sidebarGrouping}</span>
+          <span className="text-xs text-[var(--c-text-tertiary)]">{t.sidebarGroupingDesc}</span>
+        </>
+      )}
       <div className="flex gap-3">
         {options.map(({ value, label, Preview }) => {
           const active = gtdEnabled === value
@@ -285,9 +291,14 @@ export function SidebarGroupingPicker() {
               onMouseEnter={() => setHoveredValue(value)}
               onMouseLeave={() => setHoveredValue(null)}
               onClick={() => {
+                if (gtdEnabled === value) return
                 setGtdEnabled(value)
                 writeGtdEnabled(value)
                 window.dispatchEvent(new CustomEvent('arkloop:gtd-enabled-changed', { detail: value }))
+                window.dispatchEvent(new StorageEvent('storage', {
+                  key: 'arkloop:web:gtd_enabled',
+                  newValue: String(value),
+                }))
               }}
               className="flex flex-col items-center gap-2"
             >

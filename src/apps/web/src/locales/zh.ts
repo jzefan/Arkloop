@@ -62,6 +62,7 @@ export const zh: LocaleStrings = {
   themeSystem: "跟随系统",
   themeLight: "浅色",
   themeDark: "深色",
+  themeModeSection: "界面模式",
   fontSection: "字体",
   fontBody: "正文字体",
   fontCode: "代码字体",

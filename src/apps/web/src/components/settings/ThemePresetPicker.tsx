@@ -4,6 +4,7 @@ import { BUILTIN_PRESETS } from '../../themes/presets'
 import type { ThemePreset, ThemeDefinition } from '../../themes/types'
 import { useLocale } from '../../contexts/LocaleContext'
 import { Check, Trash2 } from 'lucide-react'
+import { SettingsButton } from './_SettingsButton'
 
 type SwatchVars = Partial<{ '--c-bg-page': string; '--c-bg-sidebar': string; '--c-accent': string; '--c-text-primary': string }>
 
@@ -80,7 +81,13 @@ function PresetCard({ name, dark, active, onClick }: PresetCardProps) {
   )
 }
 
-export function ThemePresetPicker({ onEditColors }: { onEditColors: () => void }) {
+export function ThemePresetPicker({
+  onEditColors,
+  showTitle = true,
+}: {
+  onEditColors: () => void
+  showTitle?: boolean
+}) {
   const { t } = useLocale()
   const {
     themePreset, setThemePreset,
@@ -103,16 +110,18 @@ export function ThemePresetPicker({ onEditColors }: { onEditColors: () => void }
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="flex items-center justify-between">
-        <span className="text-sm font-medium text-[var(--c-text-heading)]">{t.themePresetSection}</span>
-        <button
-          type="button"
-          onClick={onEditColors}
-          className="text-xs text-[var(--c-text-secondary)] hover:text-[var(--c-text-primary)] transition-colors"
-        >
-          {t.editColors}
-        </button>
-      </div>
+      {showTitle && (
+        <div className="flex items-center justify-between">
+          <span className="text-sm font-medium text-[var(--c-text-heading)]">{t.themePresetSection}</span>
+          <button
+            type="button"
+            onClick={onEditColors}
+            className="text-xs text-[var(--c-text-secondary)] transition-colors hover:text-[var(--c-text-primary)]"
+          >
+            {t.editColors}
+          </button>
+        </div>
+      )}
 
       {/* Built-in presets */}
       <div className="flex flex-wrap gap-3">
@@ -129,6 +138,15 @@ export function ThemePresetPicker({ onEditColors }: { onEditColors: () => void }
           )
         })}
       </div>
+      {!showTitle && (
+        <SettingsButton
+          type="button"
+          onClick={onEditColors}
+          className="self-start"
+        >
+          {t.editColors}
+        </SettingsButton>
+      )}
 
       {/* Custom themes */}
       {customThemeList.length > 0 && (

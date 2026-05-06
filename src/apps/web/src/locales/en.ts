@@ -62,6 +62,7 @@ export const en: LocaleStrings = {
   themeSystem: "System",
   themeLight: "Light",
   themeDark: "Dark",
+  themeModeSection: "Theme mode",
   fontSection: "Fonts",
   fontBody: "Body font",
   fontCode: "Code font",

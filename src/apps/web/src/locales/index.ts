@@ -82,6 +82,7 @@ export interface LocaleStrings {
   themeLight: string;
   themeDark: string;
   // appearance tab
+  themeModeSection: string;
   fontSection: string;
   fontBody: string;
   fontCode: string;
