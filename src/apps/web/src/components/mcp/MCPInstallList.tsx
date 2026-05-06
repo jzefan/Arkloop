@@ -1,6 +1,6 @@
 import { Loader2, MoreHorizontal, Pencil, RefreshCw, Trash2 } from 'lucide-react'
 import { DropdownAction } from '../skills/DropdownAction'
-import { statusVariant, type MCPCopy } from './types'
+import { statusLabel, statusVariant, type MCPCopy } from './types'
 import type { MCPInstall } from '../../api'
 import { SettingsSwitch } from '../settings/_SettingsSwitch'
 
@@ -29,19 +29,6 @@ function statusBadgeStyle(status: string): React.CSSProperties {
       return { background: 'var(--c-status-danger-bg)', color: 'var(--c-status-danger-text)' }
     default:
       return { background: 'var(--c-bg-deep)', color: 'var(--c-text-tertiary)' }
-  }
-}
-
-function statusLabel(status: string): string {
-  switch (status) {
-    case 'ready': return 'Ready'
-    case 'needs_check': return 'Pending'
-    case 'configured': return 'Configured'
-    case 'connect_failed': return 'Failed'
-    case 'auth_invalid': return 'Auth Error'
-    case 'protocol_error': return 'Error'
-    case 'install_missing': return 'Missing'
-    default: return status
   }
 }
 
@@ -98,7 +85,7 @@ export function MCPInstallList({
                   className="shrink-0 rounded px-1.5 py-px text-[10px] font-medium leading-tight"
                   style={statusBadgeStyle(install.discovery_status)}
                 >
-                  {statusLabel(install.discovery_status)}
+                  {statusLabel(install.discovery_status, copy.status)}
                 </span>
               </div>
               {install.last_error_message && (

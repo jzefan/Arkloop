@@ -86,6 +86,15 @@ export function MCPSettingsContent({ accessToken }: Props) {
         toastDeleted: '已删除。',
         toastChecked: '检查已完成。',
         toastImported: '已导入。',
+        status: {
+          checked: '检查通过',
+          pending: '待检查',
+          configured: '已配置',
+          failed: '连接失败',
+          authError: '认证异常',
+          error: '协议异常',
+          missing: '缺少依赖',
+        },
       }
     }
     return {
@@ -140,6 +149,15 @@ export function MCPSettingsContent({ accessToken }: Props) {
       toastDeleted: 'Deleted.',
       toastChecked: 'Check completed.',
       toastImported: 'Imported.',
+      status: {
+        checked: 'Checked',
+        pending: 'Pending',
+        configured: 'Configured',
+        failed: 'Failed',
+        authError: 'Auth Error',
+        error: 'Error',
+        missing: 'Missing',
+      },
     }
   }, [locale])
 
