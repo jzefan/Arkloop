@@ -123,7 +123,7 @@ export function CopTimelineSegment({
 
   if (hideHeader) {
     return (
-      <div style={{ position: 'relative', paddingTop: flattenSingleItem ? 0 : 6, paddingLeft: editOnly || exploreCard || flattenSingleItem ? 0 : COP_TIMELINE_CONTENT_PADDING_LEFT_PX, paddingBottom: endsWithNarrative ? 0 : EXPLORE_BOTTOM_PAD }}>
+      <div style={{ position: 'relative', paddingTop: flattenSingleItem ? 0 : 6, paddingLeft: editOnly || exploreCard || flattenSingleItem ? 0 : COP_TIMELINE_CONTENT_PADDING_LEFT_PX, paddingBottom: flattenSingleItem || endsWithNarrative ? 0 : EXPLORE_BOTTOM_PAD }}>
         {flattenSingleItem && segment.items.length === 1 ? (
           renderItem(segment.items[0]!, pool, isLive, onOpenCodeExecution, activeCodeExecutionId, onOpenSubAgent, accessToken, baseUrl, typography)
         ) : exploreCard ? (
