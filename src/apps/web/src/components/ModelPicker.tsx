@@ -39,14 +39,14 @@ type Props = {
   accessToken?: string
   value: string | null
   onChange: (model: string | null) => void
-  onAddApiKey: () => void
+  onAddModel: () => void
   variant?: 'welcome' | 'chat'
   controlHeight?: 'default' | 'legacyChat'
   thinkingEnabled: string
   onThinkingChange: (mode: string) => void
 }
 
-export function ModelPicker({ accessToken, value, onChange, onAddApiKey, variant = 'chat', controlHeight = 'default', thinkingEnabled, onThinkingChange }: Props) {
+export function ModelPicker({ accessToken, value, onChange, onAddModel, variant = 'chat', controlHeight = 'default', thinkingEnabled, onThinkingChange }: Props) {
   const { t } = useLocale()
   const mp = t.modelPicker
   const desktopShell = isDesktop()
@@ -284,7 +284,7 @@ export function ModelPicker({ accessToken, value, onChange, onAddApiKey, variant
               {desktopShell && !hasModels && !loading && !search && (
                 <button
                   type="button"
-                  onClick={() => { setOpen(false); onAddApiKey() }}
+                  onClick={() => { setOpen(false); onAddModel() }}
                   className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm hover:bg-[var(--c-bg-deep)]"
                   style={{ color: 'var(--c-text-secondary)' }}
                 >
@@ -420,11 +420,11 @@ export function ModelPicker({ accessToken, value, onChange, onAddApiKey, variant
 
               <button
                 type="button"
-                onClick={() => { setOpen(false); onAddApiKey() }}
+                onClick={() => { setOpen(false); onAddModel() }}
                 className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm hover:bg-[var(--c-bg-deep)]"
                 style={{ color: 'var(--c-text-secondary)' }}
               >
-                <span>+ {mp.addApiKey}</span>
+                <span>+ {mp.addModel}</span>
               </button>
             </div>
           </div>

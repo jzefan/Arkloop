@@ -81,9 +81,9 @@ function App() {
   const { addToast } = useToast()
   const [accessToken, setAccessToken] = useState<string | null>(null)
   const [authChecked, setAuthChecked] = useState(false)
-  const [onboardingDone, setOnboardingDone] = useState<boolean | null>(null)
+  const [onboardingDone, setOnboardingDone] = useState<boolean | null>(() => (isDesktop() ? null : true))
   const [sidecarError, setSidecarError] = useState<{ title: string; message: string } | null>(null)
-  const [sidecarChecked, setSidecarChecked] = useState(false)
+  const [sidecarChecked, setSidecarChecked] = useState(() => !isDesktop())
 
   // Desktop: 检查 onboarding 状态
   useEffect(() => {

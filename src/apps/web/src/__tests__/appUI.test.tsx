@@ -252,13 +252,13 @@ describe('DesktopTitleBar update entry', () => {
 
   it('只为桌面应用 available/downloaded 状态显示标题栏更新入口', async () => {
     await renderTitleBar(appUpdateState('idle'), false)
-    expect(container.querySelector('button[title="发现新版本"]')).toBeNull()
-    expect(container.querySelector('button[title="已可安装"]')).toBeNull()
+    expect(container.querySelector('button[title="发现新版本"], button[title="Update available"]')).toBeNull()
+    expect(container.querySelector('button[title="已可安装"], button[title="Ready to install"]')).toBeNull()
 
     await renderTitleBar(appUpdateState('available'), true)
-    expect(container.querySelector('button[title="发现新版本"]')).not.toBeNull()
+    expect(container.querySelector('button[title="发现新版本"], button[title="Update available"]')).not.toBeNull()
 
     await renderTitleBar(appUpdateState('downloaded'), true)
-    expect(container.querySelector('button[title="已可安装"]')).not.toBeNull()
+    expect(container.querySelector('button[title="已可安装"], button[title="Ready to install"]')).not.toBeNull()
   })
 })
