@@ -609,6 +609,8 @@ func (e *DesktopEngine) Execute(ctx context.Context, run data.Run, traceID strin
 	runRuntime := *e.runtimeSnapshot
 	runRuntime.DesktopExecutionMode = strings.TrimSpace(desktop.GetExecutionMode())
 
+	llmRetryMaxAttempts, llmRetryBaseDelayMs := resolveDesktopLLMRetry(ctx, e.db)
+
 	rc := &pipeline.RunContext{
 		Run:                 run,
 		DB:                  e.db,
@@ -630,8 +632,8 @@ func (e *DesktopEngine) Execute(ctx context.Context, run data.Run, traceID strin
 		PerToolSoftLimits:   tools.DefaultPerToolSoftLimits(),
 		PendingMemoryWrites: memory.NewPendingWriteBuffer(),
 
-		LlmRetryMaxAttempts: 10,
-		LlmRetryBaseDelayMs: 1000,
+		LlmRetryMaxAttempts: llmRetryMaxAttempts,
+		LlmRetryBaseDelayMs: llmRetryBaseDelayMs,
 
 		PromptCacheDebugEnabled: promptCacheDebugEnabled,
 
