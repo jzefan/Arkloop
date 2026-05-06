@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import type { ReactNode } from 'react'
 import { Check, Eye, EyeOff, Link2, Loader2, Plus, X } from 'lucide-react'
 import { ConfirmDialog } from '@arkloop/shared'
 import type { ChannelBindingResponse, ChannelResponse, LlmProvider, Persona } from '../../api'
@@ -18,6 +19,24 @@ export const secondaryButtonCls =
 
 export const primaryButtonCls =
   'inline-flex h-[32px] items-center justify-center gap-1.5 rounded-[6.5px] bg-[var(--c-btn-bg)] px-3.5 text-sm font-[450] text-[var(--c-btn-text)] transition-[box-shadow] duration-150 hover:[box-shadow:inset_0_0_0_999px_rgba(255,255,255,0.07),0_0_0_0.2px_var(--c-btn-bg)] active:[box-shadow:inset_0_0_0_999px_rgba(0,0,0,0.04)] disabled:cursor-not-allowed disabled:opacity-40'
+
+export const channelRowsCls =
+  "flex flex-col [&>*]:relative [&>*]:grid [&>*]:items-center [&>*]:gap-3 [&>*]:px-5 [&>*]:py-4 [&>*]:sm:grid-cols-[minmax(0,1fr)_minmax(260px,390px)] [&>*]:sm:gap-6 [&>*+*]:before:absolute [&>*+*]:before:left-5 [&>*+*]:before:right-5 [&>*+*]:before:top-0 [&>*+*]:before:h-px [&>*+*]:before:bg-[var(--c-border-subtle)] [&>*+*]:before:content-[''] [&_label]:mb-0 [&_label]:text-[13px] [&_label]:font-medium [&_label]:text-[var(--c-text-primary)]"
+
+export function ChannelDetailRow({
+  label,
+  children,
+}: {
+  label: string
+  children: ReactNode
+}) {
+  return (
+    <div>
+      <div className="min-w-0 text-[13px] font-medium text-[var(--c-text-primary)]">{label}</div>
+      <div className="min-w-0 sm:justify-self-end sm:w-full">{children}</div>
+    </div>
+  )
+}
 
 export function ModelDropdown({
   value,
@@ -59,7 +78,7 @@ export function StatusBadge({
 }) {
   return (
     <span
-      className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium"
+      className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] font-medium"
       style={{
         background: active ? 'var(--c-status-success-bg, rgba(34,197,94,0.1))' : 'var(--c-bg-deep)',
         color: active ? 'var(--c-status-success, #22c55e)' : 'var(--c-text-muted)',
@@ -158,7 +177,7 @@ export function ListField({
 }) {
   return (
     <div className="md:col-span-2">
-      <label className="mb-1.5 block text-xs font-medium text-[var(--c-text-secondary)]">
+      <label className="mb-1.5 block text-[13px] font-medium text-[var(--c-text-primary)]">
         {label}
       </label>
       {values.length > 0 && (
@@ -166,7 +185,7 @@ export function ListField({
           {values.map((item) => (
             <span
               key={item}
-              className="inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs text-[var(--c-text-primary)]"
+              className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs text-[var(--c-text-primary)]"
               style={{ background: 'var(--c-bg-deep)' }}
             >
               {item}
@@ -219,9 +238,8 @@ function BindingRoleBadge({
 }) {
   return (
     <span
-      className="rounded-md px-2 py-0.5 text-[11px] font-medium"
+      className="rounded-md px-1.5 py-0.5 text-[10px] font-medium"
       style={{
-        border: '0.5px solid var(--c-border-subtle)',
         background: active ? 'var(--c-status-success-bg, rgba(34,197,94,0.1))' : 'var(--c-bg-deep)',
         color: active ? 'var(--c-status-success, #22c55e)' : 'var(--c-text-secondary)',
       }}
@@ -279,8 +297,7 @@ function BindingHeartbeatEditor({
     <>
       <div
         data-binding-id={binding.binding_id}
-        className="rounded-xl px-4 py-4"
-        style={{ border: '0.5px solid var(--c-border-subtle)', background: 'var(--c-bg-page)' }}
+        className="relative px-5 py-4 [&+&]:before:absolute [&+&]:before:left-5 [&+&]:before:right-5 [&+&]:before:top-0 [&+&]:before:h-px [&+&]:before:bg-[var(--c-border-subtle)] [&+&]:before:content-['']"
       >
         <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
           <div className="min-w-0">
@@ -395,13 +412,13 @@ export function BindingsCard({
   const { t } = useLocale()
   return (
     <div
-      className="rounded-2xl p-5"
+      className="overflow-hidden rounded-xl"
       style={{ border: '0.5px solid var(--c-border-subtle)', background: 'var(--c-bg-menu)' }}
     >
-      <div className="flex flex-col gap-4">
-        <div className="flex items-center justify-between gap-3">
+      <div className="flex flex-col">
+        <div className="flex items-center justify-between gap-3 px-5 py-4">
           <div>
-            <div className="text-sm font-medium text-[var(--c-text-heading)]">{title}</div>
+            <div className="text-[13px] font-medium text-[var(--c-text-primary)]">{title}</div>
             {bindCode && (
               <div className="mt-2">
                 <code className="rounded-md bg-[var(--c-bg-deep)] px-2 py-1 font-mono text-sm text-[var(--c-text-heading)] select-all">
@@ -425,9 +442,9 @@ export function BindingsCard({
         </div>
 
         {bindings.length === 0 ? (
-          <p className="text-sm text-[var(--c-text-muted)]">{emptyLabel}</p>
+          <p className="px-5 pb-4 text-sm text-[var(--c-text-muted)]">{emptyLabel}</p>
         ) : (
-          <div className="flex flex-col gap-3">
+          <div>
             {bindings.map((binding) => (
               <BindingHeartbeatEditor
                 key={binding.binding_id}
@@ -487,7 +504,7 @@ export function SaveActions({
   onVerify: () => void
 }) {
   return (
-    <div className="flex items-center gap-3 border-t border-[var(--c-border-subtle)] pt-4">
+    <div className="flex items-center gap-3 px-1 pt-1">
       <button
         type="button"
         onClick={onSave}
@@ -529,7 +546,7 @@ export function TokenField({
   placeholder,
   onChange,
 }: {
-  label: string
+  label?: string
   value: string
   placeholder: string
   onChange: (value: string) => void
@@ -538,9 +555,11 @@ export function TokenField({
 
   return (
     <div className="md:col-span-2">
-      <label className="mb-1.5 block text-xs font-medium text-[var(--c-text-secondary)]">
-        {label}
-      </label>
+      {label && (
+        <label className="mb-1.5 block text-[13px] font-medium text-[var(--c-text-primary)]">
+          {label}
+        </label>
+      )}
       <div className="relative">
         <input
           type={showToken ? 'text' : 'password'}

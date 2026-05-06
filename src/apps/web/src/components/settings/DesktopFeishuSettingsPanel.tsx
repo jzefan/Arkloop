@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Send } from 'lucide-react'
 import {
   type ChannelResponse,
   type LlmProvider,
@@ -9,9 +8,10 @@ import {
   updateChannel,
   verifyChannel,
 } from '../../api'
-import { CopyIconButton } from '../CopyIconButton'
 import { useLocale } from '../../contexts/LocaleContext'
 import {
+  channelRowsCls,
+  ChannelDetailRow,
   buildModelOptions,
   inputCls,
   ListField,
@@ -21,7 +21,6 @@ import {
   resolvePersonaID,
   sameItems,
   SaveActions,
-  StatusBadge,
   TokenField,
 } from './DesktopChannelSettingsShared'
 import { SettingsSwitch } from './_SettingsSwitch'
@@ -69,7 +68,7 @@ export function DesktopFeishuSettingsPanel({
   const [triggerKeywords, setTriggerKeywords] = useState(readStringArrayConfig(channel, 'trigger_keywords'))
   const [triggerKeywordInput, setTriggerKeywordInput] = useState('')
   const [verifying, setVerifying] = useState(false)
-  const [verifyResult, setVerifyResult] = useState<{ ok: boolean; message: string } | null>(null)
+  const [, setVerifyResult] = useState<{ ok: boolean; message: string } | null>(null)
 
   useEffect(() => {
     setEnabled(channel?.is_active ?? false)
@@ -117,9 +116,6 @@ export function DesktopFeishuSettingsPanel({
     [personas, channel?.persona_id],
   )
   const tokenConfigured = channel?.has_credentials === true
-  const botName = readStringConfig(channel, 'bot_name')
-  const botOpenID = readStringConfig(channel, 'bot_open_id')
-  const botProfileLabel = [botName, botOpenID].filter(Boolean).join(' · ')
 
   const dirty = useMemo(() => {
     if ((channel?.is_active ?? false) !== enabled) return true
@@ -265,7 +261,7 @@ export function DesktopFeishuSettingsPanel({
     <div className="flex flex-col gap-6">
       {error && (
         <div
-          className="rounded-xl px-4 py-3 text-sm"
+          className="rounded-xl px-5 py-3 text-sm"
           style={{
             border: '0.5px solid color-mix(in srgb, var(--c-status-error, #ef4444) 24%, transparent)',
             background: 'var(--c-status-error-bg, rgba(239,68,68,0.08))',
@@ -277,68 +273,16 @@ export function DesktopFeishuSettingsPanel({
       )}
 
       <div
-        className="rounded-2xl p-5"
+        className="overflow-hidden rounded-xl"
         style={{ border: '0.5px solid var(--c-border-subtle)', background: 'var(--c-bg-menu)' }}
       >
-        <div className="flex flex-col gap-4">
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-            <div className="min-w-0">
-              <div className="flex items-center gap-2">
-                <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-[var(--c-bg-deep)] text-[var(--c-text-secondary)]">
-                  <Send size={18} />
-                </span>
-                <div className="min-w-0">
-                  <div className="text-sm font-medium text-[var(--c-text-heading)]">{ct.feishu}</div>
-                  <div className="mt-1 flex flex-wrap items-center gap-2">
-                    <StatusBadge active={enabled} label={enabled ? ct.active : ct.inactive} />
-                    <StatusBadge
-                      active={tokenConfigured}
-                      label={tokenConfigured ? ds.connectorConfigured : ds.connectorNotConfigured}
-                    />
-                    {botProfileLabel && (
-                      <span className="rounded-full bg-[var(--c-bg-deep)] px-2 py-0.5 text-[11px] font-medium text-[var(--c-text-secondary)]">
-                        {botProfileLabel}
-                      </span>
-                    )}
-                    {verifyResult && (
-                      <span
-                        className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium"
-                        style={{
-                          background: verifyResult.ok
-                            ? 'var(--c-status-success-bg, rgba(34,197,94,0.1))'
-                            : 'var(--c-status-error-bg, rgba(239,68,68,0.08))',
-                          color: verifyResult.ok
-                            ? 'var(--c-status-success, #22c55e)'
-                            : 'var(--c-status-error, #ef4444)',
-                        }}
-                      >
-                        {verifyResult.message}
-                      </span>
-                    )}
-                  </div>
-                </div>
+        <div className="flex flex-col">
+          <div className={channelRowsCls}>
+            <ChannelDetailRow label={t.agentSettings.reasoningModes.enabled}>
+              <div className="flex justify-end">
+                <SettingsSwitch checked={enabled} onChange={(next) => { setEnabled(next); setSaved(false) }} />
               </div>
-            </div>
-
-            <SettingsSwitch checked={enabled} onChange={(next) => { setEnabled(next); setSaved(false) }} />
-          </div>
-
-          {channel?.webhook_url && (
-            <div className="flex min-w-0 items-center gap-2 rounded-lg bg-[var(--c-bg-deep)] px-3 py-2">
-              <span className="shrink-0 text-xs font-medium text-[var(--c-text-secondary)]">{ct.webhookUrl}</span>
-              <span className="min-w-0 flex-1 truncate font-mono text-xs text-[var(--c-text-tertiary)]">
-                {channel.webhook_url}
-              </span>
-              <CopyIconButton
-                onCopy={() => navigator.clipboard.writeText(channel.webhook_url!)}
-                size={13}
-                tooltip={ct.webhookUrlCopy}
-                className="shrink-0 text-[var(--c-text-muted)] hover:text-[var(--c-text-secondary)]"
-              />
-            </div>
-          )}
-
-          <div className="grid gap-4 md:grid-cols-2">
+            </ChannelDetailRow>
             <div>
               <label className="mb-1.5 block text-xs font-medium text-[var(--c-text-secondary)]">
                 {ct.feishuAppID}
@@ -435,11 +379,11 @@ export function DesktopFeishuSettingsPanel({
             </div>
 
             <div
-              className="md:col-span-2 rounded-xl px-4 py-4"
+              className="md:col-span-2 relative px-5 py-4"
               style={{ border: '0.5px solid var(--c-border-subtle)', background: 'var(--c-bg-page)' }}
             >
               <div className="mb-4 text-sm font-medium text-[var(--c-text-heading)]">{ct.accessControl}</div>
-              <div className="grid gap-4 md:grid-cols-2">
+              <div className={channelRowsCls}>
                 <ListField
                   label={ct.feishuAllowedUsers}
                   values={allowedUserIDs}
