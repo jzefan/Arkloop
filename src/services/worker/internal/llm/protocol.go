@@ -114,7 +114,7 @@ func (e protocolConfigError) Error() string {
 func newProtocolTransport(cfg TransportConfig, defaultBaseURL string, normalize func(string) string) protocolTransport {
 	timeout := cfg.TotalTimeout
 	if timeout <= 0 {
-		timeout = 60 * time.Second
+		timeout = 3 * time.Minute
 	}
 
 	baseURL := strings.TrimRight(strings.TrimSpace(cfg.BaseURL), "/")
