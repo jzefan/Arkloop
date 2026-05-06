@@ -565,6 +565,9 @@ func loadPersonaRegistryFromFS() func() *personas.Registry {
 
 // Shutdown releases resources held by the engine (LSP servers, etc.).
 func (e *DesktopEngine) Shutdown(ctx context.Context) {
+	if desktop.GetLLMProviderModelTester() == e {
+		desktop.SetLLMProviderModelTester(nil)
+	}
 	if e.lspManager != nil {
 		if err := e.lspManager.Stop(ctx); err != nil {
 			slog.WarnContext(ctx, "desktop: lsp manager stop failed", "err", err.Error())

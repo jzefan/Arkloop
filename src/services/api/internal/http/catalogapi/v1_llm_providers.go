@@ -19,6 +19,7 @@ import (
 	"arkloop/services/api/internal/data"
 	"arkloop/services/api/internal/llmproviders"
 	"arkloop/services/api/internal/observability"
+	shareddesktop "arkloop/services/shared/desktop"
 	"arkloop/services/shared/localproviders"
 	sharedoutbound "arkloop/services/shared/outboundurl"
 
@@ -237,6 +238,10 @@ func llmProviderEntry(
 			modelID, err := uuid.Parse(parts[2])
 			if err != nil {
 				httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "invalid model id", traceID, nil)
+				return
+			}
+			if isLocalProviderUUID(providerID) {
+				testLocalLlmProviderModel(w, r, traceID, providerID, modelID, authService, membershipRepo)
 				return
 			}
 			testLlmProviderModel(w, r, traceID, providerID, modelID, authService, membershipRepo, service)
@@ -945,6 +950,50 @@ func testLlmProviderModel(
 	resp := llmProviderModelTestResponse{
 		Success:   err == nil,
 		ModelID:   cfg.Model.ID.String(),
+		LatencyMS: time.Since(startedAt).Milliseconds(),
+	}
+	if err != nil {
+		resp.Error = err.Error()
+	}
+	httpkit.WriteJSON(w, traceID, nethttp.StatusOK, resp)
+}
+
+func testLocalLlmProviderModel(
+	w nethttp.ResponseWriter,
+	r *nethttp.Request,
+	traceID string,
+	providerID uuid.UUID,
+	modelID uuid.UUID,
+	authService *auth.Service,
+	membershipRepo *data.AccountMembershipRepository,
+) {
+	actor, ok := authenticateLLMProviderActor(w, r, traceID, authService, membershipRepo)
+	if !ok {
+		return
+	}
+	scope, ok := resolveLlmProviderScope(w, r, traceID, actor, nil)
+	if !ok {
+		return
+	}
+	if scope != data.LlmRouteScopeUser {
+		httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "local provider scope must be user", traceID, nil)
+		return
+	}
+
+	tester := shareddesktop.GetLLMProviderModelTester()
+	if tester == nil {
+		httpkit.WriteError(w, nethttp.StatusServiceUnavailable, "llm_providers.local_tester_unavailable", "local provider tester unavailable", traceID, nil)
+		return
+	}
+
+	startedAt := time.Now()
+	err := tester.TestLLMProviderModel(r.Context(), shareddesktop.LLMProviderModelTestRequest{
+		ProviderID: providerID.String(),
+		ModelID:    modelID.String(),
+	})
+	resp := llmProviderModelTestResponse{
+		Success:   err == nil,
+		ModelID:   modelID.String(),
 		LatencyMS: time.Since(startedAt).Milliseconds(),
 	}
 	if err != nil {
