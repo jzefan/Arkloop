@@ -1,7 +1,7 @@
 {
   "name": "@arkloop/desktop",
   "productName": "Arkloop",
-  "version": "26.5.1",
+  "version": "26.3.27",
   "private": true,
   "description": "Arkloop desktop app",
   "homepage": "https://github.com/qqqqqf-q/Arkloop",

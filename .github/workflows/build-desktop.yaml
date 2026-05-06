@@ -264,11 +264,23 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Resolve release metadata
+        id: release_meta
+        run: |
+          if [ -n "${{ inputs.version }}" ]; then
+            VERSION="${{ inputs.version }}"
+          elif [[ "${GITHUB_REF_NAME}" == v* ]]; then
+            VERSION="${GITHUB_REF_NAME#v}"
+          else
+            VERSION="$(node -p "require('./src/apps/desktop/package.json').version")"
+          fi
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+
       - name: Build Arch package
         run: |
           useradd -m builder
           chown -R builder:builder "${GITHUB_WORKSPACE}"
-          su builder -c "cd '${GITHUB_WORKSPACE}/packaging/arch' && makepkg -s --noconfirm"
+          su builder -c "cd '${GITHUB_WORKSPACE}/packaging/arch' && ARKLOOP_DESKTOP_VERSION='${{ steps.release_meta.outputs.version }}' makepkg -s --noconfirm"
 
       - name: List package
         run: ls -lh packaging/arch/*.pkg.tar.zst

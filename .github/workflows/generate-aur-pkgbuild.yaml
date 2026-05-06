@@ -34,8 +34,10 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Generate .SRCINFO
-        working-directory: packaging/aur/arkloop-git
-        run: makepkg --printsrcinfo > .SRCINFO
+        run: |
+          useradd -m builder
+          chown -R builder:builder "${GITHUB_WORKSPACE}"
+          su builder -c "cd '${GITHUB_WORKSPACE}/packaging/aur/arkloop-git' && makepkg --printsrcinfo > .SRCINFO"
 
       - name: Validate generated files
         working-directory: packaging/aur/arkloop-git

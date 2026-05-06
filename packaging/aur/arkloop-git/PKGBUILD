@@ -1,6 +1,6 @@
 # Maintainer: mizorewww <aac6fef@icloud.com>
 pkgname=arkloop-git
-pkgver=26.5.1.r2277.g681aa79
+pkgver=26.5.1.r2283.gd03f5f5
 pkgrel=1
 pkgdesc="Desktop app for building conversational AI agents"
 arch=('x86_64' 'aarch64')
@@ -39,11 +39,15 @@ _pnpm_install() {
 
 pkgver() {
   cd "${srcdir}/Arkloop"
-  local app_version commit_count commit_hash
-  app_version="$(node -p "require('./src/apps/desktop/package.json').version")"
+  local base_version commit_count commit_hash
+  base_version="$(git describe --tags --match 'v[0-9]*' --abbrev=0 2>/dev/null || true)"
+  base_version="${base_version#v}"
+  if [[ -z "${base_version}" ]]; then
+    base_version="$(node -p "require('./src/apps/desktop/package.json').version")"
+  fi
   commit_count="$(git rev-list --count HEAD)"
   commit_hash="$(git rev-parse --short=7 HEAD)"
-  printf '%s.r%s.g%s\n' "${app_version}" "${commit_count}" "${commit_hash}"
+  printf '%s.r%s.g%s\n' "${base_version}" "${commit_count}" "${commit_hash}"
 }
 
 _electron_arch() {
