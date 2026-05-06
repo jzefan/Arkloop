@@ -33,22 +33,22 @@ import { ContextCompactBar } from './ContextCompactBar'
 import { IncognitoDivider } from './IncognitoDivider'
 import { AssistantActionBar } from './messagebubble/AssistantMessage'
 import {
-  buildMessageArtifactsFromRunEvents,
-  buildMessageCodeExecutionsFromRunEvents,
-  buildMessageWidgetsFromRunEvents,
+  buildMessageArtifactsFromAgentEvents,
+  buildMessageCodeExecutionsFromAgentEvents,
+  buildMessageWidgetsFromAgentEvents,
   findAssistantMessageForRun,
   shouldRefetchCompletedRunMessages,
   shouldReplayMessageCodeExecutions,
-  buildMessageBrowserActionsFromRunEvents,
-  buildMessageSubAgentsFromRunEvents,
-  buildMessageFileOpsFromRunEvents,
-  buildMessageWebFetchesFromRunEvents,
-  buildMessageThinkingFromRunEvents,
-  buildTodosFromRunEvents,
-} from '../runEventProcessing'
+  buildMessageBrowserActionsFromAgentEvents,
+  buildMessageSubAgentsFromAgentEvents,
+  buildMessageFileOpsFromAgentEvents,
+  buildMessageWebFetchesFromAgentEvents,
+  buildMessageThinkingFromAgentEvents,
+  buildTodosFromAgentEvents,
+} from '../agentEventProcessing'
 import { getThreadTodos, setThreadTodos, clearThreadTodos } from '../todoDb'
 import {
-  buildAssistantTurnFromRunEvents,
+  buildAssistantTurnFromAgentEvents,
   copSegmentCalls,
   createEmptyAssistantTurnFoldState,
   type AssistantTurnSegment,
@@ -56,7 +56,7 @@ import {
 } from '../assistantTurnSegments'
 import { copTimelinePayloadForSegment, toolCallIdsInCopTimelines } from '../copSegmentTimeline'
 import { buildResolvedPool, EMPTY_POOL, buildFallbackSegments } from '../copSubSegment'
-import { applyRunEventToWebSearchSteps } from '../webSearchTimelineFromRunEvent'
+import { applyAgentEventToWebSearchSteps } from '../webSearchTimelineFromAgentEvent'
 import { useLocale } from '../contexts/LocaleContext'
 import { useAuth } from '../contexts/auth'
 import { useThreadList } from '../contexts/thread-list'
@@ -76,8 +76,8 @@ import { useMessageMetaCompat } from '../hooks/useMessageMetaCompat'
 import { useRunTransition } from '../hooks/useRunTransition'
 import {
   normalizeError,
-  interruptedErrorFromRunEvents,
-  failedErrorFromRunEvents,
+  interruptedErrorFromAgentEvents,
+  failedErrorFromAgentEvents,
   hasRecoverableRunOutput,
   finalizeSearchSteps,
   patchLegacySearchSteps,
@@ -89,22 +89,18 @@ import { apiBaseUrl } from '@arkloop/shared/api'
 import { ChatSkeleton } from './ChatSkeleton'
 import { buildDraftAttachmentRecords, restoreAttachmentFromDraftRecord } from '../draftAttachments'
 import {
-  cancelRun,
-  createMessage,
-  createRun,
   forkThread,
   getThread,
-  listMessages,
-  listRunEvents,
   listThreadRuns,
   updateThreadCollaborationMode,
+  updateThreadLearningMode,
   uploadStagingAttachment,
   isApiError,
   type CollaborationMode,
-  type MessageResponse,
   type RunReasoningMode,
   type UploadedThreadAttachment,
 } from '../api'
+import { readAgentUIEvents, type AgentMessage, useAgentClient } from '../agent-ui'
 import { buildMessageRequest } from '../messageContent'
 import { createQueuedPrompt, type QueuedPrompt } from '../queuedPrompts'
 import {
@@ -149,9 +145,9 @@ import {
   writeMessageWidgets,
   type WidgetRef,
   migrateMessageMetadata,
-  readMsgRunEvents,
-  writeMsgRunEvents,
-  type MsgRunEvent,
+  readMessageAgentEvents,
+  writeMessageAgentEvents,
+  type MessageAgentEvent,
   readInputDraftAttachments,
   readThreadWorkFolder,
   readThreadReasoningMode,
@@ -198,7 +194,7 @@ type LocationState = {
   isIncognitoFork?: boolean
   forkBaseCount?: number
   userEnterMessageId?: string
-  welcomeUserMessage?: MessageResponse
+  welcomeUserMessage?: AgentMessage
 } | null
 
 type DocumentPanelState = {
@@ -243,7 +239,7 @@ type LiveRunPaneProps = {
   onIncognitoDividerComplete: () => void
   terminalRunHandoffStatus: LiveRunHandoffStatus
   terminalRunDisplayId: string | null
-  showRunEvents: boolean
+  showRunDetailButton: boolean
   setRunDetailPanelRunId: (runId: string | null) => void
   onOpenDocument: (artifact: ArtifactRef, options?: { trigger?: HTMLElement | null; artifacts?: ArtifactRef[]; runId?: string }) => void
   onOpenCodeExecution: (ce: CodeExecution) => void
@@ -290,7 +286,7 @@ const LiveRunPane = memo(function LiveRunPane({
   onIncognitoDividerComplete,
   terminalRunHandoffStatus,
   terminalRunDisplayId,
-  showRunEvents,
+  showRunDetailButton,
   setRunDetailPanelRunId,
   onOpenDocument,
   onOpenCodeExecution,
@@ -380,7 +376,7 @@ const LiveRunPane = memo(function LiveRunPane({
         <div style={{ maxWidth: liveContentMaxWidth }}>
           <AssistantActionBar
             textToCopy={terminalActionText}
-            onViewRunDetail={showRunEvents && terminalActionRunId ? () => setRunDetailPanelRunId(terminalActionRunId) : undefined}
+            onViewRunDetail={showRunDetailButton && terminalActionRunId ? () => setRunDetailPanelRunId(terminalActionRunId) : undefined}
             isLast
           />
         </div>
@@ -809,9 +805,12 @@ export const ChatView = memo(function ChatView() {
   }, [threadId, completedUnreadThreadIds, markCompletionRead])
   const planModeUpdateRef = useRef<Promise<void> | null>(null)
   const planModeRequestSeqRef = useRef(0)
-  const waitForPlanModeUpdate = useCallback(async () => {
-    const pending = planModeUpdateRef.current
-    if (pending) await pending
+  const learningModeUpdateRef = useRef<Promise<void> | null>(null)
+  const learningModeRequestSeqRef = useRef(0)
+  const [learningModeUpdating, setLearningModeUpdating] = useState(false)
+  const waitForThreadModeUpdates = useCallback(async () => {
+    const pending = [planModeUpdateRef.current, learningModeUpdateRef.current].filter((item): item is Promise<void> => !!item)
+    if (pending.length > 0) await Promise.all(pending)
   }, [])
   const {
     messages,
@@ -858,7 +857,6 @@ export const ChatView = memo(function ChatView() {
     markTerminalRunHistory: markTerminalRunHistoryState,
     clearCompletedTitleTail: clearCompletedTitleTailState,
     sse,
-    sseRunId,
     isStreaming,
     processedEventCountRef,
     freezeCutoffRef,
@@ -925,6 +923,7 @@ export const ChatView = memo(function ChatView() {
   const locationState = location.state as LocationState
   const navigate = useNavigate()
   const { t } = useLocale()
+  const agentClient = useAgentClient()
   const welcomeUserMessage = locationState?.welcomeUserMessage
   const shouldSkipInitialSkeleton = !!(
     welcomeUserMessage &&
@@ -969,7 +968,7 @@ export const ChatView = memo(function ChatView() {
   const lastPanelQueryRef = useRef<string | undefined>(undefined)
 
   // --- Work todo 进度 ---
-  const { showRunEvents, showDebugPanel, runDetailPanelRunId, setRunDetailPanelRunId } = useDevTools()
+  const { showRunDetailButton, showDebugPanel, runDetailPanelRunId, setRunDetailPanelRunId } = useDevTools()
 
   const markTerminalRunHistory = useCallback((messageId: string | null, expanded = true) => {
     markTerminalRunHistoryState(messageId, expanded)
@@ -1108,11 +1107,11 @@ export const ChatView = memo(function ChatView() {
       getThreadTodos(threadId).then((cached) => {
         if (cached.length > 0 && !disposed) setWorkTodos(cached)
       })
-      let loadedItems: MessageResponse[] | null = null
+      let loadedItems: AgentMessage[] | null = null
       try {
         const [thread, initialItems, runs] = await Promise.all([
           getThread(accessToken, threadId),
-          listMessages(accessToken, threadId),
+          agentClient.listMessages(threadId),
           listThreadRuns(accessToken, threadId, 1),
         ])
         if (disposed || !isMessageSyncCurrent(syncVersion)) return
@@ -1121,7 +1120,7 @@ export const ChatView = memo(function ChatView() {
         const latest = runs[0]
         let items = initialItems
         if (shouldRefetchCompletedRunMessages({ messages: initialItems, latestRun: latest })) {
-          const refreshedItems = await listMessages(accessToken, threadId)
+          const refreshedItems = await agentClient.listMessages(threadId)
           items = findAssistantMessageForRun(refreshedItems, latest.run_id) != null
             ? refreshedItems
             : initialItems
@@ -1151,7 +1150,7 @@ export const ChatView = memo(function ChatView() {
         const terminalStatusMap = new Map<string, MessageTerminalStatusRef>()
         const failedErrorMap = new Map<string, AppError>()
 
-        const runEventsMap = new Map<string, MsgRunEvent[]>()
+        const agentEventsMap = new Map<string, MessageAgentEvent[]>()
         const assistantTurnMap = new Map<string, AssistantTurnUi>()
         const metaEntries = new Map<string, Partial<MessageMeta>>()
         for (const msg of items) {
@@ -1188,20 +1187,20 @@ export const ChatView = memo(function ChatView() {
             metaEntries.set(msg.id, { coveredRunIds: cachedCoveredRunIds })
           }
 
-          const cachedRunEvents = readMsgRunEvents(msg.id)
+          const cachedAgentEvents = readMessageAgentEvents(msg.id)
           let hydratedAssistantTurn: AssistantTurnUi | null = null
-          if (cachedRunEvents) {
-            runEventsMap.set(msg.id, cachedRunEvents)
-            if (latest?.status === 'interrupted' && latest.run_id && msg.run_id === latest.run_id) {
-              interruptedError = interruptedErrorFromRunEvents(cachedRunEvents, t.runInterrupted)
+          if (cachedAgentEvents) {
+            agentEventsMap.set(msg.id, cachedAgentEvents)
+            if (latest?.status === 'interrupted' && latest.run_id && msg.streamId === latest.run_id) {
+              interruptedError = interruptedErrorFromAgentEvents(cachedAgentEvents, t.runInterrupted)
             }
-            if (latest?.status === 'failed' && latest.run_id && msg.run_id === latest.run_id) {
-              failedError = failedErrorFromRunEvents(cachedRunEvents, t.failedRunTitle)
+            if (latest?.status === 'failed' && latest.run_id && msg.streamId === latest.run_id) {
+              failedError = failedErrorFromAgentEvents(cachedAgentEvents, t.failedRunTitle)
               if (failedError) {
                 failedErrorMap.set(msg.id, failedError)
               }
             }
-            const rebuiltTurn = buildAssistantTurnFromRunEvents(cachedRunEvents)
+            const rebuiltTurn = buildAssistantTurnFromAgentEvents(cachedAgentEvents)
             if (rebuiltTurn.segments.length > 0) {
               hydratedAssistantTurn = rebuiltTurn
               writeMessageAssistantTurn(msg.id, rebuiltTurn)
@@ -1252,24 +1251,26 @@ export const ChatView = memo(function ChatView() {
         let replayThreadHandoff: ReturnType<typeof readThreadRunHandoff> = null
         if (shouldReplayLatestRun && latest) {
           try {
-            const replayEvents = await listRunEvents(accessToken, latest.run_id, { follow: false })
-            const replayArtifacts = buildMessageArtifactsFromRunEvents(replayEvents)
-            const replayWidgets = buildMessageWidgetsFromRunEvents(replayEvents)
-            const replayExecs = buildMessageCodeExecutionsFromRunEvents(replayEvents)
-            const replayBrowserActions = buildMessageBrowserActionsFromRunEvents(replayEvents)
-            const replayAgents = buildMessageSubAgentsFromRunEvents(replayEvents)
-            const replayFileOps = buildMessageFileOpsFromRunEvents(replayEvents)
-            const replayWebFetches = buildMessageWebFetchesFromRunEvents(replayEvents)
-            const replaySearchSteps = finalizeSearchSteps(
-              replayEvents.reduce<WebSearchPhaseStep[]>((acc, event) => applyRunEventToWebSearchSteps(acc, event), []),
+            const replayEvents = await readAgentUIEvents(
+              agentClient.openMessageChunkStream(latest.run_id, { live: false }),
             )
-            const replayThinking = buildMessageThinkingFromRunEvents(replayEvents)
-            let replayTurn = buildAssistantTurnFromRunEvents(replayEvents)
+            const replayArtifacts = buildMessageArtifactsFromAgentEvents(replayEvents)
+            const replayWidgets = buildMessageWidgetsFromAgentEvents(replayEvents)
+            const replayExecs = buildMessageCodeExecutionsFromAgentEvents(replayEvents)
+            const replayBrowserActions = buildMessageBrowserActionsFromAgentEvents(replayEvents)
+            const replayAgents = buildMessageSubAgentsFromAgentEvents(replayEvents)
+            const replayFileOps = buildMessageFileOpsFromAgentEvents(replayEvents)
+            const replayWebFetches = buildMessageWebFetchesFromAgentEvents(replayEvents)
+            const replaySearchSteps = finalizeSearchSteps(
+              replayEvents.reduce<WebSearchPhaseStep[]>((acc, event) => applyAgentEventToWebSearchSteps(acc, event), []),
+            )
+            const replayThinking = buildMessageThinkingFromAgentEvents(replayEvents)
+            let replayTurn = buildAssistantTurnFromAgentEvents(replayEvents)
             if (latest.status === 'interrupted') {
-              interruptedError = interruptedErrorFromRunEvents(replayEvents, t.runInterrupted)
+              interruptedError = interruptedErrorFromAgentEvents(replayEvents, t.runInterrupted)
             }
             if (latest.status === 'failed') {
-              failedError = failedErrorFromRunEvents(replayEvents, t.failedRunTitle)
+              failedError = failedErrorFromAgentEvents(replayEvents, t.failedRunTitle)
               if (failedError && lastAssistant) {
                 failedErrorMap.set(lastAssistant.id, failedError)
               }
@@ -1328,11 +1329,11 @@ export const ChatView = memo(function ChatView() {
               }
             }
             if (lastAssistant) {
-              runEventsMap.set(lastAssistant.id, replayEvents)
-              writeMsgRunEvents(lastAssistant.id, replayEvents)
+              agentEventsMap.set(lastAssistant.id, replayEvents)
+              writeMessageAgentEvents(lastAssistant.id, replayEvents)
             }
             if (lastAssistant && replayAssistantTurnNeeded) {
-              replayTurn = buildAssistantTurnFromRunEvents(replayEvents)
+              replayTurn = buildAssistantTurnFromAgentEvents(replayEvents)
               if (replayTurn.segments.length > 0) {
                 assistantTurnMap.set(lastAssistant.id, replayTurn)
                 writeMessageAssistantTurn(lastAssistant.id, replayTurn)
@@ -1368,7 +1369,7 @@ export const ChatView = memo(function ChatView() {
                 searchSteps: replaySearchSteps,
               }
             }
-            const replayedTodos = buildTodosFromRunEvents(replayEvents)
+            const replayedTodos = buildTodosFromAgentEvents(replayEvents)
             if (replayedTodos.length > 0) {
               setWorkTodos(replayedTodos)
               setThreadTodos(threadId, replayedTodos).catch(() => {})
@@ -1401,7 +1402,7 @@ export const ChatView = memo(function ChatView() {
         thinkingMap.forEach((thinking, id) => mergeMeta(id, { thinking }))
         searchStepsMap.forEach((searchSteps, id) => mergeMeta(id, { searchSteps }))
         assistantTurnMap.forEach((assistantTurn, id) => mergeMeta(id, { assistantTurn }))
-        runEventsMap.forEach((runEvents, id) => mergeMeta(id, { runEvents }))
+        agentEventsMap.forEach((agentEvents, id) => mergeMeta(id, { agentEvents }))
         failedErrorMap.forEach((failedError, id) => mergeMeta(id, { failedError }))
         const metaBatch = Array.from(metaEntries.entries())
         primeMetaBatch(metaBatch)
@@ -1585,7 +1586,7 @@ export const ChatView = memo(function ChatView() {
       disposed = true
     }
   // 只在 threadId 变化时重新加载，避免依赖 locationState 导致重复触发
-  }, [accessToken, threadId, setMetaBatch, onThreadUpserted])
+  }, [accessToken, agentClient, threadId, setMetaBatch, onThreadUpserted])
 
   // 切换 thread 时清理 SSE 和排队消息，并重置 pendingIncognito
   useEffect(() => {
@@ -1629,7 +1630,7 @@ export const ChatView = memo(function ChatView() {
     setPendingIncognito(false)
   }, [threadId, clearCompletedTitleTail, resetAssistantTurnLive])
 
-  // 连接 SSE
+  // 新 run 启动时重置 ChatView 局部渲染状态；stream 连接由 RunLifecycleProvider 统一持有。
   useEffect(() => {
     if (!activeRunId) return
     clearCompletedTitleTail()
@@ -1638,8 +1639,6 @@ export const ChatView = memo(function ChatView() {
     sseTerminalFallbackRunIdRef.current = activeRunId
     sseTerminalFallbackArmedRef.current = false
     seenFirstToolCallInRunRef.current = false
-    sse.reset()
-    sse.connect()
     processedEventCountRef.current = 0
     lastVisibleNonTerminalSeqRef.current = 0
     const shouldCarryRunningHandoff =
@@ -1669,13 +1668,7 @@ export const ChatView = memo(function ChatView() {
       setStreamingArtifacts([])
     }
     setCancelSubmitting(false)
-  }, [activeRunId, baseUrl, clearCompletedTitleTail, resetAssistantTurnLive, threadId])
-
-  useEffect(() => {
-    if (!sseRunId) return
-    sse.connect()
-    return () => { sse.disconnect() }
-  }, [sseRunId, baseUrl])
+  }, [activeRunId, clearCompletedTitleTail, resetAssistantTurnLive, threadId])
 
   useEffect(() => {
     if (!activeRunId) {
@@ -1714,20 +1707,6 @@ export const ChatView = memo(function ChatView() {
       sseTerminalFallbackArmedRef.current = true
     }
   }, [activeRunId, sse.state])
-
-  // 页面从后台回到前台时，若 SSE 已断开则重连
-  useEffect(() => {
-    const onVisibilityChange = () => {
-      if (document.visibilityState !== 'visible') return
-      if (!sseRunId) return
-      const s = sse.state
-      if (s === 'closed' || s === 'error' || s === 'idle') {
-        sse.reconnect()
-      }
-    }
-    document.addEventListener('visibilitychange', onVisibilityChange)
-    return () => document.removeEventListener('visibilitychange', onVisibilityChange)
-  }, [sseRunId, sse.state, sse.reconnect])
 
   const chatInputRef = useRef<ChatInputHandle>(null)
   const attachmentsRef = useRef(attachments)
@@ -1822,23 +1801,25 @@ export const ChatView = memo(function ChatView() {
     injectionBlockedRunIdRef.current = null
 
     try {
-      const message = await createMessage(accessToken, threadId, buildMessageRequest(prompt.text, prompt.attachments))
+      const message = await agentClient.createMessage({
+        threadId,
+        request: buildMessageRequest(prompt.text, prompt.attachments),
+      })
       invalidateMessageSync()
       setUserEnterMessageId(message.id)
       setMessages((prev) => (prev.some((item) => item.id === message.id) ? prev : [...prev, message]))
-      const run = await createRun(
-        accessToken,
+      const run = await agentClient.createRun({
         threadId,
-        prompt.personaKey,
-        prompt.modelOverride,
-        prompt.workDir,
-        prompt.reasoningMode,
-        { resumeFromRunId: options?.resumeFromRunId },
-      )
-      writeRunThinkingHint(run.run_id, hint)
+        personaId: prompt.personaKey,
+        modelOverride: prompt.modelOverride,
+        workDir: prompt.workDir,
+        reasoningMode: prompt.reasoningMode,
+        options: { resumeFromRunId: options?.resumeFromRunId },
+      })
+      writeRunThinkingHint(run.id, hint)
       if (prompt.personaKey === SEARCH_PERSONA_KEY) addSearchThreadId(threadId)
       resetSearchSteps()
-      setActiveRunId(run.run_id)
+      setActiveRunId(run.id)
       onRunStarted(threadId)
       activateAnchor()
     } catch (err) {
@@ -1852,8 +1833,8 @@ export const ChatView = memo(function ChatView() {
       setSending(false)
     }
   }, [
-    accessToken,
     activateAnchor,
+    agentClient,
     injectionBlockedRunIdRef,
     invalidateMessageSync,
     onLoggedOut,
@@ -1959,7 +1940,7 @@ export const ChatView = memo(function ChatView() {
     setInjectionBlocked(null)
 
     try {
-      await cancelRun(accessToken, activeRunId, cancelBoundary)
+      await agentClient.cancelRun(activeRunId, cancelBoundary)
     } catch (err) {
       forcedQueuedPromptRef.current = null
       freezeCutoffRef.current = null
@@ -1971,8 +1952,8 @@ export const ChatView = memo(function ChatView() {
       setError(normalizeError(err))
     }
   }, [
-    accessToken,
     activeRunId,
+    agentClient,
     cancelSubmitting,
     freezeCutoffRef,
     lastVisibleNonTerminalSeqRef,
@@ -2064,15 +2045,24 @@ export const ChatView = memo(function ChatView() {
       }
 
       if (pendingIncognito && messages.length > 0) {
-        await waitForPlanModeUpdate()
+        await waitForThreadModeUpdates()
         const lastMessageId = messages[messages.length - 1].id
         const forked = await forkThread(accessToken, threadId, lastMessageId, true)
         if (forked.id_mapping) migrateMessageMetadata(forked.id_mapping)
         onThreadCreated(forked)
         const uploaded = await uploadAttachments()
-        const forkUserMessage = await createMessage(accessToken, forked.id, buildMessageRequest(text, uploaded))
-        const run = await createRun(accessToken, forked.id, personaKey, modelOverride, resolveThreadWorkFolder(threadId), readThreadReasoningMode(threadId) !== 'off' ? readThreadReasoningMode(threadId) as RunReasoningMode : undefined)
-        writeRunThinkingHint(run.run_id, hint)
+        const forkUserMessage = await agentClient.createMessage({
+          threadId: forked.id,
+          request: buildMessageRequest(text, uploaded),
+        })
+        const run = await agentClient.createRun({
+          threadId: forked.id,
+          personaId: personaKey,
+          modelOverride,
+          workDir: resolveThreadWorkFolder(threadId),
+          reasoningMode: readThreadReasoningMode(threadId) !== 'off' ? readThreadReasoningMode(threadId) as RunReasoningMode : undefined,
+        })
+        writeRunThinkingHint(run.id, hint)
         if (personaKey === SEARCH_PERSONA_KEY) addSearchThreadId(forked.id)
         attachments.forEach((attachment) => revokeDraftAttachment(attachment))
         chatInputRef.current?.clear()
@@ -2080,7 +2070,7 @@ export const ChatView = memo(function ChatView() {
         navigate(`/t/${forked.id}`, {
           state: {
             isIncognitoFork: true,
-            initialRunId: run.run_id,
+            initialRunId: run.id,
             forkBaseCount: messages.length,
             userEnterMessageId: forkUserMessage.id,
           },
@@ -2091,7 +2081,10 @@ export const ChatView = memo(function ChatView() {
       }
 
       const uploaded = await uploadAttachments()
-      const message = await createMessage(accessToken, threadId, buildMessageRequest(text, uploaded))
+      const message = await agentClient.createMessage({
+        threadId,
+        request: buildMessageRequest(text, uploaded),
+      })
       invalidateMessageSync()
       const syncedMessages = terminalRunIdToSync
         ? await readConsistentMessages(terminalRunIdToSync)
@@ -2101,7 +2094,7 @@ export const ChatView = memo(function ChatView() {
         const base = syncedMessages && syncedMessages.length > 0 ? syncedMessages : prev
         return base.some((item) => item.id === message.id) ? base : [...base, message]
       })
-      if (terminalRunIdToSync && syncedMessages?.some((item) => item.role === 'assistant' && item.run_id === terminalRunIdToSync)) {
+      if (terminalRunIdToSync && syncedMessages?.some((item) => item.role === 'assistant' && item.streamId === terminalRunIdToSync)) {
         clearThreadRunHandoff(threadId)
       }
       if (shouldPinNewPrompt) {
@@ -2115,12 +2108,18 @@ export const ChatView = memo(function ChatView() {
       injectionBlockedRunIdRef.current = null
       noResponseMsgIdRef.current = message.id
 
-      await waitForPlanModeUpdate()
-      const run = await createRun(accessToken, threadId, personaKey, modelOverride, resolveThreadWorkFolder(threadId), readThreadReasoningMode(threadId) !== 'off' ? readThreadReasoningMode(threadId) as RunReasoningMode : undefined)
-      writeRunThinkingHint(run.run_id, hint)
+      await waitForThreadModeUpdates()
+      const run = await agentClient.createRun({
+        threadId,
+        personaId: personaKey,
+        modelOverride,
+        workDir: resolveThreadWorkFolder(threadId),
+        reasoningMode: readThreadReasoningMode(threadId) !== 'off' ? readThreadReasoningMode(threadId) as RunReasoningMode : undefined,
+      })
+      writeRunThinkingHint(run.id, hint)
       if (personaKey === SEARCH_PERSONA_KEY) addSearchThreadId(threadId)
       resetSearchSteps()
-      setActiveRunId(run.run_id)
+      setActiveRunId(run.id)
       onRunStarted(threadId)
     } catch (err) {
       setPendingThinking(false)
@@ -2134,6 +2133,7 @@ export const ChatView = memo(function ChatView() {
     }
   }, [
     accessToken,
+    agentClient,
     appendQueuedPrompt,
     editingQueuedPromptId,
     invalidateMessageSync,
@@ -2163,7 +2163,7 @@ export const ChatView = memo(function ChatView() {
     setUserEnterMessageId,
     t.copThinkingHints,
     threadId,
-    waitForPlanModeUpdate,
+    waitForThreadModeUpdates,
     queueReadyAttachments,
     resolveThreadWorkFolder,
     resolveReasoningMode,
@@ -2460,6 +2460,29 @@ export const ChatView = memo(function ChatView() {
     await updatePromise
   }, [accessToken, isWorkMode, onThreadUpserted, setError, threadId])
 
+  const handleToggleLearningMode = useCallback(async (currentMode: boolean) => {
+    if (!threadId || learningModeUpdateRef.current) return
+    const requestSeq = ++learningModeRequestSeqRef.current
+    setLearningModeUpdating(true)
+    const updatePromise: Promise<void> = updateThreadLearningMode(accessToken, threadId, !currentMode).then((thread) => {
+      if (learningModeRequestSeqRef.current === requestSeq) {
+        onThreadUpserted(thread)
+      }
+    }).catch((err) => {
+      if (learningModeRequestSeqRef.current === requestSeq) {
+        setError(normalizeError(err))
+        throw err
+      }
+    }).finally(() => {
+      if (learningModeUpdateRef.current === updatePromise) {
+        learningModeUpdateRef.current = null
+        setLearningModeUpdating(false)
+      }
+    })
+    learningModeUpdateRef.current = updatePromise
+    await updatePromise
+  }, [accessToken, onThreadUpserted, setError, threadId])
+
   const hasMessages = messages.length > 0
   const inputHorizontalPadding = isWorkMode
     ? (isPanelOpen ? chatContentPadding.panelOpen : chatContentPadding.panelClosed)
@@ -2494,8 +2517,11 @@ export const ChatView = memo(function ChatView() {
       draftOwnerKey={me?.id}
       planMode={currentThread?.collaboration_mode === 'plan'}
       onTogglePlanMode={handleTogglePlanMode}
+      learningModeEnabled={!!currentThread?.learning_mode_enabled}
+      learningModeUpdating={learningModeUpdating}
+      onToggleLearningMode={handleToggleLearningMode}
     />
-  ), [attachments, sending, isStreaming, canCancel, cancelSubmitting, effectiveAppMode, isSearchThread, hasMessages, messagesLoading, threadId, accessToken, me?.id, t.followUpPlaceholder, t.replyPlaceholder, handleSend, handleCancel, handleAttachFiles, handlePasteContent, handleRemoveAttachment, handleAsrError, handlePersonaChange, onOpenSettings, editingQueuedPromptId, cancelQueuedPromptEdit, currentThread?.collaboration_mode, handleTogglePlanMode])
+  ), [attachments, sending, isStreaming, canCancel, cancelSubmitting, effectiveAppMode, isSearchThread, hasMessages, messagesLoading, threadId, accessToken, me?.id, t.followUpPlaceholder, t.replyPlaceholder, handleSend, handleCancel, handleAttachFiles, handlePasteContent, handleRemoveAttachment, handleAsrError, handlePersonaChange, onOpenSettings, editingQueuedPromptId, cancelQueuedPromptEdit, currentThread?.collaboration_mode, currentThread?.learning_mode_enabled, learningModeUpdating, handleTogglePlanMode, handleToggleLearningMode])
 
   const renderLiveCopItems = (
     seg: Extract<AssistantTurnSegment, { type: 'cop' }>,
@@ -2686,7 +2712,7 @@ export const ChatView = memo(function ChatView() {
                     }}
                     terminalRunHandoffStatus={terminalRunHandoffStatus}
                     terminalRunDisplayId={terminalRunDisplayId}
-                    showRunEvents={showRunEvents}
+                    showRunDetailButton={showRunDetailButton}
                     setRunDetailPanelRunId={setRunDetailPanelRunId}
                     onOpenDocument={openDocumentPanel}
                     onOpenCodeExecution={openCodePanel}
@@ -2697,7 +2723,7 @@ export const ChatView = memo(function ChatView() {
                     bottomRef={bottomRef}
                   />
                 }
-                showRunEvents={showRunEvents}
+                showRunDetailButton={showRunDetailButton}
                 currentRunCopHeaderOverride={currentRunCopHeaderOverride}
                 handleRetryUserMessage={handleRetryUserMessage}
                 handleEditMessage={handleEditMessage}

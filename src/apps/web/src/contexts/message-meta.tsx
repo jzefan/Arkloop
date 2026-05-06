@@ -15,7 +15,7 @@ import type {
   MessageSearchStepRef,
   MessageTerminalStatusRef,
   MessageThinkingRef,
-  MsgRunEvent,
+  MessageAgentEvent,
   SubAgentRef,
   WebFetchRef,
   WebSource,
@@ -34,7 +34,7 @@ import {
   readMessageThinking,
   readMessageWebFetches,
   readMessageWidgets,
-  readMsgRunEvents,
+  readMessageAgentEvents,
   writeMessageArtifacts,
   writeMessageAssistantTurn,
   writeMessageBrowserActions,
@@ -48,7 +48,7 @@ import {
   writeMessageThinking,
   writeMessageWebFetches,
   writeMessageWidgets,
-  writeMsgRunEvents,
+  writeMessageAgentEvents,
   writeThreadRunHandoff,
 } from '../storage'
 import type { AssistantTurnUi } from '../assistantTurnSegments'
@@ -66,7 +66,7 @@ export type MessageMeta = {
   searchSteps?: MessageSearchStepRef[]
   assistantTurn?: AssistantTurnUi
   widgets?: WidgetRef[]
-  runEvents?: MsgRunEvent[]
+  agentEvents?: MessageAgentEvent[]
   failedError?: AppError
   coveredRunIds?: string[]
 }
@@ -108,7 +108,7 @@ interface MessageMetaContextValue {
       terminalStatus?: MessageTerminalStatusRef | null
       coveredRunIds?: string[]
     },
-    runEvents: MsgRunEvent[],
+    agentEvents: MessageAgentEvent[],
     options?: {
       persistAssistantTurn?: boolean
       cacheAssistantTurn?: boolean
@@ -201,7 +201,7 @@ export function MessageMetaProvider({ children }: { children: ReactNode }) {
     if (meta.searchSteps && meta.searchSteps.length > 0) writeMessageSearchSteps(msgId, meta.searchSteps)
     if (meta.assistantTurn) writeMessageAssistantTurn(msgId, meta.assistantTurn)
     if (meta.widgets && meta.widgets.length > 0) writeMessageWidgets(msgId, meta.widgets)
-    if (meta.runEvents && meta.runEvents.length > 0) writeMsgRunEvents(msgId, meta.runEvents)
+    if (meta.agentEvents && meta.agentEvents.length > 0) writeMessageAgentEvents(msgId, meta.agentEvents)
     if (meta.coveredRunIds && meta.coveredRunIds.length > 0) writeMessageCoveredRunIds(msgId, meta.coveredRunIds)
   }, [])
 
@@ -232,8 +232,8 @@ export function MessageMetaProvider({ children }: { children: ReactNode }) {
       if (assistantTurn) meta.assistantTurn = assistantTurn
       const widgets = readMessageWidgets(id)
       if (widgets) meta.widgets = widgets
-      const runEvents = readMsgRunEvents(id)
-      if (runEvents) meta.runEvents = runEvents
+      const agentEvents = readMessageAgentEvents(id)
+      if (agentEvents) meta.agentEvents = agentEvents
       const coveredRunIds = readMessageCoveredRunIds(id)
       if (coveredRunIds) meta.coveredRunIds = coveredRunIds
       if (Object.keys(meta).length > 0) entries.push([id, meta])
@@ -280,7 +280,7 @@ export function MessageMetaProvider({ children }: { children: ReactNode }) {
         terminalStatus?: MessageTerminalStatusRef | null
         coveredRunIds?: string[]
       },
-      runEvents: MsgRunEvent[],
+      agentEvents: MessageAgentEvent[],
       options?: {
         persistAssistantTurn?: boolean
         cacheAssistantTurn?: boolean
@@ -339,9 +339,9 @@ export function MessageMetaProvider({ children }: { children: ReactNode }) {
         writeMessageWebFetches(messageId, runData.runWebFetches)
         meta.webFetches = runData.runWebFetches
       }
-      if (runEvents.length > 0) {
-        writeMsgRunEvents(messageId, runEvents)
-        meta.runEvents = runEvents
+      if (agentEvents.length > 0) {
+        writeMessageAgentEvents(messageId, agentEvents)
+        meta.agentEvents = agentEvents
       }
 
       if (Object.keys(meta).length > 0) {

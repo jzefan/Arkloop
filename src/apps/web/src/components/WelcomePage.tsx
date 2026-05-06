@@ -8,7 +8,8 @@ import { NotificationBell } from './NotificationBell'
 import { isDesktop } from '@arkloop/shared/desktop'
 import { DebugTrigger, useTimeZone } from '@arkloop/shared'
 import { buildDraftAttachmentRecords, restoreAttachmentFromDraftRecord } from '../draftAttachments'
-import { createThread, createMessage, createRun, uploadStagingAttachment, isApiError, type RunReasoningMode } from '../api'
+import { createThread, uploadStagingAttachment, isApiError, type RunReasoningMode } from '../api'
+import { useAgentClient } from '../agent-ui'
 import {
   type InputDraftScope,
   writeActiveThreadIdToStorage,
@@ -147,6 +148,7 @@ function buildGreeting(strings: WelcomeGreetingTexts, name: string | null, now: 
 
 export function WelcomePage() {
   const { accessToken, logout: onLoggedOut, me } = useAuth()
+  const agentClient = useAgentClient()
   const { timeZone } = useTimeZone()
   const { addThread: onThreadCreated, isPrivateMode, togglePrivateMode: onTogglePrivateMode } = useThreadList()
   const { isSearchMode, enterSearchMode: onEnterSearchMode, exitSearchMode: onExitSearchMode } = useSearchUI()
@@ -159,6 +161,7 @@ export function WelcomePage() {
   const chatInputRef = useRef<ChatInputHandle>(null)
   const [attachments, setAttachments] = useState<Attachment[]>([])
   const [initialPlanMode, setInitialPlanMode] = useState(false)
+  const [initialLearningModeEnabled, setInitialLearningModeEnabled] = useState(false)
   const attachmentsRef = useRef<Attachment[]>([])
   const skipAttachmentDraftPersistRef = useRef(false)
   const prevAttachmentDraftScopeRef = useRef<InputDraftScope | null>(null)
@@ -346,6 +349,10 @@ export function WelcomePage() {
     setInitialPlanMode((prev) => !prev)
   }, [appMode])
 
+  const handleToggleLearningMode = useCallback(async (_currentMode: boolean) => {
+    setInitialLearningModeEnabled((prev) => !prev)
+  }, [])
+
   const handleSubmit = async (e: FormEvent<HTMLFormElement>, personaKey: string, modelOverride?: string) => {
     e.preventDefault()
     const text = (chatInputRef.current?.getValue() ?? '').trim()
@@ -361,6 +368,7 @@ export function WelcomePage() {
         is_private: isPrivateMode,
         mode: appMode === 'work' ? 'work' : 'chat',
         collaboration_mode: appMode === 'work' && initialPlanMode ? 'plan' : 'default',
+        learning_mode_enabled: initialLearningModeEnabled,
       })
       const uploaded = await Promise.all(
         attachments.map(async (attachment) => {
@@ -369,15 +377,17 @@ export function WelcomePage() {
           return await uploadStagingAttachment(accessToken, attachment.file)
         }),
       )
-      const userMessage = await createMessage(accessToken, thread.id, buildMessageRequest(text, uploaded))
-      const run = await createRun(
-        accessToken,
-        thread.id,
-        personaKey,
+      const userMessage = await agentClient.createMessage({
+        threadId: thread.id,
+        request: buildMessageRequest(text, uploaded),
+      })
+      const run = await agentClient.createRun({
+        threadId: thread.id,
+        personaId: personaKey,
         modelOverride,
-        readWorkFolder() ?? undefined,
-        readSelectedReasoningMode() !== 'off' ? readSelectedReasoningMode() as RunReasoningMode : undefined,
-      )
+        workDir: readWorkFolder() ?? undefined,
+        reasoningMode: readSelectedReasoningMode() !== 'off' ? readSelectedReasoningMode() as RunReasoningMode : undefined,
+      })
 
       if (personaKey === SEARCH_PERSONA_KEY) addSearchThreadId(thread.id)
       attachments.forEach((attachment) => revokeDraftAttachment(attachment))
@@ -390,7 +400,7 @@ export function WelcomePage() {
       onThreadCreated(thread)
       navigate(`/t/${thread.id}`, {
         state: {
-          initialRunId: run.run_id,
+          initialRunId: run.id,
           isSearch: personaKey === SEARCH_PERSONA_KEY,
           userEnterMessageId: userMessage.id,
           welcomeUserMessage: userMessage,
@@ -510,6 +520,8 @@ export function WelcomePage() {
             draftOwnerKey={me?.id}
             planMode={appMode === 'work' && initialPlanMode}
             onTogglePlanMode={handleTogglePlanMode}
+            learningModeEnabled={initialLearningModeEnabled}
+            onToggleLearningMode={handleToggleLearningMode}
           />
           {/* incognito note: 平滑展开/收起 */}
           <div

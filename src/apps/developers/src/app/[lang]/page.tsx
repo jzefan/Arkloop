@@ -7,7 +7,7 @@ import styles from './landing.module.css';
 type Lang = 'zh' | 'en';
 
 const SHOWCASE_MP4_SRC =
-  'https://raw.githubusercontent.com/qqqqqf-q/Arkloop/main/src/apps/developers/public/showcase.mp4';
+  'https://github.com/qqqqqf-q/Arkloop/releases/download/media-assets/showcase.mp4';
 
 const CONTENT: Record<Lang, {
   heroTitle: string[];

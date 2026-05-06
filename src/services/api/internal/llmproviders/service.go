@@ -18,6 +18,9 @@ var ErrNotConfigured = errors.New("llm providers service not configured")
 type Provider struct {
 	Credential data.LlmCredential
 	Models     []data.LlmRoute
+	Source     string
+	ReadOnly   bool
+	AuthMode   string
 }
 
 type ProviderModelTestConfig struct {

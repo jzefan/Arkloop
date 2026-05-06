@@ -72,7 +72,7 @@ type Props = {
   accessToken?: string
   onAsrError?: (error: unknown) => void
   onPersonaChange?: (personaKey: string) => void
-  onOpenSettings?: (tab: SettingsTab) => void
+  onOpenSettings?: (tab: SettingsTab | 'voice') => void
   appMode?: AppMode
   hasMessages?: boolean
   messagesLoading?: boolean
@@ -82,6 +82,9 @@ type Props = {
   draftOwnerKey?: string | null
   planMode?: boolean
   onTogglePlanMode?: (currentMode: boolean) => Promise<void>
+  learningModeEnabled?: boolean
+  learningModeUpdating?: boolean
+  onToggleLearningMode?: (currentMode: boolean) => Promise<void>
 }
 
 type TextareaSelection = {
@@ -182,6 +185,9 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
   queuedEditLabel,
   onCancelQueuedEdit,
   draftOwnerKey,
+  learningModeEnabled = false,
+  learningModeUpdating = false,
+  onToggleLearningMode,
 }, ref) {
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -217,7 +223,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
   const onChangeRef = useLatest(setDraft)
   const accessTokenRef = useLatest(accessToken)
   const onAsrErrorRef = useLatest(onAsrError)
-  const onVoiceNotConfiguredRef = useLatest<(() => void) | undefined>(() => onOpenSettings?.('voice' as never))
+  const onVoiceNotConfiguredRef = useLatest<(() => void) | undefined>(() => onOpenSettings?.('voice'))
 
   const { t } = useLocale()
 
@@ -977,6 +983,9 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
             hideWorkFolderPicker={isWorkCompactInput}
             hideModelPicker={isWorkCompactInput}
             onMenuOpenChange={handleMenuOpenChange}
+            learningModeEnabled={learningModeEnabled}
+            learningModeUpdating={learningModeUpdating}
+            onToggleLearningMode={onToggleLearningMode}
           />
 
           {isEditingQueuedPrompt && (

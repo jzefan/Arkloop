@@ -67,11 +67,11 @@ function pickToolCallId(event: AssistantTurnEvent): string {
   return typeof raw === 'string' && raw.trim() !== '' ? raw : event.event_id
 }
 
-function sortRunEvents(events: readonly AssistantTurnEvent[]): AssistantTurnEvent[] {
+function sortAssistantTurnEvents(events: readonly AssistantTurnEvent[]): AssistantTurnEvent[] {
   return [...events].sort((left, right) => left.seq - right.seq || left.ts.localeCompare(right.ts))
 }
 
-function runEventTimeMs(event: AssistantTurnEvent): number {
+function assistantTurnEventTimeMs(event: AssistantTurnEvent): number {
   const t = Date.parse(event.ts)
   return Number.isFinite(t) ? t : Date.now()
 }
@@ -252,7 +252,7 @@ export function snapshotAssistantTurn(state: AssistantTurnFoldState): AssistantT
 export function foldAssistantTurnEvent(state: AssistantTurnFoldState, event: AssistantTurnEvent): void {
   const { segments } = state
   let { currentCop } = state
-  const eventTs = runEventTimeMs(event)
+  const eventTs = assistantTurnEventTimeMs(event)
 
   const flushCop = (endMs: number) => {
     if (currentCop == null) return
@@ -482,15 +482,15 @@ export function finalizeAssistantTurnFoldState(state: AssistantTurnFoldState, en
   state.currentCop = null
 }
 
-export function buildAssistantTurnFromRunEvents(events: readonly AssistantTurnEvent[]): AssistantTurnUi {
+export function buildAssistantTurnFromEvents(events: readonly AssistantTurnEvent[]): AssistantTurnUi {
   const state = createEmptyAssistantTurnFoldState()
-  const orderedEvents = sortRunEvents(events)
+  const orderedEvents = sortAssistantTurnEvents(events)
   for (const event of orderedEvents) {
     foldAssistantTurnEvent(state, event)
   }
   const finalEndMs =
     orderedEvents.length > 0
-      ? runEventTimeMs(orderedEvents[orderedEvents.length - 1]!)
+      ? assistantTurnEventTimeMs(orderedEvents[orderedEvents.length - 1]!)
       : undefined
   finalizeAssistantTurnFoldState(state, finalEndMs)
   return { segments: state.segments.map(cloneSegment) }

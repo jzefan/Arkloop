@@ -295,15 +295,15 @@ button:not(:disabled) {
     --c-bg-tag: #E5E5E3;
     --c-bg-card: #FFFFFF;
     --c-border-console: #DEDEDE;
-    --c-status-ok-bg: #f0fdf4;
-    --c-status-ok-text: #15803d;
+    --c-status-ok-bg: #E7EDDD;
+    --c-status-ok-text: #335C00;
     --c-status-error-text: #dc2626;
     --c-status-warning-text: #d97706;
     --c-status-success-text: #16a34a;
-    --c-status-danger-bg: rgba(220, 38, 38, 0.08);
-    --c-status-danger-text: #dc2626;
-    --c-status-warn-bg: #fff7ed;
-    --c-status-warn-text: #c2410c;
+    --c-status-danger-bg: #F1DEDB;
+    --c-status-danger-text: #8A3327;
+    --c-status-warn-bg: #F0E7D5;
+    --c-status-warn-text: #70510D;
   }
 
   :root[data-body-font="default"]:not([data-theme="dark"]) {
@@ -420,15 +420,15 @@ button:not(:disabled) {
   --c-bg-tag: #E5E5E3;
   --c-bg-card: #FFFFFF;
   --c-border-console: #DEDEDE;
-  --c-status-ok-bg: #f0fdf4;
-  --c-status-ok-text: #15803d;
+  --c-status-ok-bg: #E7EDDD;
+  --c-status-ok-text: #335C00;
   --c-status-error-text: #dc2626;
   --c-status-warning-text: #d97706;
   --c-status-success-text: #16a34a;
-  --c-status-danger-bg: rgba(220, 38, 38, 0.08);
-  --c-status-danger-text: #dc2626;
-  --c-status-warn-bg: #fff7ed;
-  --c-status-warn-text: #c2410c;
+  --c-status-danger-bg: #F1DEDB;
+  --c-status-danger-text: #8A3327;
+  --c-status-warn-bg: #F0E7D5;
+  --c-status-warn-text: #70510D;
 }
 
 :root[data-theme="light"][data-body-font="default"] {
@@ -1295,6 +1295,23 @@ button:not(:disabled) {
 }
 .overlay-fade-in {
   animation: overlay-fade-in 0.12s ease-out;
+}
+
+@keyframes design-token-modal-enter {
+  from {
+    opacity: 0;
+    transform: scale(0.93);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.design-token-modal-enter {
+  transform-origin: center;
+  animation: design-token-modal-enter 0.24s cubic-bezier(0.22, 1, 0.36, 1);
+  will-change: transform, opacity;
 }
 @keyframes slide-in-left {
   from { opacity: 0; transform: translateX(-10px); }

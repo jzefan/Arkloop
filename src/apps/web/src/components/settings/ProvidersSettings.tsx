@@ -46,6 +46,16 @@ const OPENVIKING_BACKEND_ADVANCED_KEY = 'openviking_backend'
 
 type OpenVikingBackendKey = 'openai' | 'azure' | 'volcengine' | 'openai_compatible'
 
+function isManagedLocalProvider(provider: LlmProvider): boolean {
+  return provider.source === 'local' || provider.read_only === true
+}
+
+function localAuthModeLabel(provider: LlmProvider, p: ReturnType<typeof useLocale>['t']['adminProviders']): string | null {
+  if (provider.auth_mode === 'api_key') return p.apiKey
+  if (provider.auth_mode === 'oauth') return p.authModeOAuth
+  return null
+}
+
 function vendorLabel(
   key: string,
   p: { vendorOpenai: string; vendorOpenaiChat: string; vendorAnthropic: string; vendorGemini: string },
@@ -272,13 +282,18 @@ export function ProvidersSettings({ accessToken }: Props) {
                 key={pv.id}
                 onClick={() => setSelectedId(pv.id)}
                 className={[
-                  'flex h-[38px] items-center truncate rounded-lg px-2.5 text-left text-[14px] font-medium transition-all duration-[120ms] active:scale-[0.96]',
+                  'flex h-[38px] items-center gap-2 rounded-lg px-2.5 text-left text-[14px] font-medium transition-all duration-[120ms] active:scale-[0.96]',
                   selectedId === pv.id
                     ? 'rounded-[10px] bg-[var(--c-bg-deep)] text-[var(--c-text-heading)]'
                     : 'text-[var(--c-text-secondary)] hover:bg-[var(--c-bg-deep)] hover:text-[var(--c-text-heading)]',
                 ].join(' ')}
               >
-                {pv.name}
+                <span className="min-w-0 flex-1 truncate">{pv.name}</span>
+                {isManagedLocalProvider(pv) && (
+                  <span className="shrink-0 rounded-md px-1.5 py-0.5 text-[10px] font-medium text-[var(--c-text-muted)]" style={{ background: 'var(--c-bg-sub)' }}>
+                    {p.localProvider}
+                  </span>
+                )}
               </button>
             ))}
           </div>
@@ -481,6 +496,7 @@ function ProviderDetail({ provider, accessToken, onUpdated, onDeleted, p }: {
   const [err, setErr] = useState('')
   const [confirmDelete, setConfirmDelete] = useState(false)
   const [deleting, setDeleting] = useState(false)
+  const readOnly = isManagedLocalProvider(provider)
 
   useEffect(() => {
     setFormPreset(toVendorKey(provider.provider, provider.openai_api_mode))
@@ -490,6 +506,31 @@ function ProviderDetail({ provider, accessToken, onUpdated, onDeleted, p }: {
     setErr('')
     setConfirmDelete(false)
   }, [provider.base_url, provider.id, provider.name, provider.openai_api_mode, provider.provider])
+
+  if (readOnly) {
+    const authModeLabel = localAuthModeLabel(provider, p)
+    return (
+      <div className="mx-auto min-w-0 max-w-2xl space-y-6">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--c-border-subtle)] pb-4">
+          <h3 className="text-base font-semibold text-[var(--c-text-primary)]">{provider.name}</h3>
+          <div className="flex flex-wrap items-center gap-1.5">
+            <span className="rounded-md px-2 py-1 text-xs font-medium text-[var(--c-text-muted)]" style={{ background: 'var(--c-bg-sub)' }}>
+              {p.localProvider}
+            </span>
+            <span className="rounded-md px-2 py-1 text-xs font-medium text-[var(--c-text-muted)]" style={{ background: 'var(--c-bg-sub)' }}>
+              {p.readOnlyProvider}
+            </span>
+            {authModeLabel && (
+              <span className="rounded-md px-2 py-1 text-xs font-medium text-[var(--c-text-muted)]" style={{ background: 'var(--c-bg-sub)' }}>
+                {authModeLabel}
+              </span>
+            )}
+          </div>
+        </div>
+        <ModelsSection provider={provider} accessToken={accessToken} onChanged={onUpdated} p={p} readOnly />
+      </div>
+    )
+  }
 
   const handleSave = async () => {
     setSaving(true)
@@ -586,11 +627,12 @@ function ProviderDetail({ provider, accessToken, onUpdated, onDeleted, p }: {
 
 // -- Models Section (same pattern as ModelConfigContent) --
 
-function ModelsSection({ provider, accessToken, onChanged, p }: {
+function ModelsSection({ provider, accessToken, onChanged, p, readOnly = false }: {
   provider: LlmProvider
   accessToken: string
   onChanged: () => void
   p: ReturnType<typeof useLocale>['t']['adminProviders']
+  readOnly?: boolean
 }) {
   const { t } = useLocale()
   const [available, setAvailable] = useState<AvailableModel[] | null>(null)
@@ -781,48 +823,50 @@ function ModelsSection({ provider, accessToken, onChanged, p }: {
     <div>
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h4 className="text-sm font-medium text-[var(--c-text-primary)]">{p.modelsSection}</h4>
-        <div className="flex flex-wrap items-center gap-2">
-          <button
-            type="button"
-            onClick={() => setShowDeleteAllConfirm(true)}
-            disabled={deleteAllDisabled}
-            className="inline-flex h-8 items-center justify-center gap-1.5 rounded-lg px-2.5 text-sm font-medium text-[var(--c-text-muted)] transition-colors hover:border-red-500/30 hover:text-red-500 disabled:cursor-not-allowed disabled:opacity-40"
-            style={secondaryButtonBorderStyle}
-          >
-            {deletingAll ? <Loader2 size={12} className="animate-spin" /> : <Trash2 size={12} />}
-          </button>
-          <button
-            type="button"
-            onClick={() => void handleImportAll()}
-            disabled={importDisabled}
-            className="button-secondary inline-flex h-8 items-center justify-center gap-1.5 rounded-lg px-3 text-sm font-medium text-[var(--c-text-secondary)] transition-colors disabled:cursor-not-allowed disabled:opacity-40"
-            style={secondaryButtonBorderStyle}
-          >
-            {loadingAvailable || importing
-              ? <Loader2 size={12} className="animate-spin" />
-              : (
-                  <>
-                    {availableError && <X size={12} className="text-[var(--c-status-error-text)]" />}
-                    <Download size={12} />
-                  </>
-                )}
-            {unconfiguredCount > 0 && !importing && !loadingAvailable && `${p.importAll ?? 'Import all'} (${unconfiguredCount})`}
-            {(loadingAvailable || importing) && (p.importing ?? '...')}
-          </button>
-          {sectionError && <ErrorDetailsButton error={sectionError} />}
-          <ModelTestButton
-            accessToken={accessToken}
-            provider={provider}
-            label={p.testModel ?? 'Test'}
-            searchPlaceholder={p.searchProviders}
-          />
-          <button onClick={() => setCreatingModel(true)} className="button-primary inline-flex h-8 items-center justify-center gap-1.5 rounded-lg px-4 text-sm font-medium text-[var(--c-btn-text)] transition-[filter] disabled:cursor-not-allowed disabled:opacity-40" style={{ background: 'var(--c-btn-bg)' }}>
-            {p.addModel}
-          </button>
-        </div>
+        {!readOnly && (
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setShowDeleteAllConfirm(true)}
+              disabled={deleteAllDisabled}
+              className="inline-flex h-8 items-center justify-center gap-1.5 rounded-lg px-2.5 text-sm font-medium text-[var(--c-text-muted)] transition-colors hover:border-red-500/30 hover:text-red-500 disabled:cursor-not-allowed disabled:opacity-40"
+              style={secondaryButtonBorderStyle}
+            >
+              {deletingAll ? <Loader2 size={12} className="animate-spin" /> : <Trash2 size={12} />}
+            </button>
+            <button
+              type="button"
+              onClick={() => void handleImportAll()}
+              disabled={importDisabled}
+              className="button-secondary inline-flex h-8 items-center justify-center gap-1.5 rounded-lg px-3 text-sm font-medium text-[var(--c-text-secondary)] transition-colors disabled:cursor-not-allowed disabled:opacity-40"
+              style={secondaryButtonBorderStyle}
+            >
+              {loadingAvailable || importing
+                ? <Loader2 size={12} className="animate-spin" />
+                : (
+                    <>
+                      {availableError && <X size={12} className="text-[var(--c-status-error-text)]" />}
+                      <Download size={12} />
+                    </>
+                  )}
+              {unconfiguredCount > 0 && !importing && !loadingAvailable && `${p.importAll ?? 'Import all'} (${unconfiguredCount})`}
+              {(loadingAvailable || importing) && (p.importing ?? '...')}
+            </button>
+            {sectionError && <ErrorDetailsButton error={sectionError} />}
+            <ModelTestButton
+              accessToken={accessToken}
+              provider={provider}
+              label={p.testModel ?? 'Test'}
+              searchPlaceholder={p.searchProviders}
+            />
+            <button onClick={() => setCreatingModel(true)} className="button-primary inline-flex h-8 items-center justify-center gap-1.5 rounded-lg px-4 text-sm font-medium text-[var(--c-btn-text)] transition-[filter] disabled:cursor-not-allowed disabled:opacity-40" style={{ background: 'var(--c-btn-bg)' }}>
+              {p.addModel}
+            </button>
+          </div>
+        )}
       </div>
 
-      {hasLoadedAvailable && !loadingAvailable && !availableError && available !== null && available.length === 0 && (
+      {!readOnly && hasLoadedAvailable && !loadingAvailable && !availableError && available !== null && available.length === 0 && (
         <p className="mt-2 text-xs text-[var(--c-text-muted)]">{t.models.noModelsAvailable}</p>
       )}
 
@@ -845,12 +889,13 @@ function ModelsSection({ provider, accessToken, onChanged, p }: {
               onToggle={handleTogglePicker}
               onEdit={setEditingModel}
               onDelete={handleDeleteModel}
+              readOnly={readOnly}
             />
           ))
         )}
       </div>
 
-      {editingModel !== null && (
+      {!readOnly && editingModel !== null && (
       <ModelOptionsModal
         open
         model={editingModel}
@@ -891,7 +936,7 @@ function ModelsSection({ provider, accessToken, onChanged, p }: {
       />
       )}
 
-      {creatingModel && (
+      {!readOnly && creatingModel && (
       <ModelOptionsModal
         open
         mode="create"
@@ -947,27 +992,30 @@ function ModelsSection({ provider, accessToken, onChanged, p }: {
       />
       )}
 
-      <ConfirmDialog
-        open={showDeleteAllConfirm}
-        onClose={() => setShowDeleteAllConfirm(false)}
-        onConfirm={() => {
-          setShowDeleteAllConfirm(false)
-          void handleDeleteAll()
-        }}
-        title={p.deleteAllConfirmTitle ?? 'Delete all models'}
-        message={p.deleteAllConfirmDesc ?? 'This will remove every model under this provider. Continue?'}
-        confirmLabel={p.deleteAll ?? 'Delete all'}
-        loading={deletingAll}
-      />
+      {!readOnly && (
+        <ConfirmDialog
+          open={showDeleteAllConfirm}
+          onClose={() => setShowDeleteAllConfirm(false)}
+          onConfirm={() => {
+            setShowDeleteAllConfirm(false)
+            void handleDeleteAll()
+          }}
+          title={p.deleteAllConfirmTitle ?? 'Delete all models'}
+          message={p.deleteAllConfirmDesc ?? 'This will remove every model under this provider. Continue?'}
+          confirmLabel={p.deleteAll ?? 'Delete all'}
+          loading={deletingAll}
+        />
+      )}
     </div>
   )
 }
 
-const ModelRow = memo(function ModelRow({ pm, onToggle, onEdit, onDelete }: {
+const ModelRow = memo(function ModelRow({ pm, onToggle, onEdit, onDelete, readOnly = false }: {
   pm: LlmProviderModel
   onToggle: (id: string, current: boolean) => void
   onEdit: (pm: LlmProviderModel) => void
   onDelete: (id: string) => void
+  readOnly?: boolean
 }) {
   return (
     <div
@@ -981,19 +1029,25 @@ const ModelRow = memo(function ModelRow({ pm, onToggle, onEdit, onDelete }: {
         )}
       </div>
       <div className="flex w-full shrink-0 items-center justify-end gap-1.5 sm:w-auto">
-        <PillToggle checked={pm.show_in_picker} onChange={() => onToggle(pm.id, pm.show_in_picker)} />
-        <button
-          onClick={() => onEdit(pm)}
-          className="rounded-md p-1.5 text-[var(--c-text-muted)] transition-colors duration-150 hover:bg-[var(--c-bg-sub)] hover:text-[var(--c-text-secondary)]"
-        >
-          <SlidersHorizontal size={14} />
-        </button>
-        <button
-          onClick={() => onDelete(pm.id)}
-          className="rounded-md p-1.5 text-[var(--c-text-muted)] transition-colors duration-150 hover:bg-[var(--c-bg-sub)] hover:text-red-500"
-        >
-          <Trash2 size={14} />
-        </button>
+        {readOnly ? (
+          <PillToggle checked={pm.show_in_picker} onChange={() => onToggle(pm.id, pm.show_in_picker)} />
+        ) : (
+          <>
+            <PillToggle checked={pm.show_in_picker} onChange={() => onToggle(pm.id, pm.show_in_picker)} />
+            <button
+              onClick={() => onEdit(pm)}
+              className="rounded-md p-1.5 text-[var(--c-text-muted)] transition-colors duration-150 hover:bg-[var(--c-bg-sub)] hover:text-[var(--c-text-secondary)]"
+            >
+              <SlidersHorizontal size={14} />
+            </button>
+            <button
+              onClick={() => onDelete(pm.id)}
+              className="rounded-md p-1.5 text-[var(--c-text-muted)] transition-colors duration-150 hover:bg-[var(--c-bg-sub)] hover:text-red-500"
+            >
+              <Trash2 size={14} />
+            </button>
+          </>
+        )}
       </div>
     </div>
   )

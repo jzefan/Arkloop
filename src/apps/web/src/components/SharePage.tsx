@@ -210,13 +210,39 @@ export function SharePage() {
               key={msg.id}
               message={{
                 id: msg.id,
-                account_id: '',
-                thread_id: '',
-                created_by_user_id: '',
-                role: msg.role,
+                role: msg.role === 'system' || msg.role === 'user' || msg.role === 'assistant' ? msg.role : 'assistant',
                 content: msg.content,
-                content_json: msg.content_json,
-                created_at: msg.created_at,
+                contentJson: msg.content_json
+                  ? {
+                      parts: msg.content_json.parts.map((part) => {
+                        if (part.type === 'text') return part
+                        if (part.type === 'image') {
+                          return {
+                            type: 'image' as const,
+                            attachment: {
+                              key: part.attachment.key,
+                              filename: part.attachment.filename,
+                              mediaType: part.attachment.mime_type,
+                              size: part.attachment.size,
+                            },
+                          }
+                        }
+                        return {
+                          type: 'file' as const,
+                          attachment: {
+                            key: part.attachment.key,
+                            filename: part.attachment.filename,
+                            mediaType: part.attachment.mime_type,
+                            size: part.attachment.size,
+                          },
+                          extractedText: part.extracted_text,
+                        }
+                      }),
+                    }
+                  : undefined,
+                createdAt: msg.created_at,
+                metadata: { createdAt: msg.created_at },
+                parts: msg.content ? [{ type: 'text', text: msg.content, state: 'done' }] : [],
               }}
             />
           ))}

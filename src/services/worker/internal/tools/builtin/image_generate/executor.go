@@ -88,7 +88,7 @@ func (e *ToolExecutor) Execute(
 	if selected.Credential.ProviderKind == routing.ProviderKindOpenAI && (caps.ModelType == "image" || (caps.SupportsOutputModality("image") && !caps.SupportsOutputModality("text"))) {
 		request.ForceOpenAIImageAPI = true
 	}
-	resolved, err := pipeline.ResolveGatewayConfigFromSelectedRoute(*selected, false, 0)
+	resolved, err := pipeline.ResolveGatewayConfigFromSelectedRouteForRequest(ctx, *selected, false, 0)
 	if err != nil {
 		return errResult("tool.execution_failed", fmt.Sprintf("resolve image model failed: %s", err.Error()), started)
 	}

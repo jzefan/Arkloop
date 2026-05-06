@@ -29,10 +29,12 @@ var (
 type ProviderKind string
 
 const (
-	ProviderKindStub      ProviderKind = "stub"
-	ProviderKindOpenAI    ProviderKind = "openai"
-	ProviderKindAnthropic ProviderKind = "anthropic"
-	ProviderKindGemini    ProviderKind = "gemini"
+	ProviderKindStub        ProviderKind = "stub"
+	ProviderKindOpenAI      ProviderKind = "openai"
+	ProviderKindAnthropic   ProviderKind = "anthropic"
+	ProviderKindGemini      ProviderKind = "gemini"
+	ProviderKindClaudeLocal ProviderKind = "claude_code_local"
+	ProviderKindCodexLocal  ProviderKind = "codex_local"
 )
 
 type CredentialScope string
@@ -265,7 +267,7 @@ func LoadRoutingConfigFromEnv() (ProviderRoutingConfig, error) {
 			}
 		}
 
-		if kind != ProviderKindStub && apiKeyEnv == nil {
+		if kind != ProviderKindStub && kind != ProviderKindClaudeLocal && kind != ProviderKindCodexLocal && apiKeyEnv == nil {
 			return ProviderRoutingConfig{}, fmt.Errorf("non-stub credential must provide api_key_env (stores env name only, not plaintext)")
 		}
 
@@ -503,8 +505,12 @@ func parseProviderKind(value string) (ProviderKind, error) {
 		return ProviderKindAnthropic, nil
 	case "gemini":
 		return ProviderKindGemini, nil
+	case "claude_code_local":
+		return ProviderKindClaudeLocal, nil
+	case "codex_local":
+		return ProviderKindCodexLocal, nil
 	default:
-		return "", fmt.Errorf("must be stub/openai/anthropic/gemini")
+		return "", fmt.Errorf("must be stub/openai/anthropic/gemini/claude_code_local/codex_local")
 	}
 }
 
@@ -790,6 +796,10 @@ func dbProviderToKind(provider string) (ProviderKind, error) {
 		return ProviderKindAnthropic, nil
 	case "gemini":
 		return ProviderKindGemini, nil
+	case "claude_code_local":
+		return ProviderKindClaudeLocal, nil
+	case "codex_local":
+		return ProviderKindCodexLocal, nil
 	default:
 		return "", fmt.Errorf("unsupported provider: %s", provider)
 	}

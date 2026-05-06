@@ -55,7 +55,7 @@ func NewStickerPrepareMiddleware(db data.DB, store MessageAttachmentStore, cfg S
 				if rc.Temperature == nil {
 					rc.Temperature = routing.RouteDefaultTemperature(resolution.Selected.Route)
 				}
-				rc.EstimateProviderRequestBytes = stickerProviderRequestEstimator(resolution.Selected, cfg, rc.LlmMaxResponseBytes)
+				rc.EstimateProviderRequestBytes = stickerProviderRequestEstimator(ctx, resolution.Selected, cfg, rc.LlmMaxResponseBytes)
 			} else {
 				return failStickerRegisterRun(ctx, rc, cfg.EventsRepo, stickerID)
 			}
@@ -140,6 +140,7 @@ func resolveStickerToolVisionRoute(
 }
 
 func stickerProviderRequestEstimator(
+	ctx context.Context,
 	selected *routing.SelectedProviderRoute,
 	cfg StickerPrepareConfig,
 	llmMaxResponseBytes int,
@@ -147,7 +148,7 @@ func stickerProviderRequestEstimator(
 	if selected == nil || selected.Credential.ProviderKind == routing.ProviderKindStub {
 		return nil
 	}
-	resolved, err := ResolveGatewayConfigFromSelectedRoute(*selected, cfg.EmitDebugEvents, llmMaxResponseBytes)
+	resolved, err := ResolveGatewayConfigFromSelectedRouteForRequest(ctx, *selected, cfg.EmitDebugEvents, llmMaxResponseBytes)
 	if err != nil {
 		return nil
 	}

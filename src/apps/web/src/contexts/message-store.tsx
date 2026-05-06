@@ -8,14 +8,13 @@ import {
   useState,
   type ReactNode,
 } from 'react'
-import { listMessages, type MessageResponse } from '../api'
-import { findAssistantMessageForRun } from '../runEventProcessing'
+import { type AgentMessage, useAgentClient } from '../agent-ui'
+import { findAssistantMessageForRun } from '../agentEventProcessing'
 import { type Attachment } from '../components/ChatInput'
-import { useAuth } from './auth'
 import { useChatSession } from './chat-session'
 
 interface MessageStoreContextValue {
-  messages: MessageResponse[]
+  messages: AgentMessage[]
   messagesLoading: boolean
   attachments: Attachment[]
   userEnterMessageId: string | null
@@ -24,8 +23,8 @@ interface MessageStoreContextValue {
   sendMessageRef: React.RefObject<((text: string) => void) | null>
   attachmentsRef: React.RefObject<Attachment[]>
 
-  setMessages: (msgs: MessageResponse[] | ((prev: MessageResponse[]) => MessageResponse[])) => void
-  upsertLocalTerminalMessage: (message: MessageResponse) => void
+  setMessages: (msgs: AgentMessage[] | ((prev: AgentMessage[]) => AgentMessage[])) => void
+  upsertLocalTerminalMessage: (message: AgentMessage) => void
   setMessagesLoading: (v: boolean) => void
   setAttachments: (v: Attachment[] | ((prev: Attachment[]) => Attachment[])) => void
   addAttachment: (a: Attachment) => void
@@ -35,8 +34,8 @@ interface MessageStoreContextValue {
   beginMessageSync: () => number
   isMessageSyncCurrent: (version: number) => boolean
   invalidateMessageSync: () => void
-  readConsistentMessages: (requiredCompletedRunId?: string) => Promise<MessageResponse[]>
-  refreshMessages: (options?: { syncVersion?: number; requiredCompletedRunId?: string }) => Promise<MessageResponse[]>
+  readConsistentMessages: (requiredCompletedRunId?: string) => Promise<AgentMessage[]>
+  refreshMessages: (options?: { syncVersion?: number; requiredCompletedRunId?: string }) => Promise<AgentMessage[]>
   wasLoadingRef: React.RefObject<boolean>
 }
 
@@ -44,16 +43,16 @@ const Ctx = createContext<MessageStoreContextValue | null>(null)
 
 const LOCAL_TERMINAL_MESSAGE_PREFIX = 'local-terminal-run:'
 
-export function isLocalTerminalMessage(message: Pick<MessageResponse, 'id'>): boolean {
+export function isLocalTerminalMessage(message: Pick<AgentMessage, 'id'>): boolean {
   return message.id.startsWith(LOCAL_TERMINAL_MESSAGE_PREFIX)
 }
 
-function insertMessageByCreatedAt(messages: MessageResponse[], message: MessageResponse): MessageResponse[] {
+function insertMessageByCreatedAt(messages: AgentMessage[], message: AgentMessage): AgentMessage[] {
   if (messages.some((item) => item.id === message.id)) return messages
-  const messageTime = Date.parse(message.created_at)
+  const messageTime = Date.parse(message.createdAt)
   if (!Number.isFinite(messageTime)) return [...messages, message]
   const index = messages.findIndex((item) => {
-    const itemTime = Date.parse(item.created_at)
+    const itemTime = Date.parse(item.createdAt)
     return Number.isFinite(itemTime) && itemTime > messageTime
   })
   if (index < 0) return [...messages, message]
@@ -61,23 +60,23 @@ function insertMessageByCreatedAt(messages: MessageResponse[], message: MessageR
 }
 
 function mergeLocalTerminalMessages(
-  remoteMessages: MessageResponse[],
-  localMessages: Map<string, MessageResponse>,
-): MessageResponse[] {
+  remoteMessages: AgentMessage[],
+  localMessages: Map<string, AgentMessage>,
+): AgentMessage[] {
   const remoteRunIds = new Set<string>()
   for (const message of remoteMessages) {
     if (isLocalTerminalMessage(message)) continue
-    if (message.role === 'assistant' && message.run_id) remoteRunIds.add(message.run_id)
+    if (message.role === 'assistant' && message.streamId) remoteRunIds.add(message.streamId)
   }
   for (const [id, message] of localMessages) {
-    if (message.run_id && remoteRunIds.has(message.run_id)) {
+    if (message.streamId && remoteRunIds.has(message.streamId)) {
       localMessages.delete(id)
     }
   }
 
   let merged = remoteMessages.filter((message) => !isLocalTerminalMessage(message))
   for (const message of localMessages.values()) {
-    if (message.run_id && remoteRunIds.has(message.run_id)) continue
+    if (message.streamId && remoteRunIds.has(message.streamId)) continue
     merged = insertMessageByCreatedAt(merged, message)
   }
   return merged
@@ -93,9 +92,9 @@ export function MessageStoreProvider({ children }: { children: ReactNode }) {
 }
 
 function MessageStoreProviderContent({ children, threadId }: { children: ReactNode; threadId: string | null }) {
-  const { accessToken } = useAuth()
+  const agentClient = useAgentClient()
 
-  const [messages, setMessagesState] = useState<MessageResponse[]>([])
+  const [messages, setMessagesState] = useState<AgentMessage[]>([])
   const [messagesLoading, setMessagesLoading] = useState(true)
   const [attachments, setAttachments] = useState<Attachment[]>([])
   const [userEnterMessageId, setUserEnterMessageId] = useState<string | null>(null)
@@ -103,7 +102,7 @@ function MessageStoreProviderContent({ children, threadId }: { children: ReactNo
 
   const sendMessageRef = useRef<((text: string) => void) | null>(null)
   const attachmentsRef = useRef<Attachment[]>(attachments)
-  const localTerminalMessagesRef = useRef<Map<string, MessageResponse>>(new Map())
+  const localTerminalMessagesRef = useRef<Map<string, AgentMessage>>(new Map())
   useEffect(() => { attachmentsRef.current = attachments }, [attachments])
 
   const messageSyncVersionRef = useRef(0)
@@ -129,33 +128,33 @@ function MessageStoreProviderContent({ children, threadId }: { children: ReactNo
     messageSyncVersionRef.current += 1
   }, [])
 
-  const setMessages = useCallback((value: MessageResponse[] | ((prev: MessageResponse[]) => MessageResponse[])) => {
+  const setMessages = useCallback((value: AgentMessage[] | ((prev: AgentMessage[]) => AgentMessage[])) => {
     setMessagesState((prev) => {
       const next = typeof value === 'function' ? value(prev) : value
       return next
     })
   }, [])
 
-  const upsertLocalTerminalMessage = useCallback((message: MessageResponse) => {
+  const upsertLocalTerminalMessage = useCallback((message: AgentMessage) => {
     localTerminalMessagesRef.current.set(message.id, message)
     setMessages((prev) => mergeLocalTerminalMessages(prev, localTerminalMessagesRef.current))
   }, [setMessages])
 
-  const readConsistentMessages = useCallback(async (requiredCompletedRunId?: string): Promise<MessageResponse[]> => {
+  const readConsistentMessages = useCallback(async (requiredCompletedRunId?: string): Promise<AgentMessage[]> => {
     if (!threadId) return []
-    let items = await listMessages(accessToken, threadId)
+    let items = await agentClient.listMessages(threadId)
     items = mergeLocalTerminalMessages(items, localTerminalMessagesRef.current)
     if (requiredCompletedRunId && !findAssistantMessageForRun(items, requiredCompletedRunId)) {
-      const retriedItems = await listMessages(accessToken, threadId)
+      const retriedItems = await agentClient.listMessages(threadId)
       items = mergeLocalTerminalMessages(retriedItems, localTerminalMessagesRef.current)
     }
     return items
-  }, [accessToken, threadId])
+  }, [agentClient, threadId])
 
   const refreshMessages = useCallback(async (options?: {
     syncVersion?: number
     requiredCompletedRunId?: string
-  }): Promise<MessageResponse[]> => {
+  }): Promise<AgentMessage[]> => {
     if (!threadId) return []
     const syncVersion = options?.syncVersion ?? beginMessageSync()
     const items = await readConsistentMessages(options?.requiredCompletedRunId)

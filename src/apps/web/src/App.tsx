@@ -12,13 +12,22 @@ import { CreditsProvider } from './contexts/credits'
 import { SharePage } from './components/SharePage'
 import { VerifyEmailPage } from './components/VerifyEmailPage'
 import { OnboardingWizard } from './components/OnboardingWizard'
+import { HeadlessSetupPage } from './components/HeadlessSetupPage'
 import { useLocale } from './contexts/LocaleContext'
+import { shouldDelayLocalSession } from './appAuthStartup'
 import {
   clearActiveThreadIdInStorage,
   writeAccessTokenToStorage,
   clearAccessTokenFromStorage,
 } from './storage'
-import { setUnauthenticatedHandler, setAccessTokenHandler, setSessionExpiredHandler, restoreAccessSession } from './api'
+import {
+  createLocalSession,
+  isApiError,
+  setUnauthenticatedHandler,
+  setAccessTokenHandler,
+  setSessionExpiredHandler,
+  restoreAccessSession,
+} from './api'
 import { setClientApp } from '@arkloop/shared/api'
 import {
   isLocalMode,
@@ -26,7 +35,6 @@ import {
   getDesktopApi,
   getDesktopAccessToken,
 } from '@arkloop/shared/desktop'
-import { isApiError } from './api'
 
 const ScheduledJobsPage = lazy(() => import('./pages/scheduled-jobs/ScheduledJobsPage'))
 
@@ -149,17 +157,44 @@ function App() {
       addToast(t.sessionExpired, 'warn')
     })
 
-    // Local 模式: Go 后端使用固定 token，跳过刷新流程
-    if (isLocalMode()) {
-      const desktopToken = getDesktopAccessToken() ?? ''
-      writeAccessTokenToStorage(desktopToken)
-      const raf = requestAnimationFrame(() => {
-        setAccessToken(desktopToken)
-        setAuthChecked(true)
-      })
+    const localMode = isLocalMode()
+    if (shouldDelayLocalSession(localMode, sidecarChecked, onboardingDone)) {
+      setAuthChecked(false)
       return () => {
         controller.abort()
-        cancelAnimationFrame(raf)
+      }
+    }
+
+    // Local 模式: local trust 只用于换取正常 session，业务 API 继续使用 JWT。
+    if (localMode) {
+      const desktopToken = getDesktopAccessToken()?.trim()
+      if (!desktopToken) {
+        clearAccessTokenFromStorage()
+        setAccessToken(null)
+        setAuthChecked(true)
+        return () => {
+          controller.abort()
+        }
+      }
+
+      createLocalSession(desktopToken, controller.signal)
+        .then((resp) => {
+          if (controller.signal.aborted) return
+          writeAccessTokenToStorage(resp.access_token)
+          setAccessToken(resp.access_token)
+        })
+        .catch((err) => {
+          if (controller.signal.aborted) return
+          if (err instanceof Error && err.name === 'AbortError') return
+          clearAccessTokenFromStorage()
+          setAccessToken(null)
+        })
+        .finally(() => {
+          if (controller.signal.aborted) return
+          setAuthChecked(true)
+        })
+      return () => {
+        controller.abort()
       }
     }
 
@@ -185,7 +220,7 @@ function App() {
     return () => {
       controller.abort()
     }
-  }, [addToast, t.sessionExpired])
+  }, [addToast, onboardingDone, sidecarChecked, t.sessionExpired])
 
   const handleLoggedIn = useCallback((token: string) => {
     clearActiveThreadIdInStorage()
@@ -195,11 +230,7 @@ function App() {
   }, [])
 
   const handleLoggedOut = useCallback(() => {
-    // Local mode uses a fixed token — logout should be a no-op (button hidden, but guard here too)
     if (isLocalMode()) {
-      const desktopToken = getDesktopAccessToken() ?? ''
-      writeAccessTokenToStorage(desktopToken)
-      setAccessToken(desktopToken)
       return
     }
     clearAccessTokenFromStorage()
@@ -258,6 +289,7 @@ function App() {
 
   return (
     <Routes>
+      <Route path="/setup" element={<HeadlessSetupPage onLoggedIn={handleLoggedIn} />} />
       <Route path="/verify" element={<VerifyEmailPage />} />
       <Route path="/s/:token" element={<SharePage />} />
       {!authChecked ? (

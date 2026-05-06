@@ -7,7 +7,7 @@ import type {
   FileOpRef,
   MessageSearchStepRef,
   MessageThinkingRef,
-  MsgRunEvent,
+  MessageAgentEvent,
   SubAgentRef,
   WebFetchRef,
   WebSource,
@@ -30,7 +30,7 @@ export function useMessageMetaCompat() {
     const thinkingMap = new Map<string, MessageThinkingRef>()
     const searchStepsMap = new Map<string, MessageSearchStepRef[]>()
     const assistantTurnMap = new Map<string, AssistantTurnUi>()
-    const runEventsMap = new Map<string, MsgRunEvent[]>()
+    const agentEventsMap = new Map<string, MessageAgentEvent[]>()
 
     for (const [id, meta] of metaMap.entries()) {
       if (meta.sources) sourcesMap.set(id, meta.sources)
@@ -44,7 +44,7 @@ export function useMessageMetaCompat() {
       if (meta.thinking) thinkingMap.set(id, meta.thinking)
       if (meta.searchSteps) searchStepsMap.set(id, meta.searchSteps)
       if (meta.assistantTurn) assistantTurnMap.set(id, meta.assistantTurn)
-      if (meta.runEvents) runEventsMap.set(id, meta.runEvents)
+      if (meta.agentEvents) agentEventsMap.set(id, meta.agentEvents)
     }
 
     return {
@@ -59,7 +59,7 @@ export function useMessageMetaCompat() {
       messageThinkingMap: thinkingMap,
       messageSearchStepsMap: searchStepsMap,
       messageAssistantTurnMap: assistantTurnMap,
-      msgRunEventsMap: runEventsMap,
+      messageAgentEventsMap: agentEventsMap,
     }
   }, [metaMap])
 }

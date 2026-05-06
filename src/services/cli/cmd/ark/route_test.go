@@ -13,7 +13,10 @@ func TestRouteCommand(t *testing.T) {
 		args []string
 		want commandRoute
 	}{
+		{name: "--version", args: []string{"--version"}, want: commandVersion},
+		{name: "version", args: []string{"version"}, want: commandVersion},
 		{name: "run", args: []string{"run", "hello"}, want: commandRun},
+		{name: "web", args: []string{"web"}, want: commandWeb},
 		{name: "chat", args: []string{"chat"}, want: commandChat},
 		{name: "status", args: []string{"status"}, want: commandStatus},
 		{name: "models list", args: []string{"models", "list"}, want: commandModelsList},

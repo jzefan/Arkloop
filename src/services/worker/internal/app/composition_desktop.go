@@ -22,6 +22,7 @@ import (
 	sharedencryption "arkloop/services/shared/encryption"
 	"arkloop/services/shared/eventbus"
 	sharedexec "arkloop/services/shared/executionconfig"
+	"arkloop/services/shared/localproviders"
 	"arkloop/services/shared/objectstore"
 	"arkloop/services/shared/onebotclient"
 	"arkloop/services/shared/rollout"
@@ -216,7 +217,7 @@ func ComposeDesktopEngine(ctx context.Context, db data.DesktopDB, bus eventbus.E
 		slog.InfoContext(ctx, "desktop: lsp enabled", "servers", len(lspCfg.Servers))
 	}
 	authToken := strings.TrimSpace(os.Getenv("ARKLOOP_DESKTOP_TOKEN"))
-	slog.Debug("composition_desktop", "sandboxAddr", sandboxAddr, "authToken", authToken)
+	slog.Debug("composition_desktop", "sandboxAddr", sandboxAddr, "authTokenConfigured", authToken != "")
 	shellExec := runtime.NewDynamicShellExecutor(sandboxAddr, authToken, fileTracker)
 
 	// 已有持久化或用户已选模式时不覆盖；否则按当前 sandbox 可用性设默认。
@@ -1232,6 +1233,7 @@ func desktopInputLoader(
 		rc.ThreadMessageIDs = loaded.ThreadMessageIDs
 		rc.ThreadContextFrontier = append([]pipeline.FrontierNode(nil), loaded.ThreadContextFrontier...)
 		pipeline.ApplyCollaborationMode(rc)
+		pipeline.ApplyLearningMode(rc)
 		if rc.Tracer != nil {
 			rc.Tracer.Event("input_loader", "input_loader.loaded", map[string]any{
 				"run_kind":           strings.TrimSpace(desktopStringValue(loaded.InputJSON["run_kind"])),
@@ -3013,6 +3015,7 @@ func desktopPersonaResolution(
 			}
 		}
 		pipeline.SyncPlanModePrompt(rc)
+		pipeline.SyncLearningModePrompt(rc)
 
 		return next(ctx, rc)
 	}
@@ -4892,6 +4895,14 @@ func loadDesktopRoutingConfig(ctx context.Context, db data.DesktopDB) (routing.P
 		creds = append(creds, cred)
 		credMap[c.id] = cred
 	}
+	localCfg := routing.AppendLocalProviders(routing.ProviderRoutingConfig{}, localproviders.NewResolver(localproviders.Options{}).ProviderStatuses(ctx))
+	for _, cred := range localCfg.Credentials {
+		if _, exists := credMap[cred.ID]; exists {
+			continue
+		}
+		creds = append(creds, cred)
+		credMap[cred.ID] = cred
+	}
 	if len(creds) == 0 {
 		return routing.ProviderRoutingConfig{}, fmt.Errorf("no active credentials found in database")
 	}
@@ -4949,6 +4960,7 @@ func loadDesktopRoutingConfig(ctx context.Context, db data.DesktopDB) (routing.P
 	}
 	routeRows.Close()
 	tx.Rollback(ctx)
+	routes = append(routes, localCfg.Routes...)
 
 	if len(routes) == 0 {
 		return routing.ProviderRoutingConfig{}, fmt.Errorf("no routes found in database")

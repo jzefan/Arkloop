@@ -28,8 +28,6 @@ type BrowserSearchServerState = {
 }
 
 type SearchLocale = {
-  mkt: string
-  setLang: string
   acceptLanguage: string
 }
 
@@ -95,7 +93,7 @@ async function handleBrowserSearchRequest(req: http.IncomingMessage, res: http.S
   const maxResults = normalizeMaxResults(requestURL.searchParams.get('max_results'))
 
   try {
-    const payload = await searchBingInBrowser(query, maxResults)
+    const payload = await searchStartpageInBrowser(query, maxResults)
     writeJSON(res, 200, payload)
   } catch (error) {
     const message = error instanceof Error ? error.message : 'search failed'
@@ -106,7 +104,7 @@ async function handleBrowserSearchRequest(req: http.IncomingMessage, res: http.S
   }
 }
 
-async function searchBingInBrowser(query: string, maxResults: number): Promise<BrowserSearchPayload> {
+async function searchStartpageInBrowser(query: string, maxResults: number): Promise<BrowserSearchPayload> {
   const win = new BrowserWindow({
     show: false,
     width: 1280,
@@ -126,7 +124,7 @@ async function searchBingInBrowser(query: string, maxResults: number): Promise<B
 
     const locale = browserSearchLocale(query)
     await withTimeout(
-      win.loadURL(buildBingSearchURL(query, maxResults, locale), {
+      win.loadURL(buildStartpageSearchURL(query), {
         extraHeaders: `Accept-Language: ${locale.acceptLanguage}\n`,
       }),
       SEARCH_TIMEOUT_MS,
@@ -167,16 +165,26 @@ async function readBrowserSearchState(win: BrowserWindow): Promise<BrowserSearch
   const value = await win.webContents.executeJavaScript(`
 (() => {
   const clean = (value) => String(value || '').replace(/\\s+/g, ' ').trim();
+  const textFrom = (element) => {
+    if (!element) return '';
+    const clone = element.cloneNode(true);
+    clone.querySelectorAll('style, script, noscript, svg').forEach((item) => item.remove());
+    return clean(clone.textContent);
+  };
   const toURL = (value) => {
     try { return new URL(value, location.href).toString(); } catch { return ''; }
   };
-  const results = Array.from(document.querySelectorAll('li.b_algo')).map((node) => {
-    const anchor = node.querySelector('h2 a[href]') || node.querySelector('a[href]');
-    const snippetNode = node.querySelector('.b_caption p, .b_snippet, p');
+  const resultNodes = Array.from(document.querySelectorAll('[data-testid="web-result"], .result, li.b_algo'));
+  const results = resultNodes.map((node) => {
+    const anchor = node.querySelector('a.result-title[href], h2 a[href], a[href]');
+    const titleNode = anchor ? anchor.querySelector('h1, h2, h3, .wgl-title, [data-testid="result-title"]') || anchor : null;
+    const snippetNode = node.querySelector(
+      '[data-testid="result-description"], .result-description, .wgl-description, .description, .b_caption p, .b_snippet, p'
+    );
     return {
-      title: clean(anchor ? anchor.textContent : ''),
+      title: textFrom(titleNode),
       url: toURL(anchor ? anchor.getAttribute('href') : ''),
-      snippet: clean(snippetNode ? snippetNode.textContent : ''),
+      snippet: textFrom(snippetNode),
     };
   }).filter((item) => item.title && item.url);
   const challengeNode = document.querySelector(
@@ -216,40 +224,29 @@ function normalizeBrowserSearchResult(value: unknown): BrowserSearchResult | nul
   return { title, url, snippet }
 }
 
-function buildBingSearchURL(query: string, maxResults: number, locale: SearchLocale): string {
-  const url = new URL('https://www.bing.com/search')
-  url.searchParams.set('q', query)
-  url.searchParams.set('count', String(maxResults))
-  url.searchParams.set('mkt', locale.mkt)
-  url.searchParams.set('setlang', locale.setLang)
+function buildStartpageSearchURL(query: string): string {
+  const url = new URL('https://www.startpage.com/sp/search')
+  url.searchParams.set('query', query)
   return url.toString()
 }
 
 function browserSearchLocale(query: string): SearchLocale {
   if (/\p{Script=Han}/u.test(query)) {
     return {
-      mkt: 'zh-CN',
-      setLang: 'zh-CN',
       acceptLanguage: 'zh-CN,zh;q=0.9,en-US;q=0.7,en;q=0.6',
     }
   }
   if (/[\p{Script=Hiragana}\p{Script=Katakana}]/u.test(query)) {
     return {
-      mkt: 'ja-JP',
-      setLang: 'ja',
       acceptLanguage: 'ja-JP,ja;q=0.9,en-US;q=0.7,en;q=0.6',
     }
   }
   if (/\p{Script=Hangul}/u.test(query)) {
     return {
-      mkt: 'ko-KR',
-      setLang: 'ko',
       acceptLanguage: 'ko-KR,ko;q=0.9,en-US;q=0.7,en;q=0.6',
     }
   }
   return {
-    mkt: 'en-US',
-    setLang: 'en-US',
     acceptLanguage: 'en-US,en;q=0.9',
   }
 }

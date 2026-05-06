@@ -66,6 +66,13 @@ export type ResolveIdentityResponse =
         email?: string
       }
     }
+  | {
+      next_step: 'setup_required'
+      prefill?: {
+        login?: string
+        email?: string
+      }
+    }
 
 export type MeResponse = {
   id: string
@@ -204,6 +211,23 @@ export type SelectablePersona = {
 export async function login(req: LoginRequest): Promise<LoginResponse> {
   return await apiFetch<LoginResponse>('/v1/auth/login', {
     method: 'POST',
+    body: JSON.stringify(req),
+  })
+}
+
+export async function createLocalSession(desktopToken: string, signal?: AbortSignal): Promise<LoginResponse> {
+  return await apiFetch<LoginResponse>('/v1/auth/local-session', {
+    method: 'POST',
+    accessToken: desktopToken,
+    signal,
+    _isRetry: true,
+  })
+}
+
+export async function setLocalOwnerPassword(req: { username: string; password: string }, desktopToken: string): Promise<LoginResponse> {
+  return await apiFetch<LoginResponse>('/v1/auth/local-owner-password', {
+    method: 'POST',
+    accessToken: desktopToken,
     body: JSON.stringify(req),
   })
 }
@@ -521,6 +545,7 @@ export type CreateThreadRequest = {
   mode?: ThreadMode
   project_id?: string
   collaboration_mode?: CollaborationMode
+  learning_mode_enabled?: boolean
 }
 
 export type ThreadMode = 'chat' | 'work'
@@ -542,6 +567,7 @@ export type ThreadResponse = {
   is_private: boolean
   collaboration_mode: CollaborationMode
   collaboration_mode_revision: number
+  learning_mode_enabled: boolean
   title_locked?: boolean
   hidden?: boolean
   updated_at?: string
@@ -815,6 +841,18 @@ export async function updateThreadCollaborationMode(
     method: 'PATCH',
     accessToken,
     body: JSON.stringify({ collaboration_mode: collaborationMode }),
+  })
+}
+
+export async function updateThreadLearningMode(
+  accessToken: string,
+  threadId: string,
+  enabled: boolean,
+): Promise<ThreadResponse> {
+  return await apiFetch<ThreadResponse>(`/v1/threads/${threadId}`, {
+    method: 'PATCH',
+    accessToken,
+    body: JSON.stringify({ learning_mode_enabled: enabled }),
   })
 }
 
@@ -1640,6 +1678,9 @@ export type LlmProvider = {
   account_id?: string | null
   scope: string
   provider: string
+  source?: string
+  read_only?: boolean
+  auth_mode?: string
   name: string
   key_prefix: string | null
   base_url: string | null

@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"syscall"
 	"time"
 
 	"arkloop/services/cli/internal/apiclient"
@@ -29,11 +30,15 @@ type exitError struct {
 func (e *exitError) Error() string { return fmt.Sprintf("exit %d", e.code) }
 
 var errRunUsage = errors.New("run usage")
+var version = "dev"
+var webRootHint string
 
 type commandRoute string
 
 const (
 	commandRun          commandRoute = "run"
+	commandWeb          commandRoute = "web"
+	commandVersion      commandRoute = "version"
 	commandChat         commandRoute = "chat"
 	commandStatus       commandRoute = "status"
 	commandModelsList   commandRoute = "models.list"
@@ -66,7 +71,7 @@ func run() error {
 		return &exitError{2}
 	}
 
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
 	route, err := routeCommand(os.Args[1:])
@@ -76,8 +81,12 @@ func run() error {
 	}
 
 	switch route.kind {
+	case commandVersion:
+		return cmdVersion(route.args)
 	case commandRun:
 		return cmdRun(ctx, route.args)
+	case commandWeb:
+		return cmdWeb(ctx, route.args)
 	case commandChat:
 		return cmdChat(ctx, route.args)
 	case commandStatus:
@@ -100,7 +109,9 @@ func printUsage() {
 	fmt.Fprintln(os.Stderr, `usage: ark <command> [flags]
 
 commands:
+  version                        print CLI version
   run <prompt>                   execute a single run and exit
+  web                            start local headless web runtime
   chat                           interactive multi-turn conversation
   status                         show current desktop connection status
   models list                    list configured models
@@ -115,8 +126,14 @@ func routeCommand(args []string) (routedCommand, error) {
 	}
 
 	switch args[0] {
+	case "--version":
+		return routedCommand{kind: commandVersion, args: args[1:]}, nil
+	case "version":
+		return routedCommand{kind: commandVersion, args: args[1:]}, nil
 	case "run":
 		return routedCommand{kind: commandRun, args: args[1:]}, nil
+	case "web":
+		return routedCommand{kind: commandWeb, args: args[1:]}, nil
 	case "chat":
 		return routedCommand{kind: commandChat, args: args[1:]}, nil
 	case "status":
@@ -141,6 +158,19 @@ func routeCommand(args []string) (routedCommand, error) {
 	}
 
 	return routedCommand{}, fmt.Errorf("unknown command")
+}
+
+func cmdVersion(args []string) error {
+	if len(args) != 0 {
+		fmt.Fprintln(os.Stderr, "usage: ark version")
+		return &exitError{2}
+	}
+	return writeVersion(os.Stdout)
+}
+
+func writeVersion(output io.Writer) error {
+	_, err := fmt.Fprintf(output, "ark version %s\n", version)
+	return err
 }
 
 // resolveToken 按优先级解析 token：flag > 环境变量 > ~/.arkloop/desktop.token > 默认值。

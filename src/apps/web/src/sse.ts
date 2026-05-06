@@ -165,14 +165,19 @@ export class SSEClient {
 
   constructor(options: SSEClientOptions) {
     this.options = {
-      afterSeq: 0,
-      follow: true,
-      maxRetries: 5,
-      retryDelayMs: 1000,
-      maxRetryDelayMs: 10_000,
-      readTimeoutMs: 45_000,
-      maxAuthRetries: 3,
-      ...options,
+      url: options.url,
+      accessToken: options.accessToken,
+      onEvent: options.onEvent,
+      onStateChange: options.onStateChange,
+      onError: options.onError,
+      onTokenRefresh: options.onTokenRefresh,
+      afterSeq: options.afterSeq ?? 0,
+      follow: options.follow ?? true,
+      maxRetries: options.maxRetries ?? 5,
+      retryDelayMs: options.retryDelayMs ?? 1000,
+      maxRetryDelayMs: options.maxRetryDelayMs ?? 10_000,
+      readTimeoutMs: options.readTimeoutMs ?? 45_000,
+      maxAuthRetries: options.maxAuthRetries ?? 3,
     }
     this.lastSeq = this.options.afterSeq
   }

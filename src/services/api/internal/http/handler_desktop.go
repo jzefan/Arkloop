@@ -33,6 +33,7 @@ import (
 	"arkloop/services/shared/desktop"
 	"arkloop/services/shared/discordbot"
 	"arkloop/services/shared/eventbus"
+	"arkloop/services/shared/localproviders"
 	"arkloop/services/shared/objectstore"
 	"arkloop/services/shared/telegrambot"
 )
@@ -230,6 +231,7 @@ func NewHandler(cfg HandlerConfig) nethttp.Handler {
 	}
 
 	authapi.RegisterRoutes(mux, authapi.Deps{
+		Pool:                  cfg.Pool,
 		AuthService:           cfg.AuthService,
 		RegistrationService:   cfg.RegistrationService,
 		EmailVerifyService:    cfg.EmailVerifyService,
@@ -306,6 +308,7 @@ func NewHandler(cfg HandlerConfig) nethttp.Handler {
 		ArtifactStoreAvailable:       cfg.ArtifactStore != nil,
 		Logger:                       cfg.Logger,
 		MCPDiscoveryService:          cfg.MCPDiscoveryService,
+		LlmProviderListAugmenter:     catalogapi.NewLocalProviderListAugmenter(localproviders.NewResolver(localproviders.Options{})),
 	})
 
 	billingapi.RegisterRoutes(mux, billingapi.Deps{
@@ -417,6 +420,7 @@ func NewHandler(cfg HandlerConfig) nethttp.Handler {
 
 	memoryapi.RegisterRoutes(mux, memoryapi.Deps{
 		Pool:                     cfg.Pool,
+		AuthService:              cfg.AuthService,
 		MemoryProvider:           os.Getenv("ARKLOOP_MEMORY_PROVIDER"),
 		OpenVikingBaseURL:        os.Getenv("ARKLOOP_OPENVIKING_BASE_URL"),
 		OpenVikingAPIKey:         os.Getenv("ARKLOOP_OPENVIKING_ROOT_API_KEY"),

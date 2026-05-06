@@ -5,7 +5,7 @@ import { useMessageMeta } from '../contexts/message-meta'
 import { useStream } from '../contexts/stream'
 import { createEmptyAssistantTurnFoldState, snapshotAssistantTurn, type AssistantTurnUi } from '../assistantTurnSegments'
 import { collectCompletedWidgets } from '../lib/chat-helpers'
-import { clearThreadRunHandoff, type ArtifactRef, type BrowserActionRef, type CodeExecutionRef, type FileOpRef, type MessageSearchStepRef, type MessageTerminalStatusRef, type MsgRunEvent, type SubAgentRef, type WebFetchRef, type WebSource, type WidgetRef } from '../storage'
+import { clearThreadRunHandoff, type ArtifactRef, type BrowserActionRef, type CodeExecutionRef, type FileOpRef, type MessageSearchStepRef, type MessageTerminalStatusRef, type MessageAgentEvent, type SubAgentRef, type WebFetchRef, type WebSource, type WidgetRef } from '../storage'
 
 export type TerminalRunCache = {
   runSources: WebSource[]
@@ -187,13 +187,13 @@ export function useRunTransition() {
   const persistRunDataToMessage = useCallback((
     messageId: string,
     runData: TerminalRunCache,
-    runEvents: MsgRunEvent[],
+    agentEvents: MessageAgentEvent[],
     options?: PersistRunDataOptions,
   ) => {
     persistRunDataToMessageState(messageId, {
       ...runData,
       terminalStatus: runData.terminalStatus === 'running' ? null : runData.terminalStatus,
-    }, runEvents, options)
+    }, agentEvents, options)
     if (threadId && options?.clearThreadHandoff !== false) {
       clearThreadRunHandoff(threadId)
     }

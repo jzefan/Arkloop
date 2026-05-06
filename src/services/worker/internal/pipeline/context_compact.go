@@ -1214,11 +1214,11 @@ func compactApproxNonSystemMessagePressure(msgs []llm.Message) int {
 	return total
 }
 
-func EstimateProviderRequestBytesForRunContext(rc *RunContext, request llm.Request) (int, error) {
+func EstimateProviderRequestBytesForRunContext(ctx context.Context, rc *RunContext, request llm.Request) (int, error) {
 	if rc == nil || rc.SelectedRoute == nil {
 		return 0, fmt.Errorf("provider request estimator unavailable")
 	}
-	resolved, err := ResolveGatewayConfigFromSelectedRoute(*rc.SelectedRoute, false, rc.LlmMaxResponseBytes)
+	resolved, err := ResolveGatewayConfigFromSelectedRouteForRequest(ctx, *rc.SelectedRoute, false, rc.LlmMaxResponseBytes)
 	if err != nil {
 		return 0, err
 	}

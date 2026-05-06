@@ -1,4 +1,4 @@
-import type { MessageResponse } from '../api'
+import type { AgentMessage } from '../agent-ui'
 import type { WebSource, ArtifactRef, BrowserActionRef, WidgetRef } from '../storage'
 import { MarkdownRenderer } from './MarkdownRenderer'
 import { BrowserScreenshotCard, BrowserActionSummaryCard } from './BrowserScreenshotCard'
@@ -9,7 +9,7 @@ import { memo } from 'react'
 import { useTypewriter } from '../hooks/useTypewriter'
 
 type Props = {
-  message: MessageResponse
+  message: AgentMessage
   /** 仅当前线程正在 SSE 且本条为最后一条助手消息时为 true */
   streamAssistantMarkdown?: boolean
   animateUserEnter?: boolean

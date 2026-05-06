@@ -318,6 +318,25 @@ export interface LocaleStrings {
   otpCodePlaceholder: string;
   otpSendBtn: string;
   otpSendingCountdown: (s: number) => string;
+  bootstrap: {
+    title: string;
+    subtitle: string;
+    username: string;
+    usernamePlaceholder: string;
+    password: string;
+    passwordPlaceholder: string;
+    confirmPassword: string;
+    confirmPasswordPlaceholder: string;
+    passwordMismatch: string;
+    submit: string;
+    verifying: string;
+    successTitle: string;
+    successBody: string;
+    invalidTitle: string;
+    invalidBody: string;
+    expiresAt: (value: string) => string;
+    selectHint: string;
+  };
   otpVerifyBtn: string;
   emailNotVerifiedHint: string;
   newChatTitle: string;
@@ -955,8 +974,8 @@ export interface LocaleStrings {
     pipelineTraceDesc: string;
     promptCacheDebug: string;
     promptCacheDebugDesc: string;
-    showRunEvents: string;
-    showRunEventsDesc: string;
+    showRunDetailButton: string;
+    showRunDetailButtonDesc: string;
     showDebugPanel: string;
     showDebugPanelDesc: string;
     viewRunDetail: string;
@@ -1296,6 +1315,9 @@ export interface LocaleStrings {
     editProvider: string;
     deleteProvider: string;
     deleteProviderConfirm: string;
+    localProvider: string;
+    readOnlyProvider: string;
+    authModeOAuth: string;
     providerName: string;
     providerNamePlaceholder: string;
     vendor: string;
@@ -1319,6 +1341,8 @@ export interface LocaleStrings {
     importModels: string;
     importing: string;
     importDone: (count: number) => string;
+    modelVisible: string;
+    modelHidden: string;
     modelName: string;
     modelNamePlaceholder: string;
     priority: string;
@@ -1533,6 +1557,12 @@ export interface LocaleStrings {
     localRetryDownload: string;
     localDownloadComplete: string;
     localStarting: string;
+    localProviderChoiceTitle: string;
+    localProviderChoiceDesc: string;
+    localProviderUseDetected: (providers: string) => string;
+    localProviderDetectedDesc: string;
+    localProviderManual: string;
+    localProviderManualDesc: string;
     localProviderTitle: string;
     localProviderDesc: string;
     localProviderVendor: string;
