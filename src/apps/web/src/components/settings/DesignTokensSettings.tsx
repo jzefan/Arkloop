@@ -38,26 +38,30 @@ const mutedText = 'text-sm leading-relaxed text-[var(--c-text-secondary)]'
 const ruleText = 'text-xs leading-relaxed text-[var(--c-text-muted)]'
 const controlRadius = 'rounded-[6.5px]'
 const selectBorderColor = 'color-mix(in srgb, var(--c-border) 78%, var(--c-bg-input) 22%)'
+const secondaryFrameBorder = 'color-mix(in srgb, var(--c-border) 91%, var(--c-text-primary) 9%)'
+const dangerText = '#ea4d3c'
+const dangerSurface = `color-mix(in srgb, var(--c-bg-menu) 96%, ${dangerText} 4%)`
+const dangerBorder = `color-mix(in srgb, var(--c-border-subtle) 84%, ${dangerText} 16%)`
 
 const toastText: Record<ToastVariant, string> = {
-  success: 'text-[var(--c-status-success-text)]',
-  error: 'text-[var(--c-status-error-text)]',
+  success: 'text-[var(--c-status-ok-text)]',
+  error: 'text-[#ea4d3c]',
   warn: 'text-[var(--c-status-warn-text)]',
   neutral: 'text-[var(--c-text-secondary)]',
 }
 
 const toastSurface: Record<ToastVariant, string> = {
-  success: 'var(--c-bg-menu)',
-  error: 'var(--c-error-bg)',
-  warn: 'var(--c-status-warn-bg)',
-  neutral: 'var(--c-bg-menu)',
+  success: 'var(--c-bg-input)',
+  error: 'var(--c-bg-input)',
+  warn: 'var(--c-bg-input)',
+  neutral: 'var(--c-bg-input)',
 }
 
 const toastBorder: Record<ToastVariant, string> = {
-  success: 'var(--c-border-subtle)',
-  error: 'var(--c-error-border)',
-  warn: 'var(--c-status-warn-text)',
-  neutral: 'var(--c-border-subtle)',
+  success: secondaryFrameBorder,
+  error: secondaryFrameBorder,
+  warn: secondaryFrameBorder,
+  neutral: secondaryFrameBorder,
 }
 
 const radiusScale = [
@@ -1451,10 +1455,13 @@ function PageGrammarPreview() {
       </div>
 
       <SpecCard title="Danger zone">
-        <div className="rounded-xl border border-[var(--c-status-danger-text)]/20 bg-[var(--c-status-danger-bg)] p-4">
+        <div
+          className="rounded-xl border p-4"
+          style={{ background: dangerSurface, borderColor: dangerBorder }}
+        >
           <div className="flex flex-wrap items-center justify-between gap-4">
             <div className="flex min-w-0 items-start gap-3">
-              <AlertTriangle size={16} className="mt-0.5 shrink-0 text-[var(--c-status-danger-text)]" />
+              <AlertTriangle size={16} className="mt-0.5 shrink-0" style={{ color: dangerText }} />
               <div>
                 <div className="text-sm font-medium text-[var(--c-text-heading)]">Delete provider</div>
                 <div className="mt-0.5 text-xs leading-relaxed text-[var(--c-text-muted)]">危险操作放在页面末尾，常驻态保持低权重。</div>
@@ -1489,11 +1496,11 @@ function ToastPreviewItem({
   return (
     <div
       className={[
-        'flex items-center gap-2 rounded-lg px-4 py-2.5',
+        'flex min-h-[32px] items-center gap-2 rounded-[6.5px] px-3.5 py-2 [background-clip:padding-box]',
         exiting ? 'toast-exit' : 'toast-enter',
       ].join(' ')}
       style={{
-        border: `0.5px solid ${toastBorder[variant]}`,
+        border: `0.65px solid ${toastBorder[variant]}`,
         background: toastSurface[variant],
       }}
     >
@@ -1501,7 +1508,7 @@ function ToastPreviewItem({
       <button
         type="button"
         onClick={onDismiss}
-        className="shrink-0 text-[var(--c-text-muted)] transition-opacity hover:opacity-70"
+        className="-mr-1 flex h-6 w-6 shrink-0 items-center justify-center rounded-[6px] text-[color-mix(in_srgb,var(--c-border)_72%,var(--c-text-primary)_28%)] transition-colors duration-150 hover:bg-[var(--c-bg-sub)] hover:text-[var(--c-text-primary)]"
       >
         <X size={14} />
       </button>
