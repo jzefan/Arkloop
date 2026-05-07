@@ -27,21 +27,27 @@ const PROVIDER_PRESETS = [
   { key: 'openai_responses', provider: 'openai', openai_api_mode: 'responses' },
   { key: 'openai_chat_completions', provider: 'openai', openai_api_mode: 'chat_completions' },
   { key: 'anthropic_message', provider: 'anthropic', openai_api_mode: undefined },
+  { key: 'deepseek', provider: 'deepseek', openai_api_mode: 'chat_completions' },
+  { key: 'zuxmax', provider: 'zuxmax', openai_api_mode: 'chat_completions' },
 ] as const
 
 type ProviderPresetKey = typeof PROVIDER_PRESETS[number]['key']
 
-function presetLabel(key: string, m: { vendorOpenaiResponses: string; vendorOpenaiChatCompletions: string; vendorAnthropicMessage: string }): string {
+function presetLabel(key: string, m: { vendorOpenaiResponses: string; vendorOpenaiChatCompletions: string; vendorAnthropicMessage: string; vendorDeepSeek?: string; vendorZuxMax?: string }): string {
   const map: Record<string, string> = {
     openai_responses: m.vendorOpenaiResponses,
     openai_chat_completions: m.vendorOpenaiChatCompletions,
     anthropic_message: m.vendorAnthropicMessage,
+    deepseek: m.vendorDeepSeek ?? 'DeepSeek',
+    zuxmax: m.vendorZuxMax ?? 'ZuxMax',
   }
   return map[key] ?? key
 }
 
 function toPresetKey(provider: string, mode: string | null): ProviderPresetKey {
   if (provider === 'anthropic') return 'anthropic_message'
+  if (provider === 'deepseek') return 'deepseek'
+  if (provider === 'zuxmax') return 'zuxmax'
   if (mode === 'chat_completions') return 'openai_chat_completions'
   return 'openai_responses'
 }

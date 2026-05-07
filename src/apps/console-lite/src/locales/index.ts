@@ -80,6 +80,7 @@ export interface LocaleStrings {
     clientTypeAnthropic: string
     clientTypeGemini: string
     clientTypeDeepSeek: string
+    clientTypeZuxMax: string
     saveChanges: string
     deleteProvider: string
     deleteProviderConfirm: (name: string) => string

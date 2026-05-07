@@ -686,7 +686,7 @@ CREATE TABLE jobs (
 CREATE TABLE llm_credentials (
     id              TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(4))) || '-' || lower(hex(randomblob(2))) || '-4' || substr(lower(hex(randomblob(2))),2) || '-' || substr('89ab',abs(random()) % 4 + 1, 1) || substr(lower(hex(randomblob(2))),2) || '-' || lower(hex(randomblob(6)))),
     account_id      TEXT NOT NULL DEFAULT '00000000-0000-4000-8000-000000000002' REFERENCES accounts(id) ON DELETE CASCADE,
-    provider        TEXT NOT NULL CHECK (provider IN ('openai', 'anthropic', 'gemini', 'deepseek')),
+    provider        TEXT NOT NULL CHECK (provider IN ('openai', 'anthropic', 'gemini', 'deepseek', 'zuxmax')),
     name            TEXT NOT NULL,
     secret_id       TEXT,
     key_prefix      TEXT,
@@ -1483,4 +1483,3 @@ CREATE TABLE workspace_skill_enablements (
     updated_at         TEXT NOT NULL DEFAULT (datetime('now')),
     PRIMARY KEY (workspace_ref, skill_key)
 );
-

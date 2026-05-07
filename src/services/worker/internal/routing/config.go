@@ -34,6 +34,7 @@ const (
 	ProviderKindAnthropic   ProviderKind = "anthropic"
 	ProviderKindGemini      ProviderKind = "gemini"
 	ProviderKindDeepSeek    ProviderKind = "deepseek"
+	ProviderKindZuxMax      ProviderKind = "zuxmax"
 	ProviderKindClaudeLocal ProviderKind = "claude_code_local"
 	ProviderKindCodexLocal  ProviderKind = "codex_local"
 )
@@ -508,12 +509,14 @@ func parseProviderKind(value string) (ProviderKind, error) {
 		return ProviderKindGemini, nil
 	case "deepseek":
 		return ProviderKindDeepSeek, nil
+	case "zuxmax":
+		return ProviderKindZuxMax, nil
 	case "claude_code_local":
 		return ProviderKindClaudeLocal, nil
 	case "codex_local":
 		return ProviderKindCodexLocal, nil
 	default:
-		return "", fmt.Errorf("must be stub/openai/anthropic/gemini/deepseek/claude_code_local/codex_local")
+		return "", fmt.Errorf("must be stub/openai/anthropic/gemini/deepseek/zuxmax/claude_code_local/codex_local")
 	}
 }
 
@@ -801,6 +804,8 @@ func dbProviderToKind(provider string) (ProviderKind, error) {
 		return ProviderKindGemini, nil
 	case "deepseek":
 		return ProviderKindDeepSeek, nil
+	case "zuxmax":
+		return ProviderKindZuxMax, nil
 	case "claude_code_local":
 		return ProviderKindClaudeLocal, nil
 	case "codex_local":

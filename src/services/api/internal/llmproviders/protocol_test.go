@@ -55,6 +55,26 @@ func TestResolveCatalogProtocolConfigDeepSeekDefaultsToChatCompletions(t *testin
 	}
 }
 
+func TestResolveCatalogProtocolConfigZuxMaxUsesChatCompletions(t *testing.T) {
+	baseURL := "https://api.zuxmax.example/v1"
+	cfg, err := ResolveCatalogProtocolConfig(data.LlmCredential{
+		Provider: "zuxmax",
+		BaseURL:  &baseURL,
+	}, "sk-zuxmax")
+	if err != nil {
+		t.Fatalf("ResolveCatalogProtocolConfig() error = %v", err)
+	}
+	if cfg.Kind != ProtocolKindOpenAIChatCompletions {
+		t.Fatalf("Kind = %q, want %q", cfg.Kind, ProtocolKindOpenAIChatCompletions)
+	}
+	if cfg.BaseURL != baseURL {
+		t.Fatalf("BaseURL = %q, want %q", cfg.BaseURL, baseURL)
+	}
+	if cfg.OpenAI.APIMode != "chat_completions" {
+		t.Fatalf("OpenAI.APIMode = %q, want chat_completions", cfg.OpenAI.APIMode)
+	}
+}
+
 func TestResolveCatalogProtocolConfigAnthropicDefaultsToHostBase(t *testing.T) {
 	cfg, err := ResolveCatalogProtocolConfig(data.LlmCredential{
 		Provider: "anthropic",

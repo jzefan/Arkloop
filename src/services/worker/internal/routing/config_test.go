@@ -22,6 +22,26 @@ func TestDBProviderToKindDeepSeek(t *testing.T) {
 	}
 }
 
+func TestParseProviderKindZuxMax(t *testing.T) {
+	got, err := parseProviderKind("zuxmax")
+	if err != nil {
+		t.Fatalf("parseProviderKind() error = %v", err)
+	}
+	if got != ProviderKindZuxMax {
+		t.Fatalf("parseProviderKind() = %q, want %q", got, ProviderKindZuxMax)
+	}
+}
+
+func TestDBProviderToKindZuxMax(t *testing.T) {
+	got, err := dbProviderToKind("zuxmax")
+	if err != nil {
+		t.Fatalf("dbProviderToKind() error = %v", err)
+	}
+	if got != ProviderKindZuxMax {
+		t.Fatalf("dbProviderToKind() = %q, want %q", got, ProviderKindZuxMax)
+	}
+}
+
 func TestGetHighestPriorityRouteByCredentialName_Found(t *testing.T) {
 	cfg := ProviderRoutingConfig{
 		DefaultRouteID: "default",

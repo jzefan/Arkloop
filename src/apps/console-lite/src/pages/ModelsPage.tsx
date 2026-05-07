@@ -33,6 +33,7 @@ const PROVIDER_PRESETS = [
   { key: 'anthropic_message', provider: 'anthropic', openai_api_mode: undefined },
   { key: 'gemini', provider: 'gemini', openai_api_mode: undefined },
   { key: 'deepseek', provider: 'deepseek', openai_api_mode: 'chat_completions' },
+  { key: 'zuxmax', provider: 'zuxmax', openai_api_mode: 'chat_completions' },
 ] as const
 
 type ProviderPresetKey = typeof PROVIDER_PRESETS[number]['key']
@@ -41,6 +42,7 @@ function toPresetKey(provider: string, mode: string | null): ProviderPresetKey {
   if (provider === 'anthropic') return 'anthropic_message'
   if (provider === 'gemini') return 'gemini'
   if (provider === 'deepseek') return 'deepseek'
+  if (provider === 'zuxmax') return 'zuxmax'
   if (mode === 'chat_completions') return 'openai_chat_completions'
   return 'openai_responses'
 }
@@ -817,6 +819,7 @@ function presetLabel(key: string, tc: ReturnType<typeof useLocale>['t']['models'
     anthropic_message: tc.clientTypeAnthropic ?? 'Anthropic Messages',
     gemini: tc.clientTypeGemini ?? 'Google Gemini',
     deepseek: tc.clientTypeDeepSeek ?? 'DeepSeek',
+    zuxmax: tc.clientTypeZuxMax ?? 'ZuxMax',
   }
   return map[key] ?? key
 }

@@ -54,6 +54,7 @@ const VENDOR_PRESETS = [
   { key: 'anthropic_message', provider: 'anthropic', openai_api_mode: undefined },
   { key: 'gemini', provider: 'gemini', openai_api_mode: undefined },
   { key: 'deepseek', provider: 'deepseek', openai_api_mode: 'chat_completions' },
+  { key: 'zuxmax', provider: 'zuxmax', openai_api_mode: 'chat_completions' },
 ] as const
 
 type VendorPresetKey = (typeof VENDOR_PRESETS)[number]['key']
@@ -74,7 +75,7 @@ function localAuthModeLabel(provider: LlmProvider, p: ReturnType<typeof useLocal
 
 function vendorLabel(
   key: string,
-  p: { vendorOpenai: string; vendorOpenaiChat: string; vendorAnthropic: string; vendorGemini: string; vendorDeepSeek?: string },
+  p: { vendorOpenai: string; vendorOpenaiChat: string; vendorAnthropic: string; vendorGemini: string; vendorDeepSeek?: string; vendorZuxMax?: string },
 ): string {
   const map: Record<string, string> = {
     openai_responses: p.vendorOpenai,
@@ -82,6 +83,7 @@ function vendorLabel(
     anthropic_message: p.vendorAnthropic,
     gemini: p.vendorGemini,
     deepseek: p.vendorDeepSeek ?? 'DeepSeek',
+    zuxmax: p.vendorZuxMax ?? 'ZuxMax',
   }
   return map[key] ?? key
 }
@@ -90,12 +92,13 @@ function toVendorKey(provider: string, mode: string | null): VendorPresetKey {
   if (provider === 'anthropic') return 'anthropic_message'
   if (provider === 'gemini') return 'gemini'
   if (provider === 'deepseek') return 'deepseek'
+  if (provider === 'zuxmax') return 'zuxmax'
   if (mode === 'chat_completions') return 'openai_chat_completions'
   return 'openai_responses'
 }
 
 function defaultOpenVikingBackendForVendor(provider: string): OpenVikingBackendKey {
-  if (provider === 'anthropic' || provider === 'gemini' || provider === 'deepseek') return 'openai_compatible'
+  if (provider === 'anthropic' || provider === 'gemini' || provider === 'deepseek' || provider === 'zuxmax') return 'openai_compatible'
   return 'openai'
 }
 

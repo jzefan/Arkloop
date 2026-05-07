@@ -73,6 +73,15 @@ func ResolveCatalogProtocolConfig(provider data.LlmCredential, apiKey string) (C
 			OpenAI:     OpenAICatalogConfig{APIMode: "chat_completions"},
 			Credential: provider,
 		}, nil
+	case "zuxmax":
+		resolvedBaseURL := strings.TrimRight(baseURL, "/")
+		return CatalogProtocolConfig{
+			Kind:       ProtocolKindOpenAIChatCompletions,
+			BaseURL:    resolvedBaseURL,
+			APIKey:     apiKey,
+			OpenAI:     OpenAICatalogConfig{APIMode: "chat_completions"},
+			Credential: provider,
+		}, nil
 	case "anthropic":
 		resolvedBaseURL := resolveAnthropicCatalogBaseURL(baseURL)
 		version, extraHeaders, err := parseAnthropicCatalogAdvanced(provider.AdvancedJSON)

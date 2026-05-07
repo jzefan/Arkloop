@@ -76,6 +76,7 @@ export const en: LocaleStrings = {
     clientTypeAnthropic: 'Anthropic Message',
     clientTypeGemini: 'Google Gemini',
     clientTypeDeepSeek: 'DeepSeek',
+    clientTypeZuxMax: 'ZuxMax',
     saveChanges: 'Save Changes',
     deleteProvider: 'Delete Provider',
     deleteProviderConfirm: (name: string) => `Delete provider ${name}? All models under it will be removed.`,

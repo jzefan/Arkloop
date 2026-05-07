@@ -427,6 +427,21 @@ func ResolveGatewayConfigFromSelectedRoute(selected routing.SelectedProviderRout
 			Transport:    transport,
 			OpenAI:       &protocol,
 		}, nil
+	case routing.ProviderKindZuxMax:
+		transport.BaseURL = strings.TrimRight(strings.TrimSpace(transport.BaseURL), "/")
+		if transport.BaseURL == "" {
+			return llm.ResolvedGatewayConfig{}, fmt.Errorf("zuxmax base_url is required")
+		}
+		protocol, err := llm.ResolveOpenAIProtocolConfig("chat_completions", advancedJSON)
+		if err != nil {
+			return llm.ResolvedGatewayConfig{}, err
+		}
+		return llm.ResolvedGatewayConfig{
+			ProtocolKind: protocol.PrimaryKind,
+			Model:        selected.Route.Model,
+			Transport:    transport,
+			OpenAI:       &protocol,
+		}, nil
 	case routing.ProviderKindAnthropic:
 		protocol, err := llm.ResolveAnthropicProtocolConfig(advancedJSON)
 		if err != nil {

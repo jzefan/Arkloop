@@ -116,6 +116,7 @@ var validLlmProviders = map[string]bool{
 	"anthropic": true,
 	"gemini":    true,
 	"deepseek":  true,
+	"zuxmax":    true,
 }
 
 var validOpenAIAPIModes = map[string]bool{
