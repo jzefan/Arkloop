@@ -282,8 +282,11 @@ func TestResolverRefreshesClaudeOAuthAndWritesBack(t *testing.T) {
 		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
 			t.Fatalf("Decode: %v", err)
 		}
-		if payload["refresh_token"] != "refresh-old" || payload["scope"] != claudeOAuthScopes {
+		if payload["refresh_token"] != "refresh-old" {
 			t.Fatalf("unexpected refresh payload: %#v", payload)
+		}
+		if _, ok := payload["scope"]; ok {
+			t.Fatalf("claude oauth refresh should not request scope: %#v", payload)
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"access_token":  "new-access",

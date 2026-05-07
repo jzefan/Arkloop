@@ -69,7 +69,6 @@ const (
 	claudeServiceBase         = "Claude Code"
 	claudeOAuthServiceSuffix  = "-credentials"
 	claudeOAuthClientID       = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
-	claudeOAuthScopes         = "org:create_api_key user:profile user:inference"
 
 	codexHomeEnv              = "CODEX_HOME"
 	codexAPIKeyEnv            = "CODEX_API_KEY"
@@ -701,7 +700,6 @@ func (r *Resolver) refreshClaudeOAuth(ctx context.Context, credential Credential
 		"grant_type":    "refresh_token",
 		"client_id":     claudeOAuthClientID,
 		"refresh_token": credential.RefreshToken,
-		"scope":         claudeOAuthScopes,
 	}
 	var out struct {
 		AccessToken  string `json:"access_token"`
