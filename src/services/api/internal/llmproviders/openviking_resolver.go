@@ -249,6 +249,15 @@ func defaultModelBaseURL(credential data.LlmCredential) string {
 		return defaultOpenAIBaseURL
 	case "anthropic":
 		return defaultAnthropicBaseURL
+	case "zenmax":
+		switch resolveZenMaxProtocol(credential.AdvancedJSON) {
+		case "anthropic":
+			return defaultZenMaxAnthropicBaseURL
+		case "gemini":
+			return "https://zenmux.ai/api/vertex-ai"
+		default:
+			return defaultZenMaxOpenAIBaseURL
+		}
 	default:
 		return ""
 	}

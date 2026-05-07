@@ -427,21 +427,56 @@ func ResolveGatewayConfigFromSelectedRoute(selected routing.SelectedProviderRout
 			Transport:    transport,
 			OpenAI:       &protocol,
 		}, nil
-	case routing.ProviderKindZuxMax:
+	case routing.ProviderKindZenMax:
 		transport.BaseURL = strings.TrimRight(strings.TrimSpace(transport.BaseURL), "/")
-		if transport.BaseURL == "" {
-			return llm.ResolvedGatewayConfig{}, fmt.Errorf("zuxmax base_url is required")
+		zenMaxProtocol := resolveZenMaxProtocol(advancedJSON)
+		protocolAdvancedJSON := withoutZenMaxRoutingMetadata(advancedJSON)
+		switch zenMaxProtocol {
+		case "openai":
+			if transport.BaseURL == "" {
+				transport.BaseURL = "https://zenmux.ai/api/v1"
+			}
+			protocol, err := llm.ResolveOpenAIProtocolConfig("chat_completions", protocolAdvancedJSON)
+			if err != nil {
+				return llm.ResolvedGatewayConfig{}, err
+			}
+			return llm.ResolvedGatewayConfig{
+				ProtocolKind: protocol.PrimaryKind,
+				Model:        selected.Route.Model,
+				Transport:    transport,
+				OpenAI:       &protocol,
+			}, nil
+		case "anthropic":
+			if transport.BaseURL == "" {
+				transport.BaseURL = "https://zenmux.ai/api/anthropic"
+			}
+			protocol, err := llm.ResolveAnthropicProtocolConfig(protocolAdvancedJSON)
+			if err != nil {
+				return llm.ResolvedGatewayConfig{}, err
+			}
+			return llm.ResolvedGatewayConfig{
+				ProtocolKind: llm.ProtocolKindAnthropicMessages,
+				Model:        selected.Route.Model,
+				Transport:    transport,
+				Anthropic:    &protocol,
+			}, nil
+		case "gemini":
+			if transport.BaseURL == "" {
+				transport.BaseURL = "https://zenmux.ai/api/vertex-ai"
+			}
+			protocol, err := llm.ResolveGeminiProtocolConfig(protocolAdvancedJSON)
+			if err != nil {
+				return llm.ResolvedGatewayConfig{}, err
+			}
+			return llm.ResolvedGatewayConfig{
+				ProtocolKind: llm.ProtocolKindGeminiGenerateContent,
+				Model:        selected.Route.Model,
+				Transport:    transport,
+				Gemini:       &protocol,
+			}, nil
+		default:
+			return llm.ResolvedGatewayConfig{}, fmt.Errorf("unsupported zenmax protocol: %s", zenMaxProtocol)
 		}
-		protocol, err := llm.ResolveOpenAIProtocolConfig("chat_completions", advancedJSON)
-		if err != nil {
-			return llm.ResolvedGatewayConfig{}, err
-		}
-		return llm.ResolvedGatewayConfig{
-			ProtocolKind: protocol.PrimaryKind,
-			Model:        selected.Route.Model,
-			Transport:    transport,
-			OpenAI:       &protocol,
-		}, nil
 	case routing.ProviderKindAnthropic:
 		protocol, err := llm.ResolveAnthropicProtocolConfig(advancedJSON)
 		if err != nil {
@@ -600,6 +635,37 @@ func withClaudeCodeIdentityPrompt(request llm.Request) llm.Request {
 	}
 	request.PromptPlan.SystemBlocks = append([]llm.PromptPlanBlock{block}, request.PromptPlan.SystemBlocks...)
 	return request
+}
+
+func resolveZenMaxProtocol(advanced map[string]any) string {
+	if advanced == nil {
+		return "openai"
+	}
+	raw, _ := advanced["zenmax_protocol"].(string)
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "anthropic", "claude":
+		return "anthropic"
+	case "gemini":
+		return "gemini"
+	case "", "openai":
+		return "openai"
+	default:
+		return strings.ToLower(strings.TrimSpace(raw))
+	}
+}
+
+func withoutZenMaxRoutingMetadata(advanced map[string]any) map[string]any {
+	if len(advanced) == 0 {
+		return advanced
+	}
+	cleaned := make(map[string]any, len(advanced))
+	for key, value := range advanced {
+		if key == "zenmax_protocol" {
+			continue
+		}
+		cleaned[key] = value
+	}
+	return cleaned
 }
 
 func isLocalProviderKind(kind routing.ProviderKind) bool {

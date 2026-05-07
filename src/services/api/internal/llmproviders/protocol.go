@@ -73,15 +73,55 @@ func ResolveCatalogProtocolConfig(provider data.LlmCredential, apiKey string) (C
 			OpenAI:     OpenAICatalogConfig{APIMode: "chat_completions"},
 			Credential: provider,
 		}, nil
-	case "zuxmax":
-		resolvedBaseURL := strings.TrimRight(baseURL, "/")
-		return CatalogProtocolConfig{
-			Kind:       ProtocolKindOpenAIChatCompletions,
-			BaseURL:    resolvedBaseURL,
-			APIKey:     apiKey,
-			OpenAI:     OpenAICatalogConfig{APIMode: "chat_completions"},
-			Credential: provider,
-		}, nil
+	case "zenmax":
+		protocol := resolveZenMaxProtocol(provider.AdvancedJSON)
+		switch protocol {
+		case "openai":
+			resolvedBaseURL := strings.TrimRight(baseURL, "/")
+			if resolvedBaseURL == "" {
+				resolvedBaseURL = defaultZenMaxOpenAIBaseURL
+			}
+			return CatalogProtocolConfig{
+				Kind:       ProtocolKindOpenAIChatCompletions,
+				BaseURL:    resolvedBaseURL,
+				APIKey:     apiKey,
+				OpenAI:     OpenAICatalogConfig{APIMode: "chat_completions"},
+				Credential: provider,
+			}, nil
+		case "anthropic":
+			resolvedBaseURL := strings.TrimRight(baseURL, "/")
+			if resolvedBaseURL == "" {
+				resolvedBaseURL = defaultZenMaxAnthropicBaseURL
+			}
+			version, extraHeaders, err := parseAnthropicCatalogAdvanced(provider.AdvancedJSON)
+			if err != nil {
+				return CatalogProtocolConfig{}, err
+			}
+			return CatalogProtocolConfig{
+				Kind:    ProtocolKindAnthropicMessages,
+				BaseURL: resolvedBaseURL,
+				APIKey:  apiKey,
+				Anthropic: AnthropicCatalogConfig{
+					Version:      version,
+					ExtraHeaders: extraHeaders,
+				},
+				Credential: provider,
+			}, nil
+		case "gemini":
+			resolvedBaseURL := strings.TrimRight(baseURL, "/")
+			if resolvedBaseURL == "" {
+				resolvedBaseURL = defaultZenMaxGeminiCatalogBaseURL
+			}
+			return CatalogProtocolConfig{
+				Kind:       ProtocolKindGeminiGenerateContent,
+				BaseURL:    resolvedBaseURL,
+				APIKey:     apiKey,
+				Gemini:     GeminiCatalogConfig{},
+				Credential: provider,
+			}, nil
+		default:
+			return CatalogProtocolConfig{}, fmt.Errorf("unsupported zenmax protocol: %s", protocol)
+		}
 	case "anthropic":
 		resolvedBaseURL := resolveAnthropicCatalogBaseURL(baseURL)
 		version, extraHeaders, err := parseAnthropicCatalogAdvanced(provider.AdvancedJSON)
@@ -129,6 +169,23 @@ func resolveOpenAIProtocolKind(apiMode string) (ProtocolKind, string, error) {
 		return ProtocolKindOpenAIResponses, mode, nil
 	default:
 		return "", "", fmt.Errorf("invalid openai_api_mode: %s", mode)
+	}
+}
+
+func resolveZenMaxProtocol(advanced map[string]any) string {
+	if advanced == nil {
+		return "openai"
+	}
+	raw, _ := advanced["zenmax_protocol"].(string)
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "anthropic", "claude":
+		return "anthropic"
+	case "gemini":
+		return "gemini"
+	case "", "openai":
+		return "openai"
+	default:
+		return strings.ToLower(strings.TrimSpace(raw))
 	}
 }
 

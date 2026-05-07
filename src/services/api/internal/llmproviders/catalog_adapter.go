@@ -18,10 +18,13 @@ const (
 	availableModelsTimeout   = 15 * time.Second
 	availableModelsRespBytes = 8 << 20
 
-	defaultOpenAIBaseURL        = "https://api.openai.com/v1"
-	defaultDeepSeekBaseURL      = "https://api.deepseek.com"
-	defaultAnthropicVersion     = "2023-06-01"
-	defaultGeminiCatalogBaseURL = "https://generativelanguage.googleapis.com/v1beta"
+	defaultOpenAIBaseURL              = "https://api.openai.com/v1"
+	defaultDeepSeekBaseURL            = "https://api.deepseek.com"
+	defaultZenMaxOpenAIBaseURL        = "https://zenmux.ai/api/v1"
+	defaultZenMaxAnthropicBaseURL     = "https://zenmux.ai/api/anthropic"
+	defaultZenMaxGeminiCatalogBaseURL = "https://zenmux.ai/api/vertex-ai/v1beta"
+	defaultAnthropicVersion           = "2023-06-01"
+	defaultGeminiCatalogBaseURL       = "https://generativelanguage.googleapis.com/v1beta"
 )
 
 type CatalogAdapter interface {

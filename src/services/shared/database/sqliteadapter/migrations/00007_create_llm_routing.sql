@@ -5,7 +5,7 @@
 CREATE TABLE llm_credentials (
     id              TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(4))) || '-' || lower(hex(randomblob(2))) || '-4' || substr(lower(hex(randomblob(2))),2) || '-' || substr('89ab',abs(random()) % 4 + 1, 1) || substr(lower(hex(randomblob(2))),2) || '-' || lower(hex(randomblob(6)))),
     org_id          TEXT NOT NULL REFERENCES orgs(id) ON DELETE CASCADE,
-    provider        TEXT NOT NULL CHECK (provider IN ('openai', 'anthropic', 'gemini', 'deepseek', 'zuxmax')),
+    provider        TEXT NOT NULL CHECK (provider IN ('openai', 'anthropic', 'gemini', 'deepseek', 'zenmax')),
     name            TEXT NOT NULL,
     secret_id       TEXT,
     key_prefix      TEXT,

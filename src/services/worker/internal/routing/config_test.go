@@ -22,23 +22,23 @@ func TestDBProviderToKindDeepSeek(t *testing.T) {
 	}
 }
 
-func TestParseProviderKindZuxMax(t *testing.T) {
-	got, err := parseProviderKind("zuxmax")
+func TestParseProviderKindZenMax(t *testing.T) {
+	got, err := parseProviderKind("zenmax")
 	if err != nil {
 		t.Fatalf("parseProviderKind() error = %v", err)
 	}
-	if got != ProviderKindZuxMax {
-		t.Fatalf("parseProviderKind() = %q, want %q", got, ProviderKindZuxMax)
+	if got != ProviderKindZenMax {
+		t.Fatalf("parseProviderKind() = %q, want %q", got, ProviderKindZenMax)
 	}
 }
 
-func TestDBProviderToKindZuxMax(t *testing.T) {
-	got, err := dbProviderToKind("zuxmax")
+func TestDBProviderToKindZenMax(t *testing.T) {
+	got, err := dbProviderToKind("zenmax")
 	if err != nil {
 		t.Fatalf("dbProviderToKind() error = %v", err)
 	}
-	if got != ProviderKindZuxMax {
-		t.Fatalf("dbProviderToKind() = %q, want %q", got, ProviderKindZuxMax)
+	if got != ProviderKindZenMax {
+		t.Fatalf("dbProviderToKind() = %q, want %q", got, ProviderKindZenMax)
 	}
 }
 

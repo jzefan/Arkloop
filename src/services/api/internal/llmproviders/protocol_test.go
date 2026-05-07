@@ -55,23 +55,65 @@ func TestResolveCatalogProtocolConfigDeepSeekDefaultsToChatCompletions(t *testin
 	}
 }
 
-func TestResolveCatalogProtocolConfigZuxMaxUsesChatCompletions(t *testing.T) {
-	baseURL := "https://api.zuxmax.example/v1"
-	cfg, err := ResolveCatalogProtocolConfig(data.LlmCredential{
-		Provider: "zuxmax",
-		BaseURL:  &baseURL,
-	}, "sk-zuxmax")
-	if err != nil {
-		t.Fatalf("ResolveCatalogProtocolConfig() error = %v", err)
+func TestResolveCatalogProtocolConfigZenMaxProtocols(t *testing.T) {
+	tests := []struct {
+		name          string
+		protocol      string
+		wantKind      ProtocolKind
+		wantBaseURL   string
+		wantAPIMode   string
+		wantGemini    bool
+		wantAnthropic bool
+	}{
+		{
+			name:        "openai",
+			protocol:    "openai",
+			wantKind:    ProtocolKindOpenAIChatCompletions,
+			wantBaseURL: defaultZenMaxOpenAIBaseURL,
+			wantAPIMode: "chat_completions",
+		},
+		{
+			name:          "claude",
+			protocol:      "anthropic",
+			wantKind:      ProtocolKindAnthropicMessages,
+			wantBaseURL:   defaultZenMaxAnthropicBaseURL,
+			wantAnthropic: true,
+		},
+		{
+			name:        "gemini",
+			protocol:    "gemini",
+			wantKind:    ProtocolKindGeminiGenerateContent,
+			wantBaseURL: defaultZenMaxGeminiCatalogBaseURL,
+			wantGemini:  true,
+		},
 	}
-	if cfg.Kind != ProtocolKindOpenAIChatCompletions {
-		t.Fatalf("Kind = %q, want %q", cfg.Kind, ProtocolKindOpenAIChatCompletions)
-	}
-	if cfg.BaseURL != baseURL {
-		t.Fatalf("BaseURL = %q, want %q", cfg.BaseURL, baseURL)
-	}
-	if cfg.OpenAI.APIMode != "chat_completions" {
-		t.Fatalf("OpenAI.APIMode = %q, want chat_completions", cfg.OpenAI.APIMode)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg, err := ResolveCatalogProtocolConfig(data.LlmCredential{
+				Provider: "zenmax",
+				AdvancedJSON: map[string]any{
+					"zenmax_protocol": tt.protocol,
+				},
+			}, "sk-zenmax")
+			if err != nil {
+				t.Fatalf("ResolveCatalogProtocolConfig() error = %v", err)
+			}
+			if cfg.Kind != tt.wantKind {
+				t.Fatalf("Kind = %q, want %q", cfg.Kind, tt.wantKind)
+			}
+			if cfg.BaseURL != tt.wantBaseURL {
+				t.Fatalf("BaseURL = %q, want %q", cfg.BaseURL, tt.wantBaseURL)
+			}
+			if tt.wantAPIMode != "" && cfg.OpenAI.APIMode != tt.wantAPIMode {
+				t.Fatalf("OpenAI.APIMode = %q, want %q", cfg.OpenAI.APIMode, tt.wantAPIMode)
+			}
+			if tt.wantAnthropic && cfg.Anthropic.Version == "" {
+				t.Fatal("expected anthropic protocol config")
+			}
+			if tt.wantGemini && cfg.Gemini != (GeminiCatalogConfig{}) {
+				t.Fatalf("Gemini config = %#v, want empty config", cfg.Gemini)
+			}
+		})
 	}
 }
 

@@ -28,28 +28,57 @@ const PROVIDER_PRESETS = [
   { key: 'openai_chat_completions', provider: 'openai', openai_api_mode: 'chat_completions' },
   { key: 'anthropic_message', provider: 'anthropic', openai_api_mode: undefined },
   { key: 'deepseek', provider: 'deepseek', openai_api_mode: 'chat_completions' },
-  { key: 'zuxmax', provider: 'zuxmax', openai_api_mode: 'chat_completions' },
+  { key: 'zenmax_openai', provider: 'zenmax', openai_api_mode: 'chat_completions', zenmax_protocol: 'openai' },
+  { key: 'zenmax_gemini', provider: 'zenmax', openai_api_mode: undefined, zenmax_protocol: 'gemini' },
+  { key: 'zenmax_claude', provider: 'zenmax', openai_api_mode: undefined, zenmax_protocol: 'anthropic' },
 ] as const
 
 type ProviderPresetKey = typeof PROVIDER_PRESETS[number]['key']
+const ZENMAX_PROTOCOL_ADVANCED_KEY = 'zenmax_protocol'
 
-function presetLabel(key: string, m: { vendorOpenaiResponses: string; vendorOpenaiChatCompletions: string; vendorAnthropicMessage: string; vendorDeepSeek?: string; vendorZuxMax?: string }): string {
+function presetLabel(key: string, m: { vendorOpenaiResponses: string; vendorOpenaiChatCompletions: string; vendorAnthropicMessage: string; vendorDeepSeek?: string; vendorZenMaxOpenAI?: string; vendorZenMaxGemini?: string; vendorZenMaxClaude?: string }): string {
   const map: Record<string, string> = {
     openai_responses: m.vendorOpenaiResponses,
     openai_chat_completions: m.vendorOpenaiChatCompletions,
     anthropic_message: m.vendorAnthropicMessage,
     deepseek: m.vendorDeepSeek ?? 'DeepSeek',
-    zuxmax: m.vendorZuxMax ?? 'ZuxMax',
+    zenmax_openai: m.vendorZenMaxOpenAI ?? 'OpenAI',
+    zenmax_gemini: m.vendorZenMaxGemini ?? 'Gemini',
+    zenmax_claude: m.vendorZenMaxClaude ?? 'Claude',
   }
   return map[key] ?? key
 }
 
-function toPresetKey(provider: string, mode: string | null): ProviderPresetKey {
+function toPresetKey(provider: string, mode: string | null, advancedJSON?: Record<string, unknown> | null): ProviderPresetKey {
   if (provider === 'anthropic') return 'anthropic_message'
   if (provider === 'deepseek') return 'deepseek'
-  if (provider === 'zuxmax') return 'zuxmax'
+  if (provider === 'zenmax') {
+    const protocol = readZenMaxProtocol(advancedJSON)
+    if (protocol === 'gemini') return 'zenmax_gemini'
+    if (protocol === 'anthropic') return 'zenmax_claude'
+    return 'zenmax_openai'
+  }
   if (mode === 'chat_completions') return 'openai_chat_completions'
   return 'openai_responses'
+}
+
+function readZenMaxProtocol(advancedJSON?: Record<string, unknown> | null): string {
+  const raw = typeof advancedJSON?.[ZENMAX_PROTOCOL_ADVANCED_KEY] === 'string'
+    ? String(advancedJSON[ZENMAX_PROTOCOL_ADVANCED_KEY]).trim().toLowerCase()
+    : ''
+  if (raw === 'gemini') return 'gemini'
+  if (raw === 'anthropic' || raw === 'claude') return 'anthropic'
+  return 'openai'
+}
+
+function advancedJsonForPreset(current: Record<string, unknown> | null | undefined, preset: ProviderPresetKey): Record<string, unknown> {
+  const next = { ...(current ?? {}) }
+  delete next[ZENMAX_PROTOCOL_ADVANCED_KEY]
+  const selected = PROVIDER_PRESETS.find((p) => p.key === preset)
+  if (selected?.provider === 'zenmax' && 'zenmax_protocol' in selected) {
+    next[ZENMAX_PROTOCOL_ADVANCED_KEY] = selected.zenmax_protocol
+  }
+  return next
 }
 
 type Props = {
@@ -181,6 +210,7 @@ function AddProviderModal({ accessToken, onClose, onCreated }: {
         api_key: apiKey.trim(),
         base_url: baseUrl.trim() || undefined,
         openai_api_mode: p.openai_api_mode,
+        advanced_json: advancedJsonForPreset({}, preset),
       })
       onCreated()
     } catch (e) {
@@ -222,7 +252,12 @@ function AddProviderModal({ accessToken, onClose, onCreated }: {
             <SettingsSelect
               value={preset}
               onChange={(value) => setPreset(value as ProviderPresetKey)}
-              options={PROVIDER_PRESETS.map((p) => ({ value: p.key, label: presetLabel(p.key, m) }))}
+              options={PROVIDER_PRESETS.map((p) => ({
+                value: p.key,
+                label: presetLabel(p.key, m),
+                groupLabel: p.provider === 'zenmax' ? 'ZenMax' : undefined,
+                depth: p.provider === 'zenmax' ? 1 : 0,
+              }))}
               triggerClassName="h-[35px]"
             />
           </FormField>
@@ -259,7 +294,7 @@ function ProviderDetail({
   const [formName, setFormName] = useState(provider.name)
   const [formApiKey, setFormApiKey] = useState('')
   const [formBaseUrl, setFormBaseUrl] = useState(provider.base_url ?? '')
-  const [formPreset, setFormPreset] = useState<ProviderPresetKey>(toPresetKey(provider.provider, provider.openai_api_mode))
+  const [formPreset, setFormPreset] = useState<ProviderPresetKey>(toPresetKey(provider.provider, provider.openai_api_mode, provider.advanced_json))
   const [saving, setSaving] = useState(false)
   const [err, setErr] = useState('')
   const [deleting, setDeleting] = useState(false)
@@ -276,6 +311,7 @@ function ProviderDetail({
         base_url: formBaseUrl.trim() || null,
         provider: selected?.provider,
         openai_api_mode: selected?.openai_api_mode ?? null,
+        advanced_json: advancedJsonForPreset(provider.advanced_json, formPreset),
       })
       setFormApiKey('')
       onUpdated()
@@ -309,7 +345,12 @@ function ProviderDetail({
           <SettingsSelect
             value={formPreset}
             onChange={(value) => setFormPreset(value as ProviderPresetKey)}
-            options={PROVIDER_PRESETS.map((p) => ({ value: p.key, label: presetLabel(p.key, m) }))}
+            options={PROVIDER_PRESETS.map((p) => ({
+              value: p.key,
+              label: presetLabel(p.key, m),
+              groupLabel: p.provider === 'zenmax' ? 'ZenMax' : undefined,
+              depth: p.provider === 'zenmax' ? 1 : 0,
+            }))}
           />
         </FormField>
 

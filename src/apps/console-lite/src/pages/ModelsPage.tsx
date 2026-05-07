@@ -33,23 +33,53 @@ const PROVIDER_PRESETS = [
   { key: 'anthropic_message', provider: 'anthropic', openai_api_mode: undefined },
   { key: 'gemini', provider: 'gemini', openai_api_mode: undefined },
   { key: 'deepseek', provider: 'deepseek', openai_api_mode: 'chat_completions' },
-  { key: 'zuxmax', provider: 'zuxmax', openai_api_mode: 'chat_completions' },
+  { key: 'zenmax_openai', provider: 'zenmax', openai_api_mode: 'chat_completions', zenmax_protocol: 'openai' },
+  { key: 'zenmax_gemini', provider: 'zenmax', openai_api_mode: undefined, zenmax_protocol: 'gemini' },
+  { key: 'zenmax_claude', provider: 'zenmax', openai_api_mode: undefined, zenmax_protocol: 'anthropic' },
 ] as const
 
 type ProviderPresetKey = typeof PROVIDER_PRESETS[number]['key']
+const ZENMAX_PROTOCOL_ADVANCED_KEY = 'zenmax_protocol'
 
-function toPresetKey(provider: string, mode: string | null): ProviderPresetKey {
+function toPresetKey(provider: string, mode: string | null, advancedJSON?: Record<string, unknown> | null): ProviderPresetKey {
   if (provider === 'anthropic') return 'anthropic_message'
   if (provider === 'gemini') return 'gemini'
   if (provider === 'deepseek') return 'deepseek'
-  if (provider === 'zuxmax') return 'zuxmax'
+  if (provider === 'zenmax') {
+    const protocol = readZenMaxProtocol(advancedJSON)
+    if (protocol === 'gemini') return 'zenmax_gemini'
+    if (protocol === 'anthropic') return 'zenmax_claude'
+    return 'zenmax_openai'
+  }
   if (mode === 'chat_completions') return 'openai_chat_completions'
   return 'openai_responses'
 }
 
 function presetBaseUrlPlaceholder(preset: ProviderPresetKey): string {
   if (preset === 'deepseek') return 'https://api.deepseek.com'
+  if (preset === 'zenmax_openai') return 'https://zenmux.ai/api/v1'
+  if (preset === 'zenmax_gemini') return 'https://zenmux.ai/api/vertex-ai'
+  if (preset === 'zenmax_claude') return 'https://zenmux.ai/api/anthropic'
   return 'https://api.openai.com/v1'
+}
+
+function readZenMaxProtocol(advancedJSON?: Record<string, unknown> | null): string {
+  const raw = typeof advancedJSON?.[ZENMAX_PROTOCOL_ADVANCED_KEY] === 'string'
+    ? String(advancedJSON[ZENMAX_PROTOCOL_ADVANCED_KEY]).trim().toLowerCase()
+    : ''
+  if (raw === 'gemini') return 'gemini'
+  if (raw === 'anthropic' || raw === 'claude') return 'anthropic'
+  return 'openai'
+}
+
+function advancedJsonForPreset(current: Record<string, unknown> | null | undefined, preset: ProviderPresetKey): Record<string, unknown> {
+  const next = { ...(current ?? {}) }
+  delete next[ZENMAX_PROTOCOL_ADVANCED_KEY]
+  const selected = PROVIDER_PRESETS.find((p) => p.key === preset)
+  if (selected?.provider === 'zenmax' && 'zenmax_protocol' in selected) {
+    next[ZENMAX_PROTOCOL_ADVANCED_KEY] = selected.zenmax_protocol
+  }
+  return next
 }
 
 const inputCls =
@@ -249,6 +279,7 @@ function AddProviderModal({ accessToken, scope, tc, t, onClose, onCreated }: {
         api_key: apiKey.trim(),
         base_url: baseUrl.trim() || undefined,
         openai_api_mode: p.openai_api_mode,
+        advanced_json: advancedJsonForPreset({}, preset),
       }, accessToken)
       onCreated(created.id)
     } catch {
@@ -278,9 +309,14 @@ function AddProviderModal({ accessToken, scope, tc, t, onClose, onCreated }: {
 
           <LabelField label={tc.clientType}>
             <select value={preset} onChange={(e) => setPreset(e.target.value as ProviderPresetKey)} className={inputCls}>
-              {PROVIDER_PRESETS.map((p) => (
+              {PROVIDER_PRESETS.filter((p) => p.provider !== 'zenmax').map((p) => (
                 <option key={p.key} value={p.key}>{presetLabel(p.key, tc)}</option>
               ))}
+              <optgroup label="ZenMax">
+                {PROVIDER_PRESETS.filter((p) => p.provider === 'zenmax').map((p) => (
+                  <option key={p.key} value={p.key}>{presetLabel(p.key, tc)}</option>
+                ))}
+              </optgroup>
             </select>
           </LabelField>
 
@@ -331,7 +367,7 @@ function ProviderDetail({
   tc: ReturnType<typeof useLocale>['t']['models']
   t: ReturnType<typeof useLocale>['t']
 }) {
-  const [formPreset, setFormPreset] = useState<ProviderPresetKey>(toPresetKey(provider.provider, provider.openai_api_mode))
+  const [formPreset, setFormPreset] = useState<ProviderPresetKey>(toPresetKey(provider.provider, provider.openai_api_mode, provider.advanced_json))
   const [formName, setFormName] = useState(provider.name)
   const [formApiKey, setFormApiKey] = useState('')
   const [formBaseUrl, setFormBaseUrl] = useState(provider.base_url ?? '')
@@ -352,6 +388,7 @@ function ProviderDetail({
         base_url: formBaseUrl.trim() || null,
         provider: selected?.provider,
         openai_api_mode: selected?.openai_api_mode ?? null,
+        advanced_json: advancedJsonForPreset(provider.advanced_json, formPreset),
       }, accessToken)
       setFormApiKey('')
       onUpdated()
@@ -382,9 +419,14 @@ function ProviderDetail({
       <div className="space-y-4">
         <LabelField label={tc.clientType}>
           <select value={formPreset} onChange={(e) => setFormPreset(e.target.value as ProviderPresetKey)} className={inputCls}>
-            {PROVIDER_PRESETS.map((p) => (
+            {PROVIDER_PRESETS.filter((p) => p.provider !== 'zenmax').map((p) => (
               <option key={p.key} value={p.key}>{presetLabel(p.key, tc)}</option>
             ))}
+            <optgroup label="ZenMax">
+              {PROVIDER_PRESETS.filter((p) => p.provider === 'zenmax').map((p) => (
+                <option key={p.key} value={p.key}>{presetLabel(p.key, tc)}</option>
+              ))}
+            </optgroup>
           </select>
         </LabelField>
 
@@ -819,7 +861,9 @@ function presetLabel(key: string, tc: ReturnType<typeof useLocale>['t']['models'
     anthropic_message: tc.clientTypeAnthropic ?? 'Anthropic Messages',
     gemini: tc.clientTypeGemini ?? 'Google Gemini',
     deepseek: tc.clientTypeDeepSeek ?? 'DeepSeek',
-    zuxmax: tc.clientTypeZuxMax ?? 'ZuxMax',
+    zenmax_openai: tc.clientTypeZenMaxOpenAI ?? 'OpenAI',
+    zenmax_gemini: tc.clientTypeZenMaxGemini ?? 'Gemini',
+    zenmax_claude: tc.clientTypeZenMaxClaude ?? 'Claude',
   }
   return map[key] ?? key
 }

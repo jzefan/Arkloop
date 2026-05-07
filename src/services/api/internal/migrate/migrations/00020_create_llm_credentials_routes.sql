@@ -3,7 +3,7 @@ CREATE TABLE llm_credentials (
     id              UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
     org_id          UUID        NOT NULL REFERENCES orgs(id) ON DELETE CASCADE,
     provider        TEXT        NOT NULL
-                                CHECK (provider IN ('openai', 'anthropic', 'gemini', 'deepseek', 'zuxmax')),
+                                CHECK (provider IN ('openai', 'anthropic', 'gemini', 'deepseek', 'zenmax')),
     name            TEXT        NOT NULL,
     secret_id       UUID        REFERENCES secrets(id) ON DELETE SET NULL,
     key_prefix      TEXT,

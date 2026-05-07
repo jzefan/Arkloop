@@ -359,6 +359,43 @@ func TestRoutingMiddleware_AnthropicGateway_WithDirectApiKey(t *testing.T) {
 	}
 }
 
+func TestResolveGatewayConfigFromSelectedRoute_ZenMaxProtocols(t *testing.T) {
+	tests := []struct {
+		name        string
+		protocol    string
+		wantKind    llm.ProtocolKind
+		wantBaseURL string
+	}{
+		{name: "openai", protocol: "openai", wantKind: llm.ProtocolKindOpenAIChatCompletions, wantBaseURL: "https://zenmux.ai/api/v1"},
+		{name: "claude", protocol: "anthropic", wantKind: llm.ProtocolKindAnthropicMessages, wantBaseURL: "https://zenmux.ai/api/anthropic"},
+		{name: "gemini", protocol: "gemini", wantKind: llm.ProtocolKindGeminiGenerateContent, wantBaseURL: "https://zenmux.ai/api/vertex-ai"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg, err := pipeline.ResolveGatewayConfigFromSelectedRoute(routing.SelectedProviderRoute{
+				Route: routing.ProviderRouteRule{ID: "route", Model: "model"},
+				Credential: routing.ProviderCredential{
+					ID:           "cred",
+					ProviderKind: routing.ProviderKindZenMax,
+					APIKeyValue:  strPtr("sk-zenmax"),
+					AdvancedJSON: map[string]any{
+						"zenmax_protocol": tt.protocol,
+					},
+				},
+			}, false, 0)
+			if err != nil {
+				t.Fatalf("ResolveGatewayConfigFromSelectedRoute() error = %v", err)
+			}
+			if cfg.ProtocolKind != tt.wantKind {
+				t.Fatalf("ProtocolKind = %q, want %q", cfg.ProtocolKind, tt.wantKind)
+			}
+			if cfg.Transport.BaseURL != tt.wantBaseURL {
+				t.Fatalf("BaseURL = %q, want %q", cfg.Transport.BaseURL, tt.wantBaseURL)
+			}
+		})
+	}
+}
+
 func TestRoutingMiddleware_MissingApiKey_Panics(t *testing.T) {
 	cfg := routing.ProviderRoutingConfig{
 		DefaultRouteID: "route-nokey",

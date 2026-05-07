@@ -54,12 +54,15 @@ const VENDOR_PRESETS = [
   { key: 'anthropic_message', provider: 'anthropic', openai_api_mode: undefined },
   { key: 'gemini', provider: 'gemini', openai_api_mode: undefined },
   { key: 'deepseek', provider: 'deepseek', openai_api_mode: 'chat_completions' },
-  { key: 'zuxmax', provider: 'zuxmax', openai_api_mode: 'chat_completions' },
+  { key: 'zenmax_openai', provider: 'zenmax', openai_api_mode: 'chat_completions', zenmax_protocol: 'openai' },
+  { key: 'zenmax_gemini', provider: 'zenmax', openai_api_mode: undefined, zenmax_protocol: 'gemini' },
+  { key: 'zenmax_claude', provider: 'zenmax', openai_api_mode: undefined, zenmax_protocol: 'anthropic' },
 ] as const
 
 type VendorPresetKey = (typeof VENDOR_PRESETS)[number]['key']
 
 const OPENVIKING_BACKEND_ADVANCED_KEY = 'openviking_backend'
+const ZENMAX_PROTOCOL_ADVANCED_KEY = 'zenmax_protocol'
 
 type OpenVikingBackendKey = 'openai' | 'azure' | 'volcengine' | 'openai_compatible'
 
@@ -75,7 +78,7 @@ function localAuthModeLabel(provider: LlmProvider, p: ReturnType<typeof useLocal
 
 function vendorLabel(
   key: string,
-  p: { vendorOpenai: string; vendorOpenaiChat: string; vendorAnthropic: string; vendorGemini: string; vendorDeepSeek?: string; vendorZuxMax?: string },
+  p: { vendorOpenai: string; vendorOpenaiChat: string; vendorAnthropic: string; vendorGemini: string; vendorDeepSeek?: string; vendorZenMaxOpenAI?: string; vendorZenMaxGemini?: string; vendorZenMaxClaude?: string },
 ): string {
   const map: Record<string, string> = {
     openai_responses: p.vendorOpenai,
@@ -83,28 +86,57 @@ function vendorLabel(
     anthropic_message: p.vendorAnthropic,
     gemini: p.vendorGemini,
     deepseek: p.vendorDeepSeek ?? 'DeepSeek',
-    zuxmax: p.vendorZuxMax ?? 'ZuxMax',
+    zenmax_openai: p.vendorZenMaxOpenAI ?? 'OpenAI',
+    zenmax_gemini: p.vendorZenMaxGemini ?? 'Gemini',
+    zenmax_claude: p.vendorZenMaxClaude ?? 'Claude',
   }
   return map[key] ?? key
 }
 
-function toVendorKey(provider: string, mode: string | null): VendorPresetKey {
+function toVendorKey(provider: string, mode: string | null, advancedJSON?: Record<string, unknown> | null): VendorPresetKey {
   if (provider === 'anthropic') return 'anthropic_message'
   if (provider === 'gemini') return 'gemini'
   if (provider === 'deepseek') return 'deepseek'
-  if (provider === 'zuxmax') return 'zuxmax'
+  if (provider === 'zenmax') {
+    const protocol = readZenMaxProtocol(advancedJSON)
+    if (protocol === 'gemini') return 'zenmax_gemini'
+    if (protocol === 'anthropic') return 'zenmax_claude'
+    return 'zenmax_openai'
+  }
   if (mode === 'chat_completions') return 'openai_chat_completions'
   return 'openai_responses'
 }
 
 function defaultOpenVikingBackendForVendor(provider: string): OpenVikingBackendKey {
-  if (provider === 'anthropic' || provider === 'gemini' || provider === 'deepseek' || provider === 'zuxmax') return 'openai_compatible'
+  if (provider === 'anthropic' || provider === 'gemini' || provider === 'deepseek' || provider === 'zenmax') return 'openai_compatible'
   return 'openai'
 }
 
 function presetBaseUrlPlaceholder(preset: VendorPresetKey, p: ReturnType<typeof useLocale>['t']['adminProviders']): string {
   if (preset === 'deepseek') return 'https://api.deepseek.com'
+  if (preset === 'zenmax_openai') return 'https://zenmux.ai/api/v1'
+  if (preset === 'zenmax_gemini') return 'https://zenmux.ai/api/vertex-ai'
+  if (preset === 'zenmax_claude') return 'https://zenmux.ai/api/anthropic'
   return p.baseUrlPlaceholder ?? 'https://api.example.com/v1'
+}
+
+function readZenMaxProtocol(advancedJSON?: Record<string, unknown> | null): string {
+  const raw = typeof advancedJSON?.[ZENMAX_PROTOCOL_ADVANCED_KEY] === 'string'
+    ? String(advancedJSON[ZENMAX_PROTOCOL_ADVANCED_KEY]).trim().toLowerCase()
+    : ''
+  if (raw === 'gemini') return 'gemini'
+  if (raw === 'anthropic' || raw === 'claude') return 'anthropic'
+  return 'openai'
+}
+
+function mergeZenMaxProtocolForPreset(current: Record<string, unknown> | null | undefined, preset: VendorPresetKey): Record<string, unknown> {
+  const next = { ...(current ?? {}) }
+  delete next[ZENMAX_PROTOCOL_ADVANCED_KEY]
+  const selected = VENDOR_PRESETS.find((v) => v.key === preset)
+  if (selected?.provider === 'zenmax' && 'zenmax_protocol' in selected) {
+    next[ZENMAX_PROTOCOL_ADVANCED_KEY] = selected.zenmax_protocol
+  }
+  return next
 }
 
 function readOpenVikingBackend(provider: LlmProvider): OpenVikingBackendKey {
@@ -202,6 +234,8 @@ function VendorDropdown({
       options={VENDOR_PRESETS.map((preset) => ({
         value: preset.key,
         label: vendorLabel(preset.key, p),
+        groupLabel: preset.provider === 'zenmax' ? 'ZenMax' : undefined,
+        depth: preset.provider === 'zenmax' ? 1 : 0,
       }))}
       onChange={(next) => onChange(next as VendorPresetKey)}
       triggerClassName={triggerClassName}
@@ -440,9 +474,7 @@ function ProviderSummaryCard({
 }) {
   const local = isManagedLocalProvider(provider)
   const enabledModels = provider.models.filter((model) => model.show_in_picker).length
-  const apiMode = provider.openai_api_mode === 'chat_completions'
-    ? p.vendorOpenaiChat
-    : vendorLabel(toVendorKey(provider.provider, provider.openai_api_mode), p)
+  const apiMode = vendorLabel(toVendorKey(provider.provider, provider.openai_api_mode, provider.advanced_json), p)
   const baseUrl = provider.base_url?.trim() || '—'
 
   const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
@@ -565,7 +597,10 @@ function AddProviderModal({ accessToken, p, onClose, onCreated }: {
         base_url: baseUrl.trim() || undefined,
         openai_api_mode: v.openai_api_mode,
         advanced_json: writeHeaderEntriesToAdvancedJSON(
-          mergeProviderAdvancedJSON({}, defaultOpenVikingBackendForVendor(v.provider)),
+          mergeZenMaxProtocolForPreset(
+            mergeProviderAdvancedJSON({}, defaultOpenVikingBackendForVendor(v.provider)),
+            preset,
+          ),
           headers,
         ),
       })
@@ -678,7 +713,7 @@ function ProviderDetail({
   autoImportModels?: boolean
   onAutoImportStarted?: () => void
 }) {
-  const [formPreset, setFormPreset] = useState<VendorPresetKey>(toVendorKey(provider.provider, provider.openai_api_mode))
+  const [formPreset, setFormPreset] = useState<VendorPresetKey>(toVendorKey(provider.provider, provider.openai_api_mode, provider.advanced_json))
   const [formName, setFormName] = useState(provider.name)
   const [formApiKey, setFormApiKey] = useState('')
   const [formBaseUrl, setFormBaseUrl] = useState(provider.base_url ?? '')
@@ -688,7 +723,7 @@ function ProviderDetail({
   const readOnly = isManagedLocalProvider(provider)
 
   useEffect(() => {
-    setFormPreset(toVendorKey(provider.provider, provider.openai_api_mode))
+    setFormPreset(toVendorKey(provider.provider, provider.openai_api_mode, provider.advanced_json))
     setFormName(provider.name)
     setFormApiKey('')
     setFormBaseUrl(provider.base_url ?? '')
@@ -713,7 +748,10 @@ function ProviderDetail({
     const baseUrlChanged = nextBaseUrl !== (provider.base_url ?? '')
     const apiKeyChanged = apiKey !== ''
     const nextAdvancedJSON = writeHeaderEntriesToAdvancedJSON(
-      mergeProviderAdvancedJSON(provider.advanced_json, readOpenVikingBackend(provider)),
+      mergeZenMaxProtocolForPreset(
+        mergeProviderAdvancedJSON(provider.advanced_json, readOpenVikingBackend(provider)),
+        formPreset,
+      ),
       formHeaders,
     )
     const advancedChanged = advancedJSONSignature(nextAdvancedJSON) !== advancedJSONSignature(provider.advanced_json)

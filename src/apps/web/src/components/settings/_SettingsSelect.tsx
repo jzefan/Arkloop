@@ -4,7 +4,7 @@ import { Check, ChevronDown } from 'lucide-react'
 import type { CSSProperties } from 'react'
 import { getAdaptiveMenuLeft, settingsSelectBorderColor } from './_SettingsSelectUtils'
 
-export type SettingsSelectOption = { value: string; label: string; fontFamily?: string }
+export type SettingsSelectOption = { value: string; label: string; fontFamily?: string; groupLabel?: string; depth?: number }
 
 type Props = {
   value: string
@@ -98,7 +98,9 @@ export function SettingsSelect({
   }, [open, options.length])
 
   const currentOption = options.find((o) => o.value === value)
-  const currentLabel = currentOption?.label ?? placeholder ?? value
+  const currentLabel = currentOption
+    ? (currentOption.groupLabel ? `${currentOption.groupLabel} / ${currentOption.label}` : currentOption.label)
+    : (placeholder ?? value)
 
   const menu = open ? (
     <div
@@ -114,25 +116,34 @@ export function SettingsSelect({
         overflowY: 'auto',
       }}
     >
-      {options.map((opt) => {
+      {options.map((opt, index) => {
         const selected = opt.value === value
         const active = opt.value === highlighted
+        const previousGroup = index > 0 ? options[index - 1]?.groupLabel : undefined
+        const showGroup = opt.groupLabel && opt.groupLabel !== previousGroup
         return (
-          <button
-            key={opt.value}
-            type="button"
-            onMouseEnter={() => setHighlighted(opt.value)}
-            onClick={() => { onChange(opt.value); setOpen(false) }}
-            className={[
-              'flex w-full items-center justify-between rounded-[6.5px] px-3 py-2 text-sm font-[450] transition-colors duration-[140ms]',
-              active
-                ? 'bg-[var(--c-bg-deep)] text-[var(--c-text-primary)]'
-                : 'bg-[var(--c-bg-menu)] text-[var(--c-text-secondary)]',
-            ].join(' ')}
-          >
-            <span className="truncate" style={{ fontFamily: opt.fontFamily }}>{opt.label}</span>
-            {selected && <Check size={13} className="ml-2 shrink-0" />}
-          </button>
+          <div key={opt.value}>
+            {showGroup && (
+              <div className="px-3 pb-1 pt-2 text-[11px] font-semibold uppercase tracking-wide text-[var(--c-text-muted)]">
+                {opt.groupLabel}
+              </div>
+            )}
+            <button
+              type="button"
+              onMouseEnter={() => setHighlighted(opt.value)}
+              onClick={() => { onChange(opt.value); setOpen(false) }}
+              className={[
+                'flex w-full items-center justify-between rounded-[6.5px] py-2 pr-3 text-sm font-[450] transition-colors duration-[140ms]',
+                active
+                  ? 'bg-[var(--c-bg-deep)] text-[var(--c-text-primary)]'
+                  : 'bg-[var(--c-bg-menu)] text-[var(--c-text-secondary)]',
+              ].join(' ')}
+              style={{ paddingLeft: opt.depth ? 12 + opt.depth * 14 : 12 }}
+            >
+              <span className="truncate" style={{ fontFamily: opt.fontFamily }}>{opt.label}</span>
+              {selected && <Check size={13} className="ml-2 shrink-0" />}
+            </button>
+          </div>
         )
       })}
     </div>
