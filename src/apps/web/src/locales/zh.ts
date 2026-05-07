@@ -972,7 +972,7 @@ export const zh: LocaleStrings = {
     agentCoreHeader: "Agent Core",
     managementHeader: "管理",
     restartAppTitle: "重启 Arkloop",
-    restartAppDesc: "重新启动桌面端以刷新本地 Claude Code、环境变量和桌面服务配置。",
+    restartAppDesc: "重新启动桌面端以刷新本地模型工具、环境变量和桌面服务配置。",
     restartAppButton: "重启 Arkloop",
     restartAppRestarting: "正在重启",
     profileSection: "个人资料",

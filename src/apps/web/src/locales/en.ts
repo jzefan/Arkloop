@@ -982,7 +982,7 @@ export const en: LocaleStrings = {
     agentCoreHeader: "Agent Core",
     managementHeader: "Management",
     restartAppTitle: "Restart Arkloop",
-    restartAppDesc: "Restart the desktop app to refresh local Claude Code, environment variables, and desktop service settings.",
+    restartAppDesc: "Restart the desktop app to refresh local model tools, environment variables, and desktop service settings.",
     restartAppButton: "Restart Arkloop",
     restartAppRestarting: "Restarting",
     profileSection: "Profile",
