@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { createPortal } from 'react-dom'
 import { Plus, Trash2, Download, X, Loader2, SlidersHorizontal } from 'lucide-react'
+import { useModalDismiss } from '../hooks/useModalDismiss'
 import {
   type LlmProvider,
   type LlmProviderModel,
@@ -26,23 +27,32 @@ const PROVIDER_PRESETS = [
   { key: 'openai_responses', provider: 'openai', openai_api_mode: 'responses' },
   { key: 'openai_chat_completions', provider: 'openai', openai_api_mode: 'chat_completions' },
   { key: 'anthropic_message', provider: 'anthropic', openai_api_mode: undefined },
+  { key: 'deepseek', provider: 'deepseek', openai_api_mode: undefined },
 ] as const
 
 type ProviderPresetKey = typeof PROVIDER_PRESETS[number]['key']
 
-function presetLabel(key: string, m: { vendorOpenaiResponses: string; vendorOpenaiChatCompletions: string; vendorAnthropicMessage: string }): string {
+function presetLabel(key: string, m: { vendorOpenaiResponses: string; vendorOpenaiChatCompletions: string; vendorAnthropicMessage: string; vendorDeepSeek: string }): string {
   const map: Record<string, string> = {
     openai_responses: m.vendorOpenaiResponses,
     openai_chat_completions: m.vendorOpenaiChatCompletions,
     anthropic_message: m.vendorAnthropicMessage,
+    deepseek: m.vendorDeepSeek,
   }
   return map[key] ?? key
 }
 
 function toPresetKey(provider: string, mode: string | null): ProviderPresetKey {
   if (provider === 'anthropic') return 'anthropic_message'
+  if (provider === 'deepseek') return 'deepseek'
   if (mode === 'chat_completions') return 'openai_chat_completions'
   return 'openai_responses'
+}
+
+function presetBaseUrlPlaceholder(key: ProviderPresetKey, fallback: string): string {
+  if (key === 'deepseek') return 'https://api.deepseek.com'
+  if (key === 'anthropic_message') return 'https://api.anthropic.com'
+  return fallback
 }
 
 type Props = {
@@ -113,7 +123,7 @@ export function ModelConfigContent({ accessToken }: Props) {
             {m.addProvider}
           </button>
         </div>
-        {error && <p className="px-2 pb-2 text-xs text-red-400">{error}</p>}
+        {error && <p className="px-2 pb-2 text-xs text-[var(--c-error-text)]">{error}</p>}
       </div>
 
       {/* detail */}
@@ -182,15 +192,23 @@ function AddProviderModal({ accessToken, onClose, onCreated }: {
     }
   }
 
+  const dismissRef = useModalDismiss({ open: true, onDismiss: onClose })
+
   return createPortal(
     <div
       className="fixed inset-0 z-[60] flex items-center justify-center bg-black/45"
       onClick={(e) => { if (e.target === e.currentTarget) onClose() }}
     >
-      <div className="flex w-[420px] flex-col gap-4 rounded-xl bg-[var(--c-bg-deep)] p-5 shadow-lg">
+      <div
+        ref={dismissRef as React.RefObject<HTMLDivElement>}
+        role="dialog"
+        aria-modal="true"
+        aria-label={m.addProvider}
+        className="flex w-[420px] flex-col gap-4 rounded-xl bg-[var(--c-bg-deep)] p-5 shadow-lg"
+      >
         <div className="flex items-center justify-between">
           <h3 className="text-sm font-semibold text-[var(--c-text-primary)]">{m.addProvider}</h3>
-          <button onClick={onClose} className="rounded p-1 text-[var(--c-text-muted)] transition-colors hover:bg-[var(--c-bg-sub)] hover:text-[var(--c-text-secondary)]">
+          <button type="button" aria-label={m.cancel} onClick={onClose} className="rounded p-1 text-[var(--c-text-muted)] transition-colors hover:bg-[var(--c-bg-sub)] hover:text-[var(--c-text-secondary)]">
             <X size={16} />
           </button>
         </div>
@@ -217,11 +235,11 @@ function AddProviderModal({ accessToken, onClose, onCreated }: {
           </FormField>
 
           <FormField label={m.baseUrl}>
-            <input value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} placeholder={m.baseUrlPlaceholder} className={inputCls} />
+            <input value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} placeholder={presetBaseUrlPlaceholder(preset, m.baseUrlPlaceholder)} className={inputCls} />
           </FormField>
         </div>
 
-        {err && <p className="mt-3 text-xs text-red-400">{err}</p>}
+        {err && <p className="mt-3 text-xs text-[var(--c-error-text)]">{err}</p>}
 
         <div className="flex items-center justify-end gap-2 pt-1">
           <button
@@ -336,11 +354,11 @@ function ProviderDetail({
         </FormField>
 
         <FormField label={m.baseUrl}>
-          <input value={formBaseUrl} onChange={(e) => setFormBaseUrl(e.target.value)} placeholder={m.baseUrlPlaceholder} className={inputCls} />
+          <input value={formBaseUrl} onChange={(e) => setFormBaseUrl(e.target.value)} placeholder={presetBaseUrlPlaceholder(formPreset, m.baseUrlPlaceholder)} className={inputCls} />
         </FormField>
       </div>
 
-      {err && <p className="text-xs text-red-400">{err}</p>}
+      {err && <p className="text-xs text-[var(--c-error-text)]">{err}</p>}
 
       {/* action bar */}
       <div className="flex items-center justify-between border-b border-[var(--c-border-subtle)] pb-4">
@@ -350,7 +368,7 @@ function ProviderDetail({
             <button
               onClick={handleDelete}
               disabled={deleting}
-              className="rounded-md bg-red-600 px-3 py-1 text-xs font-medium text-white transition-colors hover:bg-red-700 disabled:opacity-50"
+              className="rounded-md bg-[var(--c-danger)] px-3 py-1 text-xs font-medium text-[var(--c-on-danger)] transition-colors hover:bg-[var(--c-danger-hover)] disabled:opacity-50"
             >
               {m.deleteProvider}
             </button>
@@ -587,10 +605,10 @@ function ModelsSection({
         </div>
       </div>
       {availableError && (
-        <p className="mt-1 text-xs text-red-400">{availableError}</p>
+        <p className="mt-1 text-xs text-[var(--c-error-text)]">{availableError}</p>
       )}
 
-      {err && <p className="mt-2 text-xs text-red-400">{err}</p>}
+      {err && <p className="mt-2 text-xs text-[var(--c-error-text)]">{err}</p>}
 
       {provider.models.length > 0 && (
         <div className="mt-3">

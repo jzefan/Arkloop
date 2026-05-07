@@ -292,8 +292,8 @@ export default function ScheduledJobsPage() {
                   onClick={() => handleDelete(deleteTarget.id)}
                   className="rounded-lg px-4 py-1.5 text-[13px] font-medium hover:opacity-85"
                   style={{
-                    color: '#fff',
-                    background: '#ef4444',
+                    color: 'var(--c-on-danger)',
+                    background: 'var(--c-danger)',
                   }}
                 >
                   {t.deleteThreadConfirm}

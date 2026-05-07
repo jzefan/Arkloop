@@ -224,7 +224,7 @@ export function SearchFetchSettings() {
     firecrawl: runtimeStatusForName('web_fetch.firecrawl'),
   }
   const searchRuntimeStatus = {
-    basic: runtimeStatusForName('web_search.basic'),
+    duckduckgo: runtimeStatusForName('web_search.duckduckgo'),
     tavily: runtimeStatusForName('web_search.tavily'),
     searxng: runtimeStatusForName('web_search.searxng'),
   }
@@ -329,12 +329,12 @@ export function SearchFetchSettings() {
       {/* ── Search ── */}
       <Section icon={<Search size={16} />} title={ds.searchConnectorTitle} subtitle={ds.searchConnectorDesc}>
         <ProviderSelectCard
-          title={ds.searchProviderBasic}
-          description={ds.searchProviderBasicDesc}
+          title={ds.searchProviderDuckduckgo}
+          description={ds.searchProviderDuckduckgoDesc}
           badge={<StatusBadge variant="free" t={badgeT} />}
-          selected={searchP === 'basic'}
-          onSelect={() => patchSearch({ provider: 'basic' as SearchProvider })}
-          status={<RuntimeStatusLabel state={searchRuntimeStatus.basic.runtime_state} reason={searchRuntimeStatus.basic.runtime_reason} />}
+          selected={searchP === 'duckduckgo'}
+          onSelect={() => patchSearch({ provider: 'duckduckgo' as SearchProvider })}
+          status={<RuntimeStatusLabel state={searchRuntimeStatus.duckduckgo.runtime_state} reason={searchRuntimeStatus.duckduckgo.runtime_reason} />}
         />
 
         <ProviderSelectCard

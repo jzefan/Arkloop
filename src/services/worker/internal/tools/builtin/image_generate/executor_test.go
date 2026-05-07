@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	sharedconfig "arkloop/services/shared/config"
+	"arkloop/services/shared/messagecontent"
 	"arkloop/services/shared/objectstore"
 	"arkloop/services/worker/internal/llm"
 	"arkloop/services/worker/internal/routing"
@@ -73,6 +74,14 @@ func (r resolverStub) Resolve(_ context.Context, _ string, _ sharedconfig.Scope)
 
 func (r resolverStub) ResolvePrefix(_ context.Context, _ string, _ sharedconfig.Scope) (map[string]string, error) {
 	return map[string]string{}, nil
+}
+
+type referenceImageRunContext struct {
+	messages []llm.Message
+}
+
+func (r referenceImageRunContext) ReadToolMessages() []llm.Message {
+	return r.messages
 }
 
 func TestToolExecutorExecuteWritesArtifact(t *testing.T) {
@@ -161,6 +170,113 @@ func TestToolExecutorExecuteWritesArtifact(t *testing.T) {
 	}
 	if artifacts[0]["mime_type"] != "image/png" {
 		t.Fatalf("unexpected artifact mime_type: %#v", artifacts[0]["mime_type"])
+	}
+}
+
+func TestToolExecutorUsesLatestUserImagesAsInputImages(t *testing.T) {
+	accountID := uuid.New()
+	store := &testStore{}
+	routingLoader := routing.NewConfigLoader(nil, routing.ProviderRoutingConfig{
+		Credentials: []routing.ProviderCredential{{
+			ID:           "cred-openai",
+			Name:         "img-openai",
+			OwnerKind:    routing.CredentialScopePlatform,
+			ProviderKind: routing.ProviderKindOpenAI,
+			APIKeyValue:  stringPtr("sk-test"),
+		}},
+		Routes: []routing.ProviderRouteRule{{
+			ID:           "route-openai",
+			Model:        "gpt-image-1",
+			CredentialID: "cred-openai",
+		}},
+		DefaultRouteID: "route-openai",
+	})
+	executor := NewToolExecutor(store, nil, resolverStub{value: "img-openai^gpt-image-1"}, routingLoader)
+	executor.generate = func(_ context.Context, _ llm.ResolvedGatewayConfig, req llm.ImageGenerationRequest) (llm.GeneratedImage, error) {
+		if len(req.InputImages) != 2 || string(req.InputImages[0].Data) != "image-one" || string(req.InputImages[1].Data) != "image-two" {
+			t.Fatalf("expected latest user reference images, got %#v", req.InputImages)
+		}
+		return llm.GeneratedImage{
+			Bytes:        []byte("png-bytes"),
+			MimeType:     "image/png",
+			ProviderKind: "openai",
+			Model:        "gpt-image-1",
+		}, nil
+	}
+
+	result := executor.Execute(context.Background(), AgentSpec.Name, map[string]any{
+		"prompt": "make a variant",
+	}, tools.ExecutionContext{
+		RunID:     uuid.New(),
+		AccountID: &accountID,
+		PipelineRC: referenceImageRunContext{messages: []llm.Message{{
+			Role: "user",
+			Content: []llm.ContentPart{
+				{
+					Type:       messagecontent.PartTypeImage,
+					Attachment: &messagecontent.AttachmentRef{Key: "msg/one.png", MimeType: "image/png"},
+					Data:       []byte("image-one"),
+				},
+				{
+					Type:       messagecontent.PartTypeImage,
+					Attachment: &messagecontent.AttachmentRef{Key: "msg/two.png", MimeType: "image/png"},
+					Data:       []byte("image-two"),
+				},
+			},
+		}}},
+	}, "call_1")
+	if result.Error != nil {
+		t.Fatalf("unexpected error: %#v", result.Error)
+	}
+}
+
+func TestToolExecutorExecuteCoercesZenMuxOpenAIImageModelToVertex(t *testing.T) {
+	accountID := uuid.New()
+	store := &testStore{}
+	routingLoader := routing.NewConfigLoader(nil, routing.ProviderRoutingConfig{
+		Credentials: []routing.ProviderCredential{{
+			ID:           "cred-zenmux-openai",
+			Name:         "OpenAI (Chat Completions)",
+			OwnerKind:    routing.CredentialScopePlatform,
+			ProviderKind: routing.ProviderKindOpenAI,
+			APIKeyValue:  stringPtr("sk-ss-v1-test"),
+			BaseURL:      stringPtr("https://zenmux.ai/api/v1"),
+			OpenAIMode:   stringPtr("chat_completions"),
+		}},
+		Routes: []routing.ProviderRouteRule{{
+			ID:           "route-chat",
+			Model:        "anthropic/claude-sonnet-4.6",
+			CredentialID: "cred-zenmux-openai",
+		}},
+		DefaultRouteID: "route-chat",
+	})
+	executor := NewToolExecutor(store, nil, resolverStub{value: "OpenAI (Chat Completions)^openai/gpt-image-2"}, routingLoader)
+	executor.generate = func(_ context.Context, cfg llm.ResolvedGatewayConfig, _ llm.ImageGenerationRequest) (llm.GeneratedImage, error) {
+		if cfg.ProtocolKind != llm.ProtocolKindGeminiGenerateContent {
+			t.Fatalf("expected gemini protocol, got %s", cfg.ProtocolKind)
+		}
+		if cfg.Transport.BaseURL != routing.ZenMuxVertexAIBaseURL {
+			t.Fatalf("unexpected base url: %s", cfg.Transport.BaseURL)
+		}
+		if cfg.Model != "openai/gpt-image-2" {
+			t.Fatalf("unexpected model: %s", cfg.Model)
+		}
+		return llm.GeneratedImage{
+			Bytes:        []byte("png-bytes"),
+			MimeType:     "image/png",
+			ProviderKind: "zenmux",
+			Model:        cfg.Model,
+		}, nil
+	}
+
+	result := executor.Execute(context.Background(), AgentSpec.Name, map[string]any{
+		"prompt": "draw a husky",
+	}, tools.ExecutionContext{
+		RunID:     uuid.New(),
+		AccountID: &accountID,
+	}, "call_1")
+	if result.Error != nil {
+		t.Fatalf("unexpected error: %#v", result.Error)
 	}
 }
 

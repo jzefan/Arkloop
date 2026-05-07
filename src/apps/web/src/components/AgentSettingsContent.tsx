@@ -15,6 +15,7 @@ import {
 import { useLocale } from '../contexts/LocaleContext'
 import { SettingsSelect } from './settings/_SettingsSelect'
 import { SettingsModelDropdown } from './settings/SettingsModelDropdown'
+import { GenerationModelSettings } from './settings/GenerationModelSettings'
 
 const REASONING_MODES = ['default', 'enabled', 'disabled'] as const
 
@@ -123,6 +124,8 @@ export function AgentSettingsContent({ accessToken }: Props) {
         modelOptions={modelOptions}
         onChange={handleSpawnProfileChange}
       />
+
+      <GenerationModelSettings accessToken={accessToken} />
     </div>
   )
 }
@@ -238,7 +241,7 @@ function PersonaRow({
         />
       </div>
 
-      {err && <p className="text-xs text-red-400">{err}</p>}
+      {err && <p className="text-xs text-[var(--c-error-text)]">{err}</p>}
     </div>
   )
 }

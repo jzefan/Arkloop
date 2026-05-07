@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { createPortal } from 'react-dom'
-import { X, Download, ExternalLink } from 'lucide-react'
+import { X, Download, ExternalLink, Copy, ZoomIn, ZoomOut, RotateCcw } from 'lucide-react'
 import { apiBaseUrl } from '@arkloop/shared/api'
 import type { ArtifactRef } from '../storage'
 
@@ -18,7 +18,11 @@ export function ArtifactImage({ artifact, accessToken, pathPrefix = '/v1/artifac
   const [loading, setLoading] = useState(true)
   const [visible, setVisible] = useState(false)
   const [show, setShow] = useState(false)
+  const [scale, setScale] = useState(1)
+  const [offset, setOffset] = useState({ x: 0, y: 0 })
+  const [dragging, setDragging] = useState(false)
   const closingTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const dragStartRef = useRef<{ x: number; y: number; offsetX: number; offsetY: number } | null>(null)
 
   useEffect(() => {
     let cancelled = false
@@ -33,7 +37,8 @@ export function ArtifactImage({ artifact, accessToken, pathPrefix = '/v1/artifac
       })
       .then((blob) => {
         if (cancelled) return
-        setBlobUrl(URL.createObjectURL(blob))
+        const url = URL.createObjectURL(blob)
+        setBlobUrl(url)
         setLoading(false)
       })
       .catch(() => {
@@ -61,6 +66,8 @@ export function ArtifactImage({ artifact, accessToken, pathPrefix = '/v1/artifac
 
   const openLightbox = useCallback(() => {
     if (closingTimer.current) clearTimeout(closingTimer.current)
+    setScale(1)
+    setOffset({ x: 0, y: 0 })
     setVisible(true)
     requestAnimationFrame(() => requestAnimationFrame(() => setShow(true)))
   }, [])
@@ -98,6 +105,55 @@ export function ArtifactImage({ artifact, accessToken, pathPrefix = '/v1/artifac
     [blobUrl, artifact.filename],
   )
 
+  const handleCopyImage = useCallback(
+    async (e: React.MouseEvent) => {
+      e.stopPropagation()
+      if (!blobUrl || !navigator.clipboard?.write) return
+      try {
+        const res = await fetch(blobUrl)
+        const blob = await res.blob()
+        const mime = blob.type && blob.type !== '' ? blob.type : 'image/png'
+        await navigator.clipboard.write([new ClipboardItem({ [mime]: blob })])
+      } catch {
+        // Clipboard support depends on browser permissions and image MIME support.
+      }
+    },
+    [blobUrl],
+  )
+
+  const zoomBy = useCallback((delta: number) => {
+    setScale((current) => Math.min(6, Math.max(0.25, Number((current + delta).toFixed(2)))))
+  }, [])
+
+  const resetView = useCallback((e?: React.MouseEvent) => {
+    e?.stopPropagation()
+    setScale(1)
+    setOffset({ x: 0, y: 0 })
+  }, [])
+
+  const handleWheel = useCallback((e: React.WheelEvent) => {
+    e.preventDefault()
+    zoomBy(e.deltaY > 0 ? -0.2 : 0.2)
+  }, [zoomBy])
+
+  const startDrag = useCallback((e: React.MouseEvent) => {
+    e.stopPropagation()
+    if (scale <= 1) return
+    setDragging(true)
+    dragStartRef.current = { x: e.clientX, y: e.clientY, offsetX: offset.x, offsetY: offset.y }
+  }, [offset.x, offset.y, scale])
+
+  const moveDrag = useCallback((e: React.MouseEvent) => {
+    if (!dragging || !dragStartRef.current) return
+    const start = dragStartRef.current
+    setOffset({ x: start.offsetX + e.clientX - start.x, y: start.offsetY + e.clientY - start.y })
+  }, [dragging])
+
+  const endDrag = useCallback(() => {
+    setDragging(false)
+    dragStartRef.current = null
+  }, [])
+
   if (error) return null
   if (loading) {
     return (
@@ -131,7 +187,7 @@ export function ArtifactImage({ artifact, accessToken, pathPrefix = '/v1/artifac
           padding: '8px',
         }}
       >
-        <img
+        <img loading="lazy" decoding="async"
           src={blobUrl!}
           alt={artifact.filename}
           draggable={false}
@@ -181,21 +237,41 @@ export function ArtifactImage({ artifact, accessToken, pathPrefix = '/v1/artifac
             <X size={16} />
           </button>
 
-          <img
-            src={blobUrl!}
-            alt={artifact.filename}
-            draggable={false}
-            onClick={closeLightbox}
+          <div
+            onWheel={handleWheel}
+            onMouseMove={moveDrag}
+            onMouseUp={endDrag}
+            onMouseLeave={endDrag}
             style={{
               maxWidth: '90vw',
               maxHeight: 'calc(90vh - 64px)',
-              borderRadius: '8px',
-              cursor: 'pointer',
-              transform: show ? 'scale(1)' : 'scale(0.94)',
+              overflow: 'hidden',
+              cursor: scale > 1 ? (dragging ? 'grabbing' : 'grab') : 'zoom-in',
               opacity: show ? 1 : 0,
-              transition,
+              transition: `opacity ${ANIM_MS}ms ease-out`,
             }}
-          />
+          >
+            <img loading="lazy" decoding="async"
+              src={blobUrl!}
+              alt={artifact.filename}
+              draggable={false}
+              onMouseDown={startDrag}
+              onDoubleClick={(e) => {
+                e.stopPropagation()
+                if (scale === 1) zoomBy(1)
+                else resetView()
+              }}
+              style={{
+                maxWidth: '90vw',
+                maxHeight: 'calc(90vh - 64px)',
+                borderRadius: '8px',
+                display: 'block',
+                transform: `${show ? 'scale(1)' : 'scale(0.94)'} translate(${offset.x / Math.max(scale, 1)}px, ${offset.y / Math.max(scale, 1)}px) scale(${scale})`,
+                transformOrigin: 'center',
+                transition: dragging ? 'none' : transition,
+              }}
+            />
+          </div>
 
           <div
             onClick={(e) => e.stopPropagation()}
@@ -249,7 +325,55 @@ export function ArtifactImage({ artifact, accessToken, pathPrefix = '/v1/artifac
               <ExternalLink size={14} style={{ color: 'var(--c-text-icon)', flexShrink: 0 }} />
             </a>
             <button
+              onClick={handleCopyImage}
+              title="Copy image"
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                width: 36,
+                height: 36,
+                borderRadius: 10,
+                border: '0.5px solid var(--c-border-subtle)',
+                background: 'var(--c-bg-sub)',
+                color: 'var(--c-text-icon)',
+                cursor: 'pointer',
+                fontFamily: 'inherit',
+                transition: 'background 150ms',
+              }}
+              onMouseEnter={(e) => {
+                ;(e.currentTarget as HTMLButtonElement).style.background = 'var(--c-bg-deep)'
+              }}
+              onMouseLeave={(e) => {
+                ;(e.currentTarget as HTMLButtonElement).style.background = 'var(--c-bg-sub)'
+              }}
+            >
+              <Copy size={16} />
+            </button>
+            <button
+              onClick={(e) => { e.stopPropagation(); zoomBy(-0.25) }}
+              title="Zoom out"
+              style={mediaButtonStyle}
+            >
+              <ZoomOut size={16} />
+            </button>
+            <button
+              onClick={(e) => { e.stopPropagation(); zoomBy(0.25) }}
+              title="Zoom in"
+              style={mediaButtonStyle}
+            >
+              <ZoomIn size={16} />
+            </button>
+            <button
+              onClick={resetView}
+              title="Reset view"
+              style={mediaButtonStyle}
+            >
+              <RotateCcw size={16} />
+            </button>
+            <button
               onClick={handleDownload}
+              title="Download"
               style={{
                 display: 'inline-flex',
                 alignItems: 'center',
@@ -279,4 +403,19 @@ export function ArtifactImage({ artifact, accessToken, pathPrefix = '/v1/artifac
       )}
     </>
   )
+}
+
+const mediaButtonStyle: React.CSSProperties = {
+  display: 'inline-flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  width: 36,
+  height: 36,
+  borderRadius: 10,
+  border: '0.5px solid var(--c-border-subtle)',
+  background: 'var(--c-bg-sub)',
+  color: 'var(--c-text-icon)',
+  cursor: 'pointer',
+  fontFamily: 'inherit',
+  transition: 'background 150ms',
 }

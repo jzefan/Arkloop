@@ -1,4 +1,5 @@
 import type { RunReasoningMode, UploadedThreadAttachment } from './api'
+import type { SelectedModelKind } from './storage'
 
 export type QueuedPrompt = {
   id: string
@@ -6,6 +7,7 @@ export type QueuedPrompt = {
   attachments: UploadedThreadAttachment[]
   personaKey?: string
   modelOverride?: string
+  modelKind?: SelectedModelKind
   reasoningMode?: RunReasoningMode
   workDir?: string
   createdAt: number
@@ -16,6 +18,7 @@ export type CreateQueuedPromptInput = {
   attachments?: UploadedThreadAttachment[]
   personaKey?: string
   modelOverride?: string
+  modelKind?: SelectedModelKind
   reasoningMode?: RunReasoningMode
   workDir?: string
 }
@@ -27,6 +30,7 @@ export function createQueuedPrompt(input: CreateQueuedPromptInput): QueuedPrompt
     attachments: input.attachments ?? [],
     personaKey: input.personaKey,
     modelOverride: input.modelOverride,
+    modelKind: input.modelKind,
     reasoningMode: input.reasoningMode,
     workDir: input.workDir,
     createdAt: Date.now(),

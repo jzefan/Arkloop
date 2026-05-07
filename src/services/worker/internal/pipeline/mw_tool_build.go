@@ -59,10 +59,15 @@ func NewToolBuildMiddleware() RunMiddleware {
 			resolvedAllowlist = filterIdentityRequiredTools(resolvedAllowlist)
 		}
 
+		generationTool := generationTaskToolName(rc.InputJSON)
+		if generationTool != "" {
+			resolvedAllowlist = map[string]struct{}{generationTool: {}}
+		}
+
 		// When core_tools is configured, load_tools and load_skill must be available regardless
 		// of whether it was in the original allowlist (DB persona might not include it).
 		hasCoreTools := rc.PersonaDefinition != nil && len(rc.PersonaDefinition.CoreTools) > 0
-		if hasCoreTools {
+		if hasCoreTools && generationTool == "" {
 			resolvedAllowlist["load_tools"] = struct{}{}
 			resolvedAllowlist["load_skill"] = struct{}{}
 			if _, ok := rc.ToolRegistry.Get("load_tools"); !ok {
@@ -97,7 +102,7 @@ func NewToolBuildMiddleware() RunMiddleware {
 		}
 
 		filteredAllowlist = filterNotConfiguredExecutors(filteredAllowlist, rc.ToolExecutors)
-		filteredAllowlist = filterAccountScopedAvailability(ctx, filteredAllowlist, rc.Run.AccountID, rc.ToolExecutors)
+		filteredAllowlist = filterAccountScopedAvailability(ctx, filteredAllowlist, rc.Run.AccountID, rc.ToolExecutors, rc.InputJSON)
 
 		executor, err := BuildDispatchExecutor(rc.ToolRegistry, rc.ToolExecutors, filteredAllowlist)
 		if err != nil {
@@ -112,7 +117,7 @@ func NewToolBuildMiddleware() RunMiddleware {
 
 		// Ensure load_tools LLM spec is present when core_tools is active.
 		// It might be missing if the persona's tool_allowlist narrowed ToolSpecs earlier.
-		if hasCoreTools {
+		if hasCoreTools && generationTool == "" {
 			hasSearchSpec := false
 			for _, s := range allSpecs {
 				if s.Name == "load_tools" {
@@ -185,9 +190,24 @@ func NewToolBuildMiddleware() RunMiddleware {
 	}
 }
 
+func generationTaskToolName(inputJSON map[string]any) string {
+	task, _ := inputJSON["generation_task"].(string)
+	switch strings.ToLower(strings.TrimSpace(task)) {
+	case "image":
+		return "image_generate"
+	case "video":
+		return "video_generate"
+	default:
+		return ""
+	}
+}
+
 // resolveCoreToolSet returns the set of core tool names from persona config.
 // Returns nil when all tools should be core (backward compatible).
 func resolveCoreToolSet(rc *RunContext) map[string]struct{} {
+	if generationTaskToolName(rc.InputJSON) != "" {
+		return nil
+	}
 	if rc.PersonaDefinition == nil || len(rc.PersonaDefinition.CoreTools) == 0 {
 		return nil
 	}
@@ -244,15 +264,25 @@ func filterNotConfiguredExecutors(allowlistSet map[string]struct{}, executors ma
 	return out
 }
 
-func filterAccountScopedAvailability(ctx context.Context, allowlistSet map[string]struct{}, accountID uuid.UUID, executors map[string]tools.Executor) map[string]struct{} {
+func filterAccountScopedAvailability(ctx context.Context, allowlistSet map[string]struct{}, accountID uuid.UUID, executors map[string]tools.Executor, inputJSON map[string]any) map[string]struct{} {
 	out := CopyStringSet(allowlistSet)
 	if accountID == uuid.Nil {
 		delete(out, "image_generate")
+		delete(out, "video_generate")
 		return out
 	}
-	if exec, ok := executors["image_generate"]; ok {
-		if checker, ok := exec.(tools.AccountAvailabilityChecker); ok && !checker.IsAvailableForAccount(ctx, accountID) {
-			delete(out, "image_generate")
+	generationTask, _ := inputJSON["generation_task"].(string)
+	generationModel, _ := inputJSON["generation_model"].(string)
+	for _, name := range []string{"image_generate", "video_generate"} {
+		if exec, ok := executors[name]; ok {
+			if strings.TrimSpace(generationModel) != "" &&
+				((name == "image_generate" && strings.EqualFold(strings.TrimSpace(generationTask), "image")) ||
+					(name == "video_generate" && strings.EqualFold(strings.TrimSpace(generationTask), "video"))) {
+				continue
+			}
+			if checker, ok := exec.(tools.AccountAvailabilityChecker); ok && !checker.IsAvailableForAccount(ctx, accountID) {
+				delete(out, name)
+			}
 		}
 	}
 	return out

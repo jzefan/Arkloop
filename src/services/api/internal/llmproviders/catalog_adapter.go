@@ -19,6 +19,7 @@ const (
 	availableModelsRespBytes = 8 << 20
 
 	defaultOpenAIBaseURL        = "https://api.openai.com/v1"
+	defaultDeepSeekBaseURL      = "https://api.deepseek.com"
 	defaultAnthropicVersion     = "2023-06-01"
 	defaultGeminiCatalogBaseURL = "https://generativelanguage.googleapis.com/v1beta"
 )

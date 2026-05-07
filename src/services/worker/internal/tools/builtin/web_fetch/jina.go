@@ -28,9 +28,6 @@ func NewJinaProvider(apiKey string) (*JinaProvider, error) {
 
 func (p *JinaProvider) Fetch(ctx context.Context, targetURL string, maxLength int) (Result, error) {
 	cleanedURL := strings.TrimSpace(targetURL)
-	if err := EnsureURLAllowed(cleanedURL); err != nil {
-		return Result{}, err
-	}
 	reqURL := strings.TrimRight(p.baseURL, "/") + "/" + cleanedURL
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
@@ -59,17 +56,20 @@ func (p *JinaProvider) Fetch(ctx context.Context, targetURL string, maxLength in
 	content := strings.TrimSpace(string(body))
 	title := extractTitleFromMarkdown(content)
 
-	content, truncated := truncateString(content, maxLength)
-	title, _ = truncateString(title, 512)
+	truncated := false
+	if len(content) > maxLength {
+		content = content[:maxLength]
+		truncated = true
+	}
+	if len(title) > 512 {
+		title = title[:512]
+	}
 
 	return Result{
-		URL:          cleanedURL,
-		RequestedURL: cleanedURL,
-		Title:        title,
-		Content:      content,
-		Truncated:    truncated,
-		Extractor:    "jina",
-		RawLength:    len([]rune(strings.TrimSpace(string(body)))),
+		URL:       cleanedURL,
+		Title:     title,
+		Content:   content,
+		Truncated: truncated,
 	}, nil
 }
 

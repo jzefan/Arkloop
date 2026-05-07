@@ -41,7 +41,13 @@ function runStep(command, args, options = {}) {
       shell: shouldUseShell(resolvedCommand),
       ...options,
     })
-    child.on('error', rejectPromise)
+    child.on('error', (error) => {
+      if (error?.code === 'ENOENT') {
+        rejectPromise(new Error(`command not found: ${command}. Please install it and make sure it is available in PATH.`))
+        return
+      }
+      rejectPromise(error)
+    })
     child.on('exit', (code) => {
       if (code === 0) {
         resolvePromise()
@@ -85,14 +91,23 @@ async function findAvailablePort(startPort) {
 }
 
 async function main() {
-  const vitePort = await findAvailablePort(5173)
-  const viteUrl = `http://localhost:${vitePort}`
-
   console.log('building desktop sidecar...')
   mkdirSync(resolve(desktopBin, '..'), { recursive: true })
+  const goCacheDir = resolve(workspaceRoot, '.cache', 'go-build')
+  const goModCacheDir = resolve(workspaceRoot, '.cache', 'go-mod')
+  mkdirSync(goCacheDir, { recursive: true })
+  mkdirSync(goModCacheDir, { recursive: true })
   await runStep('go', ['build', '-tags', 'desktop', '-ldflags', '-extldflags=-Wl,-no_warn_duplicate_libraries', '-o', desktopBin, './src/services/desktop/cmd/desktop'], {
     cwd: workspaceRoot,
+    env: {
+      ...process.env,
+      GOCACHE: goCacheDir,
+      GOMODCACHE: goModCacheDir,
+    },
   })
+
+  const vitePort = await findAvailablePort(5173)
+  const viteUrl = `http://localhost:${vitePort}`
 
   // Start Vite directly with sidecar proxy target, overriding .env.local
   console.log('starting vite dev server...')

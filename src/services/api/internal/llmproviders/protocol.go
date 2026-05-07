@@ -61,6 +61,18 @@ func ResolveCatalogProtocolConfig(provider data.LlmCredential, apiKey string) (C
 			OpenAI:     OpenAICatalogConfig{APIMode: normalizedMode},
 			Credential: provider,
 		}, nil
+	case "deepseek":
+		resolvedBaseURL := strings.TrimRight(baseURL, "/")
+		if resolvedBaseURL == "" {
+			resolvedBaseURL = defaultDeepSeekBaseURL
+		}
+		return CatalogProtocolConfig{
+			Kind:       ProtocolKindOpenAIChatCompletions,
+			BaseURL:    resolvedBaseURL,
+			APIKey:     apiKey,
+			OpenAI:     OpenAICatalogConfig{APIMode: "chat_completions"},
+			Credential: provider,
+		}, nil
 	case "anthropic":
 		resolvedBaseURL := resolveAnthropicCatalogBaseURL(baseURL)
 		version, extraHeaders, err := parseAnthropicCatalogAdvanced(provider.AdvancedJSON)

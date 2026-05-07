@@ -55,6 +55,8 @@ export interface LocaleStrings {
     skills: string;
     credits: string;
     models: string;
+    generation: string;
+    workspace: string;
     agents: string;
     channels: string;
     connection: string;
@@ -91,7 +93,6 @@ export interface LocaleStrings {
   fontSizeRelaxed: string;
   themePresetSection: string;
   themePresetDefault: string;
-  themePresetRetinaBurn: string;
   themeColorEditor: string;
   colorGroupBackgrounds: string;
   colorGroupText: string;
@@ -532,6 +533,7 @@ export interface LocaleStrings {
     vendorOpenaiResponses: string
     vendorOpenaiChatCompletions: string
     vendorAnthropicMessage: string
+    vendorDeepSeek: string
     applyToAll: string
     applyingToAll: string
     applyDone: string
@@ -592,11 +594,16 @@ export interface LocaleStrings {
     spawnProfileSubtitle: string
     spawnProfileFollowCurrentChat: string
     spawnProfilePlatformDefault: string
+    generationModelTitle: string
+    generationModelSubtitle: string
     spawnProfileExplore: string
     spawnProfileExploreDesc: string
     imageGenerativeTitle: string
     imageGenerativeDesc: string
     imageGenerativeUnset: string
+    videoGenerativeTitle: string
+    videoGenerativeDesc: string
+    videoGenerativeUnset: string
     spawnProfileTask: string
     spawnProfileTaskDesc: string
     spawnProfileStrong: string
@@ -847,6 +854,9 @@ export interface LocaleStrings {
     general: string;
     appearance: string;
     providers: string;
+    zenmux: string;
+    generation: string;
+    workspace: string;
     routing: string;
     personas: string;
     channels: string;
@@ -870,6 +880,15 @@ export interface LocaleStrings {
     profileSection: string;
     localModeLabel: string;
     appearanceSection: string;
+    workspaceTitle?: string;
+    workspaceSubtitle?: string;
+    workspaceCurrent?: string;
+    workspaceDefault?: string;
+    workspaceChoose?: string;
+    workspaceReset?: string;
+    workspacePermissionHint?: string;
+    workspaceLoadFailed?: string;
+    workspaceSaveFailed?: string;
     // placeholder pages
     mcpTitle: string;
     mcpDesc: string;
@@ -1062,10 +1081,10 @@ export interface LocaleStrings {
     fetchProviderJina: string;
     fetchProviderBasic: string;
     fetchProviderFirecrawl: string;
-    searchProviderBasic: string;
+    searchProviderDuckduckgo: string;
     searchProviderTavily: string;
     searchProviderSearxng: string;
-    searchProviderBasicDesc: string;
+    searchProviderDuckduckgoDesc: string;
     searchProviderTavilyDesc: string;
     searchProviderSearxngDesc: string;
     fetchProviderJinaDesc: string;
@@ -1333,6 +1352,9 @@ export interface LocaleStrings {
     vendorOpenaiChat: string;
     vendorAnthropic: string;
     vendorGemini: string;
+    vendorDeepSeek?: string;
+    vendorZenMuxVertexAI?: string;
+    zenMuxInviteHint?: string;
     openVikingBackend: string;
     openVikingBackendHint: string;
     openVikingBackendOpenAI: string;

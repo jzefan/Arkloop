@@ -256,6 +256,7 @@ func ResolveBuiltin(input ResolveInput) BuiltinAvailability {
 		available["create_artifact"] = struct{}{}
 		available["document_write"] = struct{}{}
 		available["image_generate"] = struct{}{}
+		available["video_generate"] = struct{}{}
 	}
 
 	names := make([]string, 0, len(available))

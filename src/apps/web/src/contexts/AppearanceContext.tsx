@@ -23,7 +23,6 @@ const FONT_STACKS: Record<FontFamily, string> = {
   'serif': "ui-serif, Georgia, Cambria, 'Times New Roman', Times, serif",
   'noto-sans': "'Noto Sans', system-ui, sans-serif",
   'source-sans': "'Source Sans 3', system-ui, sans-serif",
-  'open-dyslexic': "'OpenDyslexicRegular', 'OpenDyslexic', system-ui, sans-serif",
   'custom': '', // resolved at runtime from customBodyFont
 }
 
@@ -41,10 +40,9 @@ const FONT_SIZE_VALUES: Record<FontSize, string> = {
 }
 
 // Remote font loading for optional presets that are not bundled locally.
-const REMOTE_FONT_URLS: Partial<Record<FontFamily | CodeFontFamily, string>> = {
+const GOOGLE_FONT_URLS: Partial<Record<FontFamily | CodeFontFamily, string>> = {
   'noto-sans': 'https://fonts.googleapis.com/css2?family=Noto+Sans:wght@400;500;600&display=swap',
   'source-sans': 'https://fonts.googleapis.com/css2?family=Source+Sans+3:wght@400;500;600&display=swap',
-  'open-dyslexic': 'https://cdn.jsdelivr.net/npm/open-dyslexic@1.0.3/open-dyslexic-regular.css',
   'fira-code': 'https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500&display=swap',
   'source-code-pro': 'https://fonts.googleapis.com/css2?family=Source+Code+Pro:wght@400;500&display=swap',
 }
@@ -144,10 +142,10 @@ function buildStyleContent(
   return css
 }
 
-function loadRemoteFont(key: string): void {
-  const url = REMOTE_FONT_URLS[key as FontFamily | CodeFontFamily]
+function loadGoogleFont(key: string): void {
+  const url = GOOGLE_FONT_URLS[key as FontFamily | CodeFontFamily]
   if (!url) return
-  const id = `remote-font-${key}`
+  const id = `gf-${key}`
   if (document.getElementById(id)) return
   const link = document.createElement('link')
   link.id = id
@@ -188,8 +186,8 @@ export function AppearanceProvider({ children }: { children: ReactNode }) {
 
   // Inject remote font link tags for presets that are not bundled locally.
   useEffect(() => {
-    if (fontFamily !== 'default' && fontFamily !== 'inter' && fontFamily !== 'system' && fontFamily !== 'custom' && fontFamily !== 'serif') loadRemoteFont(fontFamily)
-    if (codeFontFamily !== 'jetbrains-mono' && codeFontFamily !== 'cascadia-code') loadRemoteFont(codeFontFamily)
+    if (fontFamily !== 'default' && fontFamily !== 'inter' && fontFamily !== 'system' && fontFamily !== 'custom' && fontFamily !== 'serif') loadGoogleFont(fontFamily)
+    if (codeFontFamily !== 'jetbrains-mono' && codeFontFamily !== 'cascadia-code') loadGoogleFont(codeFontFamily)
   }, [fontFamily, codeFontFamily])
 
   // Rebuild and inject the style whenever any appearance state changes
@@ -204,13 +202,13 @@ export function AppearanceProvider({ children }: { children: ReactNode }) {
 
   const setFontFamily = useCallback((f: FontFamily) => {
     setFontFamilyState(f)
-    if (f !== 'default' && f !== 'inter' && f !== 'system' && f !== 'custom' && f !== 'serif') loadRemoteFont(f)
+    if (f !== 'default' && f !== 'inter' && f !== 'system' && f !== 'custom' && f !== 'serif') loadGoogleFont(f)
     writeFontSettingsToStorage({ fontFamily: f, codeFontFamily, fontSize })
   }, [codeFontFamily, fontSize])
 
   const setCodeFontFamily = useCallback((f: CodeFontFamily) => {
     setCodeFontFamilyState(f)
-    if (f !== 'jetbrains-mono' && f !== 'cascadia-code') loadRemoteFont(f)
+    if (f !== 'jetbrains-mono' && f !== 'cascadia-code') loadGoogleFont(f)
     writeFontSettingsToStorage({ fontFamily, codeFontFamily: f, fontSize })
   }, [fontFamily, fontSize])
 

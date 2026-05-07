@@ -1,6 +1,9 @@
 package objectstore
 
-import "context"
+import (
+	"context"
+	"io"
+)
 
 const ArtifactBucket = "sandbox-artifacts"
 const SessionStateBucket = "sandbox-session-state"
@@ -26,6 +29,11 @@ Head(ctx context.Context, key string) (ObjectInfo, error)
 Delete(ctx context.Context, key string) error
 ListPrefix(ctx context.Context, prefix string) ([]ObjectInfo, error)
 WriteJSONAtomic(ctx context.Context, key string, value any) error
+}
+
+type StreamingStore interface {
+	Store
+	PutObjectStream(ctx context.Context, key string, r io.Reader, options PutOptions) error
 }
 
 type LifecycleConfigurator interface {

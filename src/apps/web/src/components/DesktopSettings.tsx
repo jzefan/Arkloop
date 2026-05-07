@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { motion } from "framer-motion";
 import { DebugTrigger } from "@arkloop/shared";
 import {
@@ -14,6 +14,8 @@ import {
   Server,
   Palette,
   Route,
+  ImagePlus,
+  FolderOpen,
   MessageSquare,
   Wrench,
   Code2,
@@ -32,12 +34,14 @@ import { GeneralSettings } from "./settings/GeneralSettings";
 import { DesktopAppearanceSettings } from "./settings/DesktopAppearanceSettings";
 import { ProvidersSettings } from "./settings/ProvidersSettings";
 import { RoutingSettings } from "./settings/RoutingSettings";
+import { GenerationModelSettings } from "./settings/GenerationModelSettings";
 import { PersonasSettings } from "./settings/PersonasSettings";
 import { DesktopChannelsSettings } from "./settings/DesktopChannelsSettings";
 import { SkillsSettings } from "./settings/SkillsSettings";
 import { MCPSettings } from "./settings/MCPSettings";
 import { ToolsSettings } from "./settings/ToolsSettings";
 import { AdvancedSettings } from "./settings/AdvancedSettings";
+import { WorkspaceSettings } from "./settings/WorkspaceSettings";
 import { MemorySettings } from "./settings/MemorySettings";
 import { NotebookSettings } from "./settings/NotebookSettings";
 import { ConnectionSettings } from "./settings/ConnectionSettings";
@@ -56,6 +60,8 @@ export type DesktopSettingsKey =
   | "general"
   | "appearance"
   | "providers"
+  | "generation"
+  | "workspace"
   | "routing"
   | "personas"
   | "channels"
@@ -87,6 +93,8 @@ const NAV_ENTRIES: NavEntry[] = [
   { key: "general",    icon: Settings },
   { key: "appearance", icon: Palette },
   { key: "providers",  icon: Cpu },
+  { key: "generation", icon: ImagePlus },
+  { key: "workspace", icon: FolderOpen },
   { key: "channels",   icon: Radio },
   // 第二段：agent 核心组件（英文专有名词区）
   { header: "agentCoreHeader" },
@@ -117,7 +125,6 @@ type Props = {
   me: MeResponse | null;
   accessToken: string;
   initialSection?: DesktopSettingsKey;
-  sectionRequestId?: number;
   onClose: () => void;
   onLogout: () => void;
   onMeUpdated?: (me: MeResponse) => void;
@@ -136,7 +143,6 @@ export function DesktopSettings({
   me,
   accessToken,
   initialSection = "general",
-  sectionRequestId,
   onClose,
   onLogout,
   onMeUpdated,
@@ -180,16 +186,6 @@ export function DesktopSettings({
     activeKey === "chat" ||
     activeKey === "connection" ||
     activeKey === "voice";
-
-  const selectSection = useCallback((key: DesktopSettingsKey) => {
-    setActiveKey(key);
-    setScrolled(false);
-    if (scrollRef.current) scrollRef.current.scrollTop = 0;
-  }, []);
-
-  useEffect(() => {
-    selectSection(initialSection);
-  }, [initialSection, sectionRequestId, selectSection]);
 
   useEffect(() => {
     if (typeof performance !== "undefined") {
@@ -384,7 +380,11 @@ export function DesktopSettings({
     });
   });
 
-  const handleTabChange = selectSection;
+  const handleTabChange = (key: DesktopSettingsKey) => {
+    setActiveKey(key);
+    setScrolled(false);
+    if (scrollRef.current) scrollRef.current.scrollTop = 0;
+  };
 
   const renderNav = (entries: NavEntry[]) =>
     entries.map((entry) => {
@@ -431,6 +431,10 @@ export function DesktopSettings({
         return <DesktopAppearanceSettings />;
       case "providers":
         return <ProvidersSettings accessToken={accessToken} />;
+      case "generation":
+        return <GenerationModelSettings accessToken={accessToken} />;
+      case "workspace":
+        return <WorkspaceSettings />;
       case "routing":
         return <RoutingSettings accessToken={accessToken} />;
       case "personas":

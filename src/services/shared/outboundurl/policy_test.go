@@ -130,6 +130,45 @@ func TestDefaultPolicyReadsTrustFakeIPEnv(t *testing.T) {
 	}
 }
 
+func TestDialTargetForResolvedHostUsesOriginalDomainForTrustedFakeIP(t *testing.T) {
+	policy := Policy{TrustFakeIP: true}
+	got := policy.dialTargetForResolvedHost(
+		"zenmux.ai:443",
+		"zenmux.ai",
+		"443",
+		[]netip.Addr{netip.MustParseAddr("198.18.4.178")},
+	)
+	if got != "zenmux.ai:443" {
+		t.Fatalf("dialTargetForResolvedHost() = %q, want original host", got)
+	}
+}
+
+func TestDialTargetForResolvedHostKeepsVerifiedIPForNormalDNS(t *testing.T) {
+	policy := Policy{TrustFakeIP: true}
+	got := policy.dialTargetForResolvedHost(
+		"example.com:443",
+		"example.com",
+		"443",
+		[]netip.Addr{netip.MustParseAddr("93.184.216.34")},
+	)
+	if got != "93.184.216.34:443" {
+		t.Fatalf("dialTargetForResolvedHost() = %q, want verified IP", got)
+	}
+}
+
+func TestDialTargetForResolvedHostKeepsLiteralFakeIP(t *testing.T) {
+	policy := Policy{TrustFakeIP: true}
+	got := policy.dialTargetForResolvedHost(
+		"198.18.4.178:443",
+		"198.18.4.178",
+		"443",
+		[]netip.Addr{netip.MustParseAddr("198.18.4.178")},
+	)
+	if got != "198.18.4.178:443" {
+		t.Fatalf("dialTargetForResolvedHost() = %q, want literal IP", got)
+	}
+}
+
 func TestValidateURLLoopbackHTTPRequiresExplicitLoopbackHost(t *testing.T) {
 	policy := Policy{AllowLoopbackHTTP: true}
 	if err := policy.ValidateRequestURL("http://localhost:3000/api"); err != nil {

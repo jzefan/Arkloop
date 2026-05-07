@@ -25,12 +25,12 @@ import (
 )
 
 type skillsTestEnv struct {
-	handler        nethttp.Handler
-	pool           *pgxpool.Pool
-	aliceToken     string
-	aliceUserID    uuid.UUID
-	aliceAccountID uuid.UUID
-	skillStore     *fakeHTTPArtifactStore
+	handler     nethttp.Handler
+	pool        *pgxpool.Pool
+	aliceToken  string
+	aliceUserID uuid.UUID
+	aliceAccountID  uuid.UUID
+	skillStore  *fakeHTTPArtifactStore
 }
 
 func TestSkillPackageLifecycle(t *testing.T) {
@@ -96,46 +96,6 @@ func TestSkillPackageLifecycle(t *testing.T) {
 	}
 }
 
-func TestExternalSkillsDiscoverEmptyDirReturnsArray(t *testing.T) {
-	env := buildSkillsEnv(t)
-	emptyDir := t.TempDir()
-	dirValue, err := json.Marshal([]string{emptyDir})
-	if err != nil {
-		t.Fatalf("marshal external dirs: %v", err)
-	}
-	if _, err := env.pool.Exec(context.Background(), `
-		INSERT INTO platform_settings (key, value, updated_at)
-		VALUES ('skills.external_dirs', $1, now())
-		ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()
-	`, string(dirValue)); err != nil {
-		t.Fatalf("set external dirs: %v", err)
-	}
-
-	resp := doJSON(env.handler, nethttp.MethodGet, "/v1/external-skills/discover", nil, authHeader(env.aliceToken))
-	if resp.Code != nethttp.StatusOK {
-		t.Fatalf("discover external skills: %d %s", resp.Code, resp.Body.String())
-	}
-
-	var payload struct {
-		Dirs []struct {
-			Path   string          `json:"path"`
-			Skills json.RawMessage `json:"skills"`
-		} `json:"dirs"`
-	}
-	if err := json.Unmarshal(resp.Body.Bytes(), &payload); err != nil {
-		t.Fatalf("decode discover response: %v", err)
-	}
-	for _, dir := range payload.Dirs {
-		if dir.Path == emptyDir {
-			if string(dir.Skills) != "[]" {
-				t.Fatalf("expected empty skills array, got %s", string(dir.Skills))
-			}
-			return
-		}
-	}
-	t.Fatalf("expected configured dir %q in response: %s", emptyDir, resp.Body.String())
-}
-
 func buildSkillsEnv(t *testing.T) skillsTestEnv {
 	t.Helper()
 	db := testutil.SetupPostgresDatabase(t, "skills_http")
@@ -180,7 +140,7 @@ func buildSkillsEnv(t *testing.T) skillsTestEnv {
 		Logger:                   logger,
 		AuthService:              authService,
 		RegistrationService:      registrationService,
-		AccountMembershipRepo:    membershipRepo,
+		AccountMembershipRepo:        membershipRepo,
 		APIKeysRepo:              apiKeysRepo,
 		AuditWriter:              auditWriter,
 		PersonasRepo:             personasRepo,

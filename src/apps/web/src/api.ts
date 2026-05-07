@@ -1026,6 +1026,8 @@ export type RunReasoningMode =
 
 export type CreateRunOptions = {
   resumeFromRunId?: string | null
+  generationTask?: 'image' | 'video' | null
+  generationModel?: string | null
 }
 
 export async function createRun(
@@ -1038,7 +1040,9 @@ export async function createRun(
   options?: CreateRunOptions,
 ): Promise<CreateRunResponse> {
   const resumeFromRunId = options?.resumeFromRunId?.trim()
-  const hasBody = personaId || modelOverride || workDir || reasoningMode || resumeFromRunId
+  const generationTask = options?.generationTask?.trim()
+  const generationModel = options?.generationModel?.trim()
+  const hasBody = personaId || modelOverride || workDir || reasoningMode || resumeFromRunId || generationTask || generationModel
   return await apiFetch<CreateRunResponse>(`/v1/threads/${threadId}/runs`, {
     method: 'POST',
     accessToken,
@@ -1049,6 +1053,8 @@ export async function createRun(
           ...(workDir ? { work_dir: workDir } : {}),
           ...(reasoningMode ? { reasoning_mode: reasoningMode } : {}),
           ...(resumeFromRunId ? { resume_from_run_id: resumeFromRunId } : {}),
+          ...(generationTask ? { generation_task: generationTask } : {}),
+          ...(generationModel ? { generation_model: generationModel } : {}),
         })
       : undefined,
   })
@@ -2265,7 +2271,8 @@ export async function getWeixinQRCodeStatus(accessToken: string, qrcode: string)
 export interface ExternalSkill {
   name: string
   path: string
-  instruction_path: string
+  instruction_path?: string
+  description?: string
 }
 
 export interface ExternalSkillDir {

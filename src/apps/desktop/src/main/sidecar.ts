@@ -6,10 +6,9 @@ import * as https from 'https'
 import * as net from 'net'
 import * as os from 'os'
 import * as path from 'path'
-import { app } from 'electron'
-import type { LocalPortMode, MemoryConfig, NetworkConfig } from './types'
+import { app, dialog, BrowserWindow } from 'electron'
+import type { LocalPortMode, MemoryConfig, NetworkConfig, WorkspaceConfig } from './types'
 import { appendSidecarLog, getDesktopLogPaths } from './logging'
-import { getBrowserSearchBaseUrl } from './browser-search'
 
 export type SidecarStatus = 'stopped' | 'starting' | 'running' | 'crashed'
 
@@ -86,6 +85,10 @@ let runtime: SidecarRuntime = {
 let bridgeBaseUrl = `http://127.0.0.1:${DEFAULT_BRIDGE_PORT}`
 let memoryConfig: MemoryConfig | null = null
 let networkConfig: NetworkConfig | null = null
+let workspaceConfig: WorkspaceConfig | null = null
+let writePermissionServer: http.Server | null = null
+let writePermissionBaseUrl: string | null = null
+let sessionWriteAllowWorkspace: string | null = null
 
 export function getSidecarStatus(): SidecarStatus {
   return runtime.status
@@ -97,6 +100,15 @@ export function setMemoryConfig(config: MemoryConfig): void {
 
 export function setNetworkConfig(config: NetworkConfig): void {
   networkConfig = config
+}
+
+export function setWorkspaceConfig(config: WorkspaceConfig): void {
+  const previousRoot = workspaceConfig?.root ? path.resolve(workspaceConfig.root) : ''
+  const nextRoot = config.root ? path.resolve(config.root) : ''
+  workspaceConfig = nextRoot ? { root: nextRoot } : {}
+  if (previousRoot !== nextRoot) {
+    sessionWriteAllowWorkspace = null
+  }
 }
 
 export function getSidecarRuntime(): SidecarRuntime {
@@ -667,6 +679,10 @@ function buildRuntimeResourceEnv(projectDir: string | null): Record<string, stri
 }
 
 function defaultWorkspaceRoot(projectDir: string | null): string {
+  const configured = workspaceConfig?.root?.trim()
+  if (configured && pathIsDirectory(configured)) {
+    return path.resolve(configured)
+  }
   if (!app.isPackaged && projectDir && isProjectDir(projectDir)) {
     return projectDir
   }
@@ -683,6 +699,127 @@ function buildWorkspaceEnv(projectDir: string | null): Record<string, string> {
     env.ARKLOOP_WORKING_DIR = workspaceRoot
   }
   return env
+}
+
+async function ensureWritePermissionServer(): Promise<string> {
+  if (writePermissionBaseUrl) return writePermissionBaseUrl
+
+  writePermissionServer = http.createServer((req, res) => {
+    void handleWritePermissionRequest(req, res)
+  })
+
+  await new Promise<void>((resolve, reject) => {
+    writePermissionServer?.once('error', reject)
+    writePermissionServer?.listen(0, '127.0.0.1', () => resolve())
+  })
+
+  const address = writePermissionServer.address()
+  if (!address || typeof address === 'string') {
+    throw new Error('write permission server did not bind to a TCP port')
+  }
+  writePermissionBaseUrl = `http://127.0.0.1:${address.port}`
+  return writePermissionBaseUrl
+}
+
+function readJsonBody(req: http.IncomingMessage, maxBytes = 64 * 1024): Promise<unknown> {
+  return new Promise((resolve, reject) => {
+    let body = ''
+    req.setEncoding('utf8')
+    req.on('data', (chunk) => {
+      body += chunk
+      if (body.length > maxBytes) {
+        reject(new Error('request body too large'))
+        req.destroy()
+      }
+    })
+    req.on('end', () => {
+      try {
+        resolve(body ? JSON.parse(body) : {})
+      } catch (error) {
+        reject(error)
+      }
+    })
+    req.on('error', reject)
+  })
+}
+
+function writeJson(res: http.ServerResponse, status: number, payload: Record<string, unknown>): void {
+  res.writeHead(status, { 'Content-Type': 'application/json' })
+  res.end(JSON.stringify(payload))
+}
+
+function hasDesktopAuth(req: http.IncomingMessage): boolean {
+  const header = req.headers.authorization ?? ''
+  return header === `Bearer ${desktopAccessToken}`
+}
+
+function resolvePermissionPath(workspaceRoot: string, filePath: string): string | null {
+  const root = path.resolve(workspaceRoot)
+  const resolved = path.isAbsolute(filePath)
+    ? path.resolve(filePath)
+    : path.resolve(root, filePath)
+  if (resolved !== root && !resolved.startsWith(root + path.sep)) {
+    return null
+  }
+  return resolved
+}
+
+async function handleWritePermissionRequest(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+  try {
+    if (req.method !== 'POST' || req.url !== '/v1/write-permission') {
+      writeJson(res, 404, { allowed: false })
+      return
+    }
+    if (!hasDesktopAuth(req)) {
+      writeJson(res, 401, { allowed: false })
+      return
+    }
+
+    const raw = await readJsonBody(req)
+    const payload = raw && typeof raw === 'object' ? raw as Record<string, unknown> : {}
+    const workspaceRoot = typeof payload.workspace_root === 'string' ? path.resolve(payload.workspace_root) : ''
+    const filePath = typeof payload.path === 'string' ? payload.path : ''
+    const action = typeof payload.action === 'string' ? payload.action : 'write'
+    if (!workspaceRoot || !filePath || !resolvePermissionPath(workspaceRoot, filePath)) {
+      writeJson(res, 403, { allowed: false })
+      return
+    }
+
+    const normalizedWorkspace = path.resolve(workspaceRoot)
+    if (sessionWriteAllowWorkspace === normalizedWorkspace) {
+      writeJson(res, 200, { allowed: true, scope: 'session' })
+      return
+    }
+
+    const target = resolvePermissionPath(workspaceRoot, filePath) ?? filePath
+    const win = BrowserWindow.getFocusedWindow()
+    const messageBoxOptions: Electron.MessageBoxOptions = {
+      type: 'warning',
+      buttons: ['允许本次', '当前会话一直允许', '取消'],
+      defaultId: 0,
+      cancelId: 2,
+      title: '允许 AI 写入文件？',
+      message: 'AI 工具请求写入当前工作目录。',
+      detail: `动作: ${action}\n工作目录: ${normalizedWorkspace}\n目标: ${target}`,
+      noLink: true,
+    }
+    const result = win
+      ? await dialog.showMessageBox(win, messageBoxOptions)
+      : await dialog.showMessageBox(messageBoxOptions)
+
+    if (result.response === 1) {
+      sessionWriteAllowWorkspace = normalizedWorkspace
+      writeJson(res, 200, { allowed: true, scope: 'session' })
+      return
+    }
+    if (result.response === 0) {
+      writeJson(res, 200, { allowed: true, scope: 'once' })
+      return
+    }
+    writeJson(res, 200, { allowed: false, scope: 'denied' })
+  } catch (error) {
+    writeJson(res, 500, { allowed: false, error: error instanceof Error ? error.message : 'permission check failed' })
+  }
 }
 
 function buildMemoryEnv(projectDir: string | null): Record<string, string> {
@@ -745,14 +882,6 @@ function buildNetworkEnv(): Record<string, string> {
     env.ARKLOOP_OUTBOUND_USER_AGENT = cfg.userAgent.trim()
   }
   return env
-}
-
-function buildBrowserSearchEnv(): Record<string, string> {
-  const baseUrl = getBrowserSearchBaseUrl()
-  if (!baseUrl) return {}
-  return {
-    ARKLOOP_DESKTOP_BROWSER_SEARCH_URL: `${baseUrl}/search`,
-  }
 }
 
 function buildBridgeEnv(bridgePort: number, projectDir: string | null): Record<string, string> {
@@ -1250,6 +1379,7 @@ async function launchOnPort(port: number, portMode: LocalPortMode): Promise<Side
   let recentOutput = ''
   let healthy = false
   const bridgePort = await resolveBridgePort(port)
+  const writePermissionUrl = await ensureWritePermissionServer()
   const projectDir = resolveProjectDir()
   setBridgeBaseUrl(`http://127.0.0.1:${bridgePort}`)
   console.info('[sidecar] launch request', {
@@ -1278,9 +1408,9 @@ async function launchOnPort(port: number, portMode: LocalPortMode): Promise<Side
       ...buildRuntimeResourceEnv(projectDir),
       ...buildWorkspaceEnv(projectDir),
       ...buildBridgeEnv(bridgePort, projectDir),
-      ...buildBrowserSearchEnv(),
       ...buildMemoryEnv(projectDir),
       ...buildNetworkEnv(),
+      ARKLOOP_WRITE_PERMISSION_URL: writePermissionUrl,
       ARKLOOP_DESKTOP_TITLE_DEBUG: desktopTitleDebugFlag(),
     },
     stdio: ['ignore', 'pipe', 'pipe'],

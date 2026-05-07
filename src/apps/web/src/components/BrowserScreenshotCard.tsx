@@ -211,7 +211,7 @@ export function BrowserScreenshotCard({ artifact, accessToken, command, url }: P
             }} />
           )}
           {blobUrl && (
-            <img
+            <img loading="lazy" decoding="async"
               src={blobUrl}
               alt={artifact.filename}
               draggable={false}
@@ -265,7 +265,7 @@ export function BrowserScreenshotCard({ artifact, accessToken, command, url }: P
             <X size={16} />
           </button>
 
-          <img
+          <img loading="lazy" decoding="async"
             src={blobUrl!}
             alt={artifact.filename}
             draggable={false}

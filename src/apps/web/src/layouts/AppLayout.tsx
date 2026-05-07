@@ -4,7 +4,7 @@ import { isDesktop, getDesktopApi } from '@arkloop/shared/desktop'
 import { LoadingPage, TimeZoneProvider } from '@arkloop/shared'
 import { Sidebar } from '../components/Sidebar'
 import { DesktopTitleBar } from '../components/DesktopTitleBar'
-import { SettingsModal, type SettingsTab } from '../components/SettingsModal'
+import { SettingsModal } from '../components/SettingsModal'
 import { DesktopSettings } from '../components/DesktopSettings'
 import { ChatsSearchModal } from '../components/ChatsSearchModal'
 import { NotificationsPanel } from '../components/NotificationsPanel'
@@ -60,7 +60,6 @@ type LayoutMainProps = {
   filteredThreads: import('../api').ThreadResponse[]
   appMode: import('../storage').AppMode
   pathname: string
-  desktopSettingsSectionRequestId: number
   onSearchClose: () => void
   onMeUpdated: (m: import('../api').MeResponse) => void
   onTrySkill: (prompt: string) => void
@@ -72,7 +71,6 @@ const LayoutMain = memo(function LayoutMain({
   filteredThreads,
   appMode,
   pathname,
-  desktopSettingsSectionRequestId,
   onSearchClose,
   onMeUpdated,
   onTrySkill,
@@ -118,7 +116,6 @@ const LayoutMain = memo(function LayoutMain({
           me={me}
           accessToken={accessToken}
           initialSection={desktopSettingsSection}
-          sectionRequestId={desktopSettingsSectionRequestId}
           onClose={closeSettings}
           onLogout={logout}
           onMeUpdated={onMeUpdated}
@@ -160,8 +157,26 @@ export function AppLayout() {
   const location = useLocation()
   const desktop = isDesktop()
 
+  const [hasComponentUpdates, setHasComponentUpdates] = useState(false)
   const [appUpdateState, setAppUpdateState] = useState<import('@arkloop/shared/desktop').AppUpdaterState | null>(null)
-  const [desktopSettingsSectionRequestId, setDesktopSettingsSectionRequestId] = useState(0)
+
+  // component updater
+  useEffect(() => {
+    if (!desktop) return
+    const api = getDesktopApi()
+    if (!api?.updater) return
+    const checkStatus = (status: Awaited<ReturnType<typeof api.updater.getCached>>) => {
+      setHasComponentUpdates(
+        status.openviking.available ||
+        status.sandbox.kernel.available ||
+        status.sandbox.rootfs.available ||
+        status.bins.rtk.available ||
+        status.bins.opencli.available
+      )
+    }
+    void api.updater.getCached().then(checkStatus).catch(() => {})
+    return api.updater.onStatusChanged?.(checkStatus)
+  }, [desktop])
 
   // app updater
   useEffect(() => {
@@ -186,11 +201,6 @@ export function AppLayout() {
     const api = getDesktopApi()
     void api?.appUpdater?.install().catch(() => {})
   }, [])
-
-  const handleTitleBarOpenSettings = useCallback((tab?: SettingsTab | 'voice') => {
-    setDesktopSettingsSectionRequestId((current) => current + 1)
-    openSettings(tab)
-  }, [openSettings])
 
   const pathnameSearchOpen = location.pathname.endsWith('/search')
   const isSearchOpen = searchOverlayOpen || pathnameSearchOpen
@@ -255,9 +265,6 @@ export function AppLayout() {
   const titleBarIncognitoActive =
     isPrivateMode || pendingIncognitoMode ||
     (currentThreadId != null && privateThreadIds.has(currentThreadId))
-  const hasAppUpdate =
-    appUpdateState?.phase === 'available' ||
-    appUpdateState?.phase === 'downloaded'
 
   return (
     <TimeZoneProvider userTimeZone={me?.timezone ?? null} accountTimeZone={me?.account_timezone ?? null}>
@@ -272,12 +279,12 @@ export function AppLayout() {
             showIncognitoToggle={activeAppMode !== 'work'}
             isPrivateMode={titleBarIncognitoActive}
             onTogglePrivateMode={handleDesktopTitleBarIncognitoClick}
-            hasAppUpdate={hasAppUpdate}
+            hasComponentUpdates={hasComponentUpdates || (appUpdateState != null && appUpdateState.phase === 'available')}
             onCheckAppUpdate={handleCheckAppUpdate}
             appUpdateState={appUpdateState}
             onDownloadApp={handleDownloadApp}
             onInstallApp={handleInstallApp}
-            onOpenSettings={handleTitleBarOpenSettings}
+            onOpenSettings={openSettings}
           />
         )}
 
@@ -297,7 +304,6 @@ export function AppLayout() {
             filteredThreads={filteredThreads}
             appMode={activeAppMode}
             pathname={location.pathname}
-            desktopSettingsSectionRequestId={desktopSettingsSectionRequestId}
             onSearchClose={handleCloseSearch}
             onMeUpdated={updateMe}
             onTrySkill={handleTrySkill}

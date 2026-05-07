@@ -133,7 +133,7 @@ describe('AuthProvider timezone bootstrap', () => {
     expect(updateMe).not.toHaveBeenCalled()
   })
 
-  it('本地模式下显示后端用户名而不是系统用户名', async () => {
+  it('本地模式下优先显示系统用户名', async () => {
     mockIsLocalMode.mockReturnValue(true)
     mockGetOsUsername.mockResolvedValue('qqqqqf')
     vi.mocked(getMe).mockResolvedValue({
@@ -157,7 +157,6 @@ describe('AuthProvider timezone bootstrap', () => {
       await Promise.resolve()
     })
 
-    expect(container.textContent).toBe('desktop')
-    expect(mockGetOsUsername).not.toHaveBeenCalled()
+    expect(container.textContent).toBe('qqqqqf')
   })
 })

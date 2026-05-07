@@ -480,7 +480,7 @@ export function DesktopWeixinSettingsPanel({
                     className="rounded-xl p-3"
                     style={{ border: '0.5px solid var(--c-border-subtle)', background: 'var(--c-bg-page)' }}
                   >
-                    <img
+                    <img loading="lazy" decoding="async"
                       src={qrCodeDataURL ?? ''}
                       alt="WeChat QR Code"
                       className="h-[200px] w-[200px]"

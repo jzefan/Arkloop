@@ -1,128 +1,247 @@
-<p align="center">
-  <img src="https://cdn.nodeimage.com/i/rvRvQavXMOx1ostIUyAqBc3mfy9SOGM4.png" alt="Arkloop" />
-</p>
+# ZenMUArkDesktop
 
-<h3 align="center">Open-source / Clean / Powerful — Your AI Agent Platform</h3>
+中文 | [English](#english)
 
-<p align="center">
-  <a href="./docs/zh-CN/README.md"><img alt="简体中文" src="https://img.shields.io/badge/简体中文-d9d9d9"></a>
-  <a href="./LICENSE"><img alt="License" src="https://img.shields.io/badge/license-Arkloop%20License-blue"></a>
-  <a href="https://github.com/qqqqqf-q/Arkloop/graphs/commit-activity"><img alt="Commits" src="https://img.shields.io/github/commit-activity/m/qqqqqf-q/Arkloop?labelColor=%2332b583&color=%2312b76a"></a>
-  <a href="https://github.com/qqqqqf-q/Arkloop/issues"><img alt="Issues closed" src="https://img.shields.io/github/issues-search?query=repo%3Aqqqqqf-q%2FArkloop%20is%3Aclosed&label=issues%20closed&labelColor=%237d89b0&color=%235d6b98"></a>
-  <a href="https://x.com/intent/follow?screen_name=qqqqqf_"><img alt="Follow on X" src="https://img.shields.io/twitter/follow/qqqqqf_?logo=X&color=%20%23f5f5f5"></a>
-</p>
+ZenMUArkDesktop 是基于 Arkloop 的桌面端定制版本，重点加入了 ZenMux 模型入口、图片生成、视频生成、参考图输入、会话产物导出、工作目录与 Skill 等桌面使用能力。
+
+本仓库基于上游开源项目：
+
+- 上游仓库 / Upstream: [qqqqqf-q/Arkloop](https://github.com/qqqqqf-q/Arkloop)
+- 本仓库 / This fork: [bennix/ZenMUArkDesktop](https://github.com/bennix/ZenMUArkDesktop)
+
+## 说明
+
+本仓库是一个干净发布副本，不包含本地 `.env`、构建产物、桌面 release 目录、真实 API Key 或本地配置文件。ZenMux / OpenAI / Anthropic / Gemini 等服务的 API Key 需要用户在应用设置中自行配置。
+
+## 主要改动
+
+- ZenMux 供应商配置入口
+- ZenMux 模型列表加载与筛选
+- 图片生成与视频生成工具链
+- 最多 5 张参考图上传与缩略图展示
+- 生成图片的保存、复制、平移、缩放
+- 生成视频播放
+- Markdown 与 LaTeX 渲染
+- Skill 导入与对话框 `~` 调用
+- 当前工作目录选择、文件上下文 `@` 调用
+- 会话批量删除
+- 会话批量导出，包含消息、图片、视频、源码、附件等产物
+
+## 开发
+
+### 本地运行桌面版（推荐）
+
+前置依赖：
+
+- Node.js / pnpm
+- Go 工具链（`go.work` 使用 Go `1.26.0`；运行 `go version` 应能看到版本）
+
+桌面版会自动构建本地 sidecar、启动 Vite 开发服务，并打开 Electron 应用：
+
+```bash
+pnpm install
+
+cd src/apps/desktop
+pnpm dev
+```
+
+启动后，在应用设置中配置 ZenMux / OpenAI / Anthropic / Gemini 等服务的 API Key。
+
+### 本地运行 Web + 后端服务
+
+如需运行完整 Web 与后端服务，请先准备 Docker，然后复制并修改环境变量：
+
+```bash
+cp .env.example .env
+```
+
+至少需要在 `.env` 中修改这些值：
+
+```env
+ARKLOOP_POSTGRES_PASSWORD=your_postgres_password
+ARKLOOP_REDIS_PASSWORD=your_redis_password
+ARKLOOP_AUTH_JWT_SECRET=please_use_at_least_32_characters
+ARKLOOP_ENCRYPTION_KEY=64_hex_characters_generated_by_openssl
+```
+
+`ARKLOOP_ENCRYPTION_KEY` 可以这样生成：
+
+```bash
+openssl rand -hex 32
+```
+
+启动完整服务：
+
+```bash
+docker compose -f compose.yaml -f compose.dev.yaml up --build
+```
+
+常用地址：
+
+- Web: <http://localhost:19080>
+- Gateway: <http://localhost:19000>
+- API health: <http://localhost:19001/healthz>
+
+### 只运行 Web 前端
+
+如果后端或 Gateway 已经在本机 `19000` 端口运行，可以只启动 Web 前端：
+
+```bash
+cd src/apps/web
+pnpm dev
+```
+
+默认会连接 `http://127.0.0.1:19000`。
+
+### 构建
+
+```bash
+pnpm install
+
+cd src/apps/web
+pnpm type-check
+pnpm build
+
+cd ../desktop
+pnpm type-check
+pnpm build:web
+pnpm build:electron
+pnpm exec electron-builder --mac --arm64 --dir
+```
+
+## 安全
+
+不要把真实 API Key、`.env`、桌面本地配置、数据库、release 包或日志提交到仓库。仓库已包含 `.gitignore` 规则，但提交前仍建议运行：
+
+```bash
+rg -n --hidden --glob '!**/.git/**' 'sk-[A-Za-z0-9_-]{20,}|sk-ss-v1-[A-Za-z0-9]+|api[_-]?key'
+```
+
+## 许可证
+
+本项目继承上游 Arkloop 的许可证与限制。详见 [LICENSE](LICENSE)。
 
 ---
 
-Arkloop is a design-focused open-source AI Agent platform. Multi-model routing, sandboxed execution, persistent memory — a clean desktop app that works out of the box.
+# English
 
-## Download
+[中文](#zenmuarkdesktop) | English
 
-Download the latest version from [GitHub Releases](https://github.com/qqqqqf-q/Arkloop/releases), supporting macOS, Linux, and Windows.
+ZenMUArkDesktop is a desktop-focused customization based on Arkloop. It adds ZenMux model integration, image generation, video generation, reference image input, conversation artifact export, workspace directory support, and Skill workflows.
 
-The desktop app bundles the full runtime — no Docker, no configuration. Just open and use. Automatic updates via GitHub Releases.
+This repository is based on the upstream open-source project:
 
-<details>
-<summary>macOS: app blocked (Move to Trash)</summary>
+- Upstream: [qqqqqf-q/Arkloop](https://github.com/qqqqqf-q/Arkloop)
+- This fork: [bennix/ZenMUArkDesktop](https://github.com/bennix/ZenMUArkDesktop)
 
-Do **not** click **Move to Trash** when macOS warns that **Arkloop** cannot be verified.
+## Notes
 
-1. Choose **Done** or close the dialog.
+This repository is a clean publishing copy. It does not include local `.env` files, build artifacts, desktop release outputs, real API keys, or local configuration files. API keys for ZenMux, OpenAI, Anthropic, Gemini, and other providers must be configured by the user in the app settings.
 
-   ![Gatekeeper blocked Arkloop](./docs/readme/macos-gatekeeper-01-not-opened.png)
+## Highlights
 
-2. Open **System Settings → Privacy & Security**. Under **Security**, find **Open Anyway** next to the **Arkloop** message and click it.
-
-   ![Privacy & Security, Open Anyway](./docs/readme/macos-gatekeeper-02-privacy-security.png)
-
-3. When the confirmation dialog appears, choose **Open Anyway** again.
-
-   ![Confirmation dialog](./docs/readme/macos-gatekeeper-03-confirm-open.png)
-
-</details>
-
-## Features
-
-Arkloop does what other AI chat tools do — multi-model support, tool calling, code execution, memory — but we focus on doing it cleanly:
-
-- **Multi-Model Routing** — OpenAI, Anthropic, and any compatible API; priority-based automatic routing with rate limit handling
-- **Sandboxed Execution** — Code runs in Firecracker microVMs or Docker containers with strict resource limits
-- **Persistent Memory** — System constraints, long-term facts, and session context preserved across conversations
-- **Prompt Injection Protection** — Semantic-level scanning that detects and blocks injection attacks
-- **Channel Integration** — Telegram integration with media handling and group context
-- **Custom Personas** — Independent system prompts, tool sets, and behavior configs; Lua scripting supported
-- **MCP / ACP** — Model Context Protocol and Agent Communication Protocol support
-- **Skill Ecosystem** — Import skills from ClawHub, compatible with OpenClaw SKILL.md format
-
-Full documentation at [docs](https://arkloop.io/en/docs/guide).
-
-
-## Contributing
-
-We welcome contributions of all kinds.
-
-Even if you're not a developer, just a regular user — if anything feels off while using it, even a bit of spacing, a color, a tiny detail, or a big-picture direction — please [open an issue](https://github.com/qqqqqf-q/Arkloop/issues). We take every UX detail seriously, and your feedback makes the experience better for everyone.
-
-See [CONTRIBUTING.md](CONTRIBUTING.md) for commit conventions and development workflow.
-
-## Sponsors
-
-Thanks to the following friends for their support, keeping Arkloop going:
-
-- [@Jinnkunn](https://github.com/Jinnkunn) — Bought me a domain
-- @jeck — Treated me to an iced Americano
-- @chuichui — Covered my AI costs for two weeks
-
-
-## Contributors
-
-<a href="https://github.com/qqqqqf-q/Arkloop/graphs/contributors">
-  <img src="https://contrib.rocks/image?repo=qqqqqf-q/Arkloop" />
-</a>
-
-
-## If you can, give us a Star
-![wkwUSiE3xZw1NeDrSFqJYDkkSEDULMfu](https://cdn.nodeimage.com/i/wkwUSiE3xZw1NeDrSFqJYDkkSEDULMfu.gif)
-
-## Architecture
-
-| Service | Stack | Role |
-|---------|-------|------|
-| API | Go | Authentication, RBAC, resource management, audit logging |
-| Gateway | Go | Reverse proxy, rate limiting, risk scoring |
-| Worker | Go | Job execution, LLM routing, tool dispatch, agent loop |
-| Sandbox | Go | Code execution isolation |
-| Desktop | Electron + Go | Native desktop app with embedded sidecar |
-| Web | React / TypeScript | User interface |
-| Console | React / TypeScript | Admin dashboard |
-
-Infrastructure: PostgreSQL, Redis, SeaweedFS (or filesystem), OpenViking (vector memory).
+- ZenMux provider configuration
+- ZenMux model loading and filtering
+- Image and video generation toolchains
+- Up to 5 reference image uploads with thumbnails
+- Generated image save, copy, pan, and zoom
+- Generated video playback
+- Markdown and LaTeX rendering
+- Skill import and `~` invocation in chat
+- Workspace directory selection and `@` file context insertion
+- Bulk conversation deletion
+- Bulk conversation export with messages, images, videos, source code, attachments, and other artifacts
 
 ## Development
 
+### Run Desktop Locally (Recommended)
+
+Prerequisites:
+
+- Node.js / pnpm
+- Go toolchain (`go.work` uses Go `1.26.0`; `go version` should print a version)
+
+The desktop app builds the local sidecar, starts the Vite development server, and opens the Electron app:
+
 ```bash
-bin/ci-local quick        # Quick local CI
-bin/ci-local integration  # Go integration tests
-bin/ci-local full          # Full check
+pnpm install
+
+cd src/apps/desktop
+pnpm dev
 ```
 
-## Self-Hosting
+After launch, configure API keys for ZenMux / OpenAI / Anthropic / Gemini and other providers in the app settings.
 
-> The self-hosting deployment path is still in development. While included in the current release, availability is not guaranteed. We are not focusing on this during the Alpha phase. We plan to provide full server deployment support once the desktop version stabilizes.
+### Run Web + Backend Locally
 
+To run the full Web and backend stack, prepare Docker first, then copy and edit the environment file:
 
+```bash
+cp .env.example .env
+```
 
-## Star History
+At minimum, update these values in `.env`:
 
-[![Star History Chart](https://api.star-history.com/svg?repos=qqqqqf-q/Arkloop&type=date&legend=top-left)](https://www.star-history.com/#qqqqqf-q/Arkloop&type=date&legend=top-left)
+```env
+ARKLOOP_POSTGRES_PASSWORD=your_postgres_password
+ARKLOOP_REDIS_PASSWORD=your_redis_password
+ARKLOOP_AUTH_JWT_SECRET=please_use_at_least_32_characters
+ARKLOOP_ENCRYPTION_KEY=64_hex_characters_generated_by_openssl
+```
+
+Generate `ARKLOOP_ENCRYPTION_KEY` with:
+
+```bash
+openssl rand -hex 32
+```
+
+Start the full stack:
+
+```bash
+docker compose -f compose.yaml -f compose.dev.yaml up --build
+```
+
+Common URLs:
+
+- Web: <http://localhost:19080>
+- Gateway: <http://localhost:19000>
+- API health: <http://localhost:19001/healthz>
+
+### Run Web Only
+
+If the backend or Gateway is already running on local port `19000`, start only the Web frontend:
+
+```bash
+cd src/apps/web
+pnpm dev
+```
+
+By default, it connects to `http://127.0.0.1:19000`.
+
+### Build
+
+```bash
+pnpm install
+
+cd src/apps/web
+pnpm type-check
+pnpm build
+
+cd ../desktop
+pnpm type-check
+pnpm build:web
+pnpm build:electron
+pnpm exec electron-builder --mac --arm64 --dir
+```
 
 ## Security
 
-To report vulnerabilities, please email qingf622@outlook.com instead of opening a public issue. See [SECURITY.md](SECURITY.md) for our disclosure policy.
+Do not commit real API keys, `.env` files, local desktop configuration, databases, release packages, or logs. The repository includes `.gitignore` rules, but it is still recommended to scan before committing:
+
+```bash
+rg -n --hidden --glob '!**/.git/**' 'sk-[A-Za-z0-9_-]{20,}|sk-ss-v1-[A-Za-z0-9]+|api[_-]?key'
+```
 
 ## License
 
-Licensed under the [Arkloop License](LICENSE), a modified Apache License 2.0 with additional conditions:
-
-- **Multi-tenant restriction** — Source code may not be used to operate a multi-tenant SaaS without written authorization.
-- **Brand protection** — LOGO and copyright information in the frontend components must not be removed or modified.
+This project inherits the upstream Arkloop license and restrictions. See [LICENSE](LICENSE).

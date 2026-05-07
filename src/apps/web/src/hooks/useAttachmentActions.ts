@@ -3,6 +3,7 @@ import { uploadStagingAttachment } from '../api'
 import { useAuth } from '../contexts/auth'
 import { useMessageStore } from '../contexts/message-store'
 import type { Attachment } from '../components/ChatInput'
+import { filterAttachableFilesForImageLimit } from '../lib/attachmentLimits'
 
 export function useAttachmentActions() {
   const { accessToken } = useAuth()
@@ -23,7 +24,8 @@ export function useAttachmentActions() {
   }, [attachmentsRef, revokeDraftAttachment])
 
   const handleAttachFiles = useCallback((files: File[]) => {
-    const newAttachments = files.map((file) => ({
+    const acceptedFiles = filterAttachableFilesForImageLimit(attachmentsRef.current, files)
+    const newAttachments = acceptedFiles.map((file) => ({
       id: `${file.name}-${file.size}-${file.lastModified}`,
       file,
       name: file.name,
@@ -51,7 +53,7 @@ export function useAttachmentActions() {
           )
         })
     }
-  }, [accessToken, setAttachments])
+  }, [accessToken, attachmentsRef, setAttachments])
 
   const handlePasteContent = useCallback((text: string) => {
     const ts = Math.floor(Date.now() / 1000)

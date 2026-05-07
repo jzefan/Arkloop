@@ -263,7 +263,7 @@ export function QQLoginFlow({ accessToken, channelId: _channelId, onStatusChange
 
         <div className="flex justify-center rounded-lg p-4" style={{ background: 'var(--c-bg-sub)', border: '0.5px solid var(--c-border-subtle)' }}>
           {qrBlobUrl ? (
-            <img
+            <img loading="lazy" decoding="async"
               src={qrBlobUrl}
               alt="QQ Login QR Code"
               className="h-48 w-48"

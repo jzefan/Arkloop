@@ -48,7 +48,14 @@ func planRequestFromRunContext(rc *pipeline.RunContext, input requestPlannerInpu
 	if input.ApplyImageFilter {
 		baseMessages = applyImageFilter(rc.SelectedRoute, baseMessages, rc.ReadCapabilities.ReadImageSourcesVisible)
 	}
-	tools := annotateToolCacheHints(rc, input.Tools)
+	toolsInput := input.Tools
+	toolChoice := input.ToolChoice
+	if generationTool := generationRequestToolName(rc); generationTool != "" {
+		toolsInput = generationOnlyToolSpecs(generationTool, input.Tools, rc.ToolSpecs)
+		toolChoice = &llm.ToolChoice{Mode: "specific", ToolName: generationTool}
+	}
+	input.ToolChoice = toolChoice
+	tools := annotateToolCacheHints(rc, toolsInput)
 	if request, snapshot, ok := inheritedPromptCacheRequest(rc, input, baseMessages, tools); ok {
 		return plannedRequest{
 			Request:           request,
@@ -64,7 +71,7 @@ func planRequestFromRunContext(rc *pipeline.RunContext, input requestPlannerInpu
 		MaxOutputTokens: effectiveMaxOutputTokens(rc, input.MaxOutputTokens),
 		Temperature:     cloneFloatPtr(input.Temperature),
 		ReasoningMode:   strings.TrimSpace(input.ReasoningMode),
-		ToolChoice:      cloneToolChoice(input.ToolChoice),
+		ToolChoice:      cloneToolChoice(toolChoice),
 		PromptPlan:      buildPromptPlan(rc, input.PromptMode, messages, tailCount),
 	}
 
@@ -72,6 +79,44 @@ func planRequestFromRunContext(rc *pipeline.RunContext, input requestPlannerInpu
 		Request:           req,
 		CacheSafeSnapshot: buildCacheSafeSnapshot(rc, baseMessages, req),
 	}
+}
+
+func generationRequestToolName(rc *pipeline.RunContext) string {
+	if rc == nil || rc.InputJSON == nil {
+		return ""
+	}
+	task, _ := rc.InputJSON["generation_task"].(string)
+	switch strings.ToLower(strings.TrimSpace(task)) {
+	case "image":
+		return "image_generate"
+	case "video":
+		return "video_generate"
+	default:
+		return ""
+	}
+}
+
+func generationOnlyToolSpecs(toolName string, preferred []llm.ToolSpec, fallback []llm.ToolSpec) []llm.ToolSpec {
+	toolName = strings.TrimSpace(toolName)
+	if toolName == "" {
+		return nil
+	}
+	if spec, ok := findToolSpecByName(preferred, toolName); ok {
+		return []llm.ToolSpec{spec}
+	}
+	if spec, ok := findToolSpecByName(fallback, toolName); ok {
+		return []llm.ToolSpec{spec}
+	}
+	return []llm.ToolSpec{{Name: toolName}}
+}
+
+func findToolSpecByName(specs []llm.ToolSpec, name string) (llm.ToolSpec, bool) {
+	for _, spec := range specs {
+		if strings.TrimSpace(spec.Name) == name {
+			return spec, true
+		}
+	}
+	return llm.ToolSpec{}, false
 }
 
 func applyPromptPlan(rc *pipeline.RunContext, baseMessages []llm.Message, mode promptPlanMode) ([]llm.Message, int) {

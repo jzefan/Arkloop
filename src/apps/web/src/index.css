@@ -6,6 +6,14 @@ button:not(:disabled) {
   cursor: pointer;
 }
 
+/* Global keyboard focus indicator. Mouse users keep clean UI via :focus-visible.
+   :where() has zero specificity so per-component styles can override easily.
+   Outline natively follows the element's border-radius in modern browsers. */
+:where(button, a, [role="button"], [role="link"], [role="menuitem"], [role="option"], [role="tab"], summary, input, select, textarea, [tabindex]:not([tabindex="-1"])):focus-visible {
+  outline: 2px solid var(--c-accent);
+  outline-offset: 2px;
+}
+
 .button-secondary:hover:not(:disabled) {
   background: var(--c-bg-deep);
 }
@@ -160,6 +168,11 @@ button:not(:disabled) {
   --c-status-danger-text: #f87171;
   --c-status-warn-bg: rgba(245, 158, 11, 0.12);
   --c-status-warn-text: #fbbf24;
+  /* Filled destructive button: saturated red bg + white text. Stable across
+     themes since saturated red contrasts with both surfaces. */
+  --c-danger: #ef4444;
+  --c-danger-hover: #dc2626;
+  --c-on-danger: #ffffff;
 }
 
 :root[data-body-font="default"] {

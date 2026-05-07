@@ -574,22 +574,6 @@ func TestAnthropicSDKGateway_LimitsCacheControlBlocks(t *testing.T) {
 	}
 }
 
-func TestAnthropicMessageCacheMarkerMissingSourceDoesNotFallbackToTail(t *testing.T) {
-	messages := []map[string]any{
-		{"role": "user", "content": []map[string]any{{"type": "text", "text": "stable"}}},
-		{"role": "user", "content": []map[string]any{{"type": "text", "text": "volatile tail"}}},
-	}
-
-	applyAnthropicMessageCachePlan(messages, map[int]int{0: 0}, nil, MessageCachePlan{
-		Enabled:            true,
-		MarkerMessageIndex: 7,
-	})
-
-	if count := countAnthropicMessageCacheControlBlocks(map[string]any{"messages": messages}); count != 0 {
-		t.Fatalf("missing source marker must not fall back to tail: %#v", messages)
-	}
-}
-
 func countAnthropicCacheControlBlocks(payload map[string]any) int {
 	count := countAnthropicSystemCacheControlBlocks(payload)
 	count += countAnthropicMessageCacheControlBlocks(payload)

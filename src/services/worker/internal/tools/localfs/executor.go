@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"arkloop/services/worker/internal/tools"
+	"arkloop/services/worker/internal/tools/writeperm"
 )
 
 const (
@@ -154,6 +155,9 @@ func (e *Executor) executeWrite(args map[string]any, started time.Time) tools.Ex
 
 	absPath, err := e.resolvePath(relPath)
 	if err != nil {
+		return errResult(errorPathDenied, err.Error(), started)
+	}
+	if err := writeperm.Check(context.Background(), e.workspaceRoot, absPath, "file_write"); err != nil {
 		return errResult(errorPathDenied, err.Error(), started)
 	}
 

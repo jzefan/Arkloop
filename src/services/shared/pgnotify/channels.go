@@ -5,5 +5,4 @@ const (
 	ChannelRunInput      = "arkloop:run_input"
 	ChannelHeartbeat     = "arkloop:heartbeat"
 	ChannelScheduledJobs = "arkloop:scheduled_jobs"
-	ChannelInboundBurst  = "arkloop:inbound_burst"
 )

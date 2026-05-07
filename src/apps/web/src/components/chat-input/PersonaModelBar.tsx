@@ -17,6 +17,7 @@ import {
   clearThreadWorkFolder,
 } from '../../storage'
 import type { AppMode } from '../../storage'
+import type { SelectedModelKind } from '../../storage'
 import { useLocale } from '../../contexts/LocaleContext'
 import { useThreadList } from '../../contexts/thread-list'
 
@@ -29,6 +30,7 @@ type Props = {
   onModeSelect: (personaKey: string) => void
   onDeactivateMode: () => void
   onModelChange: (model: string | null) => void
+  onModelKindChange?: (kind: SelectedModelKind) => void
   thinkingEnabled: string
   onThinkingChange: (mode: string) => void
   onOpenSettings?: (tab: SettingsTab) => void
@@ -57,6 +59,7 @@ export function PersonaModelBar({
   onModeSelect,
   onDeactivateMode,
   onModelChange,
+  onModelKindChange,
   thinkingEnabled,
   onThinkingChange,
   onOpenSettings,
@@ -409,6 +412,7 @@ export function PersonaModelBar({
             accessToken={accessToken}
             value={selectedModel}
             onChange={onModelChange}
+            onKindChange={onModelKindChange}
             onAddApiKey={() => onOpenSettings?.('models')}
             variant={variant}
             controlHeight={isWorkMode ? 'default' : 'legacyChat'}

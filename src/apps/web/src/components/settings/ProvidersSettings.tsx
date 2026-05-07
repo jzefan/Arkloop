@@ -32,38 +32,62 @@ import { useLocale } from '../../contexts/LocaleContext'
 import { ModelOptionsModal } from '../ModelOptionsModal'
 import { AnimatedCheck } from '../AnimatedCheck'
 import { secondaryButtonBorderStyle } from '../buttonStyles'
+import { handleExternalAnchorClick } from '../../openExternal'
 
 const VENDOR_PRESETS = [
+  { key: 'zenmux_openai_responses', provider: 'openai', openai_api_mode: 'responses', base_url: 'https://zenmux.ai/api/v1' },
+  { key: 'zenmux_openai_chat_completions', provider: 'openai', openai_api_mode: 'chat_completions', base_url: 'https://zenmux.ai/api/v1' },
+  { key: 'zenmux_anthropic_messages', provider: 'anthropic', openai_api_mode: undefined, base_url: 'https://zenmux.ai/api/anthropic' },
   { key: 'openai_responses', provider: 'openai', openai_api_mode: 'responses' },
   { key: 'openai_chat_completions', provider: 'openai', openai_api_mode: 'chat_completions' },
   { key: 'anthropic_message', provider: 'anthropic', openai_api_mode: undefined },
   { key: 'gemini', provider: 'gemini', openai_api_mode: undefined },
+  { key: 'deepseek', provider: 'deepseek', openai_api_mode: undefined, base_url: 'https://api.deepseek.com' },
+  { key: 'zenmux_vertex_ai', provider: 'gemini', openai_api_mode: undefined, base_url: 'https://zenmux.ai/api/vertex-ai' },
 ] as const
 
 type VendorPresetKey = (typeof VENDOR_PRESETS)[number]['key']
 
 const OPENVIKING_BACKEND_ADVANCED_KEY = 'openviking_backend'
+const ZENMUX_INVITE_URL = 'https://zenmux.ai/invite/GBQMC5'
 
 type OpenVikingBackendKey = 'openai' | 'azure' | 'volcengine' | 'openai_compatible'
 
 function vendorLabel(
   key: string,
-  p: { vendorOpenai: string; vendorOpenaiChat: string; vendorAnthropic: string; vendorGemini: string },
+  p: { vendorOpenai: string; vendorOpenaiChat: string; vendorAnthropic: string; vendorGemini: string; vendorDeepSeek?: string; vendorZenMuxVertexAI?: string },
 ): string {
   const map: Record<string, string> = {
     openai_responses: p.vendorOpenai,
     openai_chat_completions: p.vendorOpenaiChat,
     anthropic_message: p.vendorAnthropic,
     gemini: p.vendorGemini,
+    deepseek: p.vendorDeepSeek ?? 'DeepSeek',
+    zenmux_openai_responses: 'ZenMux / OpenAI Responses',
+    zenmux_openai_chat_completions: 'ZenMux / OpenAI Chat Completions',
+    zenmux_anthropic_messages: 'ZenMux / Anthropic Messages',
+    zenmux_vertex_ai: p.vendorZenMuxVertexAI ?? 'ZenMux Vertex AI',
   }
   return map[key] ?? key
 }
 
 function toVendorKey(provider: string, mode: string | null): VendorPresetKey {
   if (provider === 'anthropic') return 'anthropic_message'
+  if (provider === 'deepseek') return 'deepseek'
+  if (provider === 'gemini' && mode == null) return 'gemini'
   if (provider === 'gemini') return 'gemini'
   if (mode === 'chat_completions') return 'openai_chat_completions'
   return 'openai_responses'
+}
+
+function vendorPresetBaseURL(preset: (typeof VENDOR_PRESETS)[number] | undefined): string | undefined {
+  return preset && 'base_url' in preset ? preset.base_url : undefined
+}
+
+function isZenMuxProviderConfig(provider: LlmProvider): boolean {
+  const name = provider.name.toLowerCase()
+  const baseUrl = provider.base_url?.toLowerCase() ?? ''
+  return name.includes('zenmux') || baseUrl.includes('zenmux.ai')
 }
 
 function defaultOpenVikingBackendForVendor(provider: string): OpenVikingBackendKey {
@@ -157,10 +181,12 @@ function VendorDropdown({
   value,
   onChange,
   p,
+  presets = VENDOR_PRESETS,
 }: {
   value: VendorPresetKey
   onChange: (v: VendorPresetKey) => void
   p: ReturnType<typeof useLocale>['t']['adminProviders']
+  presets?: readonly (typeof VENDOR_PRESETS)[number][]
 }) {
   const [open, setOpen] = useState(false)
   const menuRef = useRef<HTMLDivElement>(null)
@@ -200,7 +226,7 @@ function VendorDropdown({
             boxShadow: 'var(--c-dropdown-shadow)',
           }}
         >
-          {VENDOR_PRESETS.map((v) => (
+          {presets.map((v) => (
             <button
               key={v.key}
               type="button"
@@ -218,17 +244,19 @@ function VendorDropdown({
   )
 }
 
-type Props = { accessToken: string }
+type Props = { accessToken: string; mode?: 'all' | 'zenmux' }
 
-export function ProvidersSettings({ accessToken }: Props) {
+export function ProvidersSettings({ accessToken, mode = 'all' }: Props) {
   const { t } = useLocale()
   const p = t.adminProviders
+  const zenMuxOnly = mode === 'zenmux'
 
   const [providers, setProviders] = useState<LlmProvider[]>([])
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [showAddProvider, setShowAddProvider] = useState(false)
+  const [addInitialPreset, setAddInitialPreset] = useState<VendorPresetKey | undefined>(undefined)
 
   const firstLoadRef = useRef(true)
 
@@ -251,7 +279,21 @@ export function ProvidersSettings({ accessToken }: Props) {
 
   useEffect(() => { void load() }, [load])
 
-  const selected = providers.find((pv) => pv.id === selectedId) ?? null
+  const visibleProviders = useMemo(
+    () => zenMuxOnly ? providers.filter(isZenMuxProviderConfig) : providers,
+    [providers, zenMuxOnly],
+  )
+
+  useEffect(() => {
+    setSelectedId((prev) => visibleProviders.find((pv) => pv.id === prev)?.id ?? (visibleProviders[0]?.id ?? null))
+  }, [visibleProviders])
+
+  const openAddProvider = useCallback((preset?: VendorPresetKey) => {
+    setAddInitialPreset(preset)
+    setShowAddProvider(true)
+  }, [])
+
+  const selected = visibleProviders.find((pv) => pv.id === selectedId) ?? null
 
   if (loading) {
     return (
@@ -267,7 +309,7 @@ export function ProvidersSettings({ accessToken }: Props) {
       <div className="flex w-[220px] shrink-0 flex-col overflow-hidden max-[1230px]:w-[180px] xl:w-[240px]" style={{ borderRight: '0.5px solid var(--c-border-subtle)' }}>
         <div className="flex-1 overflow-y-auto px-2 py-1">
           <div className="flex flex-col gap-[3px]">
-            {providers.map((pv) => (
+            {visibleProviders.map((pv) => (
               <button
                 key={pv.id}
                 onClick={() => setSelectedId(pv.id)}
@@ -285,7 +327,7 @@ export function ProvidersSettings({ accessToken }: Props) {
         </div>
         <div className="border-t border-[var(--c-border-subtle)] px-3 py-3">
           <button
-            onClick={() => setShowAddProvider(true)}
+            onClick={() => openAddProvider(zenMuxOnly ? 'zenmux_openai_responses' : undefined)}
             className="flex h-10 w-full items-center justify-center gap-1.5 rounded-lg text-[13px] font-medium text-[var(--c-text-secondary)] transition-colors hover:bg-[var(--c-bg-deep)]"
             style={{ border: '0.5px solid var(--c-border-subtle)' }}
           >
@@ -311,7 +353,7 @@ export function ProvidersSettings({ accessToken }: Props) {
           <div className="flex h-full flex-col items-center justify-center gap-3">
             <p className="text-sm text-[var(--c-text-muted)]">{p.noProviders}</p>
             <button
-              onClick={() => setShowAddProvider(true)}
+              onClick={() => openAddProvider(zenMuxOnly ? 'zenmux_openai_responses' : undefined)}
               className="flex items-center gap-1.5 rounded-lg px-4 py-2 text-sm font-medium text-[var(--c-btn-text)] transition-[filter] duration-150 hover:[filter:brightness(1.12)] active:[filter:brightness(0.95)]"
               style={{ background: 'var(--c-btn-bg)' }}
             >
@@ -326,6 +368,8 @@ export function ProvidersSettings({ accessToken }: Props) {
         <AddProviderModal
           accessToken={accessToken}
           p={p}
+          initialPreset={addInitialPreset}
+          zenMuxOnly={zenMuxOnly}
           onClose={() => setShowAddProvider(false)}
           onCreated={() => { setShowAddProvider(false); void load() }}
         />
@@ -336,14 +380,16 @@ export function ProvidersSettings({ accessToken }: Props) {
 
 // -- Add Provider Modal --
 
-function AddProviderModal({ accessToken, p, onClose, onCreated }: {
+function AddProviderModal({ accessToken, p, initialPreset, zenMuxOnly = false, onClose, onCreated }: {
   accessToken: string
   p: ReturnType<typeof useLocale>['t']['adminProviders']
+  initialPreset?: VendorPresetKey
+  zenMuxOnly?: boolean
   onClose: () => void
   onCreated: () => void
 }) {
   const [name, setName] = useState('')
-  const [preset, setPreset] = useState<VendorPresetKey>('openai_responses')
+  const [preset, setPreset] = useState<VendorPresetKey>(initialPreset ?? 'openai_responses')
   const [apiKey, setApiKey] = useState('')
   const [baseUrl, setBaseUrl] = useState('')
   const [saving, setSaving] = useState(false)
@@ -359,7 +405,7 @@ function AddProviderModal({ accessToken, p, onClose, onCreated }: {
         name: name.trim(),
         provider: v.provider,
         api_key: apiKey.trim(),
-        base_url: baseUrl.trim() || undefined,
+        base_url: baseUrl.trim() || vendorPresetBaseURL(v),
         openai_api_mode: v.openai_api_mode,
         advanced_json: mergeProviderAdvancedJSON({}, defaultOpenVikingBackendForVendor(v.provider)),
       })
@@ -373,6 +419,9 @@ function AddProviderModal({ accessToken, p, onClose, onCreated }: {
 
   const fieldLabelCls = 'block text-[11px] font-medium text-[var(--c-placeholder)] mb-1 pl-[2px]'
   const fieldInputCls = 'w-full rounded-lg border border-[var(--c-border-subtle)] bg-[var(--c-bg-input)] px-3 py-1.5 text-sm text-[var(--c-text-primary)] outline-none placeholder:text-[var(--c-placeholder)] focus:border-[var(--c-border)]'
+  const selectedPreset = VENDOR_PRESETS.find((v) => v.key === preset)
+  const allowedPresets = zenMuxOnly ? VENDOR_PRESETS.filter((v) => v.key.startsWith('zenmux_')) : VENDOR_PRESETS
+  const isZenMuxPreset = preset.startsWith('zenmux_')
 
   return createPortal(
     <div
@@ -406,7 +455,7 @@ function AddProviderModal({ accessToken, p, onClose, onCreated }: {
           </div>
           <div>
             <label className={fieldLabelCls}>{p.vendor}</label>
-            <VendorDropdown value={preset} onChange={setPreset} p={p} />
+            <VendorDropdown value={preset} onChange={setPreset} p={p} presets={allowedPresets} />
           </div>
           <div className="col-span-2">
             <label className={fieldLabelCls}>{p.apiKey}</label>
@@ -417,13 +466,27 @@ function AddProviderModal({ accessToken, p, onClose, onCreated }: {
               placeholder={p.apiKeyPlaceholder}
               className={fieldInputCls}
             />
+            {isZenMuxPreset && !apiKey.trim() && (
+              <p className="mt-1 text-xs text-[var(--c-text-muted)]">
+                {p.zenMuxInviteHint ?? 'No API Key yet?'}{' '}
+                <a
+                  href={ZENMUX_INVITE_URL}
+                  target="_blank"
+                  rel="noreferrer"
+                  onClick={(event) => handleExternalAnchorClick(event, ZENMUX_INVITE_URL)}
+                  className="font-medium text-[var(--c-text-primary)] hover:underline"
+                >
+                  {ZENMUX_INVITE_URL}
+                </a>
+              </p>
+            )}
           </div>
           <div className="col-span-2">
             <label className={fieldLabelCls}>{p.baseUrl}</label>
             <input
               value={baseUrl}
               onChange={(e) => setBaseUrl(e.target.value.slice(0, 500))}
-              placeholder={p.baseUrlPlaceholder ?? 'https://api.example.com/v1'}
+              placeholder={vendorPresetBaseURL(selectedPreset) ?? p.baseUrlPlaceholder ?? 'https://api.example.com/v1'}
               className={fieldInputCls}
               maxLength={500}
             />
@@ -560,7 +623,7 @@ function ProviderDetail({ provider, accessToken, onUpdated, onDeleted, p }: {
         {confirmDelete ? (
           <div className="flex flex-wrap items-center gap-2">
             <span className="text-xs text-[var(--c-text-tertiary)]">{p.deleteProviderConfirm}</span>
-            <button onClick={() => void handleDelete()} disabled={deleting} className="rounded-lg bg-red-600 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-red-700 disabled:opacity-50">{p.deleteProvider}</button>
+            <button onClick={() => void handleDelete()} disabled={deleting} className="rounded-lg bg-[var(--c-danger)] px-3 py-1.5 text-xs font-medium text-[var(--c-on-danger)] transition-colors hover:bg-[var(--c-danger-hover)] disabled:opacity-50">{p.deleteProvider}</button>
             <button onClick={() => setConfirmDelete(false)} className="rounded-lg px-3 py-1.5 text-xs text-[var(--c-text-secondary)] transition-colors hover:bg-[var(--c-bg-sub)]">{p.cancel}</button>
           </div>
         ) : (

@@ -37,6 +37,21 @@ func TestResolveCatalogProtocolConfigOpenAIRejectsInvalidMode(t *testing.T) {
 	}
 }
 
+func TestResolveCatalogProtocolConfigDeepSeekDefaultsToChatCompletions(t *testing.T) {
+	cfg, err := ResolveCatalogProtocolConfig(data.LlmCredential{
+		Provider: "deepseek",
+	}, "sk-deepseek")
+	if err != nil {
+		t.Fatalf("ResolveCatalogProtocolConfig() error = %v", err)
+	}
+	if cfg.Kind != ProtocolKindOpenAIChatCompletions {
+		t.Fatalf("Kind = %q, want %q", cfg.Kind, ProtocolKindOpenAIChatCompletions)
+	}
+	if cfg.BaseURL != defaultDeepSeekBaseURL {
+		t.Fatalf("BaseURL = %q, want %q", cfg.BaseURL, defaultDeepSeekBaseURL)
+	}
+}
+
 func TestResolveCatalogProtocolConfigAnthropicDefaultsToHostBase(t *testing.T) {
 	cfg, err := ResolveCatalogProtocolConfig(data.LlmCredential{
 		Provider: "anthropic",

@@ -148,6 +148,41 @@ func TestBuildPromptPlan_StableMarker(t *testing.T) {
 	}
 }
 
+func TestPlanRequestFromRunContextGenerationTaskForcesOnlyGenerationTool(t *testing.T) {
+	imageDescription := "generate images"
+	loadDescription := "load tools"
+	rc := &pipeline.RunContext{
+		InputJSON: map[string]any{"generation_task": "image"},
+		ToolSpecs: []llm.ToolSpec{
+			{Name: "load_tools", Description: &loadDescription},
+			{Name: "image_generate", Description: &imageDescription},
+		},
+	}
+
+	planned := planRequestFromRunContext(rc, requestPlannerInput{
+		Model:        "openai/gpt-image-2",
+		BaseMessages: []llm.Message{{Role: "user", Content: []llm.ContentPart{{Text: "画一只哈士奇"}}}},
+		PromptMode:   promptPlanModeNone,
+		Tools:        []llm.ToolSpec{{Name: "load_tools", Description: &loadDescription}},
+	})
+
+	if len(planned.Request.Tools) != 1 {
+		t.Fatalf("expected exactly one tool, got %d: %#v", len(planned.Request.Tools), planned.Request.Tools)
+	}
+	if got := planned.Request.Tools[0].Name; got != "image_generate" {
+		t.Fatalf("expected image_generate tool, got %q", got)
+	}
+	if planned.Request.ToolChoice == nil {
+		t.Fatalf("expected specific tool choice")
+	}
+	if got := planned.Request.ToolChoice.Mode; got != "specific" {
+		t.Fatalf("expected specific tool choice, got %q", got)
+	}
+	if got := planned.Request.ToolChoice.ToolName; got != "image_generate" {
+		t.Fatalf("expected image_generate tool choice, got %q", got)
+	}
+}
+
 func TestBuildPromptPlan_NoTail(t *testing.T) {
 	rc := &pipeline.RunContext{
 		AgentConfig: &pipeline.ResolvedAgentConfig{PromptCacheControl: "system_prompt"},

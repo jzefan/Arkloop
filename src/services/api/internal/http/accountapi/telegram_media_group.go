@@ -329,11 +329,7 @@ func (c telegramConnector) processTelegramMediaGroupMerged(
 			return err
 		}
 		if finalState == inboundStatePendingDispatch {
-			if err := tx.Commit(ctx); err != nil {
-				return err
-			}
-			notifyChannelInboundBurst(ctx, c.bus)
-			return nil
+			return tx.Commit(ctx)
 		}
 		return tx.Commit(ctx)
 	}
@@ -427,11 +423,5 @@ func (c telegramConnector) processTelegramMediaGroupMerged(
 			return err
 		}
 	}
-	if err := tx.Commit(ctx); err != nil {
-		return err
-	}
-	if incoming.ShouldCreateRun() {
-		notifyChannelInboundBurst(ctx, c.bus)
-	}
-	return nil
+	return tx.Commit(ctx)
 }

@@ -419,8 +419,8 @@ function ChatTitleMenuContent({ threadId }: { threadId: string | null }) {
                   borderRadius: '8px',
                   fontSize: '13px',
                   fontWeight: 500,
-                  color: '#fff',
-                  background: '#ef4444',
+                  color: 'var(--c-on-danger)',
+                  background: 'var(--c-danger)',
                   border: 'none',
                   cursor: 'pointer',
                 }}

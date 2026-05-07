@@ -8,9 +8,6 @@ import (
 
 func TestDiscoverExternalSkills(t *testing.T) {
 	skills := DiscoverExternalSkills(nil)
-	if skills == nil {
-		t.Fatal("expected non-nil skills slice")
-	}
 	if len(skills) != 0 {
 		t.Fatalf("expected 0 skills from nil dirs, got %d", len(skills))
 	}

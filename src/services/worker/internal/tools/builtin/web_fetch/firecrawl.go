@@ -45,9 +45,6 @@ func (p *FirecrawlProvider) Fetch(ctx context.Context, targetURL string, maxLeng
 	if p.baseURLErr != nil {
 		return Result{}, p.baseURLErr
 	}
-	if err := EnsureURLAllowed(targetURL); err != nil {
-		return Result{}, err
-	}
 	payload := map[string]any{
 		"url":             targetURL,
 		"formats":         []string{"markdown"},
@@ -123,22 +120,20 @@ func (p *FirecrawlProvider) Fetch(ctx context.Context, targetURL string, maxLeng
 	if rawURL, ok := rawData["url"].(string); ok && strings.TrimSpace(rawURL) != "" {
 		finalURL = rawURL
 	}
-	if err := EnsureURLAllowed(finalURL); err != nil {
-		return Result{}, err
+
+	truncated := false
+	if len(content) > maxLength {
+		content = content[:maxLength]
+		truncated = true
+	}
+	if len(title) > 512 {
+		title = title[:512]
 	}
 
-	content = strings.TrimSpace(content)
-	rawLength := len([]rune(content))
-	content, truncated := truncateString(content, maxLength)
-	title, _ = truncateString(strings.TrimSpace(title), 512)
-
 	return Result{
-		URL:          strings.TrimSpace(finalURL),
-		RequestedURL: targetURL,
-		Title:        title,
-		Content:      content,
-		Truncated:    truncated,
-		Extractor:    "firecrawl",
-		RawLength:    rawLength,
+		URL:       strings.TrimSpace(finalURL),
+		Title:     strings.TrimSpace(title),
+		Content:   strings.TrimSpace(content),
+		Truncated: truncated,
 	}, nil
 }

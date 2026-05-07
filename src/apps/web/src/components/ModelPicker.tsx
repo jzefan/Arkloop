@@ -1,10 +1,12 @@
-import { useRef, useEffect, useState, useCallback, useLayoutEffect } from 'react'
+import { useRef, useEffect, useState, useCallback, useLayoutEffect, useMemo } from 'react'
 import { ChevronDown, Brain, Check } from 'lucide-react'
 import { PillToggle } from '@arkloop/shared'
 import { listLlmProviders, type LlmProvider } from '../api'
 import { useLocale } from '../contexts/LocaleContext'
 import { isDesktop } from '@arkloop/shared/desktop'
 import { getAvailableCatalogFromAdvancedJson } from '@arkloop/shared/llm/available-catalog-advanced-json'
+import { listZenMuxModels, zenMuxModelId, zenMuxModelLabel, zenMuxModelSupports, type ZenMuxModel } from '../lib/zenmuxModels'
+import type { SelectedModelKind } from '../storage'
 
 const REASONING_LEVELS = ['off', 'minimal', 'low', 'medium', 'high', 'max'] as const
 const SUBMENU_INSET_LEFT = 10
@@ -20,14 +22,19 @@ const MENU_SECTION_LABEL_STYLE = {
 const SUBMENU_ROW_STYLE = {
   padding: `6px ${SUBMENU_INSET_RIGHT}px 6px ${SUBMENU_INSET_LEFT}px`,
 }
+const MODEL_FILTERS = [
+  { key: 'general', label: '通用' },
+  { key: 'image', label: '生图' },
+  { key: 'video', label: '生视频' },
+] as const
 
 // 模块级缓存：accessToken -> providers，打开时先展示缓存，后台静默刷新
 const providersCache = new Map<string, LlmProvider[]>()
 
-function pickFirstChatPickerModel(providers: LlmProvider[]): string | null {
+function pickFirstChatPickerModel(providers: PickerProvider[]): string | null {
   for (const p of providers) {
     for (const m of p.models) {
-      if (m.show_in_picker && !m.tags.includes('embedding')) {
+      if (m.show_in_picker && !m.tags.includes('embedding') && !m.tags.includes('image') && !m.tags.includes('video')) {
         return `${p.name}^${m.model}`
       }
     }
@@ -35,10 +42,77 @@ function pickFirstChatPickerModel(providers: LlmProvider[]): string | null {
   return null
 }
 
+function isZenMuxProvider(provider: LlmProvider): boolean {
+  const name = provider.name.toLowerCase()
+  const baseUrl = provider.base_url?.toLowerCase() ?? ''
+  return name.includes('zenmux') || baseUrl.includes('zenmux.ai')
+}
+
+type PickerModel = LlmProvider['models'][number] & {
+  source?: 'configured' | 'zenmux_catalog'
+  display_label?: string
+}
+
+type PickerProvider = Omit<LlmProvider, 'models'> & {
+  models: PickerModel[]
+}
+
+type ModelFilter = typeof MODEL_FILTERS[number]['key']
+
+function modelMatchesFilter(model: PickerModel, filter: ModelFilter): boolean {
+  const isImage = model.tags.includes('image')
+  const isVideo = model.tags.includes('video')
+  if (filter === 'image') return isImage
+  if (filter === 'video') return isVideo
+  return !isImage && !isVideo
+}
+
+function buildZenMuxPickerProviders(providers: LlmProvider[], catalog: ZenMuxModel[]): PickerProvider[] {
+  const catalogModels = catalog
+    .filter((model) => (
+      zenMuxModelSupports(model, 'text') ||
+      zenMuxModelSupports(model, 'image') ||
+      zenMuxModelSupports(model, 'video')
+    ))
+  return providers.map((provider) => {
+    if (!isZenMuxProvider(provider) || catalogModels.length === 0) {
+      return provider
+    }
+    const existingVisible = new Set(provider.models.filter((model) => model.show_in_picker).map((model) => model.model))
+    const injectedModels: PickerModel[] = catalogModels
+      .map((model) => ({
+        model,
+        modelId: zenMuxModelId(model),
+      }))
+      .filter(({ modelId }) => modelId && !existingVisible.has(modelId))
+      .map(({ model, modelId }) => ({
+        id: `zenmux-catalog:${provider.id}:${modelId}`,
+        provider_id: provider.id,
+        model: modelId,
+        priority: 0,
+        is_default: false,
+        show_in_picker: true,
+        tags: [
+          'chat',
+          'zenmux_catalog',
+          ...(zenMuxModelSupports(model, 'image') ? ['image'] : []),
+          ...(zenMuxModelSupports(model, 'video') ? ['video'] : []),
+        ],
+        when: {},
+        advanced_json: null,
+        multiplier: 1,
+        source: 'zenmux_catalog' as const,
+        display_label: zenMuxModelLabel(model),
+      }))
+    return { ...provider, models: [...provider.models, ...injectedModels] }
+  })
+}
+
 type Props = {
   accessToken?: string
   value: string | null
   onChange: (model: string | null) => void
+  onKindChange?: (kind: SelectedModelKind) => void
   onAddApiKey: () => void
   variant?: 'welcome' | 'chat'
   controlHeight?: 'default' | 'legacyChat'
@@ -46,15 +120,17 @@ type Props = {
   onThinkingChange: (mode: string) => void
 }
 
-export function ModelPicker({ accessToken, value, onChange, onAddApiKey, variant = 'chat', controlHeight = 'default', thinkingEnabled, onThinkingChange }: Props) {
+export function ModelPicker({ accessToken, value, onChange, onKindChange, onAddApiKey, variant = 'chat', controlHeight = 'default', thinkingEnabled, onThinkingChange }: Props) {
   const { t } = useLocale()
   const mp = t.modelPicker
   const desktopShell = isDesktop()
   const [open, setOpen] = useState(false)
   const cached = accessToken ? (providersCache.get(accessToken) ?? null) : null
   const [providers, setProviders] = useState<LlmProvider[]>(cached ?? [])
+  const [zenMuxCatalog, setZenMuxCatalog] = useState<ZenMuxModel[]>([])
   const [loading, setLoading] = useState(false)
   const [search, setSearch] = useState('')
+  const [modelFilter, setModelFilter] = useState<ModelFilter>('general')
   const [hovered, setHovered] = useState(false)
   const [hoveredCombo, setHoveredCombo] = useState<string | null>(null)
   const [optionsFor, setOptionsFor] = useState<string | null>(null)
@@ -86,13 +162,36 @@ export function ModelPicker({ accessToken, value, onChange, onAddApiKey, variant
     void load(true)
   }, [accessToken, desktopShell, load])
 
+  useEffect(() => {
+    if (!providers.some(isZenMuxProvider)) {
+      setZenMuxCatalog([])
+      return
+    }
+    let cancelled = false
+    void listZenMuxModels()
+      .then((models) => {
+        if (!cancelled) setZenMuxCatalog(models)
+      })
+      .catch(() => {
+        if (!cancelled) setZenMuxCatalog([])
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [providers])
+
+  const pickerProviders = useMemo(
+    () => buildZenMuxPickerProviders(providers, zenMuxCatalog),
+    [providers, zenMuxCatalog],
+  )
+
   // 桌面壳：未选手动值时自动落第一条可选模型（不保留「Persona / 默认」空选项语义）
   useEffect(() => {
     if (!desktopShell || value != null || !accessToken) return
-    if (loading && providers.length === 0) return
-    const first = pickFirstChatPickerModel(providers)
+    if (loading && pickerProviders.length === 0) return
+    const first = pickFirstChatPickerModel(pickerProviders)
     if (first) onChange(first)
-  }, [desktopShell, value, accessToken, loading, providers, onChange])
+  }, [desktopShell, value, accessToken, loading, pickerProviders, onChange])
 
   // 打开时：有缓存则静默刷新，无缓存则显示 loading
   useEffect(() => {
@@ -136,7 +235,7 @@ export function ModelPicker({ accessToken, value, onChange, onAddApiKey, variant
     setOptionsTop(nextTop)
   }, [open, optionsFor, optionsAnchorY, optionsTop, thinkingEnabled])
 
-  const anyPickerModel = pickFirstChatPickerModel(providers) !== null
+  const anyPickerModel = pickFirstChatPickerModel(pickerProviders) !== null
 
   const displayLabel = (() => {
     if (value) {
@@ -156,18 +255,24 @@ export function ModelPicker({ accessToken, value, onChange, onAddApiKey, variant
     return mp.defaultLabel
   })()
 
-  const handleSelect = (model: string | null) => {
+  const handleSelect = (model: string | null, kind: SelectedModelKind = 'general') => {
     if (model !== value) onChange(model)
+    onKindChange?.(kind)
     setOptionsFor(null)
     setOptionsAnchorY(null)
     setOptionsTop(null)
   }
 
   const q = search.trim().toLowerCase()
-  const visibleProviders = providers
+  const visibleProviders = pickerProviders
     .map((p) => ({
       ...p,
-      models: p.models.filter((m) => m.show_in_picker && !m.tags.includes('embedding') && (!q || m.model.toLowerCase().includes(q))),
+      models: p.models.filter((m) => (
+        m.show_in_picker &&
+        !m.tags.includes('embedding') &&
+        modelMatchesFilter(m, modelFilter) &&
+        (!q || `${m.model} ${m.display_label ?? ''}`.toLowerCase().includes(q))
+      )),
     }))
     .filter((p) => p.models.length > 0)
 
@@ -187,6 +292,11 @@ export function ModelPicker({ accessToken, value, onChange, onAddApiKey, variant
     : visibleProviders
 
   const hasModels = sortedProviders.length > 0
+  const hasConfiguredProviders = pickerProviders.length > 0
+  const groupedProviders = [
+    { key: 'zenmux', label: 'ZenMux', providers: sortedProviders.filter(isZenMuxProvider) },
+    { key: 'other', label: 'Other Providers', providers: sortedProviders.filter((provider) => !isZenMuxProvider(provider)) },
+  ].filter((group) => group.providers.length > 0)
 
   const showWebDefaultRow = !desktopShell
 
@@ -262,10 +372,37 @@ export function ModelPicker({ accessToken, value, onChange, onAddApiKey, variant
                 />
               </div>
 
+              <div className="flex gap-1 px-1 pb-1">
+                {MODEL_FILTERS.map((filter) => {
+                  const active = modelFilter === filter.key
+                  return (
+                    <button
+                      key={filter.key}
+                      type="button"
+                      onClick={() => {
+                        setModelFilter(filter.key)
+                        setOptionsFor(null)
+                        setOptionsAnchorY(null)
+                        setOptionsTop(null)
+                      }}
+                      className="flex-1 rounded-md px-2 py-1 text-xs"
+                      style={{
+                        background: active ? 'var(--c-bg-deep)' : 'transparent',
+                        color: active ? 'var(--c-text-primary)' : 'var(--c-text-muted)',
+                        border: active ? '0.5px solid var(--c-border-subtle)' : '0.5px solid transparent',
+                        fontWeight: active ? 600 : 500,
+                      }}
+                    >
+                      {filter.label}
+                    </button>
+                  )
+                })}
+              </div>
+
               {showWebDefaultRow && (
                 <button
                   type="button"
-                  onClick={() => handleSelect(null)}
+                  onClick={() => handleSelect(null, 'general')}
                   className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm hover:bg-[var(--c-bg-deep)]"
                   style={{
                     color: value === null ? 'var(--c-text-primary)' : 'var(--c-text-secondary)',
@@ -281,7 +418,7 @@ export function ModelPicker({ accessToken, value, onChange, onAddApiKey, variant
                 </button>
               )}
 
-              {desktopShell && !hasModels && !loading && !search && (
+              {desktopShell && !hasModels && !loading && !search && !hasConfiguredProviders && (
                 <button
                   type="button"
                   onClick={() => { setOpen(false); onAddApiKey() }}
@@ -290,6 +427,12 @@ export function ModelPicker({ accessToken, value, onChange, onAddApiKey, variant
                 >
                   <span>{mp.addProviderFirst}</span>
                 </button>
+              )}
+
+              {desktopShell && !hasModels && !loading && (!search || modelFilter !== 'general') && hasConfiguredProviders && (
+                <p className="px-3 py-2 text-xs" style={{ color: 'var(--c-text-muted)' }}>
+                  暂无匹配模型
+                </p>
               )}
 
               {loading && providers.length === 0 && (
@@ -302,110 +445,139 @@ export function ModelPicker({ accessToken, value, onChange, onAddApiKey, variant
                     <div style={{ height: '1px', background: 'var(--c-border-subtle)', margin: '2px 4px' }} />
                   )}
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '1px' }}>
-                    {sortedProviders.map((provider) => (
-                      <div key={provider.id}>
+                    {groupedProviders.map((group) => (
+                      <div key={group.key}>
                         <div
                           style={{
-                            padding: '6px 12px 3px',
+                            padding: '7px 12px 3px',
                             fontSize: '11px',
                             fontWeight: 600,
-                            color: 'var(--c-text-muted)',
+                            color: group.key === 'zenmux' ? 'var(--c-text-primary)' : 'var(--c-text-muted)',
                             letterSpacing: '0.01em',
                             userSelect: 'none',
                           }}
                         >
-                          {provider.name}
+                          {group.label}
                         </div>
-                        {provider.models.map((m) => {
-                          const combo = `${provider.name}^${m.model}`
-                          const isSelected = value === combo
-                          const supportsReasoning = getAvailableCatalogFromAdvancedJson(m.advanced_json)?.reasoning === true
-                          const isOptionsOpen = optionsFor === combo
-
-                          return (
+                        {group.providers.map((provider) => (
+                          <div key={provider.id}>
                             <div
-                              key={combo}
-                              onMouseEnter={() => setHoveredCombo(combo)}
-                              onMouseLeave={() => setHoveredCombo(null)}
-                              className="flex w-full items-center rounded-lg text-sm hover:bg-[var(--c-bg-deep)]"
                               style={{
-                                background: isOptionsOpen ? 'var(--c-bg-deep)' : undefined,
+                                padding: '4px 12px 2px',
+                                fontSize: '10px',
+                                fontWeight: 500,
+                                color: 'var(--c-text-tertiary)',
+                                letterSpacing: '0.01em',
+                                userSelect: 'none',
                               }}
                             >
-                              <button
-                                type="button"
-                                onClick={() => handleSelect(combo)}
-                                className="flex min-w-0 flex-1 items-center bg-transparent py-[6px] pl-3 pr-2 text-left"
-                                style={{
-                                  color: isSelected ? 'var(--c-text-primary)' : 'var(--c-text-secondary)',
-                                  fontWeight: isSelected ? 600 : 400,
-                                }}
-                              >
-                                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                                  {m.model}
-                                </span>
-                                {isSelected && thinkingEnabled !== 'off' && (
-                                  <span style={{ marginLeft: '6px', display: 'inline-flex', alignItems: 'center', gap: '3px', fontSize: '12px', color: 'var(--c-text-muted)', fontWeight: 400, flexShrink: 0 }}>
-                                    <Brain size={12} />
-                                    {thinkingEnabled.charAt(0).toUpperCase() + thinkingEnabled.slice(1)}
-                                  </span>
-                                )}
-                              </button>
-                              <div className="flex shrink-0 items-center gap-1 pr-3">
-                                {supportsReasoning && (hoveredCombo === combo || isOptionsOpen) && (
-                                  <span
-                                    role="button"
-                                    tabIndex={0}
-                                    className="text-[var(--c-text-muted)] transition-colors hover:text-[var(--c-text-primary)]"
-                                    onMouseDown={(e) => e.stopPropagation()}
-                                    onClick={(e) => {
-                                      e.stopPropagation()
-                                      if (optionsFor === combo) {
-                                        setOptionsFor(null)
-                                        setOptionsAnchorY(null)
-                                        setOptionsTop(null)
-                                        return
-                                      }
-                                      const triggerRect = e.currentTarget.getBoundingClientRect()
-                                      const rootRect = rootRef.current?.getBoundingClientRect()
-                                      if (!rootRect) return
-                                      setOptionsFor(combo)
-                                      setOptionsAnchorY(triggerRect.top - rootRect.top + triggerRect.height / 2)
-                                      setOptionsTop(null)
-                                    }}
-                                    onKeyDown={(e) => {
-                                      if (e.key !== 'Enter' && e.key !== ' ') return
-                                      e.preventDefault()
-                                      e.stopPropagation()
-                                      const triggerRect = e.currentTarget.getBoundingClientRect()
-                                      const rootRect = rootRef.current?.getBoundingClientRect()
-                                      if (!rootRect) return
-                                      if (optionsFor === combo) {
-                                        setOptionsFor(null)
-                                        setOptionsAnchorY(null)
-                                        setOptionsTop(null)
-                                        return
-                                      }
-                                      setOptionsFor(combo)
-                                      setOptionsAnchorY(triggerRect.top - rootRect.top + triggerRect.height / 2)
-                                      setOptionsTop(null)
-                                    }}
+                              {provider.name}
+                            </div>
+                            {provider.models.map((m) => {
+                              const combo = `${provider.name}^${m.model}`
+                              const isSelected = value === combo
+                              const supportsReasoning = getAvailableCatalogFromAdvancedJson(m.advanced_json)?.reasoning === true
+                              const isOptionsOpen = optionsFor === combo
+                              const capabilityLabel = m.tags.includes('video')
+                                ? 'Video'
+                                : m.tags.includes('image')
+                                  ? 'Image'
+                                  : ''
+
+                              return (
+                                <div
+                                  key={combo}
+                                  onMouseEnter={() => setHoveredCombo(combo)}
+                                  onMouseLeave={() => setHoveredCombo(null)}
+                                  className="flex w-full items-center rounded-lg text-sm hover:bg-[var(--c-bg-deep)]"
+                                  style={{
+                                    background: isOptionsOpen ? 'var(--c-bg-deep)' : undefined,
+                                  }}
+                                >
+                                  <button
+                                    type="button"
+                                    onClick={() => handleSelect(combo, modelFilter)}
+                                    className="flex min-w-0 flex-1 items-center bg-transparent py-[6px] pl-3 pr-2 text-left"
                                     style={{
-                                      fontWeight: 400,
-                                      lineHeight: 1,
-                                      cursor: 'pointer',
+                                      color: isSelected ? 'var(--c-text-primary)' : 'var(--c-text-secondary)',
+                                      fontWeight: isSelected ? 600 : 400,
                                     }}
                                   >
-                                    {mp.options}
-                                  </span>
-                                )}
-                                {isSelected && (
-                                  <Check size={13} strokeWidth={1.75} style={{ color: 'var(--c-text-muted)', flexShrink: 0 }} />
-                                )}
-                              </div>
-                            </div>
-                          )
-                        })}
+                                    <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                      {m.display_label ?? m.model}
+                                    </span>
+                                    {capabilityLabel && (
+                                      <span
+                                        className="ml-1.5 shrink-0 rounded px-1 py-px text-[10px] leading-tight"
+                                        style={{ background: 'var(--c-bg-deep)', color: 'var(--c-text-tertiary)' }}
+                                      >
+                                        {capabilityLabel}
+                                      </span>
+                                    )}
+                                    {isSelected && thinkingEnabled !== 'off' && (
+                                      <span style={{ marginLeft: '6px', display: 'inline-flex', alignItems: 'center', gap: '3px', fontSize: '12px', color: 'var(--c-text-muted)', fontWeight: 400, flexShrink: 0 }}>
+                                        <Brain size={12} />
+                                        {thinkingEnabled.charAt(0).toUpperCase() + thinkingEnabled.slice(1)}
+                                      </span>
+                                    )}
+                                  </button>
+                                  <div className="flex shrink-0 items-center gap-1 pr-3">
+                                    {supportsReasoning && (hoveredCombo === combo || isOptionsOpen) && (
+                                      <span
+                                        role="button"
+                                        tabIndex={0}
+                                        className="text-[var(--c-text-muted)] transition-colors hover:text-[var(--c-text-primary)]"
+                                        onMouseDown={(e) => e.stopPropagation()}
+                                        onClick={(e) => {
+                                          e.stopPropagation()
+                                          if (optionsFor === combo) {
+                                            setOptionsFor(null)
+                                            setOptionsAnchorY(null)
+                                            setOptionsTop(null)
+                                            return
+                                          }
+                                          const triggerRect = e.currentTarget.getBoundingClientRect()
+                                          const rootRect = rootRef.current?.getBoundingClientRect()
+                                          if (!rootRect) return
+                                          setOptionsFor(combo)
+                                          setOptionsAnchorY(triggerRect.top - rootRect.top + triggerRect.height / 2)
+                                          setOptionsTop(null)
+                                        }}
+                                        onKeyDown={(e) => {
+                                          if (e.key !== 'Enter' && e.key !== ' ') return
+                                          e.preventDefault()
+                                          e.stopPropagation()
+                                          const triggerRect = e.currentTarget.getBoundingClientRect()
+                                          const rootRect = rootRef.current?.getBoundingClientRect()
+                                          if (!rootRect) return
+                                          if (optionsFor === combo) {
+                                            setOptionsFor(null)
+                                            setOptionsAnchorY(null)
+                                            setOptionsTop(null)
+                                            return
+                                          }
+                                          setOptionsFor(combo)
+                                          setOptionsAnchorY(triggerRect.top - rootRect.top + triggerRect.height / 2)
+                                          setOptionsTop(null)
+                                        }}
+                                        style={{
+                                          fontWeight: 400,
+                                          lineHeight: 1,
+                                          cursor: 'pointer',
+                                        }}
+                                      >
+                                        {mp.options}
+                                      </span>
+                                    )}
+                                    {isSelected && (
+                                      <Check size={13} strokeWidth={1.75} style={{ color: 'var(--c-text-muted)', flexShrink: 0 }} />
+                                    )}
+                                  </div>
+                                </div>
+                              )
+                            })}
+                          </div>
+                        ))}
                       </div>
                     ))}
                   </div>
@@ -430,7 +602,7 @@ export function ModelPicker({ accessToken, value, onChange, onAddApiKey, variant
           </div>
 
           {optionsFor && (() => {
-            const optProvider = providers.find(p => optionsFor.startsWith(p.name + '^'))
+            const optProvider = pickerProviders.find(p => optionsFor.startsWith(p.name + '^'))
             const optModelId = optionsFor.split('^').slice(1).join('^')
             const optModel = optProvider?.models.find(m => m.model === optModelId)
             if (!optModel) return null

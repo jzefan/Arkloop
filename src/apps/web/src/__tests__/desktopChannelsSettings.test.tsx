@@ -42,7 +42,7 @@ async function loadDesktopSettingsSubject() {
           onboarding_completed: true,
           connectors: {
             fetch: { provider: 'basic' },
-            search: { provider: 'basic' },
+            search: { provider: 'duckduckgo' },
           },
           memory: { enabled: true, provider: 'notebook' },
           network: { proxyEnabled: false, requestTimeoutMs: 30000, retryCount: 1 },
@@ -98,7 +98,6 @@ async function loadDesktopSettingsSubject() {
   vi.doMock('../components/settings/DesktopPromptInjectionSettings', () => ({ DesktopPromptInjectionSettings: () => <div>prompt injection</div> }))
   vi.doMock('../components/settings/VoiceSettings', () => ({ VoiceSettings: () => <div>voice</div> }))
   vi.doMock('../components/settings/DesignTokensSettings', () => ({ DesignTokensSettings: () => <div>design tokens</div> }))
-  vi.doMock('../components/settings/AboutSettings', () => ({ AboutSettings: () => <div>about</div> }))
 
   const { DesktopSettings } = await import('../components/DesktopSettings')
   const { LocaleProvider } = await import('../contexts/LocaleContext')
@@ -175,7 +174,6 @@ afterEach(() => {
   vi.doUnmock('../components/settings/DesktopPromptInjectionSettings')
   vi.doUnmock('../components/settings/VoiceSettings')
   vi.doUnmock('../components/settings/DesignTokensSettings')
-  vi.doUnmock('../components/settings/AboutSettings')
   vi.resetModules()
   vi.clearAllMocks()
   if (originalActEnvironment === undefined) {
@@ -232,46 +230,6 @@ describe('DesktopSettings', () => {
 
     expect(container.textContent).toContain('Memory')
     expect(container.textContent).toContain('memory')
-  })
-
-  it('外部重复打开关于页时同步到请求的 section', async () => {
-    const { DesktopSettings, LocaleProvider } = await loadDesktopSettingsSubject()
-
-    const render = (sectionRequestId: number) => (
-      <LocaleProvider>
-        <Suspense fallback={<div>loading</div>}>
-          <DesktopSettings
-            me={null}
-            accessToken="token"
-            initialSection="about"
-            sectionRequestId={sectionRequestId}
-            onClose={() => {}}
-            onLogout={() => {}}
-          />
-        </Suspense>
-      </LocaleProvider>
-    )
-
-    await act(async () => {
-      root!.render(render(0))
-    })
-    await flushEffects()
-    expect(container.textContent).toContain('about')
-
-    const generalButton = Array.from(container.querySelectorAll('button'))
-      .find((button) => button.textContent?.includes('通用'))
-    expect(generalButton).toBeTruthy()
-
-    await act(async () => {
-      generalButton!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
-    })
-    expect(container.textContent).toContain('general')
-
-    await act(async () => {
-      root!.render(render(1))
-    })
-    await flushEffects()
-    expect(container.textContent).toContain('about')
   })
 })
 

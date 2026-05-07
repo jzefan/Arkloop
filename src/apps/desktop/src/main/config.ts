@@ -18,6 +18,7 @@ import type {
   SearchConnectorConfig,
   SearchProvider,
   VoiceConfig,
+  WorkspaceConfig,
 } from './types'
 
 const CONFIG_DIR = path.join(os.homedir(), '.arkloop')
@@ -77,8 +78,8 @@ function normalizeFetchProvider(p: unknown): FetchProvider {
 }
 
 function normalizeSearchProvider(p: unknown): SearchProvider {
-  if (p === 'browser' || p === 'duckduckgo') return 'basic'
-  if (p === 'none' || p === 'basic' || p === 'tavily' || p === 'searxng') return p
+  if (p === 'browser') return 'duckduckgo'
+  if (p === 'none' || p === 'tavily' || p === 'searxng' || p === 'duckduckgo') return p
   return DEFAULT_CONFIG.connectors.search.provider
 }
 
@@ -202,6 +203,13 @@ function normalizeNetwork(raw: unknown): NetworkConfig {
   }
 }
 
+function normalizeWorkspace(raw: unknown): WorkspaceConfig {
+  const r = (raw && typeof raw === 'object') ? raw as Partial<WorkspaceConfig> : {}
+  return {
+    ...(typeof r.root === 'string' && r.root.trim() ? { root: path.resolve(r.root.trim()) } : {}),
+  }
+}
+
 export function normalizeConfig(config: Partial<AppConfig> | null | undefined): AppConfig {
   const parsed = config ?? {}
   return {
@@ -228,6 +236,7 @@ export function normalizeConfig(config: Partial<AppConfig> | null | undefined): 
     connectors: normalizeConnectors(parsed.connectors),
     memory: normalizeMemory(parsed.memory),
     network: normalizeNetwork(parsed.network),
+    workspace: normalizeWorkspace(parsed.workspace),
     voice: normalizeVoice(parsed.voice),
   }
 }

@@ -269,10 +269,13 @@ function ProgressBar({ percent }: { percent: number }) {
       <div
         style={{
           height: "100%",
+          width: "100%",
           borderRadius: "2px",
           background: "var(--c-btn-bg)",
-          width: `${percent}%`,
-          transition: "width 0.3s ease",
+          transformOrigin: "left center",
+          transform: `scaleX(${Math.min(percent, 100) / 100})`,
+          transition: "transform 0.3s cubic-bezier(0.22, 1, 0.36, 1)",
+          willChange: "transform",
         }}
       />
     </div>
@@ -313,14 +316,16 @@ function ToggleSwitch({
         style={{
           position: "absolute",
           top: "2px",
-          left: checked ? "18px" : "2px",
+          left: "2px",
           width: "16px",
           height: "16px",
           borderRadius: "50%",
           background: "white",
-          transition: "left 0.2s ease",
+          transform: checked ? "translateX(16px)" : "translateX(0)",
+          transition: "transform 0.2s cubic-bezier(0.22, 1, 0.36, 1)",
           boxShadow: "0 1px 2px rgba(0,0,0,0.25)",
           display: "block",
+          willChange: "transform",
         }}
       />
     </button>
@@ -1395,7 +1400,7 @@ export function OnboardingWizard({ onComplete }: Props) {
                     marginBottom: "24px",
                   }}
                 >
-                  {(["default", "terra", "github", "nord", "catppuccin", "tokyo-night", "retina-burn"] as const).map((presetId) => {
+                  {(["default", "terra", "github", "nord", "catppuccin", "tokyo-night"] as const).map((presetId) => {
                     const def = BUILTIN_PRESETS[presetId];
                     if (!def) return null;
                     const dark = def.dark ?? {};
@@ -1494,7 +1499,7 @@ export function OnboardingWizard({ onComplete }: Props) {
                             borderTop: "0.5px solid var(--c-border-subtle)",
                           }}
                         >
-                          {presetId === "default" ? t.themePresetDefault : presetId === "retina-burn" ? t.themePresetRetinaBurn : def.name}
+                          {presetId === "default" ? "Default" : def.name}
                         </div>
                       </button>
                     );

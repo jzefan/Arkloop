@@ -34,3 +34,13 @@ var Spec = llm.ToolSpec{
 }
 
 func strPtr(s string) *string { return &s }
+
+// SystemProtocolSnippet 返回注入 system prompt 的心跳协议说明。
+func SystemProtocolSnippet() string {
+	return "You are in an LLM heartbeat turn. This is a two-phase process:\n" +
+		"Phase 1 (this turn): call `" + ToolName + "` exactly once. Do NOT output any text before the tool call — any text produced before the call is invisible to the user and wastes tokens.\n" +
+		"  - reply=false → skip this check, nothing is sent, turn ends.\n" +
+		"  - reply=true → you proceed to Phase 2 with full tool access.\n" +
+		"Phase 2 (after reply=true): all your tools are unlocked. " +
+		"Use them freely to compose your reply to the user."
+}

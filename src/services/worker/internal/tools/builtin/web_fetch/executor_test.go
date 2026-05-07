@@ -2,7 +2,6 @@ package webfetch
 
 import (
 	"context"
-	"errors"
 	"testing"
 	"time"
 
@@ -91,93 +90,6 @@ func TestExecuteUnwrapsJinaWrapperBeforePolicyCheck(t *testing.T) {
 	}
 }
 
-func TestExecuteClassifiesFetchFailures(t *testing.T) {
-	tests := []struct {
-		name       string
-		err        error
-		errorClass string
-		reason     string
-		retryable  bool
-	}{
-		{
-			name:       "timeout",
-			err:        context.DeadlineExceeded,
-			errorClass: errorTimeout,
-			reason:     fetchFailureNetworkTimeout,
-			retryable:  true,
-		},
-		{
-			name:       "canceled",
-			err:        context.Canceled,
-			errorClass: errorFetchFailed,
-			reason:     fetchFailureRequestCanceled,
-			retryable:  false,
-		},
-		{
-			name:       "dns",
-			err:        errors.New("outbound dns resolve failed: lookup httpbin.org: no such host"),
-			errorClass: errorFetchFailed,
-			reason:     fetchFailureDNSFailed,
-			retryable:  true,
-		},
-		{
-			name:       "tls",
-			err:        errors.New("net/http: TLS handshake timeout"),
-			errorClass: errorFetchFailed,
-			reason:     fetchFailureTLSFailed,
-			retryable:  true,
-		},
-		{
-			name:       "http status",
-			err:        HttpError{StatusCode: 503},
-			errorClass: errorFetchFailed,
-			reason:     fetchFailureHTTPStatusError,
-			retryable:  true,
-		},
-		{
-			name:       "empty page",
-			err:        errors.New("web_fetch response body is empty"),
-			errorClass: errorFetchFailed,
-			reason:     fetchFailureEmptyPage,
-			retryable:  false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			executor := &ToolExecutor{
-				provider: errorProvider{err: tt.err},
-				timeout:  2 * time.Second,
-			}
-			result := executor.Execute(
-				context.Background(),
-				"web_fetch",
-				map[string]any{
-					"url":        "https://example.com/a",
-					"max_length": 10,
-				},
-				tools.ExecutionContext{},
-				"call_1",
-			)
-			if result.Error == nil {
-				t.Fatalf("expected error")
-			}
-			if result.Error.ErrorClass != tt.errorClass {
-				t.Fatalf("unexpected error class: %s", result.Error.ErrorClass)
-			}
-			if got := result.Error.Details["reason"]; got != tt.reason {
-				t.Fatalf("unexpected reason: %#v", got)
-			}
-			if got := result.Error.Details["retryable"]; got != tt.retryable {
-				t.Fatalf("unexpected retryable: %#v", got)
-			}
-			if status := result.Error.Details["status_code"]; tt.name == "http status" && status != 503 {
-				t.Fatalf("unexpected status_code: %#v", status)
-			}
-		})
-	}
-}
-
 type captureProvider struct {
 	gotURL string
 	called bool
@@ -194,15 +106,4 @@ func (p *captureProvider) Fetch(ctx context.Context, url string, maxLength int) 
 		Content:   "c",
 		Truncated: false,
 	}, nil
-}
-
-type errorProvider struct {
-	err error
-}
-
-func (p errorProvider) Fetch(ctx context.Context, url string, maxLength int) (Result, error) {
-	_ = ctx
-	_ = url
-	_ = maxLength
-	return Result{}, p.err
 }

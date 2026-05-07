@@ -387,6 +387,20 @@ func ResolveGatewayConfigFromSelectedRoute(selected routing.SelectedProviderRout
 			Transport:    transport,
 			OpenAI:       &protocol,
 		}, nil
+	case routing.ProviderKindDeepSeek:
+		if strings.TrimSpace(transport.BaseURL) == "" {
+			transport.BaseURL = "https://api.deepseek.com"
+		}
+		protocol, err := llm.ResolveOpenAIProtocolConfig("chat_completions", advancedJSON)
+		if err != nil {
+			return llm.ResolvedGatewayConfig{}, err
+		}
+		return llm.ResolvedGatewayConfig{
+			ProtocolKind: protocol.PrimaryKind,
+			Model:        selected.Route.Model,
+			Transport:    transport,
+			OpenAI:       &protocol,
+		}, nil
 	case routing.ProviderKindAnthropic:
 		protocol, err := llm.ResolveAnthropicProtocolConfig(advancedJSON)
 		if err != nil {

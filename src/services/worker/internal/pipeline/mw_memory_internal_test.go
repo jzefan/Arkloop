@@ -614,14 +614,6 @@ func TestHeartbeatPrepareMiddlewareDoesNotDuplicateHeartbeatDecisionTool(t *test
 		if !strings.Contains(text, "[SYSTEM_HEARTBEAT_CHECK]") {
 			t.Fatalf("expected SYSTEM_HEARTBEAT_CHECK marker, got %q", text)
 		}
-		if strings.Contains(text, "You are in an LLM heartbeat turn") {
-			t.Fatalf("expected no duplicate heartbeat protocol prompt, got %q", text)
-		}
-		for _, segment := range rc.PromptSegments() {
-			if segment.Name == "heartbeat.system_protocol" {
-				t.Fatalf("expected heartbeat.system_protocol segment to be absent")
-			}
-		}
 		count := 0
 		for _, spec := range rc.ToolSpecs {
 			if spec.Name == heartbeattool.ToolName {

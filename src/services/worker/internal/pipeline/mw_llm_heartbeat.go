@@ -78,7 +78,7 @@ func IsHeartbeatDecisionToolName(toolName string) bool {
 	return llm.CanonicalToolName(toolName) == heartbeattool.ToolName
 }
 
-// NewHeartbeatPrepareMiddleware 为心跳 run 构建尾部 heartbeat check，
+// NewHeartbeatPrepareMiddleware 为心跳 run 构建尾部 user message（包含完整 heartbeat 指令），
 // 注册 heartbeat_decision 工具并设置 tool_choice=specific。
 // 非心跳 run 直接透传。
 func NewHeartbeatPrepareMiddleware() RunMiddleware {
@@ -129,6 +129,16 @@ func NewHeartbeatPrepareMiddleware() RunMiddleware {
 			Target:        PromptTargetRuntimeTail,
 			Role:          "user",
 			Text:          sb.String(),
+			Stability:     PromptStabilityVolatileTail,
+			CacheEligible: false,
+		})
+
+		// 当前 run 的两阶段协议放在 runtime tail，避免污染可复用缓存前缀。
+		rc.UpsertPromptSegment(PromptSegment{
+			Name:          "heartbeat.system_protocol",
+			Target:        PromptTargetRuntimeTail,
+			Role:          "user",
+			Text:          heartbeattool.SystemProtocolSnippet(),
 			Stability:     PromptStabilityVolatileTail,
 			CacheEligible: false,
 		})

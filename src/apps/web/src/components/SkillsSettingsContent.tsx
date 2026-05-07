@@ -38,6 +38,7 @@ import { MarketplaceView } from './skills/MarketplaceView'
 import { BuiltinSkillsView } from './skills/BuiltinSkillsView'
 import { SkillDetailModal } from './skills/SkillDetailModal'
 import { primaryButtonSmCls, secondaryButtonBorderStyle, secondaryButtonSmCls } from './buttonStyles'
+import { markdownSkillToZip } from '../lib/skillArchive'
 
 type Props = {
   accessToken: string
@@ -311,8 +312,11 @@ export function SkillsSettingsContent({ accessToken, onTrySkill }: Props) {
     setUploading(true)
     setError('')
     try {
+      const uploadFile = file.name.toLowerCase().endsWith('.md')
+        ? await markdownSkillToZip(file)
+        : file
       const response = await importSkillFromUpload(accessToken, {
-        file,
+        file: uploadFile,
         install_after_import: false,
       })
       if (installAfterImport) {
@@ -516,7 +520,7 @@ export function SkillsSettingsContent({ accessToken, onTrySkill }: Props) {
               </span>
               <input
                 type="file"
-                accept=".zip,.skill,application/zip,application/octet-stream"
+                accept=".zip,.skill,.md,text/markdown,text/plain,application/zip,application/octet-stream"
                 className="hidden"
                 onChange={(e) => setFile(e.target.files?.[0] ?? null)}
               />

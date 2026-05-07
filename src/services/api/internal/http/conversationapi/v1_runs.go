@@ -83,6 +83,8 @@ type createRunRequest struct {
 	WorkDir         *string `json:"work_dir"`
 	ReasoningMode   *string `json:"reasoning_mode"`
 	ResumeFromRunID *string `json:"resume_from_run_id"`
+	GenerationTask  *string `json:"generation_task"`
+	GenerationModel *string `json:"generation_model"`
 }
 
 type createRunResponse struct {
@@ -296,6 +298,20 @@ func createThreadRun(
 				return
 			}
 			requestedResumeFromRunID = &resumeFromRunID
+		}
+		if body != nil && body.GenerationTask != nil {
+			generationTask := strings.ToLower(strings.TrimSpace(*body.GenerationTask))
+			if generationTask != "image" && generationTask != "video" {
+				httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "request validation failed", traceID, nil)
+				return
+			}
+			startedData["generation_task"] = generationTask
+		}
+		if body != nil && body.GenerationModel != nil {
+			generationModel := strings.TrimSpace(*body.GenerationModel)
+			if generationModel != "" {
+				startedData["generation_model"] = generationModel
+			}
 		}
 		thread, err := threadRepo.GetByID(r.Context(), threadID)
 		if err != nil {

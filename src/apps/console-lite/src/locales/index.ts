@@ -79,6 +79,7 @@ export interface LocaleStrings {
     clientTypeOpenaiChat: string
     clientTypeAnthropic: string
     clientTypeGemini: string
+    clientTypeDeepSeek: string
     saveChanges: string
     deleteProvider: string
     deleteProviderConfirm: (name: string) => string
@@ -337,6 +338,8 @@ export interface LocaleStrings {
     titleSummarizerHint: string
     imageGenerativeModel: string
     imageGenerativeModelHint: string
+    videoGenerativeModel: string
+    videoGenerativeModelHint: string
     spawnProfileLabel: string
     spawnProfileExplore: string
     spawnProfileTask: string

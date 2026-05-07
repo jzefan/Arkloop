@@ -81,6 +81,56 @@ func TestGetHighestPriorityRouteByCredentialName_CredentialWithNoRoute(t *testin
 	}
 }
 
+func TestCoerceZenMuxGenerationRouteUsesVertexAI(t *testing.T) {
+	openAIMode := "chat_completions"
+	baseURL := "https://zenmux.ai/api/v1"
+	selected := SelectedProviderRoute{
+		Route: ProviderRouteRule{ID: "route1", CredentialID: "cred1", Model: "openai/gpt-image-2"},
+		Credential: ProviderCredential{
+			ID:           "cred1",
+			Name:         "OpenAI (Chat Completions)",
+			ProviderKind: ProviderKindOpenAI,
+			BaseURL:      &baseURL,
+			OpenAIMode:   &openAIMode,
+		},
+	}
+
+	got := CoerceZenMuxGenerationRoute(selected)
+
+	if got.Credential.ProviderKind != ProviderKindGemini {
+		t.Fatalf("expected gemini provider kind, got %s", got.Credential.ProviderKind)
+	}
+	if got.Credential.BaseURL == nil || *got.Credential.BaseURL != ZenMuxVertexAIBaseURL {
+		t.Fatalf("unexpected base url: %#v", got.Credential.BaseURL)
+	}
+	if got.Credential.OpenAIMode != nil {
+		t.Fatal("expected OpenAI mode to be cleared")
+	}
+	if got.Route.Model != "openai/gpt-image-2" {
+		t.Fatalf("unexpected model: %s", got.Route.Model)
+	}
+}
+
+func TestParseProviderKindDeepSeek(t *testing.T) {
+	got, err := parseProviderKind("deepseek")
+	if err != nil {
+		t.Fatalf("parseProviderKind returned error: %v", err)
+	}
+	if got != ProviderKindDeepSeek {
+		t.Fatalf("parseProviderKind = %q, want %q", got, ProviderKindDeepSeek)
+	}
+}
+
+func TestDBProviderToKindDeepSeek(t *testing.T) {
+	got, err := dbProviderToKind("deepseek")
+	if err != nil {
+		t.Fatalf("dbProviderToKind returned error: %v", err)
+	}
+	if got != ProviderKindDeepSeek {
+		t.Fatalf("dbProviderToKind = %q, want %q", got, ProviderKindDeepSeek)
+	}
+}
+
 // TestGetHighestPriorityRouteByCredentialName_PrefersWhenMatch 验证同凭证下优先选命中 When 条件的路由。
 func TestGetHighestPriorityRouteByCredentialName_PrefersWhenMatch(t *testing.T) {
 	cfg := ProviderRoutingConfig{

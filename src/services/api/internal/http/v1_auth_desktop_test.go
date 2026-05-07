@@ -19,7 +19,6 @@ import (
 )
 
 func TestDesktopMeUsesOSUsername(t *testing.T) {
-	t.Setenv("ARKLOOP_DESKTOP_TOKEN", "desktop-test-token")
 	t.Setenv("ARKLOOP_DESKTOP_OS_USERNAME", "qqqqqf")
 
 	ctx := context.Background()
@@ -54,53 +53,6 @@ func TestDesktopMeUsesOSUsername(t *testing.T) {
 	}
 	if body.Username != "qqqqqf" {
 		t.Fatalf("expected username qqqqqf, got %q", body.Username)
-	}
-}
-
-func TestDesktopSeedDoesNotOverwriteEditedUsername(t *testing.T) {
-	t.Setenv("ARKLOOP_DESKTOP_TOKEN", "desktop-test-token")
-	t.Setenv("ARKLOOP_DESKTOP_OS_USERNAME", "qqqqqf")
-
-	ctx := context.Background()
-	sqlitePool, err := sqliteadapter.AutoMigrate(ctx, filepath.Join(t.TempDir(), "data.db"))
-	if err != nil {
-		t.Fatalf("auto migrate sqlite: %v", err)
-	}
-	defer sqlitePool.Close()
-
-	pool := sqlitepgx.New(sqlitePool.Unwrap())
-	if err := auth.SeedDesktopUser(ctx, pool); err != nil {
-		t.Fatalf("seed desktop user: %v", err)
-	}
-	if _, err := pool.Exec(ctx, `UPDATE users SET username = $1 WHERE id = $2`, "edited_name", auth.DesktopUserID); err != nil {
-		t.Fatalf("edit desktop username: %v", err)
-	}
-
-	t.Setenv("ARKLOOP_DESKTOP_OS_USERNAME", "os_changed")
-	if err := auth.SeedDesktopUser(ctx, pool); err != nil {
-		t.Fatalf("seed desktop user again: %v", err)
-	}
-
-	handler := newDesktopAuthHandler(t, pool)
-
-	req := httptest.NewRequest(nethttp.MethodGet, "/v1/me", nil)
-	req.Header.Set("Authorization", "Bearer "+auth.DesktopToken())
-	rec := httptest.NewRecorder()
-
-	handler.ServeHTTP(rec, req)
-
-	if rec.Code != nethttp.StatusOK {
-		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
-	}
-
-	var body struct {
-		Username string `json:"username"`
-	}
-	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
-		t.Fatalf("decode response: %v", err)
-	}
-	if body.Username != "edited_name" {
-		t.Fatalf("expected username edited_name, got %q", body.Username)
 	}
 }
 

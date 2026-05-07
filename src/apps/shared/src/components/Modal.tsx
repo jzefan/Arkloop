@@ -8,22 +8,62 @@ type Props = {
   title?: string
   children: ReactNode
   width?: string
+  /** Accessible label when no `title` is rendered. */
+  ariaLabel?: string
 }
 
-export function Modal({ open, onClose, title, children, width = '480px' }: Props) {
+const FOCUSABLE = 'a[href],button:not([disabled]),input:not([disabled]),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex="-1"]),[contenteditable="true"]'
+
+export function Modal({ open, onClose, title, children, width = '480px', ariaLabel }: Props) {
   const overlayRef = useRef<HTMLDivElement>(null)
+  const dialogRef = useRef<HTMLDivElement>(null)
+  const previousActiveRef = useRef<Element | null>(null)
 
   const handleKeyDown = useCallback(
     (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose()
+      if (e.key === 'Escape') {
+        e.stopPropagation()
+        onClose()
+        return
+      }
+      if (e.key !== 'Tab') return
+      const dialog = dialogRef.current
+      if (!dialog) return
+      const focusables = Array.from(dialog.querySelectorAll<HTMLElement>(FOCUSABLE))
+        .filter((el) => !el.hasAttribute('disabled') && el.tabIndex !== -1)
+      if (focusables.length === 0) {
+        e.preventDefault()
+        return
+      }
+      const first = focusables[0]
+      const last = focusables[focusables.length - 1]
+      const active = document.activeElement
+      if (e.shiftKey && active === first) {
+        e.preventDefault()
+        last.focus()
+      } else if (!e.shiftKey && active === last) {
+        e.preventDefault()
+        first.focus()
+      }
     },
     [onClose],
   )
 
   useEffect(() => {
     if (!open) return
-    document.addEventListener('keydown', handleKeyDown)
-    return () => document.removeEventListener('keydown', handleKeyDown)
+    previousActiveRef.current = document.activeElement
+    document.addEventListener('keydown', handleKeyDown, true)
+    requestAnimationFrame(() => {
+      const dialog = dialogRef.current
+      if (!dialog) return
+      const target = dialog.querySelector<HTMLElement>(FOCUSABLE) ?? dialog
+      if (target instanceof HTMLElement) target.focus({ preventScroll: true })
+    })
+    return () => {
+      document.removeEventListener('keydown', handleKeyDown, true)
+      const prev = previousActiveRef.current
+      if (prev instanceof HTMLElement) prev.focus({ preventScroll: true })
+    }
   }, [open, handleKeyDown])
 
   const handleOverlayClick = useCallback(
@@ -42,6 +82,11 @@ export function Modal({ open, onClose, title, children, width = '480px' }: Props
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
     >
       <div
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-label={title ?? ariaLabel}
+        tabIndex={-1}
         className="modal-enter flex max-h-[85vh] flex-col rounded-[14px]"
         style={{
           background: 'var(--c-bg-page)',
@@ -54,6 +99,7 @@ export function Modal({ open, onClose, title, children, width = '480px' }: Props
             <h3 className="text-[15px] font-semibold text-[var(--c-text-heading)]">{title}</h3>
             <button
               type="button"
+              aria-label="Close"
               onClick={onClose}
               className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-[var(--c-text-muted)] transition-colors hover:bg-[var(--c-bg-deep)] hover:text-[var(--c-text-secondary)]"
             >

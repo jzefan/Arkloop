@@ -416,7 +416,7 @@ function OVConfigForm({ ov, providers, loadingProviders, onChange, onSave, savin
           </span>
         )}
         {saveResult === 'error' && (
-          <span className="flex items-center gap-1.5 text-xs text-red-400">
+          <span className="flex items-center gap-1.5 text-xs text-[var(--c-error-text)]">
             <XCircle size={13} />{ds.memoryConfigureError}
           </span>
         )}

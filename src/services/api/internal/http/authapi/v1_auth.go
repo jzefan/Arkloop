@@ -691,7 +691,7 @@ func register(
 	}
 }
 
-func me(authService *auth.Service, membershipRepo *data.AccountMembershipRepository, accountRepo *data.AccountRepository, usersRepo *data.UserRepository, flagService *featureflag.Service) func(nethttp.ResponseWriter, *nethttp.Request) {
+func me(authService *auth.Service, membershipRepo *data.AccountMembershipRepository, accountRepo *data.AccountRepository, credentialRepo *data.UserCredentialRepository, usersRepo *data.UserRepository, flagService *featureflag.Service) func(nethttp.ResponseWriter, *nethttp.Request) {
 	return func(w nethttp.ResponseWriter, r *nethttp.Request) {
 		traceID := observability.TraceIDFromContext(r.Context())
 		if authService == nil {
@@ -733,6 +733,12 @@ func me(authService *auth.Service, membershipRepo *data.AccountMembershipReposit
 			if usersRepo != nil {
 				if current, err := usersRepo.GetByID(r.Context(), user.ID); err == nil && current != nil {
 					resp.Timezone = normalizeResponseTimeZone(current.Timezone)
+				}
+			}
+
+			if credentialRepo != nil {
+				if cred, err := credentialRepo.GetByUserID(r.Context(), user.ID); err == nil && cred != nil {
+					resp.Username = cred.Login
 				}
 			}
 

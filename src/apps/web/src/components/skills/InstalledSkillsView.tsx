@@ -53,17 +53,6 @@ type Props = {
   accessToken: string
 }
 
-type ExternalSkillDirPayload = Omit<ExternalSkillDir, 'skills'> & {
-  skills?: ExternalSkillDir['skills'] | null
-}
-
-function normalizeExternalDirs(dirs: ExternalSkillDirPayload[] | null | undefined): ExternalSkillDir[] {
-  return (dirs ?? []).map((dir) => ({
-    ...dir,
-    skills: Array.isArray(dir.skills) ? dir.skills : [],
-  }))
-}
-
 export function InstalledSkillsView(props: Props) {
   const {
     items, loading, busySkillId, menuSkillId, setMenuSkillId,
@@ -85,7 +74,7 @@ export function InstalledSkillsView(props: Props) {
     setExternalError('')
     try {
       const res = await discoverExternalSkills(accessToken)
-      setDirs(normalizeExternalDirs(res.dirs))
+      setDirs(res.dirs ?? [])
     } catch {
       setExternalError(skillText.externalLoadFailed)
     } finally {
@@ -248,20 +237,29 @@ export function InstalledSkillsView(props: Props) {
                         <div className="overflow-hidden">
                         {dir.skills.length > 0 ? (
                           <div className="flex flex-col gap-0.5 px-3 pb-2">
-                            {dir.skills.map((skill) => (
-                              <div
-                                key={skill.path}
-                                className="flex items-center gap-2 rounded px-2 py-1 pl-5"
-                                style={{ background: 'var(--c-bg-menu)' }}
-                              >
-                                <span className="min-w-0 flex-1 truncate text-xs text-[var(--c-text-heading)]">
-                                  {skill.name}
-                                </span>
-                                <span className="shrink-0 truncate text-[10px] text-[var(--c-text-muted)]">
-                                  {skill.instruction_path.split('/').pop()}
-                                </span>
-                              </div>
-                            ))}
+                            {dir.skills.map((skill) => {
+                              const instructionPath = skill.instruction_path || 'SKILL.md'
+                              const instructionName = instructionPath.split('/').pop() || instructionPath
+                              return (
+                                <div
+                                  key={skill.path}
+                                  className="flex items-start gap-2 rounded px-2 py-1.5 pl-5"
+                                  style={{ background: 'var(--c-bg-menu)' }}
+                                >
+                                  <div className="min-w-0 flex-1">
+                                    <span className="block truncate text-xs text-[var(--c-text-heading)]">
+                                      {skill.name || skill.path.split('/').pop() || skill.path}
+                                    </span>
+                                    <span className="block truncate text-[10px] text-[var(--c-text-muted)]">
+                                      {skill.description || skill.path}
+                                    </span>
+                                  </div>
+                                  <span className="shrink-0 truncate text-[10px] text-[var(--c-text-muted)]">
+                                    {instructionName}
+                                  </span>
+                                </div>
+                              )
+                            })}
                           </div>
                         ) : (
                           <div className="px-3 pb-2 pl-7">

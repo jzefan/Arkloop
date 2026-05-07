@@ -366,6 +366,12 @@ func loadRunInputsWithTrace(
 		if rawReasoningMode, ok := dataJSON["reasoning_mode"].(string); ok && strings.TrimSpace(rawReasoningMode) != "" {
 			inputJSON["reasoning_mode"] = strings.TrimSpace(rawReasoningMode)
 		}
+		if rawGenerationTask, ok := dataJSON["generation_task"].(string); ok && strings.TrimSpace(rawGenerationTask) != "" {
+			inputJSON["generation_task"] = strings.TrimSpace(rawGenerationTask)
+		}
+		if rawGenerationModel, ok := dataJSON["generation_model"].(string); ok && strings.TrimSpace(rawGenerationModel) != "" {
+			inputJSON["generation_model"] = strings.TrimSpace(rawGenerationModel)
+		}
 		if rawCollaborationMode, ok := dataJSON["collaboration_mode"].(string); ok && strings.TrimSpace(rawCollaborationMode) != "" {
 			inputJSON["collaboration_mode"] = strings.TrimSpace(rawCollaborationMode)
 		}

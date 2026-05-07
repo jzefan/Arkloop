@@ -417,13 +417,12 @@ func resolveMarkerMessageIndex(sourceIndex int, sourceToOut map[int]int, outLen 
 	if outLen == 0 {
 		return -1
 	}
-	if sourceIndex < 0 {
-		return outLen - 1
+	if sourceIndex >= 0 {
+		if idx, ok := sourceToOut[sourceIndex]; ok {
+			return idx
+		}
 	}
-	if idx, ok := sourceToOut[sourceIndex]; ok {
-		return idx
-	}
-	return -1
+	return outLen - 1
 }
 
 func resolveStableMarkerMessageIndex(sourceIndex int, sourceToOut map[int]int) int {

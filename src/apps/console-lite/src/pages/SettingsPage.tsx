@@ -46,6 +46,7 @@ const SANDBOX_PROVIDER_MAP: Record<(typeof SANDBOX_PROVIDERS)[number], string> =
 const CREDITS_ENABLED_POLICY = '{"tiers":[{"up_to_tokens":2000,"multiplier":0},{"multiplier":1}]}'
 const CREDITS_DISABLED_POLICY = '{"tiers":[{"multiplier":0}]}'
 const IMAGE_GENERATIVE_MODEL_KEY = 'image_generative.model'
+const VIDEO_GENERATIVE_MODEL_KEY = 'video_generative.model'
 
 type ModelOption = {
   value: string
@@ -115,12 +116,20 @@ function buildAllModelOptions(providers: LlmProvider[]): ModelOption[] {
 }
 
 function buildImageGenerativeOptions(providers: LlmProvider[]): ModelOption[] {
+  return buildModalityOptions(providers, 'image')
+}
+
+function buildVideoGenerativeOptions(providers: LlmProvider[]): ModelOption[] {
+  return buildModalityOptions(providers, 'video')
+}
+
+function buildModalityOptions(providers: LlmProvider[], modality: string): ModelOption[] {
   const result: ModelOption[] = []
   for (const provider of providers) {
     for (const model of provider.models) {
       const catalog = getAvailableCatalogFromAdvancedJson(model.advanced_json)
       const outputModalities = Array.isArray(catalog?.output_modalities) ? catalog.output_modalities : []
-      if (!outputModalities.includes('image')) continue
+      if (!outputModalities.includes(modality)) continue
       result.push(buildModelOption(provider, model))
     }
   }
@@ -174,6 +183,7 @@ export function SettingsPage() {
   // General
   const [titleModel, setTitleModel] = useState('')
   const [imageGenerativeModel, setImageGenerativeModel] = useState('')
+  const [videoGenerativeModel, setVideoGenerativeModel] = useState('')
   const [spawnExplore, setSpawnExplore] = useState('')
   const [spawnTask, setSpawnTask] = useState('')
   const [spawnStrong, setSpawnStrong] = useState('')
@@ -212,6 +222,7 @@ export function SettingsPage() {
 
   const allModels = useMemo(() => buildAllModelOptions(llmProviders), [llmProviders])
   const imageGenerativeOptions = useMemo(() => buildImageGenerativeOptions(llmProviders), [llmProviders])
+  const videoGenerativeOptions = useMemo(() => buildVideoGenerativeOptions(llmProviders), [llmProviders])
 
   const selectedSmtp = useMemo(
     () => smtpList.find((s) => s.id === selectedSmtpId) ?? null,
@@ -232,6 +243,7 @@ export function SettingsPage() {
       const activeSandbox = sandboxGroup?.providers.find((provider) => provider.is_active) ?? null
       const allModelOptions = buildAllModelOptions(providers)
       const imageOutputOptions = buildImageGenerativeOptions(providers)
+      const videoOutputOptions = buildVideoGenerativeOptions(providers)
 
       setLlmProviders(providers)
       setSmtpList(smtp)
@@ -239,6 +251,7 @@ export function SettingsPage() {
 
       setTitleModel(resolveModelValue(map['title_summarizer.model'] ?? '', allModelOptions))
       setImageGenerativeModel(resolveModelValue(map[IMAGE_GENERATIVE_MODEL_KEY] ?? '', imageOutputOptions))
+      setVideoGenerativeModel(resolveModelValue(map[VIDEO_GENERATIVE_MODEL_KEY] ?? '', videoOutputOptions))
       setSpawnExplore(resolveModelValue(map['spawn.profile.explore'] ?? '', allModelOptions))
       setSpawnTask(resolveModelValue(map['spawn.profile.task'] ?? '', allModelOptions))
       setSpawnStrong(resolveModelValue(map['spawn.profile.strong'] ?? '', allModelOptions))
@@ -287,6 +300,7 @@ export function SettingsPage() {
       await Promise.all([
         saveSetting('title_summarizer.model', titleModel, accessToken),
         saveSetting(IMAGE_GENERATIVE_MODEL_KEY, imageGenerativeModel, accessToken),
+        saveSetting(VIDEO_GENERATIVE_MODEL_KEY, videoGenerativeModel, accessToken),
         saveSetting('spawn.profile.explore', spawnExplore, accessToken),
         saveSetting('spawn.profile.task', spawnTask, accessToken),
         saveSetting('spawn.profile.strong', spawnStrong, accessToken),
@@ -297,7 +311,7 @@ export function SettingsPage() {
     } finally {
       setSavingGeneral(false)
     }
-  }, [titleModel, imageGenerativeModel, spawnExplore, spawnTask, spawnStrong, accessToken, addToast, tc])
+  }, [titleModel, imageGenerativeModel, videoGenerativeModel, spawnExplore, spawnTask, spawnStrong, accessToken, addToast, tc])
 
   const handleSaveSandbox = useCallback(async () => {
     setSavingSandbox(true)
@@ -563,6 +577,8 @@ export function SettingsPage() {
                     setTitleModel={setTitleModel}
                     imageGenerativeModel={imageGenerativeModel}
                     setImageGenerativeModel={setImageGenerativeModel}
+                    videoGenerativeModel={videoGenerativeModel}
+                    setVideoGenerativeModel={setVideoGenerativeModel}
                     spawnExplore={spawnExplore}
                     setSpawnExplore={setSpawnExplore}
                     spawnTask={spawnTask}
@@ -571,6 +587,7 @@ export function SettingsPage() {
                     setSpawnStrong={setSpawnStrong}
                     allModels={allModels}
                     imageGenerativeOptions={imageGenerativeOptions}
+                    videoGenerativeOptions={videoGenerativeOptions}
                     saving={savingGeneral}
                     onSave={saveGeneral}
                     tc={tc}
@@ -841,6 +858,8 @@ function GeneralSection({
   setTitleModel,
   imageGenerativeModel,
   setImageGenerativeModel,
+  videoGenerativeModel,
+  setVideoGenerativeModel,
   spawnExplore,
   setSpawnExplore,
   spawnTask,
@@ -849,6 +868,7 @@ function GeneralSection({
   setSpawnStrong,
   allModels,
   imageGenerativeOptions,
+  videoGenerativeOptions,
   saving,
   onSave,
   tc,
@@ -858,6 +878,8 @@ function GeneralSection({
   setTitleModel: (v: string) => void
   imageGenerativeModel: string
   setImageGenerativeModel: (v: string) => void
+  videoGenerativeModel: string
+  setVideoGenerativeModel: (v: string) => void
   spawnExplore: string
   setSpawnExplore: (v: string) => void
   spawnTask: string
@@ -866,6 +888,7 @@ function GeneralSection({
   setSpawnStrong: (v: string) => void
   allModels: ModelOption[]
   imageGenerativeOptions: ModelOption[]
+  videoGenerativeOptions: ModelOption[]
   saving: boolean
   onSave: () => void
   tc: SettingsLocale
@@ -918,6 +941,24 @@ function GeneralSection({
           <ChevronDown size={14} className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-[var(--c-text-muted)]" />
         </div>
         <p className="text-xs text-[var(--c-text-muted)]">{tc.imageGenerativeModelHint}</p>
+      </FormField>
+      <FormField label={tc.videoGenerativeModel}>
+        <div className="relative">
+          <select
+            value={videoGenerativeModel}
+            onChange={(e) => setVideoGenerativeModel(e.target.value)}
+            className={selectCls}
+          >
+            <option value="">--</option>
+            {mergeCurrentOption(videoGenerativeModel, videoGenerativeOptions).map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+          <ChevronDown size={14} className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-[var(--c-text-muted)]" />
+        </div>
+        <p className="text-xs text-[var(--c-text-muted)]">{tc.videoGenerativeModelHint}</p>
       </FormField>
       <div className="mt-4">
         <p className="mb-3 text-sm font-medium text-[var(--c-text-primary)]">{tc.spawnProfileLabel}</p>

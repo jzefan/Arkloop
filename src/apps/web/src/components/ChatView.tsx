@@ -158,6 +158,7 @@ import {
   writeInputDraftAttachments,
   readRunThinkingHint,
   writeRunThinkingHint,
+  type SelectedModelKind,
 } from '../storage'
 
 const sidePanelWidth = 360
@@ -182,6 +183,21 @@ function isInterruptedRunStatus(status: string | null | undefined): boolean {
 function chooseThinkingHint(hints: readonly string[]): string {
   if (hints.length === 0) return ''
   return hints[Math.floor(Math.random() * hints.length)] ?? hints[0] ?? ''
+}
+
+function splitGenerationRunSelection(modelOverride: string | undefined, modelKind: SelectedModelKind | undefined) {
+  if (modelOverride && (modelKind === 'image' || modelKind === 'video')) {
+    return {
+      runModelOverride: undefined,
+      generationTask: modelKind,
+      generationModel: modelOverride,
+    }
+  }
+  return {
+    runModelOverride: modelOverride,
+    generationTask: undefined,
+    generationModel: undefined,
+  }
 }
 
 function isSameDraftDomain(left: InputDraftScope | null, right: InputDraftScope): boolean {
@@ -480,7 +496,7 @@ const LiveRunPane = memo(function LiveRunPane({
               onClick={onCheckInSubmit}
               disabled={checkInSubmitting || !checkInDraft.trim()}
               className="rounded-lg px-3 py-1 text-xs font-medium transition-opacity disabled:opacity-40"
-              style={{ background: 'var(--c-brand)', color: '#fff' }}
+              style={{ background: 'var(--c-btn-bg)', color: 'var(--c-btn-text)' }}
             >
               {checkInSubmitting ? '...' : 'Send'}
             </button>
@@ -1830,10 +1846,14 @@ export const ChatView = memo(function ChatView() {
         accessToken,
         threadId,
         prompt.personaKey,
-        prompt.modelOverride,
+        splitGenerationRunSelection(prompt.modelOverride, prompt.modelKind).runModelOverride,
         prompt.workDir,
         prompt.reasoningMode,
-        { resumeFromRunId: options?.resumeFromRunId },
+        {
+          resumeFromRunId: options?.resumeFromRunId,
+          generationTask: splitGenerationRunSelection(prompt.modelOverride, prompt.modelKind).generationTask,
+          generationModel: splitGenerationRunSelection(prompt.modelOverride, prompt.modelKind).generationModel,
+        },
       )
       writeRunThinkingHint(run.run_id, hint)
       if (prompt.personaKey === SEARCH_PERSONA_KEY) addSearchThreadId(threadId)
@@ -1985,7 +2005,7 @@ export const ChatView = memo(function ChatView() {
     setInjectionBlocked,
   ])
 
-  const handleSend = useCallback(async (e: React.FormEvent<HTMLFormElement>, personaKey: string, modelOverride?: string) => {
+  const handleSend = useCallback(async (e: React.FormEvent<HTMLFormElement>, personaKey: string, modelOverride?: string, modelKind?: SelectedModelKind) => {
     e.preventDefault()
     if (sending || !threadId) return
     if (editingQueuedPromptId) {
@@ -2031,6 +2051,7 @@ export const ChatView = memo(function ChatView() {
           attachments: queuedAttachments,
           personaKey,
           modelOverride,
+          modelKind,
           workDir: resolveThreadWorkFolder(threadId),
           reasoningMode: resolveReasoningMode(),
         }))
@@ -2071,7 +2092,19 @@ export const ChatView = memo(function ChatView() {
         onThreadCreated(forked)
         const uploaded = await uploadAttachments()
         const forkUserMessage = await createMessage(accessToken, forked.id, buildMessageRequest(text, uploaded))
-        const run = await createRun(accessToken, forked.id, personaKey, modelOverride, resolveThreadWorkFolder(threadId), readThreadReasoningMode(threadId) !== 'off' ? readThreadReasoningMode(threadId) as RunReasoningMode : undefined)
+        const generationSelection = splitGenerationRunSelection(modelOverride, modelKind)
+        const run = await createRun(
+          accessToken,
+          forked.id,
+          personaKey,
+          generationSelection.runModelOverride,
+          resolveThreadWorkFolder(threadId),
+          readThreadReasoningMode(threadId) !== 'off' ? readThreadReasoningMode(threadId) as RunReasoningMode : undefined,
+          {
+            generationTask: generationSelection.generationTask,
+            generationModel: generationSelection.generationModel,
+          },
+        )
         writeRunThinkingHint(run.run_id, hint)
         if (personaKey === SEARCH_PERSONA_KEY) addSearchThreadId(forked.id)
         attachments.forEach((attachment) => revokeDraftAttachment(attachment))
@@ -2116,7 +2149,19 @@ export const ChatView = memo(function ChatView() {
       noResponseMsgIdRef.current = message.id
 
       await waitForPlanModeUpdate()
-      const run = await createRun(accessToken, threadId, personaKey, modelOverride, resolveThreadWorkFolder(threadId), readThreadReasoningMode(threadId) !== 'off' ? readThreadReasoningMode(threadId) as RunReasoningMode : undefined)
+      const generationSelection = splitGenerationRunSelection(modelOverride, modelKind)
+      const run = await createRun(
+        accessToken,
+        threadId,
+        personaKey,
+        generationSelection.runModelOverride,
+        resolveThreadWorkFolder(threadId),
+        readThreadReasoningMode(threadId) !== 'off' ? readThreadReasoningMode(threadId) as RunReasoningMode : undefined,
+        {
+          generationTask: generationSelection.generationTask,
+          generationModel: generationSelection.generationModel,
+        },
+      )
       writeRunThinkingHint(run.run_id, hint)
       if (personaKey === SEARCH_PERSONA_KEY) addSearchThreadId(threadId)
       resetSearchSteps()

@@ -2465,9 +2465,9 @@ func TestLoadRunInputsKeepsRuntimeRecoveryInterruptedAfterRecoverableOutput(t *t
 	}
 }
 
-func TestLoadRunInputsCopiesOutputModelKeyFromStartedEvent(t *testing.T) {
+func TestLoadRunInputsCopiesModelOverridesFromStartedEvent(t *testing.T) {
 	ctx := context.Background()
-	db := testutil.SetupPostgresDatabase(t, "pipeline_input_loader_output_model_key")
+	db := testutil.SetupPostgresDatabase(t, "pipeline_input_loader_model_overrides")
 	pool, err := pgxpool.New(ctx, db.DSN)
 	if err != nil {
 		t.Fatalf("pgxpool.New: %v", err)
@@ -2486,7 +2486,7 @@ func TestLoadRunInputsCopiesOutputModelKeyFromStartedEvent(t *testing.T) {
 	if _, err := pool.Exec(ctx, `INSERT INTO runs (id, account_id, thread_id, status) VALUES ($1, $2, $3, 'running')`, runID, accountID, threadID); err != nil {
 		t.Fatalf("insert run: %v", err)
 	}
-	if _, err := pool.Exec(ctx, `INSERT INTO run_events (run_id, seq, type, data_json) VALUES ($1, 1, 'run.started', $2::jsonb)`, runID, fmt.Sprintf(`{"thread_tail_message_id":"%s","output_model_key":"gpt5"}`, threadTailID)); err != nil {
+	if _, err := pool.Exec(ctx, `INSERT INTO run_events (run_id, seq, type, data_json) VALUES ($1, 1, 'run.started', $2::jsonb)`, runID, fmt.Sprintf(`{"thread_tail_message_id":"%s","output_model_key":"gpt5","generation_task":"image","generation_model":"OpenAI (Chat Completions)^openai/gpt-image-2"}`, threadTailID)); err != nil {
 		t.Fatalf("insert run started event: %v", err)
 	}
 	if _, err := pool.Exec(ctx, `INSERT INTO messages (id, account_id, thread_id, role, content, metadata_json, hidden) VALUES ($1, $2, $3, 'user', $4, '{}'::jsonb, false)`, threadTailID, accountID, threadID, "hello"); err != nil {
@@ -2503,6 +2503,12 @@ func TestLoadRunInputsCopiesOutputModelKeyFromStartedEvent(t *testing.T) {
 	}
 	if got, _ := loaded.InputJSON["output_model_key"].(string); got != "gpt5" {
 		t.Fatalf("unexpected output_model_key: %#v", loaded.InputJSON["output_model_key"])
+	}
+	if got, _ := loaded.InputJSON["generation_task"].(string); got != "image" {
+		t.Fatalf("unexpected generation_task: %#v", loaded.InputJSON["generation_task"])
+	}
+	if got, _ := loaded.InputJSON["generation_model"].(string); got != "OpenAI (Chat Completions)^openai/gpt-image-2" {
+		t.Fatalf("unexpected generation_model: %#v", loaded.InputJSON["generation_model"])
 	}
 }
 

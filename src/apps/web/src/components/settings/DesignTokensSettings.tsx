@@ -435,10 +435,10 @@ function ButtonsPreview() {
 
         {/* Destructive variants */}
         <div className="flex flex-col gap-1.5">
-          <span className={LABEL_CLS}>Destructive — unified: rounded-lg bg-red-600 (fill) or border+text-red-500 (ghost)</span>
+          <span className={LABEL_CLS}>Destructive — unified: bg-[var(--c-danger)] / text-[var(--c-on-danger)] (fill) or border+text-[var(--c-status-error-text)] (ghost)</span>
           <div className="flex flex-wrap gap-2">
             {/* fill: confirm delete */}
-            <button className="flex items-center gap-1.5 rounded-lg bg-red-600 px-4 py-1.5 text-sm font-medium text-white hover:bg-red-700">
+            <button className="flex items-center gap-1.5 rounded-lg bg-[var(--c-danger)] px-4 py-1.5 text-sm font-medium text-[var(--c-on-danger)] hover:bg-[var(--c-danger-hover)]">
               <Trash2 size={14} />
               Delete (confirm)
             </button>

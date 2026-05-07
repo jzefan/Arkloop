@@ -3,12 +3,14 @@ import type { ReactNode } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import remarkMath from 'remark-math'
+import rehypeKatex from 'rehype-katex'
 import { CopyIconButton } from './CopyIconButton'
 import type { Components, Options, UrlTransform } from 'react-markdown'
 import { defaultUrlTransform } from 'react-markdown'
 import { CitationBadge, WebSourcesContext } from './CitationBadge'
 import type { WebSource, ArtifactRef } from '../storage'
 import { ArtifactImage } from './ArtifactImage'
+import { ArtifactVideo } from './ArtifactVideo'
 import { ArtifactHtmlPreview } from './ArtifactHtmlPreview'
 import { ArtifactDownload } from './ArtifactDownload'
 import { MindmapBlock } from './MindmapBlock'
@@ -33,7 +35,7 @@ const STREAMING_MATH_COMMIT_INTERVAL_MS = 96
 
 function isDocumentArtifact(artifact: ArtifactRef): boolean {
   if (artifact.display === 'panel') return true
-  return !artifact.mime_type.startsWith('image/') && artifact.mime_type !== 'text/html'
+  return !artifact.mime_type.startsWith('image/') && !artifact.mime_type.startsWith('video/') && artifact.mime_type !== 'text/html'
 }
 
 // \[...\] → $$...$$ , \(...\) → $...$
@@ -245,6 +247,9 @@ function ArtifactAwareImg({ src, alt }: { src?: string; alt?: string }) {
     if (artifact.mime_type.startsWith('image/')) {
       return <ArtifactImage artifact={artifact} accessToken={accessToken} />
     }
+    if (artifact.mime_type.startsWith('video/')) {
+      return <ArtifactVideo artifact={artifact} accessToken={accessToken} />
+    }
     if (artifact.mime_type === 'text/html') {
       return <ArtifactHtmlPreview artifact={artifact} accessToken={accessToken} />
     }
@@ -282,7 +287,7 @@ function ArtifactAwareImg({ src, alt }: { src?: string; alt?: string }) {
     )
   }
 
-  return <img src={src} alt={alt ?? ''} style={{ maxWidth: '100%', borderRadius: '8px' }} onError={() => setFailed(true)} />
+  return <img src={src} alt={alt ?? ''} loading="lazy" decoding="async" style={{ maxWidth: '100%', borderRadius: '8px' }} onError={() => setFailed(true)} />
 }
 
 // artifact: 协议感知的 a 渲染器
@@ -298,6 +303,9 @@ function ArtifactAwareLink({ href, children }: { href?: string; children?: React
     // LLM 可能用 [text](artifact:key) 而非 ![text](artifact:key)，统一按 mime_type 分派
     if (artifact.mime_type.startsWith('image/')) {
       return <ArtifactImage artifact={artifact} accessToken={accessToken} />
+    }
+    if (artifact.mime_type.startsWith('video/')) {
+      return <ArtifactVideo artifact={artifact} accessToken={accessToken} />
     }
     if (artifact.mime_type === 'text/html') {
       return <ArtifactHtmlPreview artifact={artifact} accessToken={accessToken} />
@@ -738,21 +746,20 @@ export const MarkdownRenderer = memo(function MarkdownRenderer({ content, disabl
     () => (effectiveDisableMath ? [remarkGfm] : [remarkGfm, remarkMath]),
     [effectiveDisableMath],
   )
+  const katexPlugins = useMemo<NonNullable<Options['rehypePlugins']>>(
+    () => (effectiveDisableMath ? [] : [[rehypeKatex, { throwOnError: false, output: 'htmlAndMathml' }]]),
+    [effectiveDisableMath],
+  )
 
   // 异步加载 rehype 插件：流式期间跳过高亮，完成后异步加载
-  const [asyncPlugins, setAsyncPlugins] = useState<NonNullable<Options['rehypePlugins']>>([])
+  const [asyncPlugins, setAsyncPlugins] = useState<NonNullable<Options['rehypePlugins']>>(katexPlugins)
   const loadedRef = useRef(false)
 
   useEffect(() => {
     if (streaming) {
-      // 流式期间：重置加载状态，使用空插件或仅 katex
+      // 流式期间：保留 KaTeX，同步跳过高亮。
       loadedRef.current = false
-      if (effectiveDisableMath) {
-        setAsyncPlugins([])
-      } else {
-        // 流式期间数学仍同步渲染（remark-math 已处理），但 katex 也异步
-        setAsyncPlugins([])
-      }
+      setAsyncPlugins(katexPlugins)
       return
     }
 
@@ -761,13 +768,7 @@ export const MarkdownRenderer = memo(function MarkdownRenderer({ content, disabl
       loadedRef.current = true
       const loadPlugins = async () => {
         // 动态加载 rehype 插件，异步执行不阻塞渲染
-        const plugins: NonNullable<Options['rehypePlugins']> = []
-        if (!effectiveDisableMath) {
-          try {
-            const m = await import('rehype-katex')
-            plugins.push([m.default ?? m, { throwOnError: false, output: 'htmlAndMathml' }])
-          } catch { /* skip */ }
-        }
+        const plugins: NonNullable<Options['rehypePlugins']> = [...katexPlugins]
         try {
           const m = await import('rehype-highlight')
           plugins.push([m.default ?? m, { ignoreMissing: true }])
@@ -776,7 +777,7 @@ export const MarkdownRenderer = memo(function MarkdownRenderer({ content, disabl
       }
       void loadPlugins()
     }
-  }, [streaming, effectiveDisableMath])
+  }, [streaming, effectiveDisableMath, katexPlugins])
 
   const rehypePlugins = useMemo<NonNullable<Options['rehypePlugins']>>(
     () => asyncPlugins,

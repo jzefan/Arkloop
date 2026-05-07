@@ -140,6 +140,7 @@ func TestResolveBuiltinUsesEnvAndProviders(t *testing.T) {
 		"summarize_thread",
 		"terminate_process",
 		"timeline_title",
+		"video_generate",
 		"visualize_read_me",
 		"wait_agent",
 		"web_fetch",
@@ -232,7 +233,7 @@ func TestResolveBuiltinHidesWebToolsWhenNotConfigured(t *testing.T) {
 func TestResolveBuiltinAddsWebToolsFromPlatformProviders(t *testing.T) {
 	resolved := ResolveBuiltin(ResolveInput{
 		PlatformProviders: []ProviderConfig{
-			{GroupName: "web_search", ProviderName: "web_search.basic"},
+			{GroupName: "web_search", ProviderName: "web_search.duckduckgo"},
 			{GroupName: "web_fetch", ProviderName: "web_fetch.jina"},
 			{
 				GroupName:    "read",

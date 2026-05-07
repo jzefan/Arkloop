@@ -188,9 +188,20 @@ func (p Policy) SafeDialContext(dialer *net.Dialer) func(context.Context, string
 			}
 		}
 
-		target := net.JoinHostPort(ips[0].Unmap().String(), port)
+		target := p.dialTargetForResolvedHost(addr, host, port, ips)
 		return dialer.DialContext(ctx, network, target)
 	}
+}
+
+func (p Policy) dialTargetForResolvedHost(originalAddr, host, port string, ips []netip.Addr) string {
+	if p.TrustFakeIP && !ParseIP(host).IsValid() {
+		for _, ip := range ips {
+			if fakeIPPrefix.Contains(ip.Unmap()) {
+				return originalAddr
+			}
+		}
+	}
+	return net.JoinHostPort(ips[0].Unmap().String(), port)
 }
 
 func (p Policy) CheckRedirect(req *http.Request, via []*http.Request) error {

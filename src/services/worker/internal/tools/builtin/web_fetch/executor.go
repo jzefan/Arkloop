@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net"
 	"sort"
 	"strings"
 	"time"
@@ -21,18 +20,8 @@ const (
 	errorURLDenied     = "tool.url_denied"
 	errorNotConfigured = "config.missing"
 
-	defaultTimeout = basicFetchTimeout
+	defaultTimeout = 15 * time.Second
 	maxLengthLimit = sharedtoolmeta.WebFetchMaxLengthLimit
-
-	fetchFailureDNSFailed              = "dns_failed"
-	fetchFailureEmptyPage              = "empty_page"
-	fetchFailureHTTPStatusError        = "http_status_error"
-	fetchFailureNetworkError           = "network_error"
-	fetchFailureNetworkTimeout         = "network_timeout"
-	fetchFailureRequestCanceled        = "request_canceled"
-	fetchFailureTLSFailed              = "tls_failed"
-	fetchFailureUnknown                = "unknown"
-	fetchFailureUnsupportedContentType = "unsupported_content_type"
 )
 
 var AgentSpec = tools.AgentToolSpec{
@@ -193,68 +182,26 @@ func (e *ToolExecutor) Execute(
 				Error: &tools.ExecutionError{
 					ErrorClass: errorTimeout,
 					Message:    "web_fetch timed out",
-					Details: map[string]any{
-						"reason":          fetchFailureNetworkTimeout,
-						"retryable":       true,
-						"timeout_seconds": timeout.Seconds(),
-					},
+					Details:    map[string]any{"timeout_seconds": timeout.Seconds()},
 				},
 				DurationMs: durationMs(started),
 			}
 		}
-		if errors.Is(err, context.Canceled) {
-			return tools.ExecutionResult{
-				Error: &tools.ExecutionError{
-					ErrorClass: errorFetchFailed,
-					Message:    "web_fetch request canceled",
-					Details: map[string]any{
-						"reason":    fetchFailureRequestCanceled,
-						"retryable": false,
-					},
-				},
-				DurationMs: durationMs(started),
-			}
-		}
-		var httpErr HttpError
-		if errors.As(err, &httpErr) {
+		if httpErr, ok := err.(HttpError); ok {
 			return tools.ExecutionResult{
 				Error: &tools.ExecutionError{
 					ErrorClass: errorFetchFailed,
 					Message:    "web_fetch request failed",
-					Details: map[string]any{
-						"reason":      fetchFailureHTTPStatusError,
-						"retryable":   isRetryableHTTPStatus(httpErr.StatusCode),
-						"status_code": httpErr.StatusCode,
-					},
+					Details:    map[string]any{"status_code": httpErr.StatusCode},
 				},
 				DurationMs: durationMs(started),
 			}
 		}
-		var contentTypeErr UnsupportedContentTypeError
-		if errors.As(err, &contentTypeErr) {
-			return tools.ExecutionResult{
-				Error: &tools.ExecutionError{
-					ErrorClass: errorFetchFailed,
-					Message:    "web_fetch content type is not readable text",
-					Details: map[string]any{
-						"reason":       fetchFailureUnsupportedContentType,
-						"retryable":    false,
-						"content_type": contentTypeErr.ContentType,
-					},
-				},
-				DurationMs: durationMs(started),
-			}
-		}
-		failure := classifyFetchFailure(err)
 		return tools.ExecutionResult{
 			Error: &tools.ExecutionError{
 				ErrorClass: errorFetchFailed,
 				Message:    "web_fetch execution failed",
-				Details: map[string]any{
-					"reason":    failure.reason,
-					"retryable": failure.retryable,
-					"error":     err.Error(),
-				},
+				Details:    map[string]any{"reason": err.Error()},
 			},
 			DurationMs: durationMs(started),
 		}
@@ -264,71 +211,6 @@ func (e *ToolExecutor) Execute(
 		ResultJSON: result.ToJSON(),
 		DurationMs: durationMs(started),
 	}
-}
-
-type fetchFailure struct {
-	reason    string
-	retryable bool
-}
-
-func classifyFetchFailure(err error) fetchFailure {
-	if err == nil {
-		return fetchFailure{reason: fetchFailureUnknown}
-	}
-	if errors.Is(err, context.Canceled) {
-		return fetchFailure{reason: fetchFailureRequestCanceled}
-	}
-	if errors.Is(err, context.DeadlineExceeded) {
-		return fetchFailure{reason: fetchFailureNetworkTimeout, retryable: true}
-	}
-
-	var dnsErr *net.DNSError
-	if errors.As(err, &dnsErr) {
-		return fetchFailure{reason: fetchFailureDNSFailed, retryable: dnsErr.IsTimeout || dnsErr.IsTemporary}
-	}
-
-	var netErr net.Error
-	if errors.As(err, &netErr) {
-		if netErr.Timeout() {
-			return fetchFailure{reason: fetchFailureNetworkTimeout, retryable: true}
-		}
-		if netErr.Temporary() {
-			return fetchFailure{reason: fetchFailureNetworkError, retryable: true}
-		}
-	}
-
-	message := strings.ToLower(err.Error())
-	switch {
-	case strings.Contains(message, "outbound dns resolve failed"),
-		strings.Contains(message, "no such host"),
-		strings.Contains(message, "server misbehaving"):
-		return fetchFailure{reason: fetchFailureDNSFailed, retryable: true}
-	case strings.Contains(message, "tls handshake timeout"),
-		strings.Contains(message, "tls:"),
-		strings.Contains(message, "certificate"),
-		strings.Contains(message, "x509:"):
-		return fetchFailure{reason: fetchFailureTLSFailed, retryable: strings.Contains(message, "timeout")}
-	case strings.Contains(message, "timeout"),
-		strings.Contains(message, "deadline exceeded"),
-		strings.Contains(message, "i/o timeout"):
-		return fetchFailure{reason: fetchFailureNetworkTimeout, retryable: true}
-	case strings.Contains(message, "connection reset"),
-		strings.Contains(message, "connection refused"),
-		strings.Contains(message, "unexpected eof"),
-		strings.Contains(message, "eof"),
-		strings.Contains(message, "temporary failure"),
-		strings.Contains(message, "try again"):
-		return fetchFailure{reason: fetchFailureNetworkError, retryable: true}
-	case strings.Contains(message, "response body is empty"),
-		strings.Contains(message, "html-empty"):
-		return fetchFailure{reason: fetchFailureEmptyPage}
-	default:
-		return fetchFailure{reason: fetchFailureUnknown}
-	}
-}
-
-func isRetryableHTTPStatus(statusCode int) bool {
-	return statusCode == 408 || statusCode == 429 || statusCode == 502 || statusCode == 503 || statusCode == 504
 }
 
 func parseArgs(args map[string]any) (string, int, *tools.ExecutionError) {

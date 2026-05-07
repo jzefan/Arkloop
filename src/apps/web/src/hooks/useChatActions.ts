@@ -28,9 +28,11 @@ import {
   clearThreadRunHandoff,
   migrateMessageMetadata,
   readSelectedModelFromStorage,
+  readSelectedModelKindFromStorage,
   readSelectedPersonaKeyFromStorage,
   readThreadWorkFolder,
   readThreadReasoningMode,
+  type SelectedModelKind,
   SEARCH_PERSONA_KEY,
 } from '../storage'
 import { normalizeError } from '../lib/chat-helpers'
@@ -38,6 +40,25 @@ import type { UserInputResponse } from '../userInputTypes'
 
 type UseChatActionsDeps = {
   scrollToBottom: () => void
+}
+
+function splitGenerationRunSelection(modelOverride: string | undefined, modelKind: SelectedModelKind | undefined): {
+  runModelOverride: string | undefined
+  generationTask: 'image' | 'video' | undefined
+  generationModel: string | undefined
+} {
+  if (modelOverride && (modelKind === 'image' || modelKind === 'video')) {
+    return {
+      runModelOverride: undefined,
+      generationTask: modelKind,
+      generationModel: modelOverride,
+    }
+  }
+  return {
+    runModelOverride: modelOverride,
+    generationTask: undefined,
+    generationModel: undefined,
+  }
 }
 
 export function useChatActions({ scrollToBottom }: UseChatActionsDeps) {
@@ -101,6 +122,7 @@ export function useChatActions({ scrollToBottom }: UseChatActionsDeps) {
 
     const personaKey = readSelectedPersonaKeyFromStorage()
     const modelOverride = readSelectedModelFromStorage() ?? undefined
+    const modelKind = readSelectedModelKindFromStorage()
 
     setSending(true)
     setError(null)
@@ -118,7 +140,19 @@ export function useChatActions({ scrollToBottom }: UseChatActionsDeps) {
       setMessages((prev) => [...prev, message])
       noResponseMsgIdRef.current = message.id
       const workFolder = threads.find((thread) => thread.id === threadId)?.sidebar_work_folder ?? readThreadWorkFolder(threadId) ?? undefined
-      const run = await createRun(accessToken, threadId, personaKey, modelOverride, workFolder, readThreadReasoningMode(threadId) !== 'off' ? readThreadReasoningMode(threadId) as RunReasoningMode : undefined)
+      const generationSelection = splitGenerationRunSelection(modelOverride, modelKind)
+      const run = await createRun(
+        accessToken,
+        threadId,
+        personaKey,
+        generationSelection.runModelOverride,
+        workFolder,
+        readThreadReasoningMode(threadId) !== 'off' ? readThreadReasoningMode(threadId) as RunReasoningMode : undefined,
+        {
+          generationTask: generationSelection.generationTask,
+          generationModel: generationSelection.generationModel,
+        },
+      )
       if (personaKey === SEARCH_PERSONA_KEY) addSearchThreadId(threadId)
       resetSearchSteps()
       setActiveRunId(run.run_id)

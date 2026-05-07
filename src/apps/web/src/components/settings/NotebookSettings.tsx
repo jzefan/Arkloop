@@ -20,7 +20,7 @@ function categoryColor(category: string): string {
     preferences: 'bg-purple-500/15 text-purple-400',
     entities: 'bg-amber-500/15 text-amber-400',
     events: 'bg-green-500/15 text-green-400',
-    cases: 'bg-red-500/15 text-red-400',
+    cases: 'bg-red-500/15 text-[var(--c-error-text)]',
     patterns: 'bg-teal-500/15 text-teal-400',
     general: 'bg-[var(--c-bg-deep)] text-[var(--c-text-muted)]',
   }
@@ -136,7 +136,7 @@ function EntryCard({
               </button>
               <button
                 onClick={() => onDelete(entry.id)}
-                className="rounded-lg p-1 text-[var(--c-text-muted)] transition-colors hover:text-red-400"
+                className="rounded-lg p-1 text-[var(--c-text-muted)] transition-colors hover:text-[var(--c-error-text)]"
               >
                 <Trash2 size={12} />
               </button>
@@ -442,7 +442,7 @@ export function NotebookSettings() {
               {entries.length > 0 && (
                 <button
                   onClick={() => setConfirmClearAll(true)}
-                  className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs text-red-400 transition-colors hover:bg-red-500/10"
+                  className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs text-[var(--c-error-text)] transition-colors hover:bg-red-500/10"
                 >
                   <Trash2 size={12} />{ds.memoryClearAll}
                 </button>

@@ -1,6 +1,7 @@
 import { X } from 'lucide-react'
 import { createPortal } from 'react-dom'
 import { useLocale } from '../contexts/LocaleContext'
+import { useModalDismiss } from '../hooks/useModalDismiss'
 
 function formatSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`
@@ -22,6 +23,7 @@ export function PastedContentModal({ text, size, lineCount, onClose, title, subt
 
   const displayTitle = title ?? t.pastedContent
   const displaySubtitle = subtitle ?? `${formatSize(size)} · ${t.pastedLines(lineCount)}`
+  const dismissRef = useModalDismiss({ open: true, onDismiss: onClose })
 
   return createPortal(
     <div
@@ -30,6 +32,10 @@ export function PastedContentModal({ text, size, lineCount, onClose, title, subt
       onMouseDown={(e) => { if (e.target === e.currentTarget) onClose() }}
     >
       <div
+        ref={dismissRef as React.RefObject<HTMLDivElement>}
+        role="dialog"
+        aria-modal="true"
+        aria-label={displayTitle}
         className="modal-enter flex flex-col rounded-2xl"
         style={{
           width: '680px',
@@ -66,6 +72,8 @@ export function PastedContentModal({ text, size, lineCount, onClose, title, subt
             </p>
           </div>
           <button
+            type="button"
+            aria-label={t.userInput.dismiss}
             onClick={onClose}
             style={{
               width: '32px',
@@ -78,6 +86,7 @@ export function PastedContentModal({ text, size, lineCount, onClose, title, subt
               color: 'var(--c-text-secondary)',
               cursor: 'pointer',
               flexShrink: 0,
+              background: 'transparent',
             }}
             className="hover:bg-[var(--c-bg-deep)]"
           >

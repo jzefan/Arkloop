@@ -107,7 +107,7 @@ export function SourcesPanel({ sources, userQuery, onClose }: Props) {
                     overflow: 'hidden',
                   }}
                 >
-                  <img
+                  <img loading="lazy" decoding="async"
                     src={`https://www.google.com/s2/favicons?domain=${domain}&sz=32`}
                     width={20}
                     height={20}

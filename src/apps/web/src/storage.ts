@@ -18,6 +18,7 @@ const THEME_KEY = 'arkloop:web:theme'
 const SELECTED_PERSONA_KEY = 'arkloop:web:selected_persona_key'
 const APP_MODE_KEY = 'arkloop:web:app_mode'
 const SELECTED_MODEL_KEY = 'arkloop:web:selected_model'
+const SELECTED_MODEL_KIND_KEY = 'arkloop:web:selected_model_kind'
 const SELECTED_THINKING_KEY = 'arkloop:web:selected_thinking'
 const FONT_SETTINGS_KEY = 'arkloop:web:font-settings'
 const THEME_PRESET_KEY = 'arkloop:web:theme-preset'
@@ -597,6 +598,32 @@ export function writeSelectedModelToStorage(model: string | null): void {
     } else {
       localStorage.removeItem(SELECTED_MODEL_KEY)
     }
+  } catch {
+    // 忽略存储失败
+  }
+}
+
+export type SelectedModelKind = 'general' | 'image' | 'video'
+
+export function readSelectedModelKindFromStorage(): SelectedModelKind {
+  if (!canUseLocalStorage()) return 'general'
+  try {
+    const raw = localStorage.getItem(SELECTED_MODEL_KIND_KEY)?.trim()
+    if (raw === 'image' || raw === 'video') return raw
+    return 'general'
+  } catch {
+    return 'general'
+  }
+}
+
+export function writeSelectedModelKindToStorage(kind: SelectedModelKind): void {
+  if (!canUseLocalStorage()) return
+  try {
+    if (kind === 'general') {
+      localStorage.removeItem(SELECTED_MODEL_KIND_KEY)
+      return
+    }
+    localStorage.setItem(SELECTED_MODEL_KIND_KEY, kind)
   } catch {
     // 忽略存储失败
   }
@@ -2041,7 +2068,7 @@ export function readFontSettingsFromStorage(): FontSettings {
     if (!raw) return { fontFamily: defaultFontFamily, codeFontFamily: 'jetbrains-mono', fontSize: 'normal' }
     const parsed = JSON.parse(raw) as Partial<FontSettings>
     return {
-      fontFamily: (['default', 'inter', 'system', 'serif', 'noto-sans', 'source-sans', 'open-dyslexic', 'custom'] as FontFamily[]).includes(parsed.fontFamily as FontFamily) ? parsed.fontFamily as FontFamily : defaultFontFamily,
+      fontFamily: (['default', 'inter', 'system', 'serif', 'noto-sans', 'source-sans', 'custom'] as FontFamily[]).includes(parsed.fontFamily as FontFamily) ? parsed.fontFamily as FontFamily : defaultFontFamily,
       codeFontFamily: (['jetbrains-mono', 'fira-code', 'cascadia-code', 'source-code-pro'] as CodeFontFamily[]).includes(parsed.codeFontFamily as CodeFontFamily) ? parsed.codeFontFamily as CodeFontFamily : 'jetbrains-mono',
       fontSize: (['compact', 'normal', 'relaxed'] as FontSize[]).includes(parsed.fontSize as FontSize) ? parsed.fontSize as FontSize : 'normal',
     }
@@ -2061,7 +2088,7 @@ export function readThemePresetFromStorage(): ThemePreset {
   if (!canUseLocalStorage()) return 'default'
   try {
     const raw = localStorage.getItem(THEME_PRESET_KEY)
-    const valid: ThemePreset[] = ['default', 'terra', 'github', 'nord', 'catppuccin', 'tokyo-night', 'retina-burn', 'custom']
+    const valid: ThemePreset[] = ['default', 'terra', 'github', 'nord', 'catppuccin', 'tokyo-night', 'custom']
     return valid.includes(raw as ThemePreset) ? (raw as ThemePreset) : 'default'
   } catch {
     return 'default'

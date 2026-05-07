@@ -171,7 +171,7 @@ func TestDesktopToolProvidersListActivateAndConfigWebSearch(t *testing.T) {
 		return w
 	}
 
-	act := put("/v1/tool-providers/web_search/web_search.basic/activate", nil)
+	act := put("/v1/tool-providers/web_search/web_search.duckduckgo/activate", nil)
 	if act.Code != nethttp.StatusNoContent {
 		t.Fatalf("activate: %d %s", act.Code, act.Body.String())
 	}
@@ -181,7 +181,7 @@ func TestDesktopToolProvidersListActivateAndConfigWebSearch(t *testing.T) {
 		"region":  "global",
 		"profile": "desktop",
 	}
-	cfgResp := put("/v1/tool-providers/web_search/web_search.basic/config", cfgBody)
+	cfgResp := put("/v1/tool-providers/web_search/web_search.duckduckgo/config", cfgBody)
 	if cfgResp.Code != nethttp.StatusNoContent {
 		t.Fatalf("config: %d %s", cfgResp.Code, cfgResp.Body.String())
 	}
@@ -206,12 +206,12 @@ func TestDesktopToolProvidersListActivateAndConfigWebSearch(t *testing.T) {
 			continue
 		}
 		for _, p := range g.Providers {
-			if p.ProviderName != "web_search.basic" {
+			if p.ProviderName != "web_search.duckduckgo" {
 				continue
 			}
 			found = true
 			if !p.IsActive {
-				t.Fatal("expected web_search.basic active")
+				t.Fatal("expected web_search.duckduckgo active")
 			}
 			if p.RuntimeState != "ready" {
 				t.Fatalf("expected runtime_state=ready, got %q", p.RuntimeState)
@@ -238,7 +238,7 @@ func TestDesktopToolProvidersListActivateAndConfigWebSearch(t *testing.T) {
 		}
 	}
 	if !found {
-		t.Fatal("web_search.basic not in list")
+		t.Fatal("web_search.duckduckgo not in list")
 	}
 }
 
@@ -483,9 +483,9 @@ func TestDesktopToolProvidersListShowsOnlySelectedSearchProviderRunning(t *testi
 		return w
 	}
 
-	act := put("/v1/tool-providers/web_search/web_search.basic/activate", nil)
+	act := put("/v1/tool-providers/web_search/web_search.duckduckgo/activate", nil)
 	if act.Code != nethttp.StatusNoContent {
-		t.Fatalf("activate basic search: %d %s", act.Code, act.Body.String())
+		t.Fatalf("activate duckduckgo: %d %s", act.Code, act.Body.String())
 	}
 
 	rec := httptest.NewRecorder()
@@ -501,7 +501,7 @@ func TestDesktopToolProvidersListShowsOnlySelectedSearchProviderRunning(t *testi
 		t.Fatalf("decode list: %v", err)
 	}
 
-	var basicFound bool
+	var duckduckgoFound bool
 	var tavilyFound bool
 	for _, group := range payload.Groups {
 		if group.GroupName != "web_search" {
@@ -509,10 +509,10 @@ func TestDesktopToolProvidersListShowsOnlySelectedSearchProviderRunning(t *testi
 		}
 		for _, provider := range group.Providers {
 			switch provider.ProviderName {
-			case "web_search.basic":
-				basicFound = true
+			case "web_search.duckduckgo":
+				duckduckgoFound = true
 				if provider.RuntimeStatus != "available" {
-					t.Fatalf("expected basic search available, got %q", provider.RuntimeStatus)
+					t.Fatalf("expected duckduckgo available, got %q", provider.RuntimeStatus)
 				}
 			case "web_search.tavily":
 				tavilyFound = true
@@ -522,8 +522,8 @@ func TestDesktopToolProvidersListShowsOnlySelectedSearchProviderRunning(t *testi
 			}
 		}
 	}
-	if !basicFound || !tavilyFound {
-		t.Fatalf("expected both basic and tavily in payload: basic=%v tavily=%v", basicFound, tavilyFound)
+	if !duckduckgoFound || !tavilyFound {
+		t.Fatalf("expected both duckduckgo and tavily in payload: duck=%v tavily=%v", duckduckgoFound, tavilyFound)
 	}
 }
 

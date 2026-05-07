@@ -11,9 +11,9 @@ import {
   setBridgeUrlListener,
   setMemoryConfig,
   setNetworkConfig,
+  setWorkspaceConfig,
   getSidecarRuntime,
   getBridgeBaseUrl,
-  getDesktopAccessToken,
   stopBridgeOpenvikingIfNeeded,
   ensureOpenCLI,
   type SidecarRuntime,
@@ -24,7 +24,6 @@ import { initVersionsFile } from './config'
 import { setupAppUpdater } from './app-updater'
 import { setupMainProcessLogging, getDesktopLogDir } from './logging'
 import { syncLocalVersions } from './updater'
-import { ensureBrowserSearchServer, closeBrowserSearchServer } from './browser-search'
 import type { AppConfig, ApplyConfigUpdateOptions } from './types'
 
 app.setName('Arkloop')
@@ -221,6 +220,7 @@ async function ensureLocalSidecar(config: AppConfig): Promise<AppConfig> {
 
   setMemoryConfig(config.memory)
   setNetworkConfig(config.network)
+  setWorkspaceConfig(config.workspace)
   void ensureOpenCLI()
 
   const runtime = await startSidecar(config.local.port, config.local.portMode)
@@ -248,6 +248,10 @@ function networkChanged(a: AppConfig, b: AppConfig): boolean {
     || a.network.userAgent !== b.network.userAgent
 }
 
+function workspaceChanged(a: AppConfig, b: AppConfig): boolean {
+  return a.workspace.root !== b.workspace.root
+}
+
 async function applyConfigUpdate(
   config: AppConfig,
   options?: ApplyConfigUpdateOptions,
@@ -260,10 +264,12 @@ async function applyConfigUpdate(
     || previous.local.portMode !== candidate.local.portMode
     || memoryChanged(previous, candidate)
     || networkChanged(previous, candidate)
+    || workspaceChanged(previous, candidate)
     || forceLocalReload
 
   if (!needsRestart) {
     setNetworkConfig(candidate.network)
+    setWorkspaceConfig(candidate.workspace)
     saveConfig(candidate)
     syncActiveSidecarPort(candidate, getSidecarRuntime())
     syncConfigToRenderer(candidate)
@@ -478,11 +484,6 @@ if (!hasSingleInstanceLock) {
       restartLocalSidecar,
       getSidecarRuntime: async () => getSidecarRuntime(),
     })
-    try {
-      await ensureBrowserSearchServer(getDesktopAccessToken())
-    } catch (error) {
-      console.error('[desktop] browser_search_server_start_failed', { error })
-    }
 
     const config = loadConfig()
 
@@ -552,9 +553,5 @@ if (!hasSingleInstanceLock) {
       }
       app.quit()
     })()
-  })
-
-  app.on('will-quit', () => {
-    void closeBrowserSearchServer()
   })
 }

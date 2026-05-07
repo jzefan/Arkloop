@@ -66,7 +66,7 @@ export function AboutSettings({ accessToken: _accessToken }: { accessToken: stri
             style={{ border: '0.5px solid var(--c-border-subtle)' }}
           >
             {iconDataUrl ? (
-              <img src={iconDataUrl} alt={appName} className="h-full w-full object-cover" />
+              <img src={iconDataUrl} alt={appName} loading="lazy" decoding="async" className="h-full w-full object-cover" />
             ) : (
               <HardDrive size={22} className="text-[var(--c-text-muted)]" />
             )}

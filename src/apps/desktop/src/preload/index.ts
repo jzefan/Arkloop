@@ -5,7 +5,7 @@ export type LocalPortMode = 'auto' | 'manual'
 export type DesktopPlatform = 'win32' | 'darwin' | 'linux' | string
 
 export type FetchProvider = 'none' | 'jina' | 'basic' | 'firecrawl'
-export type SearchProvider = 'none' | 'basic' | 'tavily' | 'searxng'
+export type SearchProvider = 'none' | 'duckduckgo' | 'tavily' | 'searxng'
 
 export type ConnectorsConfig = {
   fetch: {
@@ -305,6 +305,9 @@ export type ArkloopDesktopApi = {
   }
   dialog: {
     openFolder: () => Promise<string | null>
+    chooseExportFolder: () => Promise<{ ok: boolean; folderPath?: string; canceled?: boolean }>
+    saveZipToFolder: (options: { folderPath: string; defaultFilename: string; data: Uint8Array }) => Promise<{ ok: boolean; filePath?: string }>
+    exportZipToFolder: (options: { defaultFilename: string; data: Uint8Array }) => Promise<{ ok: boolean; filePath?: string; canceled?: boolean }>
   }
   sidecar: {
     getStatus: () => Promise<SidecarStatus>
@@ -554,6 +557,9 @@ const api: ArkloopDesktopApi = {
 
   dialog: {
     openFolder: () => ipcRenderer.invoke('arkloop:dialog:open-folder'),
+    chooseExportFolder: () => ipcRenderer.invoke('arkloop:dialog:choose-export-folder'),
+    saveZipToFolder: (options) => ipcRenderer.invoke('arkloop:dialog:save-zip-to-folder', options),
+    exportZipToFolder: (options) => ipcRenderer.invoke('arkloop:dialog:export-zip-to-folder', options),
   },
 
   fs: {

@@ -2,7 +2,7 @@ export type ConnectionMode = 'local' | 'saas' | 'self-hosted'
 export type LocalPortMode = 'auto' | 'manual'
 
 export type FetchProvider = 'none' | 'jina' | 'basic' | 'firecrawl'
-export type SearchProvider = 'none' | 'basic' | 'tavily' | 'searxng'
+export type SearchProvider = 'none' | 'duckduckgo' | 'tavily' | 'searxng'
 
 export type FetchConnectorConfig = {
   provider: FetchProvider
@@ -76,6 +76,10 @@ export type LocalConfig = {
   portMode: LocalPortMode
 }
 
+export type WorkspaceConfig = {
+  root?: string
+}
+
 /** applyConfigUpdate 可选行为（仅 Electron 主进程使用） */
 export type ApplyConfigUpdateOptions = {
   /** 本地模式：无论记忆字段是否变化都重启 sidecar，使 Worker 重读 ARKLOOP_MEMORY_* / OPENVIKING 等环境 */
@@ -93,6 +97,7 @@ export type AppConfig = {
   connectors: ConnectorsConfig
   memory: MemoryConfig
   network: NetworkConfig
+  workspace: WorkspaceConfig
   voice?: VoiceConfig
 }
 
@@ -106,7 +111,7 @@ export const DEFAULT_CONFIG: AppConfig = {
   connectors_migrated: false,
   connectors: {
     fetch: { provider: 'none' },
-    search: { provider: 'basic' },
+    search: { provider: 'none' },
   },
   memory: { enabled: true, provider: 'notebook', memoryCommitEachTurn: true },
   network: {
@@ -114,4 +119,5 @@ export const DEFAULT_CONFIG: AppConfig = {
     requestTimeoutMs: 30000,
     retryCount: 1,
   },
+  workspace: {},
 }

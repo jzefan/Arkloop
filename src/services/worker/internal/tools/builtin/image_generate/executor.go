@@ -2,6 +2,7 @@ package imagegenerate
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"mime"
 	"net/http"
@@ -17,6 +18,7 @@ import (
 	"arkloop/services/worker/internal/pipeline"
 	"arkloop/services/worker/internal/routing"
 	"arkloop/services/worker/internal/tools"
+	"arkloop/services/worker/internal/tools/builtin/internal/toolutil"
 
 	"github.com/google/uuid"
 )
@@ -58,31 +60,34 @@ func (e *ToolExecutor) Execute(
 ) tools.ExecutionResult {
 	started := time.Now()
 	if e == nil || e.store == nil {
-		return errResult("tool.not_configured", "image generation storage is not configured", started)
+		return toolutil.ErrResult("tool.not_configured", "image generation storage is not configured", started)
 	}
 	if execCtx.AccountID == nil {
-		return errResult("tool.execution_failed", "account context is required", started)
+		return toolutil.ErrResult("tool.execution_failed", "account context is required", started)
 	}
 
-	prompt := strings.TrimSpace(stringArg(args, "prompt"))
+	prompt := strings.TrimSpace(toolutil.StringArg(args, "prompt"))
 	if prompt == "" {
-		return errResult("tool.args_invalid", "parameter prompt is required", started)
+		return toolutil.ErrResult("tool.args_invalid", "parameter prompt is required", started)
 	}
 	inputImages, err := e.loadInputImages(ctx, args, *execCtx.AccountID)
 	if err != nil {
-		return errResult("tool.args_invalid", err.Error(), started)
+		return toolutil.ErrResult("tool.args_invalid", err.Error(), started)
 	}
-	selected, err := e.resolveSelectedRoute(ctx, *execCtx.AccountID)
+	if len(inputImages) == 0 {
+		inputImages = tools.ReferenceImagesFromPipelineRC(execCtx.PipelineRC, 5)
+	}
+	selected, err := e.resolveSelectedRoute(ctx, *execCtx.AccountID, execCtx.RunID)
 	if err != nil {
-		return errResult("tool.not_configured", err.Error(), started)
+		return toolutil.ErrResult("tool.not_configured", err.Error(), started)
 	}
 	request := llm.ImageGenerationRequest{
 		Prompt:       prompt,
 		InputImages:  inputImages,
-		Size:         strings.TrimSpace(stringArg(args, "size")),
-		Quality:      strings.TrimSpace(stringArg(args, "quality")),
-		Background:   strings.TrimSpace(stringArg(args, "background")),
-		OutputFormat: strings.TrimSpace(stringArg(args, "output_format")),
+		Size:         strings.TrimSpace(toolutil.StringArg(args, "size")),
+		Quality:      strings.TrimSpace(toolutil.StringArg(args, "quality")),
+		Background:   strings.TrimSpace(toolutil.StringArg(args, "background")),
+		OutputFormat: strings.TrimSpace(toolutil.StringArg(args, "output_format")),
 	}
 	caps := routing.SelectedRouteModelCapabilities(selected)
 	if selected.Credential.ProviderKind == routing.ProviderKindOpenAI && (caps.ModelType == "image" || (caps.SupportsOutputModality("image") && !caps.SupportsOutputModality("text"))) {
@@ -90,7 +95,7 @@ func (e *ToolExecutor) Execute(
 	}
 	resolved, err := pipeline.ResolveGatewayConfigFromSelectedRoute(*selected, false, 0)
 	if err != nil {
-		return errResult("tool.execution_failed", fmt.Sprintf("resolve image model failed: %s", err.Error()), started)
+		return toolutil.ErrResult("tool.execution_failed", fmt.Sprintf("resolve image model failed: %s", err.Error()), started)
 	}
 
 	generator := e.generate
@@ -99,15 +104,15 @@ func (e *ToolExecutor) Execute(
 	}
 	image, err := generator(ctx, resolved, request)
 	if err != nil {
-		return errResultWithDetails(errorClassForGenerateError(err), err.Error(), errorDetailsForGenerateError(err), started)
+		return toolutil.ErrResultWithDetails(toolutil.ErrorClassForGenerateError(err), err.Error(), toolutil.ErrorDetailsForGenerateError(err), started)
 	}
 	if len(image.Bytes) == 0 {
-		return errResult("tool.execution_failed", "image provider returned empty image bytes", started)
+		return toolutil.ErrResult("tool.execution_failed", "image provider returned empty image bytes", started)
 	}
 
 	contentType := normalizeImageContentType(image.MimeType, image.Bytes)
 	filename := defaultGeneratedImageName + fileExtForContentType(contentType)
-	key := buildArtifactKey(execCtx, filename)
+	key := toolutil.BuildArtifactKey(execCtx, filename)
 	var threadID *string
 	if execCtx.ThreadID != nil {
 		value := execCtx.ThreadID.String()
@@ -118,7 +123,7 @@ func (e *ToolExecutor) Execute(
 		ContentType: contentType,
 		Metadata:    metadata,
 	}); err != nil {
-		return errResult("tool.upload_failed", fmt.Sprintf("save generated image failed: %s", err.Error()), started)
+		return toolutil.ErrResult("tool.upload_failed", fmt.Sprintf("save generated image failed: %s", err.Error()), started)
 	}
 
 	result := map[string]any{
@@ -143,7 +148,7 @@ func (e *ToolExecutor) Execute(
 
 	return tools.ExecutionResult{
 		ResultJSON: result,
-		DurationMs: durationMs(started),
+		DurationMs: toolutil.DurationMs(started),
 	}
 }
 
@@ -151,16 +156,19 @@ func (e *ToolExecutor) IsAvailableForAccount(ctx context.Context, accountID uuid
 	if accountID == uuid.Nil {
 		return false
 	}
-	_, err := e.resolveSelectedRoute(ctx, accountID)
+	_, err := e.resolveSelectedRoute(ctx, accountID, uuid.Nil)
 	return err == nil
 }
 
-func (e *ToolExecutor) resolveSelectedRoute(ctx context.Context, accountID uuid.UUID) (*routing.SelectedProviderRoute, error) {
+func (e *ToolExecutor) resolveSelectedRoute(ctx context.Context, accountID uuid.UUID, runID uuid.UUID) (*routing.SelectedProviderRoute, error) {
 	if e.routingLoader == nil {
 		return nil, fmt.Errorf("image generation routing is not configured")
 	}
 	selector := ""
-	if e.db != nil {
+	if e.db != nil && runID != uuid.Nil {
+		selector = strings.TrimSpace(e.runGenerationModelOverride(ctx, runID, "image"))
+	}
+	if selector == "" && e.db != nil {
 		_ = e.db.QueryRow(ctx,
 			`SELECT value FROM account_entitlement_overrides
 			  WHERE account_id = $1 AND key = $2
@@ -187,42 +195,52 @@ func (e *ToolExecutor) resolveSelectedRoute(ctx context.Context, accountID uuid.
 		return nil, fmt.Errorf("image routing config is empty")
 	}
 
-	credName, modelName, exact := splitModelSelector(selector)
+	credName, modelName, exact := toolutil.SplitModelSelector(selector)
 	if exact {
 		if route, cred, ok := cfg.GetHighestPriorityRouteByCredentialAndModel(credName, modelName, map[string]any{}); ok {
-			return &routing.SelectedProviderRoute{Route: route, Credential: cred}, nil
+			selected := routing.CoerceZenMuxGenerationRoute(routing.SelectedProviderRoute{Route: route, Credential: cred})
+			return &selected, nil
 		}
 		if route, cred, ok := cfg.GetHighestPriorityRouteByCredentialName(credName, map[string]any{}); ok {
 			route.Model = modelName
-			return &routing.SelectedProviderRoute{Route: route, Credential: cred}, nil
+			selected := routing.CoerceZenMuxGenerationRoute(routing.SelectedProviderRoute{Route: route, Credential: cred})
+			return &selected, nil
 		}
 		return nil, fmt.Errorf("image generation route not found for selector: %s", selector)
 	}
 	if route, cred, ok := cfg.GetHighestPriorityRouteByModel(selector, map[string]any{}); ok {
-		return &routing.SelectedProviderRoute{Route: route, Credential: cred}, nil
+		selected := routing.CoerceZenMuxGenerationRoute(routing.SelectedProviderRoute{Route: route, Credential: cred})
+		return &selected, nil
 	}
 	return nil, fmt.Errorf("image generation route not found for selector: %s", selector)
 }
 
-func splitModelSelector(selector string) (string, string, bool) {
-	parts := strings.SplitN(strings.TrimSpace(selector), "^", 2)
-	if len(parts) != 2 {
-		return "", strings.TrimSpace(selector), false
+func (e *ToolExecutor) runGenerationModelOverride(ctx context.Context, runID uuid.UUID, task string) string {
+	var raw string
+	if err := e.db.QueryRow(ctx,
+		`SELECT data_json FROM run_events
+		  WHERE run_id = $1 AND type = 'run.started'
+		  ORDER BY seq ASC LIMIT 1`,
+		runID,
+	).Scan(&raw); err != nil {
+		return ""
 	}
-	credentialName := strings.TrimSpace(parts[0])
-	modelName := strings.TrimSpace(parts[1])
-	if credentialName == "" || modelName == "" {
-		return "", strings.TrimSpace(selector), false
+	var data map[string]any
+	if err := json.Unmarshal([]byte(raw), &data); err != nil {
+		return ""
 	}
-	return credentialName, modelName, true
-}
-
-func buildArtifactKey(execCtx tools.ExecutionContext, filename string) string {
-	accountID := "_anonymous"
-	if execCtx.AccountID != nil {
-		accountID = execCtx.AccountID.String()
+	rawTask, _ := data["generation_task"].(string)
+	if !strings.EqualFold(strings.TrimSpace(rawTask), task) {
+		return ""
 	}
-	return filepath.ToSlash(fmt.Sprintf("%s/%s/%s", accountID, execCtx.RunID.String(), filename))
+	model, _ := data["generation_model"].(string)
+	model = strings.TrimSpace(model)
+	// Reject credential^model selectors from untrusted run event data to prevent
+	// users from escalating to credentials not intended for their account tier.
+	if strings.Contains(model, "^") {
+		return ""
+	}
+	return model
 }
 
 func (e *ToolExecutor) loadInputImages(ctx context.Context, args map[string]any, accountID uuid.UUID) ([]llm.ContentPart, error) {
@@ -325,74 +343,4 @@ func fileExtForContentType(contentType string) string {
 		}
 		return ".png"
 	}
-}
-
-func errorClassForGenerateError(err error) string {
-	if err == nil {
-		return "tool.execution_failed"
-	}
-	if gatewayErr, ok := err.(llm.GatewayError); ok {
-		return gatewayErr.ErrorClass
-	}
-	if gatewayErr, ok := err.(*llm.GatewayError); ok && gatewayErr != nil {
-		return gatewayErr.ErrorClass
-	}
-	return "tool.execution_failed"
-}
-
-func errorDetailsForGenerateError(err error) map[string]any {
-	if err == nil {
-		return nil
-	}
-	if gatewayErr, ok := err.(llm.GatewayError); ok {
-		return copyMap(gatewayErr.Details)
-	}
-	if gatewayErr, ok := err.(*llm.GatewayError); ok && gatewayErr != nil {
-		return copyMap(gatewayErr.Details)
-	}
-	return nil
-}
-
-func stringArg(args map[string]any, key string) string {
-	if args == nil {
-		return ""
-	}
-	if value, ok := args[key].(string); ok {
-		return value
-	}
-	return ""
-}
-
-func errResult(errorClass, message string, started time.Time) tools.ExecutionResult {
-	return errResultWithDetails(errorClass, message, nil, started)
-}
-
-func errResultWithDetails(errorClass, message string, details map[string]any, started time.Time) tools.ExecutionResult {
-	return tools.ExecutionResult{
-		Error: &tools.ExecutionError{
-			ErrorClass: errorClass,
-			Message:    message,
-			Details:    copyMap(details),
-		},
-		DurationMs: durationMs(started),
-	}
-}
-
-func copyMap(src map[string]any) map[string]any {
-	if len(src) == 0 {
-		return nil
-	}
-	dst := make(map[string]any, len(src))
-	for key, value := range src {
-		dst[key] = value
-	}
-	return dst
-}
-
-func durationMs(started time.Time) int {
-	elapsed := time.Since(started)
-	if elapsed < 0 {
-		return 0
-	}
-	return int(elapsed / time.Millisecond)
 }

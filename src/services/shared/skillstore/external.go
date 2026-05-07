@@ -19,7 +19,7 @@ type ExternalSkill struct {
 // DiscoverExternalSkills 扫描给定目录列表，发现包含 SKILL.md 的子目录。
 // 每个包含 SKILL.md 的直接子目录被视为一个外部技能。
 func DiscoverExternalSkills(dirs []string) []ExternalSkill {
-	skills := make([]ExternalSkill, 0)
+	var skills []ExternalSkill
 	seen := make(map[string]struct{})
 	for _, dir := range dirs {
 		dir = strings.TrimSpace(dir)

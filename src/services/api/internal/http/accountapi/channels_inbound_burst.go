@@ -64,7 +64,6 @@ type channelInboundBurstRunner struct {
 	messageRepo  *data.MessageRepository
 	pool         data.DB
 	inputNotify  func(ctx context.Context, runID uuid.UUID)
-	bus          eventbus.EventBus
 }
 
 func StartChannelInboundBurstRunner(ctx context.Context, deps ChannelInboundBurstRunnerDeps) {
@@ -104,50 +103,11 @@ func StartChannelInboundBurstRunner(ctx context.Context, deps ChannelInboundBurs
 		messageRepo:  deps.MessageRepo,
 		pool:         deps.Pool,
 		inputNotify:  inputNotify,
-		bus:          deps.Bus,
 	}
 	go runner.run(ctx)
 }
 
-type channelInboundBurstScanResult struct {
-	pending bool
-	retry   bool
-	nextDue *time.Time
-}
-
-func (s *channelInboundBurstScanResult) merge(other channelInboundBurstScanResult) {
-	if other.pending {
-		s.pending = true
-	}
-	if other.retry {
-		s.retry = true
-	}
-	if other.nextDue != nil {
-		s.observeNextDue(*other.nextDue)
-	}
-}
-
-func (s *channelInboundBurstScanResult) observeNextDue(dueAt time.Time) {
-	if dueAt.IsZero() {
-		return
-	}
-	dueAt = dueAt.UTC()
-	s.pending = true
-	if s.nextDue == nil || dueAt.Before(*s.nextDue) {
-		next := dueAt
-		s.nextDue = &next
-	}
-}
-
 func (r channelInboundBurstRunner) run(ctx context.Context) {
-	if r.bus != nil {
-		r.runEventDriven(ctx)
-		return
-	}
-	r.runRecoveryPolling(ctx)
-}
-
-func (r channelInboundBurstRunner) runRecoveryPolling(ctx context.Context) {
 	ticker := time.NewTicker(channelInboundBurstRecoveryInterval)
 	defer ticker.Stop()
 
@@ -164,122 +124,21 @@ func (r channelInboundBurstRunner) runRecoveryPolling(ctx context.Context) {
 	}
 }
 
-func (r channelInboundBurstRunner) runEventDriven(ctx context.Context) {
-	for {
-		sub, err := r.bus.Subscribe(ctx, pgnotify.ChannelInboundBurst)
-		if err != nil {
-			slog.Warn("channel_inbound_burst_subscribe_failed", "error", err.Error())
-			r.runRecoveryPolling(ctx)
-			return
-		}
-
-		subscriptionClosed := r.runEventDrivenSubscription(ctx, sub)
-		_ = sub.Close()
-		if !subscriptionClosed {
-			return
-		}
-		if !sleepChannelInboundBurstWake(ctx, channelInboundBurstRecoveryInterval) {
-			return
-		}
-	}
-}
-
-func (r channelInboundBurstRunner) runEventDrivenSubscription(ctx context.Context, sub eventbus.Subscription) bool {
-	for {
-		result, err := r.scanPending(ctx)
-		if err != nil && ctx.Err() == nil {
-			slog.Warn("channel_inbound_burst_scan_failed", "error", err.Error())
-			result.retry = true
-		}
-
-		delay, hasDelay := nextChannelInboundBurstScanDelay(result, time.Now().UTC())
-		subscriptionClosed, ok := waitChannelInboundBurstWake(ctx, sub.Channel(), delay, hasDelay)
-		if !ok {
-			return false
-		}
-		if subscriptionClosed {
-			return true
-		}
-	}
-}
-
-func nextChannelInboundBurstScanDelay(result channelInboundBurstScanResult, now time.Time) (time.Duration, bool) {
-	if result.retry {
-		return channelInboundBurstRecoveryInterval, true
-	}
-	if result.nextDue == nil {
-		return 0, false
-	}
-	delay := result.nextDue.UTC().Sub(now.UTC())
-	if delay < 0 {
-		delay = 0
-	}
-	return delay, true
-}
-
-func waitChannelInboundBurstWake(ctx context.Context, wakeCh <-chan eventbus.Message, delay time.Duration, hasDelay bool) (bool, bool) {
-	if !hasDelay {
-		select {
-		case <-ctx.Done():
-			return false, false
-		case _, ok := <-wakeCh:
-			return !ok, true
-		}
-	}
-	timer := time.NewTimer(delay)
-	defer timer.Stop()
-	select {
-	case <-ctx.Done():
-		return false, false
-	case _, ok := <-wakeCh:
-		return !ok, true
-	case <-timer.C:
-		return false, true
-	}
-}
-
-func sleepChannelInboundBurstWake(ctx context.Context, delay time.Duration) bool {
-	timer := time.NewTimer(delay)
-	defer timer.Stop()
-	select {
-	case <-ctx.Done():
-		return false
-	case <-timer.C:
-		return true
-	}
-}
-
-func notifyChannelInboundBurst(ctx context.Context, bus eventbus.EventBus) {
-	if bus == nil {
-		return
-	}
-	_ = bus.Publish(ctx, pgnotify.ChannelInboundBurst, "")
-}
-
 func (r channelInboundBurstRunner) scan(ctx context.Context) error {
-	_, err := r.scanPending(ctx)
-	return err
-}
-
-func (r channelInboundBurstRunner) scanPending(ctx context.Context) (channelInboundBurstScanResult, error) {
-	var result channelInboundBurstScanResult
 	channels, err := r.listActiveInboundChannels(ctx)
 	if err != nil {
-		return result, err
+		return err
 	}
 	for _, ch := range channels {
-		channelResult, err := r.recoverChannel(ctx, ch, time.Now().UTC())
-		result.merge(channelResult)
-		if err != nil && ctx.Err() == nil {
+		if err := r.recoverChannel(ctx, ch); err != nil && ctx.Err() == nil {
 			slog.Warn("channel_inbound_burst_channel_recovery_failed",
 				"channel_id", ch.ID.String(),
 				"channel_type", ch.ChannelType,
 				"error", err.Error(),
 			)
-			result.retry = true
 		}
 	}
-	return result, nil
+	return nil
 }
 
 func (r channelInboundBurstRunner) listActiveInboundChannels(ctx context.Context) ([]data.Channel, error) {
@@ -302,18 +161,12 @@ func (r channelInboundBurstRunner) listActiveInboundChannels(ctx context.Context
 	return out, nil
 }
 
-func (r channelInboundBurstRunner) recoverChannel(ctx context.Context, ch data.Channel, now time.Time) (channelInboundBurstScanResult, error) {
-	var result channelInboundBurstScanResult
-	batches, err := r.ledgerRepo.ListPendingInboundBatchesByChannel(ctx, ch.ID, channelInboundBurstScanBatchLimit)
+func (r channelInboundBurstRunner) recoverChannel(ctx context.Context, ch data.Channel) error {
+	batches, err := r.ledgerRepo.ListDueInboundBatchesByChannel(ctx, ch.ID, time.Now().UTC(), channelInboundBurstScanBatchLimit)
 	if err != nil {
-		return result, err
+		return err
 	}
 	for _, batch := range batches {
-		result.observeNextDue(batch.DueAt)
-		if batch.DueAt.After(now.UTC()) {
-			continue
-		}
-		result.retry = true
 		if err := r.recoverBatch(ctx, ch, batch); err != nil && ctx.Err() == nil {
 			slog.Warn("channel_inbound_burst_batch_recovery_failed",
 				"channel_id", ch.ID.String(),
@@ -324,7 +177,7 @@ func (r channelInboundBurstRunner) recoverChannel(ctx context.Context, ch data.C
 			)
 		}
 	}
-	return result, nil
+	return nil
 }
 
 func (r channelInboundBurstRunner) recoverBatch(

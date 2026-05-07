@@ -4,7 +4,7 @@ import * as http from 'http'
 import * as os from 'os'
 import * as path from 'path'
 import { execFileSync } from 'child_process'
-import { loadConfig, loadVersionsFile, saveVersionsFile, type VersionsState } from './config'
+import { loadVersionsFile, saveVersionsFile, type VersionsState } from './config'
 
 export type ComponentStatus = {
   current: string | null
@@ -129,13 +129,8 @@ function buildComponentStatus(current: string | null, latest: string | null): Co
   return {
     current,
     latest,
-    available: !!(current && latest && latest !== current),
+    available: !!(latest && latest !== current),
   }
-}
-
-function buildOpenVikingStatus(current: string | null, latest: string | null): ComponentStatus {
-  const memory = loadConfig().memory
-  return buildComponentStatus(current, memory.enabled && memory.provider === 'openviking' ? latest : null)
 }
 
 export function getCachedUpdateStatus(): UpdateStatus {
@@ -155,7 +150,7 @@ export function getCachedUpdateStatus(): UpdateStatus {
   const opencliLatest = normalizeComponentVersion(cache?.opencli ?? null)
 
   return {
-    openviking: buildOpenVikingStatus(ovCurrent, ovLatest),
+    openviking: buildComponentStatus(ovCurrent, ovLatest),
     sandbox: {
       kernel: buildComponentStatus(kernelCurrent, kernelLatest),
       rootfs: buildComponentStatus(rootfsCurrent, rootfsLatest),
@@ -369,15 +364,11 @@ export async function syncLocalVersions(includeBridge = false): Promise<LocalVer
       modules = await bridgeListModules()
     }
     const openviking = modules?.find((module) => module.id === 'openviking')
-    if (openviking) {
-      const openvikingVersion = normalizeComponentVersion(openviking.version)
-      if (!openvikingVersion) {
-        delete next.openviking
-      } else {
-        next.openviking = {
-          version: openvikingVersion,
-          updated_at: new Date().toISOString(),
-        }
+    const openvikingVersion = normalizeComponentVersion(openviking?.version)
+    if (openvikingVersion) {
+      next.openviking = {
+        version: openvikingVersion,
+        updated_at: new Date().toISOString(),
       }
     }
   }
@@ -402,7 +393,7 @@ export async function checkForUpdates(): Promise<UpdateStatus> {
   const opencliLatest = normalizeComponentVersion(manifest.bins?.opencli?.version ?? null)
 
   const next: UpdateStatus = {
-    openviking: buildOpenVikingStatus(ovCurrent, ovLatest),
+    openviking: buildComponentStatus(ovCurrent, ovLatest),
     sandbox: {
       kernel: buildComponentStatus(kernelCurrent, kernelLatest),
       rootfs: buildComponentStatus(rootfsCurrent, rootfsLatest),
@@ -484,8 +475,9 @@ export async function applyUpdate(
   const now = new Date().toISOString()
 
   if (component === 'openviking') {
-    const { getBridgeBaseUrl, waitForBridgeOperation } = await import('./sidecar')
+    const { getBridgeBaseUrl, getDesktopAccessToken, waitForBridgeOperation } = await import('./sidecar')
     const baseUrl = getBridgeBaseUrl()
+    const desktopToken = getDesktopAccessToken()
     const body = JSON.stringify({ image: manifest.openviking.image })
 
     const operationId = await new Promise<string>((resolve, reject) => {
@@ -497,6 +489,7 @@ export async function applyUpdate(
           headers: {
             'Content-Type': 'application/json',
             'Content-Length': Buffer.byteLength(body, 'utf-8'),
+            'Authorization': `Bearer ${desktopToken}`,
           },
         },
         (res) => {

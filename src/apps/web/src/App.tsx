@@ -9,9 +9,6 @@ import { AuthProvider } from './contexts/auth'
 import { ThreadListProvider } from './contexts/thread-list'
 import { AppUIProvider } from './contexts/app-ui'
 import { CreditsProvider } from './contexts/credits'
-import { SharePage } from './components/SharePage'
-import { VerifyEmailPage } from './components/VerifyEmailPage'
-import { OnboardingWizard } from './components/OnboardingWizard'
 import { useLocale } from './contexts/LocaleContext'
 import {
   clearActiveThreadIdInStorage,
@@ -29,6 +26,11 @@ import {
 import { isApiError } from './api'
 
 const ScheduledJobsPage = lazy(() => import('./pages/scheduled-jobs/ScheduledJobsPage'))
+// Pages off the primary chat path. OnboardingWizard is ~2000 LOC and only
+// runs once per install; Share/Verify are hit via specific URLs only.
+const SharePage = lazy(() => import('./components/SharePage').then((m) => ({ default: m.SharePage })))
+const VerifyEmailPage = lazy(() => import('./components/VerifyEmailPage').then((m) => ({ default: m.VerifyEmailPage })))
+const OnboardingWizard = lazy(() => import('./components/OnboardingWizard').then((m) => ({ default: m.OnboardingWizard })))
 
 const sessionRestoreRetries = 12
 const sessionRestoreDelayMs = 1000
@@ -254,12 +256,18 @@ function App() {
     if (isDesktop()) return <LoadingPage label={t.loading} />
     return null
   }
-  if (onboardingDone === false) return <OnboardingWizard onComplete={handleOnboardingComplete} />
+  if (onboardingDone === false) {
+    return (
+      <Suspense fallback={<LoadingPage label={t.loading} />}>
+        <OnboardingWizard onComplete={handleOnboardingComplete} />
+      </Suspense>
+    )
+  }
 
   return (
     <Routes>
-      <Route path="/verify" element={<VerifyEmailPage />} />
-      <Route path="/s/:token" element={<SharePage />} />
+      <Route path="/verify" element={<Suspense fallback={<LoadingPage label={t.loading} />}><VerifyEmailPage /></Suspense>} />
+      <Route path="/s/:token" element={<Suspense fallback={<LoadingPage label={t.loading} />}><SharePage /></Suspense>} />
       {!authChecked ? (
         <Route path="*" element={<LoadingPage label={t.loading} />} />
       ) : !accessToken ? (

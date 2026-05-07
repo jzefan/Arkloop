@@ -65,6 +65,14 @@ func (s *FilesystemStore) Put(ctx context.Context, key string, data []byte) erro
 	return s.PutObject(ctx, key, data, PutOptions{})
 }
 
+func (s *FilesystemStore) PutObjectStream(ctx context.Context, key string, r io.Reader, options PutOptions) error {
+	data, err := io.ReadAll(r)
+	if err != nil {
+		return fmt.Errorf("read stream for %q: %w", key, err)
+	}
+	return s.PutObject(ctx, key, data, options)
+}
+
 func (s *FilesystemStore) PutObject(_ context.Context, key string, data []byte, options PutOptions) error {
 	dataPath, metadataPath, normalizedKey, err := s.objectPaths(key)
 	if err != nil {
@@ -401,6 +409,7 @@ func (s *FilesystemStore) cleanupEmptyParents(root, start string) {
 }
 
 var _ Store = (*FilesystemStore)(nil)
+var _ StreamingStore = (*FilesystemStore)(nil)
 var _ BlobStore = (*FilesystemStore)(nil)
 var _ LifecycleConfigurator = (*FilesystemStore)(nil)
 var _ BucketOpener = (*FilesystemOpener)(nil)

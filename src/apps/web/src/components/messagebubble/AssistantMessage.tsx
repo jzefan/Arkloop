@@ -167,7 +167,7 @@ export function AssistantActionBar({
               {webSources.slice(0, 3).map((s, i) => {
                 const domain = getDomain(s.url)
                 return (
-                  <img
+                  <img loading="lazy" decoding="async"
                     key={i}
                     src={`https://www.google.com/s2/favicons?domain=${domain}&sz=16`}
                     width={18}

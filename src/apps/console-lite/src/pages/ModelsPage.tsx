@@ -32,6 +32,7 @@ const PROVIDER_PRESETS = [
   { key: 'openai_chat_completions', provider: 'openai', openai_api_mode: 'chat_completions' },
   { key: 'anthropic_message', provider: 'anthropic', openai_api_mode: undefined },
   { key: 'gemini', provider: 'gemini', openai_api_mode: undefined },
+  { key: 'deepseek', provider: 'deepseek', openai_api_mode: undefined },
 ] as const
 
 type ProviderPresetKey = typeof PROVIDER_PRESETS[number]['key']
@@ -39,8 +40,16 @@ type ProviderPresetKey = typeof PROVIDER_PRESETS[number]['key']
 function toPresetKey(provider: string, mode: string | null): ProviderPresetKey {
   if (provider === 'anthropic') return 'anthropic_message'
   if (provider === 'gemini') return 'gemini'
+  if (provider === 'deepseek') return 'deepseek'
   if (mode === 'chat_completions') return 'openai_chat_completions'
   return 'openai_responses'
+}
+
+function presetBaseUrlPlaceholder(key: ProviderPresetKey): string {
+  if (key === 'deepseek') return 'https://api.deepseek.com'
+  if (key === 'gemini') return 'https://generativelanguage.googleapis.com/v1beta'
+  if (key === 'anthropic_message') return 'https://api.anthropic.com'
+  return 'https://api.openai.com/v1'
 }
 
 const inputCls =
@@ -280,7 +289,7 @@ function AddProviderModal({ accessToken, scope, tc, t, onClose, onCreated }: {
           </LabelField>
 
           <LabelField label={tc.baseUrl}>
-            <input value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} placeholder="https://api.openai.com/v1" className={inputCls} />
+            <input value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} placeholder={presetBaseUrlPlaceholder(preset)} className={inputCls} />
           </LabelField>
         </div>
 
@@ -397,7 +406,7 @@ function ProviderDetail({
         </LabelField>
 
         <LabelField label={tc.baseUrl}>
-          <input value={formBaseUrl} onChange={(e) => setFormBaseUrl(e.target.value)} placeholder="https://api.openai.com/v1" className={inputCls} />
+          <input value={formBaseUrl} onChange={(e) => setFormBaseUrl(e.target.value)} placeholder={presetBaseUrlPlaceholder(formPreset)} className={inputCls} />
         </LabelField>
       </div>
 
@@ -809,6 +818,7 @@ function presetLabel(key: string, tc: ReturnType<typeof useLocale>['t']['models'
     openai_chat_completions: tc.clientTypeOpenaiChat ?? 'OpenAI Chat Completions',
     anthropic_message: tc.clientTypeAnthropic ?? 'Anthropic Messages',
     gemini: tc.clientTypeGemini ?? 'Google Gemini',
+    deepseek: tc.clientTypeDeepSeek ?? 'DeepSeek',
   }
   return map[key] ?? key
 }

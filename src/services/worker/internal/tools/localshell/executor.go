@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"arkloop/services/worker/internal/tools"
+	"arkloop/services/worker/internal/tools/writeperm"
 )
 
 const (
@@ -116,12 +117,21 @@ func (e *Executor) executeExecCommand(
 	if rewritten := rtkRewrite(ctx, command); rewritten != "" {
 		command = rewritten
 	}
+	cwd, err := e.resolveCwd(reqArgs.Cwd, execCtx.WorkDir)
+	if err != nil {
+		return errResult(errorArgsInvalid, err.Error(), started)
+	}
+	for _, path := range DetectModifiedFiles(command, cwd) {
+		if err := writeperm.Check(ctx, e.workDir, path, "exec_command"); err != nil {
+			return errResult(errorArgsInvalid, err.Error(), started)
+		}
+	}
 
 	req := ExecCommandRequest{
 		RunID:     execCtx.RunID.String(),
 		Command:   command,
 		Mode:      reqArgs.Mode,
-		Cwd:       resolveExecCwd(reqArgs.Cwd, execCtx.WorkDir, e.workDir),
+		Cwd:       cwd,
 		TimeoutMs: reqArgs.TimeoutMs,
 		Size:      reqArgs.Size,
 		Env:       sanitizeLocalEnvPatches(reqArgs.Env),
@@ -139,6 +149,20 @@ func (e *Executor) executeExecCommand(
 		return mapLocalProcessError(runErr, started)
 	}
 	return buildProcessResult(resp, ExecCommandAgentSpec.Name, execCtx.RunID.String(), execCtx.PerToolSoftLimits, started)
+}
+
+func (e *Executor) resolveCwd(requested string, runWorkDir string) (string, error) {
+	cwd := resolveExecCwd(requested, runWorkDir, e.workDir)
+	cwd = strings.TrimSpace(cwd)
+	if cwd == "" {
+		cwd = e.workDir
+	}
+	cleaned := filepath.Clean(cwd)
+	root := filepath.Clean(e.workDir)
+	if cleaned != root && !strings.HasPrefix(cleaned, root+string(filepath.Separator)) {
+		return "", fmt.Errorf("cwd %q is outside the workspace", cwd)
+	}
+	return cleaned, nil
 }
 
 func (e *Executor) executeContinueProcess(args map[string]any, execCtx tools.ExecutionContext, started time.Time) tools.ExecutionResult {

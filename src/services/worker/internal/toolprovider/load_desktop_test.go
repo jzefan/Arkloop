@@ -57,7 +57,7 @@ func TestLoadDesktopActiveToolProvidersPlatformRow(t *testing.T) {
 	if _, err := db.Exec(ctx, `
 		INSERT INTO tool_provider_configs (
 			account_id, owner_kind, group_name, provider_name, is_active, config_json
-		) VALUES ($1, 'platform', 'web_search', 'web_search.basic', 1, $2)`,
+		) VALUES ($1, 'platform', 'web_search', 'web_search.duckduckgo', 1, $2)`,
 		accountID.String(), string(cfgBytes),
 	); err != nil {
 		t.Fatalf("insert tool_provider_configs: %v", err)
@@ -71,7 +71,7 @@ func TestLoadDesktopActiveToolProvidersPlatformRow(t *testing.T) {
 		t.Fatalf("expected 1 platform row, got %d", len(platform))
 	}
 	c := platform[0]
-	if c.GroupName != "web_search" || c.ProviderName != "web_search.basic" {
+	if c.GroupName != "web_search" || c.ProviderName != "web_search.duckduckgo" {
 		t.Fatalf("unexpected row: %+v", c)
 	}
 	raw, err := json.Marshal(c.ConfigJSON)
@@ -86,7 +86,7 @@ func TestLoadDesktopActiveToolProvidersPlatformRow(t *testing.T) {
 		t.Fatalf("endpoint: %v", out["endpoint"])
 	}
 	rt := ToRuntimeProviderConfig(c)
-	if rt.GroupName != "web_search" || rt.ProviderName != "web_search.basic" {
+	if rt.GroupName != "web_search" || rt.ProviderName != "web_search.duckduckgo" {
 		t.Fatalf("runtime: %+v", rt)
 	}
 	if rt.ConfigJSON == nil {

@@ -8,7 +8,6 @@ import {
   getSidecarStatus,
   getSidecarRuntime,
   downloadSidecar,
-  checkSidecarVersion,
   isSidecarAvailable,
   getDesktopAccessToken,
   getBridgeBaseUrl,
@@ -178,7 +177,7 @@ export function registerIpcHandlers(
   })
 
   ipcMain.handle('arkloop:sidecar:check-update', async () => {
-    return checkSidecarVersion()
+    return checkForUpdates()
   })
 
   ipcMain.handle('arkloop:updater:check', async () => {
@@ -463,6 +462,74 @@ export function registerIpcHandlers(
     return result.filePaths[0]
   })
 
+  ipcMain.handle('arkloop:dialog:choose-export-folder', async () => {
+    const { dialog } = require('electron') as typeof import('electron')
+    const win = getWindow()
+    const result = await dialog.showOpenDialog(win ?? BrowserWindow.getFocusedWindow()!, {
+      title: '选择导出文件夹',
+      properties: ['openDirectory', 'createDirectory'],
+    })
+    if (result.canceled || result.filePaths.length === 0) {
+      return { ok: false, canceled: true }
+    }
+    return { ok: true, folderPath: result.filePaths[0] }
+  })
+
+  ipcMain.handle('arkloop:dialog:save-zip-to-folder', async (_event, input?: { folderPath?: string; defaultFilename?: string; data?: Uint8Array | ArrayBuffer | number[] }) => {
+    const fs = require('fs') as typeof import('fs')
+    const path = require('path') as typeof import('path')
+    const folderPath = typeof input?.folderPath === 'string' ? input.folderPath : ''
+    const rawFilename = typeof input?.defaultFilename === 'string' ? input.defaultFilename : 'arkloop-conversations.zip'
+    const filename = rawFilename.replace(/[\\/:*?"<>|]+/g, '_').trim() || 'arkloop-conversations.zip'
+    if (!folderPath || !fs.existsSync(folderPath) || !fs.statSync(folderPath).isDirectory()) {
+      throw new Error('export folder is unavailable')
+    }
+    const rawData = input?.data
+    const data = rawData instanceof Uint8Array
+      ? Buffer.from(rawData)
+      : rawData instanceof ArrayBuffer
+        ? Buffer.from(rawData)
+        : Array.isArray(rawData)
+          ? Buffer.from(rawData)
+          : null
+    if (!data || data.byteLength === 0) {
+      throw new Error('export data is empty')
+    }
+    const filePath = path.join(folderPath, filename)
+    fs.writeFileSync(filePath, data)
+    return { ok: true, filePath }
+  })
+
+  ipcMain.handle('arkloop:dialog:export-zip-to-folder', async (_event, input?: { defaultFilename?: string; data?: Uint8Array | ArrayBuffer | number[] }) => {
+    const { dialog } = require('electron') as typeof import('electron')
+    const fs = require('fs') as typeof import('fs')
+    const path = require('path') as typeof import('path')
+    const rawFilename = typeof input?.defaultFilename === 'string' ? input.defaultFilename : 'arkloop-conversations.zip'
+    const filename = rawFilename.replace(/[\\/:*?"<>|]+/g, '_').trim() || 'arkloop-conversations.zip'
+    const rawData = input?.data
+    const data = rawData instanceof Uint8Array
+      ? Buffer.from(rawData)
+      : rawData instanceof ArrayBuffer
+        ? Buffer.from(rawData)
+        : Array.isArray(rawData)
+          ? Buffer.from(rawData)
+          : null
+    if (!data || data.byteLength === 0) {
+      throw new Error('export data is empty')
+    }
+    const win = getWindow()
+    const folder = await dialog.showOpenDialog(win ?? BrowserWindow.getFocusedWindow()!, {
+      title: '选择导出文件夹',
+      properties: ['openDirectory', 'createDirectory'],
+    })
+    if (folder.canceled || folder.filePaths.length === 0) {
+      return { ok: false, canceled: true }
+    }
+    const filePath = path.join(folder.filePaths[0], filename)
+    fs.writeFileSync(filePath, data)
+    return { ok: true, filePath }
+  })
+
   ipcMain.handle('arkloop:fs:list-dir', (_event, folderPath: string, subPath: string) => {
     const path = require('path') as typeof import('path')
     const fs = require('fs') as typeof import('fs')
@@ -669,8 +736,8 @@ function providerNameToFetch(providerName: string): ConnectorsConfig['fetch']['p
 
 function providerNameToSearch(providerName: string): ConnectorsConfig['search']['provider'] {
   switch (providerName) {
-    case 'web_search.basic':
-      return 'basic'
+    case 'web_search.duckduckgo':
+      return 'duckduckgo'
     case 'web_search.searxng':
       return 'searxng'
     case 'web_search.tavily':
@@ -698,7 +765,7 @@ async function migrateLegacyConnectorsIfNeeded(config: AppConfig): Promise<void>
 }
 
 function hasLegacySearchConfig(connectors: ConnectorsConfig): boolean {
-  return connectors.search.provider === 'basic'
+  return connectors.search.provider === 'duckduckgo'
     || (connectors.search.provider === 'tavily' && Boolean(connectors.search.tavilyApiKey))
     || (connectors.search.provider === 'searxng' && Boolean(connectors.search.searxngBaseUrl))
 }
@@ -716,8 +783,8 @@ async function applyConnectorConfig(connectors: ConnectorsConfig): Promise<void>
 
 async function applySearchConnector(search: ConnectorsConfig['search']): Promise<void> {
   await deactivateToolProviderGroup('web_search')
-  if (search.provider === 'basic') {
-    await activateToolProvider('web_search', 'web_search.basic')
+  if (search.provider === 'duckduckgo') {
+    await activateToolProvider('web_search', 'web_search.duckduckgo')
     return
   }
   if (search.provider === 'tavily') {

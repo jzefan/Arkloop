@@ -8,8 +8,8 @@ import {
 import type { SpawnProfile, LlmProvider } from '../../api'
 import { useLocale } from '../../contexts/LocaleContext'
 import { isLocalMode } from '@arkloop/shared/desktop'
-import { getAvailableCatalogFromAdvancedJson } from '@arkloop/shared/llm/available-catalog-advanced-json'
 import { SettingsModelDropdown } from './SettingsModelDropdown'
+import { GenerationModelSettings } from './GenerationModelSettings'
 
 type Props = {
   accessToken: string
@@ -37,17 +37,6 @@ export function RoutingSettings({ accessToken }: Props) {
       value: `${p.name}^${m.model}`,
       label: `${p.name} / ${m.model}`,
     })))
-  const imageModelOptions = providers
-    .flatMap(p => p.models
-      .filter((m) => {
-        const catalog = getAvailableCatalogFromAdvancedJson(m.advanced_json)
-        const outputModalities = Array.isArray(catalog?.output_modalities) ? catalog.output_modalities : []
-        return outputModalities.includes('image')
-      })
-      .map(m => ({
-        value: `${p.name}^${m.model}`,
-        label: `${p.name} / ${m.model}`,
-      })))
 
   const handleChange = async (name: string, value: string) => {
     setSaving(name)
@@ -69,9 +58,6 @@ export function RoutingSettings({ accessToken }: Props) {
     task:    { label: a.spawnProfileTask,    desc: a.spawnProfileTaskDesc    },
     strong:  { label: a.spawnProfileStrong,  desc: a.spawnProfileStrongDesc  },
   }
-  const imageProfile = profiles.find((p) => p.profile === 'image')
-  const imageModelValue = imageProfile?.resolved_model ?? ''
-
   return (
     <div className="flex flex-col gap-4">
       <div>
@@ -115,35 +101,7 @@ export function RoutingSettings({ accessToken }: Props) {
       })}
 
       <div className="pt-2">
-        <h3 className="text-sm font-medium text-[var(--c-text-heading)]">
-          {a.imageGenerativeTitle}
-        </h3>
-        <p className="mt-1 text-xs text-[var(--c-text-muted)]">
-          {a.imageGenerativeDesc}
-        </p>
-      </div>
-
-      <div
-        className="flex items-center justify-between gap-4 rounded-xl px-5 py-4"
-        style={{ border: '0.5px solid var(--c-border-subtle)', background: 'var(--c-bg-menu)' }}
-      >
-        <div className="min-w-0 shrink-0">
-          <span className="text-sm font-medium text-[var(--c-text-primary)]">
-            {a.imageGenerativeTitle}
-          </span>
-          <p className="mt-0.5 text-xs text-[var(--c-text-muted)]">
-            {a.imageGenerativeDesc}
-          </p>
-        </div>
-        <div className="min-w-0 flex-1" style={{ maxWidth: 320 }}>
-          <SettingsModelDropdown
-            value={imageModelValue}
-            options={imageModelOptions}
-            placeholder={a.imageGenerativeUnset}
-            disabled={saving === 'image'}
-            onChange={v => handleChange('image', v)}
-          />
-        </div>
+        <GenerationModelSettings accessToken={accessToken} />
       </div>
     </div>
   )

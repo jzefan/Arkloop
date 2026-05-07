@@ -8,6 +8,7 @@ import { NotificationBell } from './NotificationBell'
 import { isDesktop } from '@arkloop/shared/desktop'
 import { DebugTrigger, useTimeZone } from '@arkloop/shared'
 import { buildDraftAttachmentRecords, restoreAttachmentFromDraftRecord } from '../draftAttachments'
+import { filterAttachableFilesForImageLimit } from '../lib/attachmentLimits'
 import { createThread, createMessage, createRun, uploadStagingAttachment, isApiError, type RunReasoningMode } from '../api'
 import {
   type InputDraftScope,
@@ -21,6 +22,7 @@ import {
   readWorkFolder,
   readDeveloperShowDebugPanel,
   writeInputDraftAttachments,
+  type SelectedModelKind,
 } from '../storage'
 import { useLocale } from '../contexts/LocaleContext'
 import { buildMessageRequest } from '../messageContent'
@@ -49,6 +51,21 @@ function deriveTitle(content: string, defaultTitle: string): string {
   const cleaned = content.trim().replace(/\s+/g, ' ')
   if (!cleaned) return defaultTitle
   return cleaned.length > 40 ? `${cleaned.slice(0, 40)}…` : cleaned
+}
+
+function splitGenerationRunSelection(modelOverride: string | undefined, modelKind: SelectedModelKind | undefined) {
+  if (modelOverride && (modelKind === 'image' || modelKind === 'video')) {
+    return {
+      runModelOverride: undefined,
+      generationTask: modelKind,
+      generationModel: modelOverride,
+    }
+  }
+  return {
+    runModelOverride: modelOverride,
+    generationTask: undefined,
+    generationModel: undefined,
+  }
 }
 
 type GreetingParts = {
@@ -266,7 +283,8 @@ export function WelcomePage() {
   }, [revokeDraftAttachment])
 
   const handleAttachFiles = useCallback((files: File[]) => {
-    const newAttachments = files.map((file) => ({
+    const acceptedFiles = filterAttachableFilesForImageLimit(attachmentsRef.current, files)
+    const newAttachments = acceptedFiles.map((file) => ({
       id: `${file.name}-${file.size}-${file.lastModified}`,
       file,
       name: file.name,
@@ -346,7 +364,7 @@ export function WelcomePage() {
     setInitialPlanMode((prev) => !prev)
   }, [appMode])
 
-  const handleSubmit = async (e: FormEvent<HTMLFormElement>, personaKey: string, modelOverride?: string) => {
+  const handleSubmit = async (e: FormEvent<HTMLFormElement>, personaKey: string, modelOverride?: string, modelKind?: SelectedModelKind) => {
     e.preventDefault()
     const text = (chatInputRef.current?.getValue() ?? '').trim()
     if ((!text && attachments.length === 0) || sending) return
@@ -370,13 +388,18 @@ export function WelcomePage() {
         }),
       )
       const userMessage = await createMessage(accessToken, thread.id, buildMessageRequest(text, uploaded))
+      const generationSelection = splitGenerationRunSelection(modelOverride, modelKind)
       const run = await createRun(
         accessToken,
         thread.id,
         personaKey,
-        modelOverride,
+        generationSelection.runModelOverride,
         readWorkFolder() ?? undefined,
         readSelectedReasoningMode() !== 'off' ? readSelectedReasoningMode() as RunReasoningMode : undefined,
+        {
+          generationTask: generationSelection.generationTask,
+          generationModel: generationSelection.generationModel,
+        },
       )
 
       if (personaKey === SEARCH_PERSONA_KEY) addSearchThreadId(thread.id)

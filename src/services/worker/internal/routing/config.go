@@ -33,7 +33,10 @@ const (
 	ProviderKindOpenAI    ProviderKind = "openai"
 	ProviderKindAnthropic ProviderKind = "anthropic"
 	ProviderKindGemini    ProviderKind = "gemini"
+	ProviderKindDeepSeek  ProviderKind = "deepseek"
 )
+
+const ZenMuxVertexAIBaseURL = "https://zenmux.ai/api/vertex-ai"
 
 type CredentialScope string
 
@@ -52,6 +55,33 @@ type ProviderCredential struct {
 	BaseURL      *string
 	OpenAIMode   *string
 	AdvancedJSON map[string]any
+}
+
+func (c ProviderCredential) IsZenMux() bool {
+	baseURL := ""
+	if c.BaseURL != nil {
+		baseURL = strings.ToLower(strings.TrimSpace(*c.BaseURL))
+	}
+	return strings.Contains(strings.ToLower(c.Name), "zenmux") || strings.Contains(baseURL, "zenmux.ai")
+}
+
+func (c ProviderCredential) IsZenMuxVertexAI() bool {
+	baseURL := ""
+	if c.BaseURL != nil {
+		baseURL = strings.ToLower(strings.TrimSpace(*c.BaseURL))
+	}
+	return c.ProviderKind == ProviderKindGemini && strings.Contains(baseURL, "zenmux.ai/api/vertex-ai")
+}
+
+func CoerceZenMuxGenerationRoute(selected SelectedProviderRoute) SelectedProviderRoute {
+	if !selected.Credential.IsZenMux() || selected.Credential.IsZenMuxVertexAI() {
+		return selected
+	}
+	baseURL := ZenMuxVertexAIBaseURL
+	selected.Credential.ProviderKind = ProviderKindGemini
+	selected.Credential.BaseURL = &baseURL
+	selected.Credential.OpenAIMode = nil
+	return selected
 }
 
 func (c ProviderCredential) ToPublicJSON() map[string]any {
@@ -503,8 +533,10 @@ func parseProviderKind(value string) (ProviderKind, error) {
 		return ProviderKindAnthropic, nil
 	case "gemini":
 		return ProviderKindGemini, nil
+	case "deepseek":
+		return ProviderKindDeepSeek, nil
 	default:
-		return "", fmt.Errorf("must be stub/openai/anthropic/gemini")
+		return "", fmt.Errorf("must be stub/openai/anthropic/gemini/deepseek")
 	}
 }
 
@@ -790,6 +822,8 @@ func dbProviderToKind(provider string) (ProviderKind, error) {
 		return ProviderKindAnthropic, nil
 	case "gemini":
 		return ProviderKindGemini, nil
+	case "deepseek":
+		return ProviderKindDeepSeek, nil
 	default:
 		return "", fmt.Errorf("unsupported provider: %s", provider)
 	}

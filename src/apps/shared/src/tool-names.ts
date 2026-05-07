@@ -3,7 +3,7 @@ const canonicalToolNameAliases: Record<string, string> = {
   'web_fetch.basic': 'web_fetch',
   'web_fetch.firecrawl': 'web_fetch',
   'web_fetch.jina': 'web_fetch',
-  'web_search.basic': 'web_search',
+  'web_search.duckduckgo': 'web_search',
   'web_search.searxng': 'web_search',
   'web_search.tavily': 'web_search',
 }

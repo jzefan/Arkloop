@@ -21,8 +21,6 @@ async function loadSubject() {
     return {
       ...actual,
       deleteSkill: vi.fn(),
-      discoverExternalSkills: vi.fn(async () => ({ dirs: [] })),
-      getExternalDirs: vi.fn(async () => []),
       importRegistrySkill: vi.fn(),
       importSkillFromGitHub: vi.fn(),
       importSkillFromUpload: vi.fn(),
@@ -33,7 +31,6 @@ async function loadSubject() {
       listPlatformSkills: vi.fn(),
       replaceDefaultSkills: vi.fn(),
       searchMarketSkills: vi.fn(),
-      setExternalDirs: vi.fn(),
       setPlatformSkillOverride: vi.fn(),
     }
   })
@@ -135,34 +132,5 @@ describe('SkillsSettingsContent', () => {
     expect(container.textContent).toContain('内置')
     expect(container.textContent).toContain('手动可用')
     expect(container.textContent).not.toContain('默认可用')
-  })
-
-  it('外部目录 skills 为空或缺失时仍渲染设置页', async () => {
-    const { api, SkillsSettingsContent, LocaleProvider } = await loadSubject()
-    vi.mocked(api.listInstalledSkills).mockResolvedValue([])
-    vi.mocked(api.listDefaultSkills).mockResolvedValue([])
-    vi.mocked(api.searchMarketSkills).mockResolvedValue([])
-    vi.mocked(api.listPlatformSkills).mockResolvedValue([])
-    vi.mocked(api.discoverExternalSkills).mockResolvedValue({
-      dirs: [
-        { path: '/tmp/empty-skills', skills: null },
-        { path: '/tmp/missing-skills' },
-      ],
-    } as unknown as Awaited<ReturnType<typeof api.discoverExternalSkills>>)
-
-    await act(async () => {
-      root!.render(
-        <LocaleProvider>
-          <SkillsSettingsContent accessToken="token" />
-        </LocaleProvider>,
-      )
-    })
-    await flushEffects()
-
-    expect(api.discoverExternalSkills).toHaveBeenCalledWith('token')
-    expect(container.textContent).toContain('外部技能目录')
-    expect(container.textContent).toContain('/tmp/empty-skills')
-    expect(container.textContent).toContain('/tmp/missing-skills')
-    expect(container.textContent).toContain('未发现技能')
   })
 })

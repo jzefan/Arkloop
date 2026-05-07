@@ -3,7 +3,7 @@ export type LocalPortMode = 'auto' | 'manual'
 export type DesktopPlatform = 'win32' | 'darwin' | 'linux' | string
 
 export type FetchProvider = 'none' | 'jina' | 'basic' | 'firecrawl'
-export type SearchProvider = 'none' | 'basic' | 'tavily' | 'searxng'
+export type SearchProvider = 'none' | 'duckduckgo' | 'tavily' | 'searxng'
 
 export type FetchConnectorConfig = {
   provider: FetchProvider
@@ -95,6 +95,10 @@ export type NetworkConfig = {
   userAgent?: string
 }
 
+export type WorkspaceConfig = {
+  root?: string
+}
+
 export type MemoryEntry = {
   id: string
   scope: string
@@ -132,6 +136,7 @@ export type DesktopConfig = {
   connectors: ConnectorsConfig
   memory: MemoryConfig
   network: NetworkConfig
+  workspace: WorkspaceConfig
   voice?: VoiceConfig
 }
 
@@ -260,6 +265,9 @@ export type ArkloopDesktopApi = {
   }
   dialog?: {
     openFolder: () => Promise<string | null>
+    chooseExportFolder?: () => Promise<{ ok: boolean; folderPath?: string; canceled?: boolean }>
+    saveZipToFolder?: (options: { folderPath: string; defaultFilename: string; data: Uint8Array }) => Promise<{ ok: boolean; filePath?: string }>
+    exportZipToFolder?: (options: { defaultFilename: string; data: Uint8Array }) => Promise<{ ok: boolean; filePath?: string; canceled?: boolean }>
   }
   fs?: {
     listDir: (folderPath: string, subPath?: string) => Promise<{ entries: LocalFileEntry[] }>
