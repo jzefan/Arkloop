@@ -32,7 +32,7 @@ const PROVIDER_PRESETS = [
   { key: 'openai_chat_completions', provider: 'openai', openai_api_mode: 'chat_completions' },
   { key: 'anthropic_message', provider: 'anthropic', openai_api_mode: undefined },
   { key: 'gemini', provider: 'gemini', openai_api_mode: undefined },
-  { key: 'deepseek', provider: 'deepseek', openai_api_mode: 'chat_completions' },
+  { key: 'deepseek', provider: 'deepseek', openai_api_mode: undefined },
   { key: 'zenmax_openai', provider: 'zenmax', openai_api_mode: 'chat_completions', zenmax_protocol: 'openai' },
   { key: 'zenmax_gemini', provider: 'zenmax', openai_api_mode: undefined, zenmax_protocol: 'gemini' },
   { key: 'zenmax_claude', provider: 'zenmax', openai_api_mode: undefined, zenmax_protocol: 'anthropic' },

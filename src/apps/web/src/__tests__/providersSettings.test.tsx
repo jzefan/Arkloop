@@ -143,7 +143,7 @@ describe('ProvidersSettings', () => {
 
     await openProviderCard('OpenRouter')
 
-    const importButton = Array.from(document.body.querySelectorAll('button')).find((button) => button.textContent?.includes('导入模型'))
+    const importButton = findButton(document.body, /导入模型|Import models/)
     expect(importButton).toBeTruthy()
 
     await act(async () => {
@@ -169,7 +169,7 @@ describe('ProvidersSettings', () => {
 
     await openProviderCard('OpenRouter')
 
-    const importButton = Array.from(document.body.querySelectorAll('button')).find((button) => button.textContent?.includes('导入模型'))
+    const importButton = findButton(document.body, /导入模型|Import models/)
     expect(importButton).toBeTruthy()
 
     await act(async () => {
@@ -378,7 +378,7 @@ describe('ProvidersSettings', () => {
     })
     await flushEffects()
 
-    const addButton = Array.from(container.querySelectorAll('button')).find((button) => button.textContent?.includes('添加供应商'))
+    const addButton = findButton(container, /添加供应商|Add provider/)
     expect(addButton).toBeTruthy()
     await act(async () => {
       addButton!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
@@ -397,7 +397,7 @@ describe('ProvidersSettings', () => {
     })
     await flushEffects()
 
-    const saveButton = Array.from(document.body.querySelectorAll('button')).find((button) => button.textContent?.includes('保存'))
+    const saveButton = findButton(document.body, /保存|Save/)
     expect(saveButton).toBeTruthy()
     await act(async () => {
       saveButton!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
@@ -416,6 +416,78 @@ describe('ProvidersSettings', () => {
     }))
   })
 
+  it('新增 DeepSeek 供应商时不提交 openai_api_mode', async () => {
+    const createdProvider = {
+      id: 'provider-deepseek',
+      name: 'deepseek官方',
+      provider: 'deepseek',
+      openai_api_mode: null,
+      base_url: 'https://api.deepseek.com',
+      advanced_json: {},
+      models: [],
+    }
+    createLlmProvider.mockResolvedValueOnce(createdProvider)
+    listLlmProviders.mockResolvedValueOnce([]).mockResolvedValueOnce([createdProvider])
+
+    const { ProvidersSettings, LocaleProvider } = await loadSubject()
+
+    await act(async () => {
+      root!.render(
+        <LocaleProvider>
+          <ProvidersSettings accessToken="token" />
+        </LocaleProvider>,
+      )
+    })
+    await flushEffects()
+
+    const addButton = findButton(container, /添加供应商|Add provider/)
+    expect(addButton).toBeTruthy()
+    await act(async () => {
+      addButton!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+    await flushEffects()
+
+    const vendorButton = Array.from(document.body.querySelectorAll('button')).find((button) => button.textContent?.includes('OpenAI'))
+    expect(vendorButton).toBeTruthy()
+    await act(async () => {
+      vendorButton!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+    await flushEffects()
+
+    const deepseekOption = Array.from(document.body.querySelectorAll('button')).find((button) => button.textContent?.includes('DeepSeek'))
+    expect(deepseekOption).toBeTruthy()
+    await act(async () => {
+      deepseekOption!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+    await flushEffects()
+
+    const inputs = Array.from(document.body.querySelectorAll('input')) as HTMLInputElement[]
+    const nameInput = inputs.find((input) => input.placeholder === 'My Provider')
+    const apiKeyInput = inputs.find((input) => input.type === 'password')
+    expect(nameInput).toBeTruthy()
+    expect(apiKeyInput).toBeTruthy()
+
+    await act(async () => {
+      setInputValue(nameInput!, 'deepseek官方')
+      setInputValue(apiKeyInput!, 'sk-deepseek')
+    })
+    await flushEffects()
+
+    const saveButton = findButton(document.body, /保存|Save/)
+    expect(saveButton).toBeTruthy()
+    await act(async () => {
+      saveButton!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+    await flushEffects()
+
+    expect(createLlmProvider).toHaveBeenCalledWith('token', expect.objectContaining({
+      name: 'deepseek官方',
+      provider: 'deepseek',
+      api_key: 'sk-deepseek',
+      openai_api_mode: undefined,
+    }))
+  })
+
   it('新增供应商时在高级选项保存 Headers', async () => {
     const { ProvidersSettings, LocaleProvider } = await loadSubject()
 
@@ -428,23 +500,21 @@ describe('ProvidersSettings', () => {
     })
     await flushEffects()
 
-    const addButton = Array.from(container.querySelectorAll('button')).find((button) => button.textContent?.includes('添加供应商'))
+    const addButton = findButton(container, /添加供应商|Add provider/)
     expect(addButton).toBeTruthy()
     await act(async () => {
       addButton!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
     })
     await flushEffects()
 
-    const advancedButton = Array.from(document.body.querySelectorAll('button')).find((button) =>
-      /高级选项|高级配置|Advanced/.test(button.textContent ?? ''),
-    )
+    const advancedButton = findButton(document.body, /高级选项|高级配置|Advanced/)
     expect(advancedButton).toBeTruthy()
     await act(async () => {
       advancedButton!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
     })
     await flushEffects()
 
-    const addHeaderButton = Array.from(document.body.querySelectorAll('button')).find((button) => button.textContent?.includes('添加 Header'))
+    const addHeaderButton = findButton(document.body, /添加 Header|Add header/)
     expect(addHeaderButton).toBeTruthy()
     await act(async () => {
       addHeaderButton!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
@@ -454,8 +524,8 @@ describe('ProvidersSettings', () => {
     const inputs = Array.from(document.body.querySelectorAll('input')) as HTMLInputElement[]
     const nameInput = inputs.find((input) => input.placeholder === 'My Provider')
     const apiKeyInput = inputs.find((input) => input.type === 'password')
-    const headerNameInput = inputs.find((input) => input.placeholder === 'Header 名称')
-    const headerValueInput = inputs.find((input) => input.placeholder === 'Header 值')
+    const headerNameInput = inputs.find((input) => /Header 名称|Header name/.test(input.placeholder))
+    const headerValueInput = inputs.find((input) => /Header 值|Header value/.test(input.placeholder))
     expect(nameInput).toBeTruthy()
     expect(apiKeyInput).toBeTruthy()
     expect(headerNameInput).toBeTruthy()
@@ -469,7 +539,7 @@ describe('ProvidersSettings', () => {
     })
     await flushEffects()
 
-    const saveButton = Array.from(document.body.querySelectorAll('button')).find((button) => button.textContent?.includes('保存'))
+    const saveButton = findButton(document.body, /保存|Save/)
     expect(saveButton).toBeTruthy()
     await act(async () => {
       saveButton!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
@@ -493,6 +563,12 @@ async function openProviderCard(name: string) {
     button!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
   })
   await flushEffects()
+}
+
+function findButton(rootElement: ParentNode, pattern: RegExp): HTMLButtonElement | undefined {
+  return Array.from(rootElement.querySelectorAll('button')).find((button) =>
+    pattern.test(button.textContent ?? ''),
+  ) as HTMLButtonElement | undefined
 }
 
 async function openProviderDeleteConfirm() {
