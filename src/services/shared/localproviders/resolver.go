@@ -508,11 +508,13 @@ func (r *Resolver) resolveCodex(ctx context.Context) (Credential, error) {
 
 func (r *Resolver) readClaudeOAuth(ctx context.Context) (Credential, bool) {
 	if !r.disableKeychain && r.platform == "darwin" {
-		service := r.claudeKeychainServiceName(claudeOAuthServiceSuffix)
-		account := currentUsername()
-		root, ok := r.readKeychainJSON(ctx, service, account)
-		if ok {
-			return parseClaudeOAuth(root, credentialStore{kind: "keychain", service: service, account: account, root: root})
+		for _, service := range r.claudeKeychainServiceNames(claudeOAuthServiceSuffix) {
+			for _, account := range keychainAccountCandidates(currentUsername()) {
+				root, ok := r.readKeychainJSON(ctx, service, account)
+				if ok {
+					return parseClaudeOAuth(root, credentialStore{kind: "keychain", service: service, account: account, root: root})
+				}
+			}
 		}
 	}
 	path := filepath.Join(r.claudeConfigDir(), ".credentials.json")
@@ -546,18 +548,22 @@ func parseClaudeOAuth(root map[string]any, store credentialStore) (Credential, b
 
 func (r *Resolver) readClaudeAPIKey(ctx context.Context) (Credential, bool) {
 	if !r.disableKeychain && r.platform == "darwin" {
-		if key, ok := r.readKeychainString(ctx, r.claudeKeychainServiceName(""), currentUsername()); ok {
-			return Credential{
-				ProviderID:   ClaudeCodeProviderID,
-				ProviderKind: ClaudeCodeProviderKind,
-				AuthMode:     AuthModeAPIKey,
-				APIKey:       key,
-				store: credentialStore{
-					kind:    "keychain",
-					service: r.claudeKeychainServiceName(""),
-					account: currentUsername(),
-				},
-			}, true
+		for _, service := range r.claudeKeychainServiceNames("") {
+			for _, account := range keychainAccountCandidates(currentUsername()) {
+				if key, ok := r.readKeychainString(ctx, service, account); ok {
+					return Credential{
+						ProviderID:   ClaudeCodeProviderID,
+						ProviderKind: ClaudeCodeProviderKind,
+						AuthMode:     AuthModeAPIKey,
+						APIKey:       key,
+						store: credentialStore{
+							kind:    "keychain",
+							service: service,
+							account: account,
+						},
+					}, true
+				}
+			}
 		}
 	}
 	for _, path := range r.claudeGlobalConfigPaths() {
@@ -1098,6 +1104,29 @@ func (r *Resolver) claudeKeychainServiceName(serviceSuffix string) string {
 	}
 	sum := sha256.Sum256([]byte(r.claudeConfigDir()))
 	return claudeServiceBase + serviceSuffix + "-" + hex.EncodeToString(sum[:])[:8]
+}
+
+func (r *Resolver) claudeKeychainServiceNames(serviceSuffix string) []string {
+	names := []string{claudeServiceBase + serviceSuffix, r.claudeKeychainServiceName(serviceSuffix)}
+	out := make([]string, 0, len(names))
+	seen := map[string]bool{}
+	for _, name := range names {
+		name = strings.TrimSpace(name)
+		if name == "" || seen[name] {
+			continue
+		}
+		seen[name] = true
+		out = append(out, name)
+	}
+	return out
+}
+
+func keychainAccountCandidates(account string) []string {
+	account = strings.TrimSpace(account)
+	if account == "" {
+		return []string{""}
+	}
+	return []string{account, ""}
 }
 
 func (r *Resolver) codexHome() string {

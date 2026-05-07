@@ -417,10 +417,10 @@ func TestResolverRefreshesCodexOAuthAndWritesBack(t *testing.T) {
 	}
 }
 
-func TestResolverUsesClaudeConfigDirKeychainServiceHash(t *testing.T) {
+func TestResolverUsesClaudeConfigDirKeychainServiceFallbacks(t *testing.T) {
 	home := t.TempDir()
 	configDir := filepath.Join(home, "custom-claude")
-	var seenService string
+	var seenServices []string
 	resolver := NewResolver(Options{
 		HomeDir:  home,
 		Platform: "darwin",
@@ -429,10 +429,15 @@ func TestResolverUsesClaudeConfigDirKeychainServiceHash(t *testing.T) {
 			if name != "security" {
 				t.Fatalf("unexpected command: %s", name)
 			}
+			service := ""
 			for i, arg := range args {
 				if arg == "-s" && i+1 < len(args) {
-					seenService = args[i+1]
+					service = args[i+1]
 				}
+			}
+			seenServices = append(seenServices, service)
+			if service == "Claude Code-credentials" {
+				return "", errors.New("not found")
 			}
 			return `{"claudeAiOauth":{"accessToken":"access","refreshToken":"refresh","expiresAt":4102444800000}}`, nil
 		},
@@ -444,8 +449,53 @@ func TestResolverUsesClaudeConfigDirKeychainServiceHash(t *testing.T) {
 	if credential.AuthMode != AuthModeOAuth {
 		t.Fatalf("unexpected credential: %#v", credential)
 	}
-	if !strings.HasPrefix(seenService, "Claude Code-credentials-") || len(seenService) != len("Claude Code-credentials-")+8 {
-		t.Fatalf("unexpected service name: %q", seenService)
+	if len(seenServices) != 3 {
+		t.Fatalf("expected standard account, standard accountless, and hashed lookups, got %#v", seenServices)
+	}
+	if seenServices[0] != "Claude Code-credentials" || seenServices[1] != "Claude Code-credentials" {
+		t.Fatalf("expected standard service first, got %#v", seenServices)
+	}
+	if !strings.HasPrefix(seenServices[2], "Claude Code-credentials-") || len(seenServices[2]) != len("Claude Code-credentials-")+8 {
+		t.Fatalf("unexpected hashed service name: %q", seenServices[2])
+	}
+}
+
+func TestResolverClaudeKeychainFallsBackToAccountlessLookup(t *testing.T) {
+	home := t.TempDir()
+	var seenAccounts []string
+	resolver := NewResolver(Options{
+		HomeDir:  home,
+		Platform: "darwin",
+		Env:      map[string]string{},
+		CommandRunner: func(ctx context.Context, name string, args ...string) (string, error) {
+			if name != "security" {
+				t.Fatalf("unexpected command: %s", name)
+			}
+			account := ""
+			for i, arg := range args {
+				if arg == "-a" && i+1 < len(args) {
+					account = args[i+1]
+				}
+			}
+			seenAccounts = append(seenAccounts, account)
+			if account != "" {
+				return "", errors.New("not found")
+			}
+			return `{"claudeAiOauth":{"accessToken":"access","refreshToken":"refresh","expiresAt":4102444800000}}`, nil
+		},
+	})
+	credential, err := resolver.Resolve(context.Background(), ClaudeCodeProviderID, ResolveOptions{})
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if credential.AuthMode != AuthModeOAuth {
+		t.Fatalf("unexpected credential: %#v", credential)
+	}
+	if len(seenAccounts) != 2 {
+		t.Fatalf("expected account-specific and accountless lookups, got %#v", seenAccounts)
+	}
+	if seenAccounts[0] == "" || seenAccounts[1] != "" {
+		t.Fatalf("unexpected account lookup order: %#v", seenAccounts)
 	}
 }
 
