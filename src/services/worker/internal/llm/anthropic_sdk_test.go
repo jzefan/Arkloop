@@ -335,6 +335,7 @@ func TestAnthropicSDKGateway_ErrorClassification(t *testing.T) {
 		{name: "context_length", status: http.StatusBadRequest, typeName: "context_length_exceeded", wantClass: ErrorClassProviderNonRetryable},
 		{name: "invalid_value", status: http.StatusBadRequest, typeName: "invalid_value", wantClass: ErrorClassProviderNonRetryable},
 		{name: "bad_request_nil_type", status: http.StatusBadRequest, typeName: "<nil>", wantClass: ErrorClassProviderNonRetryable},
+		{name: "usage_limit", status: http.StatusTooManyRequests, typeName: "rate_limit_error", wantClass: ErrorClassProviderUsageLimit},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -342,7 +343,11 @@ func TestAnthropicSDKGateway_ErrorClassification(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				w.Header().Set("Content-Type", "application/json")
 				w.WriteHeader(tc.status)
-				_, _ = w.Write([]byte(`{"error":{"type":"` + tc.typeName + `","message":"failed"}}`))
+				message := "failed"
+				if tc.name == "usage_limit" {
+					message = "Usage limit reached"
+				}
+				_, _ = w.Write([]byte(`{"error":{"type":"` + tc.typeName + `","message":"` + message + `"}}`))
 			}))
 			defer server.Close()
 			gateway := NewAnthropicGatewaySDK(AnthropicGatewayConfig{Transport: TransportConfig{APIKey: "test-key", BaseURL: server.URL}, Protocol: AnthropicProtocolConfig{Version: "2023-06-01"}})

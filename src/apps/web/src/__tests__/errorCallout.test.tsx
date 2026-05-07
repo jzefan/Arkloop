@@ -28,6 +28,15 @@ describe('ErrorCallout', () => {
     expect(html).not.toContain('auth.invalid_credentials')
   })
 
+  it('将本地模型用量限制显示为明确提示', () => {
+    const html = renderWithLocale(
+      <ErrorCallout error={{ message: 'Claude Code usage limit reached', code: 'provider.usage_limit' }} />,
+    )
+
+    expect(html).toContain('本地模型用量额度已用尽')
+    expect(html).not.toContain('所需工具未配置')
+  })
+
   it('run error notice 默认展开完整错误信息并提供关闭入口', () => {
     const html = renderWithLocale(
       <RunErrorNotice

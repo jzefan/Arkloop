@@ -25,6 +25,36 @@ import (
 
 var ErrCredentialUnavailable = errors.New("local provider credential unavailable")
 
+type OAuthHTTPError struct {
+	StatusCode int
+	Body       string
+	Message    string
+}
+
+func (e *OAuthHTTPError) Error() string {
+	if e == nil {
+		return ""
+	}
+	if strings.TrimSpace(e.Message) != "" {
+		return strings.TrimSpace(e.Message)
+	}
+	return fmt.Sprintf("oauth refresh failed: status %d", e.StatusCode)
+}
+
+func IsUsageLimitError(err error) bool {
+	if err == nil {
+		return false
+	}
+	text := strings.ToLower(err.Error())
+	var httpErr *OAuthHTTPError
+	if errors.As(err, &httpErr) {
+		text += " " + strings.ToLower(httpErr.Body)
+	}
+	return strings.Contains(text, "usage limit reached") ||
+		strings.Contains(text, "usage limit exceeded") ||
+		strings.Contains(text, "usage quota exceeded")
+}
+
 const (
 	claudeConfigDirEnv        = "CLAUDE_CONFIG_DIR"
 	claudeAnthropicAuthEnv    = "ANTHROPIC_AUTH_TOKEN"
@@ -324,7 +354,7 @@ func (r *Resolver) Resolve(ctx context.Context, providerID string, options Resol
 	if fresh, freshErr := resolver.resolveProvider(ctx, providerID, true); freshErr == nil && !resolver.needsOAuthRefresh(fresh) {
 		return fresh, nil
 	}
-	return Credential{}, fmt.Errorf("%w: oauth refresh failed", ErrCredentialUnavailable)
+	return Credential{}, errors.Join(ErrCredentialUnavailable, fmt.Errorf("oauth refresh failed: %w", err))
 }
 
 func (r *Resolver) resolveProvider(ctx context.Context, providerID string, forceRead bool) (Credential, error) {
@@ -812,12 +842,57 @@ func (r *Resolver) doJSON(req *http.Request, out any) error {
 	defer func() { _ = resp.Body.Close() }()
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		return fmt.Errorf("oauth refresh failed: status %d", resp.StatusCode)
+		message := oauthHTTPErrorMessage(resp.StatusCode, body)
+		raw := truncateRunes(string(body), 4096)
+		return &OAuthHTTPError{StatusCode: resp.StatusCode, Body: raw, Message: message}
 	}
 	if err := json.Unmarshal(body, out); err != nil {
 		return err
 	}
 	return nil
+}
+
+func oauthHTTPErrorMessage(status int, body []byte) string {
+	fallback := fmt.Sprintf("oauth refresh failed: status %d", status)
+	if len(body) == 0 {
+		return fallback
+	}
+	var root map[string]any
+	if err := json.Unmarshal(body, &root); err == nil {
+		if msg := stringValue(root["message"]); msg != "" {
+			return msg
+		}
+		if msg := stringValue(root["error_description"]); msg != "" {
+			return msg
+		}
+		if msg := stringValue(root["error"]); msg != "" {
+			return msg
+		}
+		if errObj, ok := root["error"].(map[string]any); ok {
+			if msg := stringValue(errObj["message"]); msg != "" {
+				return msg
+			}
+			if msg := stringValue(errObj["type"]); msg != "" {
+				return msg
+			}
+		}
+	}
+	text := strings.TrimSpace(string(body))
+	if text == "" {
+		return fallback
+	}
+	return truncateRunes(text, 300)
+}
+
+func truncateRunes(value string, maxRunes int) string {
+	if maxRunes <= 0 {
+		return ""
+	}
+	runes := []rune(value)
+	if len(runes) <= maxRunes {
+		return value
+	}
+	return string(runes[:maxRunes]) + "..."
 }
 
 func (r *Resolver) claudeConfigDir() string {

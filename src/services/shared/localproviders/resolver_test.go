@@ -280,6 +280,45 @@ func TestResolverRefreshesClaudeOAuthAndWritesBack(t *testing.T) {
 	}
 }
 
+func TestResolverClaudeOAuthUsageLimitErrorPreservesMessage(t *testing.T) {
+	home := t.TempDir()
+	now := time.Unix(2_000_000_000, 0)
+	writeTestJSON(t, filepath.Join(home, ".claude", ".credentials.json"), map[string]any{
+		"claudeAiOauth": map[string]any{
+			"accessToken":  "old-access",
+			"refreshToken": "refresh-old",
+			"expiresAt":    now.Add(-time.Hour).UnixMilli(),
+		},
+	})
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusTooManyRequests)
+		_, _ = w.Write([]byte(`{"error":{"type":"rate_limit_error","message":"Usage limit reached"}}`))
+	}))
+	t.Cleanup(server.Close)
+
+	resolver := NewResolver(Options{
+		HomeDir:         home,
+		DisableKeychain: true,
+		Env:             map[string]string{},
+		HTTPClient:      server.Client(),
+		Now:             func() time.Time { return now },
+	})
+	withClaudeRefreshURLForTest(t, server.URL, func() {
+		_, err := resolver.Resolve(context.Background(), ClaudeCodeProviderID, ResolveOptions{Refresh: true})
+		if err == nil {
+			t.Fatal("expected refresh error")
+		}
+		if !IsUsageLimitError(err) {
+			t.Fatalf("expected usage limit classification, got %T %v", err, err)
+		}
+		if !strings.Contains(err.Error(), "Usage limit reached") {
+			t.Fatalf("expected provider message to be preserved, got %q", err.Error())
+		}
+	})
+}
+
 func TestResolverRefreshesCodexOAuthAndWritesBack(t *testing.T) {
 	home := t.TempDir()
 	now := time.Unix(2_000_000_000, 0)

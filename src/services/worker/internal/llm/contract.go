@@ -11,6 +11,7 @@ import (
 const (
 	ErrorClassProviderRetryable    = "provider.retryable"
 	ErrorClassProviderNonRetryable = "provider.non_retryable"
+	ErrorClassProviderUsageLimit   = "provider.usage_limit"
 	ErrorClassBudgetExceeded       = "budget.exceeded"
 	ErrorClassPolicyDenied         = "policy.denied"
 	ErrorClassInternalError        = "internal.error"

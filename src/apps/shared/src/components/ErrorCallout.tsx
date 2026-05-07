@@ -40,6 +40,7 @@ const FRIENDLY_ERROR_MESSAGES: Record<string, FriendlyText> = {
   'credits.insufficient': { zh: '积分不足', en: 'Insufficient credits.' },
   'provider.non_retryable': { zh: '模型服务商请求失败', en: 'Provider request failed (non-retryable).' },
   'provider.retryable': { zh: '模型服务商暂时不可用，请重试', en: 'Provider temporarily unavailable. Please retry.' },
+  'provider.usage_limit': { zh: '本地模型用量额度已用尽', en: 'Local model usage limit reached.' },
   'routing.not_found': { zh: '模型路由未找到，请检查 LLM 供应商配置', en: 'Model route not found. Please check LLM provider settings.' },
   'entitlement.quota_exceeded': { zh: '用量配额已用尽', en: 'Usage quota exceeded.' },
   'budget.exceeded': { zh: '对话预算已用尽', en: 'Conversation budget exceeded.' },

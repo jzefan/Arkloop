@@ -530,7 +530,7 @@ func (g *localProviderGateway) Stream(ctx context.Context, request llm.Request, 
 	providerID := localProviderIDFromKind(g.selected.Credential.ProviderKind)
 	credential, err := g.resolver.Resolve(ctx, providerID, localproviders.ResolveOptions{Refresh: true})
 	if err != nil {
-		return yield(llm.StreamRunFailed{Error: llm.GatewayError{ErrorClass: llm.ErrorClassConfigMissing, Message: "local provider credential unavailable"}})
+		return yield(llm.StreamRunFailed{Error: localProviderResolveGatewayError(providerID, err)})
 	}
 	advancedJSON := providerPayloadAdvancedJSON(mergeAdvancedJSON(g.selected.Credential.AdvancedJSON, g.selected.Route.AdvancedJSON))
 	resolved, err := resolveLocalProviderGatewayConfig(g.selected, credential, advancedJSON, g.emitDebugEvents, g.llmMaxResponseBytes)
@@ -545,6 +545,45 @@ func (g *localProviderGateway) Stream(ctx context.Context, request llm.Request, 
 		request = withClaudeCodeIdentityPrompt(request)
 	}
 	return inner.Stream(ctx, request, yield)
+}
+
+func localProviderResolveGatewayError(providerID string, err error) llm.GatewayError {
+	details := map[string]any{
+		"provider_id": providerID,
+	}
+	if err != nil {
+		details["reason"] = err.Error()
+	}
+	if localproviders.IsUsageLimitError(err) {
+		return llm.GatewayError{
+			ErrorClass: llm.ErrorClassProviderUsageLimit,
+			Message:    localProviderUsageLimitMessage(providerID),
+			Details:    details,
+		}
+	}
+	if errors.Is(err, localproviders.ErrCredentialUnavailable) {
+		return llm.GatewayError{
+			ErrorClass: llm.ErrorClassConfigMissing,
+			Message:    "local provider credential unavailable",
+			Details:    details,
+		}
+	}
+	return llm.GatewayError{
+		ErrorClass: llm.ErrorClassConfigInvalid,
+		Message:    "local provider credential refresh failed",
+		Details:    details,
+	}
+}
+
+func localProviderUsageLimitMessage(providerID string) string {
+	switch providerID {
+	case localproviders.ClaudeCodeProviderID:
+		return "Claude Code usage limit reached"
+	case localproviders.CodexProviderID:
+		return "Codex usage limit reached"
+	default:
+		return "local model usage limit reached"
+	}
 }
 
 func resolveLocalProviderGatewayConfig(

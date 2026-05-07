@@ -969,7 +969,7 @@ func anthropicSDKErrorToGateway(err error, payloadBytes int, apiMode string, str
 			details = OversizeFailureDetails(payloadBytes, OversizePhaseProvider, details)
 		}
 		details = mergeProviderResponseCaptureDetails(details, responseCapture)
-		return GatewayError{ErrorClass: anthropicSDKErrorClass(apiErr, details), Message: message, Details: details}
+		return GatewayError{ErrorClass: anthropicSDKErrorClass(apiErr, message, details), Message: message, Details: details}
 	}
 	details := sdkTransportErrorDetails(err, "anthropic", apiMode, streaming, true)
 	details = mergeContextErrorDetails(details, err, ctx)
@@ -977,9 +977,12 @@ func anthropicSDKErrorToGateway(err error, payloadBytes int, apiMode string, str
 	return GatewayError{ErrorClass: ErrorClassProviderRetryable, Message: "Anthropic network error", Details: details}
 }
 
-func anthropicSDKErrorClass(err *anthropic.Error, details map[string]any) string {
+func anthropicSDKErrorClass(err *anthropic.Error, message string, details map[string]any) string {
 	if err == nil {
 		return ErrorClassProviderRetryable
+	}
+	if isUsageLimitMessage(message, details) {
+		return ErrorClassProviderUsageLimit
 	}
 	if err.StatusCode == http.StatusBadRequest {
 		if errorType, _ := details["anthropic_error_type"].(string); errorType == "context_length_exceeded" || errorType == "invalid_value" {
@@ -995,6 +998,16 @@ func anthropicSDKErrorClass(err *anthropic.Error, details map[string]any) string
 	default:
 		return classifyHTTPStatus(err.StatusCode)
 	}
+}
+
+func isUsageLimitMessage(message string, details map[string]any) bool {
+	text := strings.ToLower(message)
+	if raw, _ := details["provider_error_body"].(string); raw != "" {
+		text += " " + strings.ToLower(raw)
+	}
+	return strings.Contains(text, "usage limit reached") ||
+		strings.Contains(text, "usage limit exceeded") ||
+		strings.Contains(text, "usage quota exceeded")
 }
 
 func anthropicSDKImageContentPart(part ContentPart) (map[string]any, error) {
