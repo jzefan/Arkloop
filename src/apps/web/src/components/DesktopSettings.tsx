@@ -388,11 +388,15 @@ export function DesktopSettings({
   const handleTabChange = selectSection;
 
   const handleRestartApp = async () => {
-    const restart = desktopApi?.app.restart;
-    if (!restart || appRestarting) return;
+    if (!desktopApi || appRestarting) return;
     setAppRestarting(true);
     try {
-      await restart();
+      if (desktopApi.app.restart) {
+        await desktopApi.app.restart();
+        return;
+      }
+      await desktopApi.sidecar.restart();
+      setAppRestarting(false);
     } catch (err) {
       console.error("[desktop-settings] restart app failed:", err);
       setAppRestarting(false);
@@ -541,6 +545,22 @@ export function DesktopSettings({
           <div className="px-4">
             <div className="flex flex-col gap-[3px]">{renderNav(navEntries)}</div>
           </div>
+          {desktopApi && (
+            <div className="mt-auto px-4 pt-5">
+              <button
+                type="button"
+                onClick={handleRestartApp}
+                disabled={appRestarting}
+                className="flex h-[38px] w-full items-center justify-center gap-2 rounded-lg border border-[var(--c-border)] bg-[var(--c-bg-input)] px-2.5 text-[13px] font-medium text-[var(--c-text-primary)] transition-colors hover:bg-[var(--c-bg-deep)] disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                <RotateCw size={15} className={appRestarting ? "animate-spin" : ""} />
+                <span>{appRestarting ? ds.restartAppRestarting : ds.restartAppButton}</span>
+              </button>
+              <div className="mt-2 text-center text-[11px] leading-4 text-[var(--c-text-tertiary)]">
+                {ds.restartAppDesc}
+              </div>
+            </div>
+          )}
         </div>
 
         <div className="relative flex min-w-0 flex-1 overflow-hidden">
@@ -562,27 +582,6 @@ export function DesktopSettings({
             onScroll={(e) => setScrolled((e.currentTarget as HTMLDivElement).scrollTop > 8)}
           >
             {hydrationLoading && activePaneNeedsHydration ? <SettingsPaneFallback /> : renderContent()}
-            {desktopApi?.app.restart && (
-              <div className="mt-8 flex items-center justify-between gap-4 border-t border-[var(--c-border-subtle)] pt-5">
-                <div className="min-w-0">
-                  <div className="text-[14px] font-medium text-[var(--c-text-heading)]">
-                    {ds.restartAppTitle}
-                  </div>
-                  <div className="mt-1 max-w-[560px] text-[12px] leading-5 text-[var(--c-text-tertiary)]">
-                    {ds.restartAppDesc}
-                  </div>
-                </div>
-                <button
-                  type="button"
-                  onClick={handleRestartApp}
-                  disabled={appRestarting}
-                  className="inline-flex h-9 shrink-0 items-center gap-2 rounded-lg border border-[var(--c-border)] bg-[var(--c-bg-input)] px-3 text-[13px] font-medium text-[var(--c-text-primary)] transition-colors hover:bg-[var(--c-bg-deep)] disabled:cursor-not-allowed disabled:opacity-60"
-                >
-                  <RotateCw size={15} className={appRestarting ? "animate-spin" : ""} />
-                  {appRestarting ? ds.restartAppRestarting : ds.restartAppButton}
-                </button>
-              </div>
-            )}
           </div>
         </div>
       </motion.div>
