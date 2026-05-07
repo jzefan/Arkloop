@@ -1,0 +1,84 @@
+appId: com.arkloop.desktop
+productName: Arkloop
+copyright: Copyright (c) Arkloop
+
+directories:
+  output: release
+
+files:
+  - dist/**/*
+  - resources/**/*
+
+extraResources:
+  - from: ../web/dist/
+    to: renderer
+    filter:
+      - "**/*"
+  - from: ../../../compose.yaml
+    to: arkloop-project/compose.yaml
+  - from: ../../../install/modules.yaml
+    to: arkloop-project/install/modules.yaml
+  - from: ../../../config/searxng
+    to: arkloop-project/config/searxng
+  - from: ../../../config/openviking
+    to: arkloop-project/config/openviking
+  - from: ../../../config/firecrawl-postgres
+    to: arkloop-project/config/firecrawl-postgres
+  - from: ../../../src/services/sandbox
+    to: arkloop-project/src/services/sandbox
+  - from: ../../../src/services/shared
+    to: arkloop-project/src/services/shared
+  - from: ../../../src/personas
+    to: arkloop-project/src/personas
+  - from: ../../../src/skills
+    to: arkloop-project/src/skills
+
+publish:
+  provider: github
+  owner: qqqqqf-q
+  repo: Arkloop
+  releaseType: release
+
+mac:
+  category: public.app-category.developer-tools
+  artifactName: "${productName}-mac-${arch}.${ext}"
+  target:
+    - dmg
+    - zip
+  icon: resources/icon.icns
+  notarize: true
+  entitlements: build/entitlements.mac.plist
+  entitlementsInherit: build/entitlements.mac.inherit.plist
+  hardenedRuntime: true
+  extraResources:
+    - from: sidecar-bin/desktop-darwin-${arch}
+      to: sidecar/desktop
+
+linux:
+  category: Development
+  artifactName: "${productName}-linux-${arch}.${ext}"
+  target:
+    - AppImage
+    - deb
+    - rpm
+  icon: resources/icon.png
+  extraResources:
+    - from: sidecar-bin/desktop-linux-${arch}
+      to: sidecar/desktop
+
+rpm:
+  fpm:
+    - --rpm-rpmbuild-define=_build_id_links none
+
+win:
+  artifactName: "${productName}-win-${arch}.${ext}"
+  target:
+    - nsis
+  icon: resources/icon.ico
+  extraResources:
+    - from: sidecar-bin/desktop-win32-${arch}.exe
+      to: sidecar/desktop.exe
+
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true

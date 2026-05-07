@@ -1,0 +1,218 @@
+package executor
+
+import (
+	"testing"
+
+	"arkloop/services/worker/internal/llm"
+	"arkloop/services/worker/internal/personas"
+	"arkloop/services/worker/internal/pipeline"
+	"arkloop/services/worker/internal/routing"
+	"arkloop/services/worker/internal/subagentctl"
+)
+
+func TestPlanRequestFromRunContextReusesInheritedPromptCacheSnapshot(t *testing.T) {
+	description := "echo tool"
+	route := &routing.SelectedProviderRoute{Route: routing.ProviderRouteRule{
+		ID:    "route-1",
+		Model: "anthropic^claude-sonnet-4-5",
+		AdvancedJSON: map[string]any{
+			"available_catalog": map[string]any{"max_output_tokens": float64(16384)},
+		},
+	}}
+	tools := []llm.ToolSpec{{Name: "echo", Description: &description}}
+	parentBaseMessages := []llm.Message{
+		{Role: "user", Content: []llm.ContentPart{{Text: "parent question"}}},
+		{Role: "assistant", Content: []llm.ContentPart{{Text: "parent answer"}}},
+	}
+	currentBaseMessages := append(cloneMessages(parentBaseMessages), llm.Message{
+		Role:    "user",
+		Content: []llm.ContentPart{{Text: "child task"}},
+	})
+	catalogMaxOutputTokens := 16384
+	rc := &pipeline.RunContext{
+		AgentConfig: &pipeline.ResolvedAgentConfig{PromptCacheControl: "system_prompt"},
+		PersonaDefinition: &personas.Definition{
+			ID:        "researcher@1",
+			CoreTools: []string{"echo"},
+		},
+		PromptAssembly: pipeline.PromptAssembly{
+			Segments: []pipeline.PromptSegment{
+				{
+					Name:      "persona.system_prompt",
+					Target:    pipeline.PromptTargetSystemPrefix,
+					Role:      "system",
+					Text:      "current recomputed system",
+					Stability: pipeline.PromptStabilityStablePrefix,
+				},
+				{
+					Name:      "runtime.local_now",
+					Target:    pipeline.PromptTargetRuntimeTail,
+					Role:      "user",
+					Text:      "current local now",
+					Stability: pipeline.PromptStabilityVolatileTail,
+				},
+			},
+		},
+		SelectedRoute: route,
+		FinalSpecs:    tools,
+		ReasoningMode: "high",
+		InheritedPromptCacheSnapshot: &subagentctl.PromptCacheSnapshot{
+			PersonaID:    "researcher@1",
+			BaseMessages: parentBaseMessages,
+			Tools: []llm.ToolSpec{{
+				Name:        "echo",
+				Description: &description,
+				CacheHint:   &llm.CacheHint{Action: llm.CacheHintActionWrite, Scope: "global"},
+			}},
+			Model:           route.Route.Model,
+			MaxOutputTokens: &catalogMaxOutputTokens,
+			ReasoningMode:   "high",
+			PromptPlan: &llm.PromptPlan{
+				SystemBlocks: []llm.PromptPlanBlock{{
+					Name:          "persona.system_prompt",
+					Target:        llm.PromptTargetSystemPrefix,
+					Role:          "system",
+					Text:          "frozen parent system",
+					Stability:     llm.CacheStabilityStablePrefix,
+					CacheEligible: true,
+				}},
+			},
+		},
+	}
+
+	maxOutputTokens := 32768
+	planned := planRequestFromRunContext(rc, requestPlannerInput{
+		Model:            route.Route.Model,
+		BaseMessages:     currentBaseMessages,
+		PromptMode:       promptPlanModeFull,
+		Tools:            tools,
+		MaxOutputTokens:  &maxOutputTokens,
+		ReasoningMode:    "high",
+		ApplyImageFilter: false,
+	})
+
+	if got := planned.Request.PromptPlan.SystemBlocks[0].Text; got != "frozen parent system" {
+		t.Fatalf("expected frozen system block, got %q", got)
+	}
+	if got := planned.Request.Messages[0].Content[0].Text; got != "frozen parent system" {
+		t.Fatalf("expected frozen system message, got %q", got)
+	}
+	if got := planned.Request.Messages[len(planned.Request.Messages)-1].Content[0].Text; got != "current local now" {
+		t.Fatalf("expected current runtime tail, got %q", got)
+	}
+	if got := planned.Request.Messages[len(planned.Request.Messages)-2].Content[0].Text; got != "child task" {
+		t.Fatalf("expected child suffix message, got %q", got)
+	}
+	if got := planned.CacheSafeSnapshot.PersonaID; got != "researcher@1" {
+		t.Fatalf("unexpected cache snapshot persona id: %q", got)
+	}
+	if planned.Request.MaxOutputTokens == nil || *planned.Request.MaxOutputTokens != 16384 {
+		t.Fatalf("expected inherited request max_output_tokens clamped to 16384, got %#v", planned.Request.MaxOutputTokens)
+	}
+}
+
+func TestBuildPromptPlan_StableMarker(t *testing.T) {
+	rc := &pipeline.RunContext{
+		AgentConfig: &pipeline.ResolvedAgentConfig{PromptCacheControl: "system_prompt"},
+		PromptAssembly: pipeline.PromptAssembly{
+			Segments: []pipeline.PromptSegment{
+				{
+					Name:      "persona.system_prompt",
+					Target:    pipeline.PromptTargetSystemPrefix,
+					Role:      "system",
+					Text:      "test system",
+					Stability: pipeline.PromptStabilityStablePrefix,
+				},
+			},
+		},
+	}
+
+	messages := []llm.Message{
+		{Role: "user", Content: []llm.ContentPart{{Text: "msg0"}}},
+		{Role: "assistant", Content: []llm.ContentPart{{Text: "msg1"}}},
+		{Role: "user", Content: []llm.ContentPart{{Text: "msg2"}}},
+		{Role: "assistant", Content: []llm.ContentPart{{Text: "msg3"}}},
+		{Role: "user", Content: []llm.ContentPart{{Text: "msg4"}}},
+	}
+
+	plan := buildPromptPlan(rc, promptPlanModeFull, messages, 2)
+
+	if plan == nil {
+		t.Fatal("expected non-nil prompt plan")
+	}
+	if !plan.MessageCache.StableMarkerEnabled {
+		t.Error("expected StableMarkerEnabled to be true")
+	}
+	if plan.MessageCache.StableMarkerMessageIndex != 2 {
+		t.Errorf("expected StableMarkerMessageIndex = 2, got %d", plan.MessageCache.StableMarkerMessageIndex)
+	}
+}
+
+func TestPlanRequestFromRunContextGenerationTaskForcesOnlyGenerationTool(t *testing.T) {
+	imageDescription := "generate images"
+	loadDescription := "load tools"
+	rc := &pipeline.RunContext{
+		InputJSON: map[string]any{"generation_task": "image"},
+		ToolSpecs: []llm.ToolSpec{
+			{Name: "load_tools", Description: &loadDescription},
+			{Name: "image_generate", Description: &imageDescription},
+		},
+	}
+
+	planned := planRequestFromRunContext(rc, requestPlannerInput{
+		Model:        "openai/gpt-image-2",
+		BaseMessages: []llm.Message{{Role: "user", Content: []llm.ContentPart{{Text: "画一只哈士奇"}}}},
+		PromptMode:   promptPlanModeNone,
+		Tools:        []llm.ToolSpec{{Name: "load_tools", Description: &loadDescription}},
+	})
+
+	if len(planned.Request.Tools) != 1 {
+		t.Fatalf("expected exactly one tool, got %d: %#v", len(planned.Request.Tools), planned.Request.Tools)
+	}
+	if got := planned.Request.Tools[0].Name; got != "image_generate" {
+		t.Fatalf("expected image_generate tool, got %q", got)
+	}
+	if planned.Request.ToolChoice == nil {
+		t.Fatalf("expected specific tool choice")
+	}
+	if got := planned.Request.ToolChoice.Mode; got != "specific" {
+		t.Fatalf("expected specific tool choice, got %q", got)
+	}
+	if got := planned.Request.ToolChoice.ToolName; got != "image_generate" {
+		t.Fatalf("expected image_generate tool choice, got %q", got)
+	}
+}
+
+func TestBuildPromptPlan_NoTail(t *testing.T) {
+	rc := &pipeline.RunContext{
+		AgentConfig: &pipeline.ResolvedAgentConfig{PromptCacheControl: "system_prompt"},
+		PromptAssembly: pipeline.PromptAssembly{
+			Segments: []pipeline.PromptSegment{
+				{
+					Name:      "persona.system_prompt",
+					Target:    pipeline.PromptTargetSystemPrefix,
+					Role:      "system",
+					Text:      "test system",
+					Stability: pipeline.PromptStabilityStablePrefix,
+				},
+			},
+		},
+	}
+
+	messages := []llm.Message{
+		{Role: "user", Content: []llm.ContentPart{{Text: "msg0"}}},
+		{Role: "assistant", Content: []llm.ContentPart{{Text: "msg1"}}},
+		{Role: "user", Content: []llm.ContentPart{{Text: "msg2"}}},
+		{Role: "assistant", Content: []llm.ContentPart{{Text: "msg3"}}},
+		{Role: "user", Content: []llm.ContentPart{{Text: "msg4"}}},
+	}
+
+	plan := buildPromptPlan(rc, promptPlanModeFull, messages, 0)
+
+	if plan == nil {
+		t.Fatal("expected non-nil prompt plan")
+	}
+	if plan.MessageCache.StableMarkerEnabled {
+		t.Error("expected StableMarkerEnabled to be false when tailCount is 0")
+	}
+}

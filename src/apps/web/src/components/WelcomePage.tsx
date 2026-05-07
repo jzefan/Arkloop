@@ -1,0 +1,559 @@
+import { useState, useCallback, useMemo, useRef, useEffect, type FormEvent } from 'react'
+import { useNavigate } from 'react-router-dom'
+import { Glasses } from 'lucide-react'
+import type { LocaleStrings } from '../locales'
+import { ChatInput, type Attachment, type ChatInputHandle } from './ChatInput'
+import { ErrorCallout, type AppError } from './ErrorCallout'
+import { NotificationBell } from './NotificationBell'
+import { isDesktop } from '@arkloop/shared/desktop'
+import { DebugTrigger, useTimeZone } from '@arkloop/shared'
+import { buildDraftAttachmentRecords, restoreAttachmentFromDraftRecord } from '../draftAttachments'
+import { filterAttachableFilesForImageLimit } from '../lib/attachmentLimits'
+import { createThread, createMessage, createRun, uploadStagingAttachment, isApiError, type RunReasoningMode } from '../api'
+import {
+  type InputDraftScope,
+  writeActiveThreadIdToStorage,
+  addSearchThreadId,
+  SEARCH_PERSONA_KEY,
+  transferGlobalWorkFolderToThread,
+  transferGlobalThinkingToThread,
+  readSelectedReasoningMode,
+  readInputDraftAttachments,
+  readWorkFolder,
+  readDeveloperShowDebugPanel,
+  writeInputDraftAttachments,
+  type SelectedModelKind,
+} from '../storage'
+import { useLocale } from '../contexts/LocaleContext'
+import { buildMessageRequest } from '../messageContent'
+import { useAuth } from '../contexts/auth'
+import { useThreadList } from '../contexts/thread-list'
+import {
+  useAppModeUI,
+  useNotificationsUI,
+  useSearchUI,
+  useSettingsUI,
+  useSkillPromptUI,
+} from '../contexts/app-ui'
+import { useCredits } from '../contexts/credits'
+
+function normalizeError(error: unknown, fallback: string): AppError {
+  if (isApiError(error)) {
+    return { message: error.message, traceId: error.traceId, code: error.code }
+  }
+  if (error instanceof Error) {
+    return { message: error.message }
+  }
+  return { message: fallback }
+}
+
+function deriveTitle(content: string, defaultTitle: string): string {
+  const cleaned = content.trim().replace(/\s+/g, ' ')
+  if (!cleaned) return defaultTitle
+  return cleaned.length > 40 ? `${cleaned.slice(0, 40)}…` : cleaned
+}
+
+function splitGenerationRunSelection(modelOverride: string | undefined, modelKind: SelectedModelKind | undefined) {
+  if (modelOverride && (modelKind === 'image' || modelKind === 'video')) {
+    return {
+      runModelOverride: undefined,
+      generationTask: modelKind,
+      generationModel: modelOverride,
+    }
+  }
+  return {
+    runModelOverride: modelOverride,
+    generationTask: undefined,
+    generationModel: undefined,
+  }
+}
+
+type GreetingParts = {
+  hour: number
+  month: number
+  day: number
+  weekday: number
+  minute: number
+}
+
+type WelcomeGreetingTexts = LocaleStrings['welcomeGreeting']
+
+function isSameDraftDomain(left: InputDraftScope | null, right: InputDraftScope): boolean {
+  if (!left) return false
+  return left.page === right.page
+    && (left.threadId ?? null) === (right.threadId ?? null)
+    && left.appMode === right.appMode
+    && !!left.searchMode === !!right.searchMode
+}
+
+function getGreetingParts(now: Date, timeZone: string): GreetingParts {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone,
+    hour: '2-digit',
+    minute: '2-digit',
+    month: 'numeric',
+    day: 'numeric',
+    weekday: 'short',
+    hour12: false,
+  }).formatToParts(now)
+  const getPart = (type: string) => parts.find((part) => part.type === type)?.value ?? '0'
+  const weekdayLabel = getPart('weekday')
+  const weekdayMap: Record<string, number> = {
+    Sun: 0,
+    Mon: 1,
+    Tue: 2,
+    Wed: 3,
+    Thu: 4,
+    Fri: 5,
+    Sat: 6,
+  }
+  return {
+    hour: Number(getPart('hour')),
+    minute: Number(getPart('minute')),
+    month: Number(getPart('month')) - 1,
+    day: Number(getPart('day')),
+    weekday: weekdayMap[weekdayLabel] ?? 0,
+  }
+}
+
+function buildGreeting(strings: WelcomeGreetingTexts, name: string | null, now: GreetingParts): string {
+  const { hour, month, day, weekday, minute } = now
+
+  const first = name ? name.split(/[\s_]+/)[0] : null
+
+  // 节日优先
+  if (month === 11 && day >= 24 && day <= 26) return strings.merryChristmas(first)
+  if (month === 0 && day === 1) return strings.happyNewYear(first)
+  if (month === 1 && day >= 9 && day <= 15) return strings.happyLunarNewYear(first)
+
+  // 周一激励
+  if (weekday === 1 && hour >= 8 && hour < 12) {
+    return strings.mondayMorning(first)
+  }
+
+  // 周五
+  if (weekday === 5 && hour >= 15) {
+    return strings.fridayAfternoon(first)
+  }
+
+  // 深夜
+  if (hour >= 0 && hour < 5) {
+    return strings.lateNight(first)
+  }
+
+  // 时段问候池，每个时段多条随机，避免每次一样
+  const pools: Record<string, string[]> = {
+    morning: strings.morning(first),
+    afternoon: strings.afternoon(first),
+    evening: strings.evening(first),
+    generic: strings.generic(first),
+  }
+
+  let pool: string[]
+  if (hour >= 5 && hour < 12) pool = pools.morning
+  else if (hour >= 12 && hour < 18) pool = pools.afternoon
+  else if (hour >= 18 && hour < 24) pool = pools.evening
+  else pool = pools.generic
+
+  // 用分钟做伪随机 seed，同一分钟内刷新不跳
+  const seed = minute + hour * 60
+  return pool[seed % pool.length]
+}
+
+
+
+export function WelcomePage() {
+  const { accessToken, logout: onLoggedOut, me } = useAuth()
+  const { timeZone } = useTimeZone()
+  const { addThread: onThreadCreated, isPrivateMode, togglePrivateMode: onTogglePrivateMode } = useThreadList()
+  const { isSearchMode, enterSearchMode: onEnterSearchMode, exitSearchMode: onExitSearchMode } = useSearchUI()
+  const { openNotifications: onOpenNotifications, notificationVersion } = useNotificationsUI()
+  const { openSettings: onOpenSettings } = useSettingsUI()
+  const { appMode } = useAppModeUI()
+  const { pendingSkillPrompt, consumeSkillPrompt } = useSkillPromptUI()
+  const { refreshCredits } = useCredits()
+  const [showDebugPanel, setShowDebugPanel] = useState(() => readDeveloperShowDebugPanel())
+  const chatInputRef = useRef<ChatInputHandle>(null)
+  const [attachments, setAttachments] = useState<Attachment[]>([])
+  const [initialPlanMode, setInitialPlanMode] = useState(false)
+  const attachmentsRef = useRef<Attachment[]>([])
+  const skipAttachmentDraftPersistRef = useRef(false)
+  const prevAttachmentDraftScopeRef = useRef<InputDraftScope | null>(null)
+  const [sending, setSending] = useState(false)
+  const [error, setError] = useState<AppError | null>(null)
+  const navigate = useNavigate()
+  const { t } = useLocale()
+
+  const greeting = useMemo(
+    () => buildGreeting(t.welcomeGreeting, me?.username ?? null, getGreetingParts(new Date(), timeZone)),
+    [me?.username, t.welcomeGreeting, timeZone],
+  )
+  const draftScope = useMemo<InputDraftScope>(() => ({
+    ownerKey: me?.id,
+    page: 'welcome',
+    appMode: appMode === 'work' ? 'work' : 'chat',
+    searchMode: isSearchMode,
+  }), [appMode, isSearchMode, me?.id])
+  const draftScopeKey = useMemo(() => JSON.stringify(draftScope), [draftScope])
+
+  useEffect(() => {
+    const handleChange = (e: Event) => {
+      setShowDebugPanel((e as CustomEvent<boolean>).detail)
+    }
+    window.addEventListener('arkloop:developer_show_debug_panel', handleChange)
+    return () => window.removeEventListener('arkloop:developer_show_debug_panel', handleChange)
+  }, [])
+
+  useEffect(() => {
+    if (pendingSkillPrompt) {
+      chatInputRef.current?.setValue(pendingSkillPrompt)
+      consumeSkillPrompt()
+    }
+  }, [pendingSkillPrompt, consumeSkillPrompt])
+
+  const [typedGreeting, setTypedGreeting] = useState('')
+  useEffect(() => {
+    setTypedGreeting('')
+    if (isPrivateMode) return
+    let i = 0
+    const id = setInterval(() => {
+      i++
+      if (i > greeting.length) { clearInterval(id); return }
+      setTypedGreeting(greeting.slice(0, i))
+    }, 45)
+    return () => clearInterval(id)
+  }, [greeting, isPrivateMode])
+
+  const [typedIncognito, setTypedIncognito] = useState('')
+  useEffect(() => {
+    setTypedIncognito('')
+    if (!isPrivateMode) return
+    let i = 0
+    const text = t.youAreIncognito
+    const id = setInterval(() => {
+      i++
+      if (i > text.length) { clearInterval(id); return }
+      setTypedIncognito(text.slice(0, i))
+    }, 55)
+    return () => clearInterval(id)
+  }, [isPrivateMode, t.youAreIncognito])
+
+  const revokeDraftAttachment = useCallback((attachment: Attachment) => {
+    if (attachment.preview_url) URL.revokeObjectURL(attachment.preview_url)
+  }, [])
+
+  useEffect(() => {
+    const prevScope = prevAttachmentDraftScopeRef.current
+    const storedAttachments = readInputDraftAttachments(draftScope)
+    const shouldMigrateCurrent =
+      isSameDraftDomain(prevScope, draftScope)
+      && prevScope?.ownerKey !== draftScope.ownerKey
+      && storedAttachments.length === 0
+      && attachmentsRef.current.length > 0
+    const nextAttachments = shouldMigrateCurrent
+      ? buildDraftAttachmentRecords(attachmentsRef.current)
+      : storedAttachments
+    if (shouldMigrateCurrent) {
+      writeInputDraftAttachments(draftScope, nextAttachments)
+    }
+    prevAttachmentDraftScopeRef.current = draftScope
+    skipAttachmentDraftPersistRef.current = true
+    setAttachments((prev) => {
+      prev.forEach((attachment) => revokeDraftAttachment(attachment))
+      return nextAttachments.map(restoreAttachmentFromDraftRecord)
+    })
+  }, [draftScope, draftScopeKey, revokeDraftAttachment])
+
+  useEffect(() => {
+    if (skipAttachmentDraftPersistRef.current) {
+      skipAttachmentDraftPersistRef.current = false
+      return
+    }
+    writeInputDraftAttachments(draftScope, buildDraftAttachmentRecords(attachments))
+  }, [attachments, draftScope, draftScopeKey])
+
+  useEffect(() => {
+    attachmentsRef.current = attachments
+  }, [attachments])
+
+  useEffect(() => {
+    return () => {
+      attachmentsRef.current.forEach((attachment) => revokeDraftAttachment(attachment))
+    }
+  }, [revokeDraftAttachment])
+
+  const handleAttachFiles = useCallback((files: File[]) => {
+    const acceptedFiles = filterAttachableFilesForImageLimit(attachmentsRef.current, files)
+    const newAttachments = acceptedFiles.map((file) => ({
+      id: `${file.name}-${file.size}-${file.lastModified}`,
+      file,
+      name: file.name,
+      size: file.size,
+      mime_type: file.type || 'application/octet-stream',
+      preview_url: file.type.startsWith('image/') ? URL.createObjectURL(file) : undefined,
+      status: 'uploading' as const,
+    }))
+    if (newAttachments.length === 0) return
+    setAttachments((prev) => {
+      const existingIDs = new Set(prev.map((item) => item.id))
+      const deduped = newAttachments.filter((item) => !existingIDs.has(item.id))
+      return [...prev, ...deduped]
+    })
+    for (const att of newAttachments) {
+      uploadStagingAttachment(accessToken, att.file)
+        .then((uploaded) => {
+          setAttachments((prev) =>
+            prev.map((a) => a.id === att.id ? { ...a, status: 'ready' as const, uploaded } : a),
+          )
+        })
+        .catch(() => {
+          setAttachments((prev) =>
+            prev.map((a) => a.id === att.id ? { ...a, status: 'error' as const } : a),
+          )
+        })
+    }
+  }, [accessToken])
+
+  const handlePasteContent = useCallback((text: string) => {
+    const ts = Math.floor(Date.now() / 1000)
+    const filename = `pasted-${ts}.txt`
+    const blob = new Blob([text], { type: 'text/plain' })
+    const file = new File([blob], filename, { type: 'text/plain', lastModified: Date.now() })
+    const lineCount = text.split('\n').length
+    const att: Attachment = {
+      id: `${filename}-${file.size}-${Date.now()}`,
+      file,
+      name: filename,
+      size: file.size,
+      mime_type: 'text/plain',
+      status: 'uploading',
+      pasted: { text, lineCount },
+    }
+    setAttachments((prev) => [...prev, att])
+    uploadStagingAttachment(accessToken, file)
+      .then((uploaded) => {
+        setAttachments((prev) =>
+          prev.map((a) => a.id === att.id ? { ...a, status: 'ready' as const, uploaded } : a),
+        )
+      })
+      .catch(() => {
+        setAttachments((prev) =>
+          prev.map((a) => a.id === att.id ? { ...a, status: 'error' as const } : a),
+        )
+      })
+  }, [accessToken])
+
+  const handleRemoveAttachment = useCallback((id: string) => {
+    setAttachments((prev) => {
+      const target = prev.find((item) => item.id === id)
+      if (target) revokeDraftAttachment(target)
+      return prev.filter((item) => item.id !== id)
+    })
+  }, [revokeDraftAttachment])
+
+  const handleAsrError = useCallback((err: unknown) => {
+    if (isApiError(err) && err.status === 401) {
+      onLoggedOut()
+      return
+    }
+    setError(normalizeError(err, t.requestFailed))
+  }, [onLoggedOut, t.requestFailed])
+
+  const handleTogglePlanMode = useCallback(async (_currentMode: boolean) => {
+    if (appMode !== 'work') return
+    setInitialPlanMode((prev) => !prev)
+  }, [appMode])
+
+  const handleSubmit = async (e: FormEvent<HTMLFormElement>, personaKey: string, modelOverride?: string, modelKind?: SelectedModelKind) => {
+    e.preventDefault()
+    const text = (chatInputRef.current?.getValue() ?? '').trim()
+    if ((!text && attachments.length === 0) || sending) return
+
+    setSending(true)
+    setError(null)
+
+    try {
+      const title = deriveTitle(text, t.newChatTitle)
+      const thread = await createThread(accessToken, {
+        title,
+        is_private: isPrivateMode,
+        mode: appMode === 'work' ? 'work' : 'chat',
+        collaboration_mode: appMode === 'work' && initialPlanMode ? 'plan' : 'default',
+      })
+      const uploaded = await Promise.all(
+        attachments.map(async (attachment) => {
+          if (attachment.uploaded) return attachment.uploaded
+          if (!attachment.file) throw new Error('attachment file missing')
+          return await uploadStagingAttachment(accessToken, attachment.file)
+        }),
+      )
+      const userMessage = await createMessage(accessToken, thread.id, buildMessageRequest(text, uploaded))
+      const generationSelection = splitGenerationRunSelection(modelOverride, modelKind)
+      const run = await createRun(
+        accessToken,
+        thread.id,
+        personaKey,
+        generationSelection.runModelOverride,
+        readWorkFolder() ?? undefined,
+        readSelectedReasoningMode() !== 'off' ? readSelectedReasoningMode() as RunReasoningMode : undefined,
+        {
+          generationTask: generationSelection.generationTask,
+          generationModel: generationSelection.generationModel,
+        },
+      )
+
+      if (personaKey === SEARCH_PERSONA_KEY) addSearchThreadId(thread.id)
+      attachments.forEach((attachment) => revokeDraftAttachment(attachment))
+      chatInputRef.current?.clear()
+      setAttachments([])
+      refreshCredits()
+      writeActiveThreadIdToStorage(thread.id)
+      if (appMode === 'work') transferGlobalWorkFolderToThread(thread.id)
+      transferGlobalThinkingToThread(thread.id)
+      onThreadCreated(thread)
+      navigate(`/t/${thread.id}`, {
+        state: {
+          initialRunId: run.run_id,
+          isSearch: personaKey === SEARCH_PERSONA_KEY,
+          userEnterMessageId: userMessage.id,
+          welcomeUserMessage: userMessage,
+        },
+      })
+    } catch (err) {
+      if (isApiError(err) && err.status === 401) {
+        onLoggedOut()
+        return
+      }
+      setError(normalizeError(err, t.requestFailed))
+    } finally {
+      setSending(false)
+    }
+  }
+
+  return (
+    <div className="flex h-full flex-col">
+      {/* 顶部 header */}
+      <div className="relative z-10 flex min-h-[51px] items-center justify-end gap-2 px-[15px] py-[15px]">
+        {!isDesktop() && (
+          <NotificationBell accessToken={accessToken} onClick={onOpenNotifications} refreshKey={notificationVersion} title={t.notificationsTitle} />
+        )}
+        {!isDesktop() && (
+          <button
+            onClick={onTogglePrivateMode}
+            title={isPrivateMode ? t.disableIncognito : t.enableIncognito}
+            className={[
+              'flex h-8 w-8 items-center justify-center rounded-lg transition-colors',
+              isPrivateMode
+                ? 'bg-[var(--c-bg-deep)] text-[var(--c-text-primary)]'
+                : 'text-[var(--c-text-secondary)] hover:bg-[var(--c-bg-deep)] hover:text-[var(--c-text-primary)]',
+            ].join(' ')}
+          >
+            <Glasses size={18} />
+          </button>
+        )}
+      </div>
+
+      {/* 居中内容 — paddingTop 带过渡动画，模式切换时平滑移动 */}
+      <div
+        className="flex flex-1 flex-col items-center px-5"
+        style={{
+          paddingTop: appMode === 'work' ? '32vh' : '27vh',
+          transition: 'padding-top 0.38s cubic-bezier(0.16, 1, 0.3, 1)',
+        }}
+      >
+        {/* 标题：三层绝对定位交叉淡出 */}
+        <div className="mb-[40px]" style={{ position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          {/* 常规问候 / 无痕文本 */}
+          <h2
+            className="relative whitespace-nowrap text-[40px] font-normal tracking-[-0.5px] text-[var(--c-text-heading)]"
+            style={{
+              opacity: (isSearchMode || appMode === 'work') ? 0 : 1,
+              transform: (isSearchMode || appMode === 'work') ? 'translateY(-6px)' : 'translateY(0)',
+              transition: 'opacity 0.22s ease, transform 0.24s ease',
+              pointerEvents: (isSearchMode || appMode === 'work') ? 'none' : 'auto',
+            }}
+          >
+            <span className="invisible select-none" aria-hidden="true">
+              {isPrivateMode ? t.youAreIncognito : greeting}
+            </span>
+            <span className="absolute inset-0">
+              {isPrivateMode ? typedIncognito : typedGreeting}
+            </span>
+          </h2>
+          {/* Search for everything */}
+          <h2
+            className="absolute text-[40px] font-normal tracking-[-0.5px] text-[var(--c-text-heading)]"
+            style={{
+              opacity: isSearchMode ? 1 : 0,
+              transform: isSearchMode ? 'translateY(0)' : 'translateY(6px)',
+              transition: 'opacity 0.2s ease, transform 0.22s ease',
+              pointerEvents: isSearchMode ? 'auto' : 'none',
+              whiteSpace: 'nowrap',
+            }}
+          >
+            Search for everything
+          </h2>
+          {/* Work 模式欢迎语 */}
+          <h2
+            className="absolute text-[40px] font-normal tracking-[-0.5px] text-[var(--c-text-heading)]"
+            style={{
+              opacity: appMode === 'work' && !isSearchMode ? 1 : 0,
+              transform: appMode === 'work' && !isSearchMode ? 'translateY(0)' : 'translateY(6px)',
+              transition: 'opacity 0.22s ease, transform 0.24s ease',
+              pointerEvents: appMode === 'work' && !isSearchMode ? 'auto' : 'none',
+              whiteSpace: 'nowrap',
+            }}
+          >
+            {t.workGreeting}
+          </h2>
+        </div>
+
+        <div className="w-full max-w-[675px]">
+          <ChatInput
+            key={`welcome:${appMode}:${isSearchMode ? 'search' : 'default'}`}
+            ref={chatInputRef}
+            onSubmit={handleSubmit}
+            placeholder={isSearchMode ? '今天有什么想搜索的吗？' : t.chatPlaceholder}
+            disabled={sending}
+            isStreaming={false}
+            variant="welcome"
+            searchMode={isSearchMode}
+            attachments={attachments}
+            onAttachFiles={handleAttachFiles}
+            onPasteContent={handlePasteContent}
+            onRemoveAttachment={handleRemoveAttachment}
+            accessToken={accessToken}
+            onAsrError={handleAsrError}
+            onPersonaChange={(personaKey) => {
+              if (personaKey === SEARCH_PERSONA_KEY && !isSearchMode) onEnterSearchMode()
+              else if (personaKey !== SEARCH_PERSONA_KEY && isSearchMode) onExitSearchMode()
+            }}
+            onOpenSettings={onOpenSettings}
+            appMode={appMode}
+            draftOwnerKey={me?.id}
+            planMode={appMode === 'work' && initialPlanMode}
+            onTogglePlanMode={handleTogglePlanMode}
+          />
+          {/* incognito note: 平滑展开/收起 */}
+          <div
+            style={{
+              display: 'grid',
+              gridTemplateRows: isPrivateMode ? '1fr' : '0fr',
+              opacity: isPrivateMode ? 1 : 0,
+              transition: 'grid-template-rows 0.2s ease, opacity 0.15s ease',
+              overflow: 'hidden',
+            }}
+          >
+            <div style={{ minHeight: 0 }}>
+              <p className="mt-2 text-center text-xs" style={{ color: 'var(--c-text-muted)' }}>
+                {t.incognitoThreadNote}
+              </p>
+            </div>
+          </div>
+          {error && <ErrorCallout error={error} />}
+        </div>
+      </div>
+      {showDebugPanel && <DebugTrigger />}
+    </div>
+  )
+}

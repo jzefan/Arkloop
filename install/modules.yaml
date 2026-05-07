@@ -1,0 +1,371 @@
+# Arkloop Module Registry
+#
+# Single source of truth for all installable modules.
+# Consumed by: setup.sh parser, installation.md, Console module status page, Installer Bridge.
+
+modules:
+  # ── Core (always installed) ──────────────────────────────────
+
+  postgres:
+    category: core
+    description: Primary database
+    compose_service: postgres
+    capabilities:
+      installable: true
+      configurable: true
+      healthcheck: true
+      bootstrap_supported: false
+      external_admin_supported: false
+      privileged_required: false
+    profiles:
+      self-hosted:
+        default: true
+        required: true
+      saas:
+        default: true
+        required: true
+
+  redis:
+    category: core
+    description: Queue, cache, and rate-limiting store
+    compose_service: redis
+    capabilities:
+      installable: true
+      configurable: true
+      healthcheck: true
+      bootstrap_supported: false
+      external_admin_supported: false
+      privileged_required: false
+    profiles:
+      self-hosted:
+        default: true
+        required: true
+      saas:
+        default: true
+        required: true
+
+  migrate:
+    category: core
+    description: Database schema migration
+    compose_service: migrate
+    depends_on: [postgres]
+    capabilities:
+      installable: true
+      configurable: false
+      healthcheck: false
+      bootstrap_supported: false
+      external_admin_supported: false
+      privileged_required: false
+    profiles:
+      self-hosted:
+        default: true
+        required: true
+      saas:
+        default: true
+        required: true
+
+  api:
+    category: core
+    description: Control-plane REST API
+    compose_service: api
+    depends_on: [postgres, redis, migrate]
+    capabilities:
+      installable: true
+      configurable: true
+      healthcheck: true
+      bootstrap_supported: false
+      external_admin_supported: false
+      privileged_required: false
+    profiles:
+      self-hosted:
+        default: true
+        required: true
+      saas:
+        default: true
+        required: true
+
+  worker:
+    category: core
+    description: Job execution engine (LLM routing, tool dispatch, agent loop)
+    compose_service: worker
+    depends_on: [postgres, redis, migrate]
+    capabilities:
+      installable: true
+      configurable: true
+      healthcheck: false
+      bootstrap_supported: false
+      external_admin_supported: false
+      privileged_required: false
+    profiles:
+      self-hosted:
+        default: true
+        required: true
+      saas:
+        default: true
+        required: true
+
+  # ── Standard (default entry for self-hosted) ─────────────────
+
+  gateway:
+    category: standard
+    description: Reverse proxy with rate-limiting, geo-IP, and risk scoring
+    compose_service: gateway
+    depends_on: [api, redis]
+    capabilities:
+      installable: true
+      configurable: true
+      healthcheck: true
+      bootstrap_supported: false
+      external_admin_supported: false
+      privileged_required: false
+    profiles:
+      self-hosted:
+        default: true
+      saas:
+        default: true
+
+  console-lite:
+    category: standard
+    description: Self-hosted management console (7 pages)
+    compose_service: console-lite
+    depends_on: [api, gateway]
+    mutually_exclusive: [console]
+    capabilities:
+      installable: true
+      configurable: false
+      healthcheck: true
+      bootstrap_supported: false
+      external_admin_supported: false
+      privileged_required: false
+    profiles:
+      self-hosted:
+        default: true
+      saas:
+        default: false
+
+  # ── Optional ─────────────────────────────────────────────────
+
+  console:
+    category: optional
+    description: Full management console (~35 pages)
+    compose_service: console
+    compose_profile: console-full
+    depends_on: [api, gateway]
+    mutually_exclusive: [console-lite]
+    web_port: "${ARKLOOP_CONSOLE_PORT:-5174}"
+    capabilities:
+      installable: true
+      configurable: false
+      healthcheck: true
+      bootstrap_supported: false
+      external_admin_supported: false
+      privileged_required: false
+    profiles:
+      self-hosted:
+        default: false
+      saas:
+        default: true
+
+  openviking:
+    category: optional
+    description: Memory system (embedding + vector store)
+    compose_service: openviking
+    compose_profile: openviking
+    capabilities:
+      installable: true
+      configurable: true
+      healthcheck: true
+      bootstrap_supported: true
+      external_admin_supported: true
+      privileged_required: false
+    profiles:
+      self-hosted:
+        default: false
+      saas:
+        default: false
+
+  sandbox-docker:
+    category: optional
+    description: Code execution sandbox (Docker backend, macOS/Windows/no-KVM)
+    compose_service: sandbox-docker
+    compose_profile: docker-sandbox
+    depends_on: [postgres]
+    platform_constraints:
+      requires_docker: true
+    mutually_exclusive: [sandbox-firecracker]
+    capabilities:
+      installable: true
+      configurable: true
+      healthcheck: true
+      bootstrap_supported: true
+      external_admin_supported: false
+      privileged_required: false
+    profiles:
+      self-hosted:
+        default: false
+      saas:
+        default: false
+
+  sandbox-firecracker:
+    category: optional
+    description: Code execution sandbox (Firecracker backend, Linux + KVM)
+    compose_service: sandbox
+    compose_profile: firecracker
+    depends_on: [postgres]
+    platform_constraints:
+      requires_linux: true
+      requires_kvm: true
+    mutually_exclusive: [sandbox-docker]
+    capabilities:
+      installable: true
+      configurable: true
+      healthcheck: true
+      bootstrap_supported: true
+      external_admin_supported: false
+      privileged_required: true
+    profiles:
+      self-hosted:
+        default: false
+      saas:
+        default: false
+
+  browser:
+    category: optional
+    description: Browser automation (Node + Chromium, as Sandbox browser tier)
+    compose_service: sandbox-docker
+    compose_profile: docker-sandbox
+    depends_on: [sandbox-docker]
+    virtual: true
+    platform_constraints:
+      requires_docker: true
+    capabilities:
+      installable: true
+      configurable: true
+      healthcheck: true
+      bootstrap_supported: false
+      external_admin_supported: false
+      privileged_required: false
+    profiles:
+      self-hosted:
+        default: false
+      saas:
+        default: false
+
+  pgbouncer:
+    category: optional
+    description: PostgreSQL connection pooler (high-concurrency scenarios)
+    compose_service: pgbouncer
+    compose_profile: pgbouncer
+    depends_on: [postgres]
+    capabilities:
+      installable: true
+      configurable: true
+      healthcheck: true
+      bootstrap_supported: false
+      external_admin_supported: false
+      privileged_required: false
+    profiles:
+      self-hosted:
+        default: false
+      saas:
+        default: true
+
+  seaweedfs:
+    category: optional
+    description: S3-compatible object storage
+    compose_service: seaweedfs
+    compose_profile: s3
+    capabilities:
+      installable: true
+      configurable: true
+      healthcheck: true
+      bootstrap_supported: true
+      external_admin_supported: false
+      privileged_required: false
+    profiles:
+      self-hosted:
+        default: false
+      saas:
+        default: true
+
+  searxng:
+    category: optional
+    description: Self-hosted metasearch engine (replaces Tavily API for web_search)
+    compose_service: searxng
+    compose_profile: searxng
+    capabilities:
+      installable: true
+      configurable: true
+      healthcheck: true
+      bootstrap_supported: true
+      external_admin_supported: false
+      privileged_required: false
+    trade_offs:
+      pros:
+        - No third-party API dependency or cost
+        - Full control over search sources and privacy
+      cons:
+        - Additional resource consumption
+        - Crawler IP exposure risk
+        - Slower than API-based search
+    profiles:
+      self-hosted:
+        default: false
+      saas:
+        default: false
+
+  firecrawl:
+    category: optional
+    description: Self-hosted web scraper (replaces Jina/Basic for web_fetch)
+    compose_service: firecrawl
+    compose_profile: firecrawl
+    depends_on: [firecrawl-redis, firecrawl-playwright]
+    capabilities:
+      installable: true
+      configurable: true
+      healthcheck: true
+      bootstrap_supported: true
+      external_admin_supported: false
+      privileged_required: false
+    trade_offs:
+      pros:
+        - No third-party API dependency or cost
+        - Full page content extraction (markdown/HTML)
+      cons:
+        - Additional resource consumption (Redis + Playwright/Chromium)
+        - Crawler IP exposure risk
+        - Rate limits from target sites
+    profiles:
+      self-hosted:
+        default: false
+      saas:
+        default: false
+
+# setup.sh --web-tools mapping:
+#   builtin     -> no additional modules (use Tavily + Jina/Basic via API)
+#   self-hosted -> enable searxng + firecrawl profiles
+
+  # ── Security / ML ────────────────────────────────────────────
+
+  prompt-guard:
+    category: optional
+    description: Prompt injection semantic detection model (DeBERTa-v3, ONNX)
+    virtual: true
+    depends_on: [worker]
+    capabilities:
+      installable: true
+      configurable: false
+      healthcheck: false
+      bootstrap_supported: false
+      external_admin_supported: false
+      privileged_required: false
+    platform_constraints:
+      requires_onnxruntime: true
+    env:
+      ARKLOOP_PROMPT_GUARD_MODEL_DIR: "${ARKLOOP_DATA_DIR}/models/prompt-guard"
+      ARKLOOP_ONNX_RUNTIME_LIB: ""
+    profiles:
+      self-hosted:
+        default: false
+      saas:
+        default: true

@@ -1,0 +1,31 @@
+id: normal
+version: "1"
+title: Normal
+description: 通用对话模式，支持工具调用、多轮推理和深度分析。
+soul_file: soul.md
+user_selectable: false
+selector_name: Normal
+selector_order: 1
+core_tools:
+    - load_skill
+    - timeline_title
+    - ask_user
+    - arkloop_help
+    - read
+    - todo_write
+    - web_search
+    - web_fetch
+    - python_execute
+    - exec_command
+    - document_write
+    - memory_search
+    - notebook_write
+budgets:
+    reasoning_iterations: 99999
+    temperature: 1
+reasoning_mode: auto
+prompt_cache_control: system_prompt
+executor_type: agent.simple
+
+heartbeat:
+  enabled: true

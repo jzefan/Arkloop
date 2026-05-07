@@ -1,0 +1,107 @@
+package rollout
+
+import (
+	"encoding/json"
+	"time"
+)
+
+type RolloutItem struct {
+	Type      string          `json:"type"`
+	Timestamp time.Time       `json:"timestamp"`
+	Payload   json.RawMessage `json:"payload"`
+}
+
+// payload types
+type RunMeta struct {
+	RunID       string `json:"run_id"`
+	SubAgentID  string `json:"sub_agent_id"`
+	ParentRunID string `json:"parent_run_id"`
+	RootRunID   string `json:"root_run_id"`
+	AccountID   string `json:"account_id"`
+	Status      string `json:"status"`
+	CreatedAt   string `json:"created_at"`
+}
+
+type TurnStart struct {
+	TurnIndex int    `json:"turn_index"`
+	Model     string `json:"model"`
+	Cwd       string `json:"cwd"`
+}
+
+type PromptSegment struct {
+	Name          string `json:"name"`
+	Target        string `json:"target"`
+	Role          string `json:"role"`
+	Text          string `json:"text"`
+	Stability     string `json:"stability"`
+	CacheEligible bool   `json:"cache_eligible"`
+}
+
+type PromptSnapshot struct {
+	Segments        []PromptSegment `json:"segments"`
+	SystemPrompt    string          `json:"system_prompt,omitempty"`
+	RuntimePrompt   string          `json:"runtime_prompt,omitempty"`
+	RequestModel    string          `json:"request_model,omitempty"`
+	SelectedRouteID string          `json:"selected_route_id,omitempty"`
+	SelectedModel   string          `json:"selected_model,omitempty"`
+	ReasoningMode   string          `json:"reasoning_mode,omitempty"`
+	WorkDir         string          `json:"work_dir,omitempty"`
+	ProfileRef      string          `json:"profile_ref,omitempty"`
+	WorkspaceRef    string          `json:"workspace_ref,omitempty"`
+	PersonaID       string          `json:"persona_id,omitempty"`
+}
+
+type AssistantMessage struct {
+	Content      string          `json:"content,omitempty"`
+	ContentParts json.RawMessage `json:"content_parts,omitempty"`
+	ToolCalls    json.RawMessage `json:"tool_calls,omitempty"`
+}
+
+type ToolCall struct {
+	CallID string          `json:"call_id"`
+	Name   string          `json:"name"`
+	Input  json.RawMessage `json:"input"`
+}
+
+type ToolResult struct {
+	CallID string          `json:"call_id"`
+	Output json.RawMessage `json:"output,omitempty"`
+	Error  string          `json:"error,omitempty"`
+}
+
+type TurnEnd struct {
+	TurnIndex               int    `json:"turn_index"`
+	LastAssistantMessageRef string `json:"last_assistant_message_ref,omitempty"`
+}
+
+type RunEnd struct {
+	FinalStatus string `json:"final_status"`
+	OutputRef   string `json:"output_ref,omitempty"`
+}
+
+type ReplayToolResult struct {
+	CallID    string          `json:"call_id"`
+	Name      string          `json:"name,omitempty"`
+	Output    json.RawMessage `json:"output,omitempty"`
+	Error     string          `json:"error,omitempty"`
+	Synthetic bool            `json:"synthetic,omitempty"`
+}
+
+type ReplayMessage struct {
+	Role      string            `json:"role"`
+	Assistant *AssistantMessage `json:"assistant,omitempty"`
+	Tool      *ReplayToolResult `json:"tool,omitempty"`
+}
+
+type ReconstructedState struct {
+	Messages         []json.RawMessage // 兼容旧调用方：仅 assistant message 序列
+	ReplayMessages   []ReplayMessage
+	PendingToolCalls []ToolCall
+	PromptSnapshot   *PromptSnapshot
+	Breakpoint       *Breakpoint
+	FinalStatus      string
+}
+
+type Breakpoint struct {
+	TurnIndex int `json:"turn_index"`
+}

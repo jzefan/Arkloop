@@ -1,0 +1,340 @@
+package loadtools
+
+import (
+	"context"
+	"encoding/json"
+	"sort"
+	"strings"
+	"time"
+
+	sharedtoolmeta "arkloop/services/shared/toolmeta"
+	"arkloop/services/worker/internal/llm"
+	"arkloop/services/worker/internal/tools"
+)
+
+const (
+	errorArgsInvalid = "tool.args_invalid"
+	errorNoResults   = "tool.no_results"
+)
+
+const (
+	stateActivated     = "activated"
+	stateAlreadyLoaded = "already_loaded"
+	stateAlreadyActive = "already_active"
+)
+
+var toolDependencies = map[string][]string{
+	"show_widget":     {"visualize_read_me"},
+	"create_artifact": {"visualize_read_me"},
+}
+
+// Executor resolves tool queries against the searchable pool and activates matches.
+type Executor struct {
+	activator        tools.ToolActivator
+	specsFn          func() map[string]llm.ToolSpec
+	activeSpecsFn    func() map[string]llm.ToolSpec // core tools already in request.Tools
+	alreadyActivated map[string]struct{}
+}
+
+// NewExecutor creates a load_tools executor.
+// specsFn is called lazily because searchable specs are set after executor creation.
+// activeSpecsFn (optional) provides core/already-active specs so queries against them
+// return schema info with already_active:true rather than "no results".
+func NewExecutor(activator tools.ToolActivator, specsFn func() map[string]llm.ToolSpec, activeSpecsFn func() map[string]llm.ToolSpec) *Executor {
+	return &Executor{
+		activator:        activator,
+		specsFn:          specsFn,
+		activeSpecsFn:    activeSpecsFn,
+		alreadyActivated: map[string]struct{}{},
+	}
+}
+
+func (e *Executor) Execute(
+	ctx context.Context,
+	toolName string,
+	args map[string]any,
+	execCtx tools.ExecutionContext,
+	toolCallID string,
+) tools.ExecutionResult {
+	started := time.Now()
+
+	rawQueries, ok := args["queries"]
+	if !ok {
+		return errorResult(started, errorArgsInvalid, "queries is required")
+	}
+	queriesSlice, ok := rawQueries.([]any)
+	if !ok || len(queriesSlice) == 0 {
+		return errorResult(started, errorArgsInvalid, "queries must be a non-empty array of strings")
+	}
+
+	queries := make([]string, 0, len(queriesSlice))
+	for _, q := range queriesSlice {
+		if s, ok := q.(string); ok && strings.TrimSpace(s) != "" {
+			queries = append(queries, strings.TrimSpace(s))
+		}
+	}
+	if len(queries) == 0 {
+		return errorResult(started, errorArgsInvalid, "queries must contain at least one non-empty string")
+	}
+
+	searchable := e.specsFn()
+
+	// Build combined pool: searchable tools + already-active core tools.
+	// Core tools are matched for schema lookup but never re-activated.
+	var activeSpecs map[string]llm.ToolSpec
+	if e.activeSpecsFn != nil {
+		activeSpecs = e.activeSpecsFn()
+	}
+	pool := make(map[string]llm.ToolSpec, len(searchable)+len(activeSpecs))
+	for k, v := range activeSpecs {
+		pool[k] = v
+	}
+	for k, v := range searchable {
+		pool[k] = v
+	}
+
+	matched := expandToolDependencies(matchTools(queries, searchable, pool), pool)
+
+	if len(matched) == 0 {
+		return tools.ExecutionResult{
+			ResultJSON: map[string]any{
+				"matched":              []any{},
+				"count":                0,
+				"activated_count":      0,
+				"already_loaded_count": 0,
+				"already_active_count": 0,
+				"message":              "no tools matched: queries must be tool names or catalog keywords, not natural-language research or web questions — use web_search for external facts",
+			},
+			DurationMs: durationMs(started),
+		}
+	}
+
+	// Activate searchable tools not yet injected; core tools are already active.
+	var newSpecs []llm.ToolSpec
+	results := make([]map[string]any, 0, len(matched))
+	activatedCount := 0
+	alreadyLoadedCount := 0
+	alreadyActiveCount := 0
+	for _, spec := range matched {
+		entry := specToJSON(spec)
+		if deps := reverseToolDependencies(spec.Name, matched); len(deps) > 0 {
+			entry["auto_activated_by"] = deps
+		}
+		_, isSearchable := searchable[spec.Name]
+		if isSearchable {
+			if _, done := e.alreadyActivated[spec.Name]; !done {
+				e.alreadyActivated[spec.Name] = struct{}{}
+				newSpecs = append(newSpecs, spec)
+				entry["state"] = stateActivated
+				activatedCount++
+			} else {
+				entry["state"] = stateAlreadyLoaded
+				entry["already_loaded"] = true
+				alreadyLoadedCount++
+			}
+		} else {
+			entry["state"] = stateAlreadyActive
+			entry["already_active"] = true
+			alreadyActiveCount++
+		}
+		results = append(results, entry)
+	}
+
+	if len(newSpecs) > 0 {
+		e.activator.Activate(newSpecs...)
+	}
+
+	return tools.ExecutionResult{
+		ResultJSON: map[string]any{
+			"matched":              results,
+			"count":                len(results),
+			"activated_count":      activatedCount,
+			"already_loaded_count": alreadyLoadedCount,
+			"already_active_count": alreadyActiveCount,
+		},
+		DurationMs: durationMs(started),
+	}
+}
+
+func matchTools(queries []string, searchable map[string]llm.ToolSpec, pool map[string]llm.ToolSpec) []llm.ToolSpec {
+	seen := map[string]struct{}{}
+	var result []llm.ToolSpec
+
+	for _, query := range queries {
+		q := strings.ToLower(query)
+
+		// wildcard is discovery mode: only return searchable tools.
+		if q == "*" || q == "all" {
+			for name, spec := range searchable {
+				if _, dup := seen[name]; !dup {
+					seen[name] = struct{}{}
+					result = append(result, spec)
+				}
+			}
+			continue
+		}
+
+		// priority 1: exact name match
+		if spec, ok := pool[query]; ok {
+			if _, dup := seen[spec.Name]; !dup {
+				seen[spec.Name] = struct{}{}
+				result = append(result, spec)
+			}
+			continue
+		}
+
+		// priority 2: discovery search is limited to searchable tools.
+		for name, spec := range searchable {
+			if _, dup := seen[name]; dup {
+				continue
+			}
+			nameLower := strings.ToLower(name)
+			if strings.Contains(nameLower, q) || strings.Contains(q, nameLower) {
+				seen[name] = struct{}{}
+				result = append(result, spec)
+				continue
+			}
+
+			// priority 3: ShortDesc or Label match (via toolmeta)
+			if meta, ok := sharedtoolmeta.Lookup(name); ok {
+				combined := strings.ToLower(meta.ShortDesc + " " + meta.Label)
+				if strings.Contains(combined, q) {
+					seen[name] = struct{}{}
+					result = append(result, spec)
+				}
+			}
+		}
+	}
+	sort.SliceStable(result, func(i, j int) bool {
+		return result[i].Name < result[j].Name
+	})
+	return result
+}
+
+func specToJSON(spec llm.ToolSpec) map[string]any {
+	out := map[string]any{
+		"name":   spec.Name,
+		"schema": spec.JSONSchema,
+	}
+	if spec.Description != nil {
+		out["description"] = *spec.Description
+	}
+	return out
+}
+
+func expandToolDependencies(matched []llm.ToolSpec, pool map[string]llm.ToolSpec) []llm.ToolSpec {
+	if len(matched) == 0 {
+		return nil
+	}
+	out := make([]llm.ToolSpec, 0, len(matched))
+	seen := make(map[string]struct{}, len(matched))
+	for _, spec := range matched {
+		if _, ok := seen[spec.Name]; ok {
+			continue
+		}
+		seen[spec.Name] = struct{}{}
+		out = append(out, spec)
+		for _, dep := range toolDependencies[spec.Name] {
+			depSpec, ok := pool[dep]
+			if !ok {
+				continue
+			}
+			if _, dup := seen[depSpec.Name]; dup {
+				continue
+			}
+			seen[depSpec.Name] = struct{}{}
+			out = append(out, depSpec)
+		}
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		return out[i].Name < out[j].Name
+	})
+	return out
+}
+
+func reverseToolDependencies(toolName string, matched []llm.ToolSpec) []string {
+	owners := make([]string, 0, 1)
+	for _, spec := range matched {
+		for _, dep := range toolDependencies[spec.Name] {
+			if dep == toolName && spec.Name != toolName {
+				owners = append(owners, spec.Name)
+			}
+		}
+	}
+	return owners
+}
+
+func errorResult(started time.Time, class, message string) tools.ExecutionResult {
+	return tools.ExecutionResult{
+		Error: &tools.ExecutionError{
+			ErrorClass: class,
+			Message:    message,
+		},
+		DurationMs: durationMs(started),
+	}
+}
+
+func durationMs(started time.Time) int {
+	ms := int(time.Since(started) / time.Millisecond)
+	if ms < 0 {
+		return 0
+	}
+	return ms
+}
+
+// BuildCatalogPrompt builds a compact tool catalog for the system prompt.
+// Only includes tools in the searchable set (not already in core).
+func BuildCatalogPrompt(searchable map[string]llm.ToolSpec) string {
+	if len(searchable) == 0 {
+		return ""
+	}
+
+	var sb strings.Builder
+	sb.WriteString("\n<available_tools>\n")
+	sb.WriteString("These tools are not callable yet.\n")
+	sb.WriteString("Use load_tools to get the full schema before calling any of them.\n")
+	sb.WriteString("load_tools queries must be a tool id or a word from a line below (this catalog only), not a web or research question.\n")
+	sb.WriteString("After load_tools returns, call a matched tool only if it appears in the real tool list in later phases of the same reasoning loop.\n")
+
+	names := make([]string, 0, len(searchable))
+	for name := range searchable {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		shortDesc := name
+		if meta, ok := sharedtoolmeta.Lookup(name); ok && meta.ShortDesc != "" {
+			shortDesc = meta.ShortDesc
+		}
+		if meta, ok := sharedtoolmeta.Lookup(name); ok {
+			capabilityBits := make([]string, 0, 2)
+			if meta.Group != "" {
+				capabilityBits = append(capabilityBits, meta.Group)
+			}
+			if len(capabilityBits) > 0 {
+				shortDesc = shortDesc + " [" + strings.Join(capabilityBits, ", ") + "]"
+			}
+		}
+		sb.WriteString("- ")
+		sb.WriteString(name)
+		sb.WriteString(": ")
+		sb.WriteString(shortDesc)
+		sb.WriteString("\n")
+	}
+	sb.WriteString("</available_tools>")
+	return sb.String()
+}
+
+// MarshalSearchableIndex returns a JSON-serializable index for debugging/logging.
+func MarshalSearchableIndex(searchable map[string]llm.ToolSpec) string {
+	index := make(map[string]string, len(searchable))
+	for name := range searchable {
+		if meta, ok := sharedtoolmeta.Lookup(name); ok {
+			index[name] = meta.ShortDesc
+		} else {
+			index[name] = ""
+		}
+	}
+	data, _ := json.Marshal(index)
+	return string(data)
+}

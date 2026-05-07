@@ -1,0 +1,5 @@
+# Go 编译产物
+/sandbox
+
+# rootfs 构建产物
+rootfs/output/

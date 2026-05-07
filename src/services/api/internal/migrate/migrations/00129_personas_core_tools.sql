@@ -1,0 +1,3 @@
+-- +goose Up
+
+ALTER TABLE personas ADD COLUMN IF NOT EXISTS core_tools TEXT[] NOT NULL DEFAULT '{}';

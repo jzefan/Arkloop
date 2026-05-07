@@ -1,0 +1,8 @@
+packages:
+  - src/apps/shared
+  - src/apps/web
+  - src/apps/console
+  - src/apps/console-lite
+  - src/apps/developers
+  - src/apps/desktop
+  - src/apps/tui

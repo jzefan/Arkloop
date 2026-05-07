@@ -1,0 +1,40 @@
+{
+  "name": "@arkloop/shared",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "test": "vitest run"
+  },
+  "exports": {
+    ".": "./src/index.ts",
+    "./api": "./src/api/client.ts",
+    "./api/types": "./src/api/types.ts",
+    "./storage": "./src/storage/tokens.ts",
+    "./desktop": "./src/desktop.ts",
+    "./contexts/theme": "./src/contexts/ThemeContext.tsx",
+    "./contexts/locale": "./src/contexts/LocaleContext.tsx",
+    "./components/auth-ui": "./src/components/auth-ui.tsx",
+    "./components/prompt-injection": "./src/components/prompt-injection/index.ts",
+    "./run-turns": "./src/run-turns.ts",
+    "./llm/available-catalog-advanced-json": "./src/llm/availableCatalogAdvancedJson.ts",
+    "./debug": "./src/debug-bus.ts"
+  },
+  "peerDependencies": {
+    "lucide-react": ">=0.400.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "react-router-dom": ">=6.0.0"
+  },
+  "devDependencies": {
+    "@types/react": "^19.2.5",
+    "@types/react-dom": "^19.2.3",
+    "react-router-dom": "^7.13.1",
+    "typescript": "~5.9.3",
+    "vite": "^8.0.3",
+    "vitest": "^4.1.2"
+  },
+  "dependencies": {
+    "@chenglou/pretext": "^0.0.3"
+  }
+}

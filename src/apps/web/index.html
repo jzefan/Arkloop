@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Arkloop Web</title>
+    <script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
+    <script>
+      // 同步读取主题，避免加载界面闪屏
+      ;(function(){
+        try {
+          var t = localStorage.getItem('arkloop:web:theme')
+          if (t === 'light' || t === 'dark') document.documentElement.setAttribute('data-theme', t)
+        } catch(e) {}
+      })()
+    </script>
+    <script>
+      // 同步读取语言和字体预设，避免首屏使用错误的 lang
+      ;(function(){
+        try {
+          var locale = localStorage.getItem('arkloop:web:locale')
+          var rawFontSettings = localStorage.getItem('arkloop:web:font-settings')
+          var fontFamily = 'default'
+          if (rawFontSettings) {
+            try {
+              var parsed = JSON.parse(rawFontSettings)
+              if (parsed && typeof parsed.fontFamily === 'string') fontFamily = parsed.fontFamily
+            } catch (e) {}
+          }
+          document.documentElement.setAttribute('data-body-font', fontFamily)
+          document.documentElement.lang = fontFamily === 'default'
+            ? 'zh-CN'
+            : (fontFamily === 'system' ? 'en' : (locale === 'zh' ? 'zh-CN' : 'en'))
+        } catch(e) {}
+      })()
+    </script>
+  </head>
+  <body>
+    <div id="root">
+      <style>
+        .ark-loader {
+          position: fixed;
+          inset: 0;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          background: #1E1D1C;
+          z-index: 9999;
+        }
+        .ark-loader-text {
+          font-family: 'MiSans Adjusted', system-ui, sans-serif;
+          font-size: 20px;
+          font-weight: 600;
+          letter-spacing: -0.3px;
+          background: linear-gradient(90deg, #6b6b68 0%, #c2c0b6 40%, #faf9f5 50%, #c2c0b6 60%, #6b6b68 100%);
+          background-size: 200% 100%;
+          -webkit-background-clip: text;
+          background-clip: text;
+          -webkit-text-fill-color: transparent;
+          animation: ark-shimmer 3s ease-in-out infinite;
+        }
+        @media (prefers-color-scheme: light) {
+          :root:not([data-theme="dark"]) .ark-loader { background: #F8F8F7; }
+          :root:not([data-theme="dark"]) .ark-loader-text {
+            background: linear-gradient(90deg, #8C8C8A 0%, #3D3D3B 40%, #141412 50%, #3D3D3B 60%, #8C8C8A 100%);
+            background-size: 200% 100%;
+            -webkit-background-clip: text;
+            background-clip: text;
+          }
+        }
+        :root[data-theme="light"] .ark-loader { background: #F8F8F7; }
+        :root[data-theme="light"] .ark-loader-text {
+          background: linear-gradient(90deg, #8C8C8A 0%, #3D3D3B 40%, #141412 50%, #3D3D3B 60%, #8C8C8A 100%);
+          background-size: 200% 100%;
+          -webkit-background-clip: text;
+          background-clip: text;
+        }
+        @keyframes ark-shimmer {
+          0% { background-position: 200% 0; }
+          100% { background-position: -200% 0; }
+        }
+      </style>
+      <div class="ark-loader">
+        <span class="ark-loader-text">Arkloop</span>
+      </div>
+    </div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

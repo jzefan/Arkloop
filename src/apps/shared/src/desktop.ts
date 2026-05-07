@@ -1,0 +1,420 @@
+export type ConnectionMode = 'local' | 'saas' | 'self-hosted'
+export type LocalPortMode = 'auto' | 'manual'
+export type DesktopPlatform = 'win32' | 'darwin' | 'linux' | string
+
+export type FetchProvider = 'none' | 'jina' | 'basic' | 'firecrawl'
+export type SearchProvider = 'none' | 'duckduckgo' | 'tavily' | 'searxng'
+
+export type FetchConnectorConfig = {
+  provider: FetchProvider
+  jinaApiKey?: string
+  firecrawlApiKey?: string
+  firecrawlBaseUrl?: string
+}
+
+export type SearchConnectorConfig = {
+  provider: SearchProvider
+  tavilyApiKey?: string
+  searxngBaseUrl?: string
+}
+
+export type ConnectorsConfig = {
+  fetch: FetchConnectorConfig
+  search: SearchConnectorConfig
+}
+
+export type MemoryProvider = 'notebook' | 'openviking' | 'nowledge'
+
+export type OpenVikingDesktopConfig = {
+  rootApiKey?: string
+  embeddingSelector?: string
+  embeddingProvider?: string
+  embeddingModel?: string
+  embeddingApiKey?: string
+  embeddingApiBase?: string
+  embeddingDimension?: number
+  vlmSelector?: string
+  vlmProvider?: string
+  vlmModel?: string
+  vlmApiKey?: string
+  vlmApiBase?: string
+  rerankSelector?: string
+  rerankProvider?: string
+  rerankModel?: string
+  rerankApiKey?: string
+  rerankApiBase?: string
+}
+
+export type NowledgeDesktopConfig = {
+  baseUrl?: string
+  apiKey?: string
+  requestTimeoutMs?: number
+}
+
+export type MemoryConfig = {
+  enabled: boolean
+  provider: MemoryProvider
+  memoryCommitEachTurn?: boolean
+  openviking?: OpenVikingDesktopConfig
+  nowledge?: NowledgeDesktopConfig
+}
+
+export type ImportSourceKind = 'hermes' | 'openclaw'
+export type ImportItemKey = 'identity' | 'skills' | 'mcp' | 'providers'
+
+export type AgentImportDiscovery = {
+  kind: ImportSourceKind
+  name: string
+  sourcePath: string
+  skillsCount: number
+  mcpServers: string[]
+  llmProviders: string[]
+}
+
+export type OnboardingImportApplyRequest = {
+  source: ImportSourceKind
+  selection?: Partial<Record<ImportItemKey, boolean>>
+}
+
+export type OnboardingImportApplyResult = {
+  ok: boolean
+  imported: Record<ImportItemKey, number>
+  errors: string[]
+}
+
+export type VoiceConfig = {
+  enabled: boolean
+  language?: string
+}
+
+export type NetworkConfig = {
+  proxyEnabled: boolean
+  proxyUrl?: string
+  requestTimeoutMs?: number
+  retryCount?: number
+  userAgent?: string
+}
+
+export type WorkspaceConfig = {
+  root?: string
+}
+
+export type MemoryEntry = {
+  id: string
+  scope: string
+  category: string
+  key: string
+  content: string
+  created_at: string
+}
+
+export type SnapshotHit = {
+  uri: string
+  abstract: string
+  is_leaf: boolean
+}
+
+export type MemoryRuntimeStatus = {
+  provider: MemoryProvider
+  configured: boolean
+  healthy: boolean
+  checked_at: string
+  error?: string
+  details?: {
+    nowledge?: { version?: string; search_ok?: boolean }
+    openviking?: { health_ok?: boolean }
+  }
+}
+
+export type DesktopConfig = {
+  mode: ConnectionMode
+  saas: { baseUrl: string }
+  selfHosted: { baseUrl: string }
+  local: { port: number; portMode: LocalPortMode }
+  window: { width: number; height: number }
+  onboarding_completed: boolean
+  connectors: ConnectorsConfig
+  memory: MemoryConfig
+  network: NetworkConfig
+  workspace: WorkspaceConfig
+  voice?: VoiceConfig
+}
+
+export type SidecarRuntime = {
+  status: 'stopped' | 'starting' | 'running' | 'crashed'
+  port: number | null
+  portMode: LocalPortMode
+  lastError?: string
+
+}
+
+type DesktopInfo = {
+  apiBaseUrl?: string
+  bridgeBaseUrl?: string
+  accessToken?: string
+  mode?: ConnectionMode
+  platform?: DesktopPlatform
+  getApiBaseUrl?: () => string
+  getBridgeBaseUrl?: () => string
+  getAccessToken?: () => string
+  getMode?: () => ConnectionMode
+  getPlatform?: () => DesktopPlatform
+}
+
+export type UpdaterComponentStatus = {
+  current: string | null
+  latest: string | null
+  available: boolean
+}
+
+export type AppUpdaterState = {
+  supported: boolean
+  phase: 'idle' | 'unsupported' | 'checking' | 'available' | 'not-available' | 'downloading' | 'downloaded' | 'error'
+  currentVersion: string
+  latestVersion: string | null
+  progressPercent: number
+  error: string | null
+}
+
+export type UpdaterStatus = {
+  openviking: UpdaterComponentStatus
+  sandbox: { kernel: UpdaterComponentStatus; rootfs: UpdaterComponentStatus }
+  bins: { rtk: UpdaterComponentStatus; opencli: UpdaterComponentStatus }
+}
+
+export type UpdaterComponent = 'openviking' | 'sandbox_kernel' | 'sandbox_rootfs' | 'rtk' | 'opencli'
+
+export type ArkloopDesktopApi = {
+  isDesktop: true
+  config: {
+    get: () => Promise<DesktopConfig>
+    set: (config: DesktopConfig) => Promise<{ ok: boolean }>
+    getPath: () => Promise<string>
+    onChanged: (callback: (config: DesktopConfig) => void) => () => void
+  }
+  advanced?: {
+    getOverview: () => Promise<DesktopAdvancedOverview>
+    chooseDataFolder: () => Promise<string | null>
+    exportDataBundle: (options: DesktopExportOptions) => Promise<DesktopExportResult>
+    importDataBundle: () => Promise<DesktopImportResult>
+    listLogs: (input?: DesktopLogQuery) => Promise<{ entries: DesktopLogEntry[] }>
+  }
+  updater?: {
+    getCached: () => Promise<UpdaterStatus>
+    check: () => Promise<UpdaterStatus>
+    apply: (opts: { component: UpdaterComponent }) => Promise<{ ok: boolean }>
+    onProgress: (callback: (data: { phase: string; percent: number; bytesDownloaded: number; bytesTotal: number; error?: string; component: UpdaterComponent }) => void) => () => void
+    onStatusChanged: (callback: (status: UpdaterStatus) => void) => () => void
+  }
+  appUpdater?: {
+    getState: () => Promise<AppUpdaterState>
+    check: () => Promise<AppUpdaterState>
+    download: () => Promise<AppUpdaterState>
+    install: () => Promise<{ ok: boolean }>
+    onState: (callback: (state: AppUpdaterState) => void) => () => void
+  }
+  connectors?: {
+    get: () => Promise<ConnectorsConfig>
+    set: (config: ConnectorsConfig) => Promise<{ ok: boolean }>
+  }
+  memory?: {
+    getConfig: () => Promise<MemoryConfig>
+    setConfig: (config: MemoryConfig) => Promise<{ ok: boolean }>
+    list: (agentId?: string) => Promise<{ entries: MemoryEntry[] }>
+    delete: (id: string, agentId?: string) => Promise<{ status: string }>
+    getStatus: (agentId?: string) => Promise<MemoryRuntimeStatus>
+    getSnapshot: (agentId?: string) => Promise<{ memory_block: string; hits?: SnapshotHit[] }>
+    rebuildSnapshot: (agentId?: string) => Promise<{ memory_block: string; hits?: SnapshotHit[] }>
+    getContent: (uri: string, layer?: 'overview' | 'read') => Promise<{ content: string }>
+    add: (content: string, category?: string) => Promise<{ entry: MemoryEntry }>
+    getImpression: (agentId?: string) => Promise<{ impression: string; updated_at?: string }>
+    rebuildImpression: (agentId?: string) => Promise<{ status: string; run_id?: string; updated_at?: string }>
+  }
+  sidecar: {
+    getStatus: () => Promise<'stopped' | 'starting' | 'running' | 'crashed'>
+    getRuntime: () => Promise<SidecarRuntime>
+    restart: () => Promise<string>
+    download: () => Promise<{ ok: boolean }>
+    isAvailable: () => Promise<boolean>
+    checkUpdate: () => Promise<{ current: string | null; latest: string | null; updateAvailable: boolean }>
+    onStatusChanged: (callback: (status: string) => void) => () => void
+    onRuntimeChanged: (callback: (runtime: SidecarRuntime) => void) => () => void
+    onDownloadProgress: (callback: (progress: { phase: string; percent: number; bytesDownloaded: number; bytesTotal: number; error?: string }) => void) => () => void
+  }
+  onboarding: {
+    getStatus: () => Promise<{ completed: boolean }>
+    complete: () => Promise<{ ok: boolean }>
+    detectImports?: () => Promise<AgentImportDiscovery[]>
+    applyImport?: (request: OnboardingImportApplyRequest) => Promise<OnboardingImportApplyResult>
+  }
+  app: {
+    getVersion: () => Promise<string>
+    quit: () => Promise<void>
+    getOsUsername?: () => Promise<string>
+  }
+  window?: {
+    minimize: () => Promise<void>
+    toggleMaximize: () => Promise<{ maximized: boolean }>
+    close: () => Promise<void>
+    isMaximized: () => Promise<boolean>
+    onMaximizedChanged: (callback: (maximized: boolean) => void) => () => void
+  }
+  logs?: {
+    getDir: () => Promise<string>
+    getFiles: () => Promise<{ main: string; sidecar: string }>
+  }
+  dialog?: {
+    openFolder: () => Promise<string | null>
+    chooseExportFolder?: () => Promise<{ ok: boolean; folderPath?: string; canceled?: boolean }>
+    saveZipToFolder?: (options: { folderPath: string; defaultFilename: string; data: Uint8Array }) => Promise<{ ok: boolean; filePath?: string }>
+    exportZipToFolder?: (options: { defaultFilename: string; data: Uint8Array }) => Promise<{ ok: boolean; filePath?: string; canceled?: boolean }>
+  }
+  fs?: {
+    listDir: (folderPath: string, subPath?: string) => Promise<{ entries: LocalFileEntry[] }>
+    readFile: (folderPath: string, relativePath: string) => Promise<{ data: string; mime_type: string } | { error: string }>
+  }
+}
+
+export type LocalFileEntry = {
+  name: string
+  path: string
+  type: 'file' | 'dir'
+  size?: number
+  mtime_unix_ms?: number
+}
+
+export type DesktopOverviewLink = {
+  label: string
+  url: string
+}
+
+export type DesktopUsageSummary = {
+  account_id: string
+  year: number
+  month: number
+  total_input_tokens: number
+  total_output_tokens: number
+  total_cost_usd: number
+  record_count: number
+}
+
+export type DesktopOverviewItem = {
+  label: string
+  value: string
+  tone?: 'default' | 'success' | 'warning' | 'danger'
+}
+
+export type DesktopAdvancedOverview = {
+  appName: string
+  appVersion: string
+  githubUrl: string
+  telegramUrl: string | null
+  iconDataUrl: string | null
+  configPath: string
+  dataDir: string
+  logsDir: string
+  sqlitePath: string
+  links: DesktopOverviewLink[]
+  status: DesktopOverviewItem[]
+  usage: DesktopUsageSummary | null
+}
+
+export type DesktopExportSection =
+  | 'settings'
+  | 'providers'
+  | 'history'
+  | 'personas'
+  | 'projects'
+  | 'mcp'
+  | 'themes'
+
+export type DesktopThemeExportPayload = {
+  customThemeId: string | null
+  customThemes: Record<string, unknown>
+}
+
+export type DesktopExportOptions = {
+  sections: DesktopExportSection[]
+  themes?: DesktopThemeExportPayload | null
+}
+
+export type DesktopExportResult = {
+  ok: boolean
+  filePath?: string
+  canceled?: boolean
+}
+
+export type DesktopImportResult = {
+  ok: boolean
+  importedFrom?: string
+  canceled?: boolean
+  themes?: DesktopThemeExportPayload | null
+}
+
+export type DesktopLogLevel = 'info' | 'warn' | 'error' | 'debug' | 'other'
+
+export type DesktopLogEntry = {
+  timestamp: string
+  level: DesktopLogLevel
+  source: 'main' | 'sidecar'
+  message: string
+  raw: string
+}
+
+export type DesktopLogQuery = {
+  source?: 'all' | 'main' | 'sidecar'
+  level?: 'all' | DesktopLogLevel
+  search?: string
+  limit?: number
+}
+
+export function isDesktop(): boolean {
+  // Electron preload 同时注入 arkloop API 与 __ARKLOOP_DESKTOP__；dev/hmr 下偶发只其一可用。
+  const g = globalThis as Record<string, unknown>
+  return !!(g.arkloop || g.__ARKLOOP_DESKTOP__)
+}
+
+export function getDesktopApi(): ArkloopDesktopApi | null {
+  const api = (globalThis as Record<string, unknown>).arkloop as ArkloopDesktopApi | undefined
+  return api?.isDesktop ? api : null
+}
+
+function getDesktopInfo(): DesktopInfo | undefined {
+  return (globalThis as Record<string, unknown>).__ARKLOOP_DESKTOP__ as DesktopInfo | undefined
+}
+
+export function getDesktopMode(): ConnectionMode | null {
+  const info = getDesktopInfo()
+  if (typeof info?.getMode === 'function') {
+    return info.getMode() ?? null
+  }
+  return info?.mode ?? null
+}
+
+export function getDesktopPlatform(): DesktopPlatform | null {
+  const info = getDesktopInfo()
+  if (typeof info?.getPlatform === 'function') {
+    return info.getPlatform() ?? null
+  }
+  return info?.platform ?? null
+}
+
+export function getDesktopAccessToken(): string | null {
+  const info = getDesktopInfo()
+  if (typeof info?.getAccessToken === 'function') {
+    return info.getAccessToken() ?? null
+  }
+  return info?.accessToken ?? null
+}
+
+export function getDesktopBridgeBaseUrl(): string | null {
+  const info = getDesktopInfo()
+  if (typeof info?.getBridgeBaseUrl === 'function') {
+    return info.getBridgeBaseUrl() ?? null
+  }
+  return info?.bridgeBaseUrl ?? null
+}
+
+export function isLocalMode(): boolean {
+  return getDesktopMode() === 'local'
+}

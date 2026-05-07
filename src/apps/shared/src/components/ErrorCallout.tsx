@@ -1,0 +1,194 @@
+import { useMemo, useState } from 'react'
+import { ChevronDown, ChevronRight } from 'lucide-react'
+import type { Locale } from '../contexts/LocaleContext'
+
+export type AppError = {
+  message: string
+  traceId?: string
+  code?: string
+  details?: Record<string, unknown>
+}
+
+type FriendlyText = { zh: string; en: string }
+
+const FRIENDLY_ERROR_MESSAGES: Record<string, FriendlyText> = {
+  'internal.error': { zh: '服务出错，请稍后再试', en: 'Something went wrong. Please try again.' },
+  'database.not_configured': { zh: '服务暂不可用', en: 'Service unavailable.' },
+  'service_unavailable': { zh: '服务暂不可用', en: 'Service unavailable.' },
+  'validation.error': { zh: '请求参数有误', en: 'Invalid request.' },
+  'bad_request': { zh: '请求参数有误', en: 'Invalid request.' },
+  'policy.denied': { zh: '无权限', en: 'Access denied.' },
+  'auth.forbidden': { zh: '无权限', en: 'Access denied.' },
+  'auth.invalid_credentials': { zh: '账号或密码错误', en: 'Invalid credentials.' },
+  'auth.user_suspended': { zh: '账号已停用', en: 'Account suspended.' },
+  'auth.email_not_verified': { zh: '邮箱未验证', en: 'Email not verified.' },
+  'auth.captcha_invalid': { zh: '人机验证失败', en: 'Captcha verification failed.' },
+  'auth.invite_code_required': { zh: '需要邀请码', en: 'Invite code required.' },
+  'auth.invite_code_invalid': { zh: '邀请码无效', en: 'Invalid invite code.' },
+  'auth.login_exists': { zh: '用户名已被占用', en: 'Login already taken.' },
+  'auth.flow_token_invalid': { zh: '登录流程已失效，请重新开始', en: 'Sign-in flow expired. Please start again.' },
+  'auth.otp_unavailable': { zh: '当前账号无法使用邮箱验证码', en: 'Email code is unavailable for this account.' },
+  'auth.otp_invalid': { zh: '验证码无效或已过期', en: 'Code invalid or expired.' },
+  'auth.token_expired': { zh: '登录已过期，请重新登录', en: 'Session expired. Please log in again.' },
+  'auth.invalid_token': { zh: '登录已过期，请重新登录', en: 'Session expired. Please log in again.' },
+  'auth.missing_token': { zh: '未登录', en: 'Not authenticated.' },
+  'auth.invalid_authorization': { zh: '未登录', en: 'Not authenticated.' },
+  'threads.not_found': { zh: '会话不存在', en: 'Thread not found.' },
+  'runs.not_found': { zh: '任务不存在', en: 'Run not found.' },
+  'runs.limit_exceeded': { zh: '当前有任务在运行，请稍后再试', en: 'Too many concurrent runs.' },
+  'credits.insufficient': { zh: '积分不足', en: 'Insufficient credits.' },
+  'provider.non_retryable': { zh: '模型服务商请求失败', en: 'Provider request failed (non-retryable).' },
+  'provider.retryable': { zh: '模型服务商暂时不可用，请重试', en: 'Provider temporarily unavailable. Please retry.' },
+  'routing.not_found': { zh: '模型路由未找到，请检查 LLM 供应商配置', en: 'Model route not found. Please check LLM provider settings.' },
+  'entitlement.quota_exceeded': { zh: '用量配额已用尽', en: 'Usage quota exceeded.' },
+  'budget.exceeded': { zh: '对话预算已用尽', en: 'Conversation budget exceeded.' },
+  'bootstrap.invalid_token': { zh: '初始化链接已失效', en: 'Bootstrap link expired.' },
+  'bootstrap.already_initialized': { zh: '平台管理员已初始化', en: 'Platform admin already initialized.' },
+  'config.missing': { zh: '所需工具未配置', en: 'Required tool not configured.' },
+  'config.invalid': { zh: '配置无效，请检查平台设置', en: 'Invalid configuration. Please check platform settings.' },
+  'runtime_policy.denied': { zh: '运行时策略拒绝', en: 'Denied by runtime policy.' },
+  'external_provider.failed': { zh: '外部服务商请求失败', en: 'External provider request failed.' },
+  'internal_platform.error': { zh: '平台内部错误，请联系管理员', en: 'Internal platform error. Please contact admin.' },
+  'policy.byok_disabled': { zh: '平台未启用自带密钥功能', en: 'Bring-your-own-key is not enabled on this platform.' },
+  'routing.model_not_found': { zh: '指定模型未找到，请检查 LLM 供应商配置', en: 'Specified model not found. Please check LLM provider settings.' },
+  'projects.delete_default': { zh: '默认项目不可删除', en: 'Default project cannot be deleted.' },
+  'llm_providers.name_conflict': { zh: '同名 AI 服务商已存在', en: 'A provider with the same name already exists.' },
+  'llm_providers.upstream_auth_failed': { zh: '服务商认证失败，请检查 API Key 或 Base URL', en: 'Provider authentication failed. Check the API key or base URL.' },
+  'llm_providers.upstream_request_failed': { zh: '服务商请求失败，请检查兼容性或稍后重试', en: 'Provider request failed. Check compatibility or try again later.' },
+  'llm_provider_models.model_conflict': { zh: '该模型已存在', en: 'That model already exists.' },
+}
+
+function hasCjk(text: string): boolean {
+  return /[\u4e00-\u9fff]/.test(text)
+}
+
+function isNetworkErrorMessage(text: string): boolean {
+  const m = text.trim().toLowerCase()
+  if (!m) return false
+  return (
+    m.includes('failed to fetch') ||
+    m.includes('networkerror') ||
+    m.includes('network error') ||
+    m.includes('load failed') ||
+    m.includes('err_incomplete_chunked_encoding') ||
+    m.includes('net::err_') ||
+    m.includes('failed to load')
+  )
+}
+
+function formatDetailValue(value: unknown): string {
+  if (value == null) return String(value)
+  if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
+    return String(value)
+  }
+  try {
+    return JSON.stringify(value)
+  } catch {
+    return String(value)
+  }
+}
+
+type ErrorCalloutProps = {
+  error: AppError
+  locale: Locale
+  requestFailedText: string
+}
+
+export type FormattedError = {
+  title: string
+  detailLines: string[]
+}
+
+export function formatErrorForDisplay(error: AppError, locale: Locale, requestFailedText: string): FormattedError {
+  const rawMessage = (error.message ?? '').trim()
+  const code = typeof error.code === 'string' ? error.code.trim() : ''
+  const traceId = typeof error.traceId === 'string' ? error.traceId.trim() : ''
+  const details = error.details
+  const labels = locale === 'zh'
+    ? { raw: '原始信息', code: '错误码', trace: 'Trace ID' }
+    : { raw: 'Raw message', code: 'Code', trace: 'Trace ID' }
+
+  let title: string
+  if (rawMessage && hasCjk(rawMessage)) {
+    title = rawMessage
+  } else if (code && FRIENDLY_ERROR_MESSAGES[code]) {
+    title = FRIENDLY_ERROR_MESSAGES[code][locale]
+  } else if (rawMessage && isNetworkErrorMessage(rawMessage)) {
+    title = locale === 'zh' ? '网络异常，请重试' : 'Network error. Please try again.'
+  } else {
+    title = requestFailedText
+  }
+
+  const detailLines: string[] = []
+  if (rawMessage && rawMessage !== title) detailLines.push(`${labels.raw}: ${rawMessage}`)
+  if (code) detailLines.push(`${labels.code}: ${code}`)
+  if (traceId) detailLines.push(`${labels.trace}: ${traceId}`)
+  if (details && Object.keys(details).length > 0) {
+    for (const [key, value] of Object.entries(details)) {
+      detailLines.push(`${key}: ${formatDetailValue(value)}`)
+    }
+  }
+
+  return { title, detailLines }
+}
+
+export function ErrorCallout({ error, locale, requestFailedText }: ErrorCalloutProps) {
+  const [detailsOpen, setDetailsOpen] = useState(false)
+
+  const formatted = useMemo(() => formatErrorForDisplay(error, locale, requestFailedText), [error, locale, requestFailedText])
+  const showDetails = formatted.detailLines.length > 0
+
+  const labels = useMemo(() => {
+    if (locale === 'zh') {
+      return { details: '详情' }
+    }
+    return { details: 'Details' }
+  }, [locale])
+
+  return (
+    <div
+      className="mt-3 rounded-xl border px-4 py-3 text-sm"
+      style={{
+        background: 'var(--c-error-bg)',
+        borderColor: 'var(--c-error-border)',
+      }}
+    >
+      <div className="flex items-start justify-between gap-3">
+        <div className="font-medium" style={{ color: 'var(--c-error-text)' }}>
+          {formatted.title}
+        </div>
+        {showDetails && (
+          <button
+            type="button"
+            onClick={() => setDetailsOpen((v) => !v)}
+            className="flex items-center gap-1 whitespace-nowrap text-xs"
+            style={{
+              background: 'transparent',
+              border: 'none',
+              padding: 0,
+              cursor: 'pointer',
+              color: 'var(--c-error-subtext)',
+              opacity: 0.9,
+            }}
+          >
+            {detailsOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+            {labels.details}
+          </button>
+        )}
+      </div>
+
+      {showDetails && detailsOpen && (
+        <div
+          className="mt-1.5 space-y-0.5 text-xs"
+          style={{ color: 'var(--c-error-subtext)' }}
+        >
+          {formatted.detailLines.map((line, index) => (
+            <div key={`${index}:${line}`} className="font-mono break-words">
+              {line}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}

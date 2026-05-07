@@ -1,0 +1,113 @@
+import { SyntaxStyle } from "@opentui/core"
+import { Index, Show } from "solid-js"
+import { CHAT_CONTENT_GUTTER, CHAT_LEAD_GUTTER_WIDTH, CHAT_PREFIX_WIDTH } from "../lib/chatLayout"
+import { tuiTheme } from "../lib/theme"
+
+const markdownSyntaxStyle = SyntaxStyle.create()
+
+const PREVIEW_LINES = 4
+
+interface Props {
+  role: "user" | "assistant" | "tool"
+  content?: string
+  toolName?: string
+  toolSummary?: string
+  toolStatus?: "pending" | "success" | "error"
+  toolError?: string
+  toolResultContent?: string
+  toolResultLineCount?: number
+  streaming?: boolean
+}
+
+export function MessageBubble(props: Props) {
+  const isUser = () => props.role === "user"
+  const toolLineText = () => props.toolSummary?.trim() || props.toolName?.trim() || "Tool"
+
+  const roleFg = () => {
+    switch (props.role) {
+      case "user": return tuiTheme.info
+      case "assistant": return tuiTheme.primary
+      case "tool": return props.toolStatus === "error" ? tuiTheme.error : props.toolStatus === "pending" ? tuiTheme.textMuted : tuiTheme.success
+    }
+  }
+
+  const previewLines = () => {
+    const raw = props.toolResultContent
+    if (!raw) return []
+    return raw.split("\n").slice(0, PREVIEW_LINES)
+  }
+  const hiddenCount = () => {
+    const total = props.toolResultLineCount ?? 0
+    return Math.max(0, total - PREVIEW_LINES)
+  }
+  const hasPreview = () => previewLines().length > 0
+
+  return (
+    <box flexDirection="column" width="100%">
+      {!isUser() && props.role === "tool" ? (
+        <box flexDirection="column" width="100%" paddingLeft={CHAT_CONTENT_GUTTER} paddingRight={1} paddingBottom={1}>
+          {/* Header: dot + summary */}
+          <box flexDirection="row">
+            <box width={CHAT_PREFIX_WIDTH}>
+              <text content="●" fg={roleFg()} />
+            </box>
+            <box flexGrow={1}>
+              <text content={toolLineText()} fg={tuiTheme.textMuted} wrapMode="word" />
+            </box>
+          </box>
+          {/* Result preview */}
+          <Show when={hasPreview()}>
+            <box flexDirection="column" paddingLeft={CHAT_PREFIX_WIDTH}>
+              <box flexDirection="row">
+                <text content="⎿  " fg={tuiTheme.textMuted} />
+                <box flexGrow={1} flexDirection="column">
+                  <Index each={previewLines()}>
+                    {(line) => <text content={line()} fg={tuiTheme.textMuted} wrapMode="word" />}
+                  </Index>
+                </box>
+              </box>
+              <Show when={hiddenCount() > 0}>
+                <text content={`    ... +${hiddenCount()} lines`} fg={tuiTheme.textMuted} />
+              </Show>
+            </box>
+          </Show>
+          {/* No output fallback */}
+          <Show when={props.toolStatus === "success" && !hasPreview() && !props.toolError}>
+            <box paddingLeft={CHAT_PREFIX_WIDTH}>
+              <text content="⎿  (No output)" fg={tuiTheme.textMuted} />
+            </box>
+          </Show>
+          {/* Error */}
+          <Show when={props.toolStatus === "error" && props.toolError}>
+            <box paddingLeft={CHAT_PREFIX_WIDTH}>
+              <text content={props.toolError ?? ""} fg={tuiTheme.error} wrapMode="word" />
+            </box>
+          </Show>
+        </box>
+      ) : null}
+      {isUser() ? (
+        <box flexDirection="row" width="100%" paddingLeft={CHAT_CONTENT_GUTTER} paddingRight={1} paddingBottom={1}>
+          <box flexGrow={1} backgroundColor={tuiTheme.userPromptBg} paddingRight={1}>
+            <box flexDirection="row" alignItems="flex-start">
+              <box width={CHAT_PREFIX_WIDTH}>
+                <text content="❯" fg={tuiTheme.primary} />
+              </box>
+              <box flexGrow={1}>
+                <text content={props.content ?? ""} wrapMode="word" fg={tuiTheme.text} />
+              </box>
+            </box>
+          </box>
+        </box>
+      ) : props.role === "assistant" ? (
+        <box flexDirection="row" width="100%" paddingLeft={CHAT_CONTENT_GUTTER} paddingRight={1} paddingBottom={1}>
+          <box width={CHAT_PREFIX_WIDTH}>
+            <text content="●" fg={roleFg()} />
+          </box>
+          <box flexGrow={1}>
+            <markdown content={props.content ?? ""} syntaxStyle={markdownSyntaxStyle} streaming={props.streaming} />
+          </box>
+        </box>
+      ) : null}
+    </box>
+  )
+}

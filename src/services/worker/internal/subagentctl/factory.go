@@ -1,0 +1,394 @@
+package subagentctl
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"strings"
+	"time"
+
+	"arkloop/services/worker/internal/data"
+
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
+)
+
+const childThreadTTL = 7 * 24 * time.Hour
+
+type SubAgentRunFactory struct {
+	pool            data.DB
+	snapshotStorage *SnapshotStorage
+}
+
+func NewSubAgentRunFactory(pool data.DB, snapshotStorage *SnapshotStorage) *SubAgentRunFactory {
+	return &SubAgentRunFactory{pool: pool, snapshotStorage: snapshotStorage}
+}
+
+func (f *SubAgentRunFactory) CreateSpawnRun(
+	ctx context.Context,
+	tx pgx.Tx,
+	parentRun data.Run,
+	spawnReq ResolvedSpawnRequest,
+	snapshot ContextSnapshot,
+	forcedRunID *uuid.UUID,
+) (data.SubAgentRecord, uuid.UUID, error) {
+	parentSubAgent, err := (data.SubAgentRepository{}).GetByCurrentRunID(ctx, tx, parentRun.ID)
+	if err != nil {
+		return data.SubAgentRecord{}, uuid.Nil, err
+	}
+	ownerThreadID := parentRun.ThreadID
+	var parentSubAgentID *uuid.UUID
+	depth := 1
+	if parentSubAgent != nil {
+		ownerThreadID = parentRun.ThreadID
+		parentSubAgentID = &parentSubAgent.ID
+		depth = parentSubAgent.Depth + 1
+	}
+	childThreadID, err := f.createChildThread(ctx, tx, parentRun)
+	if err != nil {
+		return data.SubAgentRecord{}, uuid.Nil, err
+	}
+	createdSubAgent, err := (data.SubAgentRepository{}).Create(ctx, tx, data.SubAgentCreateParams{
+		AccountID:        parentRun.AccountID,
+		OwnerThreadID:    ownerThreadID,
+		AgentThreadID:    childThreadID,
+		OriginRunID:      parentRun.ID,
+		ParentSubAgentID: parentSubAgentID,
+		Depth:            depth,
+		Role:             cloneStringPtr(spawnReq.Role),
+		PersonaID:        stringPtr(spawnReq.PersonaID),
+		Nickname:         cloneStringPtr(spawnReq.Nickname),
+		SourceType:       spawnReq.SourceType,
+		ContextMode:      spawnReq.ContextMode,
+	})
+	if err != nil {
+		return data.SubAgentRecord{}, uuid.Nil, fmt.Errorf("create sub_agent: %w", err)
+	}
+	if err := f.snapshotStorage.Save(ctx, tx, createdSubAgent.ID, snapshot); err != nil {
+		return data.SubAgentRecord{}, uuid.Nil, fmt.Errorf("save context snapshot: %w", err)
+	}
+	if _, err := (data.SubAgentEventAppender{}).Append(ctx, tx, createdSubAgent.ID, nil, data.SubAgentEventTypeSpawnRequested, map[string]any{
+		"persona_id":      spawnReq.PersonaID,
+		"context_mode":    createdSubAgent.ContextMode,
+		"source_type":     spawnReq.SourceType,
+		"origin_run_id":   parentRun.ID.String(),
+		"owner_thread_id": ownerThreadID.String(),
+		"agent_thread_id": childThreadID.String(),
+	}, nil); err != nil {
+		return data.SubAgentRecord{}, uuid.Nil, fmt.Errorf("append spawn_requested: %w", err)
+	}
+	if err := f.copySnapshotMessages(ctx, tx, parentRun.AccountID, childThreadID, snapshot.Messages); err != nil {
+		return data.SubAgentRecord{}, uuid.Nil, err
+	}
+	if _, err := insertUserMessage(ctx, tx, parentRun.AccountID, childThreadID, spawnReq.Input); err != nil {
+		return data.SubAgentRecord{}, uuid.Nil, fmt.Errorf("insert child message: %w", err)
+	}
+	childRunID, err := f.createQueuedRun(ctx, tx, parentRun, createdSubAgent, childThreadID, &snapshot, forcedRunID, data.SubAgentEventTypeSpawned, map[string]any{
+		"thread_id": childThreadID.String(),
+	}, nil)
+	if err != nil {
+		return data.SubAgentRecord{}, uuid.Nil, err
+	}
+	return createdSubAgent, childRunID, nil
+}
+
+func (f *SubAgentRunFactory) CreateRunForExistingSubAgent(
+	ctx context.Context,
+	tx pgx.Tx,
+	subAgent data.SubAgentRecord,
+	input string,
+	forcedRunID *uuid.UUID,
+	primaryEventType string,
+	primaryPayload map[string]any,
+	errorClass *string,
+	reconstructedMessages []ContextSnapshotMessage,
+) (uuid.UUID, error) {
+	ownerRun, err := (data.RunsRepository{}).GetRun(ctx, tx, subAgent.OriginRunID)
+	if err != nil {
+		return uuid.Nil, err
+	}
+	if ownerRun == nil {
+		return uuid.Nil, fmt.Errorf("origin run not found: %s", subAgent.OriginRunID)
+	}
+	snapshot, err := f.snapshotStorage.LoadBySubAgent(ctx, tx, subAgent.ID)
+	if err != nil {
+		return uuid.Nil, err
+	}
+	if snapshot == nil {
+		return uuid.Nil, fmt.Errorf("context snapshot not found for sub_agent: %s", subAgent.ID)
+	}
+	threadID := subAgent.AgentThreadID
+	runID := uuid.Nil
+	if subAgent.CurrentRunID != nil {
+		runID = *subAgent.CurrentRunID
+	}
+	payload := cloneMap(primaryPayload)
+	payload["thread_id"] = threadID.String()
+	if runID != uuid.Nil {
+		payload["run_id"] = runID.String()
+	}
+	trimmedInput := strings.TrimSpace(input)
+	if trimmedInput != "" {
+		messageID, err := insertUserMessage(ctx, tx, subAgent.AccountID, threadID, trimmedInput)
+		if err != nil {
+			return uuid.Nil, fmt.Errorf("insert sub_agent input: %w", err)
+		}
+		payload["message_id"] = messageID.String()
+		payload["input_bytes"] = len([]byte(trimmedInput))
+	}
+	// 注入从 rollout 重建的历史消息
+	if len(reconstructedMessages) > 0 {
+		if err := f.copySnapshotMessages(ctx, tx, subAgent.AccountID, threadID, reconstructedMessages); err != nil {
+			return uuid.Nil, fmt.Errorf("copy reconstructed messages: %w", err)
+		}
+	}
+	return f.createQueuedRun(ctx, tx, *ownerRun, subAgent, threadID, snapshot, forcedRunID, primaryEventType, payload, errorClass)
+}
+
+func (f *SubAgentRunFactory) CreateRunFromPendingInputs(ctx context.Context, tx pgx.Tx, subAgent data.SubAgentRecord) (*uuid.UUID, error) {
+	pendingRepo := data.SubAgentPendingInputsRepository{}
+	items, err := pendingRepo.ListBySubAgentForUpdate(ctx, tx, subAgent.ID)
+	if err != nil {
+		return nil, err
+	}
+	if len(items) == 0 {
+		return nil, nil
+	}
+	snapshot, err := f.snapshotStorage.LoadBySubAgent(ctx, tx, subAgent.ID)
+	if err != nil {
+		return nil, err
+	}
+	if snapshot == nil {
+		return nil, fmt.Errorf("context snapshot not found for sub_agent: %s", subAgent.ID)
+	}
+	parts := make([]string, 0, len(items))
+	ids := make([]uuid.UUID, 0, len(items))
+	for _, item := range items {
+		parts = append(parts, strings.TrimSpace(item.Input))
+		ids = append(ids, item.ID)
+	}
+	combined := strings.Join(parts, "\n\n")
+	ownerRun, err := (data.RunsRepository{}).GetRun(ctx, tx, subAgent.OriginRunID)
+	if err != nil {
+		return nil, err
+	}
+	if ownerRun == nil {
+		return nil, fmt.Errorf("origin run not found: %s", subAgent.OriginRunID)
+	}
+	threadID := subAgent.AgentThreadID
+	messageID, err := insertUserMessage(ctx, tx, subAgent.AccountID, threadID, combined)
+	if err != nil {
+		return nil, fmt.Errorf("insert pending input message: %w", err)
+	}
+	childRunID, err := f.createQueuedRun(ctx, tx, *ownerRun, subAgent, threadID, snapshot, nil, data.SubAgentEventTypeInputSent, map[string]any{
+		"thread_id":     threadID.String(),
+		"message_id":    messageID.String(),
+		"input_bytes":   len([]byte(combined)),
+		"pending_count": len(items),
+		"from_pending":  true,
+	}, nil)
+	if err != nil {
+		return nil, err
+	}
+	if err := pendingRepo.DeleteBatch(ctx, tx, ids); err != nil {
+		return nil, err
+	}
+	return &childRunID, nil
+}
+
+func (f *SubAgentRunFactory) createChildThread(ctx context.Context, tx pgx.Tx, parentRun data.Run) (uuid.UUID, error) {
+	if parentRun.ProjectID == nil {
+		return uuid.Nil, fmt.Errorf("parent run project_id must not be nil")
+	}
+	expiresAt := time.Now().UTC().Add(childThreadTTL)
+	var childThreadID uuid.UUID
+	if err := tx.QueryRow(ctx,
+		`INSERT INTO threads (account_id, project_id, is_private, expires_at)
+		 VALUES ($1, $2, TRUE, $3)
+		 RETURNING id`,
+		parentRun.AccountID,
+		parentRun.ProjectID,
+		expiresAt,
+	).Scan(&childThreadID); err != nil {
+		return uuid.Nil, fmt.Errorf("create child thread: %w", err)
+	}
+	return childThreadID, nil
+}
+
+func (f *SubAgentRunFactory) createQueuedRun(
+	ctx context.Context,
+	tx pgx.Tx,
+	parentRun data.Run,
+	subAgent data.SubAgentRecord,
+	threadID uuid.UUID,
+	snapshot *ContextSnapshot,
+	forcedRunID *uuid.UUID,
+	primaryEventType string,
+	primaryPayload map[string]any,
+	errorClass *string,
+) (uuid.UUID, error) {
+	childRunID := uuid.New()
+	if forcedRunID != nil && *forcedRunID != uuid.Nil {
+		childRunID = *forcedRunID
+	}
+	profileRef, workspaceRef := inheritedBindings(parentRun, snapshot)
+
+	createdByUserID := parentRun.CreatedByUserID
+	if subAgent.SourceType == data.SubAgentSourceTypePlatformAgent {
+		if sysUID, err := f.resolveSystemAgentUserID(ctx, tx); err == nil && sysUID != uuid.Nil {
+			createdByUserID = &sysUID
+		}
+	}
+
+	if _, err := tx.Exec(ctx,
+		`INSERT INTO runs (id, account_id, thread_id, parent_run_id, created_by_user_id, profile_ref, workspace_ref, status)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, 'running')`,
+		childRunID,
+		parentRun.AccountID,
+		threadID,
+		parentRun.ID,
+		createdByUserID,
+		profileRef,
+		workspaceRef,
+	); err != nil {
+		return uuid.Nil, fmt.Errorf("insert child run: %w", err)
+	}
+	// Lock the run row to serialize per-run seq allocation
+	if _, err := tx.Exec(ctx, `SELECT 1 FROM runs WHERE id = $1 FOR UPDATE`, childRunID); err != nil {
+		return uuid.Nil, fmt.Errorf("lock run for seq: %w", err)
+	}
+	var seq int64
+	if err := tx.QueryRow(ctx,
+		`SELECT COALESCE(MAX(seq), 0) + 1 FROM run_events WHERE run_id = $1`,
+		childRunID,
+	).Scan(&seq); err != nil {
+		return uuid.Nil, fmt.Errorf("alloc seq: %w", err)
+	}
+	personaID := derefString(subAgent.PersonaID)
+	eventData, err := json.Marshal(buildRunStartedData(subAgent, snapshot, personaID))
+	if err != nil {
+		return uuid.Nil, fmt.Errorf("marshal run.started data: %w", err)
+	}
+	if _, err := tx.Exec(ctx,
+		`INSERT INTO run_events (run_id, seq, type, data_json)
+		 VALUES ($1, $2, 'run.started', $3::jsonb)`,
+		childRunID, seq, string(eventData),
+	); err != nil {
+		return uuid.Nil, fmt.Errorf("insert run.started: %w", err)
+	}
+	if err := (data.SubAgentRepository{}).TransitionToQueued(ctx, tx, subAgent.ID, childRunID); err != nil {
+		return uuid.Nil, fmt.Errorf("mark sub_agent queued: %w", err)
+	}
+	payload := map[string]any{
+		"run_id":       childRunID.String(),
+		"thread_id":    threadID.String(),
+		"persona_id":   personaID,
+		"context_mode": subAgent.ContextMode,
+	}
+	for key, value := range primaryPayload {
+		payload[key] = value
+	}
+	appender := data.SubAgentEventAppender{}
+	if strings.TrimSpace(primaryEventType) != "" {
+		if _, err := appender.Append(ctx, tx, subAgent.ID, &childRunID, primaryEventType, payload, errorClass); err != nil {
+			return uuid.Nil, fmt.Errorf("append %s: %w", primaryEventType, err)
+		}
+	}
+	if _, err := appender.Append(ctx, tx, subAgent.ID, &childRunID, data.SubAgentEventTypeRunQueued, payload, nil); err != nil {
+		return uuid.Nil, fmt.Errorf("append run_queued: %w", err)
+	}
+	return childRunID, nil
+}
+
+func (f *SubAgentRunFactory) copySnapshotMessages(ctx context.Context, tx pgx.Tx, accountID uuid.UUID, threadID uuid.UUID, messages []ContextSnapshotMessage) error {
+	if len(messages) == 0 {
+		return nil
+	}
+	repo := data.MessagesRepository{}
+	for _, item := range messages {
+		if _, err := repo.InsertThreadMessage(ctx, tx, accountID, threadID, item.Role, item.Content, cloneRawJSON(item.ContentJSON), nil); err != nil {
+			return fmt.Errorf("copy snapshot message: %w", err)
+		}
+	}
+	return nil
+}
+
+func buildRunStartedData(subAgent data.SubAgentRecord, snapshot *ContextSnapshot, personaID string) map[string]any {
+	payload := map[string]any{
+		"persona_id":   personaID,
+		"sub_agent_id": subAgent.ID.String(),
+		"context_mode": subAgent.ContextMode,
+	}
+	if subAgent.Role != nil && strings.TrimSpace(*subAgent.Role) != "" {
+		payload["role"] = strings.TrimSpace(*subAgent.Role)
+	}
+	if snapshot == nil {
+		return payload
+	}
+	if routeID := strings.TrimSpace(snapshot.Runtime.RouteID); routeID != "" {
+		payload["route_id"] = routeID
+	}
+	return payload
+}
+
+func inheritedBindings(parentRun data.Run, snapshot *ContextSnapshot) (*string, *string) {
+	if snapshot == nil || !snapshot.Inherit.Workspace {
+		return nil, nil
+	}
+	profileRef := strings.TrimSpace(snapshot.Environment.ProfileRef)
+	workspaceRef := strings.TrimSpace(snapshot.Environment.WorkspaceRef)
+	if profileRef == "" {
+		profileRef = strings.TrimSpace(derefString(parentRun.ProfileRef))
+	}
+	if workspaceRef == "" {
+		workspaceRef = strings.TrimSpace(derefString(parentRun.WorkspaceRef))
+	}
+	return stringPtr(profileRef), stringPtr(workspaceRef)
+}
+
+func resolveSubAgentThread(ctx context.Context, tx pgx.Tx, record data.SubAgentRecord) (uuid.UUID, uuid.UUID, error) {
+	candidateRunID := uuid.Nil
+	if record.CurrentRunID != nil {
+		candidateRunID = *record.CurrentRunID
+	} else if record.LastCompletedRunID != nil {
+		candidateRunID = *record.LastCompletedRunID
+	}
+	if candidateRunID == uuid.Nil {
+		return uuid.Nil, uuid.Nil, fmt.Errorf("sub_agent has no run context")
+	}
+	run, err := (data.RunsRepository{}).GetRun(ctx, tx, candidateRunID)
+	if err != nil {
+		return uuid.Nil, uuid.Nil, err
+	}
+	if run == nil {
+		return uuid.Nil, uuid.Nil, fmt.Errorf("run not found: %s", candidateRunID)
+	}
+	return run.ThreadID, run.ID, nil
+}
+
+func insertUserMessage(ctx context.Context, tx pgx.Tx, accountID uuid.UUID, threadID uuid.UUID, content string) (uuid.UUID, error) {
+	return data.MessagesRepository{}.InsertThreadMessage(ctx, tx, accountID, threadID, "user", strings.TrimSpace(content), nil, nil)
+}
+
+func cloneMap(src map[string]any) map[string]any {
+	if len(src) == 0 {
+		return map[string]any{}
+	}
+	cloned := make(map[string]any, len(src))
+	for key, value := range src {
+		cloned[key] = value
+	}
+	return cloned
+}
+
+// resolveSystemAgentUserID 从 DB 查询 system_agent 的 user_id。
+func (f *SubAgentRunFactory) resolveSystemAgentUserID(ctx context.Context, tx pgx.Tx) (uuid.UUID, error) {
+	var uid uuid.UUID
+	err := tx.QueryRow(ctx,
+		`SELECT id FROM users WHERE username = 'system_agent' AND deleted_at IS NULL LIMIT 1`,
+	).Scan(&uid)
+	if err != nil {
+		return uuid.Nil, err
+	}
+	return uid, nil
+}
