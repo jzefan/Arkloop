@@ -480,8 +480,12 @@ func (r *Resolver) resolveClaudeCode(ctx context.Context) (Credential, error) {
 		credential.store.addFingerprint(fingerprint)
 		return r.applyClaudeEnvironment(credential, settings), nil
 	}
-	if r.claudeAPIKeyHelperConfigured() {
-		return Credential{}, fmt.Errorf("%w: %s apiKeyHelper configured", ErrCredentialUnavailable, ClaudeCodeProviderID)
+	if helper, fingerprint, ok := r.claudeAPIKeyHelper(); ok {
+		credential, err := r.readClaudeAPIKeyHelper(ctx, helper, fingerprint)
+		if err != nil {
+			return Credential{}, errors.Join(ErrCredentialUnavailable, fmt.Errorf("claude apiKeyHelper failed: %w", err))
+		}
+		return r.applyClaudeEnvironment(credential, settings), nil
 	}
 	if oauth, ok := r.readClaudeOAuth(ctx); ok {
 		return r.applyClaudeEnvironment(oauth, settings), nil
@@ -1032,26 +1036,60 @@ func (r *Resolver) claudeGatewayModels(settings claudeSettings) []Model {
 	return applyClaudeSelectedModel(models, settings.model)
 }
 
-func (r *Resolver) claudeAPIKeyHelperConfigured() bool {
+func (r *Resolver) claudeAPIKeyHelper() (string, fileFingerprint, bool) {
 	for _, path := range r.claudeSettingsPaths() {
-		root, ok := readJSONFile(path)
+		root, fingerprint, ok := readJSONFileWithFingerprint(path)
 		if !ok {
 			continue
 		}
-		if stringValue(root[claudeAPIKeyHelperSetting]) != "" {
-			return true
+		if helper := stringValue(root[claudeAPIKeyHelperSetting]); helper != "" {
+			return helper, fingerprint, true
 		}
 	}
 	for _, path := range r.claudeGlobalConfigPaths() {
-		root, ok := readJSONFile(path)
+		root, fingerprint, ok := readJSONFileWithFingerprint(path)
 		if !ok {
 			continue
 		}
-		if stringValue(root[claudeAPIKeyHelperSetting]) != "" {
-			return true
+		if helper := stringValue(root[claudeAPIKeyHelperSetting]); helper != "" {
+			return helper, fingerprint, true
 		}
 	}
-	return false
+	return "", fileFingerprint{}, false
+}
+
+func (r *Resolver) readClaudeAPIKeyHelper(ctx context.Context, helper string, fingerprint fileFingerprint) (Credential, error) {
+	output, err := r.runShellCommand(ctx, helper)
+	if err != nil {
+		return Credential{}, err
+	}
+	key := strings.TrimSpace(output)
+	if key == "" {
+		return Credential{}, errors.New("apiKeyHelper returned empty key")
+	}
+	credential := Credential{
+		ProviderID:   ClaudeCodeProviderID,
+		ProviderKind: ClaudeCodeProviderKind,
+		AuthMode:     AuthModeAPIKey,
+		APIKey:       key,
+		store: credentialStore{
+			kind:        "file",
+			fingerprint: fingerprint,
+		},
+	}
+	credential.store.addFingerprint(fingerprint)
+	return credential, nil
+}
+
+func (r *Resolver) runShellCommand(ctx context.Context, command string) (string, error) {
+	command = strings.TrimSpace(command)
+	if command == "" {
+		return "", errors.New("empty command")
+	}
+	if r.platform == "windows" {
+		return r.runCommand(ctx, "cmd", "/C", command)
+	}
+	return r.runCommand(ctx, "sh", "-c", command)
 }
 
 func (r *Resolver) claudeKeychainServiceName(serviceSuffix string) string {

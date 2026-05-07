@@ -177,10 +177,10 @@ func TestResolverClaudeProcessEnvPrecedesSettingsEnv(t *testing.T) {
 	}
 }
 
-func TestResolverClaudeAPIKeyHelperBlocksManagedStores(t *testing.T) {
+func TestResolverClaudeAPIKeyHelperPrecedesManagedStores(t *testing.T) {
 	home := t.TempDir()
 	writeTestJSON(t, filepath.Join(home, ".claude", "settings.json"), map[string]any{
-		"apiKeyHelper": "helper-command",
+		"apiKeyHelper": "helper-command --print",
 	})
 	writeTestJSON(t, filepath.Join(home, ".claude", ".credentials.json"), map[string]any{
 		"claudeAiOauth": map[string]any{
@@ -190,10 +190,50 @@ func TestResolverClaudeAPIKeyHelperBlocksManagedStores(t *testing.T) {
 		},
 	})
 
-	resolver := NewResolver(Options{HomeDir: home, DisableKeychain: true, Env: map[string]string{}})
+	var seenName string
+	var seenArgs []string
+	resolver := NewResolver(Options{
+		HomeDir:         home,
+		DisableKeychain: true,
+		Env:             map[string]string{},
+		CommandRunner: func(ctx context.Context, name string, args ...string) (string, error) {
+			seenName = name
+			seenArgs = append([]string{}, args...)
+			return "sk-helper\n", nil
+		},
+	})
+	credential, err := resolver.Resolve(context.Background(), ClaudeCodeProviderID, ResolveOptions{})
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if credential.AuthMode != AuthModeAPIKey || credential.APIKey != "sk-helper" {
+		t.Fatalf("unexpected credential: %#v", credential)
+	}
+	if seenName != "sh" || len(seenArgs) != 2 || seenArgs[0] != "-c" || seenArgs[1] != "helper-command --print" {
+		t.Fatalf("unexpected helper command: %s %#v", seenName, seenArgs)
+	}
+}
+
+func TestResolverClaudeAPIKeyHelperFailureIsCredentialUnavailable(t *testing.T) {
+	home := t.TempDir()
+	writeTestJSON(t, filepath.Join(home, ".claude", "settings.json"), map[string]any{
+		"apiKeyHelper": "helper-command",
+	})
+
+	resolver := NewResolver(Options{
+		HomeDir:         home,
+		DisableKeychain: true,
+		Env:             map[string]string{},
+		CommandRunner: func(ctx context.Context, name string, args ...string) (string, error) {
+			return "", errors.New("Usage limit reached")
+		},
+	})
 	_, err := resolver.Resolve(context.Background(), ClaudeCodeProviderID, ResolveOptions{})
 	if !errors.Is(err, ErrCredentialUnavailable) {
-		t.Fatalf("expected unavailable from apiKeyHelper precedence, got %v", err)
+		t.Fatalf("expected unavailable from apiKeyHelper failure, got %v", err)
+	}
+	if !IsUsageLimitError(err) {
+		t.Fatalf("expected usage limit classification, got %v", err)
 	}
 }
 
