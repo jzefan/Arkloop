@@ -3,7 +3,7 @@ import { formatDateTime, formatMonthDay, getActiveTimeZone, isSameCalendarDay } 
 
 export function isDocumentArtifact(artifact: ArtifactRef): boolean {
   if (artifact.display === 'panel') return true
-  return !artifact.mime_type.startsWith('image/') && !artifact.mime_type.startsWith('video/') && artifact.mime_type !== 'text/html'
+  return !artifact.mime_type.startsWith('image/') && artifact.mime_type !== 'text/html'
 }
 
 export function formatShortDate(dateStr: string): string {

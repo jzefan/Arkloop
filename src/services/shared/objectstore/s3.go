@@ -136,14 +136,10 @@ func (o *S3Store) PutWithContentType(ctx context.Context, key string, data []byt
 }
 
 func (o *S3Store) PutObject(ctx context.Context, key string, data []byte, options PutOptions) error {
-	return o.PutObjectStream(ctx, key, bytes.NewReader(data), options)
-}
-
-func (o *S3Store) PutObjectStream(ctx context.Context, key string, r io.Reader, options PutOptions) error {
 	input := &s3.PutObjectInput{
 		Bucket: aws.String(o.bucket),
 		Key:    aws.String(key),
-		Body:   r,
+		Body:   bytes.NewReader(data),
 	}
 	if options.ContentType != "" {
 		input.ContentType = aws.String(options.ContentType)
@@ -302,7 +298,6 @@ func IsNotFound(err error) bool {
 }
 
 var _ Store = (*S3Store)(nil)
-var _ StreamingStore = (*S3Store)(nil)
 var _ BlobStore = (*S3Store)(nil)
 var _ LifecycleConfigurator = (*S3Store)(nil)
 var _ BucketOpener = (*S3Opener)(nil)

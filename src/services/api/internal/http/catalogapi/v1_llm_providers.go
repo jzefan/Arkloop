@@ -19,6 +19,8 @@ import (
 	"arkloop/services/api/internal/data"
 	"arkloop/services/api/internal/llmproviders"
 	"arkloop/services/api/internal/observability"
+	shareddesktop "arkloop/services/shared/desktop"
+	"arkloop/services/shared/localproviders"
 	sharedoutbound "arkloop/services/shared/outboundurl"
 
 	"github.com/google/uuid"
@@ -56,6 +58,9 @@ type llmProviderResponse struct {
 	Scope         string                     `json:"scope"`
 	Provider      string                     `json:"provider"`
 	Name          string                     `json:"name"`
+	Source        string                     `json:"source,omitempty"`
+	ReadOnly      bool                       `json:"read_only,omitempty"`
+	AuthMode      string                     `json:"auth_mode,omitempty"`
 	KeyPrefix     *string                    `json:"key_prefix"`
 	BaseURL       *string                    `json:"base_url"`
 	OpenAIAPIMode *string                    `json:"openai_api_mode"`
@@ -131,13 +136,14 @@ func llmProvidersEntry(
 	secretsRepo *data.SecretsRepository,
 	projectRepo *data.ProjectRepository,
 	pool data.TxStarter,
+	augmenter LlmProviderListAugmenter,
 ) func(nethttp.ResponseWriter, *nethttp.Request) {
 	service := llmproviders.NewService(pool, credRepo, routeRepo, secretsRepo, projectRepo)
 	return func(w nethttp.ResponseWriter, r *nethttp.Request) {
 		traceID := observability.TraceIDFromContext(r.Context())
 		switch r.Method {
 		case nethttp.MethodGet:
-			listLlmProviders(w, r, traceID, authService, membershipRepo, service)
+			listLlmProviders(w, r, traceID, authService, membershipRepo, service, augmenter)
 		case nethttp.MethodPost:
 			createLlmProvider(w, r, traceID, authService, membershipRepo, service)
 		default:
@@ -170,6 +176,24 @@ func llmProviderEntry(
 			httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "invalid provider id", traceID, nil)
 			return
 		}
+		if isLocalProviderUUID(providerID) {
+			if len(parts) == 3 && parts[1] == "models" && r.Method == nethttp.MethodPatch {
+				modelID, err := uuid.Parse(parts[2])
+				if err != nil {
+					httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "invalid model id", traceID, nil)
+					return
+				}
+				patchLocalProviderModel(w, r, traceID, providerID, modelID, authService, membershipRepo)
+				return
+			}
+			if isLocalProviderMutation(parts, r.Method) {
+				if _, ok := authenticateLLMProviderActor(w, r, traceID, authService, membershipRepo); !ok {
+					return
+				}
+				writeLocalProviderReadOnly(w, traceID)
+				return
+			}
+		}
 
 		switch {
 		case len(parts) == 1:
@@ -181,6 +205,12 @@ func llmProviderEntry(
 			default:
 				httpkit.WriteMethodNotAllowed(w, r)
 			}
+		case len(parts) == 2 && parts[1] == "copy":
+			if r.Method != nethttp.MethodPost {
+				httpkit.WriteMethodNotAllowed(w, r)
+				return
+			}
+			copyLlmProvider(w, r, traceID, providerID, authService, membershipRepo, service)
 		case len(parts) == 2 && parts[1] == "models":
 			if r.Method != nethttp.MethodPost {
 				httpkit.WriteMethodNotAllowed(w, r)
@@ -217,11 +247,127 @@ func llmProviderEntry(
 				httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "invalid model id", traceID, nil)
 				return
 			}
+			if isLocalProviderUUID(providerID) {
+				testLocalLlmProviderModel(w, r, traceID, providerID, modelID, authService, membershipRepo)
+				return
+			}
 			testLlmProviderModel(w, r, traceID, providerID, modelID, authService, membershipRepo, service)
 		default:
 			httpkit.WriteNotFound(w, r)
 		}
 	}
+}
+
+func patchLocalProviderModel(
+	w nethttp.ResponseWriter,
+	r *nethttp.Request,
+	traceID string,
+	providerID uuid.UUID,
+	modelID uuid.UUID,
+	authService *auth.Service,
+	membershipRepo *data.AccountMembershipRepository,
+) {
+	actor, ok := authenticateLLMProviderActor(w, r, traceID, authService, membershipRepo)
+	if !ok {
+		return
+	}
+	body, err := decodeRawJSONMap(r)
+	if err != nil {
+		httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "request validation failed", traceID, nil)
+		return
+	}
+	if !localProviderModelPatchOnlyTogglesPicker(body) {
+		writeLocalProviderReadOnly(w, traceID)
+		return
+	}
+	showInPicker, showInPickerSet, err := readOptionalBool(body, "show_in_picker")
+	if err != nil {
+		httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "show_in_picker must be a boolean", traceID, nil)
+		return
+	}
+	if !showInPickerSet || showInPicker == nil {
+		httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "show_in_picker is required", traceID, nil)
+		return
+	}
+	scopeText, _, err := readOptionalString(body, "scope")
+	if err != nil {
+		httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "scope must be a string", traceID, nil)
+		return
+	}
+	if scopeText == nil {
+		scope := data.LlmRouteScopeUser
+		scopeText = &scope
+	}
+	scope, ok := resolveLlmProviderScope(w, r, traceID, actor, scopeText)
+	if !ok {
+		return
+	}
+	if scope != data.LlmRouteScopeUser {
+		httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "local provider scope must be user", traceID, nil)
+		return
+	}
+	localProviderID, ok := localProviderIDFromUUID(providerID)
+	if !ok {
+		httpkit.WriteError(w, nethttp.StatusNotFound, "not_found", "provider not found", traceID, nil)
+		return
+	}
+	resolver := localproviders.NewResolver(localproviders.Options{})
+	status, model, ok := findLocalProviderModel(r.Context(), resolver, localProviderID, modelID)
+	if !ok {
+		writeLlmProviderServiceError(r.Context(), w, traceID, llmproviders.ModelNotFoundError{ID: modelID})
+		return
+	}
+	if err := resolver.SetModelVisible(localProviderID, model.ID, *showInPicker); err != nil {
+		httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "failed to update model", traceID, nil)
+		return
+	}
+	model.Hidden = !*showInPicker
+	model.Default = model.Default && !model.Hidden
+	route := localRouteFromModel(status, providerID, model, time.Now().UTC())
+	httpkit.WriteJSON(w, traceID, nethttp.StatusOK, toLlmProviderModelResponse(route, status.Provider))
+}
+
+func localProviderModelPatchOnlyTogglesPicker(body map[string]json.RawMessage) bool {
+	for key := range body {
+		if key != "scope" && key != "show_in_picker" {
+			return false
+		}
+	}
+	return true
+}
+
+func findLocalProviderModel(ctx context.Context, resolver *localproviders.Resolver, providerID string, modelID uuid.UUID) (localproviders.ProviderStatus, localproviders.Model, bool) {
+	for _, status := range resolver.ProviderStatuses(ctx) {
+		if status.ID != providerID {
+			continue
+		}
+		for _, model := range status.Models {
+			if localRouteUUID(providerID, model.ID) == modelID {
+				return status, model, true
+			}
+		}
+		return status, localproviders.Model{}, false
+	}
+	return localproviders.ProviderStatus{}, localproviders.Model{}, false
+}
+
+func isLocalProviderMutation(parts []string, method string) bool {
+	switch {
+	case len(parts) == 1:
+		return method == nethttp.MethodPatch || method == nethttp.MethodDelete
+	case len(parts) == 2 && parts[1] == "copy":
+		return method == nethttp.MethodPost
+	case len(parts) == 2 && parts[1] == "models":
+		return method == nethttp.MethodPost
+	case len(parts) == 3 && parts[1] == "models":
+		return method == nethttp.MethodDelete
+	default:
+		return false
+	}
+}
+
+func writeLocalProviderReadOnly(w nethttp.ResponseWriter, traceID string) {
+	httpkit.WriteError(w, nethttp.StatusForbidden, "llm_providers.read_only", "provider is read-only", traceID, nil)
 }
 
 func listLlmProviders(
@@ -231,6 +377,7 @@ func listLlmProviders(
 	authService *auth.Service,
 	membershipRepo *data.AccountMembershipRepository,
 	service *llmproviders.Service,
+	augmenter LlmProviderListAugmenter,
 ) {
 	actor, ok := authenticateLLMProviderActor(w, r, traceID, authService, membershipRepo)
 	if !ok {
@@ -244,6 +391,14 @@ func listLlmProviders(
 	if err != nil {
 		writeLlmProviderServiceError(r.Context(), w, traceID, err)
 		return
+	}
+	if augmenter != nil {
+		extra, err := augmenter(r.Context(), actor.AccountID, scope, actor.UserID)
+		if err != nil {
+			writeLlmProviderServiceError(r.Context(), w, traceID, err)
+			return
+		}
+		providers = append(providers, extra...)
 	}
 	resp := make([]llmProviderResponse, 0, len(providers))
 	for _, provider := range providers {
@@ -296,6 +451,31 @@ func createLlmProvider(
 		OpenAIAPIMode: normalizeOptionalString(req.OpenAIAPIMode),
 		AdvancedJSON:  req.AdvancedJSON,
 	})
+	if err != nil {
+		writeLlmProviderServiceError(r.Context(), w, traceID, err)
+		return
+	}
+	httpkit.WriteJSON(w, traceID, nethttp.StatusCreated, toLlmProviderResponse(provider))
+}
+
+func copyLlmProvider(
+	w nethttp.ResponseWriter,
+	r *nethttp.Request,
+	traceID string,
+	providerID uuid.UUID,
+	authService *auth.Service,
+	membershipRepo *data.AccountMembershipRepository,
+	service *llmproviders.Service,
+) {
+	actor, ok := authenticateLLMProviderActor(w, r, traceID, authService, membershipRepo)
+	if !ok {
+		return
+	}
+	scope, ok := resolveLlmProviderScope(w, r, traceID, actor, nil)
+	if !ok {
+		return
+	}
+	provider, err := service.CopyProvider(r.Context(), actor.AccountID, providerID, scope, &actor.UserID)
 	if err != nil {
 		writeLlmProviderServiceError(r.Context(), w, traceID, err)
 		return
@@ -812,6 +992,50 @@ func testLlmProviderModel(
 	httpkit.WriteJSON(w, traceID, nethttp.StatusOK, resp)
 }
 
+func testLocalLlmProviderModel(
+	w nethttp.ResponseWriter,
+	r *nethttp.Request,
+	traceID string,
+	providerID uuid.UUID,
+	modelID uuid.UUID,
+	authService *auth.Service,
+	membershipRepo *data.AccountMembershipRepository,
+) {
+	actor, ok := authenticateLLMProviderActor(w, r, traceID, authService, membershipRepo)
+	if !ok {
+		return
+	}
+	scope, ok := resolveLlmProviderScope(w, r, traceID, actor, nil)
+	if !ok {
+		return
+	}
+	if scope != data.LlmRouteScopeUser {
+		httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "local provider scope must be user", traceID, nil)
+		return
+	}
+
+	tester := shareddesktop.GetLLMProviderModelTester()
+	if tester == nil {
+		httpkit.WriteError(w, nethttp.StatusServiceUnavailable, "llm_providers.local_tester_unavailable", "local provider tester unavailable", traceID, nil)
+		return
+	}
+
+	startedAt := time.Now()
+	err := tester.TestLLMProviderModel(r.Context(), shareddesktop.LLMProviderModelTestRequest{
+		ProviderID: providerID.String(),
+		ModelID:    modelID.String(),
+	})
+	resp := llmProviderModelTestResponse{
+		Success:   err == nil,
+		ModelID:   modelID.String(),
+		LatencyMS: time.Since(startedAt).Milliseconds(),
+	}
+	if err != nil {
+		resp.Error = err.Error()
+	}
+	httpkit.WriteJSON(w, traceID, nethttp.StatusOK, resp)
+}
+
 const testTimeout = 15 * time.Second
 
 func runLlmProviderModelTest(ctx context.Context, cfg llmproviders.ProviderModelTestConfig) error {
@@ -887,33 +1111,33 @@ func testChatModel(ctx context.Context, cfg llmproviders.CatalogProtocolConfig, 
 	case llmproviders.ProtocolKindAnthropicMessages:
 		return testAnthropicChat(ctx, cfg, baseURL, apiKey, model)
 	case llmproviders.ProtocolKindGeminiGenerateContent:
-		return testGeminiChat(ctx, baseURL, apiKey, model)
+		return testGeminiChat(ctx, cfg, baseURL, apiKey, model)
 	case llmproviders.ProtocolKindOpenAIResponses:
-		return testOpenAIResponsesChat(ctx, baseURL, apiKey, model)
+		return testOpenAIResponsesChat(ctx, cfg, baseURL, apiKey, model)
 	default:
-		return testOpenAIChat(ctx, baseURL, apiKey, model)
+		return testOpenAIChat(ctx, cfg, baseURL, apiKey, model)
 	}
 }
 
 func testEmbeddingModel(ctx context.Context, cfg llmproviders.CatalogProtocolConfig, baseURL, apiKey, model string) error {
 	switch cfg.Kind {
 	case llmproviders.ProtocolKindGeminiGenerateContent:
-		return testGeminiEmbedding(ctx, baseURL, apiKey, model)
+		return testGeminiEmbedding(ctx, cfg, baseURL, apiKey, model)
 	default:
-		return testOpenAIEmbedding(ctx, baseURL, apiKey, model)
+		return testOpenAIEmbedding(ctx, cfg, baseURL, apiKey, model)
 	}
 }
 
 func testImageModel(ctx context.Context, cfg llmproviders.CatalogProtocolConfig, baseURL, apiKey, model string) error {
 	switch cfg.Kind {
 	case llmproviders.ProtocolKindGeminiGenerateContent:
-		return testGeminiImage(ctx, baseURL, apiKey, model)
+		return testGeminiImage(ctx, cfg, baseURL, apiKey, model)
 	default:
-		return testOpenAIImage(ctx, baseURL, apiKey, model)
+		return testOpenAIImage(ctx, cfg, baseURL, apiKey, model)
 	}
 }
 
-func testOpenAIChat(ctx context.Context, baseURL, apiKey, model string) error {
+func testOpenAIChat(ctx context.Context, cfg llmproviders.CatalogProtocolConfig, baseURL, apiKey, model string) error {
 	payload := map[string]any{
 		"model": model,
 		"messages": []map[string]string{
@@ -921,32 +1145,32 @@ func testOpenAIChat(ctx context.Context, baseURL, apiKey, model string) error {
 		},
 		"max_tokens": 32,
 	}
-	return doTestHTTPPost(ctx, baseURL+"/chat/completions", apiKey, "Bearer", payload)
+	return doTestHTTPPost(ctx, cfg, baseURL+"/chat/completions", apiKey, "Bearer", payload)
 }
 
-func testOpenAIResponsesChat(ctx context.Context, baseURL, apiKey, model string) error {
+func testOpenAIResponsesChat(ctx context.Context, cfg llmproviders.CatalogProtocolConfig, baseURL, apiKey, model string) error {
 	payload := map[string]any{
 		"model":             model,
 		"input":             "ping",
 		"max_output_tokens": 32,
 	}
-	return doTestHTTPPost(ctx, baseURL+"/responses", apiKey, "Bearer", payload)
+	return doTestHTTPPost(ctx, cfg, baseURL+"/responses", apiKey, "Bearer", payload)
 }
 
-func testOpenAIEmbedding(ctx context.Context, baseURL, apiKey, model string) error {
+func testOpenAIEmbedding(ctx context.Context, cfg llmproviders.CatalogProtocolConfig, baseURL, apiKey, model string) error {
 	payload := map[string]any{
 		"model": model,
 		"input": "ping",
 	}
-	return doTestHTTPPost(ctx, baseURL+"/embeddings", apiKey, "Bearer", payload)
+	return doTestHTTPPost(ctx, cfg, baseURL+"/embeddings", apiKey, "Bearer", payload)
 }
 
-func testOpenAIImage(ctx context.Context, baseURL, apiKey, model string) error {
+func testOpenAIImage(ctx context.Context, cfg llmproviders.CatalogProtocolConfig, baseURL, apiKey, model string) error {
 	payload := map[string]any{
 		"model":  model,
 		"prompt": "ping",
 	}
-	return doTestHTTPPost(ctx, baseURL+"/images/generations", apiKey, "Bearer", payload)
+	return doTestHTTPPost(ctx, cfg, baseURL+"/images/generations", apiKey, "Bearer", payload)
 }
 
 func testAnthropicChat(ctx context.Context, cfg llmproviders.CatalogProtocolConfig, baseURL, apiKey, model string) error {
@@ -971,12 +1195,13 @@ func testAnthropicChat(ctx context.Context, cfg llmproviders.CatalogProtocolConf
 	for key, value := range cfg.Anthropic.ExtraHeaders {
 		req.Header.Set(key, value)
 	}
+	applyUserExtraHeadersToRequest(req, cfg)
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
 	return doTestRequest(req)
 }
 
-func testGeminiChat(ctx context.Context, baseURL, apiKey, model string) error {
+func testGeminiChat(ctx context.Context, cfg llmproviders.CatalogProtocolConfig, baseURL, apiKey, model string) error {
 	payload := map[string]any{
 		"contents": []map[string]any{
 			{
@@ -994,10 +1219,11 @@ func testGeminiChat(ctx context.Context, baseURL, apiKey, model string) error {
 	req.Header.Set("x-goog-api-key", apiKey)
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
+	applyUserExtraHeadersToRequest(req, cfg)
 	return doTestRequest(req)
 }
 
-func testGeminiEmbedding(ctx context.Context, baseURL, apiKey, model string) error {
+func testGeminiEmbedding(ctx context.Context, cfg llmproviders.CatalogProtocolConfig, baseURL, apiKey, model string) error {
 	payload := map[string]any{
 		"content": map[string]any{
 			"parts": []map[string]string{
@@ -1012,10 +1238,11 @@ func testGeminiEmbedding(ctx context.Context, baseURL, apiKey, model string) err
 	req.Header.Set("x-goog-api-key", apiKey)
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
+	applyUserExtraHeadersToRequest(req, cfg)
 	return doTestRequest(req)
 }
 
-func testGeminiImage(ctx context.Context, baseURL, apiKey, model string) error {
+func testGeminiImage(ctx context.Context, cfg llmproviders.CatalogProtocolConfig, baseURL, apiKey, model string) error {
 	payload := map[string]any{
 		"instances": []map[string]string{
 			{"prompt": "ping"},
@@ -1031,10 +1258,11 @@ func testGeminiImage(ctx context.Context, baseURL, apiKey, model string) error {
 	req.Header.Set("x-goog-api-key", apiKey)
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
+	applyUserExtraHeadersToRequest(req, cfg)
 	return doTestRequest(req)
 }
 
-func doTestHTTPPost(ctx context.Context, url, apiKey, authPrefix string, payload map[string]any) error {
+func doTestHTTPPost(ctx context.Context, cfg llmproviders.CatalogProtocolConfig, url, apiKey, authPrefix string, payload map[string]any) error {
 	body, err := json.Marshal(payload)
 	if err != nil {
 		return err
@@ -1048,14 +1276,22 @@ func doTestHTTPPost(ctx context.Context, url, apiKey, authPrefix string, payload
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
+	applyUserExtraHeadersToRequest(req, cfg)
 	return doTestRequest(req)
 }
 
+func applyUserExtraHeadersToRequest(req *nethttp.Request, cfg llmproviders.CatalogProtocolConfig) {
+	for key, value := range llmproviders.OpenVikingExtraHeadersFromAdvancedJSON(cfg.Credential.AdvancedJSON) {
+		req.Header.Set(key, value)
+	}
+}
+
 func doTestRequest(req *nethttp.Request) error {
-	if err := sharedoutbound.DefaultPolicy().ValidateRequestURL(req.URL.String()); err != nil {
+	policy := sharedoutbound.DefaultPolicy()
+	if err := policy.ValidateRequestURL(req.URL.String()); err != nil {
 		return err
 	}
-	resp, err := sharedoutbound.DefaultPolicy().NewHTTPClient(testTimeout).Do(req)
+	resp, err := policy.NewHTTPClient(testTimeout).Do(req)
 	if err != nil {
 		return err
 	}
@@ -1276,6 +1512,9 @@ func toLlmProviderResponse(provider llmproviders.Provider) llmProviderResponse {
 		Scope:         scope,
 		Provider:      provider.Credential.Provider,
 		Name:          provider.Credential.Name,
+		Source:        provider.Source,
+		ReadOnly:      provider.ReadOnly,
+		AuthMode:      provider.AuthMode,
 		KeyPrefix:     provider.Credential.KeyPrefix,
 		BaseURL:       provider.Credential.BaseURL,
 		OpenAIAPIMode: provider.Credential.OpenAIAPIMode,

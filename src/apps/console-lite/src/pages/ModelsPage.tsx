@@ -32,7 +32,7 @@ const PROVIDER_PRESETS = [
   { key: 'openai_chat_completions', provider: 'openai', openai_api_mode: 'chat_completions' },
   { key: 'anthropic_message', provider: 'anthropic', openai_api_mode: undefined },
   { key: 'gemini', provider: 'gemini', openai_api_mode: undefined },
-  { key: 'deepseek', provider: 'deepseek', openai_api_mode: undefined },
+  { key: 'deepseek', provider: 'deepseek', openai_api_mode: 'chat_completions' },
 ] as const
 
 type ProviderPresetKey = typeof PROVIDER_PRESETS[number]['key']
@@ -45,10 +45,8 @@ function toPresetKey(provider: string, mode: string | null): ProviderPresetKey {
   return 'openai_responses'
 }
 
-function presetBaseUrlPlaceholder(key: ProviderPresetKey): string {
-  if (key === 'deepseek') return 'https://api.deepseek.com'
-  if (key === 'gemini') return 'https://generativelanguage.googleapis.com/v1beta'
-  if (key === 'anthropic_message') return 'https://api.anthropic.com'
+function presetBaseUrlPlaceholder(preset: ProviderPresetKey): string {
+  if (preset === 'deepseek') return 'https://api.deepseek.com'
   return 'https://api.openai.com/v1'
 }
 
@@ -405,9 +403,9 @@ function ProviderDetail({
           )}
         </LabelField>
 
-        <LabelField label={tc.baseUrl}>
+          <LabelField label={tc.baseUrl}>
           <input value={formBaseUrl} onChange={(e) => setFormBaseUrl(e.target.value)} placeholder={presetBaseUrlPlaceholder(formPreset)} className={inputCls} />
-        </LabelField>
+          </LabelField>
       </div>
 
       {err && <p className="text-xs text-red-400">{err}</p>}

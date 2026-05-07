@@ -19,7 +19,7 @@ import type { MeResponse } from '../api'
 import { useLocale } from '../contexts/LocaleContext'
 import { useTheme } from '../contexts/ThemeContext'
 import { SkillsSettingsContent } from './SkillsSettingsContent'
-import { ModelConfigContent } from './ModelConfigContent'
+import { ProvidersSettings } from './settings/ProvidersSettings'
 import { AgentSettingsContent } from './AgentSettingsContent'
 import { ChannelsSettingsContent } from './ChannelsSettingsContent'
 import { ConnectionSettingsContent } from './ConnectionSettingsContent'
@@ -193,7 +193,7 @@ export function SettingsModal({ me, accessToken, initialTab = 'account', onClose
               <CreditsContent accessToken={accessToken} onCreditsChanged={onCreditsChanged} />
             )}
             {activeKey === 'models' && (
-              <ModelConfigContent accessToken={accessToken} />
+              <ProvidersSettings accessToken={accessToken} />
             )}
             {activeKey === 'agents' && (
               <AgentSettingsContent accessToken={accessToken} />

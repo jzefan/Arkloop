@@ -1,9 +1,9 @@
 import { useState } from 'react'
 import { isDesktop } from '@arkloop/shared/desktop'
-import { TabBar } from '@arkloop/shared/components/prompt-injection'
 import { ConnectorsSettings } from './ConnectorsSettings'
 import { SearchFetchSettings } from './SearchFetchSettings'
 import { useLocale } from '../../contexts/LocaleContext'
+import { SettingsSegmentedControl } from './_SettingsSegmentedControl'
 
 type Tab = 'connectors' | 'searchFetch'
 
@@ -28,11 +28,17 @@ export function ToolsSettings({ accessToken }: Props) {
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <TabBar tabs={tabs} active={activeTab} onChange={setActiveTab} className="mb-3 shrink-0" />
+      <div className="mb-3 shrink-0">
+        <SettingsSegmentedControl<Tab>
+          options={tabs.map((item) => ({ value: item.key, label: item.label }))}
+          value={activeTab}
+          onChange={setActiveTab}
+        />
+      </div>
       <div className="-mx-6 shrink-0 border-t border-[var(--c-border-subtle)]" />
       <div className="min-h-0 flex-1 pt-3">
         {activeTab === 'connectors' && <ConnectorsSettings accessToken={accessToken} nestedUnderTabs />}
-        {activeTab === 'searchFetch' && <SearchFetchSettings />}
+        {activeTab === 'searchFetch' && <SearchFetchSettings accessToken={accessToken} />}
       </div>
     </div>
   )

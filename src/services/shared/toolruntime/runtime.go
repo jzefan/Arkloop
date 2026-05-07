@@ -243,11 +243,11 @@ func ResolveBuiltin(input ResolveInput) BuiltinAvailability {
 		}
 	}
 	if memoryProvider == "nowledge" && memoryBaseURL != "" {
-		for _, name := range []string{"memory_search", "memory_read", "memory_write", "memory_forget", "memory_thread_search", "memory_thread_fetch", "memory_connections", "memory_timeline", "memory_context", "memory_status"} {
+		for _, name := range []string{"memory_list", "memory_search", "memory_read", "memory_write", "memory_forget", "memory_thread_search", "memory_thread_fetch", "memory_connections", "memory_timeline", "memory_context", "memory_status"} {
 			available[name] = struct{}{}
 		}
 	} else if memoryBaseURL != "" {
-		for _, name := range []string{"memory_search", "memory_read", "memory_write", "memory_edit", "memory_forget"} {
+		for _, name := range []string{"memory_list", "memory_search", "memory_read", "memory_write", "memory_edit", "memory_forget"} {
 			available[name] = struct{}{}
 		}
 	}
@@ -256,7 +256,6 @@ func ResolveBuiltin(input ResolveInput) BuiltinAvailability {
 		available["create_artifact"] = struct{}{}
 		available["document_write"] = struct{}{}
 		available["image_generate"] = struct{}{}
-		available["video_generate"] = struct{}{}
 	}
 
 	names := make([]string, 0, len(available))
@@ -307,9 +306,9 @@ func resolveMemoryFromConfig(ctx context.Context, resolver sharedconfig.Resolver
 	}
 	switch availability.MemoryProvider {
 	case "nowledge":
-		availability.toolNames = appendToolNames(availability.toolNames, "memory_search", "memory_read", "memory_write", "memory_forget", "memory_thread_search", "memory_thread_fetch", "memory_connections", "memory_timeline", "memory_context", "memory_status")
+		availability.toolNames = appendToolNames(availability.toolNames, "memory_list", "memory_search", "memory_read", "memory_write", "memory_forget", "memory_thread_search", "memory_thread_fetch", "memory_connections", "memory_timeline", "memory_context", "memory_status")
 	default:
-		availability.toolNames = appendToolNames(availability.toolNames, "memory_search", "memory_read", "memory_write", "memory_edit", "memory_forget")
+		availability.toolNames = appendToolNames(availability.toolNames, "memory_list", "memory_search", "memory_read", "memory_write", "memory_edit", "memory_forget")
 	}
 	return availability
 }

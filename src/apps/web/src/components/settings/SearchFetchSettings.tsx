@@ -10,10 +10,10 @@ import {
 } from 'lucide-react'
 import { useLocale } from '../../contexts/LocaleContext'
 import { listToolProviders } from '../../api-admin'
-import { getDesktopAccessToken, getDesktopApi } from '@arkloop/shared/desktop'
 import type { ConnectorsConfig, FetchProvider, SearchProvider } from '@arkloop/shared/desktop'
 import { useToast } from '@arkloop/shared'
 import { ProviderSelectCard } from './ProviderSelectCard'
+import { getDesktopConnectorsApi } from '../../desktopConnectorsApi'
 
 // ---------------------------------------------------------------------------
 // Shared styles — all colours use CSS variables so they adapt to dark/light
@@ -113,14 +113,18 @@ function PasswordInput({ value, onChange, placeholder }: {
 // Main component
 // ---------------------------------------------------------------------------
 
-export function SearchFetchSettings() {
+type Props = {
+  accessToken: string
+}
+
+export function SearchFetchSettings({ accessToken }: Props) {
   const { t } = useLocale()
   const ds = t.desktopSettings
   const { addToast } = useToast()
-  const api = getDesktopApi()
+  const connectorsApi = getDesktopConnectorsApi(accessToken)
 
   const [config, setConfig] = useState<ConnectorsConfig | null>(null)
-  const [loading, setLoading] = useState(!!api?.connectors)
+  const [loading, setLoading] = useState(!!connectorsApi)
   const [savedAt, setSavedAt] = useState(0)
   const [runtimeProviders, setRuntimeProviders] = useState<
     Record<string, { runtime_state?: string; runtime_reason?: string }>
@@ -131,19 +135,19 @@ export function SearchFetchSettings() {
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   useEffect(() => {
-    if (!api?.connectors) return
-    void api.connectors.get().then((c) => {
+    if (!connectorsApi) return
+    setLoading(true)
+    void connectorsApi.get().then((c) => {
       setConfig(c)
       savedConfigRef.current = c
       setLoading(false)
       initializedRef.current = true
     }).catch(() => setLoading(false))
-  }, [api])
+  }, [connectorsApi])
 
   useEffect(() => {
     let canceled = false
     const load = async () => {
-      const accessToken = getDesktopAccessToken()
       if (!accessToken) {
         if (!canceled) setRuntimeProviders({})
         return
@@ -167,7 +171,7 @@ export function SearchFetchSettings() {
     }
     void load()
     return () => { canceled = true }
-  }, [savedAt])
+  }, [accessToken, savedAt])
 
   const runtimeStatusForName = (providerName?: string, fallbackReason?: string) => {
     const runtime = providerName ? runtimeProviders[providerName] : undefined
@@ -181,16 +185,16 @@ export function SearchFetchSettings() {
   }
 
   const handleSave = useCallback(async (cfg: ConnectorsConfig) => {
-    if (!api?.connectors) return
+    if (!connectorsApi) return
     try {
-      await api.connectors.set(cfg)
+      await connectorsApi.set(cfg)
       savedConfigRef.current = cfg
       setSavedAt(Date.now())
       addToast(ds.connectorSaved, 'success')
     } catch {
       addToast('Save failed', 'error')
     }
-  }, [api, addToast, ds.connectorSaved])
+  }, [connectorsApi, addToast, ds.connectorSaved])
 
   const scheduleAutoSave = useCallback((cfg: ConnectorsConfig) => {
     if (!initializedRef.current) return
@@ -224,7 +228,7 @@ export function SearchFetchSettings() {
     firecrawl: runtimeStatusForName('web_fetch.firecrawl'),
   }
   const searchRuntimeStatus = {
-    duckduckgo: runtimeStatusForName('web_search.duckduckgo'),
+    basic: runtimeStatusForName('web_search.basic'),
     tavily: runtimeStatusForName('web_search.tavily'),
     searxng: runtimeStatusForName('web_search.searxng'),
   }
@@ -240,7 +244,7 @@ export function SearchFetchSettings() {
     )
   }
 
-  if (!config || !api?.connectors) {
+  if (!config || !connectorsApi) {
     return (
       <div className="flex flex-col gap-4">
         <PageHeader ds={ds} />
@@ -329,12 +333,12 @@ export function SearchFetchSettings() {
       {/* ── Search ── */}
       <Section icon={<Search size={16} />} title={ds.searchConnectorTitle} subtitle={ds.searchConnectorDesc}>
         <ProviderSelectCard
-          title={ds.searchProviderDuckduckgo}
-          description={ds.searchProviderDuckduckgoDesc}
+          title={ds.searchProviderBasic}
+          description={ds.searchProviderBasicDesc}
           badge={<StatusBadge variant="free" t={badgeT} />}
-          selected={searchP === 'duckduckgo'}
-          onSelect={() => patchSearch({ provider: 'duckduckgo' as SearchProvider })}
-          status={<RuntimeStatusLabel state={searchRuntimeStatus.duckduckgo.runtime_state} reason={searchRuntimeStatus.duckduckgo.runtime_reason} />}
+          selected={searchP === 'basic'}
+          onSelect={() => patchSearch({ provider: 'basic' as SearchProvider })}
+          status={<RuntimeStatusLabel state={searchRuntimeStatus.basic.runtime_state} reason={searchRuntimeStatus.basic.runtime_reason} />}
         />
 
         <ProviderSelectCard

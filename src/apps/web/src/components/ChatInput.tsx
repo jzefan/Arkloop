@@ -1,16 +1,7 @@
 import { useRef, useEffect, useCallback, useMemo, useState, forwardRef, useImperativeHandle, useLayoutEffect } from 'react'
-import { ArrowUp, Mic, X, Check, Loader2, Pencil, FileText, Sparkles } from 'lucide-react'
+import { ArrowUp, Mic, X, Check, Loader2, Pencil } from 'lucide-react'
 import type { FormEvent, KeyboardEvent, ClipboardEvent as ReactClipboardEvent } from 'react'
-import {
-  listDefaultSkills,
-  listInstalledSkills,
-  listSelectablePersonas,
-  replaceDefaultSkills,
-  type InstalledSkill,
-  type SelectablePersona,
-  type SkillReference,
-  type UploadedThreadAttachment,
-} from '../api'
+import { listSelectablePersonas, type SelectablePersona, type UploadedThreadAttachment } from '../api'
 import { useLocale } from '../contexts/LocaleContext'
 import { PastedContentModal } from './PastedContentModal'
 import type { SettingsTab } from './SettingsModal'
@@ -23,9 +14,6 @@ import {
   writeSelectedPersonaKeyToStorage,
   readSelectedModelFromStorage,
   writeSelectedModelToStorage,
-  readSelectedModelKindFromStorage,
-  writeSelectedModelKindToStorage,
-  type SelectedModelKind,
   readSelectedReasoningMode,
   writeSelectedReasoningMode,
   readThreadReasoningMode,
@@ -48,7 +36,6 @@ import { ModelPicker } from './ModelPicker'
 import { AutoResizeTextarea, measureTextareaHeight } from '@arkloop/shared'
 import { useLatest } from '../hooks/useLatest'
 import { useInputPerfDebug } from '../hooks/useInputPerfDebug'
-import { getDesktopApi } from '@arkloop/shared/desktop'
 
 export type ChatInputHandle = {
   clear: () => void
@@ -69,7 +56,7 @@ export type Attachment = {
 }
 
 type Props = {
-  onSubmit: (e: FormEvent<HTMLFormElement>, personaKey: string, modelOverride?: string, modelKind?: SelectedModelKind) => void
+  onSubmit: (e: FormEvent<HTMLFormElement>, personaKey: string, modelOverride?: string) => void
   onCancel?: () => void
   placeholder?: string
   disabled?: boolean
@@ -85,7 +72,7 @@ type Props = {
   accessToken?: string
   onAsrError?: (error: unknown) => void
   onPersonaChange?: (personaKey: string) => void
-  onOpenSettings?: (tab: SettingsTab) => void
+  onOpenSettings?: (tab: SettingsTab | 'voice') => void
   appMode?: AppMode
   hasMessages?: boolean
   messagesLoading?: boolean
@@ -95,70 +82,15 @@ type Props = {
   draftOwnerKey?: string | null
   planMode?: boolean
   onTogglePlanMode?: (currentMode: boolean) => Promise<void>
+  learningModeEnabled?: boolean
+  learningModeUpdating?: boolean
+  onToggleLearningMode?: (currentMode: boolean) => Promise<void>
 }
 
 type TextareaSelection = {
   start: number
   end: number
   direction: 'forward' | 'backward' | 'none'
-}
-
-type MentionMenuState =
-  | { kind: 'file'; query: string; start: number; end: number }
-  | { kind: 'skill'; query: string; start: number; end: number }
-  | null
-
-type WorkspaceFileOption = {
-  path: string
-  name: string
-  size?: number
-}
-
-function dedupeSkillReferences(items: SkillReference[]): SkillReference[] {
-  const seen = new Set<string>()
-  return items.filter((item) => {
-    const key = `${item.skill_key}@${item.version}`
-    if (seen.has(key)) return false
-    seen.add(key)
-    return true
-  })
-}
-
-function buildSkillPrompt(skill: InstalledSkill): string {
-  const label = skill.display_name || skill.skill_key
-  const description = skill.description?.trim()
-  const version = skill.version ? `@${skill.version}` : ''
-  return [
-    `<skill name="${skill.skill_key}${version}" label="${label}">`,
-    `本轮对话必须先调用 load_skill 工具加载 "${skill.skill_key}"，然后严格按该 Skill 的 SKILL.md 指令执行。`,
-    description ? `Skill 描述：${description}` : '',
-    '</skill>',
-    '',
-  ].filter(Boolean).join('\n')
-}
-
-function detectMentionMenu(value: string, cursor: number): MentionMenuState {
-  const before = value.slice(0, cursor)
-  const match = /(^|\s)([@~])([^\s@~]*)$/.exec(before)
-  if (!match || match.index == null) return null
-  const trigger = match[2]
-  const query = match[3] ?? ''
-  const start = match.index + (match[1]?.length ?? 0)
-  return {
-    kind: trigger === '@' ? 'file' : 'skill',
-    query,
-    start,
-    end: cursor,
-  }
-}
-
-function base64ToFile(data: string, filename: string, mimeType: string): File {
-  const binary = atob(data)
-  const bytes = new Uint8Array(binary.length)
-  for (let i = 0; i < binary.length; i += 1) {
-    bytes[i] = binary.charCodeAt(i)
-  }
-  return new File([bytes], filename, { type: mimeType || 'text/plain', lastModified: Date.now() })
 }
 
 function buildFallbackSelectablePersonas(_selectedPersonaKey: string): SelectablePersona[] {
@@ -253,10 +185,12 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
   queuedEditLabel,
   onCancelQueuedEdit,
   draftOwnerKey,
+  learningModeEnabled = false,
+  learningModeUpdating = false,
+  onToggleLearningMode,
 }, ref) {
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
-  const desktopApi = useMemo(() => getDesktopApi(), [])
 
   const [draft, setDraft] = useState('')
   const draftRef = useLatest(draft)
@@ -289,7 +223,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
   const onChangeRef = useLatest(setDraft)
   const accessTokenRef = useLatest(accessToken)
   const onAsrErrorRef = useLatest(onAsrError)
-  const onVoiceNotConfiguredRef = useLatest<(() => void) | undefined>(() => onOpenSettings?.('voice' as never))
+  const onVoiceNotConfiguredRef = useLatest<(() => void) | undefined>(() => onOpenSettings?.('voice'))
 
   const { t } = useLocale()
 
@@ -299,20 +233,16 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
   const [collapsingGrid, setCollapsingGrid] = useState(false)
   const [pastedModalAttachment, setPastedModalAttachment] = useState<Attachment | null>(null)
   const [chipExiting, setChipExiting] = useState(false)
+  const [typewriterText, setTypewriterText] = useState('')
   const [workCompactInputWraps, setWorkCompactInputWraps] = useState(false)
   const [textareaFocusRestoreTick, setTextareaFocusRestoreTick] = useState(0)
   const [selectedModel, setSelectedModel] = useState<string | null>(readSelectedModelFromStorage)
-  const [selectedModelKind, setSelectedModelKind] = useState<SelectedModelKind>(readSelectedModelKindFromStorage)
-  const [mentionMenu, setMentionMenu] = useState<MentionMenuState>(null)
-  const [workspaceRoot, setWorkspaceRoot] = useState('')
-  const [workspaceFiles, setWorkspaceFiles] = useState<WorkspaceFileOption[]>([])
-  const [installedSkills, setInstalledSkills] = useState<InstalledSkill[]>([])
   const compactTextareaWidthRef = useRef<number | null>(null)
   const pendingTextareaFocusRef = useRef<TextareaSelection | null>(null)
   const inputLayoutChangingRef = useRef(false)
   const isComposingRef = useRef(false)
   const [isComposingInput, setIsComposingInput] = useState(false)
-  const [composingWorkCompactInput, setComposingWorkCompactInput] = useState<boolean | null>(null)
+  const composingWorkCompactInputRef = useRef<boolean | null>(null)
   const draftScope = useMemo<InputDraftScope>(() => ({
     ownerKey: draftOwnerKey,
     page: variant === 'welcome' ? 'welcome' : 'thread',
@@ -342,73 +272,6 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
 
   const { isFileDragging, handleAttachTransfer, pasteProcessingRef, lastPasteRef } =
     useAttachments({ onAttachFiles, textareaRef })
-
-  useEffect(() => {
-    if (!desktopApi?.config) return
-    let cancelled = false
-    void desktopApi.config.get()
-      .then((config) => {
-        if (!cancelled) setWorkspaceRoot(config.workspace?.root ?? '')
-      })
-      .catch(() => undefined)
-    const unsubscribe = desktopApi.config.onChanged((config) => {
-      setWorkspaceRoot(config.workspace?.root ?? '')
-    })
-    return () => {
-      cancelled = true
-      unsubscribe()
-    }
-  }, [desktopApi])
-
-  useEffect(() => {
-    if (!accessToken) {
-      setInstalledSkills([])
-      return
-    }
-    let cancelled = false
-    void listInstalledSkills(accessToken)
-      .then((skills) => {
-        if (!cancelled) setInstalledSkills(skills)
-      })
-      .catch(() => {
-        if (!cancelled) setInstalledSkills([])
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [accessToken])
-
-  useEffect(() => {
-    if (!workspaceRoot || !desktopApi?.fs) {
-      setWorkspaceFiles([])
-      return
-    }
-    let cancelled = false
-    const out: WorkspaceFileOption[] = []
-    const walk = async (subPath: string, depth: number): Promise<void> => {
-      if (cancelled || depth > 3 || out.length >= 120) return
-      const result = await desktopApi.fs?.listDir(workspaceRoot, subPath)
-      for (const entry of result?.entries ?? []) {
-        if (cancelled || out.length >= 120) return
-        if (entry.name.startsWith('.') || entry.name === 'node_modules') continue
-        if (entry.type === 'dir') {
-          await walk(entry.path, depth + 1)
-        } else {
-          out.push({ path: entry.path, name: entry.name, size: entry.size })
-        }
-      }
-    }
-    void walk('/', 0)
-      .then(() => {
-        if (!cancelled) setWorkspaceFiles(out)
-      })
-      .catch(() => {
-        if (!cancelled) setWorkspaceFiles([])
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [desktopApi, workspaceRoot])
 
   const persistSelectedPersona = useCallback((personaKey: string) => {
     setSelectedPersonaKey(personaKey)
@@ -468,11 +331,6 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
     writeSelectedReasoningMode('off')
   }, [workThreadId])
 
-  const handleModelKindChange = useCallback((kind: SelectedModelKind) => {
-    setSelectedModelKind(kind)
-    writeSelectedModelKindToStorage(kind)
-  }, [])
-
   const handleReasoningModeChange = useCallback((mode: string) => {
     setReasoningMode(mode)
     if (workThreadId) {
@@ -494,7 +352,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
 
   const isNonDefaultMode = selectedPersonaKey !== DEFAULT_PERSONA_KEY && selectedPersonaKey !== WORK_PERSONA_KEY
   const showSendButton = draft.trim().length > 0 || attachments.length > 0
-  const resolvedPlaceholder = placeholder
+  const resolvedPlaceholder = typewriterText
   const isWelcomeInput = variant === 'welcome'
   const isWorkChat = variant === 'chat' && appMode === 'work'
   const hasAttachments = attachments.length > 0
@@ -504,8 +362,8 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
   const isEditingQueuedPrompt = !!queuedEditLabel
   const isWorkSingleLogicalLine = countLinesWithinLimit(draft, 2) === 1
   const measuredWorkCompactInput = isWorkChat && isWorkSingleLogicalLine && !workCompactInputWraps
-  const isWorkCompactInput = isWorkChat && isComposingInput && composingWorkCompactInput !== null
-    ? composingWorkCompactInput
+  const isWorkCompactInput = isWorkChat && isComposingInput && composingWorkCompactInputRef.current !== null
+    ? composingWorkCompactInputRef.current
     : measuredWorkCompactInput
   const isWorkExpandedInput = isWorkChat && !isWorkCompactInput
   const formPadding = isPlainChatThread
@@ -539,6 +397,11 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
     const end = Math.min(selection.end, textarea.value.length)
     textarea.setSelectionRange(start, end, selection.direction)
   }, [disabled])
+
+  const requestTextareaFocusRestore = useCallback((selection: TextareaSelection) => {
+    pendingTextareaFocusRef.current = selection
+    setTextareaFocusRestoreTick((tick) => tick + 1)
+  }, [])
 
   const measureWorkInputWraps = useCallback((value: string, textarea: HTMLTextAreaElement) => {
     const style = window.getComputedStyle(textarea)
@@ -599,7 +462,6 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
   }, [draft, isComposingInput, isWorkChat, isWorkCompactInput, isWorkSingleLogicalLine, workCompactInputWraps])
 
   useLayoutEffect(() => {
-    if (isComposingInput) return
     if (!pendingTextareaFocusRef.current) return
     if (inputLayoutChangingRef.current) {
       inputLayoutChangingRef.current = false
@@ -609,13 +471,13 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
     const selection = pendingTextareaFocusRef.current
     pendingTextareaFocusRef.current = null
     restoreTextareaFocus(selection)
-  }, [draft, isComposingInput, isWorkCompactInput, isWorkExpandedInput, restoreTextareaFocus, textareaFocusRestoreTick])
+  }, [draft, isWorkCompactInput, isWorkExpandedInput, restoreTextareaFocus, textareaFocusRestoreTick])
 
   useLayoutEffect(() => {
-    if (disabled || isComposingInput || isRecording || isTranscribing) return
+    if (disabled || isRecording || isTranscribing) return
     const frame = requestAnimationFrame(() => restoreTextareaFocus(null))
     return () => cancelAnimationFrame(frame)
-  }, [disabled, draftScopeKey, isComposingInput, isRecording, isTranscribing, restoreTextareaFocus])
+  }, [disabled, draftScopeKey, isRecording, isTranscribing, restoreTextareaFocus])
 
   useEffect(() => {
     const prevScope = prevDraftScopeRef.current
@@ -689,6 +551,33 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
     })
     return () => cancelAnimationFrame(id)
   }, [persistSelectedPersona, appMode, selectedPersonaKey])
+
+  const typewriterTarget = placeholder
+
+  // typewriter: clears text, then types out target one char every 45ms
+  const typewriterTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  useEffect(() => {
+    const target = typewriterTarget
+    if (!target) {
+      setTypewriterText('')
+      return
+    }
+    let i = 0
+    setTypewriterText('')
+    const tick = () => {
+      i++
+      if (i > target.length) return
+      setTypewriterText(target.slice(0, i))
+      typewriterTimerRef.current = setTimeout(tick, 45)
+    }
+    typewriterTimerRef.current = setTimeout(tick, 45)
+    return () => {
+      if (typewriterTimerRef.current !== null) {
+        clearTimeout(typewriterTimerRef.current)
+        typewriterTimerRef.current = null
+      }
+    }
+  }, [typewriterTarget])
 
   const applyHistoryValue = (value: string, cursor: 'start' | 'end') => {
     skipDraftPersistRef.current = true
@@ -800,72 +689,26 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
   }
 
   const handleDraftChange = (target: HTMLTextAreaElement) => {
-    if (isComposingRef.current) {
-      trackedSetDraft(target.value)
-      return
-    }
     resetHistoryCursor()
     if (!isComposingRef.current && document.activeElement === target && willWorkInputLayoutChange(target.value, target)) {
       pendingTextareaFocusRef.current = readTextareaSelection(target)
     }
-    setMentionMenu(detectMentionMenu(target.value, target.selectionStart))
     trackedSetDraft(target.value)
-  }
-
-  const replaceMention = (menu: MentionMenuState, replacement: string) => {
-    if (!menu) return
-    const before = draft.slice(0, menu.start)
-    const after = draft.slice(menu.end)
-    const next = `${before}${replacement}${after}`
-    const pos = before.length + replacement.length
-    pendingTextareaFocusRef.current = { start: pos, end: pos, direction: 'none' }
-    trackedSetDraft(next)
-    setMentionMenu(null)
-    requestAnimationFrame(() => {
-      const target = textareaRef.current
-      if (!target) return
-      target.focus()
-      target.setSelectionRange(pos, pos)
-    })
-  }
-
-  const attachWorkspaceFile = async (option: WorkspaceFileOption) => {
-    if (!workspaceRoot || !desktopApi?.fs || !onAttachFiles) return
-    const result = await desktopApi.fs.readFile(workspaceRoot, option.path)
-    if ('error' in result) return
-    const file = base64ToFile(result.data, option.path.replace(/^[/\\]+/, '').replaceAll('/', '_'), result.mime_type)
-    onAttachFiles([file])
-    replaceMention(mentionMenu, option.path)
-  }
-
-  const enableSkillForRuns = useCallback(async (skill: InstalledSkill) => {
-    if (!accessToken || !skill.version || skill.is_platform) return
-    const defaults = await listDefaultSkills(accessToken)
-    const next = dedupeSkillReferences([
-      ...defaults.map((item) => ({ skill_key: item.skill_key, version: item.version })),
-      { skill_key: skill.skill_key, version: skill.version },
-    ])
-    await replaceDefaultSkills(accessToken, next)
-  }, [accessToken])
-
-  const chooseSkillMention = (skill: InstalledSkill) => {
-    void enableSkillForRuns(skill)
-    replaceMention(mentionMenu, buildSkillPrompt(skill))
   }
 
   const handleCompositionStart = () => {
     isComposingRef.current = true
-    setComposingWorkCompactInput(isWorkChat ? isWorkCompactInput : null)
+    composingWorkCompactInputRef.current = isWorkChat ? isWorkCompactInput : null
     setIsComposingInput(true)
     pendingTextareaFocusRef.current = null
   }
 
   const handleCompositionEnd = (target: HTMLTextAreaElement) => {
     isComposingRef.current = false
-    setComposingWorkCompactInput(null)
+    composingWorkCompactInputRef.current = null
     setIsComposingInput(false)
     resetHistoryCursor()
-    setMentionMenu(detectMentionMenu(target.value, target.selectionStart))
+    requestTextareaFocusRestore(readTextareaSelection(target))
     trackedSetDraft(target.value)
   }
 
@@ -876,19 +719,8 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
       historyRef.current = readInputHistory(draftScope)
       resetHistoryCursor()
     }
-    onSubmit(e, selectedPersonaKey, selectedModel ?? undefined, selectedModelKind)
+    onSubmit(e, selectedPersonaKey, selectedModel ?? undefined)
   }
-
-  const mentionOptions = mentionMenu?.kind === 'file'
-    ? workspaceFiles
-      .filter((file) => file.path.toLowerCase().includes(mentionMenu.query.toLowerCase()))
-      .slice(0, 8)
-    : []
-  const skillMentionOptions = mentionMenu?.kind === 'skill'
-    ? installedSkills
-      .filter((skill) => `${skill.skill_key} ${skill.display_name ?? ''} ${skill.description ?? ''}`.toLowerCase().includes(mentionMenu.query.toLowerCase()))
-      .slice(0, 8)
-    : []
 
   return (
     <div
@@ -943,14 +775,11 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                 key={i}
                 style={{
                   width: '2px',
-                  height: '38px',
+                  height: `${Math.max(3, Math.round(h * 38))}px`,
                   borderRadius: '999px',
                   background: 'var(--c-text-secondary)',
                   flexShrink: 0,
-                  transformOrigin: 'center',
-                  transform: `scaleY(${Math.max(3 / 38, h)})`,
-                  transition: 'transform 0.06s linear',
-                  willChange: 'transform',
+                  transition: 'height 0.06s ease',
                 }}
               />
             ))}
@@ -1076,56 +905,6 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
           </div>
         </div>
       )}
-      {mentionMenu && (
-        <div className="px-3 pb-1">
-          <div
-            className="max-h-64 overflow-y-auto rounded-xl p-1"
-            style={{
-              border: '0.5px solid var(--c-border-subtle)',
-              background: 'var(--c-bg-menu)',
-              boxShadow: 'var(--c-dropdown-shadow)',
-            }}
-          >
-            {mentionMenu.kind === 'file' && mentionOptions.length === 0 && (
-              <div className="px-3 py-2 text-xs text-[var(--c-text-muted)]">
-                {workspaceRoot ? '没有匹配的文件' : '请先在设置里选择工作目录'}
-              </div>
-            )}
-            {mentionMenu.kind === 'file' && mentionOptions.map((file) => (
-              <button
-                key={file.path}
-                type="button"
-                onMouseDown={(event) => event.preventDefault()}
-                onClick={() => void attachWorkspaceFile(file)}
-                className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm transition-colors hover:bg-[var(--c-bg-deep)]"
-              >
-                <FileText size={14} className="shrink-0 text-[var(--c-text-muted)]" />
-                <span className="min-w-0 flex-1 truncate text-[var(--c-text-primary)]">{file.path}</span>
-              </button>
-            ))}
-            {mentionMenu.kind === 'skill' && skillMentionOptions.length === 0 && (
-              <div className="px-3 py-2 text-xs text-[var(--c-text-muted)]">
-                暂无匹配 Skill
-              </div>
-            )}
-            {mentionMenu.kind === 'skill' && skillMentionOptions.map((skill) => (
-              <button
-                key={`${skill.skill_key}@${skill.version}`}
-                type="button"
-                onMouseDown={(event) => event.preventDefault()}
-                onClick={() => chooseSkillMention(skill)}
-                className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm transition-colors hover:bg-[var(--c-bg-deep)]"
-              >
-                <Sparkles size={14} className="shrink-0 text-[var(--c-text-muted)]" />
-                <span className="min-w-0 flex-1">
-                  <span className="block truncate text-[var(--c-text-primary)]">{skill.display_name || skill.skill_key}</span>
-                  <span className="block truncate text-xs text-[var(--c-text-muted)]">{skill.skill_key}</span>
-                </span>
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
       <form
         onSubmit={handleFormSubmit}
         style={{
@@ -1158,7 +937,6 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
               disabled={disabled}
               minRows={1}
               maxHeight={300}
-              autoResize={!isComposingInput}
               style={{
                 fontFamily: 'inherit',
                 fontSize: '16px',
@@ -1192,7 +970,6 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
             onModeSelect={handleModeSelect}
             onDeactivateMode={deactivateMode}
             onModelChange={handleModelChange}
-            onModelKindChange={handleModelKindChange}
             thinkingEnabled={reasoningMode}
             onThinkingChange={handleReasoningModeChange}
             onOpenSettings={onOpenSettings}
@@ -1206,6 +983,9 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
             hideWorkFolderPicker={isWorkCompactInput}
             hideModelPicker={isWorkCompactInput}
             onMenuOpenChange={handleMenuOpenChange}
+            learningModeEnabled={learningModeEnabled}
+            learningModeUpdating={learningModeUpdating}
+            onToggleLearningMode={onToggleLearningMode}
           />
 
           {isEditingQueuedPrompt && (
@@ -1278,7 +1058,6 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                   disabled={disabled}
                   minRows={1}
                   maxHeight={300}
-                  autoResize={!isComposingInput}
                   style={{
                     display: 'block',
                     fontFamily: 'inherit',
@@ -1299,8 +1078,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                   accessToken={accessToken}
                   value={selectedModel}
                   onChange={handleModelChange}
-                  onKindChange={handleModelKindChange}
-                  onAddApiKey={() => onOpenSettings?.('models')}
+                  onAddModel={() => onOpenSettings?.('models')}
                   variant={variant}
                   thinkingEnabled={reasoningMode}
                   onThinkingChange={handleReasoningModeChange}

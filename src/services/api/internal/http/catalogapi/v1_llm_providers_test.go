@@ -10,7 +10,10 @@ import (
 
 	"arkloop/services/api/internal/data"
 	"arkloop/services/api/internal/llmproviders"
+	"arkloop/services/shared/localproviders"
 	sharedoutbound "arkloop/services/shared/outboundurl"
+
+	"github.com/google/uuid"
 )
 
 func TestDetermineModelTestTypePrefersImageCatalogType(t *testing.T) {
@@ -38,6 +41,67 @@ func TestDetermineModelTestTypeFallsBackToImageOutputModality(t *testing.T) {
 
 	if got := determineModelTestType(model); got != "image" {
 		t.Fatalf("determineModelTestType() = %q, want image", got)
+	}
+}
+
+func TestLocalProviderFromStatusIsReadOnlyAndSecretFree(t *testing.T) {
+	userID := uuid.New()
+	provider := localProviderFromStatus(localproviders.ProviderStatus{
+		ID:          localproviders.ClaudeCodeProviderID,
+		DisplayName: localproviders.ClaudeCodeDisplayName,
+		Provider:    localproviders.ClaudeCodeProviderKind,
+		AuthMode:    localproviders.AuthModeOAuth,
+		Models: []localproviders.Model{{
+			ID:              "claude-sonnet-4-6",
+			ContextLength:   200000,
+			MaxOutputTokens: 64000,
+			ToolCalling:     true,
+			Reasoning:       true,
+			Default:         true,
+			Hidden:          true,
+			Priority:        900,
+		}},
+	}, userID)
+
+	if provider.Source != localproviders.SourceLocal || !provider.ReadOnly || provider.AuthMode != localproviders.AuthModeOAuth {
+		t.Fatalf("unexpected local provider flags: %#v", provider)
+	}
+	if provider.Credential.Provider != localproviders.ClaudeCodeProviderKind || provider.Credential.Name != localproviders.ClaudeCodeDisplayName {
+		t.Fatalf("unexpected credential: %#v", provider.Credential)
+	}
+	if provider.Credential.SecretID != nil || provider.Credential.KeyPrefix != nil || provider.Credential.BaseURL != nil {
+		t.Fatalf("local provider must not carry stored credential data: %#v", provider.Credential)
+	}
+	if len(provider.Models) != 1 || provider.Models[0].ShowInPicker || provider.Models[0].IsDefault {
+		t.Fatalf("unexpected local routes: %#v", provider.Models)
+	}
+}
+
+func TestLocalProviderMutationGuard(t *testing.T) {
+	providerID := localProviderUUID(localproviders.ClaudeCodeProviderID)
+	if !isLocalProviderUUID(providerID) {
+		t.Fatalf("expected local provider uuid to be recognized")
+	}
+	cases := []struct {
+		name   string
+		parts  []string
+		method string
+		want   bool
+	}{
+		{name: "patch provider", parts: []string{providerID.String()}, method: nethttp.MethodPatch, want: true},
+		{name: "delete provider", parts: []string{providerID.String()}, method: nethttp.MethodDelete, want: true},
+		{name: "create model", parts: []string{providerID.String(), "models"}, method: nethttp.MethodPost, want: true},
+		{name: "patch model picker", parts: []string{providerID.String(), "models", uuid.NewString()}, method: nethttp.MethodPatch, want: false},
+		{name: "delete model", parts: []string{providerID.String(), "models", uuid.NewString()}, method: nethttp.MethodDelete, want: true},
+		{name: "available models read", parts: []string{providerID.String(), "available-models"}, method: nethttp.MethodGet, want: false},
+		{name: "model test read", parts: []string{providerID.String(), "models", uuid.NewString(), "test"}, method: nethttp.MethodPost, want: false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := isLocalProviderMutation(tc.parts, tc.method); got != tc.want {
+				t.Fatalf("isLocalProviderMutation() = %v, want %v", got, tc.want)
+			}
+		})
 	}
 }
 

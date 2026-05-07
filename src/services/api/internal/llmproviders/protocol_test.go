@@ -50,6 +50,9 @@ func TestResolveCatalogProtocolConfigDeepSeekDefaultsToChatCompletions(t *testin
 	if cfg.BaseURL != defaultDeepSeekBaseURL {
 		t.Fatalf("BaseURL = %q, want %q", cfg.BaseURL, defaultDeepSeekBaseURL)
 	}
+	if cfg.OpenAI.APIMode != "chat_completions" {
+		t.Fatalf("OpenAI.APIMode = %q, want chat_completions", cfg.OpenAI.APIMode)
+	}
 }
 
 func TestResolveCatalogProtocolConfigAnthropicDefaultsToHostBase(t *testing.T) {

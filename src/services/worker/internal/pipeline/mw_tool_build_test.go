@@ -312,51 +312,6 @@ func TestToolBuildMiddleware_FiltersAccountUnavailableImageGenerate(t *testing.T
 	}
 }
 
-func TestToolBuildMiddleware_GenerationTaskForcesImageGenerate(t *testing.T) {
-	registry := tools.NewRegistry()
-	for _, spec := range []tools.AgentToolSpec{
-		{Name: "image_generate", Version: "1", Description: "image_generate", RiskLevel: tools.RiskLevelLow},
-		{Name: "show_widget", Version: "1", Description: "show_widget", RiskLevel: tools.RiskLevelLow},
-		loadskill.AgentSpec,
-	} {
-		if err := registry.Register(spec); err != nil {
-			t.Fatalf("register %s: %v", spec.Name, err)
-		}
-	}
-	rc := &pipeline.RunContext{
-		Run: data.Run{
-			ID:        uuid.New(),
-			AccountID: uuid.New(),
-		},
-		Emitter:       events.NewEmitter("test"),
-		ToolRegistry:  registry,
-		ToolExecutors: map[string]tools.Executor{"image_generate": &recordingExecutor{}, "show_widget": &recordingExecutor{}, "load_skill": &recordingExecutor{}},
-		AllowlistSet:  map[string]struct{}{"image_generate": {}, "show_widget": {}, "load_skill": {}},
-		ToolSpecs: []llm.ToolSpec{
-			{Name: "image_generate"},
-			{Name: "show_widget"},
-			{Name: "load_skill"},
-		},
-		InputJSON: map[string]any{
-			"generation_task":  "image",
-			"generation_model": "OpenAI (Chat Completions)^openai/gpt-image-2",
-		},
-		PersonaDefinition: &personas.Definition{CoreTools: []string{"load_skill"}},
-		Runtime:           &sharedtoolruntime.RuntimeSnapshot{},
-	}
-
-	mw := pipeline.NewToolBuildMiddleware()
-	h := pipeline.Build([]pipeline.RunMiddleware{mw}, func(_ context.Context, rc *pipeline.RunContext) error {
-		if len(rc.FinalSpecs) != 1 || rc.FinalSpecs[0].Name != "image_generate" {
-			t.Fatalf("expected only image_generate, got %+v", rc.FinalSpecs)
-		}
-		return nil
-	})
-	if err := h(context.Background(), rc); err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-}
-
 func TestToolBuildMiddleware_KeepsUserProviderTool(t *testing.T) {
 	registry := tools.NewRegistry()
 	if err := registry.Register(readtool.AgentSpec); err != nil {
@@ -419,16 +374,16 @@ func TestToolBuildMiddleware_KeepsUserProviderTool(t *testing.T) {
 	}
 }
 
-func TestToolBuildMiddleware_BindsDuckduckgoProvider(t *testing.T) {
+func TestToolBuildMiddleware_BindsBasicSearchProvider(t *testing.T) {
 	registry := tools.NewRegistry()
 	if err := registry.Register(tools.AgentToolSpec{
-		Name:        "web_search.duckduckgo",
+		Name:        "web_search.basic",
 		LlmName:     "web_search",
 		Version:     "1",
 		Description: "search",
 		RiskLevel:   tools.RiskLevelLow,
 	}); err != nil {
-		t.Fatalf("register duckduckgo: %v", err)
+		t.Fatalf("register basic search: %v", err)
 	}
 
 	exec := &recordingExecutor{}
@@ -437,13 +392,13 @@ func TestToolBuildMiddleware_BindsDuckduckgoProvider(t *testing.T) {
 		Emitter:      events.NewEmitter("test"),
 		ToolRegistry: registry,
 		ToolExecutors: map[string]tools.Executor{
-			"web_search.duckduckgo": exec,
+			"web_search.basic": exec,
 		},
 		AllowlistSet: map[string]struct{}{
 			"web_search": {},
 		},
 		ActiveToolProviderByGroup: map[string]string{
-			"web_search": "web_search.duckduckgo",
+			"web_search": "web_search.basic",
 		},
 		ToolSpecs: []llm.ToolSpec{
 			{Name: "web_search"},
@@ -468,8 +423,8 @@ func TestToolBuildMiddleware_BindsDuckduckgoProvider(t *testing.T) {
 		if result.Error != nil {
 			t.Fatalf("unexpected error: %+v", result.Error)
 		}
-		if got := exec.CalledWith(); got != "web_search.duckduckgo" {
-			t.Fatalf("expected web_search.duckduckgo, got %q", got)
+		if got := exec.CalledWith(); got != "web_search.basic" {
+			t.Fatalf("expected web_search.basic, got %q", got)
 		}
 		return nil
 	})

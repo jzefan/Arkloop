@@ -1,10 +1,12 @@
 import type {
-  CreateMessageRequest,
-  MessageContent,
-  MessageContentPart,
-  MessageResponse,
   UploadedThreadAttachment,
 } from './api'
+import type {
+  AgentCreateMessageRequest,
+  AgentMessage,
+  AgentMessageContent,
+  AgentMessageContentPart,
+} from './agent-ui'
 
 export function extractLegacyFilesFromContent(content: string): { text: string; fileNames: string[] } {
   const fileNames: string[] = []
@@ -17,10 +19,10 @@ export function extractLegacyFilesFromContent(content: string): { text: string; 
   return { text, fileNames }
 }
 
-export function messageTextContent(message: Pick<MessageResponse, 'content' | 'content_json'>): string {
-  if (message.content_json?.parts?.length) {
-    return message.content_json.parts
-      .filter((part): part is Extract<MessageContentPart, { type: 'text' }> => part.type === 'text')
+export function messageTextContent(message: Pick<AgentMessage, 'content' | 'contentJson'>): string {
+  if (message.contentJson?.parts?.length) {
+    return message.contentJson.parts
+      .filter((part): part is Extract<AgentMessageContentPart, { type: 'text' }> => part.type === 'text')
       .map((part) => part.text)
       .join('\n\n')
       .trim()
@@ -28,15 +30,15 @@ export function messageTextContent(message: Pick<MessageResponse, 'content' | 'c
   return extractLegacyFilesFromContent(message.content).text
 }
 
-export function messageAttachmentParts(message: Pick<MessageResponse, 'content' | 'content_json'>): MessageContentPart[] {
-  if (message.content_json?.parts?.length) {
-    return message.content_json.parts.filter((part) => part.type === 'image' || part.type === 'file')
+export function messageAttachmentParts(message: Pick<AgentMessage, 'content' | 'contentJson'>): AgentMessageContentPart[] {
+  if (message.contentJson?.parts?.length) {
+    return message.contentJson.parts.filter((part) => part.type === 'image' || part.type === 'file')
   }
   return []
 }
 
-export function buildMessageRequest(text: string, uploads: UploadedThreadAttachment[]): CreateMessageRequest {
-  const parts: MessageContentPart[] = []
+export function buildMessageRequest(text: string, uploads: UploadedThreadAttachment[]): AgentCreateMessageRequest {
+  const parts: AgentMessageContentPart[] = []
   if (text.trim()) {
     parts.push({ type: 'text', text: text.trim() })
   }
@@ -44,37 +46,37 @@ export function buildMessageRequest(text: string, uploads: UploadedThreadAttachm
     const attachment = {
       key: item.key,
       filename: item.filename,
-      mime_type: item.mime_type,
+      mediaType: item.mime_type,
       size: item.size,
     }
     if (item.kind === 'image') {
       parts.push({ type: 'image', attachment })
       continue
     }
-    parts.push({ type: 'file', attachment, extracted_text: item.extracted_text ?? '' })
+    parts.push({ type: 'file', attachment, extractedText: item.extracted_text ?? '' })
   }
   if (parts.length === 0) {
     return { content: text.trim() }
   }
   return {
     content: text.trim() || undefined,
-    content_json: { parts },
+    contentJson: { parts },
   }
 }
 
-export function hasMessageAttachments(message: Pick<MessageResponse, 'content' | 'content_json'>): boolean {
+export function hasMessageAttachments(message: Pick<AgentMessage, 'content' | 'contentJson'>): boolean {
   return messageAttachmentParts(message).length > 0 || extractLegacyFilesFromContent(message.content).fileNames.length > 0
 }
 
-export function isImagePart(part: MessageContentPart): part is Extract<MessageContentPart, { type: 'image' }> {
+export function isImagePart(part: AgentMessageContentPart): part is Extract<AgentMessageContentPart, { type: 'image' }> {
   return part.type === 'image'
 }
 
-export function isFilePart(part: MessageContentPart): part is Extract<MessageContentPart, { type: 'file' }> {
+export function isFilePart(part: AgentMessageContentPart): part is Extract<AgentMessageContentPart, { type: 'file' }> {
   return part.type === 'file'
 }
 
-export function ensureContent(value?: MessageContent): MessageContent | undefined {
+export function ensureContent(value?: AgentMessageContent): AgentMessageContent | undefined {
   if (!value?.parts?.length) return undefined
   return value
 }

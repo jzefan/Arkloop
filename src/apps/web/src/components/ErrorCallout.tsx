@@ -3,7 +3,7 @@ import { ChevronDown, ChevronRight, X } from 'lucide-react'
 import { ErrorCallout as SharedErrorCallout, formatErrorForDisplay, type AppError } from '@arkloop/shared'
 import { useLocale } from '../contexts/LocaleContext'
 
-const RUN_ERROR_TITLE_BG = 'var(--c-danger)'
+const RUN_ERROR_TITLE_BG = '#ea4d3c'
 const MONO = 'ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace'
 
 function flattenDetailLine(line: string): string {
@@ -37,7 +37,7 @@ export function RunErrorNotice({ error, onDismiss }: { error: AppError; onDismis
       <div
         style={{
           background: RUN_ERROR_TITLE_BG,
-          color: 'var(--c-on-danger)',
+          color: '#fff',
           display: 'flex',
           alignItems: 'center',
           gap: 8,
@@ -67,7 +67,7 @@ export function RunErrorNotice({ error, onDismiss }: { error: AppError; onDismis
           style={{
             background: 'transparent',
             border: 'none',
-            color: 'var(--c-on-danger)',
+            color: '#fff',
             cursor: 'pointer',
             padding: 0,
           }}
@@ -82,7 +82,7 @@ export function RunErrorNotice({ error, onDismiss }: { error: AppError; onDismis
           style={{
             background: 'transparent',
             border: 'none',
-            color: 'var(--c-on-danger)',
+            color: '#fff',
             cursor: 'pointer',
             padding: 0,
           }}

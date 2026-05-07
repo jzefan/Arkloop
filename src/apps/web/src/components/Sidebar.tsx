@@ -9,7 +9,6 @@ import {
   Bolt,
   Glasses,
   MoreHorizontal,
-  Download,
   Star,
   Share2,
   Pencil,
@@ -21,10 +20,10 @@ import {
   ChevronRight,
   Plus,
 } from 'lucide-react'
-import type { MessageContentPart, MessageResponse, ThreadGtdBucket, ThreadResponse, UpdateThreadSidebarRequest } from '../api'
-import { listMessages, listRunEvents, listStarredThreadIds, listThreadRuns, starThread, unstarThread, updateThreadTitle, deleteThread, updateThreadSidebarState } from '../api'
-import { buildUrl } from '@arkloop/shared/api'
-import { getDesktopApi, isLocalMode, isDesktop } from '@arkloop/shared/desktop'
+import type { ThreadGtdBucket, ThreadResponse, UpdateThreadSidebarRequest } from '../api'
+import { listStarredThreadIds, starThread, unstarThread, updateThreadTitle, deleteThread, updateThreadSidebarState } from '../api'
+import { isLocalMode, isDesktop } from '@arkloop/shared/desktop'
+import { ConfirmDialog } from '@arkloop/shared'
 import { useLocale } from '../contexts/LocaleContext'
 import { ShareModal } from './ShareModal'
 import { beginPerfTrace, endPerfTrace, isPerfDebugEnabled, recordPerfValue } from '../perfDebug'
@@ -40,16 +39,7 @@ import {
   readPinnedThreadIds, writePinnedThreadIds,
   readGtdEnabled, readExpandedProjectPaths, writeExpandedProjectPaths,
   clearThreadWorkFolder, readThreadWorkFolder, writeThreadWorkFolder, clearWorkFolder, writeWorkFolder,
-  readMessageArtifacts,
-  readMessageCodeExecutions,
-  readMessageFileOps,
-  type ArtifactRef,
-  type CodeExecutionRef,
-  type FileOpRef,
 } from '../storage'
-import { createZipBlob, type ZipEntry } from '../lib/zip'
-import { buildMessageArtifactsFromRunEvents, buildMessageCodeExecutionsFromRunEvents, buildMessageFileOpsFromRunEvents } from '../runEventProcessing'
-import type { RunEvent } from '../sse'
 
 type Props = {
   threads: ThreadResponse[]
@@ -68,6 +58,7 @@ const PROJECT_GROUP_SECONDARY_PAGE_SIZE = 2
 const PROJECT_GROUP_LABEL_WEIGHT = 'var(--c-sidebar-thread-weight)'
 const SIDEBAR_ROW_TEXT_SIZE = '13.5px'
 const SIDEBAR_ROW_LINE_HEIGHT = '20px'
+const GTD_ENABLED_STORAGE_KEY = 'arkloop:web:gtd_enabled'
 const DRAG_START_DISTANCE_PX = 3
 const DRAG_LONG_PRESS_DELAY_MS = 180
 const GTD_BUCKETS: readonly GtdBucket[] = ['inbox', 'todo', 'waiting', 'someday', 'archived']
@@ -75,7 +66,6 @@ const GTD_BUCKETS: readonly GtdBucket[] = ['inbox', 'todo', 'waiting', 'someday'
 type SidebarDragState =
   | { kind: 'work'; threadId: string; title: string; x: number; y: number; fromPinned: boolean; sourcePath: string }
   | { kind: 'gtd'; threadId: string; title: string; x: number; y: number; sourceBucket: GtdBucket }
-type MessageAttachmentPart = Extract<MessageContentPart, { type: 'file' | 'image' }>
 
 function projectGroupLimit(value: number | undefined, fallback: number): number {
   if (typeof value === 'number' && Number.isFinite(value) && value > 0) return Math.floor(value)
@@ -89,6 +79,14 @@ function threadTitle(thread: ThreadResponse, untitled: string): string {
 
 function defaultGtdExpandedBuckets(): Set<GtdBucket> {
   return new Set(GTD_BUCKETS)
+}
+
+function areStringSetsEqual(left: Set<string>, right: Set<string>): boolean {
+  if (left.size !== right.size) return false
+  for (const value of left) {
+    if (!right.has(value)) return false
+  }
+  return true
 }
 
 function normalizeGtdBucket(value: ThreadResponse['sidebar_gtd_bucket']): GtdBucket | null {
@@ -108,248 +106,6 @@ function withSidebarPatch(thread: ThreadResponse, patch: UpdateThreadSidebarRequ
     next.sidebar_gtd_bucket = patch.sidebar_gtd_bucket ?? null
   }
   return next
-}
-
-function safeFilename(name: string, fallback: string): string {
-  const cleaned = name.trim().replace(/[\\/:*?"<>|]+/g, '_').replace(/\s+/g, ' ').slice(0, 120)
-  return cleaned || fallback
-}
-
-function encodeStorageKey(key: string): string {
-  return key.split('/').map(encodeURIComponent).join('/')
-}
-
-function downloadBlob(blob: Blob, filename: string): void {
-  const url = URL.createObjectURL(blob)
-  const anchor = document.createElement('a')
-  anchor.href = url
-  anchor.download = filename
-  document.body.appendChild(anchor)
-  anchor.click()
-  anchor.remove()
-  window.setTimeout(() => URL.revokeObjectURL(url), 60_000)
-}
-
-async function fetchStoredBlob(accessToken: string, prefix: '/v1/artifacts' | '/v1/attachments', key: string): Promise<Blob | null> {
-  const response = await fetch(buildUrl(`${prefix}/${encodeStorageKey(key)}`), {
-    headers: { Authorization: `Bearer ${accessToken}` },
-    credentials: 'include',
-  })
-  if (!response.ok) return null
-  return await response.blob()
-}
-
-function collectMessageAttachments(message: MessageResponse): MessageAttachmentPart[] {
-  return message.content_json?.parts.filter((part): part is MessageAttachmentPart => part.type === 'file' || part.type === 'image') ?? []
-}
-
-function messageToMarkdown(message: MessageResponse): string {
-  const role = message.role === 'assistant' ? 'Assistant' : message.role === 'user' ? 'User' : message.role
-  const attachments = collectMessageAttachments(message)
-    .map((part) => `- ${part.attachment.filename} (${part.attachment.mime_type}, ${part.attachment.size} bytes)`)
-    .join('\n')
-  const attachmentBlock = attachments ? `\n\nAttachments:\n${attachments}` : ''
-  return `## ${role} · ${message.created_at}\n\n${message.content || ''}${attachmentBlock}`.trim()
-}
-
-function mergeArtifacts(...groups: Array<ArtifactRef[] | null | undefined>): ArtifactRef[] {
-  const out: ArtifactRef[] = []
-  const seen = new Set<string>()
-  for (const group of groups) {
-    for (const artifact of group ?? []) {
-      if (!artifact.key || seen.has(artifact.key)) continue
-      seen.add(artifact.key)
-      out.push(artifact)
-    }
-  }
-  return out
-}
-
-function mergeCodeExecutions(...groups: Array<CodeExecutionRef[] | null | undefined>): CodeExecutionRef[] {
-  const out: CodeExecutionRef[] = []
-  const seen = new Set<string>()
-  for (const group of groups) {
-    for (const execution of group ?? []) {
-      if (!execution.id || seen.has(execution.id)) continue
-      seen.add(execution.id)
-      out.push(execution)
-    }
-  }
-  return out
-}
-
-function mergeFileOps(...groups: Array<FileOpRef[] | null | undefined>): FileOpRef[] {
-  const out: FileOpRef[] = []
-  const seen = new Set<string>()
-  for (const group of groups) {
-    for (const op of group ?? []) {
-      if (!op.id || seen.has(op.id)) continue
-      seen.add(op.id)
-      out.push(op)
-    }
-  }
-  return out
-}
-
-function shortId(id: string): string {
-  return id.replace(/-/g, '').slice(0, 8) || id
-}
-
-async function loadThreadRunEvents(accessToken: string, threadId: string): Promise<Map<string, RunEvent[]>> {
-  const runs = await listThreadRuns(accessToken, threadId, 200).catch(() => [])
-  const entries = await Promise.all(runs.map(async (run) => {
-    const events = await listRunEvents(accessToken, run.run_id, { follow: false, afterSeq: 0 }).catch(() => [])
-    return [run.run_id, events] as const
-  }))
-  return new Map(entries)
-}
-
-async function buildThreadExportEntries(accessToken: string, thread: ThreadResponse, untitled: string): Promise<ZipEntry[]> {
-  const messages = await listMessages(accessToken, thread.id, 500)
-  const runEventsByID = await loadThreadRunEvents(accessToken, thread.id)
-  const folder = safeFilename(`${threadTitle(thread, untitled)} - ${shortId(thread.id)}`, thread.id)
-  const metadata = messages.map((message) => ({
-    ...message,
-    artifacts: mergeArtifacts(readMessageArtifacts(message.id), message.run_id ? buildMessageArtifactsFromRunEvents(runEventsByID.get(message.run_id) ?? []) : []),
-    code_executions: mergeCodeExecutions(readMessageCodeExecutions(message.id), message.run_id ? buildMessageCodeExecutionsFromRunEvents(runEventsByID.get(message.run_id) ?? []) : []),
-    file_ops: mergeFileOps(readMessageFileOps(message.id), message.run_id ? buildMessageFileOpsFromRunEvents(runEventsByID.get(message.run_id) ?? []) : []),
-  }))
-  const runMetadata = Array.from(runEventsByID.entries()).map(([run_id, events]) => ({
-    run_id,
-    artifacts: buildMessageArtifactsFromRunEvents(events),
-    code_executions: buildMessageCodeExecutionsFromRunEvents(events),
-    file_ops: buildMessageFileOpsFromRunEvents(events),
-  }))
-  const entries: ZipEntry[] = [
-    {
-      path: `${folder}/thread.json`,
-      data: JSON.stringify({ thread, messages: metadata, runs: runMetadata }, null, 2),
-      mimeType: 'application/json',
-    },
-    {
-      path: `${folder}/messages.md`,
-      data: [`# ${threadTitle(thread, untitled)}`, '', ...messages.map(messageToMarkdown)].join('\n\n'),
-      mimeType: 'text/markdown',
-    },
-  ]
-
-  const usedPaths = new Set(entries.map((entry) => entry.path))
-  const addUnique = (path: string, data: BlobPart, mimeType?: string) => {
-    const normalized = path.replace(/\/+/g, '/')
-    if (!usedPaths.has(normalized)) {
-      usedPaths.add(normalized)
-      entries.push({ path: normalized, data, mimeType })
-      return
-    }
-    const dot = normalized.lastIndexOf('.')
-    const base = dot > -1 ? normalized.slice(0, dot) : normalized
-    const ext = dot > -1 ? normalized.slice(dot) : ''
-    let index = 2
-    while (usedPaths.has(`${base}-${index}${ext}`)) index += 1
-    const unique = `${base}-${index}${ext}`
-    usedPaths.add(unique)
-    entries.push({ path: unique, data, mimeType })
-  }
-
-  for (const message of messages) {
-    for (const part of collectMessageAttachments(message)) {
-      const blob = await fetchStoredBlob(accessToken, '/v1/attachments', part.attachment.key).catch(() => null)
-      if (!blob) continue
-      addUnique(
-        `${folder}/attachments/${message.id}/${safeFilename(part.attachment.filename, part.attachment.key)}`,
-        blob,
-        part.attachment.mime_type,
-      )
-    }
-
-    const artifacts = mergeArtifacts(
-      readMessageArtifacts(message.id),
-      message.run_id ? buildMessageArtifactsFromRunEvents(runEventsByID.get(message.run_id) ?? []) : [],
-    )
-    for (const artifact of artifacts) {
-      const blob = await fetchStoredBlob(accessToken, '/v1/artifacts', artifact.key).catch(() => null)
-      if (!blob) continue
-      addUnique(
-        `${folder}/artifacts/${message.id}/${safeFilename(artifact.filename, artifact.key)}`,
-        blob,
-        artifact.mime_type,
-      )
-    }
-
-    const executions = mergeCodeExecutions(
-      readMessageCodeExecutions(message.id),
-      message.run_id ? buildMessageCodeExecutionsFromRunEvents(runEventsByID.get(message.run_id) ?? []) : [],
-    )
-    for (const execution of executions) {
-      if (execution.code?.trim()) {
-        const ext = execution.language === 'python' ? 'py' : 'sh'
-        addUnique(
-          `${folder}/source/code-executions/${message.id}/${safeFilename(execution.id, 'execution')}.${ext}`,
-          execution.code,
-          'text/plain',
-        )
-      }
-      if (execution.output?.trim()) {
-        addUnique(
-          `${folder}/source/code-executions/${message.id}/${safeFilename(execution.id, 'execution')}.output.txt`,
-          execution.output,
-          'text/plain',
-        )
-      }
-    }
-
-    const fileOps = mergeFileOps(
-      readMessageFileOps(message.id),
-      message.run_id ? buildMessageFileOpsFromRunEvents(runEventsByID.get(message.run_id) ?? []) : [],
-    )
-    for (const op of fileOps) {
-      if (!op.output?.trim()) continue
-      addUnique(
-        `${folder}/source/file-ops/${message.id}/${safeFilename(op.id, 'file-op')}.txt`,
-        op.output,
-        'text/plain',
-      )
-    }
-  }
-
-  for (const run of runMetadata) {
-    for (const artifact of run.artifacts) {
-      const blob = await fetchStoredBlob(accessToken, '/v1/artifacts', artifact.key).catch(() => null)
-      if (!blob) continue
-      addUnique(
-        `${folder}/artifacts/runs/${run.run_id}/${safeFilename(artifact.filename, artifact.key)}`,
-        blob,
-        artifact.mime_type,
-      )
-    }
-    for (const execution of run.code_executions) {
-      if (execution.code?.trim()) {
-        const ext = execution.language === 'python' ? 'py' : 'sh'
-        addUnique(
-          `${folder}/source/runs/${run.run_id}/${safeFilename(execution.id, 'execution')}.${ext}`,
-          execution.code,
-          'text/plain',
-        )
-      }
-      if (execution.output?.trim()) {
-        addUnique(
-          `${folder}/source/runs/${run.run_id}/${safeFilename(execution.id, 'execution')}.output.txt`,
-          execution.output,
-          'text/plain',
-        )
-      }
-    }
-    for (const op of run.file_ops) {
-      if (!op.output?.trim()) continue
-      addUnique(
-        `${folder}/source/runs/${run.run_id}/file-ops/${safeFilename(op.id, 'file-op')}.txt`,
-        op.output,
-        'text/plain',
-      )
-    }
-  }
-
-  return entries
 }
 
 type SidebarThreadItemProps = {
@@ -373,9 +129,6 @@ type SidebarThreadItemProps = {
   beforeNavigateToThread?: () => void
   navigate: ReturnType<typeof useNavigate>
   openMenu: (event: React.MouseEvent, id: string) => void
-  bulkMode: boolean
-  selected: boolean
-  onToggleSelected: (threadId: string) => void
 }
 
 const SidebarThreadItem = memo(function SidebarThreadItem({
@@ -399,9 +152,6 @@ const SidebarThreadItem = memo(function SidebarThreadItem({
   beforeNavigateToThread,
   navigate,
   openMenu,
-  bulkMode,
-  selected,
-  onToggleSelected,
 }: SidebarThreadItemProps) {
   return (
     <div
@@ -438,10 +188,6 @@ const SidebarThreadItem = memo(function SidebarThreadItem({
       ) : (
         <button
           onClick={() => {
-            if (bulkMode) {
-              onToggleSelected(thread.id)
-              return
-            }
             markCompletionRead(thread.id)
             beforeNavigateToThread?.()
             navigate(`/t/${thread.id}`)
@@ -454,19 +200,6 @@ const SidebarThreadItem = memo(function SidebarThreadItem({
           ].join(' ')}
           style={{ fontWeight: 'var(--c-sidebar-thread-weight)' }}
         >
-          {bulkMode && (
-            <span
-              className="flex h-[15px] w-[15px] shrink-0 items-center justify-center rounded-[4px]"
-              style={{
-                border: `1px solid ${selected ? 'var(--c-text-primary)' : 'var(--c-border-mid)'}`,
-                background: selected ? 'var(--c-text-primary)' : 'transparent',
-                color: selected ? 'var(--c-bg-page)' : 'transparent',
-              }}
-              aria-hidden="true"
-            >
-              <CheckCircle size={11} strokeWidth={2.4} />
-            </span>
-          )}
           {showStatusDot && (
             <span className="flex h-[14px] w-[16px] shrink-0 items-center justify-center" aria-hidden="true">
               {isRunning ? (
@@ -489,7 +222,7 @@ const SidebarThreadItem = memo(function SidebarThreadItem({
         </button>
       )}
 
-      {!isEditing && !bulkMode && (
+      {!isEditing && (
         <div className="mr-1 flex shrink-0 items-center">
           <div
             className={[
@@ -566,6 +299,7 @@ export function Sidebar({
   const [gtdSomedayIds, setGtdSomedayIds] = useState<Set<string>>(() => readGtdSomedayThreadIds())
   const [gtdArchivedIds, setGtdArchivedIds] = useState<Set<string>>(() => readGtdArchivedThreadIds())
   const [pinnedIds, setPinnedIds] = useState<Set<string>>(() => readPinnedThreadIds())
+  const pinnedIdsRef = useRef(pinnedIds)
   const [expandedPaths, setExpandedPaths] = useState<Set<string>>(() => readExpandedProjectPaths())
   const [expandedLimits, setExpandedLimits] = useState<Record<string, number>>({})
   const [expandedGtdBuckets, setExpandedGtdBuckets] = useState<Set<GtdBucket>>(() => defaultGtdExpandedBuckets())
@@ -576,9 +310,6 @@ export function Sidebar({
   const [dragOverPinned, setDragOverPinned] = useState(false)
   const [dragOverProjectPath, setDragOverProjectPath] = useState<string | null>(null)
   const [dragOverGtdBucket, setDragOverGtdBucket] = useState<GtdBucket | null>(null)
-  const [bulkMode, setBulkMode] = useState(false)
-  const [selectedThreadIds, setSelectedThreadIds] = useState<Set<string>>(() => new Set())
-  const [bulkBusy, setBulkBusy] = useState(false)
   const pinnedDropRef = useRef<HTMLDivElement>(null)
   const projectGroupRefs = useRef<Map<string, HTMLDivElement>>(new Map())
   const gtdGroupRefs = useRef<Map<GtdBucket, HTMLDivElement>>(new Map())
@@ -597,27 +328,6 @@ export function Sidebar({
     }
     return next
   }, [starredIds, threads])
-
-  const selectedThreads = useMemo(() => (
-    threads.filter((thread) => selectedThreadIds.has(thread.id))
-  ), [selectedThreadIds, threads])
-
-  const toggleBulkMode = useCallback(() => {
-    setMenuThreadId(null)
-    setBulkMode((prev) => {
-      if (prev) setSelectedThreadIds(new Set())
-      return !prev
-    })
-  }, [])
-
-  const toggleSelectedThread = useCallback((id: string) => {
-    setSelectedThreadIds((prev) => {
-      const next = new Set(prev)
-      if (next.has(id)) next.delete(id)
-      else next.add(id)
-      return next
-    })
-  }, [])
 
   const effectivePinnedIds = useMemo(() => {
     const next = new Set(pinnedIds)
@@ -819,12 +529,9 @@ export function Sidebar({
         beforeNavigateToThread={beforeNavigateToThread}
         navigate={navigate}
         openMenu={openMenu}
-        bulkMode={bulkMode}
-        selected={selectedThreadIds.has(thread.id)}
-        onToggleSelected={toggleSelectedThread}
       />
     )
-  }, [runningThreadIds, completedUnreadThreadIds, menuThreadId, editingThreadId, activeThreadId, starredSet, draggingThreadId, editingTitle, t.untitled, editInputRef, setEditingTitle, setEditingThreadId, commitRename, markCompletionRead, beforeNavigateToThread, navigate, openMenu, bulkMode, selectedThreadIds, toggleSelectedThread])
+  }, [runningThreadIds, completedUnreadThreadIds, menuThreadId, editingThreadId, activeThreadId, starredSet, draggingThreadId, editingTitle, t.untitled, editInputRef, setEditingTitle, setEditingThreadId, commitRename, markCompletionRead, beforeNavigateToThread, navigate, openMenu])
 
   const renderDropRow = (icon: React.ReactNode, label: string, active: boolean) => (
     <div
@@ -1043,14 +750,18 @@ export function Sidebar({
   const markGtdSomeday = useCallback((id: string) => moveGtdThread(id, 'someday'), [moveGtdThread])
   const archiveGtdThread = useCallback((id: string) => moveGtdThread(id, 'archived'), [moveGtdThread])
 
-  const applyPinnedLocal = useCallback((id: string, pinned: boolean) => {
-    setPinnedIds((prev: Set<string>) => {
-      const next = new Set(prev)
-      if (pinned) next.add(id); else next.delete(id)
-      writePinnedThreadIds(next)
-      return next
-    })
+  const replacePinnedIds = useCallback((next: Set<string>) => {
+    pinnedIdsRef.current = next
+    writePinnedThreadIds(next)
+    setPinnedIds(next)
   }, [])
+
+  const applyPinnedLocal = useCallback((id: string, pinned: boolean) => {
+    const next = new Set(pinnedIdsRef.current)
+    if (pinned) next.add(id)
+    else next.delete(id)
+    replacePinnedIds(next)
+  }, [replacePinnedIds])
 
   const togglePin = useCallback((id: string) => {
     const nextPinned = !effectivePinnedIds.has(id)
@@ -1112,7 +823,7 @@ export function Sidebar({
   }, [dragOverGtdBucket])
 
   useEffect(() => {
-    if (!isWorkMode || bulkMode) return
+    if (!isWorkMode) return
     let timer: number | null = null
     let startX = 0
     let startY = 0
@@ -1249,10 +960,10 @@ export function Sidebar({
       document.removeEventListener('click', onClick, true)
       clearTimer()
     }
-  }, [isWorkMode, bulkMode, threads, effectivePinnedIds, t.untitled, movePinnedThreadToFolder, pinThread, setThreadWorkFolder])
+  }, [isWorkMode, threads, effectivePinnedIds, t.untitled, movePinnedThreadToFolder, pinThread, setThreadWorkFolder])
 
   useEffect(() => {
-    if (isWorkMode || !gtdEnabled || bulkMode) return
+    if (isWorkMode || !gtdEnabled) return
     let timer: number | null = null
     let startX = 0
     let startY = 0
@@ -1370,7 +1081,7 @@ export function Sidebar({
       document.removeEventListener('click', onClick, true)
       clearTimer()
     }
-  }, [isWorkMode, gtdEnabled, bulkMode, threads, effectiveGtdBucketForThread, t.untitled, moveGtdThread])
+  }, [isWorkMode, gtdEnabled, threads, effectiveGtdBucketForThread, t.untitled, moveGtdThread])
 
   const handleDelete = useCallback(async (id: string) => {
     setDeleteConfirmThreadId(null)
@@ -1378,84 +1089,16 @@ export function Sidebar({
       await deleteThread(accessToken, id)
       // 清理 GTD 和 Pin 的本地状态
       applyGtdBucketLocal(id, null)
-      setPinnedIds((prev: Set<string>) => {
-        if (!prev.has(id)) return prev
-        const next = new Set(prev)
+      if (pinnedIdsRef.current.has(id)) {
+        const next = new Set(pinnedIdsRef.current)
         next.delete(id)
-        writePinnedThreadIds(next)
-        return next
-      })
+        replacePinnedIds(next)
+      }
       onThreadDeleted(id)
     } catch {
       // 失败静默
     }
-  }, [accessToken, applyGtdBucketLocal, onThreadDeleted])
-
-  const handleBulkExport = useCallback(async () => {
-    if (bulkBusy || selectedThreads.length === 0) return
-    setBulkBusy(true)
-    try {
-      const stamp = new Date().toISOString().replace(/[:.]/g, '-')
-      const filename = `arkloop-conversations-${stamp}.zip`
-      const desktopApi = getDesktopApi()
-      const exportFolder = desktopApi?.dialog?.chooseExportFolder
-        ? await desktopApi.dialog.chooseExportFolder()
-        : null
-      if (exportFolder?.canceled) return
-      if (desktopApi?.dialog?.chooseExportFolder && (!exportFolder?.ok || !exportFolder.folderPath)) {
-        throw new Error('未选择有效的导出文件夹')
-      }
-      const entries: ZipEntry[] = []
-      for (const thread of selectedThreads) {
-        entries.push(...await buildThreadExportEntries(accessToken, thread, t.untitled))
-      }
-      const zip = await createZipBlob(entries)
-      if (exportFolder?.folderPath && desktopApi?.dialog?.saveZipToFolder) {
-        const bytes = new Uint8Array(await zip.arrayBuffer())
-        await desktopApi.dialog.saveZipToFolder({ folderPath: exportFolder.folderPath, defaultFilename: filename, data: bytes })
-      } else if (desktopApi?.dialog?.exportZipToFolder) {
-        const bytes = new Uint8Array(await zip.arrayBuffer())
-        await desktopApi.dialog.exportZipToFolder({ defaultFilename: filename, data: bytes })
-      } else {
-        downloadBlob(zip, filename)
-      }
-    } catch (error) {
-      window.alert(`导出失败：${error instanceof Error ? error.message : String(error)}`)
-    } finally {
-      setBulkBusy(false)
-    }
-  }, [accessToken, bulkBusy, selectedThreads, t.untitled])
-
-  const handleBulkDelete = useCallback(async () => {
-    if (bulkBusy || selectedThreadIds.size === 0) return
-    const count = selectedThreadIds.size
-    if (!window.confirm(`删除选中的 ${count} 个历史对话？`)) return
-    setBulkBusy(true)
-    try {
-      const ids = Array.from(selectedThreadIds)
-      for (const id of ids) {
-        try {
-          await deleteThread(accessToken, id)
-          applyGtdBucketLocal(id, null)
-          setPinnedIds((prev: Set<string>) => {
-            if (!prev.has(id)) return prev
-            const next = new Set(prev)
-            next.delete(id)
-            writePinnedThreadIds(next)
-            return next
-          })
-          setStarredIds((prev) => prev.filter((item) => item !== id))
-          onThreadDeleted(id)
-        } catch {
-          // Keep going so one failed delete does not block the rest.
-        }
-      }
-      setSelectedThreadIds(new Set())
-      setBulkMode(false)
-    } finally {
-      setBulkBusy(false)
-    }
-  }, [accessToken, applyGtdBucketLocal, bulkBusy, onThreadDeleted, selectedThreadIds])
+  }, [accessToken, applyGtdBucketLocal, onThreadDeleted, replacePinnedIds])
 
   // 进入编辑模式后自动聚焦 input
   useEffect(() => {
@@ -1492,8 +1135,16 @@ export function Sidebar({
       const enabled = (e as CustomEvent<boolean>).detail
       setGtdEnabled(enabled)
     }
+    const storageHandler = (e: StorageEvent) => {
+      if (e.key !== GTD_ENABLED_STORAGE_KEY) return
+      setGtdEnabled(e.newValue === 'true')
+    }
     window.addEventListener('arkloop:gtd-enabled-changed', handler)
-    return () => window.removeEventListener('arkloop:gtd-enabled-changed', handler)
+    window.addEventListener('storage', storageHandler)
+    return () => {
+      window.removeEventListener('arkloop:gtd-enabled-changed', handler)
+      window.removeEventListener('storage', storageHandler)
+    }
   }, [])
 
   // 监听 work folder 变更，触发重新渲染
@@ -1514,10 +1165,27 @@ export function Sidebar({
       setGtdWaitingIds(readGtdWaitingThreadIds())
       setGtdSomedayIds(readGtdSomedayThreadIds())
       setGtdArchivedIds(readGtdArchivedThreadIds())
-      setPinnedIds(readPinnedThreadIds())
     })
     return () => { cancelled = true }
   }, [threads])
+
+  useEffect(() => {
+    let cancelled = false
+    window.queueMicrotask(() => {
+      if (cancelled) return
+      const storedPinnedIds = readPinnedThreadIds()
+      const next = new Set(pinnedIdsRef.current)
+      for (const thread of threads) {
+        if (thread.sidebar_pinned_at || storedPinnedIds.has(thread.id)) {
+          next.add(thread.id)
+        } else {
+          next.delete(thread.id)
+        }
+      }
+      if (!areStringSetsEqual(next, pinnedIdsRef.current)) replacePinnedIds(next)
+    })
+    return () => { cancelled = true }
+  }, [replacePinnedIds, threads])
 
   useEffect(() => {
     if (!isPerfDebugEnabled()) return
@@ -1772,67 +1440,19 @@ export function Sidebar({
       onClose={() => setShareModalThreadId(null)}
     />
   ) : null
-  const deleteConfirmPortal = deleteConfirmThreadId !== null ? createPortal(
-    <div
-      className="overlay-fade-in fixed inset-0 flex items-center justify-center"
-      style={{ zIndex: 10000, background: 'rgba(0,0,0,0.12)', backdropFilter: 'blur(2px)', WebkitBackdropFilter: 'blur(2px)' }}
-      onClick={(e) => { if (e.target === e.currentTarget) setDeleteConfirmThreadId(null) }}
-    >
-      <div
-        className="modal-enter"
-        style={{
-          background: 'var(--c-bg-page)',
-          border: '0.5px solid var(--c-border-subtle)',
-          borderRadius: '16px',
-          padding: '24px',
-          width: '320px',
-          boxShadow: 'var(--c-dropdown-shadow)',
-        }}
-      >
-        <p style={{ fontSize: '15px', fontWeight: 600, color: 'var(--c-text-primary)', marginBottom: '8px' }}>
-          {t.deleteThreadConfirmTitle}
-        </p>
-        <p style={{ fontSize: '13px', color: 'var(--c-text-secondary)', lineHeight: 1.55, marginBottom: '20px' }}>
-          {t.deleteThreadConfirmBody}
-        </p>
-        <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
-          <button
-            onClick={() => setDeleteConfirmThreadId(null)}
-            className="hover:bg-[var(--c-bg-deep)]"
-            style={{
-              padding: '7px 16px',
-              borderRadius: '8px',
-              fontSize: '13px',
-              fontWeight: 500,
-              color: 'var(--c-text-secondary)',
-              background: 'transparent',
-              border: '0.5px solid var(--c-border-subtle)',
-              cursor: 'pointer',
-            }}
-          >
-            {t.deleteThreadCancel}
-          </button>
-          <button
-            onClick={() => handleDelete(deleteConfirmThreadId)}
-            className="hover:opacity-85 active:opacity-70"
-            style={{
-              padding: '7px 16px',
-              borderRadius: '8px',
-              fontSize: '13px',
-              fontWeight: 500,
-              color: 'var(--c-on-danger)',
-              background: 'var(--c-danger)',
-              border: 'none',
-              cursor: 'pointer',
-            }}
-          >
-            {t.deleteThreadConfirm}
-          </button>
-        </div>
-      </div>
-    </div>,
-    document.body,
-  ) : null
+  const deleteConfirmDialog = (
+    <ConfirmDialog
+      open={deleteConfirmThreadId !== null}
+      title={t.deleteThreadConfirmTitle}
+      message={t.deleteThreadConfirmBody}
+      confirmLabel={t.deleteThreadConfirm}
+      cancelLabel={t.deleteThreadCancel}
+      onClose={() => setDeleteConfirmThreadId(null)}
+      onConfirm={() => {
+        if (deleteConfirmThreadId) void handleDelete(deleteConfirmThreadId)
+      }}
+    />
+  )
 
   const dragPortal = dragState ? createPortal(
     <div
@@ -1862,13 +1482,18 @@ export function Sidebar({
     </div>,
     document.body,
   ) : null
+  const navButtonClass = 'group flex h-[32px] w-full items-center gap-[10px] overflow-hidden whitespace-nowrap rounded-lg px-[8px] text-[15px] text-[var(--c-text-secondary)] transition-colors duration-[60ms] hover:bg-[var(--c-bg-deep)] hover:text-[var(--c-text-primary)]'
+  const navButtonStyle = { fontWeight: 'var(--c-sidebar-nav-weight)' }
+  const navLabelClass = 'min-w-0 overflow-hidden whitespace-nowrap transition-opacity duration-100'
+  const newThreadNavLabel = isWorkMode ? t.newTask : t.newChat
+  const searchNavLabel = isWorkMode ? t.searchTasks : t.searchChats
 
   return (
     <>
       <aside
       ref={asideRef}
       className={[
-        'flex h-full shrink-0 flex-col overflow-hidden bg-[var(--c-bg-sidebar)]',
+        'theme-surface-sidebar flex h-full shrink-0 flex-col overflow-hidden bg-[var(--c-bg-sidebar)]',
         collapsed ? 'w-[48px]' : narrow ? 'w-[224px]' : desktopMode ? 'w-[284px]' : 'w-[304px]',
       ].join(' ')}
       style={{
@@ -1937,14 +1562,17 @@ export function Sidebar({
       )}
 
       {/* Nav buttons — always rendered, text clips when sidebar narrows */}
-      <nav className="flex flex-col gap-px px-2 pt-1">
+      <nav className="flex flex-col items-start gap-px pl-[8px] pr-[7px] pt-1">
         <button
           onClick={onNewThread}
-          className="group flex h-9 items-center gap-2.5 overflow-hidden whitespace-nowrap rounded-lg px-2 text-[15px] text-[var(--c-text-secondary)] transition-[background-color,color] duration-[60ms] hover:bg-[var(--c-bg-deep)] hover:text-[var(--c-text-primary)]"
-          style={{ fontWeight: 'var(--c-sidebar-nav-weight)' }}
+          aria-label={newThreadNavLabel}
+          className={navButtonClass}
+          style={navButtonStyle}
         >
-          <SquarePen size={16} className="shrink-0 transition-transform duration-100 group-hover:scale-[1.05]" />
-          <span style={{ overflow: 'hidden', maxWidth: collapsed ? 0 : '200px', opacity: collapsed ? 0 : 1, transition: 'max-width 280ms cubic-bezier(0.16,1,0.3,1), opacity 150ms ease', whiteSpace: 'nowrap' }}>{isWorkMode ? t.newTask : t.newChat}</span>
+          <span className="flex h-[16px] w-[16px] shrink-0 items-center justify-center">
+            <SquarePen size={16} className="shrink-0 transition-transform duration-100 group-hover:scale-[1.05]" />
+          </span>
+          <span className={navLabelClass}>{newThreadNavLabel}</span>
         </button>
 
         <button
@@ -1972,29 +1600,26 @@ export function Sidebar({
           onPointerLeave={() => {
             searchPointerTraceRef.current = null
           }}
-          className="group flex h-9 items-center gap-2.5 overflow-hidden whitespace-nowrap rounded-lg px-2 text-[15px] text-[var(--c-text-secondary)] transition-[background-color,color] duration-[60ms] hover:bg-[var(--c-bg-deep)] hover:text-[var(--c-text-primary)]"
-          style={{ fontWeight: 'var(--c-sidebar-nav-weight)' }}
+          aria-label={searchNavLabel}
+          className={navButtonClass}
+          style={navButtonStyle}
         >
-          <Search size={16} className="shrink-0 transition-transform duration-100 group-hover:scale-[1.05]" />
-          <span style={{ overflow: 'hidden', maxWidth: collapsed ? 0 : '200px', opacity: collapsed ? 0 : 1, transition: 'max-width 280ms cubic-bezier(0.16,1,0.3,1), opacity 150ms ease', whiteSpace: 'nowrap' }}>{isWorkMode ? t.searchTasks : t.searchChats}</span>
+          <span className="flex h-[16px] w-[16px] shrink-0 items-center justify-center">
+            <Search size={16} className="shrink-0 transition-transform duration-100 group-hover:scale-[1.05]" />
+          </span>
+          <span className={navLabelClass}>{searchNavLabel}</span>
         </button>
 
         <button
           onClick={() => navigate('/scheduled-jobs')}
-          className="group flex h-9 items-center gap-2.5 overflow-hidden whitespace-nowrap rounded-lg px-2 text-[15px] text-[var(--c-text-secondary)] transition-[background-color,color] duration-[60ms] hover:bg-[var(--c-bg-deep)] hover:text-[var(--c-text-primary)]"
-          style={{ fontWeight: 'var(--c-sidebar-nav-weight)' }}
+          aria-label={t.scheduledJobs}
+          className={navButtonClass}
+          style={navButtonStyle}
         >
-          <Clock size={16} className="shrink-0 transition-transform duration-100 group-hover:scale-[1.05]" />
-          <span style={{ overflow: 'hidden', maxWidth: collapsed ? 0 : '200px', opacity: collapsed ? 0 : 1, transition: 'max-width 280ms cubic-bezier(0.16,1,0.3,1), opacity 150ms ease', whiteSpace: 'nowrap' }}>{t.scheduledJobs}</span>
-        </button>
-
-        <button
-          onClick={toggleBulkMode}
-          className="group flex h-9 items-center gap-2.5 overflow-hidden whitespace-nowrap rounded-lg px-2 text-[15px] text-[var(--c-text-secondary)] transition-[background-color,color] duration-[60ms] hover:bg-[var(--c-bg-deep)] hover:text-[var(--c-text-primary)]"
-          style={{ fontWeight: 'var(--c-sidebar-nav-weight)' }}
-        >
-          <CheckCircle size={16} className="shrink-0 transition-transform duration-100 group-hover:scale-[1.05]" />
-          <span style={{ overflow: 'hidden', maxWidth: collapsed ? 0 : '200px', opacity: collapsed ? 0 : 1, transition: 'max-width 280ms cubic-bezier(0.16,1,0.3,1), opacity 150ms ease', whiteSpace: 'nowrap' }}>{bulkMode ? '退出批量' : '批量管理'}</span>
+          <span className="flex h-[16px] w-[16px] shrink-0 items-center justify-center">
+            <Clock size={16} className="shrink-0 transition-transform duration-100 group-hover:scale-[1.05]" />
+          </span>
+          <span className={navLabelClass}>{t.scheduledJobs}</span>
         </button>
 
       </nav>
@@ -2016,34 +1641,6 @@ export function Sidebar({
               >
                 {t.recents}
               </h3>
-            </div>
-          )}
-          {bulkMode && (
-            <div
-              className="mb-2 flex shrink-0 items-center gap-1 rounded-lg px-2 py-1.5"
-              style={{ border: '0.5px solid var(--c-border-subtle)', background: 'var(--c-bg-sub)' }}
-            >
-              <span className="min-w-0 flex-1 truncate text-[12px] text-[var(--c-text-tertiary)]">
-                已选 {selectedThreadIds.size}
-              </span>
-              <button
-                type="button"
-                disabled={bulkBusy || selectedThreadIds.size === 0}
-                onClick={handleBulkExport}
-                className="flex h-7 w-7 items-center justify-center rounded-md text-[var(--c-text-secondary)] hover:bg-[var(--c-bg-deep)] disabled:opacity-40"
-                title="导出选中对话和所有产物"
-              >
-                <Download size={14} />
-              </button>
-              <button
-                type="button"
-                disabled={bulkBusy || selectedThreadIds.size === 0}
-                onClick={handleBulkDelete}
-                className="flex h-7 w-7 items-center justify-center rounded-md text-[var(--c-status-error)] hover:bg-[var(--c-bg-deep)] disabled:opacity-40"
-                title="删除选中对话"
-              >
-                <Trash2 size={14} />
-              </button>
             </div>
           )}
           <div className="flex flex-col gap-[2px] flex-1 min-h-0">
@@ -2205,7 +1802,7 @@ export function Sidebar({
 
       {menuPortal}
       {shareModal}
-      {deleteConfirmPortal}
+      {deleteConfirmDialog}
       {dragPortal}
     </>
   )

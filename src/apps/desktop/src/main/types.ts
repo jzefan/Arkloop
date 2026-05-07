@@ -2,7 +2,7 @@ export type ConnectionMode = 'local' | 'saas' | 'self-hosted'
 export type LocalPortMode = 'auto' | 'manual'
 
 export type FetchProvider = 'none' | 'jina' | 'basic' | 'firecrawl'
-export type SearchProvider = 'none' | 'duckduckgo' | 'tavily' | 'searxng'
+export type SearchProvider = 'none' | 'basic' | 'tavily' | 'searxng'
 
 export type FetchConnectorConfig = {
   provider: FetchProvider
@@ -71,13 +71,21 @@ export type NetworkConfig = {
   userAgent?: string
 }
 
+export type StartupOpenMode = 'home' | 'last-workspace'
+export type CloseWindowBehavior = 'keep-in-background' | 'quit'
+
+export type DesktopPreferencesConfig = {
+  startupOpen: StartupOpenMode
+  closeBehavior: CloseWindowBehavior
+  launchAtLogin: boolean
+  desktopNotifications: boolean
+  productUpdateNotifications: boolean
+  keepScreenAwake: boolean
+}
+
 export type LocalConfig = {
   port: number
   portMode: LocalPortMode
-}
-
-export type WorkspaceConfig = {
-  root?: string
 }
 
 /** applyConfigUpdate 可选行为（仅 Electron 主进程使用） */
@@ -97,7 +105,7 @@ export type AppConfig = {
   connectors: ConnectorsConfig
   memory: MemoryConfig
   network: NetworkConfig
-  workspace: WorkspaceConfig
+  desktop: DesktopPreferencesConfig
   voice?: VoiceConfig
 }
 
@@ -111,7 +119,7 @@ export const DEFAULT_CONFIG: AppConfig = {
   connectors_migrated: false,
   connectors: {
     fetch: { provider: 'none' },
-    search: { provider: 'none' },
+    search: { provider: 'basic' },
   },
   memory: { enabled: true, provider: 'notebook', memoryCommitEachTurn: true },
   network: {
@@ -119,5 +127,12 @@ export const DEFAULT_CONFIG: AppConfig = {
     requestTimeoutMs: 30000,
     retryCount: 1,
   },
-  workspace: {},
+  desktop: {
+    startupOpen: 'last-workspace',
+    closeBehavior: 'keep-in-background',
+    launchAtLogin: false,
+    desktopNotifications: true,
+    productUpdateNotifications: true,
+    keepScreenAwake: false,
+  },
 }

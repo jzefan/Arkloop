@@ -17,6 +17,7 @@ import { usePanels } from '../contexts/panels'
 import { useAuth } from '../contexts/auth'
 import { useThreadList } from '../contexts/thread-list'
 import { apiBaseUrl } from '@arkloop/shared/api'
+import type { AgentMessage } from '../agent-ui'
 import { copTimelinePayloadForSegment } from '../copSegmentTimeline'
 import { buildResolvedPool, EMPTY_POOL, buildFallbackSegments } from '../copSubSegment'
 import { assistantTurnPlainText } from '../assistantTurnSegments'
@@ -51,7 +52,7 @@ export const MessageList = memo(function MessageList({
   openDocumentPanel,
   openCodePanel,
   openAgentPanel,
-  showRunEvents,
+  showRunDetailButton,
   sourcePanelMessageId,
   setRunDetailPanelRunId,
   currentRunCopHeaderOverride,
@@ -62,14 +63,14 @@ export const MessageList = memo(function MessageList({
   lastUserPromptRef: React.RefObject<HTMLDivElement | null>
   lastTurnChildren?: React.ReactNode
   lastTurnStartIdx: number
-  handleRetryUserMessage: (message: import('../api').MessageResponse) => void
-  handleEditMessage: (message: import('../api').MessageResponse, newContent: string) => void
+  handleRetryUserMessage: (message: AgentMessage) => void
+  handleEditMessage: (message: AgentMessage, newContent: string) => void
   handleFork: (messageId: string) => Promise<void>
   handleArtifactAction: ComponentProps<typeof WidgetBlock>['onAction']
   openDocumentPanel: (artifact: ArtifactRef, options?: { trigger?: HTMLElement | null; artifacts?: ArtifactRef[]; runId?: string }) => void
   openCodePanel: (ce: CodeExecution) => void
   openAgentPanel: (agent: SubAgentRef) => void
-  showRunEvents: boolean
+  showRunDetailButton: boolean
   sourcePanelMessageId: string | null
   setRunDetailPanelRunId: (runId: string | null) => void
   currentRunCopHeaderOverride: (params: {
@@ -167,13 +168,13 @@ export const MessageList = memo(function MessageList({
       })
   }
 
-  const renderMessage = (msg: import('../api').MessageResponse, idx: number) => {
+  const renderMessage = (msg: AgentMessage, idx: number) => {
     const hideTerminalRunMessage =
       msg.role === 'assistant' &&
       !isLocalTerminalMessage(msg) &&
       (
-        (hasCurrentRunHandoffUi && terminalRunDisplayId != null && msg.run_id === terminalRunDisplayId) ||
-        (msg.run_id != null && coveredRunIdsForHistory.has(msg.run_id))
+        (hasCurrentRunHandoffUi && terminalRunDisplayId != null && msg.streamId === terminalRunDisplayId) ||
+        (msg.streamId != null && coveredRunIdsForHistory.has(msg.streamId))
       )
     if (hideTerminalRunMessage) return null
 
@@ -182,7 +183,7 @@ export const MessageList = memo(function MessageList({
     const isCurrentTerminalRunMessage =
       msg.role === 'assistant' &&
       terminalRunDisplayId != null &&
-      msg.run_id === terminalRunDisplayId
+      msg.streamId === terminalRunDisplayId
     const persistedTerminalStatus =
       msg.role === 'assistant' ? readMessageTerminalStatus(msg.id) : null
     const effectiveTerminalStatus =
@@ -244,7 +245,7 @@ export const MessageList = memo(function MessageList({
                   webSources={resolvedSources}
                   artifacts={msgMeta?.artifacts}
                   accessToken={accessToken}
-                  runId={msg.run_id ?? undefined}
+                  runId={msg.streamId ?? undefined}
                   onOpenDocument={openDocumentPanel}
                   typography={isWorkMode ? 'work' : 'default'}
                   trimTrailingMargin={
@@ -335,7 +336,7 @@ export const MessageList = memo(function MessageList({
                 panels.closePanel()
                 panels.openSourcePanel(msg.id)
               } : undefined}
-              onViewRunDetail={showRunEvents && msg.run_id ? () => setRunDetailPanelRunId(msg.run_id!) : undefined}
+              onViewRunDetail={showRunDetailButton && msg.streamId ? () => setRunDetailPanelRunId(msg.streamId!) : undefined}
               isLast={true}
             />
           )}
@@ -426,8 +427,8 @@ export const MessageList = memo(function MessageList({
           }
           onOpenDocument={msg.role === 'assistant' ? openDocumentPanel : undefined}
           onViewRunDetail={
-            showRunEvents && msg.role === 'assistant' && msg.run_id
-              ? () => setRunDetailPanelRunId(msg.run_id!)
+            showRunDetailButton && msg.role === 'assistant' && msg.streamId
+              ? () => setRunDetailPanelRunId(msg.streamId!)
               : undefined
           }
           contentOverride={msg.role === 'assistant' && hasAssistantTurn ? '' : undefined}

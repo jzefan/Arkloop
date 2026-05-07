@@ -5,7 +5,7 @@ export type LocalPortMode = 'auto' | 'manual'
 export type DesktopPlatform = 'win32' | 'darwin' | 'linux' | string
 
 export type FetchProvider = 'none' | 'jina' | 'basic' | 'firecrawl'
-export type SearchProvider = 'none' | 'duckduckgo' | 'tavily' | 'searxng'
+export type SearchProvider = 'none' | 'basic' | 'tavily' | 'searxng'
 
 export type ConnectorsConfig = {
   fetch: {
@@ -93,6 +93,18 @@ export type NetworkConfig = {
   userAgent?: string
 }
 
+export type StartupOpenMode = 'home' | 'last-workspace'
+export type CloseWindowBehavior = 'keep-in-background' | 'quit'
+
+export type DesktopPreferencesConfig = {
+  startupOpen: StartupOpenMode
+  closeBehavior: CloseWindowBehavior
+  launchAtLogin: boolean
+  desktopNotifications: boolean
+  productUpdateNotifications: boolean
+  keepScreenAwake: boolean
+}
+
 export type MemoryEntry = {
   id: string
   scope: string
@@ -130,6 +142,7 @@ export type AppConfig = {
   connectors: ConnectorsConfig
   memory: MemoryConfig
   network: NetworkConfig
+  desktop: DesktopPreferencesConfig
   voice?: VoiceConfig
 }
 
@@ -305,9 +318,6 @@ export type ArkloopDesktopApi = {
   }
   dialog: {
     openFolder: () => Promise<string | null>
-    chooseExportFolder: () => Promise<{ ok: boolean; folderPath?: string; canceled?: boolean }>
-    saveZipToFolder: (options: { folderPath: string; defaultFilename: string; data: Uint8Array }) => Promise<{ ok: boolean; filePath?: string }>
-    exportZipToFolder: (options: { defaultFilename: string; data: Uint8Array }) => Promise<{ ok: boolean; filePath?: string; canceled?: boolean }>
   }
   sidecar: {
     getStatus: () => Promise<SidecarStatus>
@@ -348,6 +358,13 @@ export type ArkloopDesktopApi = {
     quit: () => Promise<void>
     getOsUsername: () => Promise<string>
     openExternal: (url: string) => Promise<void>
+  }
+  notifications: {
+    show: (input: { title: string; body?: string }) => Promise<{ ok: boolean }>
+    isSupported: () => Promise<boolean>
+  }
+  power: {
+    setSessionActive: (active: boolean) => Promise<{ ok: boolean }>
   }
   window: {
     minimize: () => Promise<void>
@@ -538,6 +555,15 @@ const api: ArkloopDesktopApi = {
     openExternal: (url: string) => ipcRenderer.invoke('arkloop:app:open-external', url),
   },
 
+  notifications: {
+    show: (input) => ipcRenderer.invoke('arkloop:notifications:show', input),
+    isSupported: () => ipcRenderer.invoke('arkloop:notifications:is-supported'),
+  },
+
+  power: {
+    setSessionActive: (active: boolean) => ipcRenderer.invoke('arkloop:power:set-session-active', active),
+  },
+
   window: {
     minimize: () => ipcRenderer.invoke('arkloop:window:minimize'),
     toggleMaximize: () => ipcRenderer.invoke('arkloop:window:toggle-maximize'),
@@ -557,9 +583,6 @@ const api: ArkloopDesktopApi = {
 
   dialog: {
     openFolder: () => ipcRenderer.invoke('arkloop:dialog:open-folder'),
-    chooseExportFolder: () => ipcRenderer.invoke('arkloop:dialog:choose-export-folder'),
-    saveZipToFolder: (options) => ipcRenderer.invoke('arkloop:dialog:save-zip-to-folder', options),
-    exportZipToFolder: (options) => ipcRenderer.invoke('arkloop:dialog:export-zip-to-folder', options),
   },
 
   fs: {

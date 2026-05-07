@@ -29,14 +29,14 @@ var (
 type ProviderKind string
 
 const (
-	ProviderKindStub      ProviderKind = "stub"
-	ProviderKindOpenAI    ProviderKind = "openai"
-	ProviderKindAnthropic ProviderKind = "anthropic"
-	ProviderKindGemini    ProviderKind = "gemini"
-	ProviderKindDeepSeek  ProviderKind = "deepseek"
+	ProviderKindStub        ProviderKind = "stub"
+	ProviderKindOpenAI      ProviderKind = "openai"
+	ProviderKindAnthropic   ProviderKind = "anthropic"
+	ProviderKindGemini      ProviderKind = "gemini"
+	ProviderKindDeepSeek    ProviderKind = "deepseek"
+	ProviderKindClaudeLocal ProviderKind = "claude_code_local"
+	ProviderKindCodexLocal  ProviderKind = "codex_local"
 )
-
-const ZenMuxVertexAIBaseURL = "https://zenmux.ai/api/vertex-ai"
 
 type CredentialScope string
 
@@ -55,33 +55,6 @@ type ProviderCredential struct {
 	BaseURL      *string
 	OpenAIMode   *string
 	AdvancedJSON map[string]any
-}
-
-func (c ProviderCredential) IsZenMux() bool {
-	baseURL := ""
-	if c.BaseURL != nil {
-		baseURL = strings.ToLower(strings.TrimSpace(*c.BaseURL))
-	}
-	return strings.Contains(strings.ToLower(c.Name), "zenmux") || strings.Contains(baseURL, "zenmux.ai")
-}
-
-func (c ProviderCredential) IsZenMuxVertexAI() bool {
-	baseURL := ""
-	if c.BaseURL != nil {
-		baseURL = strings.ToLower(strings.TrimSpace(*c.BaseURL))
-	}
-	return c.ProviderKind == ProviderKindGemini && strings.Contains(baseURL, "zenmux.ai/api/vertex-ai")
-}
-
-func CoerceZenMuxGenerationRoute(selected SelectedProviderRoute) SelectedProviderRoute {
-	if !selected.Credential.IsZenMux() || selected.Credential.IsZenMuxVertexAI() {
-		return selected
-	}
-	baseURL := ZenMuxVertexAIBaseURL
-	selected.Credential.ProviderKind = ProviderKindGemini
-	selected.Credential.BaseURL = &baseURL
-	selected.Credential.OpenAIMode = nil
-	return selected
 }
 
 func (c ProviderCredential) ToPublicJSON() map[string]any {
@@ -295,7 +268,7 @@ func LoadRoutingConfigFromEnv() (ProviderRoutingConfig, error) {
 			}
 		}
 
-		if kind != ProviderKindStub && apiKeyEnv == nil {
+		if kind != ProviderKindStub && kind != ProviderKindClaudeLocal && kind != ProviderKindCodexLocal && apiKeyEnv == nil {
 			return ProviderRoutingConfig{}, fmt.Errorf("non-stub credential must provide api_key_env (stores env name only, not plaintext)")
 		}
 
@@ -535,8 +508,12 @@ func parseProviderKind(value string) (ProviderKind, error) {
 		return ProviderKindGemini, nil
 	case "deepseek":
 		return ProviderKindDeepSeek, nil
+	case "claude_code_local":
+		return ProviderKindClaudeLocal, nil
+	case "codex_local":
+		return ProviderKindCodexLocal, nil
 	default:
-		return "", fmt.Errorf("must be stub/openai/anthropic/gemini/deepseek")
+		return "", fmt.Errorf("must be stub/openai/anthropic/gemini/deepseek/claude_code_local/codex_local")
 	}
 }
 
@@ -824,6 +801,10 @@ func dbProviderToKind(provider string) (ProviderKind, error) {
 		return ProviderKindGemini, nil
 	case "deepseek":
 		return ProviderKindDeepSeek, nil
+	case "claude_code_local":
+		return ProviderKindClaudeLocal, nil
+	case "codex_local":
+		return ProviderKindCodexLocal, nil
 	default:
 		return "", fmt.Errorf("unsupported provider: %s", provider)
 	}

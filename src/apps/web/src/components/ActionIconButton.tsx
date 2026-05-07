@@ -82,10 +82,6 @@ export function ActionIconButton({
     pointerEvents: 'none',
   }
 
-  // Tooltip text is the visual label, so use it as the accessible name
-  // unless the caller has explicitly provided their own aria-label.
-  const ariaLabel = props['aria-label'] ?? tooltip
-
   return (
     <span style={{ position: 'relative', display: 'inline-flex' }}>
       <button
@@ -99,7 +95,6 @@ export function ActionIconButton({
         onPointerUp={handlePointerUp}
         onPointerLeave={handlePointerLeave}
         {...props}
-        aria-label={ariaLabel}
       >
         <span style={backgroundStyle} />
         <span style={contentStyle}>

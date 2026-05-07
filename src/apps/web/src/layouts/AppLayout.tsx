@@ -4,14 +4,14 @@ import { isDesktop, getDesktopApi } from '@arkloop/shared/desktop'
 import { LoadingPage, TimeZoneProvider } from '@arkloop/shared'
 import { Sidebar } from '../components/Sidebar'
 import { DesktopTitleBar } from '../components/DesktopTitleBar'
-import { SettingsModal } from '../components/SettingsModal'
+import { SettingsModal, type SettingsTab } from '../components/SettingsModal'
 import { DesktopSettings } from '../components/DesktopSettings'
 import { ChatsSearchModal } from '../components/ChatsSearchModal'
 import { NotificationsPanel } from '../components/NotificationsPanel'
 import { EmailVerificationGate } from '../components/EmailVerificationGate'
 import { useLocale } from '../contexts/LocaleContext'
 import { getMe } from '../api'
-import { writeSelectedPersonaKeyToStorage, DEFAULT_PERSONA_KEY } from '../storage'
+import { writeActiveThreadIdToStorage, writeSelectedPersonaKeyToStorage, DEFAULT_PERSONA_KEY } from '../storage'
 import { useAuth } from '../contexts/auth'
 import { useThreadList } from '../contexts/thread-list'
 import {
@@ -77,7 +77,14 @@ const LayoutMain = memo(function LayoutMain({
 }: LayoutMainProps) {
   const { me, accessToken, logout } = useAuth()
   const { setCreditsBalance } = useCredits()
-  const { settingsOpen, settingsInitialTab, desktopSettingsSection, closeSettings } = useSettingsUI()
+  const {
+    settingsOpen,
+    settingsInitialTab,
+    desktopSettingsSection,
+    desktopAdvancedSection,
+    desktopSettingsRequestId,
+    closeSettings,
+  } = useSettingsUI()
   const { notificationsOpen, closeNotifications, markNotificationRead } = useNotificationsUI()
 
   useEffect(() => {
@@ -116,6 +123,8 @@ const LayoutMain = memo(function LayoutMain({
           me={me}
           accessToken={accessToken}
           initialSection={desktopSettingsSection}
+          initialAdvancedKey={desktopAdvancedSection}
+          sectionRequestId={desktopSettingsRequestId}
           onClose={closeSettings}
           onLogout={logout}
           onMeUpdated={onMeUpdated}
@@ -157,26 +166,8 @@ export function AppLayout() {
   const location = useLocation()
   const desktop = isDesktop()
 
-  const [hasComponentUpdates, setHasComponentUpdates] = useState(false)
   const [appUpdateState, setAppUpdateState] = useState<import('@arkloop/shared/desktop').AppUpdaterState | null>(null)
-
-  // component updater
-  useEffect(() => {
-    if (!desktop) return
-    const api = getDesktopApi()
-    if (!api?.updater) return
-    const checkStatus = (status: Awaited<ReturnType<typeof api.updater.getCached>>) => {
-      setHasComponentUpdates(
-        status.openviking.available ||
-        status.sandbox.kernel.available ||
-        status.sandbox.rootfs.available ||
-        status.bins.rtk.available ||
-        status.bins.opencli.available
-      )
-    }
-    void api.updater.getCached().then(checkStatus).catch(() => {})
-    return api.updater.onStatusChanged?.(checkStatus)
-  }, [desktop])
+  const [productUpdateNotifications, setProductUpdateNotifications] = useState(true)
 
   // app updater
   useEffect(() => {
@@ -185,6 +176,18 @@ export function AppLayout() {
     if (!api?.appUpdater) return
     void api.appUpdater.getState().then(setAppUpdateState).catch(() => {})
     return api.appUpdater.onState(setAppUpdateState)
+  }, [desktop])
+
+  useEffect(() => {
+    if (!desktop) return
+    const api = getDesktopApi()
+    if (!api?.config) return
+    void api.config.get()
+      .then((config) => setProductUpdateNotifications(config.desktop?.productUpdateNotifications ?? true))
+      .catch(() => {})
+    return api.config.onChanged((config) => {
+      setProductUpdateNotifications(config.desktop?.productUpdateNotifications ?? true)
+    })
   }, [desktop])
 
   const handleCheckAppUpdate = useCallback(() => {
@@ -202,9 +205,19 @@ export function AppLayout() {
     void api?.appUpdater?.install().catch(() => {})
   }, [])
 
+  const handleTitleBarOpenSettings = useCallback((tab?: SettingsTab | 'voice') => {
+    openSettings(tab)
+  }, [openSettings])
+
   const pathnameSearchOpen = location.pathname.endsWith('/search')
   const isSearchOpen = searchOverlayOpen || pathnameSearchOpen
   const currentThreadId = location.pathname.match(/^\/t\/([^/]+)/)?.[1] ?? null
+
+  useEffect(() => {
+    if (!currentThreadId) return
+    writeActiveThreadIdToStorage(currentThreadId)
+  }, [currentThreadId])
+
   const currentThread = useMemo(
     () => currentThreadId ? threads.find((thread) => thread.id === currentThreadId) ?? null : null,
     [currentThreadId, threads],
@@ -265,10 +278,15 @@ export function AppLayout() {
   const titleBarIncognitoActive =
     isPrivateMode || pendingIncognitoMode ||
     (currentThreadId != null && privateThreadIds.has(currentThreadId))
+  const hasAppUpdate =
+    productUpdateNotifications &&
+    (appUpdateState?.phase === 'available' ||
+      appUpdateState?.phase === 'downloaded')
 
   return (
     <TimeZoneProvider userTimeZone={me?.timezone ?? null} accountTimeZone={me?.account_timezone ?? null}>
-      <div className="flex h-screen flex-col overflow-hidden bg-[var(--c-bg-page)]">
+      <div className="theme-background-root app-viewport flex flex-col overflow-hidden bg-[var(--c-bg-page)]">
+        <div className="theme-background-layer" aria-hidden="true" />
         {desktop && (
           <DesktopTitleBar
             sidebarCollapsed={sidebarCollapsed}
@@ -279,12 +297,12 @@ export function AppLayout() {
             showIncognitoToggle={activeAppMode !== 'work'}
             isPrivateMode={titleBarIncognitoActive}
             onTogglePrivateMode={handleDesktopTitleBarIncognitoClick}
-            hasComponentUpdates={hasComponentUpdates || (appUpdateState != null && appUpdateState.phase === 'available')}
+            hasAppUpdate={hasAppUpdate}
             onCheckAppUpdate={handleCheckAppUpdate}
             appUpdateState={appUpdateState}
             onDownloadApp={handleDownloadApp}
             onInstallApp={handleInstallApp}
-            onOpenSettings={openSettings}
+            onOpenSettings={handleTitleBarOpenSettings}
           />
         )}
 

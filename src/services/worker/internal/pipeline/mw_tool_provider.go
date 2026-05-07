@@ -159,8 +159,8 @@ func BuildProviderExecutor(cfg toolprovider.ActiveProviderConfig) tools.Executor
 	providerName := strings.TrimSpace(cfg.ProviderName)
 
 	switch providerName {
-	case websearch.AgentSpecDuckduckgo.Name:
-		provider := websearch.NewDuckduckgoProvider()
+	case websearch.AgentSpecBasic.Name:
+		provider := websearch.NewBasicProvider()
 		return websearch.NewToolExecutorWithProvider(provider)
 
 	case websearch.AgentSpecTavily.Name:

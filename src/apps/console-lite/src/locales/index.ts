@@ -338,8 +338,6 @@ export interface LocaleStrings {
     titleSummarizerHint: string
     imageGenerativeModel: string
     imageGenerativeModelHint: string
-    videoGenerativeModel: string
-    videoGenerativeModelHint: string
     spawnProfileLabel: string
     spawnProfileExplore: string
     spawnProfileTask: string

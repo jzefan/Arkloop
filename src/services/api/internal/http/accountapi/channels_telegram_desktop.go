@@ -30,31 +30,31 @@ var logTelegramPollNoActiveChannels sync.Once
 
 // TelegramDesktopPollerDeps 桌面模式 getUpdates 长轮询依赖。
 type TelegramDesktopPollerDeps struct {
-	ChannelsRepo            *data.ChannelsRepository
-	ChannelIdentitiesRepo   *data.ChannelIdentitiesRepository
+	ChannelsRepo             *data.ChannelsRepository
+	ChannelIdentitiesRepo    *data.ChannelIdentitiesRepository
 	ChannelIdentityLinksRepo *data.ChannelIdentityLinksRepository
-	ChannelBindCodesRepo    *data.ChannelBindCodesRepository
-	ChannelDMThreadsRepo    *data.ChannelDMThreadsRepository
-	ChannelGroupThreadsRepo *data.ChannelGroupThreadsRepository
-	ChannelReceiptsRepo     *data.ChannelMessageReceiptsRepository
-	ChannelLedgerRepo       *data.ChannelMessageLedgerRepository
-	SecretsRepo             *data.SecretsRepository
-	PersonasRepo            *data.PersonasRepository
-	UsersRepo               *data.UserRepository
-	AccountRepo             *data.AccountRepository
-	AccountMembershipRepo   *data.AccountMembershipRepository
-	ProjectRepo             *data.ProjectRepository
-	ThreadRepo              *data.ThreadRepository
-	MessageRepo             *data.MessageRepository
-	RunEventRepo            *data.RunEventRepository
-	JobRepo                 *data.JobRepository
-	CreditsRepo             *data.CreditsRepository
-	Pool                    data.DB
-	EntitlementService      *entitlement.Service
-	TelegramBotClient       *telegrambot.Client
-	MessageAttachmentStore  MessageAttachmentPutStore
-	PollInterval            time.Duration
-	PollLimit               int
+	ChannelBindCodesRepo     *data.ChannelBindCodesRepository
+	ChannelDMThreadsRepo     *data.ChannelDMThreadsRepository
+	ChannelGroupThreadsRepo  *data.ChannelGroupThreadsRepository
+	ChannelReceiptsRepo      *data.ChannelMessageReceiptsRepository
+	ChannelLedgerRepo        *data.ChannelMessageLedgerRepository
+	SecretsRepo              *data.SecretsRepository
+	PersonasRepo             *data.PersonasRepository
+	UsersRepo                *data.UserRepository
+	AccountRepo              *data.AccountRepository
+	AccountMembershipRepo    *data.AccountMembershipRepository
+	ProjectRepo              *data.ProjectRepository
+	ThreadRepo               *data.ThreadRepository
+	MessageRepo              *data.MessageRepository
+	RunEventRepo             *data.RunEventRepository
+	JobRepo                  *data.JobRepository
+	CreditsRepo              *data.CreditsRepository
+	Pool                     data.DB
+	EntitlementService       *entitlement.Service
+	TelegramBotClient        *telegrambot.Client
+	MessageAttachmentStore   MessageAttachmentPutStore
+	PollInterval             time.Duration
+	PollLimit                int
 	// TelegramMode 为 webhook 时不启动桌面轮询；空视为 polling。
 	TelegramMode string
 	Bus          eventbus.EventBus
@@ -123,6 +123,10 @@ func StartTelegramDesktopPoller(ctx context.Context, deps TelegramDesktopPollerD
 	if limit <= 0 {
 		limit = 20
 	}
+	pollInterval := deps.PollInterval
+	if pollInterval <= 0 {
+		pollInterval = 5 * time.Second
+	}
 	channelLedgerRepo := deps.ChannelLedgerRepo
 	if channelLedgerRepo == nil {
 		var err error
@@ -147,31 +151,31 @@ func StartTelegramDesktopPoller(ctx context.Context, deps TelegramDesktopPollerD
 	}
 
 	connector := telegramConnector{
-		channelsRepo:            deps.ChannelsRepo,
-		channelIdentitiesRepo:   deps.ChannelIdentitiesRepo,
+		channelsRepo:             deps.ChannelsRepo,
+		channelIdentitiesRepo:    deps.ChannelIdentitiesRepo,
 		channelIdentityLinksRepo: deps.ChannelIdentityLinksRepo,
-		channelBindCodesRepo:    deps.ChannelBindCodesRepo,
-		channelDMThreadsRepo:    deps.ChannelDMThreadsRepo,
-		channelGroupThreadsRepo: deps.ChannelGroupThreadsRepo,
-		channelReceiptsRepo:     deps.ChannelReceiptsRepo,
-		channelLedgerRepo:       channelLedgerRepo,
-		scheduledTriggersRepo:   &data.ScheduledTriggersRepository{},
-		personasRepo:            deps.PersonasRepo,
-		usersRepo:               deps.UsersRepo,
-		accountRepo:             deps.AccountRepo,
-		membershipRepo:          deps.AccountMembershipRepo,
-		projectRepo:             deps.ProjectRepo,
-		threadRepo:              deps.ThreadRepo,
-		messageRepo:             deps.MessageRepo,
-		runEventRepo:            deps.RunEventRepo,
-		jobRepo:                 deps.JobRepo,
-		creditsRepo:             deps.CreditsRepo,
-		pool:                    deps.Pool,
-		entitlementSvc:          deps.EntitlementService,
-		telegramClient:          telegramForConnector,
-		attachmentStore:         deps.MessageAttachmentStore,
-		inputNotify:             busInputNotify,
-		bus:                     deps.Bus,
+		channelBindCodesRepo:     deps.ChannelBindCodesRepo,
+		channelDMThreadsRepo:     deps.ChannelDMThreadsRepo,
+		channelGroupThreadsRepo:  deps.ChannelGroupThreadsRepo,
+		channelReceiptsRepo:      deps.ChannelReceiptsRepo,
+		channelLedgerRepo:        channelLedgerRepo,
+		scheduledTriggersRepo:    &data.ScheduledTriggersRepository{},
+		personasRepo:             deps.PersonasRepo,
+		usersRepo:                deps.UsersRepo,
+		accountRepo:              deps.AccountRepo,
+		membershipRepo:           deps.AccountMembershipRepo,
+		projectRepo:              deps.ProjectRepo,
+		threadRepo:               deps.ThreadRepo,
+		messageRepo:              deps.MessageRepo,
+		runEventRepo:             deps.RunEventRepo,
+		jobRepo:                  deps.JobRepo,
+		creditsRepo:              deps.CreditsRepo,
+		pool:                     deps.Pool,
+		entitlementSvc:           deps.EntitlementService,
+		telegramClient:           telegramForConnector,
+		attachmentStore:          deps.MessageAttachmentStore,
+		inputNotify:              busInputNotify,
+		bus:                      deps.Bus,
 	}
 
 	pollHTTP := &http.Client{Timeout: time.Duration(telegramLongPollSeconds+15) * time.Second}
@@ -195,9 +199,17 @@ func StartTelegramDesktopPoller(ctx context.Context, deps TelegramDesktopPollerD
 				}
 				backoff = 0
 			}
-			err := pollTelegramDesktopOnce(ctx, pollClient, connector, deps.ChannelsRepo, deps.SecretsRepo, offsets, limit, telegramLongPollSeconds)
+			didPoll, err := pollTelegramDesktopOnce(ctx, pollClient, connector, deps.ChannelsRepo, deps.SecretsRepo, offsets, limit, telegramLongPollSeconds)
 			if err != nil {
 				backoff = 2 * time.Second
+				continue
+			}
+			if !didPoll {
+				select {
+				case <-ctx.Done():
+					return
+				case <-time.After(pollInterval):
+				}
 			}
 		}
 	}()
@@ -212,17 +224,19 @@ func pollTelegramDesktopOnce(
 	offsets map[uuid.UUID]int64,
 	limit int,
 	longPollSec int,
-) error {
+) (bool, error) {
 	channels, err := channelsRepo.ListActiveByType(ctx, "telegram")
 	if err != nil {
 		slog.Warn("telegram_poll_list_channels", "err", err.Error())
-		return err
+		return false, err
 	}
 	if len(channels) == 0 {
 		logTelegramPollNoActiveChannels.Do(func() {
 			slog.Info("telegram_poll_tick", "active_channels", 0)
 		})
+		return false, nil
 	}
+	didPoll := false
 	var lastErr error
 	for _, ch := range channels {
 		// 注意：Create 时总会写入指向本机 API 的 webhook 路径（验签/路由），不代表 Telegram 侧已 setWebhook。
@@ -237,6 +251,7 @@ func pollTelegramDesktopOnce(
 			slog.Warn("telegram_poll_token", "channel_id", ch.ID.String(), "err", "empty")
 			continue
 		}
+		didPoll = true
 
 		req := telegrambot.GetUpdatesRequest{
 			Limit:          limit,
@@ -273,5 +288,5 @@ func pollTelegramDesktopOnce(
 			offsets[ch.ID] = nextOffset
 		}
 	}
-	return lastErr
+	return didPoll, lastErr
 }

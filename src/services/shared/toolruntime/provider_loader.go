@@ -184,7 +184,7 @@ func evaluateProviderRuntimeStatus(status ProviderRuntimeStatus) (ProviderRuntim
 		return ProviderRuntimeStateReady, ""
 	case "web_search.searxng":
 		return validateInternalBaseURL(status.BaseURL)
-	case "web_search.duckduckgo":
+	case "web_search.basic":
 		return ProviderRuntimeStateReady, ""
 	case "web_fetch.jina":
 		return ProviderRuntimeStateReady, ""

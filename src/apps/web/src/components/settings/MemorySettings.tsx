@@ -1,10 +1,9 @@
 import { useState, useEffect, useCallback, useRef, useLayoutEffect } from 'react'
 import { FileText, RefreshCw, Settings, AlertTriangle, Brain, Check, ChevronRight } from 'lucide-react'
-import { PillToggle, Modal } from '@arkloop/shared'
+import { Modal } from '@arkloop/shared'
 import { ProviderSelectCard } from './ProviderSelectCard'
 import { SpinnerIcon } from '@arkloop/shared/components/auth-ui'
 import { useLocale } from '../../contexts/LocaleContext'
-import { getDesktopApi } from '@arkloop/shared/desktop'
 import { formatDateTime } from '@arkloop/shared'
 import type { MemoryConfig, SnapshotHit } from '@arkloop/shared/desktop'
 import { checkBridgeAvailable, bridgeClient, type ModuleStatus } from '../../api-bridge'
@@ -13,6 +12,8 @@ import { SettingsSectionHeader } from './_SettingsSectionHeader'
 import { MemoryConfigModal } from './MemoryConfigModal'
 import { listMemoryErrors, type MemoryErrorEvent } from '../../api'
 import { PastedContentModal } from '../PastedContentModal'
+import { getDesktopMemoryApi } from '../../desktopMemoryApi'
+import { SettingsSwitch } from './_SettingsSwitch'
 
 // ---------------------------------------------------------------------------
 // Status dot — shows health on the provider card
@@ -614,8 +615,7 @@ export function MemorySettings({ accessToken }: Props) {
   const [health, setHealth] = useState<HealthStatus>('checking')
   const [healthLabel, setHealthLabel] = useState('')
 
-  const api = getDesktopApi()
-  const memoryApi = api?.memory
+  const memoryApi = getDesktopMemoryApi(accessToken)
 
   const probeHealth = useCallback(async (cfg: MemoryConfig | null) => {
     if (!cfg?.enabled) {
@@ -810,7 +810,13 @@ export function MemorySettings({ accessToken }: Props) {
 
   const saveConfig = useCallback(async (next: MemoryConfig) => {
     if (!memoryApi) return
-    await memoryApi.setConfig(next)
+    try {
+      await memoryApi.setConfig(next)
+    } catch (err) {
+      console.error('memory setConfig failed', err)
+      void loadData(true)
+      return
+    }
     memoryConfigCache = next
     setMemConfigState(next)
     void probeHealth(next)
@@ -864,7 +870,17 @@ export function MemorySettings({ accessToken }: Props) {
       <SettingsSectionHeader title={ds.memorySettingsTitle} description={ds.memorySettingsDesc} />
 
       {/* Enable Memory + Auto-summarize compound card */}
-      <div className="rounded-xl border-[0.5px] border-[var(--c-border-subtle)] bg-[var(--c-bg-menu)]">
+      <div
+        className="group/switch-card rounded-xl border-[0.5px] border-[var(--c-border-subtle)] bg-[var(--c-bg-menu)]"
+        onMouseEnter={() => {
+          setEnableCardHovered(true)
+          setSummarizeCardHovered(true)
+        }}
+        onMouseLeave={() => {
+          setEnableCardHovered(false)
+          setSummarizeCardHovered(false)
+        }}
+      >
         <div
           role="button"
           tabIndex={0}
@@ -884,7 +900,7 @@ export function MemorySettings({ accessToken }: Props) {
             <p className="mt-0.5 text-xs text-[var(--c-text-muted)]">{ds.memoryEnabledDesc}</p>
           </div>
           <div className="shrink-0" onClick={(e) => e.stopPropagation()}>
-            <PillToggle
+            <SettingsSwitch
               checked={enabled}
               onChange={(next) => { if (memConfig) void saveConfig({ ...memConfig, enabled: next }) }}
               forceHover={enableCardHovered}
@@ -912,7 +928,7 @@ export function MemorySettings({ accessToken }: Props) {
               <p className="mt-0.5 text-xs text-[var(--c-text-muted)]">{ds.memoryAutoSummarizeDesc}</p>
             </div>
             <div className="shrink-0" onClick={(e) => e.stopPropagation()}>
-              <PillToggle
+              <SettingsSwitch
                 checked={memConfig.memoryCommitEachTurn !== false}
                 onChange={(next) => void saveConfig({ ...memConfig, memoryCommitEachTurn: next })}
                 forceHover={summarizeCardHovered}

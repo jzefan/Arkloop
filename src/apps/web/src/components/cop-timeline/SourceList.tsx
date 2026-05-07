@@ -36,7 +36,7 @@ export const SourceFavicon = memo(function SourceFavicon({
   }
 
   return (
-    <img loading="lazy" decoding="async"
+    <img
       src={`https://www.google.com/s2/favicons?sz=16&domain=${domain}`}
       alt=""
       width={14}

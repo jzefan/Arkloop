@@ -30,6 +30,8 @@ func buildProviderPayloadForEstimate(cfg ResolvedGatewayConfig, request Request)
 		return buildOpenAIChatCompletionsPayloadForEstimate(cfg.OpenAI, req)
 	case ProtocolKindOpenAIResponses:
 		return buildOpenAIResponsesPayloadForEstimate(cfg.OpenAI, req)
+	case ProtocolKindOpenAICodexResponses:
+		return buildOpenAICodexResponsesPayloadForEstimate(cfg.OpenAI, req)
 	case ProtocolKindAnthropicMessages:
 		return buildAnthropicMessagesPayloadForEstimate(cfg.Anthropic, req)
 	case ProtocolKindGeminiGenerateContent:
@@ -106,6 +108,18 @@ func buildOpenAIResponsesPayloadForEstimate(cfg *OpenAIProtocolConfig, request R
 		}
 	}
 	applyOpenAIResponsesReasoningMode(payload, request.ReasoningMode)
+	return payload, nil
+}
+
+func buildOpenAICodexResponsesPayloadForEstimate(cfg *OpenAIProtocolConfig, request Request) (map[string]any, error) {
+	if cfg == nil {
+		cfg = &OpenAIProtocolConfig{AdvancedPayloadJSON: map[string]any{}}
+	}
+	payload, err := buildOpenAIResponsesPayloadForEstimate(cfg, request)
+	if err != nil {
+		return nil, err
+	}
+	applyOpenAICodexResponsesPayloadDefaults(payload)
 	return payload, nil
 }
 

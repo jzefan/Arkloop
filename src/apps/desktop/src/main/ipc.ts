@@ -1,4 +1,4 @@
-import { ipcMain, BrowserWindow } from 'electron'
+import { ipcMain, BrowserWindow, Notification } from 'electron'
 import http from 'http'
 import os from 'os'
 import { DatabaseSync } from 'node:sqlite'
@@ -8,6 +8,7 @@ import {
   getSidecarStatus,
   getSidecarRuntime,
   downloadSidecar,
+  checkSidecarVersion,
   isSidecarAvailable,
   getDesktopAccessToken,
   getBridgeBaseUrl,
@@ -24,7 +25,11 @@ type DesktopController = {
   applyConfigUpdate: (config: AppConfig, options?: ApplyConfigUpdateOptions) => Promise<AppConfig>
   restartLocalSidecar: () => Promise<SidecarRuntime>
   getSidecarRuntime: () => Promise<SidecarRuntime>
+  setKeepAwakeSessionActive: (active: boolean) => void
 }
+
+let desktopSessionAccessToken = ''
+let desktopSessionAccessTokenExpiresAt = 0
 
 type DesktopExportSection =
   | 'settings'
@@ -177,7 +182,7 @@ export function registerIpcHandlers(
   })
 
   ipcMain.handle('arkloop:sidecar:check-update', async () => {
-    return checkForUpdates()
+    return checkSidecarVersion()
   })
 
   ipcMain.handle('arkloop:updater:check', async () => {
@@ -234,9 +239,10 @@ export function registerIpcHandlers(
   })
 
   ipcMain.handle('arkloop:onboarding-import:apply', async (_event, request: OnboardingImportApplyRequest) => {
+    const apiBaseUrl = await waitForLocalApiBaseUrlReady()
     return await applyOnboardingImport(request, {
-      apiBaseUrl: await waitForLocalApiBaseUrlReady(),
-      token: getDesktopAccessToken(),
+      apiBaseUrl,
+      token: apiBaseUrl ? await getDesktopSessionAccessToken(apiBaseUrl) : '',
     })
   })
 
@@ -271,7 +277,7 @@ export function registerIpcHandlers(
   ipcMain.handle('arkloop:memory:list', async (_event) => {
     const apiBaseUrl = getLocalApiBaseUrl()
     if (!apiBaseUrl) return { entries: [] }
-    const token = getDesktopAccessToken()
+    const token = await getDesktopSessionAccessToken(apiBaseUrl)
     // No agent_id filter — return all memories across all agents for the settings UI.
     const url = `${apiBaseUrl}/v1/desktop/memory/entries`
     const resp = await makeApiRequest(url, 'GET', token)
@@ -281,7 +287,7 @@ export function registerIpcHandlers(
   ipcMain.handle('arkloop:memory:delete', async (_event, id: string) => {
     const apiBaseUrl = getLocalApiBaseUrl()
     if (!apiBaseUrl) return { status: 'error', message: 'sidecar not running' }
-    const token = getDesktopAccessToken()
+    const token = await getDesktopSessionAccessToken(apiBaseUrl)
     // agent_id is resolved server-side from the entry record itself.
     const url = `${apiBaseUrl}/v1/desktop/memory/entries/${encodeURIComponent(id)}`
     const resp = await makeApiRequest(url, 'DELETE', token)
@@ -294,7 +300,7 @@ export function registerIpcHandlers(
     if (!apiBaseUrl) {
       return { provider: 'notebook', configured: false, healthy: false, checked_at: checkedAt, error: 'sidecar not running' }
     }
-    const token = getDesktopAccessToken()
+    const token = await getDesktopSessionAccessToken(apiBaseUrl)
     const query = typeof agentId === 'string' && agentId.trim()
       ? `?agent_id=${encodeURIComponent(agentId.trim())}`
       : ''
@@ -309,7 +315,7 @@ export function registerIpcHandlers(
   ipcMain.handle('arkloop:memory:get-snapshot', async (_event, agentId?: string) => {
     const apiBaseUrl = getLocalApiBaseUrl()
     if (!apiBaseUrl) return { memory_block: '', hits: [] }
-    const token = getDesktopAccessToken()
+    const token = await getDesktopSessionAccessToken(apiBaseUrl)
     const query = typeof agentId === 'string' && agentId.trim()
       ? `?agent_id=${encodeURIComponent(agentId.trim())}`
       : ''
@@ -321,7 +327,7 @@ export function registerIpcHandlers(
   ipcMain.handle('arkloop:memory:rebuild-snapshot', async (_event, agentId?: string) => {
     const apiBaseUrl = getLocalApiBaseUrl()
     if (!apiBaseUrl) return { memory_block: '', hits: [] }
-    const token = getDesktopAccessToken()
+    const token = await getDesktopSessionAccessToken(apiBaseUrl)
     const query = typeof agentId === 'string' && agentId.trim()
       ? `?agent_id=${encodeURIComponent(agentId.trim())}`
       : ''
@@ -333,7 +339,7 @@ export function registerIpcHandlers(
   ipcMain.handle('arkloop:memory:get-impression', async (_event, agentId?: string) => {
     const apiBaseUrl = getLocalApiBaseUrl()
     if (!apiBaseUrl) return { impression: '' }
-    const token = getDesktopAccessToken()
+    const token = await getDesktopSessionAccessToken(apiBaseUrl)
     const query = typeof agentId === 'string' && agentId.trim()
       ? `?agent_id=${encodeURIComponent(agentId.trim())}`
       : ''
@@ -345,7 +351,7 @@ export function registerIpcHandlers(
   ipcMain.handle('arkloop:memory:rebuild-impression', async (_event, agentId?: string) => {
     const apiBaseUrl = getLocalApiBaseUrl()
     if (!apiBaseUrl) return { status: 'unavailable' }
-    const token = getDesktopAccessToken()
+    const token = await getDesktopSessionAccessToken(apiBaseUrl)
     const query = typeof agentId === 'string' && agentId.trim()
       ? `?agent_id=${encodeURIComponent(agentId.trim())}`
       : ''
@@ -366,7 +372,7 @@ export function registerIpcHandlers(
   ipcMain.handle('arkloop:memory:get-content', async (_event, uri: string, layer?: string) => {
     const apiBaseUrl = getLocalApiBaseUrl()
     if (!apiBaseUrl) return { content: '' }
-    const token = getDesktopAccessToken()
+    const token = await getDesktopSessionAccessToken(apiBaseUrl)
     const params = new URLSearchParams({ uri })
     if (layer) params.set('layer', layer)
     const url = `${apiBaseUrl}/v1/desktop/memory/content?${params.toString()}`
@@ -377,7 +383,7 @@ export function registerIpcHandlers(
   ipcMain.handle('arkloop:memory:add', async (_event, content: string, category?: string) => {
     const apiBaseUrl = getLocalApiBaseUrl()
     if (!apiBaseUrl) return { entry: null }
-    const token = getDesktopAccessToken()
+    const token = await getDesktopSessionAccessToken(apiBaseUrl)
     const url = `${apiBaseUrl}/v1/desktop/memory/entries`
     const body = JSON.stringify({ content, category: category || undefined })
     const result = await makeApiRequestRaw(url, 'POST', token, body)
@@ -421,6 +427,27 @@ export function registerIpcHandlers(
     }
   })
 
+  ipcMain.handle('arkloop:notifications:is-supported', () => {
+    return Notification.isSupported()
+  })
+
+  ipcMain.handle('arkloop:notifications:show', (_event, input: { title?: string; body?: string }) => {
+    if (!Notification.isSupported()) return { ok: false }
+    const title = typeof input?.title === 'string' && input.title.trim()
+      ? input.title.trim().slice(0, 120)
+      : 'Arkloop'
+    const body = typeof input?.body === 'string' && input.body.trim()
+      ? input.body.trim().slice(0, 240)
+      : undefined
+    new Notification({ title, body }).show()
+    return { ok: true }
+  })
+
+  ipcMain.handle('arkloop:power:set-session-active', (_event, active: boolean) => {
+    controller.setKeepAwakeSessionActive(active === true)
+    return { ok: true }
+  })
+
   ipcMain.handle('arkloop:window:minimize', () => {
     getWindow()?.minimize()
   })
@@ -460,74 +487,6 @@ export function registerIpcHandlers(
     })
     if (result.canceled || result.filePaths.length === 0) return null
     return result.filePaths[0]
-  })
-
-  ipcMain.handle('arkloop:dialog:choose-export-folder', async () => {
-    const { dialog } = require('electron') as typeof import('electron')
-    const win = getWindow()
-    const result = await dialog.showOpenDialog(win ?? BrowserWindow.getFocusedWindow()!, {
-      title: '选择导出文件夹',
-      properties: ['openDirectory', 'createDirectory'],
-    })
-    if (result.canceled || result.filePaths.length === 0) {
-      return { ok: false, canceled: true }
-    }
-    return { ok: true, folderPath: result.filePaths[0] }
-  })
-
-  ipcMain.handle('arkloop:dialog:save-zip-to-folder', async (_event, input?: { folderPath?: string; defaultFilename?: string; data?: Uint8Array | ArrayBuffer | number[] }) => {
-    const fs = require('fs') as typeof import('fs')
-    const path = require('path') as typeof import('path')
-    const folderPath = typeof input?.folderPath === 'string' ? input.folderPath : ''
-    const rawFilename = typeof input?.defaultFilename === 'string' ? input.defaultFilename : 'arkloop-conversations.zip'
-    const filename = rawFilename.replace(/[\\/:*?"<>|]+/g, '_').trim() || 'arkloop-conversations.zip'
-    if (!folderPath || !fs.existsSync(folderPath) || !fs.statSync(folderPath).isDirectory()) {
-      throw new Error('export folder is unavailable')
-    }
-    const rawData = input?.data
-    const data = rawData instanceof Uint8Array
-      ? Buffer.from(rawData)
-      : rawData instanceof ArrayBuffer
-        ? Buffer.from(rawData)
-        : Array.isArray(rawData)
-          ? Buffer.from(rawData)
-          : null
-    if (!data || data.byteLength === 0) {
-      throw new Error('export data is empty')
-    }
-    const filePath = path.join(folderPath, filename)
-    fs.writeFileSync(filePath, data)
-    return { ok: true, filePath }
-  })
-
-  ipcMain.handle('arkloop:dialog:export-zip-to-folder', async (_event, input?: { defaultFilename?: string; data?: Uint8Array | ArrayBuffer | number[] }) => {
-    const { dialog } = require('electron') as typeof import('electron')
-    const fs = require('fs') as typeof import('fs')
-    const path = require('path') as typeof import('path')
-    const rawFilename = typeof input?.defaultFilename === 'string' ? input.defaultFilename : 'arkloop-conversations.zip'
-    const filename = rawFilename.replace(/[\\/:*?"<>|]+/g, '_').trim() || 'arkloop-conversations.zip'
-    const rawData = input?.data
-    const data = rawData instanceof Uint8Array
-      ? Buffer.from(rawData)
-      : rawData instanceof ArrayBuffer
-        ? Buffer.from(rawData)
-        : Array.isArray(rawData)
-          ? Buffer.from(rawData)
-          : null
-    if (!data || data.byteLength === 0) {
-      throw new Error('export data is empty')
-    }
-    const win = getWindow()
-    const folder = await dialog.showOpenDialog(win ?? BrowserWindow.getFocusedWindow()!, {
-      title: '选择导出文件夹',
-      properties: ['openDirectory', 'createDirectory'],
-    })
-    if (folder.canceled || folder.filePaths.length === 0) {
-      return { ok: false, canceled: true }
-    }
-    const filePath = path.join(folder.filePaths[0], filename)
-    fs.writeFileSync(filePath, data)
-    return { ok: true, filePath }
   })
 
   ipcMain.handle('arkloop:fs:list-dir', (_event, folderPath: string, subPath: string) => {
@@ -635,7 +594,7 @@ async function rebuildSemanticMemoryDerivedState(): Promise<void> {
   if (!apiBaseUrl) {
     throw new Error('sidecar not running')
   }
-  const token = getDesktopAccessToken()
+  const token = await getDesktopSessionAccessToken(apiBaseUrl)
   await makeApiRequest(`${apiBaseUrl}/v1/desktop/memory/snapshot/rebuild`, 'POST', token)
   await makeApiRequest(`${apiBaseUrl}/v1/desktop/memory/impression/rebuild`, 'POST', token)
 }
@@ -682,7 +641,7 @@ type ToolProviderGroup = {
 async function fetchToolProviders(): Promise<ToolProviderGroup[]> {
   const apiBaseUrl = getLocalApiBaseUrl()
   if (!apiBaseUrl) return []
-  const token = getDesktopAccessToken()
+  const token = await getDesktopSessionAccessToken(apiBaseUrl)
   const resp = await makeApiRequest(`${apiBaseUrl}/v1/tool-providers?scope=platform`, 'GET', token)
   if (!resp || typeof resp !== 'object' || !Array.isArray((resp as { groups?: unknown[] }).groups)) {
     return []
@@ -736,8 +695,8 @@ function providerNameToFetch(providerName: string): ConnectorsConfig['fetch']['p
 
 function providerNameToSearch(providerName: string): ConnectorsConfig['search']['provider'] {
   switch (providerName) {
-    case 'web_search.duckduckgo':
-      return 'duckduckgo'
+    case 'web_search.basic':
+      return 'basic'
     case 'web_search.searxng':
       return 'searxng'
     case 'web_search.tavily':
@@ -765,7 +724,7 @@ async function migrateLegacyConnectorsIfNeeded(config: AppConfig): Promise<void>
 }
 
 function hasLegacySearchConfig(connectors: ConnectorsConfig): boolean {
-  return connectors.search.provider === 'duckduckgo'
+  return connectors.search.provider === 'basic'
     || (connectors.search.provider === 'tavily' && Boolean(connectors.search.tavilyApiKey))
     || (connectors.search.provider === 'searxng' && Boolean(connectors.search.searxngBaseUrl))
 }
@@ -783,8 +742,8 @@ async function applyConnectorConfig(connectors: ConnectorsConfig): Promise<void>
 
 async function applySearchConnector(search: ConnectorsConfig['search']): Promise<void> {
   await deactivateToolProviderGroup('web_search')
-  if (search.provider === 'duckduckgo') {
-    await activateToolProvider('web_search', 'web_search.duckduckgo')
+  if (search.provider === 'basic') {
+    await activateToolProvider('web_search', 'web_search.basic')
     return
   }
   if (search.provider === 'tavily') {
@@ -853,10 +812,28 @@ async function requestToolProvider(pathname: string, method: string, body?: stri
   if (!apiBaseUrl) {
     throw new Error('sidecar not running')
   }
-  const token = getDesktopAccessToken()
+  const token = await getDesktopSessionAccessToken(apiBaseUrl)
   const sep = pathname.includes('?') ? '&' : '?'
   const url = `${apiBaseUrl}${pathname}${sep}scope=platform`
   await makeApiRequestRaw(url, method, token, body)
+}
+
+async function getDesktopSessionAccessToken(apiBaseUrl: string): Promise<string> {
+  const now = Date.now()
+  if (desktopSessionAccessToken && now < desktopSessionAccessTokenExpiresAt) {
+    return desktopSessionAccessToken
+  }
+  const result = await makeApiRequest(`${apiBaseUrl}/v1/auth/local-session`, 'POST', getDesktopAccessToken())
+  if (!result || typeof result !== 'object') {
+    throw new Error('local session failed')
+  }
+  const accessToken = (result as { access_token?: unknown }).access_token
+  if (typeof accessToken !== 'string' || !accessToken.trim()) {
+    throw new Error('local session failed')
+  }
+  desktopSessionAccessToken = accessToken.trim()
+  desktopSessionAccessTokenExpiresAt = now + 45 * 60 * 1000
+  return desktopSessionAccessToken
 }
 
 async function makeApiRequest(url: string, method: string, token: string, body?: string, timeoutMsOverride?: number): Promise<unknown> {

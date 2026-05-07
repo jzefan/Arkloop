@@ -9,6 +9,7 @@ import {
   Globe,
   Import,
   Loader2,
+  Mic,
   Network,
   RefreshCw,
   ScrollText,
@@ -17,7 +18,7 @@ import {
   type LucideIcon,
 } from 'lucide-react'
 import { getDesktopApi } from '@arkloop/shared/desktop'
-import { Modal, PillToggle, TabBar, formatDateTime, useTimeZone, useToast } from '@arkloop/shared'
+import { Modal, formatDateTime, useTimeZone, useToast } from '@arkloop/shared'
 import type {
   AgentImportDiscovery,
   DesktopExportSection,
@@ -37,11 +38,17 @@ import { SettingsSectionHeader } from './_SettingsSectionHeader'
 import { settingsInputCls } from './_SettingsInput'
 import { SettingsLabel } from './_SettingsLabel'
 import { SettingsSelect } from './_SettingsSelect'
+import { SettingsSegmentedControl } from './_SettingsSegmentedControl'
 import { ConnectionSettings } from './ConnectionSettings'
+import { VoiceSettings } from './VoiceSettings'
+import { SettingsSwitch } from './_SettingsSwitch'
 
-type AdvancedKey = 'network' | 'usage' | 'data' | 'logs'
+export type AdvancedSettingsKey = 'usage' | 'voice' | 'network' | 'data' | 'logs'
 
-type Props = { accessToken: string }
+type Props = {
+  accessToken: string
+  initialKey?: AdvancedSettingsKey | null
+}
 
 type UsageState = {
   summary: MeUsageSummary | null
@@ -104,16 +111,16 @@ function formatChartTick(n: number): string {
 
 function actionBtnCls(disabled?: boolean) {
   return [
-    'inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm transition-colors',
-    disabled ? 'cursor-not-allowed opacity-50' : 'hover:bg-[var(--c-bg-deep)]',
+    'inline-flex h-[32px] items-center gap-1.5 rounded-[6.5px] bg-[var(--c-bg-input)] px-3.5 text-sm font-[450] text-[color-mix(in_srgb,var(--c-text-secondary)_72%,var(--c-text-primary)_28%)] [background-clip:padding-box] transition-colors duration-[180ms]',
+    disabled ? 'cursor-not-allowed opacity-40' : 'hover:border-transparent hover:bg-[var(--c-bg-deep)] hover:text-[var(--c-text-primary)]',
   ].join(' ')
 }
 
 function primaryBtnCls(disabled?: boolean) {
   return [
-    'inline-flex items-center gap-1.5 rounded-lg px-4 py-1.5 text-sm font-medium text-[var(--c-btn-text)]',
-    'transition-[filter] duration-150 hover:[filter:brightness(1.12)] active:[filter:brightness(0.95)]',
-    disabled ? 'cursor-not-allowed opacity-50' : '',
+    'inline-flex h-[32px] items-center gap-1.5 rounded-[6.5px] px-3.5 text-sm font-[450] text-[var(--c-btn-text)]',
+    'transition-[box-shadow] duration-150 hover:[box-shadow:inset_0_0_0_999px_rgba(255,255,255,0.07),0_0_0_0.2px_var(--c-btn-bg)] active:[box-shadow:inset_0_0_0_999px_rgba(0,0,0,0.04)]',
+    disabled ? 'cursor-not-allowed opacity-40' : '',
   ].join(' ')
 }
 
@@ -849,19 +856,19 @@ function UsagePane({
               <span className="text-sm font-semibold">{ds.advancedUsageModelAnalysis}</span>
             </div>
             {chartTab !== 'model' && (
-              <TabBar
-                tabs={[
-                  { key: 'hourly' as const, label: ds.advancedUsageTrendHourly },
-                  { key: 'daily' as const, label: ds.advancedUsageTrendDaily },
+              <SettingsSegmentedControl
+                options={[
+                  { value: 'hourly' as const, label: ds.advancedUsageTrendHourly },
+                  { value: 'daily' as const, label: ds.advancedUsageTrendDaily },
                 ]}
-                active={trendGranularity}
+                value={trendGranularity}
                 onChange={setTrendGranularity}
               />
             )}
           </div>
-          <TabBar
-            tabs={chartTabs}
-            active={chartTab}
+          <SettingsSegmentedControl
+            options={chartTabs.map((item) => ({ value: item.key, label: item.label }))}
+            value={chartTab}
             onChange={setChartTab}
           />
         </div>
@@ -985,7 +992,7 @@ function DataPane({ onReloadOverview }: { onReloadOverview: () => Promise<void> 
   }, [])
 
   useEffect(() => {
-    const detectImports = api?.onboarding.detectImports
+    const detectImports = api?.onboarding?.detectImports
     if (!detectImports) return
     let cancelled = false
 
@@ -1176,7 +1183,7 @@ function DataPane({ onReloadOverview }: { onReloadOverview: () => Promise<void> 
             onClick={(event) => event.stopPropagation()}
             onKeyDown={(event) => event.stopPropagation()}
           >
-            <PillToggle
+            <SettingsSwitch
               checked={selection[itemKey]}
               onChange={() => handleAgentImportItemToggle(selectedAgentImportSource.kind, itemKey)}
               disabled={agentImporting}
@@ -1501,15 +1508,16 @@ function LogsPane() {
 
 // -- Main component --
 
-export function AdvancedSettings({ accessToken }: Props) {
+export function AdvancedSettings({ accessToken, initialKey = null }: Props) {
   const { t } = useLocale()
   const { timeZone } = useTimeZone()
   const ds = t.desktopSettings
+  const requestedKey = initialKey ?? 'usage'
   const now = useMemo(() => getDateStringInTimeZone(new Date(), timeZone), [timeZone])
   const defaultYear = Number(now.slice(0, 4))
   const defaultMonth = Number(now.slice(5, 7))
 
-  const [activeKey, setActiveKey] = useState<AdvancedKey>('usage')
+  const [activeKey, setActiveKey] = useState<AdvancedSettingsKey>(requestedKey)
   const [prefetchedUsage, setPrefetchedUsage] = useState<UsageState | null>(null)
 
   const loadOverview = useCallback(async () => {
@@ -1542,8 +1550,9 @@ export function AdvancedSettings({ accessToken }: Props) {
     }
   }, [accessToken, defaultMonth, defaultYear])
 
-  const navItems: Array<{ key: AdvancedKey; icon: LucideIcon; label: string }> = [
+  const navItems: Array<{ key: AdvancedSettingsKey; icon: LucideIcon; label: string }> = [
     { key: 'usage', icon: BarChart3, label: ds.advancedUsage },
+    { key: 'voice', icon: Mic, label: ds.voiceTitle },
     { key: 'network', icon: Network, label: ds.advancedNetwork },
     { key: 'data', icon: Database, label: ds.advancedData },
     { key: 'logs', icon: ScrollText, label: ds.advancedLogs },
@@ -1584,6 +1593,7 @@ export function AdvancedSettings({ accessToken }: Props) {
               initialUsage={prefetchedUsage}
             />
           )}
+          {activeKey === 'voice' && <VoiceSettings accessToken={accessToken} />}
           {activeKey === 'network' && <NetworkPane onReloadOverview={loadOverview} />}
           {activeKey === 'data' && (
             <DataPane onReloadOverview={loadOverview} />

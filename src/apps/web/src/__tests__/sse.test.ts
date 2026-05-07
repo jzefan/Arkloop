@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { createSSEClient, parseSSEChunk, SSEApiError } from '../sse'
+import { createSSEClient, parseSSEChunk, SSEApiError, type SSEClientOptions } from '../sse'
 
 describe('parseSSEChunk', () => {
   it('解析单个完整事件', () => {
@@ -178,6 +178,79 @@ describe('SSEApiError', () => {
 })
 
 describe('SSEClient retry delay', () => {
+  it('显式 undefined 不应覆盖默认重连退避', async () => {
+    const waits: number[] = []
+    const originalSetTimeout = globalThis.setTimeout
+    const originalFetch = globalThis.fetch
+
+    globalThis.setTimeout = (((handler: TimerHandler, timeout?: number) => {
+      waits.push(Number(timeout ?? 0))
+      queueMicrotask(() => {
+        if (typeof handler === 'function') handler()
+      })
+      return 0 as unknown as ReturnType<typeof setTimeout>
+    }) as unknown) as typeof setTimeout
+
+    globalThis.fetch = (async () => {
+      throw new Error('network down')
+    }) as typeof fetch
+
+    try {
+      const client = createSSEClient({
+        url: 'https://example.com/v1/runs/run/events',
+        accessToken: 'token',
+        onEvent: () => {},
+        maxRetries: 2,
+        retryDelayMs: undefined,
+        maxRetryDelayMs: undefined,
+      } as SSEClientOptions)
+      await client.connect()
+      expect(waits.slice(0, 2)).toEqual([1000, 2000])
+    } finally {
+      globalThis.setTimeout = originalSetTimeout
+      globalThis.fetch = originalFetch
+    }
+  })
+
+  it('显式 undefined 不应覆盖默认读超时', async () => {
+    const waits: number[] = []
+    const originalSetTimeout = globalThis.setTimeout
+    const originalClearTimeout = globalThis.clearTimeout
+    const originalFetch = globalThis.fetch
+    const body = { close: undefined as undefined | (() => void) }
+
+    globalThis.setTimeout = (((_handler: TimerHandler, timeout?: number) => {
+      waits.push(Number(timeout ?? 0))
+      return 0 as unknown as ReturnType<typeof setTimeout>
+    }) as unknown) as typeof setTimeout
+    globalThis.clearTimeout = (() => {}) as typeof clearTimeout
+
+    globalThis.fetch = (async () => new Response(new ReadableStream<Uint8Array>({
+      start(controller) {
+        body.close = () => controller.close()
+      },
+    }), { status: 200 })) as typeof fetch
+
+    try {
+      const client = createSSEClient({
+        url: 'https://example.com/v1/runs/run/events',
+        accessToken: 'token',
+        onEvent: () => {},
+        readTimeoutMs: undefined,
+      } as SSEClientOptions)
+      const connected = client.connect()
+      await Promise.resolve()
+      await Promise.resolve()
+      expect(waits[0]).toBe(45_000)
+      body.close?.()
+      await connected
+    } finally {
+      globalThis.setTimeout = originalSetTimeout
+      globalThis.clearTimeout = originalClearTimeout
+      globalThis.fetch = originalFetch
+    }
+  })
+
   it('应对重连退避应用 10 秒封顶', async () => {
     const waits: number[] = []
     const originalSetTimeout = globalThis.setTimeout

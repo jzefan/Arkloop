@@ -55,8 +55,6 @@ export interface LocaleStrings {
     skills: string;
     credits: string;
     models: string;
-    generation: string;
-    workspace: string;
     agents: string;
     channels: string;
     connection: string;
@@ -84,6 +82,7 @@ export interface LocaleStrings {
   themeLight: string;
   themeDark: string;
   // appearance tab
+  themeModeSection: string;
   fontSection: string;
   fontBody: string;
   fontCode: string;
@@ -93,6 +92,8 @@ export interface LocaleStrings {
   fontSizeRelaxed: string;
   themePresetSection: string;
   themePresetDefault: string;
+  themePresetCustomBackground: string;
+  themePresetRetinaBurn: string;
   themeColorEditor: string;
   colorGroupBackgrounds: string;
   colorGroupText: string;
@@ -112,6 +113,19 @@ export interface LocaleStrings {
   exportTheme: string;
   deleteCustomTheme: string;
   myThemes: string;
+  backgroundImageSection: string;
+  backgroundImageUpload: string;
+  backgroundImageReplace: string;
+  backgroundImageRemove: string;
+  backgroundImageEmpty: string;
+  backgroundImageInvalid: string;
+  backgroundImageTooLarge: string;
+  backgroundImageLoadFailed: string;
+  backgroundImageSaveFailed: string;
+  backgroundImageOpacity: string;
+  backgroundImageReset: string;
+  backgroundImageCancel: string;
+  backgroundImageApply: string;
   skills: {
     title: string;
     subtitle: string;
@@ -179,6 +193,9 @@ export interface LocaleStrings {
     deleteConflict: string;
     candidatesTitle: string;
     chooseCandidate: string;
+    selectAllCandidates: string;
+    clearAllCandidates: string;
+    importSelectedCandidates: (count: number) => string;
     installSuccess: (name: string) => string;
     removeSuccess: (name: string) => string;
     updateSuccess: (name: string) => string;
@@ -319,6 +336,25 @@ export interface LocaleStrings {
   otpCodePlaceholder: string;
   otpSendBtn: string;
   otpSendingCountdown: (s: number) => string;
+  bootstrap: {
+    title: string;
+    subtitle: string;
+    username: string;
+    usernamePlaceholder: string;
+    password: string;
+    passwordPlaceholder: string;
+    confirmPassword: string;
+    confirmPasswordPlaceholder: string;
+    passwordMismatch: string;
+    submit: string;
+    verifying: string;
+    successTitle: string;
+    successBody: string;
+    invalidTitle: string;
+    invalidBody: string;
+    expiresAt: (value: string) => string;
+    selectHint: string;
+  };
   otpVerifyBtn: string;
   emailNotVerifiedHint: string;
   newChatTitle: string;
@@ -533,7 +569,6 @@ export interface LocaleStrings {
     vendorOpenaiResponses: string
     vendorOpenaiChatCompletions: string
     vendorAnthropicMessage: string
-    vendorDeepSeek: string
     applyToAll: string
     applyingToAll: string
     applyDone: string
@@ -594,16 +629,11 @@ export interface LocaleStrings {
     spawnProfileSubtitle: string
     spawnProfileFollowCurrentChat: string
     spawnProfilePlatformDefault: string
-    generationModelTitle: string
-    generationModelSubtitle: string
     spawnProfileExplore: string
     spawnProfileExploreDesc: string
     imageGenerativeTitle: string
     imageGenerativeDesc: string
     imageGenerativeUnset: string
-    videoGenerativeTitle: string
-    videoGenerativeDesc: string
-    videoGenerativeUnset: string
     spawnProfileTask: string
     spawnProfileTaskDesc: string
     spawnProfileStrong: string
@@ -760,7 +790,7 @@ export interface LocaleStrings {
   modelPicker: {
     defaultLabel: string
     addProviderFirst: string
-    addApiKey: string
+    addModel: string
     byokSection: string
     noByok: string
     searchPlaceholder: string
@@ -854,9 +884,6 @@ export interface LocaleStrings {
     general: string;
     appearance: string;
     providers: string;
-    zenmux: string;
-    generation: string;
-    workspace: string;
     routing: string;
     personas: string;
     channels: string;
@@ -879,16 +906,25 @@ export interface LocaleStrings {
     // general settings
     profileSection: string;
     localModeLabel: string;
+    languageRegionSection: string;
+    supportSection: string;
     appearanceSection: string;
-    workspaceTitle?: string;
-    workspaceSubtitle?: string;
-    workspaceCurrent?: string;
-    workspaceDefault?: string;
-    workspaceChoose?: string;
-    workspaceReset?: string;
-    workspacePermissionHint?: string;
-    workspaceLoadFailed?: string;
-    workspaceSaveFailed?: string;
+    startupWindowSection: string;
+    startupOpen: string;
+    startupOpenLastWorkspace: string;
+    startupOpenHome: string;
+    closeWindow: string;
+    closeWindowKeepBackground: string;
+    closeWindowQuit: string;
+    launchAtLogin: string;
+    notificationsSection: string;
+    desktopNotifications: string;
+    desktopNotificationsDesc: string;
+    productUpdateNotifications: string;
+    productUpdateNotificationsDesc: string;
+    backgroundToolsSection: string;
+    keepScreenAwake: string;
+    keepScreenAwakeDesc: string;
     // placeholder pages
     mcpTitle: string;
     mcpDesc: string;
@@ -974,8 +1010,8 @@ export interface LocaleStrings {
     pipelineTraceDesc: string;
     promptCacheDebug: string;
     promptCacheDebugDesc: string;
-    showRunEvents: string;
-    showRunEventsDesc: string;
+    showRunDetailButton: string;
+    showRunDetailButtonDesc: string;
     showDebugPanel: string;
     showDebugPanelDesc: string;
     viewRunDetail: string;
@@ -1081,10 +1117,10 @@ export interface LocaleStrings {
     fetchProviderJina: string;
     fetchProviderBasic: string;
     fetchProviderFirecrawl: string;
-    searchProviderDuckduckgo: string;
+    searchProviderBasic: string;
     searchProviderTavily: string;
     searchProviderSearxng: string;
-    searchProviderDuckduckgoDesc: string;
+    searchProviderBasicDesc: string;
     searchProviderTavilyDesc: string;
     searchProviderSearxngDesc: string;
     fetchProviderJinaDesc: string;
@@ -1311,10 +1347,20 @@ export interface LocaleStrings {
   // admin providers/models settings (ported from console-lite)
   adminProviders: {
     title: string;
+    providersPageTitle?: string;
+    providersPageDesc?: string;
+    filterAll?: string;
+    filterEnabled?: string;
+    filterLocal?: string;
+    filterCloud?: string;
     addProvider: string;
     editProvider: string;
+    copyProvider?: string;
     deleteProvider: string;
     deleteProviderConfirm: string;
+    localProvider: string;
+    readOnlyProvider: string;
+    authModeOAuth: string;
     providerName: string;
     providerNamePlaceholder: string;
     vendor: string;
@@ -1326,6 +1372,11 @@ export interface LocaleStrings {
     apiKeyHintGemini: string;
     baseUrl: string;
     baseUrlPlaceholder: string;
+    advancedOptions?: string;
+    headers?: string;
+    addHeader?: string;
+    headerKeyPlaceholder?: string;
+    headerValuePlaceholder?: string;
     save: string;
     saving: string;
     cancel: string;
@@ -1338,6 +1389,8 @@ export interface LocaleStrings {
     importModels: string;
     importing: string;
     importDone: (count: number) => string;
+    modelVisible: string;
+    modelHidden: string;
     modelName: string;
     modelNamePlaceholder: string;
     priority: string;
@@ -1352,15 +1405,14 @@ export interface LocaleStrings {
     vendorOpenaiChat: string;
     vendorAnthropic: string;
     vendorGemini: string;
-    vendorDeepSeek?: string;
-    vendorZenMuxVertexAI?: string;
-    zenMuxInviteHint?: string;
+    vendorDeepSeek: string;
     openVikingBackend: string;
     openVikingBackendHint: string;
     openVikingBackendOpenAI: string;
     openVikingBackendAzure: string;
     openVikingBackendVolcengine: string;
     openVikingBackendLiteLLM: string;
+    providerConfig?: string;
     advancedConfig: string;
     searchProviders: string;
     testModel?: string;
@@ -1555,6 +1607,12 @@ export interface LocaleStrings {
     localRetryDownload: string;
     localDownloadComplete: string;
     localStarting: string;
+    localProviderChoiceTitle: string;
+    localProviderChoiceDesc: string;
+    localProviderUseDetected: (providers: string) => string;
+    localProviderDetectedDesc: string;
+    localProviderManual: string;
+    localProviderManualDesc: string;
     localProviderTitle: string;
     localProviderDesc: string;
     localProviderVendor: string;

@@ -21,6 +21,8 @@ export function hasTransferFiles(dataTransfer?: DataTransfer | null): boolean {
 export function extractFilesFromTransfer(dataTransfer?: DataTransfer | null): File[] {
   if (!dataTransfer) return []
   const files: File[] = []
+  const seenTypes = new Set<string>()
+
   const items = Array.from(dataTransfer.items ?? [])
 
   // Prefer items API (supports clipboard images in Electron)
@@ -35,6 +37,11 @@ export function extractFilesFromTransfer(dataTransfer?: DataTransfer | null): Fi
 
   if (allFiles.length > 0) {
     for (const file of allFiles) {
+      const prefix = file.type.split('/')[0]
+      if (prefix === 'image') {
+        if (seenTypes.has('image')) continue
+        seenTypes.add('image')
+      }
       files.push(file)
     }
     return files
@@ -45,8 +52,10 @@ export function extractFilesFromTransfer(dataTransfer?: DataTransfer | null): Fi
   // This handles cases where the clipboard image kind check passes but file is null.
   for (const item of items) {
     if (!item.type.startsWith('image/')) continue
+    if (seenTypes.has('image')) continue
     const file = item.getAsFile()
     if (file) {
+      seenTypes.add('image')
       files.push(file)
     }
   }
@@ -234,7 +243,7 @@ export function AttachmentCard({
 
           {isImage ? (
             previewSrc ? (
-              <img loading="lazy" decoding="async"
+              <img
                 src={previewSrc}
                 alt={attachment.name}
                 onLoad={() => setImageLoaded(true)}
@@ -371,7 +380,7 @@ export function AttachmentCard({
             <X size={16} />
           </button>
 
-          <img loading="lazy" decoding="async"
+          <img
             src={previewSrc}
             alt={attachment.name}
             draggable={false}

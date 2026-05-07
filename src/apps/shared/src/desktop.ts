@@ -3,7 +3,7 @@ export type LocalPortMode = 'auto' | 'manual'
 export type DesktopPlatform = 'win32' | 'darwin' | 'linux' | string
 
 export type FetchProvider = 'none' | 'jina' | 'basic' | 'firecrawl'
-export type SearchProvider = 'none' | 'duckduckgo' | 'tavily' | 'searxng'
+export type SearchProvider = 'none' | 'basic' | 'tavily' | 'searxng'
 
 export type FetchConnectorConfig = {
   provider: FetchProvider
@@ -95,8 +95,16 @@ export type NetworkConfig = {
   userAgent?: string
 }
 
-export type WorkspaceConfig = {
-  root?: string
+export type StartupOpenMode = 'home' | 'last-workspace'
+export type CloseWindowBehavior = 'keep-in-background' | 'quit'
+
+export type DesktopPreferencesConfig = {
+  startupOpen: StartupOpenMode
+  closeBehavior: CloseWindowBehavior
+  launchAtLogin: boolean
+  desktopNotifications: boolean
+  productUpdateNotifications: boolean
+  keepScreenAwake: boolean
 }
 
 export type MemoryEntry = {
@@ -136,7 +144,7 @@ export type DesktopConfig = {
   connectors: ConnectorsConfig
   memory: MemoryConfig
   network: NetworkConfig
-  workspace: WorkspaceConfig
+  desktop: DesktopPreferencesConfig
   voice?: VoiceConfig
 }
 
@@ -154,11 +162,13 @@ type DesktopInfo = {
   accessToken?: string
   mode?: ConnectionMode
   platform?: DesktopPlatform
+  appVersion?: string
   getApiBaseUrl?: () => string
   getBridgeBaseUrl?: () => string
   getAccessToken?: () => string
   getMode?: () => ConnectionMode
   getPlatform?: () => DesktopPlatform
+  getAppVersion?: () => string
 }
 
 export type UpdaterComponentStatus = {
@@ -251,6 +261,14 @@ export type ArkloopDesktopApi = {
     getVersion: () => Promise<string>
     quit: () => Promise<void>
     getOsUsername?: () => Promise<string>
+    openExternal?: (url: string) => Promise<void>
+  }
+  notifications?: {
+    show: (input: { title: string; body?: string }) => Promise<{ ok: boolean }>
+    isSupported: () => Promise<boolean>
+  }
+  power?: {
+    setSessionActive: (active: boolean) => Promise<{ ok: boolean }>
   }
   window?: {
     minimize: () => Promise<void>
@@ -265,9 +283,6 @@ export type ArkloopDesktopApi = {
   }
   dialog?: {
     openFolder: () => Promise<string | null>
-    chooseExportFolder?: () => Promise<{ ok: boolean; folderPath?: string; canceled?: boolean }>
-    saveZipToFolder?: (options: { folderPath: string; defaultFilename: string; data: Uint8Array }) => Promise<{ ok: boolean; filePath?: string }>
-    exportZipToFolder?: (options: { defaultFilename: string; data: Uint8Array }) => Promise<{ ok: boolean; filePath?: string; canceled?: boolean }>
   }
   fs?: {
     listDir: (folderPath: string, subPath?: string) => Promise<{ entries: LocalFileEntry[] }>
@@ -397,6 +412,14 @@ export function getDesktopPlatform(): DesktopPlatform | null {
     return info.getPlatform() ?? null
   }
   return info?.platform ?? null
+}
+
+export function getDesktopAppVersion(): string | null {
+  const info = getDesktopInfo()
+  if (typeof info?.getAppVersion === 'function') {
+    return info.getAppVersion() ?? null
+  }
+  return info?.appVersion ?? null
 }
 
 export function getDesktopAccessToken(): string | null {

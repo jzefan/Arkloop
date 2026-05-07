@@ -1,15 +1,15 @@
 import { useEffect, useState } from 'react'
 import type { ReactNode } from 'react'
 import { ChevronLeft } from 'lucide-react'
-import { getDesktopApi } from '@arkloop/shared/desktop'
+import { getDesktopApi, getDesktopAppVersion } from '@arkloop/shared/desktop'
 import { useToast } from '@arkloop/shared'
 import { useLocale } from '../../contexts/LocaleContext'
 import { getAccountSettings, updateAccountSettings } from '../../api'
-import { readDeveloperShowRunEvents, writeDeveloperShowRunEvents, readDeveloperShowDebugPanel, writeDeveloperShowDebugPanel, readDeveloperPipelineTraceEnabled, writeDeveloperPipelineTraceEnabled, readDeveloperPromptCacheDebugEnabled, writeDeveloperPromptCacheDebugEnabled } from '../../storage'
+import { readDeveloperShowRunDetailButton, writeDeveloperShowRunDetailButton, readDeveloperShowDebugPanel, writeDeveloperShowDebugPanel, readDeveloperPipelineTraceEnabled, writeDeveloperPipelineTraceEnabled, readDeveloperPromptCacheDebugEnabled, writeDeveloperPromptCacheDebugEnabled } from '../../storage'
 import { RunsSettings } from './RunsSettings'
-import { PillToggle } from '@arkloop/shared'
 import type { DesktopSettingsKey } from '../DesktopSettings'
-import { secondaryButtonBorderStyle, secondaryButtonSmCls } from '../buttonStyles'
+import { SettingsSwitch } from './_SettingsSwitch'
+import { SettingsButton } from './_SettingsButton'
 
 type Props = {
   accessToken?: string
@@ -24,15 +24,13 @@ type PanelBtnProps = {
 
 function PanelButton({ onClick, disabled, children }: PanelBtnProps) {
   return (
-    <button
-      type="button"
+    <SettingsButton
+      variant="secondary"
       onClick={onClick}
       disabled={disabled}
-      className={secondaryButtonSmCls}
-      style={secondaryButtonBorderStyle}
     >
       {children}
-    </button>
+    </SettingsButton>
   )
 }
 
@@ -42,7 +40,7 @@ export function DeveloperSettings({ accessToken, onNavigate }: Props) {
   const ds = t.desktopSettings
   const [appVersion, setAppVersion] = useState('')
   const [resetDone, setResetDone] = useState(false)
-  const [showRunEvents, setShowRunEvents] = useState(() => readDeveloperShowRunEvents())
+  const [showRunDetailButton, setShowRunDetailButton] = useState(() => readDeveloperShowRunDetailButton())
   const [showDebugPanel, setShowDebugPanel] = useState(() => readDeveloperShowDebugPanel())
   const [pipelineTraceEnabled, setPipelineTraceEnabled] = useState(() => readDeveloperPipelineTraceEnabled())
   const [pipelineTraceLoading, setPipelineTraceLoading] = useState(() => !!accessToken)
@@ -56,7 +54,9 @@ export function DeveloperSettings({ accessToken, onNavigate }: Props) {
     const api = getDesktopApi()
     if (api) {
       api.app.getVersion().then(setAppVersion).catch(() => {})
+      return
     }
+    setAppVersion(getDesktopAppVersion() ?? '')
   }, [])
 
   useEffect(() => {
@@ -187,7 +187,7 @@ export function DeveloperSettings({ accessToken, onNavigate }: Props) {
               {ds.pipelineTraceDesc}
             </div>
           </div>
-          <PillToggle
+          <SettingsSwitch
             checked={pipelineTraceEnabled}
             disabled={!accessToken || pipelineTraceLoading || pipelineTraceSaving}
             onChange={(next) => {
@@ -208,7 +208,7 @@ export function DeveloperSettings({ accessToken, onNavigate }: Props) {
               {ds.promptCacheDebugDesc}
             </div>
           </div>
-          <PillToggle
+          <SettingsSwitch
             checked={promptCacheDebugEnabled}
             disabled={!accessToken || promptCacheDebugLoading || promptCacheDebugSaving}
             onChange={(next) => {
@@ -224,17 +224,17 @@ export function DeveloperSettings({ accessToken, onNavigate }: Props) {
         >
           <div>
             <div className="text-sm font-medium text-[var(--c-text-primary)]">
-              {ds.showRunEvents}
+              {ds.showRunDetailButton}
             </div>
             <div className="text-xs text-[var(--c-text-muted)]">
-              {ds.showRunEventsDesc}
+              {ds.showRunDetailButtonDesc}
             </div>
           </div>
-          <PillToggle
-            checked={showRunEvents}
+          <SettingsSwitch
+            checked={showRunDetailButton}
             onChange={(next) => {
-              setShowRunEvents(next)
-              writeDeveloperShowRunEvents(next)
+              setShowRunDetailButton(next)
+              writeDeveloperShowRunDetailButton(next)
             }}
           />
         </div>
@@ -252,7 +252,7 @@ export function DeveloperSettings({ accessToken, onNavigate }: Props) {
               {ds.showDebugPanelDesc}
             </div>
           </div>
-          <PillToggle
+          <SettingsSwitch
             checked={showDebugPanel}
             onChange={(next) => {
               setShowDebugPanel(next)

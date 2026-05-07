@@ -1,18 +1,18 @@
 import { useState, useEffect } from 'react'
-import { readDeveloperShowRunEvents, readDeveloperShowDebugPanel, type MsgRunEvent } from '../storage'
+import { readDeveloperShowRunDetailButton, readDeveloperShowDebugPanel, type MessageAgentEvent } from '../storage'
 
 export function useDevTools() {
-  const [showRunEvents, setShowRunEvents] = useState(() => readDeveloperShowRunEvents())
+  const [showRunDetailButton, setShowRunDetailButton] = useState(() => readDeveloperShowRunDetailButton())
   const [showDebugPanel, setShowDebugPanel] = useState(() => readDeveloperShowDebugPanel())
   const [runDetailPanelRunId, setRunDetailPanelRunId] = useState<string | null>(null)
-  const [msgRunEventsMap, setMsgRunEventsMap] = useState<Map<string, MsgRunEvent[]>>(new Map())
+  const [messageAgentEventsMap, setMessageAgentEventsMap] = useState<Map<string, MessageAgentEvent[]>>(new Map())
 
   useEffect(() => {
     const handleChange = (e: Event) => {
-      setShowRunEvents((e as CustomEvent<boolean>).detail)
+      setShowRunDetailButton((e as CustomEvent<boolean>).detail)
     }
-    window.addEventListener('arkloop:developer_show_run_events', handleChange)
-    return () => window.removeEventListener('arkloop:developer_show_run_events', handleChange)
+    window.addEventListener('arkloop:developer_show_run_detail_button', handleChange)
+    return () => window.removeEventListener('arkloop:developer_show_run_detail_button', handleChange)
   }, [])
 
   useEffect(() => {
@@ -24,11 +24,11 @@ export function useDevTools() {
   }, [])
 
   return {
-    showRunEvents,
+    showRunDetailButton,
     showDebugPanel,
     runDetailPanelRunId,
     setRunDetailPanelRunId,
-    msgRunEventsMap,
-    setMsgRunEventsMap,
+    messageAgentEventsMap,
+    setMessageAgentEventsMap,
   } as const
 }

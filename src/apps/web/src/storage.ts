@@ -3,8 +3,14 @@ import {
 } from '@arkloop/shared/storage'
 import type { Theme } from '@arkloop/shared/contexts/theme'
 import type { UploadedThreadAttachment } from './api'
-import type { FontFamily, CodeFontFamily, FontSize, ThemePreset, ThemeDefinition } from './themes/types'
+import type { FontFamily, CodeFontFamily, FontSize, ThemePreset, ThemeDefinition, ThemeBackgroundImage } from './themes/types'
 import type { AssistantTurnSegment, AssistantTurnUi, CopBlockItem, TurnToolCallRef } from './assistantTurnSegments'
+import type { AgentUIEvent } from './agent-ui/contract'
+import {
+  normalizeAgentEventData,
+  normalizeAgentEventToolName,
+  normalizeAgentEventType,
+} from './agent-ui/event-data'
 
 export {
   readAccessToken as readAccessTokenFromStorage,
@@ -18,13 +24,14 @@ const THEME_KEY = 'arkloop:web:theme'
 const SELECTED_PERSONA_KEY = 'arkloop:web:selected_persona_key'
 const APP_MODE_KEY = 'arkloop:web:app_mode'
 const SELECTED_MODEL_KEY = 'arkloop:web:selected_model'
-const SELECTED_MODEL_KIND_KEY = 'arkloop:web:selected_model_kind'
 const SELECTED_THINKING_KEY = 'arkloop:web:selected_thinking'
 const FONT_SETTINGS_KEY = 'arkloop:web:font-settings'
 const THEME_PRESET_KEY = 'arkloop:web:theme-preset'
 const CUSTOM_THEME_ID_KEY = 'arkloop:web:custom-theme-id'
 const CUSTOM_THEMES_KEY = 'arkloop:web:custom-themes'
 const CUSTOM_BODY_FONT_KEY = 'arkloop:web:custom-body-font'
+const BACKGROUND_IMAGE_KEY = 'arkloop:web:background-image'
+const BACKGROUND_IMAGE_OPACITY_KEY = 'arkloop:web:background-image-opacity'
 const INPUT_DRAFT_TEXT_PREFIX = 'arkloop:web:input_draft_text'
 const INPUT_DRAFT_ATTACHMENTS_PREFIX = 'arkloop:web:input_draft_attachments'
 const INPUT_HISTORY_PREFIX = 'arkloop:web:input_history'
@@ -57,7 +64,6 @@ const EPHEMERAL_CACHE_MAX_ITEMS = 900
 export const DEFAULT_PERSONA_KEY = 'normal'
 export const SEARCH_PERSONA_KEY = 'extended-search'
 export const WORK_PERSONA_KEY = 'work'
-export const LEARNING_PERSONA_KEY = 'stem-tutor'
 
 export type AppMode = 'chat' | 'work'
 
@@ -241,10 +247,10 @@ if (typeof window !== 'undefined') {
   })
 }
 
-function tryWriteDraftWithEviction(write: () => void, protectedKeys: string[]): void {
+function tryWriteDraftWithEviction(write: () => void, protectedKeys: string[]): boolean {
   try {
     write()
-    return
+    return true
   } catch {
     // fall through
   }
@@ -265,11 +271,12 @@ function tryWriteDraftWithEviction(write: () => void, protectedKeys: string[]): 
     if (!removedAny) continue
     try {
       write()
-      return
+      return true
     } catch {
       // keep evicting
     }
   }
+  return false
 }
 
 function inputDraftBaseKey(scope: InputDraftScope, prefix: string): string | null {
@@ -598,32 +605,6 @@ export function writeSelectedModelToStorage(model: string | null): void {
     } else {
       localStorage.removeItem(SELECTED_MODEL_KEY)
     }
-  } catch {
-    // 忽略存储失败
-  }
-}
-
-export type SelectedModelKind = 'general' | 'image' | 'video'
-
-export function readSelectedModelKindFromStorage(): SelectedModelKind {
-  if (!canUseLocalStorage()) return 'general'
-  try {
-    const raw = localStorage.getItem(SELECTED_MODEL_KIND_KEY)?.trim()
-    if (raw === 'image' || raw === 'video') return raw
-    return 'general'
-  } catch {
-    return 'general'
-  }
-}
-
-export function writeSelectedModelKindToStorage(kind: SelectedModelKind): void {
-  if (!canUseLocalStorage()) return
-  try {
-    if (kind === 'general') {
-      localStorage.removeItem(SELECTED_MODEL_KIND_KEY)
-      return
-    }
-    localStorage.setItem(SELECTED_MODEL_KIND_KEY, kind)
   } catch {
     // 忽略存储失败
   }
@@ -1656,20 +1637,20 @@ export function clearThreadRunHandoff(threadId: string): void {
 
 // -- Developer Settings --
 
-const DEVELOPER_SHOW_RUN_EVENTS_KEY = 'arkloop:web:developer_show_run_events'
+const DEVELOPER_SHOW_RUN_DETAIL_BUTTON_KEY = 'arkloop:web:developer_show_run_detail_button'
 
-export function readDeveloperShowRunEvents(): boolean {
+export function readDeveloperShowRunDetailButton(): boolean {
   if (!canUseLocalStorage()) return false
   try {
-    return localStorage.getItem(DEVELOPER_SHOW_RUN_EVENTS_KEY) === 'true'
+    return localStorage.getItem(DEVELOPER_SHOW_RUN_DETAIL_BUTTON_KEY) === 'true'
   } catch { return false }
 }
 
-export function writeDeveloperShowRunEvents(value: boolean): void {
+export function writeDeveloperShowRunDetailButton(value: boolean): void {
   if (!canUseLocalStorage()) return
   try {
-    localStorage.setItem(DEVELOPER_SHOW_RUN_EVENTS_KEY, value ? 'true' : 'false')
-    window.dispatchEvent(new CustomEvent('arkloop:developer_show_run_events', { detail: value }))
+    localStorage.setItem(DEVELOPER_SHOW_RUN_DETAIL_BUTTON_KEY, value ? 'true' : 'false')
+    window.dispatchEvent(new CustomEvent('arkloop:developer_show_run_detail_button', { detail: value }))
   } catch { /* ignore */ }
 }
 
@@ -1739,45 +1720,127 @@ export function writeDeveloperPromptCacheDebugEnabled(value: boolean): void {
   } catch { /* ignore */ }
 }
 
-// -- Per-message run events (for inline debug display) --
+// -- Per-message agent events (for inline debug display) --
 
-export type MsgRunEvent = {
-  event_id: string
-  run_id: string
-  seq: number
-  ts: string
-  type: string
-  data: unknown
-  tool_name?: string
-  error_class?: string
+export type MessageAgentEvent = AgentUIEvent
+
+function normalizeStoredAgentEvent(item: unknown): MessageAgentEvent | null {
+  if (!item || typeof item !== 'object') return null
+  const record = item as Record<string, unknown>
+  if (
+    typeof record.id === 'string' &&
+    typeof record.streamId === 'string' &&
+    typeof record.order === 'number' &&
+    typeof record.type === 'string'
+  ) {
+    const type = normalizeAgentEventType(record.type)
+    const data = normalizeAgentEventData({
+      type,
+      eventId: record.id,
+      data: record.data,
+      toolName: typeof record.toolName === 'string' ? record.toolName : undefined,
+      errorCode: typeof record.errorCode === 'string' ? record.errorCode : undefined,
+    })
+    return {
+      id: record.id,
+      streamId: record.streamId,
+      order: record.order,
+      timestamp: typeof record.timestamp === 'string' ? record.timestamp : '',
+      type,
+      data,
+      toolName: normalizeAgentEventToolName({
+        type,
+        data,
+        fallback: typeof record.toolName === 'string' ? record.toolName : undefined,
+      }),
+      errorCode: typeof record.errorCode === 'string' ? record.errorCode : undefined,
+    }
+  }
+  if (
+    typeof record.id === 'string' &&
+    typeof record.streamId === 'string' &&
+    typeof record.sequence === 'number' &&
+    typeof record.kind === 'string'
+  ) {
+    const type = normalizeAgentEventType(record.kind)
+    const data = normalizeAgentEventData({
+      type,
+      rawType: record.kind,
+      eventId: record.id,
+      data: record.payload,
+      toolName: typeof record.toolName === 'string' ? record.toolName : undefined,
+      errorCode: typeof record.errorCode === 'string' ? record.errorCode : undefined,
+    })
+    return {
+      id: record.id,
+      streamId: record.streamId,
+      order: record.sequence,
+      timestamp: typeof record.timestamp === 'string' ? record.timestamp : '',
+      type,
+      data,
+      toolName: normalizeAgentEventToolName({
+        type,
+        data,
+        fallback: typeof record.toolName === 'string' ? record.toolName : undefined,
+      }),
+      errorCode: typeof record.errorCode === 'string' ? record.errorCode : undefined,
+    }
+  }
+  if (
+    typeof record.event_id === 'string' &&
+    typeof record.run_id === 'string' &&
+    typeof record.seq === 'number' &&
+    typeof record.type === 'string'
+  ) {
+    const type = normalizeAgentEventType(record.type)
+    const data = normalizeAgentEventData({
+      type,
+      rawType: record.type,
+      eventId: record.event_id,
+      data: record.data,
+      toolName: typeof record.tool_name === 'string' ? record.tool_name : undefined,
+      errorCode: typeof record.error_class === 'string' ? record.error_class : undefined,
+    })
+    return {
+      id: record.event_id,
+      streamId: record.run_id,
+      order: record.seq,
+      timestamp: typeof record.ts === 'string' ? record.ts : '',
+      type,
+      data,
+      toolName: normalizeAgentEventToolName({
+        type,
+        data,
+        fallback: typeof record.tool_name === 'string' ? record.tool_name : undefined,
+      }),
+      errorCode: typeof record.error_class === 'string' ? record.error_class : undefined,
+    }
+  }
+  return null
 }
 
-function messageRunEventsKey(messageId: string): string {
+function messageAgentEventsKey(messageId: string): string {
   return `arkloop:web:msg_run_events:${messageId}`
 }
 
-export function readMsgRunEvents(messageId: string): MsgRunEvent[] | null {
+export function readMessageAgentEvents(messageId: string): MessageAgentEvent[] | null {
   if (!canUseLocalStorage() || !messageId) return null
   try {
-    const raw = localStorage.getItem(messageRunEventsKey(messageId))
+    const raw = localStorage.getItem(messageAgentEventsKey(messageId))
     if (!raw) return null
     const parsed = JSON.parse(raw) as unknown
     if (!Array.isArray(parsed)) return null
-    const events = parsed.filter(
-      (item): item is MsgRunEvent =>
-        item != null &&
-        typeof item === 'object' &&
-        typeof (item as Record<string, unknown>).event_id === 'string' &&
-        typeof (item as Record<string, unknown>).type === 'string',
-    )
+    const events = parsed
+      .map(normalizeStoredAgentEvent)
+      .filter((item): item is MessageAgentEvent => item != null)
     return events.length > 0 ? events : null
   } catch { return null }
 }
 
-export function writeMsgRunEvents(messageId: string, events: MsgRunEvent[]): void {
+export function writeMessageAgentEvents(messageId: string, events: MessageAgentEvent[]): void {
   if (!canUseLocalStorage() || !messageId || events.length === 0) return
   try {
-    writeEphemeralStorageItem(messageRunEventsKey(messageId), JSON.stringify(events))
+    writeEphemeralStorageItem(messageAgentEventsKey(messageId), JSON.stringify(events))
   } catch { /* ignore */ }
 }
 
@@ -2068,7 +2131,7 @@ export function readFontSettingsFromStorage(): FontSettings {
     if (!raw) return { fontFamily: defaultFontFamily, codeFontFamily: 'jetbrains-mono', fontSize: 'normal' }
     const parsed = JSON.parse(raw) as Partial<FontSettings>
     return {
-      fontFamily: (['default', 'inter', 'system', 'serif', 'noto-sans', 'source-sans', 'custom'] as FontFamily[]).includes(parsed.fontFamily as FontFamily) ? parsed.fontFamily as FontFamily : defaultFontFamily,
+      fontFamily: (['default', 'inter', 'system', 'serif', 'noto-sans', 'source-sans', 'open-dyslexic', 'custom'] as FontFamily[]).includes(parsed.fontFamily as FontFamily) ? parsed.fontFamily as FontFamily : defaultFontFamily,
       codeFontFamily: (['jetbrains-mono', 'fira-code', 'cascadia-code', 'source-code-pro'] as CodeFontFamily[]).includes(parsed.codeFontFamily as CodeFontFamily) ? parsed.codeFontFamily as CodeFontFamily : 'jetbrains-mono',
       fontSize: (['compact', 'normal', 'relaxed'] as FontSize[]).includes(parsed.fontSize as FontSize) ? parsed.fontSize as FontSize : 'normal',
     }
@@ -2088,7 +2151,7 @@ export function readThemePresetFromStorage(): ThemePreset {
   if (!canUseLocalStorage()) return 'default'
   try {
     const raw = localStorage.getItem(THEME_PRESET_KEY)
-    const valid: ThemePreset[] = ['default', 'terra', 'github', 'nord', 'catppuccin', 'tokyo-night', 'custom']
+    const valid: ThemePreset[] = ['default', 'terra', 'github', 'nord', 'catppuccin', 'tokyo-night', 'retina-burn', 'background-image', 'custom']
     return valid.includes(raw as ThemePreset) ? (raw as ThemePreset) : 'default'
   } catch {
     return 'default'
@@ -2155,6 +2218,68 @@ export function writeCustomBodyFontToStorage(font: string | null): void {
     } else {
       localStorage.removeItem(CUSTOM_BODY_FONT_KEY)
     }
+  } catch { /* ignore */ }
+}
+
+function isBackgroundImageDataUrl(value: string): boolean {
+  return /^data:image\/(?:png|jpeg|jpg|webp|gif|avif);base64,[a-zA-Z0-9+/=]+$/.test(value)
+}
+
+export function readBackgroundImageFromStorage(): ThemeBackgroundImage | null {
+  if (!canUseLocalStorage()) return null
+  try {
+    const raw = localStorage.getItem(BACKGROUND_IMAGE_KEY)
+    if (!raw) return null
+    const parsed = JSON.parse(raw) as Partial<ThemeBackgroundImage>
+    if (typeof parsed.dataUrl !== 'string' || !isBackgroundImageDataUrl(parsed.dataUrl)) return null
+    const name = typeof parsed.name === 'string' && parsed.name.trim() ? parsed.name.trim() : 'background'
+    const mimeType = typeof parsed.mimeType === 'string' && parsed.mimeType.trim() ? parsed.mimeType.trim() : 'image/jpeg'
+    const size = Number.isFinite(parsed.size) && Number(parsed.size) >= 0 ? Number(parsed.size) : 0
+    const updatedAt = Number.isFinite(parsed.updatedAt) ? Number(parsed.updatedAt) : Date.now()
+    return { dataUrl: parsed.dataUrl, name, mimeType, size, updatedAt }
+  } catch {
+    return null
+  }
+}
+
+export function writeBackgroundImageToStorage(image: ThemeBackgroundImage | null): boolean {
+  if (!canUseLocalStorage()) return false
+  try {
+    if (!image) {
+      localStorage.removeItem(BACKGROUND_IMAGE_KEY)
+      return true
+    }
+    if (!isBackgroundImageDataUrl(image.dataUrl)) return false
+    const payload = JSON.stringify(image)
+    return tryWriteDraftWithEviction(() => {
+      localStorage.setItem(BACKGROUND_IMAGE_KEY, payload)
+    }, [BACKGROUND_IMAGE_KEY])
+  } catch {
+    return false
+  }
+}
+
+function normalizeBackgroundImageOpacity(value: unknown): number {
+  const next = typeof value === 'number' ? value : Number(value)
+  if (!Number.isFinite(next)) return 100
+  return Math.min(Math.max(Math.round(next), 0), 100)
+}
+
+export function readBackgroundImageOpacityFromStorage(): number {
+  if (!canUseLocalStorage()) return 100
+  try {
+    const raw = localStorage.getItem(BACKGROUND_IMAGE_OPACITY_KEY)
+    if (!raw) return 100
+    return normalizeBackgroundImageOpacity(raw)
+  } catch {
+    return 100
+  }
+}
+
+export function writeBackgroundImageOpacityToStorage(opacity: number): void {
+  if (!canUseLocalStorage()) return
+  try {
+    localStorage.setItem(BACKGROUND_IMAGE_OPACITY_KEY, String(normalizeBackgroundImageOpacity(opacity)))
   } catch { /* ignore */ }
 }
 

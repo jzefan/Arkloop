@@ -382,8 +382,6 @@ export const en: LocaleStrings = {
     titleSummarizerHint: 'Used to auto-generate conversation titles',
     imageGenerativeModel: 'Image Generative Model',
     imageGenerativeModelHint: 'Only configured models with image output are shown',
-    videoGenerativeModel: 'Video Generative Model',
-    videoGenerativeModelHint: 'Only configured models with video output are shown',
     spawnProfileLabel: 'Sub-agent Models',
     spawnProfileExplore: 'explore',
     spawnProfileTask: 'task',

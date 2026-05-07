@@ -21,15 +21,12 @@ var allowedProfiles = map[string]struct{}{
 	"task":    {},
 	"strong":  {},
 	"tool":    {},
-	"video":   {},
 }
 
 func profileConfigKey(name string) string {
 	switch strings.TrimSpace(name) {
 	case "image":
 		return "image_generative.model"
-	case "video":
-		return "video_generative.model"
 	default:
 		return "spawn.profile." + name
 	}
@@ -84,7 +81,7 @@ func spawnProfileEntry(
 			return
 		}
 		if _, ok := allowedProfiles[name]; !ok {
-			httpkit.WriteError(w, nethttp.StatusBadRequest, "validation.error", "profile must be one of: explore, image, task, strong, tool, video", traceID, nil)
+			httpkit.WriteError(w, nethttp.StatusBadRequest, "validation.error", "profile must be one of: explore, image, task, strong, tool", traceID, nil)
 			return
 		}
 
@@ -115,7 +112,7 @@ func listSpawnProfiles(
 		return
 	}
 
-	profiles := []string{"explore", "image", "task", "strong", "tool", "video"}
+	profiles := []string{"explore", "image", "task", "strong", "tool"}
 	result := make([]spawnProfileResponse, 0, len(profiles))
 
 	for _, name := range profiles {

@@ -2,13 +2,13 @@ import { spawn } from 'child_process'
 import { createRequire } from 'module'
 import { resolve, dirname } from 'path'
 import { mkdirSync } from 'fs'
-import { createServer } from 'net'
 import { fileURLToPath } from 'url'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const root = resolve(__dirname, '..')
 const webRoot = resolve(root, '..', 'web')
 const workspaceRoot = resolve(root, '..', '..', '..')
+const goCacheRoot = resolve(workspaceRoot, '.cache')
 const desktopBin = resolve(
   workspaceRoot,
   'src',
@@ -41,12 +41,12 @@ function runStep(command, args, options = {}) {
       shell: shouldUseShell(resolvedCommand),
       ...options,
     })
-    child.on('error', (error) => {
-      if (error?.code === 'ENOENT') {
+    child.on('error', (err) => {
+      if (err && err.code === 'ENOENT') {
         rejectPromise(new Error(`command not found: ${command}. Please install it and make sure it is available in PATH.`))
         return
       }
-      rejectPromise(error)
+      rejectPromise(err)
     })
     child.on('exit', (code) => {
       if (code === 0) {
@@ -70,62 +70,87 @@ async function waitForVite(url, timeoutMs = 30000) {
   throw new Error(`vite dev server not ready after ${timeoutMs}ms`)
 }
 
-function canListenOnPort(port) {
-  return new Promise((resolvePromise) => {
-    const server = createServer()
-    server.once('error', () => resolvePromise(false))
-    server.once('listening', () => {
-      server.close(() => resolvePromise(true))
-    })
-    server.listen(port, '127.0.0.1')
-  })
+function normalizeDevUrl(url) {
+  return url.endsWith('/') ? url.slice(0, -1) : url
 }
 
-async function findAvailablePort(startPort) {
-  for (let port = startPort; port < startPort + 20; port += 1) {
-    if (await canListenOnPort(port)) {
-      return port
+const ANSI_ESCAPE_PATTERN = /\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])/g
+
+function stripAnsi(value) {
+  return value.replace(ANSI_ESCAPE_PATTERN, '')
+}
+
+function parseViteDevUrl(output) {
+  const match = stripAnsi(output).match(/https?:\/\/(?:localhost|127\.0\.0\.1|\[::1\]):\d+\/?/)
+  return match ? normalizeDevUrl(match[0]) : null
+}
+
+function startViteDevServer() {
+  return new Promise((resolvePromise, rejectPromise) => {
+    const viteCommand = resolveCommand('pnpm')
+    const vite = spawn(viteCommand, ['exec', 'vite', '--port', '5173'], {
+      cwd: webRoot,
+      stdio: ['inherit', 'pipe', 'pipe'],
+      shell: shouldUseShell(viteCommand),
+      env: {
+        ...process.env,
+        ARKLOOP_API_PROXY_TARGET: 'http://127.0.0.1:19001',
+        ARKLOOP_DESKTOP_SHELL_DEV: 'true',
+      },
+    })
+
+    let settled = false
+    let outputBuffer = ''
+
+    const settle = (url) => {
+      if (settled) return
+      settled = true
+      resolvePromise({ vite, url })
     }
-  }
-  throw new Error(`no available vite port found from ${startPort}`)
+
+    const rejectStart = (error) => {
+      if (settled) return
+      settled = true
+      rejectPromise(error)
+    }
+
+    const handleOutput = (chunk, stream) => {
+      stream.write(chunk)
+      outputBuffer = `${outputBuffer}${chunk.toString()}`
+      const url = parseViteDevUrl(outputBuffer)
+      if (url) settle(url)
+      if (outputBuffer.length > 4096) {
+        outputBuffer = outputBuffer.slice(-4096)
+      }
+    }
+
+    vite.stdout.on('data', (chunk) => handleOutput(chunk, process.stdout))
+    vite.stderr.on('data', (chunk) => handleOutput(chunk, process.stderr))
+    vite.on('error', rejectStart)
+    vite.on('exit', (code) => {
+      if (settled) return
+      rejectStart(new Error(`vite exited with code ${code ?? 0}`))
+    })
+  })
 }
 
 async function main() {
   console.log('building desktop sidecar...')
   mkdirSync(resolve(desktopBin, '..'), { recursive: true })
-  const goCacheDir = resolve(workspaceRoot, '.cache', 'go-build')
-  const goModCacheDir = resolve(workspaceRoot, '.cache', 'go-mod')
-  mkdirSync(goCacheDir, { recursive: true })
-  mkdirSync(goModCacheDir, { recursive: true })
-  await runStep('go', ['build', '-tags', 'desktop', '-ldflags', '-extldflags=-Wl,-no_warn_duplicate_libraries', '-o', desktopBin, './src/services/desktop/cmd/desktop'], {
+  mkdirSync(resolve(goCacheRoot, 'go-build'), { recursive: true })
+  mkdirSync(resolve(goCacheRoot, 'go-mod'), { recursive: true })
+  const darwinLdflags = process.platform === 'darwin' ? ['-ldflags', '-extldflags=-Wl,-no_warn_duplicate_libraries'] : []
+  await runStep('go', ['build', '-tags', 'desktop', ...darwinLdflags, '-o', desktopBin, './src/services/desktop/cmd/desktop'], {
     cwd: workspaceRoot,
     env: {
       ...process.env,
-      GOCACHE: goCacheDir,
-      GOMODCACHE: goModCacheDir,
+      GOCACHE: resolve(goCacheRoot, 'go-build'),
+      GOMODCACHE: resolve(goCacheRoot, 'go-mod'),
     },
   })
 
-  const vitePort = await findAvailablePort(5173)
-  const viteUrl = `http://localhost:${vitePort}`
-
-  // Start Vite directly with sidecar proxy target, overriding .env.local
   console.log('starting vite dev server...')
-  const viteCommand = resolveCommand('pnpm')
-  const vite = spawn(viteCommand, ['exec', 'vite', '--port', String(vitePort), '--strictPort'], {
-    cwd: webRoot,
-    stdio: 'inherit',
-    shell: shouldUseShell(viteCommand),
-    env: {
-      ...process.env,
-      ARKLOOP_API_PROXY_TARGET: 'http://127.0.0.1:19001',
-    },
-  })
-
-  vite.on('error', (err) => {
-    console.error('vite failed to start:', err)
-    process.exit(1)
-  })
+  const { vite, url: viteUrl } = await startViteDevServer()
 
   console.log('waiting for vite dev server...')
   await waitForVite(viteUrl)

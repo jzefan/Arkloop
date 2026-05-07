@@ -527,17 +527,6 @@ var registry = []ToolMeta{
 			"Do not mention raw storage paths. Do not invent artifact keys. " +
 			"If the tool fails, explain the failure plainly instead of pretending the image exists.",
 	},
-	{
-		Name:      "video_generate",
-		Group:     GroupDocument,
-		Label:     "Generate video",
-		ShortDesc: "generate a video and save it as an artifact",
-		LLMDescription: "generate a video from a text prompt using the configured video model and save it as an artifact. " +
-			"You may optionally provide output options such as aspect_ratio, resolution, duration_seconds, fps, negative_prompt, and generate_audio when the user asks for them. " +
-			"Use when the user explicitly asks for video generation. " +
-			"After this tool succeeds, you MUST reference the returned artifact with [video](artifact:<key>) so the user can play it inline. " +
-			"If the tool fails, explain the failure plainly instead of pretending the video exists.",
-	},
 	// ── orchestration ──
 	{
 		Name:      "spawn_agent",

@@ -382,8 +382,6 @@ export const zhCN: LocaleStrings = {
     titleSummarizerHint: '用于自动生成对话标题',
     imageGenerativeModel: 'Image Generative 模型',
     imageGenerativeModelHint: '仅显示支持图片输出的已配置模型',
-    videoGenerativeModel: 'Video Generative 模型',
-    videoGenerativeModelHint: '仅显示支持视频输出的已配置模型',
     spawnProfileLabel: 'Sub-agent 模型',
     spawnProfileExplore: 'explore',
     spawnProfileTask: 'task',

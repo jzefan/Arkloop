@@ -583,6 +583,32 @@ func (r *ChannelMessageLedgerRepository) ListDueInboundBatchesByChannel(
 	dueBefore time.Time,
 	limit int,
 ) ([]ChannelInboundLedgerBatch, error) {
+	if limit <= 0 {
+		limit = channelInboundDefaultBatchLimit
+	}
+	batches, err := r.ListPendingInboundBatchesByChannel(ctx, channelID, limit)
+	if err != nil {
+		return nil, err
+	}
+	cutoff := dueBefore.UTC()
+	result := make([]ChannelInboundLedgerBatch, 0, limit)
+	for _, batch := range batches {
+		if batch.DueAt.After(cutoff) {
+			continue
+		}
+		result = append(result, batch)
+		if len(result) >= limit {
+			break
+		}
+	}
+	return result, nil
+}
+
+func (r *ChannelMessageLedgerRepository) ListPendingInboundBatchesByChannel(
+	ctx context.Context,
+	channelID uuid.UUID,
+	limit int,
+) ([]ChannelInboundLedgerBatch, error) {
 	if channelID == uuid.Nil {
 		return nil, fmt.Errorf("channel_message_ledger: channel_id must not be empty")
 	}
@@ -602,18 +628,10 @@ func (r *ChannelMessageLedgerRepository) ListDueInboundBatchesByChannel(
 		return nil, nil
 	}
 	sortInboundBatches(batches)
-	cutoff := dueBefore.UTC()
-	result := make([]ChannelInboundLedgerBatch, 0, limit)
-	for _, batch := range batches {
-		if batch.DueAt.After(cutoff) {
-			continue
-		}
-		result = append(result, batch)
-		if len(result) >= limit {
-			break
-		}
+	if len(batches) > limit {
+		batches = batches[:limit]
 	}
-	return result, nil
+	return batches, nil
 }
 
 func groupInboundBatches(channelID uuid.UUID, items []ChannelInboundLedgerEntry) []ChannelInboundLedgerBatch {

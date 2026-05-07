@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react'
 import { Check, Share2, Split, Terminal } from 'lucide-react'
-import type { MessageResponse } from '../../api'
+import type { AgentMessage } from '../../agent-ui'
 import type { WebSource, ArtifactRef, BrowserActionRef, WidgetRef } from '../../storage'
 import { WidgetBlock } from '../WidgetBlock'
 import { MarkdownRenderer } from '../MarkdownRenderer'
@@ -16,7 +16,7 @@ import { CopyIconButton } from '../CopyIconButton'
 import { ActionIconButton } from '../ActionIconButton'
 
 type Props = {
-  message: MessageResponse
+  message: AgentMessage
   /** 与 ChatPage 中「正在流式且为最后一条助手气泡」对齐；未分段正文用 */
   streamMarkdown?: boolean
   onFork?: () => void
@@ -167,7 +167,7 @@ export function AssistantActionBar({
               {webSources.slice(0, 3).map((s, i) => {
                 const domain = getDomain(s.url)
                 return (
-                  <img loading="lazy" decoding="async"
+                  <img
                     key={i}
                     src={`https://www.google.com/s2/favicons?domain=${domain}&sz=16`}
                     width={18}
@@ -261,7 +261,7 @@ export function AssistantMessage({
             webSources={webSources}
             artifacts={artifacts}
             accessToken={accessToken}
-            runId={message.run_id}
+            runId={message.streamId}
             onOpenDocument={onOpenDocument}
             typography={isWorkMode ? 'work' : 'default'}
             trimTrailingMargin

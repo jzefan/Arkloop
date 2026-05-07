@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"arkloop/services/api/internal/data"
+	"arkloop/services/shared/eventbus"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -248,8 +249,15 @@ func TestChannelInboundBurstRunnerScanSkipsFutureBatch(t *testing.T) {
 		messageRepo:  env.messageRepo,
 		pool:         env.pool,
 	}
-	if err := runner.scan(context.Background()); err != nil {
+	result, err := runner.scanPending(context.Background())
+	if err != nil {
 		t.Fatalf("runner scan: %v", err)
+	}
+	if !result.pending {
+		t.Fatal("expected scan to report pending future batch")
+	}
+	if result.nextDue == nil {
+		t.Fatal("expected scan to report next due time")
 	}
 
 	if got := countRows(t, env.pool, `SELECT COUNT(*) FROM runs`); got != 0 {
@@ -258,6 +266,66 @@ func TestChannelInboundBurstRunnerScanSkipsFutureBatch(t *testing.T) {
 	if got := countRows(t, env.pool, `SELECT COUNT(*) FROM jobs WHERE job_type = $1`, data.RunExecuteJobType); got != 0 {
 		t.Fatalf("run.execute jobs = %d, want 0", got)
 	}
+}
+
+func TestChannelInboundBurstScanDelay(t *testing.T) {
+	now := time.Now().UTC()
+	if _, ok := nextChannelInboundBurstScanDelay(channelInboundBurstScanResult{}, now); ok {
+		t.Fatal("expected no scan delay without pending work")
+	}
+
+	nextDue := now.Add(10 * time.Second)
+	delay, ok := nextChannelInboundBurstScanDelay(channelInboundBurstScanResult{pending: true, nextDue: &nextDue}, now)
+	if !ok {
+		t.Fatal("expected delay for future pending batch")
+	}
+	if delay != 10*time.Second {
+		t.Fatalf("delay = %s, want 10s", delay)
+	}
+
+	delay, ok = nextChannelInboundBurstScanDelay(channelInboundBurstScanResult{retry: true, nextDue: &nextDue}, now)
+	if !ok {
+		t.Fatal("expected retry delay")
+	}
+	if delay != channelInboundBurstRecoveryInterval {
+		t.Fatalf("retry delay = %s, want %s", delay, channelInboundBurstRecoveryInterval)
+	}
+}
+
+func TestCloseChannelInboundBurstSubscriptionSkipsAlreadyClosedSubscription(t *testing.T) {
+	sub := &channelInboundBurstTestSubscription{ch: make(chan eventbus.Message)}
+	close(sub.ch)
+
+	closeChannelInboundBurstSubscription(sub, true)
+
+	if sub.closeCalled {
+		t.Fatal("expected already closed subscription to be left alone")
+	}
+}
+
+func TestCloseChannelInboundBurstSubscriptionClosesOpenSubscription(t *testing.T) {
+	sub := &channelInboundBurstTestSubscription{ch: make(chan eventbus.Message)}
+
+	closeChannelInboundBurstSubscription(sub, false)
+
+	if !sub.closeCalled {
+		t.Fatal("expected open subscription to be closed")
+	}
+}
+
+type channelInboundBurstTestSubscription struct {
+	ch          chan eventbus.Message
+	closeCalled bool
+}
+
+func (s *channelInboundBurstTestSubscription) Channel() <-chan eventbus.Message {
+	return s.ch
+}
+
+func (s *channelInboundBurstTestSubscription) Close() error {
+	s.closeCalled = true
+	close(s.ch)
+	return nil
 }
 
 func countRows(t *testing.T, pool *pgxpool.Pool, query string, args ...any) int {

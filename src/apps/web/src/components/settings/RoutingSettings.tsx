@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import {
   listSpawnProfiles,
   listLlmProviders,
@@ -8,8 +8,9 @@ import {
 import type { SpawnProfile, LlmProvider } from '../../api'
 import { useLocale } from '../../contexts/LocaleContext'
 import { isLocalMode } from '@arkloop/shared/desktop'
+import { getAvailableCatalogFromAdvancedJson } from '@arkloop/shared/llm/available-catalog-advanced-json'
 import { SettingsModelDropdown } from './SettingsModelDropdown'
-import { GenerationModelSettings } from './GenerationModelSettings'
+import { ToolModelSettingControl } from './ToolModelSettingControl'
 
 type Props = {
   accessToken: string
@@ -17,9 +18,62 @@ type Props = {
 
 const PROFILE_NAMES = ['explore', 'task', 'strong'] as const
 
+function RoutingSection({
+  title,
+  description,
+  children,
+}: {
+  title: string
+  description?: string
+  children: ReactNode
+}) {
+  return (
+    <section className="flex flex-col gap-2.5">
+      <div>
+        <h3 className="text-sm font-semibold text-[var(--c-text-heading)]">{title}</h3>
+        {description && (
+          <p className="mt-1 text-xs leading-5 text-[var(--c-text-muted)]">{description}</p>
+        )}
+      </div>
+      {children}
+    </section>
+  )
+}
+
+function RoutingCard({ children }: { children: ReactNode }) {
+  return (
+    <div className="overflow-hidden rounded-xl border border-[var(--c-border-subtle)] bg-[var(--c-bg-menu)]">
+      {children}
+    </div>
+  )
+}
+
+function RoutingRow({
+  title,
+  description,
+  control,
+}: {
+  title: string
+  description?: ReactNode
+  control: ReactNode
+}) {
+  return (
+    <div className="grid gap-3 px-5 py-4 first:border-t-0 sm:grid-cols-[minmax(0,1fr)_minmax(220px,320px)] sm:items-center sm:gap-6 [&+&]:border-t [&+&]:border-[var(--c-border-subtle)]">
+      <div className="min-w-0">
+        <div className="text-sm font-medium text-[var(--c-text-primary)]">{title}</div>
+        {description && (
+          <div className="mt-1 text-xs leading-5 text-[var(--c-text-tertiary)]">{description}</div>
+        )}
+      </div>
+      <div className="min-w-0 sm:justify-self-end">{control}</div>
+    </div>
+  )
+}
+
 export function RoutingSettings({ accessToken }: Props) {
   const { t } = useLocale()
   const a = t.agentSettings
+  const ds = t.desktopSettings
   const [profiles, setProfiles] = useState<SpawnProfile[]>([])
   const [providers, setProviders] = useState<LlmProvider[]>([])
   const [saving, setSaving] = useState<string | null>(null)
@@ -37,6 +91,17 @@ export function RoutingSettings({ accessToken }: Props) {
       value: `${p.name}^${m.model}`,
       label: `${p.name} / ${m.model}`,
     })))
+  const imageModelOptions = providers
+    .flatMap(p => p.models
+      .filter((m) => {
+        const catalog = getAvailableCatalogFromAdvancedJson(m.advanced_json)
+        const outputModalities = Array.isArray(catalog?.output_modalities) ? catalog.output_modalities : []
+        return outputModalities.includes('image')
+      })
+      .map(m => ({
+        value: `${p.name}^${m.model}`,
+        label: `${p.name} / ${m.model}`,
+      })))
 
   const handleChange = async (name: string, value: string) => {
     setSaving(name)
@@ -58,51 +123,64 @@ export function RoutingSettings({ accessToken }: Props) {
     task:    { label: a.spawnProfileTask,    desc: a.spawnProfileTaskDesc    },
     strong:  { label: a.spawnProfileStrong,  desc: a.spawnProfileStrongDesc  },
   }
+  const imageProfile = profiles.find((p) => p.profile === 'image')
+  const imageModelValue = imageProfile?.resolved_model ?? ''
   return (
-    <div className="flex flex-col gap-4">
-      <div>
-        <h3 className="text-sm font-medium text-[var(--c-text-heading)]">
-          {a.spawnProfileTitle}
-        </h3>
-        <p className="mt-1 text-xs text-[var(--c-text-muted)]">
-          {a.spawnProfileSubtitle}
-        </p>
-      </div>
-
-      {PROFILE_NAMES.map(name => {
-        const profile = profiles.find(p => p.profile === name)
-        const currentValue = profile?.has_override ? profile.resolved_model : ''
-        const meta = profileMeta[name]
-        return (
-          <div
-            key={name}
-            className="flex items-center justify-between gap-4 rounded-xl px-5 py-4"
-            style={{ border: '0.5px solid var(--c-border-subtle)', background: 'var(--c-bg-menu)' }}
-          >
-            <div className="min-w-0 shrink-0">
-              <span className="text-sm font-medium text-[var(--c-text-primary)]">
-                {meta.label}
-              </span>
-              <p className="mt-0.5 text-xs text-[var(--c-text-muted)]">
-                {meta.desc}
-              </p>
-            </div>
-            <div className="min-w-0 flex-1" style={{ maxWidth: 320 }}>
-              <SettingsModelDropdown
-                value={currentValue}
-                options={modelOptions}
-                placeholder={subAgentPlaceholder}
-                disabled={saving === name}
-                onChange={v => handleChange(name, v)}
+    <div className="mx-auto flex w-full max-w-[1040px] flex-col gap-7 pb-8">
+      <RoutingSection title={a.spawnProfileTitle} description={a.spawnProfileSubtitle}>
+        <RoutingCard>
+          {PROFILE_NAMES.map(name => {
+            const profile = profiles.find(p => p.profile === name)
+            const currentValue = profile?.has_override ? profile.resolved_model : ''
+            const meta = profileMeta[name]
+            return (
+              <RoutingRow
+                key={name}
+                title={meta.label}
+                description={meta.desc}
+                control={(
+                  <SettingsModelDropdown
+                    value={currentValue}
+                    options={modelOptions}
+                    placeholder={subAgentPlaceholder}
+                    disabled={saving === name}
+                    onChange={v => handleChange(name, v)}
+                  />
+                )}
               />
-            </div>
-          </div>
-        )
-      })}
+            )
+          })}
+        </RoutingCard>
+      </RoutingSection>
 
-      <div className="pt-2">
-        <GenerationModelSettings accessToken={accessToken} />
-      </div>
+      <RoutingSection title={ds.toolModel} description={ds.toolModelDesc}>
+        <RoutingCard>
+          <RoutingRow
+            title={ds.toolModel}
+            control={(
+              <ToolModelSettingControl accessToken={accessToken} />
+            )}
+          />
+        </RoutingCard>
+      </RoutingSection>
+
+      <RoutingSection title={a.imageGenerativeTitle} description={a.imageGenerativeDesc}>
+        <RoutingCard>
+          <RoutingRow
+            title={a.imageGenerativeTitle}
+            description={a.imageGenerativeDesc}
+            control={(
+              <SettingsModelDropdown
+                value={imageModelValue}
+                options={imageModelOptions}
+                placeholder={a.imageGenerativeUnset}
+                disabled={saving === 'image'}
+                onChange={v => handleChange('image', v)}
+              />
+            )}
+          />
+        </RoutingCard>
+      </RoutingSection>
     </div>
   )
 }

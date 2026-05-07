@@ -203,7 +203,7 @@ func TestComposeDesktopEngineRegistersArtifactTools(t *testing.T) {
 		t.Fatalf("compose desktop engine: %v", err)
 	}
 
-	for _, toolName := range []string{"visualize_read_me", "artifact_guidelines", "show_widget", "create_artifact", "document_write", "image_generate", "video_generate"} {
+	for _, toolName := range []string{"visualize_read_me", "artifact_guidelines", "show_widget", "create_artifact", "document_write", "image_generate"} {
 		if _, ok := engine.toolRegistry.Get(toolName); !ok {
 			t.Fatalf("expected tool %s to be registered", toolName)
 		}
@@ -216,7 +216,7 @@ func TestComposeDesktopEngineRegistersArtifactTools(t *testing.T) {
 	for _, spec := range engine.allLlmSpecs {
 		specNames[spec.Name] = struct{}{}
 	}
-	for _, toolName := range []string{"visualize_read_me", "artifact_guidelines", "show_widget", "create_artifact", "document_write", "image_generate", "video_generate"} {
+	for _, toolName := range []string{"visualize_read_me", "artifact_guidelines", "show_widget", "create_artifact", "document_write", "image_generate"} {
 		if _, ok := specNames[toolName]; !ok {
 			t.Fatalf("expected tool spec %s in desktop llm specs", toolName)
 		}
@@ -276,6 +276,34 @@ func TestDesktopPromptInjectionResolverReadsPlatformSettings(t *testing.T) {
 	}
 	if got != "false" {
 		t.Fatalf("expected resolver to read sqlite platform_settings, got %q", got)
+	}
+}
+
+func TestResolveDesktopLLMRetryReadsPlatformSettings(t *testing.T) {
+	t.Setenv("ARKLOOP_LLM_RETRY_MAX_ATTEMPTS", "")
+	t.Setenv("ARKLOOP_LLM_RETRY_BASE_DELAY_MS", "")
+
+	ctx := context.Background()
+	db := openDesktopPromptInjectionTestDB(t)
+	mustExecDesktopSQL(t, db, `CREATE TABLE IF NOT EXISTS platform_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)`)
+
+	maxAttempts, baseDelayMs := resolveDesktopLLMRetry(ctx, db)
+	if maxAttempts != 3 || baseDelayMs != 1000 {
+		t.Fatalf("default retry config = (%d, %d), want (3, 1000)", maxAttempts, baseDelayMs)
+	}
+
+	for key, value := range map[string]string{
+		"llm.retry.max_attempts":  "2",
+		"llm.retry.base_delay_ms": "250",
+	} {
+		if _, err := db.Exec(ctx, `INSERT INTO platform_settings (key, value) VALUES ($1, $2)`, key, value); err != nil {
+			t.Fatalf("insert platform setting %s: %v", key, err)
+		}
+	}
+
+	maxAttempts, baseDelayMs = resolveDesktopLLMRetry(ctx, db)
+	if maxAttempts != 2 || baseDelayMs != 250 {
+		t.Fatalf("stored retry config = (%d, %d), want (2, 250)", maxAttempts, baseDelayMs)
 	}
 }
 
@@ -1600,6 +1628,46 @@ func TestDesktopPersonaResolutionRestoresPlanModePromptAfterReset(t *testing.T) 
 	}
 	if !strings.Contains(gotRuntimePrompt, "plans/"+threadID.String()+".md") {
 		t.Fatalf("expected plan path in runtime prompt, got %q", gotRuntimePrompt)
+	}
+}
+
+func TestDesktopPersonaResolutionRestoresLearningModePromptAfterReset(t *testing.T) {
+	reg := personas.NewRegistry()
+	reg.Set(personas.Definition{
+		ID:             "test-persona",
+		Version:        "1",
+		Title:          "Test Persona",
+		SoulMD:         "persona soul",
+		PromptMD:       "system prompt",
+		ExecutorType:   "agent.simple",
+		ExecutorConfig: map[string]any{},
+	})
+	mw := desktopPersonaResolution(nil, func() *personas.Registry { return reg }, data.DesktopRunsRepository{}, data.DesktopRunEventsRepository{})
+
+	rc := &pipeline.RunContext{
+		InputJSON: map[string]any{
+			"persona_id":            "test-persona",
+			"learning_mode_enabled": true,
+		},
+	}
+	pipeline.ApplyLearningMode(rc)
+
+	var gotRuntimePrompt string
+	h := pipeline.Build([]pipeline.RunMiddleware{mw}, func(_ context.Context, got *pipeline.RunContext) error {
+		gotRuntimePrompt = got.RuntimePrompt
+		return nil
+	})
+	if err := h(context.Background(), rc); err != nil {
+		t.Fatalf("desktopPersonaResolution failed: %v", err)
+	}
+	if !rc.LearningModeEnabled {
+		t.Fatal("expected learning mode to remain active")
+	}
+	if !strings.Contains(gotRuntimePrompt, "学习辅导已在当前 thread 启用") {
+		t.Fatalf("expected learning prompt after desktop persona reset, got %q", gotRuntimePrompt)
+	}
+	if !strings.Contains(gotRuntimePrompt, "不替换当前 persona") {
+		t.Fatalf("expected persona overlay boundary in desktop runtime prompt, got %q", gotRuntimePrompt)
 	}
 }
 

@@ -83,8 +83,6 @@ type createRunRequest struct {
 	WorkDir         *string `json:"work_dir"`
 	ReasoningMode   *string `json:"reasoning_mode"`
 	ResumeFromRunID *string `json:"resume_from_run_id"`
-	GenerationTask  *string `json:"generation_task"`
-	GenerationModel *string `json:"generation_model"`
 }
 
 type createRunResponse struct {
@@ -159,6 +157,13 @@ func setRunCollaborationMode(startedData map[string]any, jobData map[string]any,
 	if jobData != nil {
 		jobData["collaboration_mode"] = mode
 		jobData["collaboration_mode_revision"] = revision
+	}
+}
+
+func setRunLearningMode(startedData map[string]any, jobData map[string]any, enabled bool) {
+	startedData["learning_mode_enabled"] = enabled
+	if jobData != nil {
+		jobData["learning_mode_enabled"] = enabled
 	}
 }
 
@@ -299,20 +304,6 @@ func createThreadRun(
 			}
 			requestedResumeFromRunID = &resumeFromRunID
 		}
-		if body != nil && body.GenerationTask != nil {
-			generationTask := strings.ToLower(strings.TrimSpace(*body.GenerationTask))
-			if generationTask != "image" && generationTask != "video" {
-				httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "request validation failed", traceID, nil)
-				return
-			}
-			startedData["generation_task"] = generationTask
-		}
-		if body != nil && body.GenerationModel != nil {
-			generationModel := strings.TrimSpace(*body.GenerationModel)
-			if generationModel != "" {
-				startedData["generation_model"] = generationModel
-			}
-		}
 		thread, err := threadRepo.GetByID(r.Context(), threadID)
 		if err != nil {
 			writeInternalError(w, traceID, err)
@@ -404,6 +395,7 @@ func createThreadRun(
 		thread = &currentThread
 		jobData := map[string]any{"source": "api"}
 		setRunCollaborationMode(startedData, jobData, collaborationMode, collaborationModeRevision)
+		setRunLearningMode(startedData, jobData, thread.LearningModeEnabled)
 
 		var resumeFromRunID *uuid.UUID
 		if requestedResumeFromRunID != nil {

@@ -6,6 +6,8 @@ import type {
   AppConfig,
   ConnectionMode,
   ConnectorsConfig,
+  CloseWindowBehavior,
+  DesktopPreferencesConfig,
   FetchConnectorConfig,
   FetchProvider,
   LocalConfig,
@@ -17,8 +19,8 @@ import type {
   OpenVikingDesktopConfig,
   SearchConnectorConfig,
   SearchProvider,
+  StartupOpenMode,
   VoiceConfig,
-  WorkspaceConfig,
 } from './types'
 
 const CONFIG_DIR = path.join(os.homedir(), '.arkloop')
@@ -78,8 +80,8 @@ function normalizeFetchProvider(p: unknown): FetchProvider {
 }
 
 function normalizeSearchProvider(p: unknown): SearchProvider {
-  if (p === 'browser') return 'duckduckgo'
-  if (p === 'none' || p === 'tavily' || p === 'searxng' || p === 'duckduckgo') return p
+  if (p === 'browser' || p === 'duckduckgo') return 'basic'
+  if (p === 'none' || p === 'basic' || p === 'tavily' || p === 'searxng') return p
   return DEFAULT_CONFIG.connectors.search.provider
 }
 
@@ -203,10 +205,23 @@ function normalizeNetwork(raw: unknown): NetworkConfig {
   }
 }
 
-function normalizeWorkspace(raw: unknown): WorkspaceConfig {
-  const r = (raw && typeof raw === 'object') ? raw as Partial<WorkspaceConfig> : {}
+function normalizeStartupOpenMode(value: unknown): StartupOpenMode {
+  return value === 'home' ? 'home' : 'last-workspace'
+}
+
+function normalizeCloseBehavior(value: unknown): CloseWindowBehavior {
+  return value === 'quit' ? 'quit' : 'keep-in-background'
+}
+
+function normalizeDesktopPreferences(raw: unknown): DesktopPreferencesConfig {
+  const r = (raw && typeof raw === 'object') ? raw as Partial<DesktopPreferencesConfig> : {}
   return {
-    ...(typeof r.root === 'string' && r.root.trim() ? { root: path.resolve(r.root.trim()) } : {}),
+    startupOpen: normalizeStartupOpenMode(r.startupOpen),
+    closeBehavior: normalizeCloseBehavior(r.closeBehavior),
+    launchAtLogin: r.launchAtLogin === true,
+    desktopNotifications: r.desktopNotifications === false ? false : true,
+    productUpdateNotifications: r.productUpdateNotifications === false ? false : true,
+    keepScreenAwake: r.keepScreenAwake === true,
   }
 }
 
@@ -236,7 +251,7 @@ export function normalizeConfig(config: Partial<AppConfig> | null | undefined): 
     connectors: normalizeConnectors(parsed.connectors),
     memory: normalizeMemory(parsed.memory),
     network: normalizeNetwork(parsed.network),
-    workspace: normalizeWorkspace(parsed.workspace),
+    desktop: normalizeDesktopPreferences(parsed.desktop),
     voice: normalizeVoice(parsed.voice),
   }
 }

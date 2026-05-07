@@ -18,7 +18,7 @@ func (rc *RunContext) ResolveImageGenerateGatewayConfig(ctx context.Context) (ll
 		return llm.ResolvedGatewayConfig{}, "", "", fmt.Errorf("image generation route not initialized")
 	}
 
-	cfg, err := ResolveGatewayConfigFromSelectedRoute(*selected, false, rc.LlmMaxResponseBytes)
+	cfg, err := ResolveGatewayConfigFromSelectedRouteForRequest(ctx, *selected, false, rc.LlmMaxResponseBytes)
 	if err != nil {
 		return llm.ResolvedGatewayConfig{}, "", "", err
 	}

@@ -252,7 +252,7 @@ export function CitationBadge({ indices }: Props) {
             }}
           >
             <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '5px' }}>
-              <img loading="lazy" decoding="async"
+              <img
                 src={`https://www.google.com/s2/favicons?domain=${currentDomain}&sz=16`}
                 width={14}
                 height={14}

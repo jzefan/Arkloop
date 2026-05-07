@@ -20,6 +20,7 @@ func TestNormalizeBaseURL(t *testing.T) {
 		{name: "userinfo denied", raw: "https://user:pass@example.com/v1", wantReason: "userinfo_denied"},
 		{name: "query denied", raw: "https://example.com/v1?q=1", wantReason: "query_denied"},
 		{name: "fragment denied", raw: "https://example.com/v1#frag", wantReason: "fragment_denied"},
+		{name: "unsupported scheme denied", raw: "ftp://example.com/v1", wantReason: "unsupported_scheme"},
 		{name: "private ip allowed", raw: "https://10.0.0.1/v1", want: "https://10.0.0.1/v1"},
 		{name: "fake ip allowed", raw: "https://198.18.0.1/v1", want: "https://198.18.0.1/v1"},
 		{name: "localhost allowed", raw: "https://localhost:8443/v1", want: "https://localhost:8443/v1"},
@@ -45,7 +46,7 @@ func TestNormalizeBaseURL(t *testing.T) {
 }
 
 func TestNormalizeBaseURLTrustFakeIP(t *testing.T) {
-	policy := Policy{TrustFakeIP: true}
+	policy := Policy{ProtectionEnabled: true, TrustFakeIP: true}
 	got, err := policy.NormalizeBaseURL("https://198.18.0.1/v1/")
 	if err != nil {
 		t.Fatalf("NormalizeBaseURL() error = %v", err)
@@ -55,8 +56,57 @@ func TestNormalizeBaseURLTrustFakeIP(t *testing.T) {
 	}
 }
 
-func TestValidateRequestURL(t *testing.T) {
+func TestNormalizeBaseURLUsesSafetyChecksWhenEnabled(t *testing.T) {
+	policy := Policy{ProtectionEnabled: true}
+	assertDeniedReason(t, mustNormalizeBaseURLError(policy, "http://example.com/v1"), "insecure_scheme_denied")
+	assertDeniedReason(t, mustNormalizeBaseURLError(policy, "https://10.0.0.1/v1"), "private_ip_denied")
+	assertDeniedReason(t, mustNormalizeBaseURLError(policy, "https://localhost:8443/v1"), "localhost_denied")
+}
+
+func TestValidateRequestURLSkipsSafetyChecksByDefault(t *testing.T) {
 	policy := Policy{}
+	tests := []struct {
+		name string
+		raw  string
+	}{
+		{name: "public http", raw: "http://example.com/search"},
+		{name: "private https", raw: "https://10.0.0.1/v1/models"},
+		{name: "localhost https", raw: "https://localhost:8443/v1/models"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if err := policy.ValidateRequestURL(tt.raw); err != nil {
+				t.Fatalf("ValidateRequestURL() error = %v", err)
+			}
+		})
+	}
+	assertDeniedReason(t, policy.ValidateRequestURL("ftp://example.com/file"), "unsupported_scheme")
+}
+
+func TestValidateRequestURLUsesSafetyChecksWhenEnabled(t *testing.T) {
+	policy := Policy{ProtectionEnabled: true}
+	assertDeniedReason(t, policy.ValidateRequestURL("http://example.com/v1/models"), "insecure_scheme_denied")
+	assertDeniedReason(t, policy.ValidateRequestURL("https://10.0.0.1/v1/models"), "private_ip_denied")
+}
+
+func TestDefaultPolicyReadsProtectionEnabledEnv(t *testing.T) {
+	t.Setenv(ProtectionEnabledEnv, "true")
+	policy := DefaultPolicy()
+	if !policy.ProtectionEnabled {
+		t.Fatal("expected ProtectionEnabled to be enabled from env")
+	}
+}
+
+func TestDefaultPolicyDisablesProtectionByDefault(t *testing.T) {
+	t.Setenv(ProtectionEnabledEnv, "")
+	policy := DefaultPolicy()
+	if policy.ProtectionEnabled {
+		t.Fatal("expected ProtectionEnabled to be disabled by default")
+	}
+}
+
+func TestValidateRequestURL(t *testing.T) {
+	policy := Policy{ProtectionEnabled: true}
 	tests := []struct {
 		name       string
 		raw        string
@@ -83,7 +133,7 @@ func TestValidateRequestURL(t *testing.T) {
 }
 
 func TestEnsureIPAllowed(t *testing.T) {
-	policy := Policy{}
+	policy := Policy{ProtectionEnabled: true}
 	tests := []struct {
 		ip      string
 		wantErr bool
@@ -115,7 +165,7 @@ func TestEnsureIPAllowed(t *testing.T) {
 }
 
 func TestEnsureIPAllowedTrustFakeIP(t *testing.T) {
-	policy := Policy{TrustFakeIP: true}
+	policy := Policy{ProtectionEnabled: true, TrustFakeIP: true}
 	if err := policy.EnsureIPAllowed(netip.MustParseAddr("198.18.0.1")); err != nil {
 		t.Fatalf("EnsureIPAllowed() error = %v", err)
 	}
@@ -130,47 +180,8 @@ func TestDefaultPolicyReadsTrustFakeIPEnv(t *testing.T) {
 	}
 }
 
-func TestDialTargetForResolvedHostUsesOriginalDomainForTrustedFakeIP(t *testing.T) {
-	policy := Policy{TrustFakeIP: true}
-	got := policy.dialTargetForResolvedHost(
-		"zenmux.ai:443",
-		"zenmux.ai",
-		"443",
-		[]netip.Addr{netip.MustParseAddr("198.18.4.178")},
-	)
-	if got != "zenmux.ai:443" {
-		t.Fatalf("dialTargetForResolvedHost() = %q, want original host", got)
-	}
-}
-
-func TestDialTargetForResolvedHostKeepsVerifiedIPForNormalDNS(t *testing.T) {
-	policy := Policy{TrustFakeIP: true}
-	got := policy.dialTargetForResolvedHost(
-		"example.com:443",
-		"example.com",
-		"443",
-		[]netip.Addr{netip.MustParseAddr("93.184.216.34")},
-	)
-	if got != "93.184.216.34:443" {
-		t.Fatalf("dialTargetForResolvedHost() = %q, want verified IP", got)
-	}
-}
-
-func TestDialTargetForResolvedHostKeepsLiteralFakeIP(t *testing.T) {
-	policy := Policy{TrustFakeIP: true}
-	got := policy.dialTargetForResolvedHost(
-		"198.18.4.178:443",
-		"198.18.4.178",
-		"443",
-		[]netip.Addr{netip.MustParseAddr("198.18.4.178")},
-	)
-	if got != "198.18.4.178:443" {
-		t.Fatalf("dialTargetForResolvedHost() = %q, want literal IP", got)
-	}
-}
-
 func TestValidateURLLoopbackHTTPRequiresExplicitLoopbackHost(t *testing.T) {
-	policy := Policy{AllowLoopbackHTTP: true}
+	policy := Policy{ProtectionEnabled: true, AllowLoopbackHTTP: true}
 	if err := policy.ValidateRequestURL("http://localhost:3000/api"); err != nil {
 		t.Fatalf("ValidateRequestURL() error = %v", err)
 	}
@@ -201,6 +212,11 @@ func assertDeniedReason(t *testing.T, err error, want string) {
 	if denied.Reason != want {
 		t.Fatalf("Reason = %q, want %q", denied.Reason, want)
 	}
+}
+
+func mustNormalizeBaseURLError(policy Policy, raw string) error {
+	_, err := policy.NormalizeBaseURL(raw)
+	return err
 }
 
 func TestNormalizeInternalBaseURL(t *testing.T) {

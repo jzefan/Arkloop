@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useCallback, type CSSProperties } from 'react'
 import { Pencil, Paperclip } from 'lucide-react'
-import type { MessageResponse } from '../../api'
+import type { AgentMessage } from '../../agent-ui'
 import type { ArtifactRef } from '../../storage'
 import { extractLegacyFilesFromContent, isFilePart, isImagePart, isPastedFile, messageAttachmentParts, messageTextContent } from '../../messageContent'
 import { useLocale } from '../../contexts/LocaleContext'
@@ -19,8 +19,17 @@ import {
   USER_TEXT_FADE_HEIGHT,
 } from './utils'
 
+function attachmentArtifact(part: { attachment: { key: string; filename: string; mediaType: string; size: number } }): ArtifactRef {
+  return {
+    key: part.attachment.key,
+    filename: part.attachment.filename,
+    mime_type: part.attachment.mediaType,
+    size: part.attachment.size,
+  }
+}
+
 type Props = {
-  message: MessageResponse
+  message: AgentMessage
   animateEnter?: boolean
   onEnterAnimationEnd?: () => void
   onRetry?: () => void
@@ -270,13 +279,13 @@ export function UserMessage({ message, onRetry, onEdit, accessToken, animateEnte
             {imageAttachments.map((part) => (
               <ImageThumbnailCard
                 key={part.attachment.key}
-                artifact={part.attachment as ArtifactRef}
+                artifact={attachmentArtifact(part)}
                 accessToken={accessToken}
                 pathPrefix="/v1/attachments"
               />
             ))}
             {pastedAttachments.map((part) => {
-              const fullText = part.extracted_text || ''
+              const fullText = part.extractedText || ''
               const preview = fullText.split('\n').slice(0, 4).join('\n')
               return (
                 <PastedBubbleCard
@@ -294,7 +303,7 @@ export function UserMessage({ message, onRetry, onEdit, accessToken, animateEnte
             {fileAttachments.map((part) => (
               <ArtifactDownload
                 key={part.attachment.key}
-                artifact={part.attachment as ArtifactRef}
+                artifact={attachmentArtifact(part)}
                 accessToken={accessToken}
                 pathPrefix="/v1/attachments"
               />
@@ -430,7 +439,7 @@ export function UserMessage({ message, onRetry, onEdit, accessToken, animateEnte
             <Pencil size={16} />
           </ActionIconButton>
           <div style={{ marginLeft: '12px', marginBottom: '0px' }}>
-            <MessageDate createdAt={message.created_at} isWorkMode={isWorkMode} />
+            <MessageDate createdAt={message.createdAt} isWorkMode={isWorkMode} />
           </div>
         </div>
       </div>

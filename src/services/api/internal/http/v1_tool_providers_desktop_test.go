@@ -131,7 +131,7 @@ func TestDesktopToolProvidersListActivateAndConfigWebSearch(t *testing.T) {
 		ProjectRepo:             projectRepo,
 	})
 
-	token := auth.DesktopToken()
+	token := issueDesktopLocalSessionAccessToken(t, handler)
 	authH := map[string]string{"Authorization": "Bearer " + token}
 
 	rec := httptest.NewRecorder()
@@ -171,7 +171,7 @@ func TestDesktopToolProvidersListActivateAndConfigWebSearch(t *testing.T) {
 		return w
 	}
 
-	act := put("/v1/tool-providers/web_search/web_search.duckduckgo/activate", nil)
+	act := put("/v1/tool-providers/web_search/web_search.basic/activate", nil)
 	if act.Code != nethttp.StatusNoContent {
 		t.Fatalf("activate: %d %s", act.Code, act.Body.String())
 	}
@@ -181,7 +181,7 @@ func TestDesktopToolProvidersListActivateAndConfigWebSearch(t *testing.T) {
 		"region":  "global",
 		"profile": "desktop",
 	}
-	cfgResp := put("/v1/tool-providers/web_search/web_search.duckduckgo/config", cfgBody)
+	cfgResp := put("/v1/tool-providers/web_search/web_search.basic/config", cfgBody)
 	if cfgResp.Code != nethttp.StatusNoContent {
 		t.Fatalf("config: %d %s", cfgResp.Code, cfgResp.Body.String())
 	}
@@ -206,12 +206,12 @@ func TestDesktopToolProvidersListActivateAndConfigWebSearch(t *testing.T) {
 			continue
 		}
 		for _, p := range g.Providers {
-			if p.ProviderName != "web_search.duckduckgo" {
+			if p.ProviderName != "web_search.basic" {
 				continue
 			}
 			found = true
 			if !p.IsActive {
-				t.Fatal("expected web_search.duckduckgo active")
+				t.Fatal("expected web_search.basic active")
 			}
 			if p.RuntimeState != "ready" {
 				t.Fatalf("expected runtime_state=ready, got %q", p.RuntimeState)
@@ -238,7 +238,7 @@ func TestDesktopToolProvidersListActivateAndConfigWebSearch(t *testing.T) {
 		}
 	}
 	if !found {
-		t.Fatal("web_search.duckduckgo not in list")
+		t.Fatal("web_search.basic not in list")
 	}
 }
 
@@ -336,7 +336,7 @@ func TestDesktopToolProvidersListMemoryLocalRuntime(t *testing.T) {
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(nethttp.MethodGet, "/v1/tool-providers", nil)
-	req.Header.Set("Authorization", "Bearer "+auth.DesktopToken())
+	setDesktopTestAuthHeader(t, handler, req)
 	handler.ServeHTTP(rec, req)
 	if rec.Code != nethttp.StatusOK {
 		t.Fatalf("list status %d: %s", rec.Code, rec.Body.String())
@@ -477,20 +477,20 @@ func TestDesktopToolProvidersListShowsOnlySelectedSearchProviderRunning(t *testi
 		}
 		r := httptest.NewRequest(nethttp.MethodPut, path, rdr)
 		r.Header.Set("Content-Type", "application/json")
-		r.Header.Set("Authorization", "Bearer "+auth.DesktopToken())
+		setDesktopTestAuthHeader(t, handler, r)
 		w := httptest.NewRecorder()
 		handler.ServeHTTP(w, r)
 		return w
 	}
 
-	act := put("/v1/tool-providers/web_search/web_search.duckduckgo/activate", nil)
+	act := put("/v1/tool-providers/web_search/web_search.basic/activate", nil)
 	if act.Code != nethttp.StatusNoContent {
-		t.Fatalf("activate duckduckgo: %d %s", act.Code, act.Body.String())
+		t.Fatalf("activate basic search: %d %s", act.Code, act.Body.String())
 	}
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(nethttp.MethodGet, "/v1/tool-providers", nil)
-	req.Header.Set("Authorization", "Bearer "+auth.DesktopToken())
+	setDesktopTestAuthHeader(t, handler, req)
 	handler.ServeHTTP(rec, req)
 	if rec.Code != nethttp.StatusOK {
 		t.Fatalf("list status %d: %s", rec.Code, rec.Body.String())
@@ -501,7 +501,7 @@ func TestDesktopToolProvidersListShowsOnlySelectedSearchProviderRunning(t *testi
 		t.Fatalf("decode list: %v", err)
 	}
 
-	var duckduckgoFound bool
+	var basicFound bool
 	var tavilyFound bool
 	for _, group := range payload.Groups {
 		if group.GroupName != "web_search" {
@@ -509,10 +509,10 @@ func TestDesktopToolProvidersListShowsOnlySelectedSearchProviderRunning(t *testi
 		}
 		for _, provider := range group.Providers {
 			switch provider.ProviderName {
-			case "web_search.duckduckgo":
-				duckduckgoFound = true
+			case "web_search.basic":
+				basicFound = true
 				if provider.RuntimeStatus != "available" {
-					t.Fatalf("expected duckduckgo available, got %q", provider.RuntimeStatus)
+					t.Fatalf("expected basic search available, got %q", provider.RuntimeStatus)
 				}
 			case "web_search.tavily":
 				tavilyFound = true
@@ -522,8 +522,8 @@ func TestDesktopToolProvidersListShowsOnlySelectedSearchProviderRunning(t *testi
 			}
 		}
 	}
-	if !duckduckgoFound || !tavilyFound {
-		t.Fatalf("expected both duckduckgo and tavily in payload: duck=%v tavily=%v", duckduckgoFound, tavilyFound)
+	if !basicFound || !tavilyFound {
+		t.Fatalf("expected both basic and tavily in payload: basic=%v tavily=%v", basicFound, tavilyFound)
 	}
 }
 
@@ -621,7 +621,7 @@ func TestDesktopToolProvidersListSeparatesDockerAndFirecrackerRuntime(t *testing
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(nethttp.MethodGet, "/v1/tool-providers", nil)
-	req.Header.Set("Authorization", "Bearer "+auth.DesktopToken())
+	setDesktopTestAuthHeader(t, handler, req)
 	handler.ServeHTTP(rec, req)
 	if rec.Code != nethttp.StatusOK {
 		t.Fatalf("list status %d: %s", rec.Code, rec.Body.String())

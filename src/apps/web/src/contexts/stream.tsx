@@ -22,7 +22,7 @@ import {
   requestAssistantTurnThinkingBreak as requestThinkingBreak,
   snapshotAssistantTurn,
 } from '../assistantTurnSegments'
-import type { RunEvent } from '../sse'
+import type { AgentUIEvent } from '../agent-ui'
 
 export type Segment = {
   segmentId: string
@@ -68,7 +68,7 @@ interface StreamContextValue {
   setTopLevelFileOps: React.Dispatch<React.SetStateAction<FileOpRef[]>>
   addTopLevelWebFetch: (fetch: WebFetchRef) => void
   setTopLevelWebFetches: React.Dispatch<React.SetStateAction<WebFetchRef[]>>
-  foldAssistantTurnEvent: (event: RunEvent) => void
+  foldAssistantTurnEvent: (event: AgentUIEvent) => void
   bumpSnapshot: () => void
   resetLiveState: () => void
   setWorkTodos: React.Dispatch<React.SetStateAction<Array<{ id: string; content: string; activeForm?: string; status: string }>>>
@@ -173,7 +173,7 @@ export function StreamProvider({ children }: { children: ReactNode }) {
     setTopLevelWebFetches((prev) => [...prev, fetch])
   }, [])
 
-  const foldAssistantTurnEvent = useCallback((event: RunEvent) => {
+  const foldAssistantTurnEvent = useCallback((event: AgentUIEvent) => {
     foldEvent(assistantTurnFoldStateRef.current, event)
   }, [])
 

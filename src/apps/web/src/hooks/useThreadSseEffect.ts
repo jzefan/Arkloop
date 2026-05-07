@@ -10,14 +10,13 @@ import { useRunLifecycle } from '../contexts/run-lifecycle'
 import { useStream } from '../contexts/stream'
 import { useThreadList } from '../contexts/thread-list'
 import { useRunTransition, type TerminalRunCache } from './useRunTransition'
-import { SSEApiError } from '../sse'
 import {
   applyCodeExecutionToolCall,
   applyCodeExecutionToolResult,
   applyTerminalDelta,
   patchCodeExecutionList,
   findAssistantMessageForRun,
-  selectFreshRunEvents,
+  selectFreshAgentEvents,
   applyBrowserToolCall,
   applyBrowserToolResult,
   applySubAgentToolCall,
@@ -29,29 +28,38 @@ import {
   isWebFetchToolName,
   extractArtifacts,
   firstVisibleCodeExecutionToolCallIndex,
-} from '../runEventProcessing'
+} from '../agentEventProcessing'
 import {
   assistantTurnPlainText,
   foldAssistantTurnEvent,
   requestAssistantTurnThinkingBreak,
 } from '../assistantTurnSegments'
 import {
-  applyRunEventToWebSearchSteps,
+  applyAgentEventToWebSearchSteps,
   isWebSearchToolName,
   webSearchSourcesFromResult,
-} from '../webSearchTimelineFromRunEvent'
+} from '../webSearchTimelineFromAgentEvent'
 import {
-  isTerminalRunEventType,
-  buildFrozenAssistantTurnFromRunEvents,
+  isTerminalAgentEventType,
+  buildFrozenAssistantTurnFromAgentEvents,
   finalizeSearchSteps,
   hasRecoverableRunOutput,
 } from '../lib/chat-helpers'
 import { extractPartialArtifactFields, extractPartialWidgetFields } from '../components/ArtifactStreamBlock'
-import type { MsgRunEvent } from '../storage'
-import { getInjectionBlockMessage, shouldSuppressLiveRunEventAfterInjectionBlock } from '../liveRunSecurity'
+import type { MessageAgentEvent } from '../storage'
+import { getInjectionBlockMessage, shouldSuppressLiveAgentEventAfterInjectionBlock } from '../liveRunSecurity'
 import type { RequestedSchema } from '../userInputTypes'
 import { noteShowWidgetDelta } from '../streamDebug'
-import type { MessageResponse } from '../api'
+import {
+  agentEventDataRecord,
+  agentEventToolInput,
+  agentEventToolOutput,
+  type AgentMessage,
+} from '../agent-ui'
+
+function isUnauthorizedStreamError(error: unknown): boolean {
+  return !!error && typeof error === 'object' && (error as { status?: unknown }).status === 401
+}
 
 type UseThreadSseEffectDeps = {
   drainQueuedPromptRef: RefObject<(() => void) | null>
@@ -171,7 +179,7 @@ export function useThreadSseEffect({
     return () => { clearContextCompactHideTimer() }
   }, [clearContextCompactHideTimer])
 
-  const scheduleDeferredRunEventDrain = useCallback(() => {
+  const scheduleDeferredAgentEventDrain = useCallback(() => {
     window.setTimeout(() => {
       drainSseEventsRef.current()
     }, 0)
@@ -187,8 +195,8 @@ export function useThreadSseEffect({
     runId: string,
     terminalStatus: 'completed' | 'cancelled' | 'failed' | 'interrupted',
     runCache: TerminalRunCache,
-    runEvents: MsgRunEvent[],
-  ): MessageResponse | null => {
+    agentEvents: MessageAgentEvent[],
+  ): AgentMessage | null => {
     if (!threadId) return null
     if (!hasRecoverableRunOutput({
       assistantTurn: runCache.handoffAssistantTurn,
@@ -201,22 +209,22 @@ export function useThreadSseEffect({
     })) {
       return null
     }
-    const lastEvent = runEvents[runEvents.length - 1]
-    const message: MessageResponse = {
+    const lastEvent = agentEvents[agentEvents.length - 1]
+    const createdAt = lastEvent?.timestamp ?? new Date().toISOString()
+    const message: AgentMessage = {
       id: `local-terminal-run:${runId}`,
-      account_id: '',
-      thread_id: threadId,
-      created_by_user_id: '',
       role: 'assistant',
       content: assistantTurnPlainText(runCache.handoffAssistantTurn),
-      created_at: lastEvent?.ts ?? new Date().toISOString(),
-      run_id: runId,
+      createdAt,
+      streamId: runId,
+      metadata: { createdAt, streamId: runId },
+      parts: [{ type: 'text', text: assistantTurnPlainText(runCache.handoffAssistantTurn), state: 'done' }],
     }
     upsertLocalTerminalMessage(message)
     persistRunDataToMessage(message.id, {
       ...runCache,
       terminalStatus,
-    }, runEvents, { clearThreadHandoff: false })
+    }, agentEvents, { clearThreadHandoff: false })
     return message
   }, [persistRunDataToMessage, threadId, upsertLocalTerminalMessage])
 
@@ -274,7 +282,7 @@ export function useThreadSseEffect({
       setCheckInDraft('')
       if (threadId) onRunEnded(threadId)
     }
-    const { fresh, nextProcessedCount } = selectFreshRunEvents({
+    const { fresh, nextProcessedCount } = selectFreshAgentEvents({
       events: sse.events,
       activeRunId: sseRunId,
       processedCount: processedEventCountRef.current,
@@ -283,9 +291,9 @@ export function useThreadSseEffect({
     const freshToProcess = pauseIndex >= 0 ? fresh.slice(0, pauseIndex + 1) : fresh
     const pausedAt = freshToProcess[freshToProcess.length - 1]
     if (pauseIndex >= 0 && pausedAt) {
-      const rawIndex = sse.events.findIndex((event) => event.event_id === pausedAt.event_id)
+      const rawIndex = sse.events.findIndex((event) => event.id === pausedAt.id)
       processedEventCountRef.current = rawIndex >= 0 ? rawIndex + 1 : nextProcessedCount
-      scheduleDeferredRunEventDrain()
+      scheduleDeferredAgentEventDrain()
     } else {
       processedEventCountRef.current = nextProcessedCount
     }
@@ -293,28 +301,28 @@ export function useThreadSseEffect({
       const freezeCutoff = freezeCutoffRef.current
       if (
         freezeCutoff != null &&
-        typeof event.seq === 'number' &&
-        event.seq > freezeCutoff &&
-        !isTerminalRunEventType(event.type)
+        typeof event.order === 'number' &&
+        event.order > freezeCutoff &&
+        !isTerminalAgentEventType(event.type)
       ) {
         continue
       }
-      if (shouldSuppressLiveRunEventAfterInjectionBlock({
+      if (shouldSuppressLiveAgentEventAfterInjectionBlock({
         activeRunId,
         blockedRunId: injectionBlockedRunIdRef.current,
         event,
       })) {
         continue
       }
-      const nextWebSearchSteps = applyRunEventToWebSearchSteps(searchStepsRef.current, event)
+      const nextWebSearchSteps = applyAgentEventToWebSearchSteps(searchStepsRef.current, event)
       if (nextWebSearchSteps !== searchStepsRef.current) {
         searchStepsRef.current = nextWebSearchSteps
         setSearchSteps(nextWebSearchSteps)
       }
 
-      if (event.type === 'run.segment.start') {
-        const obj = event.data as { segment_id?: unknown; kind?: unknown; display?: unknown }
-        const segmentId = typeof obj.segment_id === 'string' ? obj.segment_id : ''
+      if (event.type === 'segment-start') {
+        const obj = agentEventDataRecord(event.data) ?? {}
+        const segmentId = typeof obj?.segmentId === 'string' ? obj.segmentId : ''
         const kind = typeof obj.kind === 'string' ? obj.kind : 'planning_round'
         const display = (obj.display ?? {}) as { mode?: unknown; label?: unknown; queries?: unknown }
         const mode = typeof display.mode === 'string' ? display.mode : 'collapsed'
@@ -332,8 +340,8 @@ export function useThreadSseEffect({
         continue
       }
 
-      if (event.type === 'run.context_compact') {
-        const obj = event.data as { phase?: unknown; op?: unknown; dropped_prefix?: unknown }
+      if (event.type === 'context-compact') {
+        const obj = agentEventDataRecord(event.data) ?? {}
         const op = typeof obj.op === 'string' ? obj.op : undefined
         const phase = typeof obj.phase === 'string' ? obj.phase : undefined
 
@@ -358,7 +366,7 @@ export function useThreadSseEffect({
           }
         } else if (op === 'trim') {
           if (phase === 'completed') {
-            const dropped = typeof obj.dropped_prefix === 'number' ? obj.dropped_prefix : 0
+            const dropped = typeof obj.droppedPrefix === 'number' ? obj.droppedPrefix : 0
             if (dropped > 0) {
               clearContextCompactHideTimer()
               setContextCompactBar({ type: 'trim', status: 'done', dropped })
@@ -372,15 +380,15 @@ export function useThreadSseEffect({
         continue
       }
 
-      if (event.type === 'todo.updated') {
-        const obj = event.data as { todos?: unknown }
+      if (event.type === 'todo-updated') {
+        const obj = agentEventDataRecord(event.data) ?? {}
         if (Array.isArray(obj.todos)) {
           const items = (obj.todos as unknown[]).flatMap((t) => {
             if (!t || typeof t !== 'object') return []
-            const item = t as { id?: unknown; content?: unknown; status?: unknown }
+            const item = t as { id?: unknown; content?: unknown; status?: unknown; activeForm?: unknown }
             if (typeof item.id !== 'string' || typeof item.content !== 'string' || typeof item.status !== 'string') return []
-            const activeForm = typeof (t as { active_form?: unknown }).active_form === 'string'
-              ? (t as { active_form: string }).active_form.trim()
+            const activeForm = typeof item.activeForm === 'string'
+              ? item.activeForm.trim()
               : ''
             return [{ id: item.id, content: item.content, ...(activeForm ? { activeForm } : {}), status: item.status }]
           })
@@ -390,9 +398,9 @@ export function useThreadSseEffect({
         continue
       }
 
-      if (event.type === 'run.segment.end') {
-        const obj = event.data as { segment_id?: unknown }
-        const segmentId = typeof obj.segment_id === 'string' ? obj.segment_id : ''
+      if (event.type === 'segment-end') {
+        const obj = agentEventDataRecord(event.data) ?? {}
+        const segmentId = typeof obj?.segmentId === 'string' ? obj.segmentId : ''
         if (segmentId && activeSegmentIdRef.current === segmentId) {
           activeSegmentIdRef.current = null
         }
@@ -403,15 +411,15 @@ export function useThreadSseEffect({
         continue
       }
 
-      if (event.type === 'message.delta') {
+      if (event.type === 'assistant-delta') {
         noResponseMsgIdRef.current = null
-        const obj = event.data as { content_delta?: unknown; role?: unknown; channel?: unknown }
+        const obj = agentEventDataRecord(event.data) ?? {}
         if (obj.role != null && obj.role !== 'assistant') continue
-        if (typeof obj.content_delta !== 'string' || !obj.content_delta) continue
-        const delta = obj.content_delta
+        if (typeof obj.delta !== 'string' || !obj.delta) continue
+        const delta = obj.delta
         const channel = typeof obj.channel === 'string' ? obj.channel : ''
         const isThinking = channel === 'thinking'
-        const eventSeq = typeof event.seq === 'number' ? event.seq : 0
+        const eventSeq = typeof event.order === 'number' ? event.order : 0
         if (!isThinking && channel.trim() === '') {
           if (eventSeq > lastVisibleNonTerminalSeqRef.current) {
             lastVisibleNonTerminalSeqRef.current = eventSeq
@@ -444,19 +452,19 @@ export function useThreadSseEffect({
         continue
       }
 
-      if (event.type === 'tool.call.delta') {
-        const obj = event.data as { tool_call_index?: number; tool_call_id?: string; tool_name?: string; arguments_delta?: string }
-        const idx = typeof obj.tool_call_index === 'number' ? obj.tool_call_index : -1
-        if (idx >= 0 && typeof obj.arguments_delta === 'string') {
+      if (event.type === 'tool-input-delta') {
+        const obj = agentEventDataRecord(event.data) ?? {}
+        const idx = typeof obj?.toolCallIndex === 'number' ? obj.toolCallIndex : -1
+        if (idx >= 0 && typeof obj.delta === 'string') {
           let entry = streamingArtifactsRef.current.find((e) => e.toolCallIndex === idx)
           if (!entry) {
             entry = { toolCallIndex: idx, argumentsBuffer: '', complete: false }
             streamingArtifactsRef.current = [...streamingArtifactsRef.current, entry]
           }
-          if (obj.tool_call_id) entry.toolCallId = obj.tool_call_id
-          if (obj.tool_name) entry.toolName = canonicalToolName(obj.tool_name)
-          entry.argumentsBuffer += obj.arguments_delta
-          const isShowWidgetDelta = entry.toolName === 'show_widget' || canonicalToolName(obj.tool_name ?? '') === 'show_widget'
+          if (typeof obj.toolCallId === 'string') entry.toolCallId = obj.toolCallId
+          if (typeof obj.toolName === 'string') entry.toolName = canonicalToolName(obj.toolName)
+          entry.argumentsBuffer += obj.delta
+          const isShowWidgetDelta = entry.toolName === 'show_widget' || canonicalToolName(typeof obj.toolName === 'string' ? obj.toolName : '') === 'show_widget'
 
           if (entry.toolName === 'show_widget' || (!entry.toolName && entry.argumentsBuffer.includes('"widget_code"'))) {
             const parsed = extractPartialWidgetFields(entry.argumentsBuffer)
@@ -471,7 +479,7 @@ export function useThreadSseEffect({
                 toolCallIndex: entry.toolCallIndex,
                 title: entry.title ?? null,
                 contentLength: entry.content?.length ?? 0,
-                seq: event.seq,
+                seq: event.order,
               })
             }
           } else if (entry.toolName === 'create_artifact' || (!entry.toolName && entry.argumentsBuffer.includes('"content"'))) {
@@ -487,11 +495,11 @@ export function useThreadSseEffect({
         continue
       }
 
-      if (event.type === 'tool.call') {
+      if (event.type === 'tool-call') {
         setPendingThinking(false)
         seenFirstToolCallInRunRef.current = true
-        const obj = event.data as { llm_name?: unknown; tool_call_id?: unknown; arguments?: unknown }
-        const toolName = pickLogicalToolName(event.data, event.tool_name)
+        const obj = agentEventDataRecord(event.data) ?? {}
+        const toolName = pickLogicalToolName(event.data, event.toolName)
         const codeExecutionCall = applyCodeExecutionToolCall(currentRunCodeExecutionsRef.current, event)
         if (codeExecutionCall.appended) {
           const entry = codeExecutionCall.appended
@@ -528,8 +536,8 @@ export function useThreadSseEffect({
           setTopLevelWebFetches((prev) => [...prev, webFetchCall.appended!])
         }
         if (toolName === 'show_widget') {
-          const args = obj.arguments as Record<string, unknown> | undefined
-          const callId = typeof obj.tool_call_id === 'string' ? obj.tool_call_id : undefined
+          const args = agentEventToolInput(event.data)
+          const callId = typeof obj?.toolCallId === 'string' ? obj.toolCallId : undefined
           let entry = callId
             ? streamingArtifactsRef.current.find((e) => e.toolCallId === callId)
             : undefined
@@ -557,8 +565,8 @@ export function useThreadSseEffect({
           setStreamingArtifacts([...streamingArtifactsRef.current])
         }
         if (toolName === 'create_artifact') {
-          const args = obj.arguments as Record<string, unknown> | undefined
-          const callId = typeof obj.tool_call_id === 'string' ? obj.tool_call_id : undefined
+          const args = agentEventToolInput(event.data)
+          const callId = typeof obj?.toolCallId === 'string' ? obj.toolCallId : undefined
           let entry = callId
             ? streamingArtifactsRef.current.find((e) => e.toolCallId === callId)
             : undefined
@@ -592,7 +600,7 @@ export function useThreadSseEffect({
         continue
       }
 
-      if (event.type === 'terminal.stdout_delta' || event.type === 'terminal.stderr_delta') {
+      if (event.type === 'terminal-delta' || event.type === 'terminal-delta') {
         const deltaPatch = applyTerminalDelta(currentRunCodeExecutionsRef.current, event)
         if (deltaPatch.updated) {
           currentRunCodeExecutionsRef.current = deltaPatch.nextExecutions
@@ -607,21 +615,21 @@ export function useThreadSseEffect({
         continue
       }
 
-      if (event.type === 'tool.result') {
-        const obj = event.data as { tool_call_id?: unknown; result?: unknown; error?: unknown }
-        const resultToolName = pickLogicalToolName(event.data, event.tool_name)
+      if (event.type === 'tool-result') {
+        const obj = agentEventDataRecord(event.data) ?? {}
+        const resultToolName = pickLogicalToolName(event.data, event.toolName)
         if (isWebSearchToolName(resultToolName)) {
-          const newSources = webSearchSourcesFromResult(obj.result)
+          const newSources = webSearchSourcesFromResult(agentEventToolOutput(event.data))
           if (newSources && newSources.length > 0) {
             currentRunSourcesRef.current = [...currentRunSourcesRef.current, ...newSources]
           }
         }
-        const result = obj.result as { artifacts?: unknown[]; stdout?: unknown; stderr?: unknown; exit_code?: unknown; output?: unknown } | undefined
+        const result = agentEventToolOutput(event.data) as { artifacts?: unknown[]; stdout?: unknown; stderr?: unknown; exit_code?: unknown; output?: unknown } | undefined
         const newArtifacts = extractArtifacts(result)
         if (newArtifacts.length > 0) {
           currentRunArtifactsRef.current = [...currentRunArtifactsRef.current, ...newArtifacts]
           if (resultToolName === 'create_artifact') {
-            const callId = typeof obj.tool_call_id === 'string' ? obj.tool_call_id : undefined
+            const callId = typeof obj?.toolCallId === 'string' ? obj.toolCallId : undefined
             for (const art of newArtifacts) {
               const entry = callId
                 ? streamingArtifactsRef.current.find((e) => e.toolCallId === callId)
@@ -689,37 +697,37 @@ export function useThreadSseEffect({
         continue
       }
 
-      if (event.type === 'thread.title.updated') {
-        const obj = event.data as { thread_id?: unknown; title?: unknown }
-        const tid = typeof obj.thread_id === 'string' ? obj.thread_id : threadId
+      if (event.type === 'thread-title') {
+        const obj = agentEventDataRecord(event.data) ?? {}
+        const tid = typeof obj?.threadId === 'string' ? obj.threadId : threadId
         const title = typeof obj.title === 'string' ? obj.title : ''
         if (tid && title) onThreadTitleUpdated(tid, title)
-        if (event.run_id && event.run_id === completedTitleTailRunId) {
+        if (event.streamId && event.streamId === completedTitleTailRunId) {
           clearCompletedTitleTail()
         }
         continue
       }
 
-      if (event.type === 'thread.collaboration_mode.updated') {
-        const obj = event.data as { thread_id?: unknown; collaboration_mode?: unknown; collaboration_mode_revision?: unknown }
-        const tid = typeof obj.thread_id === 'string' ? obj.thread_id : threadId
-        const collaborationMode = obj.collaboration_mode === 'plan' ? 'plan' : obj.collaboration_mode === 'default' ? 'default' : null
-        const revision = typeof obj.collaboration_mode_revision === 'number' ? obj.collaboration_mode_revision : undefined
+      if (event.type === 'thread-collaboration') {
+        const obj = agentEventDataRecord(event.data) ?? {}
+        const tid = typeof obj?.threadId === 'string' ? obj.threadId : threadId
+        const collaborationMode = obj.collaborationMode === 'plan' ? 'plan' : obj.collaborationMode === 'default' ? 'default' : null
+        const revision = typeof obj.collaborationModeRevision === 'number' ? obj.collaborationModeRevision : undefined
         if (tid && collaborationMode) {
           onThreadCollaborationModeUpdated(tid, collaborationMode, revision)
         }
         continue
       }
 
-      if (event.type === 'run.input_requested') {
+      if (event.type === 'input-request') {
         // SSE 重连时会重放历史事件，只有 run 实际继续执行的事件才能证明 input 已被回答
         const hasRunContinued = sse.events.some(
-          (e) => e.run_id === event.run_id && e.seq > event.seq
-            && (e.type === 'tool.result' || isTerminalRunEventType(e.type)),
+          (e) => e.streamId === event.streamId && e.order > event.order
+            && (e.type === 'tool-result' || isTerminalAgentEventType(e.type)),
         )
         if (hasRunContinued) continue
 
-        const data = event.data as Record<string, unknown> | undefined
+        const data = agentEventDataRecord(event.data)
         const message = data?.message as string | undefined
         const schema = data?.requestedSchema as RequestedSchema | undefined
         if (message && schema && schema.properties && Object.keys(schema.properties).length > 0) {
@@ -728,7 +736,7 @@ export function useThreadSseEffect({
             required: Array.isArray(schema.required) ? schema.required : undefined,
           }
           setPendingUserInput({
-            request_id: (data?.request_id as string) ?? '',
+            request_id: (data?.requestId as string) ?? '',
             message,
             requestedSchema: safeSchema,
           })
@@ -738,9 +746,9 @@ export function useThreadSseEffect({
         continue
       }
 
-      if (event.type === 'security.injection.blocked') {
+      if (event.type === 'security-block') {
         freezeCutoffRef.current = null
-        injectionBlockedRunIdRef.current = event.run_id
+        injectionBlockedRunIdRef.current = event.streamId
         sseTerminalFallbackArmedRef.current = false
         sseTerminalFallbackRunIdRef.current = null
         sse.disconnect()
@@ -753,23 +761,23 @@ export function useThreadSseEffect({
         continue
       }
 
-      if (event.type === 'run.completed') {
+      if (event.type === 'run-completed') {
         freezeCutoffRef.current = null
-        const completedRunId = event.run_id
+        const completedRunId = event.streamId
         injectionBlockedRunIdRef.current = null
         noResponseMsgIdRef.current = null
         setPreserveLiveRunUi(true)
         setTerminalRunDisplayId(completedRunId)
         setTerminalRunHandoffStatus('completed')
-        const runEventsForMessage = (sse.events as MsgRunEvent[]).filter((e) => {
-          if (e.run_id !== completedRunId || typeof e.seq !== 'number') {
+        const agentEventsForMessage = (sse.events as MessageAgentEvent[]).filter((e) => {
+          if (e.streamId !== completedRunId || typeof e.order !== 'number') {
             return false
           }
-          return e.seq <= event.seq
+          return e.order <= event.order
         })
         const runCache = captureTerminalRunCache('completed')
-        if (runEventsForMessage.length > 0) {
-          const frozenAssistantTurn = buildFrozenAssistantTurnFromRunEvents(runEventsForMessage)
+        if (agentEventsForMessage.length > 0) {
+          const frozenAssistantTurn = buildFrozenAssistantTurnFromAgentEvents(agentEventsForMessage)
           if (frozenAssistantTurn.segments.length > 0) {
             runCache.handoffAssistantTurn = frozenAssistantTurn
             runCache.runAssistantTurn = frozenAssistantTurn
@@ -800,7 +808,7 @@ export function useThreadSseEffect({
           webFetches: completedRunCache.runWebFetches,
         })
         const localCompletedAssistant = completedHasRecoverableOutput
-          ? materializeTerminalRunMessage(completedRunId, 'completed', completedRunCache, runEventsForMessage)
+          ? materializeTerminalRunMessage(completedRunId, 'completed', completedRunCache, agentEventsForMessage)
           : null
         if (completedHasRecoverableOutput) {
           persistThreadRunHandoff(completedRunId, completedRunCache)
@@ -822,7 +830,7 @@ export function useThreadSseEffect({
               persistRunDataToMessage(completedAssistant.id, {
                 ...completedRunCache,
                 pendingSearchSteps: pendingSteps,
-              }, runEventsForMessage)
+              }, agentEventsForMessage)
               markTerminalRunHistory(completedAssistant.id, false)
               releaseCompletedHandoffToHistory()
             }
@@ -836,26 +844,26 @@ export function useThreadSseEffect({
         continue
       }
 
-      if (event.type === 'run.cancelled') {
-        const blockedByInjection = injectionBlockedRunIdRef.current === event.run_id
-        const runId = event.run_id
+      if (event.type === 'run-cancelled') {
+        const blockedByInjection = injectionBlockedRunIdRef.current === event.streamId
+        const runId = event.streamId
         setTerminalRunDisplayId(runId)
         setTerminalRunHandoffStatus('cancelled')
         const runSearchSteps = finalizeSearchSteps(searchStepsRef.current)
         if (runSearchSteps.length > 0) {
           pendingSearchStepsRef.current = runSearchSteps
         }
-        const runEventsForMessage = runId
-          ? (sse.events as MsgRunEvent[]).filter((e) => {
-            if (e.run_id !== runId || typeof e.seq !== 'number') {
+        const agentEventsForMessage = runId
+          ? (sse.events as MessageAgentEvent[]).filter((e) => {
+            if (e.streamId !== runId || typeof e.order !== 'number') {
               return false
             }
-            return e.seq <= event.seq
+            return e.order <= event.order
           })
           : []
         const runCache = captureTerminalRunCache('cancelled')
-        if (runCache.handoffAssistantTurn.segments.length === 0 && runEventsForMessage.length > 0) {
-          runCache.handoffAssistantTurn = buildFrozenAssistantTurnFromRunEvents(runEventsForMessage)
+        if (runCache.handoffAssistantTurn.segments.length === 0 && agentEventsForMessage.length > 0) {
+          runCache.handoffAssistantTurn = buildFrozenAssistantTurnFromAgentEvents(agentEventsForMessage)
           runCache.runAssistantTurn = runCache.handoffAssistantTurn
         }
         if (runId) {
@@ -871,7 +879,7 @@ export function useThreadSseEffect({
           webFetches: runCache.runWebFetches,
         })
         const localAssistant = runHasRecoverableOutput
-          ? materializeTerminalRunMessage(runId, 'cancelled', runCache, runEventsForMessage)
+          ? materializeTerminalRunMessage(runId, 'cancelled', runCache, agentEventsForMessage)
           : null
         resetTerminalRunState({
           preserveSearchSteps: true,
@@ -885,7 +893,7 @@ export function useThreadSseEffect({
             .then((items) => {
               const assistant = findAssistantMessageForRun(items, runId)
               if (assistant) {
-                persistRunDataToMessage(assistant.id, runCache, runEventsForMessage)
+                persistRunDataToMessage(assistant.id, runCache, agentEventsForMessage)
                 markTerminalRunHistory(assistant.id, false)
               }
               if (assistant || localAssistant || !runHasRecoverableOutput) {
@@ -897,21 +905,21 @@ export function useThreadSseEffect({
         continue
       }
 
-      if (event.type === 'run.failed') {
-        const runId = event.run_id
+      if (event.type === 'run-failed') {
+        const runId = event.streamId
         setTerminalRunDisplayId(runId)
         setTerminalRunHandoffStatus('failed')
-        const runEventsForMessage = runId
-          ? (sse.events as MsgRunEvent[]).filter((e) => {
-            if (e.run_id !== runId || typeof e.seq !== 'number') {
+        const agentEventsForMessage = runId
+          ? (sse.events as MessageAgentEvent[]).filter((e) => {
+            if (e.streamId !== runId || typeof e.order !== 'number') {
               return false
             }
-            return e.seq <= event.seq
+            return e.order <= event.order
           })
           : []
         const runCache = captureTerminalRunCache('failed')
-        if (runCache.handoffAssistantTurn.segments.length === 0 && runEventsForMessage.length > 0) {
-          runCache.handoffAssistantTurn = buildFrozenAssistantTurnFromRunEvents(runEventsForMessage)
+        if (runCache.handoffAssistantTurn.segments.length === 0 && agentEventsForMessage.length > 0) {
+          runCache.handoffAssistantTurn = buildFrozenAssistantTurnFromAgentEvents(agentEventsForMessage)
           runCache.runAssistantTurn = runCache.handoffAssistantTurn
         }
         if (runId) {
@@ -927,14 +935,14 @@ export function useThreadSseEffect({
           webFetches: runCache.runWebFetches,
         })
         const localAssistant = runHasRecoverableOutput
-          ? materializeTerminalRunMessage(runId, 'failed', runCache, runEventsForMessage)
+          ? materializeTerminalRunMessage(runId, 'failed', runCache, agentEventsForMessage)
           : null
         resetTerminalRunState({
           preserveSearchSteps: true,
           handoffRunCache: runHasRecoverableOutput && !localAssistant ? runCache : undefined,
         })
-        const obj = event.data as { message?: unknown; error_class?: unknown; code?: unknown; details?: unknown }
-        const errorClass = typeof obj?.error_class === 'string' ? obj.error_class : undefined
+        const obj = agentEventDataRecord(event.data)
+        const errorClass = typeof obj?.errorClass === 'string' ? obj.errorClass : undefined
         const details = (obj?.details && typeof obj.details === 'object' && !Array.isArray(obj.details))
           ? obj.details as Record<string, unknown>
           : undefined
@@ -953,7 +961,7 @@ export function useThreadSseEffect({
             .then((items) => {
               const assistant = findAssistantMessageForRun(items, runId)
               if (assistant) {
-                persistRunDataToMessage(assistant.id, runCache, runEventsForMessage)
+                persistRunDataToMessage(assistant.id, runCache, agentEventsForMessage)
               }
               if (assistant || localAssistant || !runHasRecoverableOutput) {
                 drainForcedQueuedPromptRef.current?.({ runId, status: 'failed' })
@@ -964,21 +972,21 @@ export function useThreadSseEffect({
         continue
       }
 
-      if (event.type === 'run.interrupted') {
-        const runId = event.run_id
+      if (event.type === 'run-interrupted') {
+        const runId = event.streamId
         setTerminalRunDisplayId(runId)
         setTerminalRunHandoffStatus('interrupted')
-        const runEventsForMessage = runId
-          ? (sse.events as MsgRunEvent[]).filter((e) => {
-            if (e.run_id !== runId || typeof e.seq !== 'number') {
+        const agentEventsForMessage = runId
+          ? (sse.events as MessageAgentEvent[]).filter((e) => {
+            if (e.streamId !== runId || typeof e.order !== 'number') {
               return false
             }
-            return e.seq <= event.seq
+            return e.order <= event.order
           })
           : []
         const runCache = captureTerminalRunCache('interrupted')
-        if (runCache.handoffAssistantTurn.segments.length === 0 && runEventsForMessage.length > 0) {
-          runCache.handoffAssistantTurn = buildFrozenAssistantTurnFromRunEvents(runEventsForMessage)
+        if (runCache.handoffAssistantTurn.segments.length === 0 && agentEventsForMessage.length > 0) {
+          runCache.handoffAssistantTurn = buildFrozenAssistantTurnFromAgentEvents(agentEventsForMessage)
           runCache.runAssistantTurn = runCache.handoffAssistantTurn
         }
         if (runId) {
@@ -994,14 +1002,14 @@ export function useThreadSseEffect({
           webFetches: runCache.runWebFetches,
         })
         const localAssistant = runHasRecoverableOutput
-          ? materializeTerminalRunMessage(runId, 'interrupted', runCache, runEventsForMessage)
+          ? materializeTerminalRunMessage(runId, 'interrupted', runCache, agentEventsForMessage)
           : null
         resetTerminalRunState({
           preserveSearchSteps: true,
           handoffRunCache: runHasRecoverableOutput && !localAssistant ? runCache : undefined,
         })
-        const obj = event.data as { message?: unknown; error_class?: unknown; code?: unknown; details?: unknown }
-        const errorClass = typeof obj?.error_class === 'string' ? obj.error_class : undefined
+        const obj = agentEventDataRecord(event.data)
+        const errorClass = typeof obj?.errorClass === 'string' ? obj.errorClass : undefined
         const details = (obj?.details && typeof obj.details === 'object' && !Array.isArray(obj.details))
           ? obj.details as Record<string, unknown>
           : undefined
@@ -1011,12 +1019,12 @@ export function useThreadSseEffect({
           code: typeof obj?.code === 'string' ? obj.code : errorClass,
           details,
         })
-        if (event.run_id) {
+        if (event.streamId) {
           void refreshMessages({ requiredCompletedRunId: runHasRecoverableOutput ? runId! : undefined })
             .then((items) => {
               const assistant = findAssistantMessageForRun(items, runId!)
               if (assistant) {
-                persistRunDataToMessage(assistant.id, runCache, runEventsForMessage)
+                persistRunDataToMessage(assistant.id, runCache, agentEventsForMessage)
               }
               if (assistant || localAssistant || !runHasRecoverableOutput) {
                 drainForcedQueuedPromptRef.current?.({ runId: runId!, status: 'interrupted' })
@@ -1034,9 +1042,8 @@ export function useThreadSseEffect({
     drainSseEvents()
   })
 
-  // 401 SSE 错误时登出
   useEffect(() => {
-    if (sse.error instanceof SSEApiError && sse.error.status === 401) {
+    if (isUnauthorizedStreamError(sse.error)) {
       onLoggedOut()
     }
   }, [sse.error, onLoggedOut])
@@ -1051,17 +1058,17 @@ export function useThreadSseEffect({
 
     sseTerminalFallbackArmedRef.current = false
     sseTerminalFallbackRunIdRef.current = null
-    const terminalRunMaxSeq = (sse.events as MsgRunEvent[])
-      .filter((e) => e.run_id === terminalRunId && typeof e.seq === 'number')
-      .reduce((max, e) => Math.max(max, e.seq), 0)
-    const runEventsForMessage = (sse.events as MsgRunEvent[]).filter((e) =>
-      e.run_id === terminalRunId &&
-      typeof e.seq === 'number' &&
-      e.seq <= terminalRunMaxSeq,
+    const terminalRunMaxSeq = (sse.events as MessageAgentEvent[])
+      .filter((e) => e.streamId === terminalRunId && typeof e.order === 'number')
+      .reduce((max, e) => Math.max(max, e.order), 0)
+    const agentEventsForMessage = (sse.events as MessageAgentEvent[]).filter((e) =>
+      e.streamId === terminalRunId &&
+      typeof e.order === 'number' &&
+      e.order <= terminalRunMaxSeq,
     )
     const terminalCache = captureTerminalRunCache()
-    if (terminalCache.handoffAssistantTurn.segments.length === 0 && runEventsForMessage.length > 0) {
-      terminalCache.handoffAssistantTurn = buildFrozenAssistantTurnFromRunEvents(runEventsForMessage)
+    if (terminalCache.handoffAssistantTurn.segments.length === 0 && agentEventsForMessage.length > 0) {
+      terminalCache.handoffAssistantTurn = buildFrozenAssistantTurnFromAgentEvents(agentEventsForMessage)
       terminalCache.runAssistantTurn = terminalCache.handoffAssistantTurn
     }
     setTerminalRunDisplayId(terminalRunId)
@@ -1085,7 +1092,7 @@ export function useThreadSseEffect({
       .then((items) => {
         const completedAssistant = findAssistantMessageForRun(items, terminalRunId)
         if (completedAssistant) {
-          persistRunDataToMessage(completedAssistant.id, terminalCache, runEventsForMessage)
+          persistRunDataToMessage(completedAssistant.id, terminalCache, agentEventsForMessage)
         }
       })
       .catch((err) => console.error('persist run data failed', err))

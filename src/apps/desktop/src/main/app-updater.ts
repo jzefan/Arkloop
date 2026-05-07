@@ -1,7 +1,5 @@
 import { app } from 'electron'
 import { autoUpdater } from 'electron-updater'
-import fs from 'node:fs'
-import path from 'node:path'
 
 export type AppUpdaterPhase =
   | 'idle'
@@ -23,8 +21,8 @@ export type AppUpdaterState = {
 }
 
 const baseState = (): AppUpdaterState => ({
-  supported: appUpdaterSupported(),
-  phase: appUpdaterSupported() ? 'idle' : 'unsupported',
+  supported: app.isPackaged,
+  phase: app.isPackaged ? 'idle' : 'unsupported',
   currentVersion: app.getVersion(),
   latestVersion: null,
   progressPercent: 0,
@@ -35,11 +33,6 @@ let state: AppUpdaterState = baseState()
 let initialized = false
 let getWindowRef: (() => Electron.BrowserWindow | null) | null = null
 
-function appUpdaterSupported(): boolean {
-  if (!app.isPackaged) return false
-  return fs.existsSync(path.join(process.resourcesPath, 'app-update.yml'))
-}
-
 function extractVersion(value: unknown): string | null {
   if (!value || typeof value !== 'object') return null
   const maybeVersion = (value as { version?: unknown }).version
@@ -47,7 +40,7 @@ function extractVersion(value: unknown): string | null {
 }
 
 function patchState(patch: Partial<AppUpdaterState>): void {
-  state = { ...state, ...patch, currentVersion: app.getVersion(), supported: appUpdaterSupported() }
+  state = { ...state, ...patch, currentVersion: app.getVersion(), supported: app.isPackaged }
   const win = getWindowRef?.()
   if (win) {
     win.webContents.send('arkloop:app-updater:state', state)
@@ -55,11 +48,11 @@ function patchState(patch: Partial<AppUpdaterState>): void {
 }
 
 export function getAppUpdaterState(): AppUpdaterState {
-  return { ...state, currentVersion: app.getVersion(), supported: appUpdaterSupported() }
+  return { ...state, currentVersion: app.getVersion(), supported: app.isPackaged }
 }
 
 export async function checkForAppUpdates(): Promise<AppUpdaterState> {
-  if (!appUpdaterSupported()) {
+  if (!app.isPackaged) {
     patchState({ phase: 'unsupported', latestVersion: null, progressPercent: 0, error: null })
     return getAppUpdaterState()
   }
@@ -76,7 +69,7 @@ export async function checkForAppUpdates(): Promise<AppUpdaterState> {
 }
 
 export async function downloadAppUpdate(): Promise<AppUpdaterState> {
-  if (!appUpdaterSupported()) {
+  if (!app.isPackaged) {
     patchState({ phase: 'unsupported', latestVersion: null, progressPercent: 0, error: null })
     return getAppUpdaterState()
   }
@@ -93,7 +86,7 @@ export async function downloadAppUpdate(): Promise<AppUpdaterState> {
 }
 
 export function installAppUpdate(): void {
-  if (!appUpdaterSupported()) {
+  if (!app.isPackaged) {
     patchState({ phase: 'unsupported', latestVersion: null, progressPercent: 0, error: null })
     return
   }
@@ -103,7 +96,10 @@ export function installAppUpdate(): void {
   autoUpdater.quitAndInstall(false, true)
 }
 
-export function setupAppUpdater(getWindow: () => Electron.BrowserWindow | null): void {
+export function setupAppUpdater(
+  getWindow: () => Electron.BrowserWindow | null,
+  options: { autoCheck: boolean } = { autoCheck: true },
+): void {
   getWindowRef = getWindow
   state = baseState()
 
@@ -113,7 +109,7 @@ export function setupAppUpdater(getWindow: () => Electron.BrowserWindow | null):
   }
 
   initialized = true
-  if (!appUpdaterSupported()) {
+  if (!app.isPackaged) {
     patchState({})
     return
   }
@@ -166,5 +162,7 @@ export function setupAppUpdater(getWindow: () => Electron.BrowserWindow | null):
   })
 
   patchState({})
-  void checkForAppUpdates().catch(() => {})
+  if (options.autoCheck) {
+    void checkForAppUpdates().catch(() => {})
+  }
 }

@@ -1,17 +1,16 @@
 import { describe, expect, it } from 'vitest'
 import { resolveMessageSourcesForRender } from '../components/chatSourceResolver'
-import type { MessageResponse } from '../api'
+import type { AgentMessage, AgentMessageRole } from '../agent-ui'
 import type { WebSource } from '../storage'
 
-function message(id: string, role: string, content: string): MessageResponse {
+function message(id: string, role: AgentMessageRole, content: string): AgentMessage {
   return {
     id,
     role,
+    parts: content ? [{ type: 'text', text: content, state: 'done' }] : [],
     content,
-    account_id: 'acc_1',
-    thread_id: 'thread_1',
-    created_by_user_id: 'user_1',
-    created_at: '2026-01-01T00:00:00Z',
+    createdAt: '2026-01-01T00:00:00Z',
+    metadata: { createdAt: '2026-01-01T00:00:00Z' },
   }
 }
 

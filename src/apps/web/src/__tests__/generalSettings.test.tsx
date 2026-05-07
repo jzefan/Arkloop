@@ -12,11 +12,13 @@ vi.mock('../api', async () => {
     deleteSpawnProfile: vi.fn(),
     resolveOpenVikingConfig: vi.fn(),
     testLlmProviderModel: vi.fn(),
+    updateMe: vi.fn(),
   }
 })
 
 vi.mock('@arkloop/shared/desktop', () => ({
   getDesktopMode: () => 'desktop',
+  getDesktopAppVersion: () => '0.0.0-test',
   isDesktop: () => true,
   isLocalMode: () => true,
   getDesktopApi: () => ({
@@ -26,6 +28,14 @@ vi.mock('@arkloop/shared/desktop', () => ({
     config: null,
   }),
 }))
+
+vi.mock('@arkloop/shared', async () => {
+  const actual = await vi.importActual<typeof import('@arkloop/shared')>('@arkloop/shared')
+  return {
+    ...actual,
+    useToast: () => ({ addToast: vi.fn() }),
+  }
+})
 
 vi.mock('../api-bridge', () => ({
   bridgeClient: {
@@ -77,17 +87,10 @@ vi.mock('../components/settings/SettingsModelDropdown', () => ({
   ),
 }))
 
-type Deferred<T> = {
-  promise: Promise<T>
-  resolve: (value: T) => void
-}
-
-function deferred<T>(): Deferred<T> {
-  let resolve!: (value: T) => void
-  const promise = new Promise<T>((nextResolve) => {
-    resolve = nextResolve
-  })
-  return { promise, resolve }
+function setInputValue(input: HTMLInputElement, value: string) {
+  const descriptor = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')
+  descriptor?.set?.call(input, value)
+  input.dispatchEvent(new Event('input', { bubbles: true }))
 }
 
 describe('GeneralSettings', () => {
@@ -122,12 +125,10 @@ describe('GeneralSettings', () => {
     return { api, LocaleProvider, GeneralSettings }
   }
 
-  it('首次加载时显示加载态，而不是主对话占位', async () => {
+  it('渲染通用页基础偏好与工具模型', async () => {
     const { api, LocaleProvider, GeneralSettings } = await loadSubject()
-    const providersRequest = deferred<Awaited<ReturnType<typeof api.listLlmProviders>>>()
-    const profilesRequest = deferred<Awaited<ReturnType<typeof api.listSpawnProfiles>>>()
-    vi.mocked(api.listLlmProviders).mockReturnValue(providersRequest.promise)
-    vi.mocked(api.listSpawnProfiles).mockReturnValue(profilesRequest.promise)
+    vi.mocked(api.listLlmProviders).mockResolvedValue([])
+    vi.mocked(api.listSpawnProfiles).mockResolvedValue([])
 
     await act(async () => {
       root.render(
@@ -137,89 +138,74 @@ describe('GeneralSettings', () => {
       )
     })
 
-    const dropdown = container.querySelector('[data-testid="tool-model-dropdown"]')
-    expect(dropdown?.getAttribute('data-placeholder')).toBe('加载中...')
-    expect(dropdown?.getAttribute('data-disabled')).toBe('true')
+    expect(container.textContent).toContain('通用')
+    expect(container.textContent).toContain('语言与区域')
+    expect(container.textContent).toContain('支持')
+    expect(container.querySelector('[data-testid="language-content"]')).not.toBeNull()
+    expect(container.querySelector('[data-testid="timezone-settings"]')).not.toBeNull()
+    expect(container.querySelector('[data-testid="theme-mode-picker"]')).toBeNull()
+    expect(container.querySelector('[data-testid="tool-model-dropdown"]')).not.toBeNull()
+    expect(api.listLlmProviders).toHaveBeenCalledWith('token')
+    expect(api.listSpawnProfiles).toHaveBeenCalledWith('token')
   })
 
-  it('重新打开时直接复用上次的工具模型值', async () => {
+  it('本地模式用户卡片内联编辑后端用户名', async () => {
     const { api, LocaleProvider, GeneralSettings } = await loadSubject()
-    vi.mocked(api.listLlmProviders).mockResolvedValue([
-      {
-        id: 'provider-1',
-        scope: 'user',
-        provider: 'openrouter',
-        name: 'openrouter',
-        key_prefix: null,
-        base_url: 'https://openrouter.ai/api/v1',
-        openai_api_mode: 'openai',
-        created_at: '2026-04-09T00:00:00Z',
-        models: [
-          {
-            id: 'model-1',
-            provider_id: 'provider-1',
-            model: 'google/gemma-4-26b-a4b-it',
-            priority: 0,
-            is_default: true,
-            show_in_picker: true,
-            tags: [],
-            when: {},
-            multiplier: 1,
-          },
-        ],
-      },
-    ])
-    vi.mocked(api.listSpawnProfiles).mockResolvedValue([
-      {
-        profile: 'tool',
-        resolved_model: 'openrouter^google/gemma-4-26b-a4b-it',
-        has_override: true,
-        auto_model: 'openrouter^google/gemma-4-26b-a4b-it',
-      },
-    ])
+    vi.mocked(api.listLlmProviders).mockResolvedValue([])
+    vi.mocked(api.listSpawnProfiles).mockResolvedValue([])
+    vi.mocked(api.updateMe).mockResolvedValue({ username: 'renamed-user', timezone: 'Asia/Singapore' })
+    const onMeUpdated = vi.fn()
 
     await act(async () => {
       root.render(
         <LocaleProvider>
-          <GeneralSettings accessToken="token" me={null} onLogout={() => {}} />
+          <GeneralSettings
+            accessToken="token"
+            me={{
+              id: 'user-1',
+              username: 'desktop-user',
+              email_verified: true,
+              email_verification_required: false,
+              work_enabled: true,
+              timezone: 'Asia/Singapore',
+              account_timezone: null,
+            }}
+            onLogout={() => {}}
+            onMeUpdated={onMeUpdated}
+          />
         </LocaleProvider>,
       )
     })
 
+    expect(container.textContent).toContain('desktop-user')
+    expect(container.textContent).not.toContain('alice')
+
+    const editButton = container.querySelector('button[aria-label="编辑"]') as HTMLButtonElement | null
+    expect(editButton).not.toBeNull()
+    expect(editButton?.className).toContain('group-hover:opacity-100')
+
     await act(async () => {
+      editButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+
+    const input = container.querySelector('input[type="text"]') as HTMLInputElement | null
+    expect(input?.value).toBe('desktop-user')
+
+    await act(async () => {
+      setInputValue(input!, 'renamed-user')
+    })
+
+    const saveButton = container.querySelector('button[aria-label="保存"]') as HTMLButtonElement | null
+    expect(saveButton).not.toBeNull()
+
+    await act(async () => {
+      saveButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      await Promise.resolve()
       await Promise.resolve()
     })
 
-    expect(
-      container.querySelector('[data-testid="tool-model-dropdown"]')?.getAttribute('data-value'),
-    ).toBe('openrouter^google/gemma-4-26b-a4b-it')
-
-    const nextProvidersRequest = deferred<Awaited<ReturnType<typeof api.listLlmProviders>>>()
-    const nextProfilesRequest = deferred<Awaited<ReturnType<typeof api.listSpawnProfiles>>>()
-    vi.mocked(api.listLlmProviders).mockReturnValue(nextProvidersRequest.promise)
-    vi.mocked(api.listSpawnProfiles).mockReturnValue(nextProfilesRequest.promise)
-
-    await act(async () => {
-      root.unmount()
-    })
-
-    container = document.createElement('div')
-    document.body.appendChild(container)
-    root = createRoot(container)
-
-    await act(async () => {
-      root.render(
-        <LocaleProvider>
-          <GeneralSettings accessToken="token" me={null} onLogout={() => {}} />
-        </LocaleProvider>,
-      )
-    })
-
-    expect(
-      container.querySelector('[data-testid="tool-model-dropdown"]')?.getAttribute('data-value'),
-    ).toBe('openrouter^google/gemma-4-26b-a4b-it')
-    expect(
-      container.querySelector('[data-testid="tool-model-dropdown"]')?.getAttribute('data-disabled'),
-    ).toBe('false')
+    expect(api.updateMe).toHaveBeenCalledWith('token', { username: 'renamed-user' })
+    expect(onMeUpdated).toHaveBeenCalledWith(expect.objectContaining({ username: 'renamed-user' }))
+    expect(container.querySelector('input[type="text"]')).toBeNull()
   })
 })

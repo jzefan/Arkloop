@@ -324,7 +324,7 @@ func ComposeNativeEngine(ctx context.Context, pool *pgxpool.Pool, directPool *pg
 		return nil, err
 	}
 	if artifactToolsRegistered {
-		slog.InfoContext(ctx, "stored artifact tools registered", "tools", []string{"create_artifact", "document_write", "image_generate", "video_generate"})
+		slog.InfoContext(ctx, "stored artifact tools registered", "tools", []string{"create_artifact", "document_write", "image_generate"})
 	}
 
 	var toolDescriptionOverridesRepo *data.ToolDescriptionOverridesRepository
@@ -335,7 +335,7 @@ func ComposeNativeEngine(ctx context.Context, pool *pgxpool.Pool, directPool *pg
 		}
 	}
 
-	llmRetryMaxAttempts := 10
+	llmRetryMaxAttempts := 3
 	llmRetryBaseDelayMs := 1000
 	if configResolver != nil {
 		m, err := configResolver.ResolvePrefix(ctx, "llm.retry.", sharedconfig.Scope{})

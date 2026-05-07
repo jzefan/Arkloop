@@ -22,6 +22,7 @@ import (
 	sharedencryption "arkloop/services/shared/encryption"
 	"arkloop/services/shared/eventbus"
 	sharedexec "arkloop/services/shared/executionconfig"
+	"arkloop/services/shared/localproviders"
 	"arkloop/services/shared/objectstore"
 	"arkloop/services/shared/onebotclient"
 	"arkloop/services/shared/rollout"
@@ -216,7 +217,7 @@ func ComposeDesktopEngine(ctx context.Context, db data.DesktopDB, bus eventbus.E
 		slog.InfoContext(ctx, "desktop: lsp enabled", "servers", len(lspCfg.Servers))
 	}
 	authToken := strings.TrimSpace(os.Getenv("ARKLOOP_DESKTOP_TOKEN"))
-	slog.Debug("composition_desktop", "sandboxAddr", sandboxAddr, "authToken", authToken)
+	slog.Debug("composition_desktop", "sandboxAddr", sandboxAddr, "authTokenConfigured", authToken != "")
 	shellExec := runtime.NewDynamicShellExecutor(sandboxAddr, authToken, fileTracker)
 
 	// 已有持久化或用户已选模式时不覆盖；否则按当前 sandbox 可用性设默认。
@@ -405,7 +406,7 @@ func ComposeDesktopEngine(ctx context.Context, db data.DesktopDB, bus eventbus.E
 		return nil, fmt.Errorf("register desktop artifact tools: %w", err)
 	}
 	if artifactToolsRegistered {
-		slog.InfoContext(ctx, "desktop: stored artifact tools registered", "tools", []string{"create_artifact", "document_write", "image_generate", "video_generate"})
+		slog.InfoContext(ctx, "desktop: stored artifact tools registered", "tools", []string{"create_artifact", "document_write", "image_generate"})
 	}
 	if lspManager != nil {
 		allLlmSpecs = append(allLlmSpecs, lsp.LSPToolLLMSpec)
@@ -564,6 +565,9 @@ func loadPersonaRegistryFromFS() func() *personas.Registry {
 
 // Shutdown releases resources held by the engine (LSP servers, etc.).
 func (e *DesktopEngine) Shutdown(ctx context.Context) {
+	if desktop.GetLLMProviderModelTester() == e {
+		desktop.SetLLMProviderModelTester(nil)
+	}
 	if e.lspManager != nil {
 		if err := e.lspManager.Stop(ctx); err != nil {
 			slog.WarnContext(ctx, "desktop: lsp manager stop failed", "err", err.Error())
@@ -608,6 +612,8 @@ func (e *DesktopEngine) Execute(ctx context.Context, run data.Run, traceID strin
 	runRuntime := *e.runtimeSnapshot
 	runRuntime.DesktopExecutionMode = strings.TrimSpace(desktop.GetExecutionMode())
 
+	llmRetryMaxAttempts, llmRetryBaseDelayMs := resolveDesktopLLMRetry(ctx, e.db)
+
 	rc := &pipeline.RunContext{
 		Run:                 run,
 		DB:                  e.db,
@@ -629,8 +635,8 @@ func (e *DesktopEngine) Execute(ctx context.Context, run data.Run, traceID strin
 		PerToolSoftLimits:   tools.DefaultPerToolSoftLimits(),
 		PendingMemoryWrites: memory.NewPendingWriteBuffer(),
 
-		LlmRetryMaxAttempts: 10,
-		LlmRetryBaseDelayMs: 1000,
+		LlmRetryMaxAttempts: llmRetryMaxAttempts,
+		LlmRetryBaseDelayMs: llmRetryBaseDelayMs,
 
 		PromptCacheDebugEnabled: promptCacheDebugEnabled,
 
@@ -788,7 +794,6 @@ func (e *DesktopEngine) Execute(ctx context.Context, run data.Run, traceID strin
 		}),
 		pipeline.NewHeartbeatPrepareMiddleware(),
 		pipeline.NewConditionalToolsMiddleware(),
-		pipeline.NewGenerationTaskMiddleware(),
 		pipeline.NewToolBuildMiddleware(),
 		pipeline.NewToolLoopDetectionMiddleware(),
 		pipeline.NewResultSummarizerMiddleware(nil, e.auxGateway, e.emitDebugEvents, 0, e.routingLoader),
@@ -1233,6 +1238,7 @@ func desktopInputLoader(
 		rc.ThreadMessageIDs = loaded.ThreadMessageIDs
 		rc.ThreadContextFrontier = append([]pipeline.FrontierNode(nil), loaded.ThreadContextFrontier...)
 		pipeline.ApplyCollaborationMode(rc)
+		pipeline.ApplyLearningMode(rc)
 		if rc.Tracer != nil {
 			rc.Tracer.Event("input_loader", "input_loader.loaded", map[string]any{
 				"run_kind":           strings.TrimSpace(desktopStringValue(loaded.InputJSON["run_kind"])),
@@ -3014,6 +3020,7 @@ func desktopPersonaResolution(
 			}
 		}
 		pipeline.SyncPlanModePrompt(rc)
+		pipeline.SyncLearningModePrompt(rc)
 
 		return next(ctx, rc)
 	}
@@ -4893,6 +4900,14 @@ func loadDesktopRoutingConfig(ctx context.Context, db data.DesktopDB) (routing.P
 		creds = append(creds, cred)
 		credMap[c.id] = cred
 	}
+	localCfg := routing.AppendLocalProviders(routing.ProviderRoutingConfig{}, localproviders.NewResolver(localproviders.Options{}).ProviderStatuses(ctx))
+	for _, cred := range localCfg.Credentials {
+		if _, exists := credMap[cred.ID]; exists {
+			continue
+		}
+		creds = append(creds, cred)
+		credMap[cred.ID] = cred
+	}
 	if len(creds) == 0 {
 		return routing.ProviderRoutingConfig{}, fmt.Errorf("no active credentials found in database")
 	}
@@ -4950,6 +4965,7 @@ func loadDesktopRoutingConfig(ctx context.Context, db data.DesktopDB) (routing.P
 	}
 	routeRows.Close()
 	tx.Rollback(ctx)
+	routes = append(routes, localCfg.Routes...)
 
 	if len(routes) == 0 {
 		return routing.ProviderRoutingConfig{}, fmt.Errorf("no routes found in database")

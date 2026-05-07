@@ -9,13 +9,26 @@ import { AuthProvider } from './contexts/auth'
 import { ThreadListProvider } from './contexts/thread-list'
 import { AppUIProvider } from './contexts/app-ui'
 import { CreditsProvider } from './contexts/credits'
+import { SharePage } from './components/SharePage'
+import { VerifyEmailPage } from './components/VerifyEmailPage'
+import { OnboardingWizard } from './components/OnboardingWizard'
+import { HeadlessSetupPage } from './components/HeadlessSetupPage'
 import { useLocale } from './contexts/LocaleContext'
+import { shouldDelayLocalSession } from './appAuthStartup'
 import {
   clearActiveThreadIdInStorage,
+  readActiveThreadIdFromStorage,
   writeAccessTokenToStorage,
   clearAccessTokenFromStorage,
 } from './storage'
-import { setUnauthenticatedHandler, setAccessTokenHandler, setSessionExpiredHandler, restoreAccessSession } from './api'
+import {
+  createLocalSession,
+  isApiError,
+  setUnauthenticatedHandler,
+  setAccessTokenHandler,
+  setSessionExpiredHandler,
+  restoreAccessSession,
+} from './api'
 import { setClientApp } from '@arkloop/shared/api'
 import {
   isLocalMode,
@@ -23,26 +36,54 @@ import {
   getDesktopApi,
   getDesktopAccessToken,
 } from '@arkloop/shared/desktop'
-import { isApiError } from './api'
 
 const ScheduledJobsPage = lazy(() => import('./pages/scheduled-jobs/ScheduledJobsPage'))
-// Pages off the primary chat path. OnboardingWizard is ~2000 LOC and only
-// runs once per install; Share/Verify are hit via specific URLs only.
-const SharePage = lazy(() => import('./components/SharePage').then((m) => ({ default: m.SharePage })))
-const VerifyEmailPage = lazy(() => import('./components/VerifyEmailPage').then((m) => ({ default: m.VerifyEmailPage })))
-const OnboardingWizard = lazy(() => import('./components/OnboardingWizard').then((m) => ({ default: m.OnboardingWizard })))
 
 const sessionRestoreRetries = 12
 const sessionRestoreDelayMs = 1000
+let startupRestoreAttempted = false
+
+function StartupRoute() {
+  const [targetThreadId, setTargetThreadId] = useState<string | null>(null)
+  const shouldRestoreStartupThread = isDesktop() && !startupRestoreAttempted
+  const [checked, setChecked] = useState(!shouldRestoreStartupThread)
+
+  useEffect(() => {
+    if (!shouldRestoreStartupThread) return
+    startupRestoreAttempted = true
+    let active = true
+    const api = getDesktopApi()
+    if (!api?.config) {
+      setChecked(true)
+      return
+    }
+    void api.config.get().then((config) => {
+      if (!active) return
+      if ((config.desktop?.startupOpen ?? 'last-workspace') === 'last-workspace') {
+        setTargetThreadId(readActiveThreadIdFromStorage())
+      }
+      setChecked(true)
+    }).catch(() => {
+      if (active) setChecked(true)
+    })
+    return () => {
+      active = false
+    }
+  }, [shouldRestoreStartupThread])
+
+  if (!checked) return null
+  if (targetThreadId) return <Navigate to={`/t/${targetThreadId}`} replace />
+  return <WelcomePage />
+}
 
 function App() {
   const { t } = useLocale()
   const { addToast } = useToast()
   const [accessToken, setAccessToken] = useState<string | null>(null)
   const [authChecked, setAuthChecked] = useState(false)
-  const [onboardingDone, setOnboardingDone] = useState<boolean | null>(null)
+  const [onboardingDone, setOnboardingDone] = useState<boolean | null>(() => (isDesktop() ? null : true))
   const [sidecarError, setSidecarError] = useState<{ title: string; message: string } | null>(null)
-  const [sidecarChecked, setSidecarChecked] = useState(false)
+  const [sidecarChecked, setSidecarChecked] = useState(() => !isDesktop())
 
   // Desktop: 检查 onboarding 状态
   useEffect(() => {
@@ -151,17 +192,50 @@ function App() {
       addToast(t.sessionExpired, 'warn')
     })
 
-    // Local 模式: Go 后端使用固定 token，跳过刷新流程
-    if (isLocalMode()) {
-      const desktopToken = getDesktopAccessToken() ?? ''
-      writeAccessTokenToStorage(desktopToken)
-      const raf = requestAnimationFrame(() => {
-        setAccessToken(desktopToken)
-        setAuthChecked(true)
-      })
+    const localMode = isLocalMode()
+    if (!sidecarChecked || onboardingDone === null) {
+      setAuthChecked(false)
       return () => {
         controller.abort()
-        cancelAnimationFrame(raf)
+      }
+    }
+    if (shouldDelayLocalSession(localMode, sidecarChecked, onboardingDone)) {
+      setAuthChecked(false)
+      return () => {
+        controller.abort()
+      }
+    }
+
+    // Local 模式: local trust 只用于换取正常 session，业务 API 继续使用 JWT。
+    if (localMode) {
+      const desktopToken = getDesktopAccessToken()?.trim()
+      if (!desktopToken) {
+        clearAccessTokenFromStorage()
+        setAccessToken(null)
+        setAuthChecked(true)
+        return () => {
+          controller.abort()
+        }
+      }
+
+      createLocalSession(desktopToken, controller.signal)
+        .then((resp) => {
+          if (controller.signal.aborted) return
+          writeAccessTokenToStorage(resp.access_token)
+          setAccessToken(resp.access_token)
+        })
+        .catch((err) => {
+          if (controller.signal.aborted) return
+          if (err instanceof Error && err.name === 'AbortError') return
+          clearAccessTokenFromStorage()
+          setAccessToken(null)
+        })
+        .finally(() => {
+          if (controller.signal.aborted) return
+          setAuthChecked(true)
+        })
+      return () => {
+        controller.abort()
       }
     }
 
@@ -187,7 +261,7 @@ function App() {
     return () => {
       controller.abort()
     }
-  }, [addToast, t.sessionExpired])
+  }, [addToast, onboardingDone, sidecarChecked, t.sessionExpired])
 
   const handleLoggedIn = useCallback((token: string) => {
     clearActiveThreadIdInStorage()
@@ -197,11 +271,7 @@ function App() {
   }, [])
 
   const handleLoggedOut = useCallback(() => {
-    // Local mode uses a fixed token — logout should be a no-op (button hidden, but guard here too)
     if (isLocalMode()) {
-      const desktopToken = getDesktopAccessToken() ?? ''
-      writeAccessTokenToStorage(desktopToken)
-      setAccessToken(desktopToken)
       return
     }
     clearAccessTokenFromStorage()
@@ -256,18 +326,13 @@ function App() {
     if (isDesktop()) return <LoadingPage label={t.loading} />
     return null
   }
-  if (onboardingDone === false) {
-    return (
-      <Suspense fallback={<LoadingPage label={t.loading} />}>
-        <OnboardingWizard onComplete={handleOnboardingComplete} />
-      </Suspense>
-    )
-  }
+  if (onboardingDone === false) return <OnboardingWizard onComplete={handleOnboardingComplete} />
 
   return (
     <Routes>
-      <Route path="/verify" element={<Suspense fallback={<LoadingPage label={t.loading} />}><VerifyEmailPage /></Suspense>} />
-      <Route path="/s/:token" element={<Suspense fallback={<LoadingPage label={t.loading} />}><SharePage /></Suspense>} />
+      <Route path="/setup" element={<HeadlessSetupPage onLoggedIn={handleLoggedIn} />} />
+      <Route path="/verify" element={<VerifyEmailPage />} />
+      <Route path="/s/:token" element={<SharePage />} />
       {!authChecked ? (
         <Route path="*" element={<LoadingPage label={t.loading} />} />
       ) : !accessToken ? (
@@ -291,7 +356,7 @@ function App() {
               </ThreadListProvider>
             </AuthProvider>
           }>
-            <Route index element={<WelcomePage />} />
+            <Route index element={<StartupRoute />} />
             <Route path="search" element={<WelcomePage />} />
             <Route path="t/:threadId" element={<ChatShell />} />
             <Route path="t/:threadId/search" element={<ChatShell />} />

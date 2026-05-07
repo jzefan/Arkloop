@@ -191,8 +191,8 @@ func TestRepairMissingColumnsMigratesOldPlanMode(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load threads columns: %v", err)
 	}
-	if !hasSQLiteColumns(columns, "collaboration_mode", "collaboration_mode_revision") {
-		t.Fatalf("threads columns = %v, want collaboration mode columns", columns)
+	if !hasSQLiteColumns(columns, "collaboration_mode", "collaboration_mode_revision", "learning_mode_enabled") {
+		t.Fatalf("threads columns = %v, want repaired thread columns", columns)
 	}
 
 	var defaultMode, planMode string
@@ -204,6 +204,43 @@ func TestRepairMissingColumnsMigratesOldPlanMode(t *testing.T) {
 	}
 	if defaultMode != "default" || planMode != "plan" {
 		t.Fatalf("collaboration modes = default:%q plan:%q, want default/plan", defaultMode, planMode)
+	}
+}
+
+func TestRepairMissingColumnsBackfillsChannelOwner(t *testing.T) {
+	t.Parallel()
+	pool := openTestDB(t)
+	ctx := context.Background()
+
+	if _, err := pool.Exec(ctx, `CREATE TABLE users (id TEXT PRIMARY KEY)`); err != nil {
+		t.Fatalf("create users: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `CREATE TABLE accounts (id TEXT PRIMARY KEY, owner_user_id TEXT)`); err != nil {
+		t.Fatalf("create accounts: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `CREATE TABLE channels (id TEXT PRIMARY KEY, account_id TEXT NOT NULL)`); err != nil {
+		t.Fatalf("create old channels: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO users (id) VALUES ('owner-1')`); err != nil {
+		t.Fatalf("seed user: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO accounts (id, owner_user_id) VALUES ('account-1', 'owner-1')`); err != nil {
+		t.Fatalf("seed account: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO channels (id, account_id) VALUES ('channel-1', 'account-1')`); err != nil {
+		t.Fatalf("seed channel: %v", err)
+	}
+
+	if err := repairMissingColumns(ctx, pool.Unwrap()); err != nil {
+		t.Fatalf("repair missing columns: %v", err)
+	}
+
+	var ownerUserID string
+	if err := pool.QueryRow(ctx, `SELECT owner_user_id FROM channels WHERE id = 'channel-1'`).Scan(&ownerUserID); err != nil {
+		t.Fatalf("query channel owner: %v", err)
+	}
+	if ownerUserID != "owner-1" {
+		t.Fatalf("unexpected channel owner: got %q want owner-1", ownerUserID)
 	}
 }
 
@@ -245,6 +282,126 @@ func TestMigrations_UpDown(t *testing.T) {
 	}
 	if ver != 0 {
 		t.Errorf("version after down all = %d; want 0", ver)
+	}
+}
+
+func TestMigration00089WebSearchBasicProvider(t *testing.T) {
+	t.Parallel()
+
+	pool := openTestDB(t)
+	ctx := context.Background()
+	db := pool.Unwrap()
+
+	provider, err := newProvider(db)
+	if err != nil {
+		t.Fatalf("new provider: %v", err)
+	}
+	if _, err := provider.UpTo(ctx, 88); err != nil {
+		t.Fatalf("up to 88: %v", err)
+	}
+
+	accountID := "00000000-0000-4000-8000-000000000089"
+	ownerID := "00000000-0000-4000-8000-000000000090"
+	conflictOwnerID := "00000000-0000-4000-8000-000000000091"
+	for _, userID := range []string{ownerID, conflictOwnerID} {
+		if _, err := pool.Exec(ctx, `INSERT INTO users (id, username) VALUES (?, ?)`, userID, "user-"+userID[len(userID)-4:]); err != nil {
+			t.Fatalf("insert user %s: %v", userID, err)
+		}
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO accounts (id, slug, name, type, owner_user_id)
+		VALUES (?, 'web-search-basic-migration', 'Web Search Basic Migration', 'personal', ?)
+	`, accountID, ownerID); err != nil {
+		t.Fatalf("insert account: %v", err)
+	}
+
+	seedToolProvider := func(ownerKind string, ownerUserID *string, providerName string, active int, keyPrefix string, baseURL string, configJSON string) {
+		t.Helper()
+		var ownerArg any
+		if ownerUserID != nil {
+			ownerArg = *ownerUserID
+		}
+		_, err := pool.Exec(ctx, `
+			INSERT INTO tool_provider_configs (
+				account_id, owner_kind, owner_user_id, group_name, provider_name,
+				is_active, key_prefix, base_url, config_json
+			) VALUES (?, ?, ?, 'web_search', ?, ?, NULLIF(?, ''), NULLIF(?, ''), ?)
+		`, accountID, ownerKind, ownerArg, providerName, active, keyPrefix, baseURL, configJSON)
+		if err != nil {
+			t.Fatalf("insert provider %s/%s: %v", ownerKind, providerName, err)
+		}
+	}
+	seedToolProvider("platform", nil, "web_search.duckduckgo", 1, "old-platform", "https://old.example", `{"mode":"old"}`)
+	seedToolProvider("platform", nil, "web_search.basic", 0, "", "", `{}`)
+	seedToolProvider("user", &ownerID, "web_search.duckduckgo", 0, "", "", `{"only":"old"}`)
+	seedToolProvider("user", &conflictOwnerID, "web_search.duckduckgo", 1, "old-user", "", `{"mode":"old"}`)
+	seedToolProvider("user", &conflictOwnerID, "web_search.basic", 0, "", "https://target.example", `{"keep":true}`)
+
+	result, err := provider.UpByOne(ctx)
+	if err != nil {
+		t.Fatalf("apply 89: %v", err)
+	}
+	if result == nil || result.Source == nil || result.Source.Version != 89 {
+		t.Fatalf("expected migration 89, got %#v", result)
+	}
+
+	assertSQLiteToolProviderCount(t, pool, ctx, "web_search.duckduckgo", 0)
+	assertSQLiteToolProviderCount(t, pool, ctx, "web_search.basic", 3)
+
+	var platformActive int
+	var platformKey, platformBase, platformConfig string
+	if err := pool.QueryRow(ctx, `
+		SELECT is_active, COALESCE(key_prefix, ''), COALESCE(base_url, ''), config_json
+		FROM tool_provider_configs
+		WHERE owner_kind = 'platform' AND provider_name = 'web_search.basic'
+	`).Scan(&platformActive, &platformKey, &platformBase, &platformConfig); err != nil {
+		t.Fatalf("select platform row: %v", err)
+	}
+	if platformActive != 1 || platformKey != "old-platform" || platformBase != "https://old.example" || !strings.Contains(platformConfig, `"mode":"old"`) {
+		t.Fatalf("platform row = active:%d key:%q base:%q config:%q", platformActive, platformKey, platformBase, platformConfig)
+	}
+
+	var userOnlyProvider string
+	if err := pool.QueryRow(ctx, `
+		SELECT provider_name
+		FROM tool_provider_configs
+		WHERE owner_kind = 'user' AND owner_user_id = ?
+	`, ownerID).Scan(&userOnlyProvider); err != nil {
+		t.Fatalf("select user-only row: %v", err)
+	}
+	if userOnlyProvider != "web_search.basic" {
+		t.Fatalf("user-only provider = %q", userOnlyProvider)
+	}
+
+	var conflictActive int
+	var conflictKey, conflictBase, conflictConfig string
+	if err := pool.QueryRow(ctx, `
+		SELECT is_active, COALESCE(key_prefix, ''), COALESCE(base_url, ''), config_json
+		FROM tool_provider_configs
+		WHERE owner_kind = 'user' AND owner_user_id = ? AND provider_name = 'web_search.basic'
+	`, conflictOwnerID).Scan(&conflictActive, &conflictKey, &conflictBase, &conflictConfig); err != nil {
+		t.Fatalf("select conflict row: %v", err)
+	}
+	if conflictActive != 1 || conflictKey != "old-user" || conflictBase != "https://target.example" ||
+		!strings.Contains(conflictConfig, `"keep":true`) || strings.Contains(conflictConfig, `"mode":"old"`) {
+		t.Fatalf("conflict row = active:%d key:%q base:%q config:%q", conflictActive, conflictKey, conflictBase, conflictConfig)
+	}
+
+	if _, err := provider.Down(ctx); err != nil {
+		t.Fatalf("down 89: %v", err)
+	}
+	assertSQLiteToolProviderCount(t, pool, ctx, "web_search.basic", 0)
+	assertSQLiteToolProviderCount(t, pool, ctx, "web_search.duckduckgo", 3)
+}
+
+func assertSQLiteToolProviderCount(t *testing.T, pool *Pool, ctx context.Context, providerName string, want int) {
+	t.Helper()
+	var got int
+	if err := pool.QueryRow(ctx, `SELECT COUNT(*) FROM tool_provider_configs WHERE provider_name = ?`, providerName).Scan(&got); err != nil {
+		t.Fatalf("count %s: %v", providerName, err)
+	}
+	if got != want {
+		t.Fatalf("provider %s count = %d, want %d", providerName, got, want)
 	}
 }
 

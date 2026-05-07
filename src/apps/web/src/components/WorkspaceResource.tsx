@@ -269,7 +269,7 @@ export function WorkspaceResource({ file, runId, projectId, accessToken }: Props
           data-workspace-kind="image"
           style={{ display: 'inline-block', border: '0.5px solid var(--c-border-subtle)', borderRadius: '12px', padding: '8px' }}
         >
-          <img loading="lazy" decoding="async"
+          <img
             src={loadState.blobUrl}
             alt={file.filename}
             draggable={false}
@@ -315,7 +315,7 @@ export function WorkspaceResource({ file, runId, projectId, accessToken }: Props
               <X size={16} />
             </button>
 
-            <img loading="lazy" decoding="async"
+            <img
               src={loadState.blobUrl}
               alt={file.filename}
               draggable={false}

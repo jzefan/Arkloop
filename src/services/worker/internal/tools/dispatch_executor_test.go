@@ -125,49 +125,6 @@ func TestDispatchingExecutorResolvesLlmNameToProvider(t *testing.T) {
 	}
 }
 
-func TestDispatchingExecutorRejectsNonGenerationToolForGenerationTask(t *testing.T) {
-	registry := NewRegistry()
-	for _, name := range []string{"show_widget", "image_generate"} {
-		if err := registry.Register(AgentToolSpec{
-			Name:        name,
-			Version:     "1",
-			Description: "x",
-			RiskLevel:   RiskLevelLow,
-		}); err != nil {
-			t.Fatalf("register %s failed: %v", name, err)
-		}
-	}
-
-	allowlist := AllowlistFromNames([]string{"show_widget", "image_generate"})
-	policy := NewPolicyEnforcer(registry, allowlist)
-	dispatch := NewDispatchingExecutor(registry, policy)
-	exec := &recordingExecutor{}
-	if err := dispatch.Bind("show_widget", exec); err != nil {
-		t.Fatalf("bind show_widget failed: %v", err)
-	}
-	if err := dispatch.Bind("image_generate", exec); err != nil {
-		t.Fatalf("bind image_generate failed: %v", err)
-	}
-
-	result := dispatch.Execute(context.Background(), "show_widget", nil, ExecutionContext{
-		Emitter:   events.NewEmitter("trace"),
-		InputJSON: map[string]any{"generation_task": "image"},
-	}, "call1")
-
-	if result.Error == nil {
-		t.Fatalf("expected generation task tool rejection")
-	}
-	if result.Error.ErrorClass != ErrorClassToolNotRegistered {
-		t.Fatalf("unexpected error class: %q", result.Error.ErrorClass)
-	}
-	if got := result.Error.Details["required_tool"]; got != "image_generate" {
-		t.Fatalf("expected required image_generate, got %#v", got)
-	}
-	if got := exec.CalledWith(); got != "" {
-		t.Fatalf("executor should not have been called, got %q", got)
-	}
-}
-
 func TestDispatchingExecutorFallbackDisplayDescriptionDoesNotCopyCommand(t *testing.T) {
 	dispatch := NewDispatchingExecutor(nil, nil)
 	emit := events.NewEmitter("trace")
@@ -189,10 +146,10 @@ func TestDispatchingExecutorFallbackDisplayDescriptionDoesNotCopyCommand(t *test
 	}
 }
 
-func TestDispatchingExecutorBindsDuckduckgoProviderName(t *testing.T) {
+func TestDispatchingExecutorBindsBasicSearchProviderName(t *testing.T) {
 	registry := NewRegistry()
 	if err := registry.Register(AgentToolSpec{
-		Name:        "web_search.duckduckgo",
+		Name:        "web_search.basic",
 		LlmName:     "web_search",
 		Version:     "1",
 		Description: "x",
@@ -201,12 +158,12 @@ func TestDispatchingExecutorBindsDuckduckgoProviderName(t *testing.T) {
 		t.Fatalf("register failed: %v", err)
 	}
 
-	allowlist := AllowlistFromNames([]string{"web_search.duckduckgo"})
+	allowlist := AllowlistFromNames([]string{"web_search.basic"})
 	policy := NewPolicyEnforcer(registry, allowlist)
 	dispatch := NewDispatchingExecutor(registry, policy)
 
 	exec := &recordingExecutor{}
-	if err := dispatch.Bind("web_search.duckduckgo", exec); err != nil {
+	if err := dispatch.Bind("web_search.basic", exec); err != nil {
 		t.Fatalf("bind failed: %v", err)
 	}
 
@@ -220,8 +177,8 @@ func TestDispatchingExecutorBindsDuckduckgoProviderName(t *testing.T) {
 	if result.Error != nil {
 		t.Fatalf("unexpected error: %+v", result.Error)
 	}
-	if got := exec.CalledWith(); got != "web_search.duckduckgo" {
-		t.Fatalf("expected web_search.duckduckgo, got %q", got)
+	if got := exec.CalledWith(); got != "web_search.basic" {
+		t.Fatalf("expected web_search.basic, got %q", got)
 	}
 }
 

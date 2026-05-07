@@ -49,7 +49,6 @@ type ExecutionContext struct {
 	Model                            string
 	MemoryScope                      string
 	AgentID                          string
-	InputJSON                        map[string]any
 	TimeoutMs                        *int
 	Budget                           map[string]any
 	PerToolSoftLimits                PerToolSoftLimits
@@ -273,21 +272,6 @@ func (e *DispatchingExecutor) Execute(
 	logicalName := identity.LogicalName
 	resolvedName := identity.ResolvedName
 
-	if required := requiredGenerationTool(execContext.InputJSON); required != "" && resolvedName != required && logicalName != required {
-		return ExecutionResult{
-			Error: &ExecutionError{
-				ErrorClass: ErrorClassToolNotRegistered,
-				Message:    "tool is not available for this generation task",
-				Details: map[string]any{
-					"tool_name":     logicalName,
-					"required_tool": required,
-					"tool_call_id":  toolCallID,
-				},
-			},
-			DurationMs: durationMs(started),
-		}
-	}
-
 	decision := e.policyEnforcer.RequestToolCall(execContext.Emitter, logicalName, args, toolCallID, resolvedName)
 	policyEvents := append([]events.RunEvent{}, decision.Events...)
 
@@ -406,18 +390,6 @@ func (e *DispatchingExecutor) Execute(
 	result.DurationMs = durationMs(started)
 	result.Events = append(policyEvents, result.Events...)
 	return result
-}
-
-func requiredGenerationTool(inputJSON map[string]any) string {
-	task, _ := inputJSON["generation_task"].(string)
-	switch strings.ToLower(strings.TrimSpace(task)) {
-	case "image":
-		return "image_generate"
-	case "video":
-		return "video_generate"
-	default:
-		return ""
-	}
 }
 
 func runExecutorWithHardTimeout(

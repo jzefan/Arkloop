@@ -121,7 +121,7 @@ export function ImageThumbnailCard({ artifact, accessToken, pathPrefix = '/v1/ar
           </div>
         )}
         {blobUrl && (
-          <img loading="lazy" decoding="async"
+          <img
             src={blobUrl}
             alt={artifact.filename}
             draggable={false}
@@ -180,7 +180,7 @@ export function ImageThumbnailCard({ artifact, accessToken, pathPrefix = '/v1/ar
             <X size={16} />
           </button>
 
-          <img loading="lazy" decoding="async"
+          <img
             src={blobUrl}
             alt={artifact.filename}
             draggable={false}

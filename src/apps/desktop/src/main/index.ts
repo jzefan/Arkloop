@@ -1,4 +1,4 @@
-import { app, BrowserWindow, Menu, nativeImage, session, shell } from 'electron'
+import { app, BrowserWindow, Menu, nativeImage, powerSaveBlocker, session, shell } from 'electron'
 import * as fs from 'fs'
 import * as os from 'os'
 import * as path from 'path'
@@ -11,9 +11,9 @@ import {
   setBridgeUrlListener,
   setMemoryConfig,
   setNetworkConfig,
-  setWorkspaceConfig,
   getSidecarRuntime,
   getBridgeBaseUrl,
+  getDesktopAccessToken,
   stopBridgeOpenvikingIfNeeded,
   ensureOpenCLI,
   type SidecarRuntime,
@@ -24,6 +24,7 @@ import { initVersionsFile } from './config'
 import { setupAppUpdater } from './app-updater'
 import { setupMainProcessLogging, getDesktopLogDir } from './logging'
 import { syncLocalVersions } from './updater'
+import { ensureBrowserSearchServer, closeBrowserSearchServer } from './browser-search'
 import type { AppConfig, ApplyConfigUpdateOptions } from './types'
 
 app.setName('Arkloop')
@@ -220,7 +221,6 @@ async function ensureLocalSidecar(config: AppConfig): Promise<AppConfig> {
 
   setMemoryConfig(config.memory)
   setNetworkConfig(config.network)
-  setWorkspaceConfig(config.workspace)
   void ensureOpenCLI()
 
   const runtime = await startSidecar(config.local.port, config.local.portMode)
@@ -248,10 +248,6 @@ function networkChanged(a: AppConfig, b: AppConfig): boolean {
     || a.network.userAgent !== b.network.userAgent
 }
 
-function workspaceChanged(a: AppConfig, b: AppConfig): boolean {
-  return a.workspace.root !== b.workspace.root
-}
-
 async function applyConfigUpdate(
   config: AppConfig,
   options?: ApplyConfigUpdateOptions,
@@ -264,13 +260,12 @@ async function applyConfigUpdate(
     || previous.local.portMode !== candidate.local.portMode
     || memoryChanged(previous, candidate)
     || networkChanged(previous, candidate)
-    || workspaceChanged(previous, candidate)
     || forceLocalReload
 
   if (!needsRestart) {
     setNetworkConfig(candidate.network)
-    setWorkspaceConfig(candidate.workspace)
     saveConfig(candidate)
+    applyDesktopPreferences(candidate)
     syncActiveSidecarPort(candidate, getSidecarRuntime())
     syncConfigToRenderer(candidate)
     return candidate
@@ -290,6 +285,7 @@ async function applyConfigUpdate(
   try {
     const applied = await ensureLocalSidecar(candidate)
     saveConfig(applied)
+    applyDesktopPreferences(applied)
     syncConfigToRenderer(applied)
     return applied
   } catch (error) {
@@ -297,6 +293,7 @@ async function applyConfigUpdate(
       try {
         const restored = await ensureLocalSidecar(previous)
         saveConfig(restored)
+        applyDesktopPreferences(restored)
         syncConfigToRenderer(restored)
       } catch {}
     } else {
@@ -369,7 +366,7 @@ function createWindow(): BrowserWindow {
       nodeIntegration: false,
       sandbox: true,
     },
-    frame: isWindows ? false : undefined,
+    frame: !isWindows,
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
     trafficLightPosition: { x: 12, y: 12 },
     ...(process.platform === 'linux' || process.platform === 'win32' ? { icon: iconPath } : {}),
@@ -389,12 +386,14 @@ function createWindow(): BrowserWindow {
     saveConfig(cfg)
   })
 
-  // 关闭时最小化到托盘而非退出
   win.on('close', (e) => {
-    if (!isQuitting) {
-      e.preventDefault()
-      win.hide()
+    if (isQuitting) return
+    e.preventDefault()
+    if (loadConfig().desktop.closeBehavior === 'quit') {
+      app.quit()
+      return
     }
+    win.hide()
   })
 
   win.once('ready-to-show', () => {
@@ -446,6 +445,33 @@ function loadContent(win: BrowserWindow): void {
 
 let isQuitting = false
 let shutdownInProgress = false
+let powerSaveBlockerId: number | null = null
+let keepAwakeSessionActive = false
+
+function applyDesktopPreferences(config: AppConfig): void {
+  try {
+    app.setLoginItemSettings({ openAtLogin: config.desktop.launchAtLogin })
+  } catch (error) {
+    console.error('[desktop] login_item_update_failed', { error })
+  }
+
+  if (config.desktop.keepScreenAwake && keepAwakeSessionActive) {
+    if (powerSaveBlockerId === null || !powerSaveBlocker.isStarted(powerSaveBlockerId)) {
+      powerSaveBlockerId = powerSaveBlocker.start('prevent-display-sleep')
+    }
+    return
+  }
+
+  if (powerSaveBlockerId !== null && powerSaveBlocker.isStarted(powerSaveBlockerId)) {
+    powerSaveBlocker.stop(powerSaveBlockerId)
+  }
+  powerSaveBlockerId = null
+}
+
+function setKeepAwakeSessionActive(active: boolean): void {
+  keepAwakeSessionActive = active
+  applyDesktopPreferences(loadConfig())
+}
 
 if (!hasSingleInstanceLock) {
   app.quit()
@@ -483,9 +509,16 @@ if (!hasSingleInstanceLock) {
       applyConfigUpdate,
       restartLocalSidecar,
       getSidecarRuntime: async () => getSidecarRuntime(),
+      setKeepAwakeSessionActive,
     })
+    try {
+      await ensureBrowserSearchServer(getDesktopAccessToken())
+    } catch (error) {
+      console.error('[desktop] browser_search_server_start_failed', { error })
+    }
 
     const config = loadConfig()
+    applyDesktopPreferences(config)
 
     // 先创建窗口，让用户立即看到 LoadingPage
     mainWindow = createWindow()
@@ -521,7 +554,7 @@ if (!hasSingleInstanceLock) {
 
     createTray(getWindow, showMainWindow)
     registerGlobalShortcut(getWindow, showMainWindow)
-    setupAppUpdater(getWindow)
+    setupAppUpdater(getWindow, { autoCheck: config.desktop.productUpdateNotifications })
   })
 
   app.on('window-all-closed', () => {
@@ -553,5 +586,13 @@ if (!hasSingleInstanceLock) {
       }
       app.quit()
     })()
+  })
+
+  app.on('will-quit', () => {
+    if (powerSaveBlockerId !== null && powerSaveBlocker.isStarted(powerSaveBlockerId)) {
+      powerSaveBlocker.stop(powerSaveBlockerId)
+      powerSaveBlockerId = null
+    }
+    void closeBrowserSearchServer()
   })
 }

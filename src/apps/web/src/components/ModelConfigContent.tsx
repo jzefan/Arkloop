@@ -1,7 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
-import { createPortal } from 'react-dom'
-import { Plus, Trash2, Download, X, Loader2, SlidersHorizontal } from 'lucide-react'
-import { useModalDismiss } from '../hooks/useModalDismiss'
+import { Plus, Trash2, Download, Loader2, SlidersHorizontal } from 'lucide-react'
 import {
   type LlmProvider,
   type LlmProviderModel,
@@ -17,42 +15,35 @@ import {
   isApiError,
 } from '../api'
 import { routeAdvancedJsonFromAvailableCatalog } from '@arkloop/shared/llm/available-catalog-advanced-json'
-import { PillToggle } from '@arkloop/shared'
 import { useLocale } from '../contexts/LocaleContext'
 import { ModelOptionsModal } from './ModelOptionsModal'
-
-const inputCls = 'w-full rounded-md border border-[var(--c-border-subtle)] bg-[var(--c-bg-input)] px-3 py-1.5 text-sm text-[var(--c-text-primary)] outline-none placeholder:text-[var(--c-text-muted)] focus:border-[var(--c-border)]'
+import { SettingsButton, SettingsIconButton } from './settings/_SettingsButton'
+import { SettingsInput } from './settings/_SettingsInput'
+import { SettingsModalFrame } from './settings/_SettingsModalFrame'
+import { SettingsSelect } from './settings/_SettingsSelect'
+import { SettingsSwitch } from './settings/_SettingsSwitch'
 
 const PROVIDER_PRESETS = [
   { key: 'openai_responses', provider: 'openai', openai_api_mode: 'responses' },
   { key: 'openai_chat_completions', provider: 'openai', openai_api_mode: 'chat_completions' },
   { key: 'anthropic_message', provider: 'anthropic', openai_api_mode: undefined },
-  { key: 'deepseek', provider: 'deepseek', openai_api_mode: undefined },
 ] as const
 
 type ProviderPresetKey = typeof PROVIDER_PRESETS[number]['key']
 
-function presetLabel(key: string, m: { vendorOpenaiResponses: string; vendorOpenaiChatCompletions: string; vendorAnthropicMessage: string; vendorDeepSeek: string }): string {
+function presetLabel(key: string, m: { vendorOpenaiResponses: string; vendorOpenaiChatCompletions: string; vendorAnthropicMessage: string }): string {
   const map: Record<string, string> = {
     openai_responses: m.vendorOpenaiResponses,
     openai_chat_completions: m.vendorOpenaiChatCompletions,
     anthropic_message: m.vendorAnthropicMessage,
-    deepseek: m.vendorDeepSeek,
   }
   return map[key] ?? key
 }
 
 function toPresetKey(provider: string, mode: string | null): ProviderPresetKey {
   if (provider === 'anthropic') return 'anthropic_message'
-  if (provider === 'deepseek') return 'deepseek'
   if (mode === 'chat_completions') return 'openai_chat_completions'
   return 'openai_responses'
-}
-
-function presetBaseUrlPlaceholder(key: ProviderPresetKey, fallback: string): string {
-  if (key === 'deepseek') return 'https://api.deepseek.com'
-  if (key === 'anthropic_message') return 'https://api.anthropic.com'
-  return fallback
 }
 
 type Props = {
@@ -115,15 +106,16 @@ export function ModelConfigContent({ accessToken }: Props) {
           </div>
         </div>
         <div className="border-t border-[var(--c-border-subtle)] px-3 py-3">
-          <button
+          <SettingsButton
+            variant="secondary"
             onClick={() => setShowAddProvider(true)}
-            className="flex h-7 w-full items-center justify-center gap-1.5 rounded-md text-sm text-[var(--c-text-muted)] transition-colors hover:bg-[var(--c-bg-sub)] hover:text-[var(--c-text-secondary)]"
+            className="w-full"
+            icon={<Plus size={14} />}
           >
-            <Plus size={14} />
             {m.addProvider}
-          </button>
+          </SettingsButton>
         </div>
-        {error && <p className="px-2 pb-2 text-xs text-[var(--c-error-text)]">{error}</p>}
+        {error && <p className="px-2 pb-2 text-xs text-red-400">{error}</p>}
       </div>
 
       {/* detail */}
@@ -192,73 +184,54 @@ function AddProviderModal({ accessToken, onClose, onCreated }: {
     }
   }
 
-  const dismissRef = useModalDismiss({ open: true, onDismiss: onClose })
-
-  return createPortal(
-    <div
-      className="fixed inset-0 z-[60] flex items-center justify-center bg-black/45"
-      onClick={(e) => { if (e.target === e.currentTarget) onClose() }}
+  return (
+    <SettingsModalFrame
+      open
+      title={m.addProvider}
+      onClose={onClose}
+      width={510}
+      footer={(
+        <>
+          <SettingsButton size="modal" variant="secondary" onClick={onClose}>
+            {m.cancel}
+          </SettingsButton>
+          <SettingsButton
+            size="modal"
+            variant="primary"
+            onClick={handleSave}
+            disabled={saving || !name.trim() || !apiKey.trim()}
+            icon={saving ? <Loader2 size={14} className="animate-spin" /> : undefined}
+          >
+            {m.save}
+          </SettingsButton>
+        </>
+      )}
     >
-      <div
-        ref={dismissRef as React.RefObject<HTMLDivElement>}
-        role="dialog"
-        aria-modal="true"
-        aria-label={m.addProvider}
-        className="flex w-[420px] flex-col gap-4 rounded-xl bg-[var(--c-bg-deep)] p-5 shadow-lg"
-      >
-        <div className="flex items-center justify-between">
-          <h3 className="text-sm font-semibold text-[var(--c-text-primary)]">{m.addProvider}</h3>
-          <button type="button" aria-label={m.cancel} onClick={onClose} className="rounded p-1 text-[var(--c-text-muted)] transition-colors hover:bg-[var(--c-bg-sub)] hover:text-[var(--c-text-secondary)]">
-            <X size={16} />
-          </button>
-        </div>
-
-        <div className="space-y-3">
+        <div className="mt-7 space-y-4">
           <FormField label={m.providerName}>
-            <input value={name} onChange={(e) => setName(e.target.value)} placeholder="My Provider" className={inputCls} />
+            <SettingsInput variant="md" value={name} onChange={(e) => setName(e.target.value)} placeholder="My Provider" />
           </FormField>
 
           <FormField label={m.providerVendor}>
-            <select
+            <SettingsSelect
               value={preset}
-              onChange={(e) => setPreset(e.target.value as ProviderPresetKey)}
-              className={inputCls}
-            >
-              {PROVIDER_PRESETS.map((p) => (
-                <option key={p.key} value={p.key}>{presetLabel(p.key, m)}</option>
-              ))}
-            </select>
+              onChange={(value) => setPreset(value as ProviderPresetKey)}
+              options={PROVIDER_PRESETS.map((p) => ({ value: p.key, label: presetLabel(p.key, m) }))}
+              triggerClassName="h-[35px]"
+            />
           </FormField>
 
           <FormField label={m.apiKey}>
-            <input type="password" value={apiKey} onChange={(e) => setApiKey(e.target.value)} placeholder={m.apiKeyPlaceholder} className={inputCls} />
+            <SettingsInput variant="md" type="password" value={apiKey} onChange={(e) => setApiKey(e.target.value)} placeholder={m.apiKeyPlaceholder} />
           </FormField>
 
           <FormField label={m.baseUrl}>
-            <input value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} placeholder={presetBaseUrlPlaceholder(preset, m.baseUrlPlaceholder)} className={inputCls} />
+            <SettingsInput variant="md" value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} placeholder={m.baseUrlPlaceholder} />
           </FormField>
         </div>
 
-        {err && <p className="mt-3 text-xs text-[var(--c-error-text)]">{err}</p>}
-
-        <div className="flex items-center justify-end gap-2 pt-1">
-          <button
-            onClick={onClose}
-            className="rounded-md border border-[var(--c-border-subtle)] px-3.5 py-1.5 text-sm text-[var(--c-text-secondary)] transition-colors hover:bg-[var(--c-bg-sub)]"
-          >
-            {m.cancel}
-          </button>
-          <button
-            onClick={handleSave}
-            disabled={saving || !name.trim() || !apiKey.trim()}
-            className="rounded-md bg-[var(--c-btn-bg)] px-4 py-1.5 text-sm font-medium text-[var(--c-btn-text)] transition-colors hover:opacity-90 disabled:opacity-50"
-          >
-            {saving ? <Loader2 size={14} className="animate-spin" /> : m.save}
-          </button>
-        </div>
-      </div>
-    </div>,
-    document.body,
+        {err && <p className="mt-3 text-xs text-red-400">{err}</p>}
+    </SettingsModalFrame>
   )
 }
 
@@ -327,24 +300,23 @@ function ProviderDetail({
       {/* provider form (always visible, like console-lite) */}
       <div className="space-y-4">
         <FormField label={m.providerVendor}>
-          <select value={formPreset} onChange={(e) => setFormPreset(e.target.value as ProviderPresetKey)} className={inputCls}>
-            {PROVIDER_PRESETS.map((p) => (
-              <option key={p.key} value={p.key}>{presetLabel(p.key, m)}</option>
-            ))}
-          </select>
+          <SettingsSelect
+            value={formPreset}
+            onChange={(value) => setFormPreset(value as ProviderPresetKey)}
+            options={PROVIDER_PRESETS.map((p) => ({ value: p.key, label: presetLabel(p.key, m) }))}
+          />
         </FormField>
 
         <FormField label={m.providerName}>
-          <input value={formName} onChange={(e) => setFormName(e.target.value)} className={inputCls} />
+          <SettingsInput value={formName} onChange={(e) => setFormName(e.target.value)} />
         </FormField>
 
         <FormField label={m.apiKey}>
-          <input
+          <SettingsInput
             type="password"
             value={formApiKey}
             onChange={(e) => setFormApiKey(e.target.value)}
             placeholder={provider.key_prefix ? `${provider.key_prefix}${'*'.repeat(40)}` : m.apiKeyPlaceholder}
-            className={inputCls}
           />
           {provider.key_prefix && (
             <p className="mt-1 text-xs text-[var(--c-text-muted)]">
@@ -354,43 +326,46 @@ function ProviderDetail({
         </FormField>
 
         <FormField label={m.baseUrl}>
-          <input value={formBaseUrl} onChange={(e) => setFormBaseUrl(e.target.value)} placeholder={presetBaseUrlPlaceholder(formPreset, m.baseUrlPlaceholder)} className={inputCls} />
+          <SettingsInput value={formBaseUrl} onChange={(e) => setFormBaseUrl(e.target.value)} placeholder={m.baseUrlPlaceholder} />
         </FormField>
       </div>
 
-      {err && <p className="text-xs text-[var(--c-error-text)]">{err}</p>}
+      {err && <p className="text-xs text-red-400">{err}</p>}
 
       {/* action bar */}
       <div className="flex items-center justify-between border-b border-[var(--c-border-subtle)] pb-4">
         {confirmDelete ? (
           <div className="flex items-center gap-2">
             <span className="text-xs text-[var(--c-text-tertiary)]">{m.deleteProviderConfirm}</span>
-            <button
+            <SettingsButton
+              variant="danger"
               onClick={handleDelete}
               disabled={deleting}
-              className="rounded-md bg-[var(--c-danger)] px-3 py-1 text-xs font-medium text-[var(--c-on-danger)] transition-colors hover:bg-[var(--c-danger-hover)] disabled:opacity-50"
+              icon={deleting ? <Loader2 size={12} className="animate-spin" /> : undefined}
             >
               {m.deleteProvider}
-            </button>
-            <button onClick={() => setConfirmDelete(false)} className="rounded-md px-3 py-1 text-xs text-[var(--c-text-secondary)] transition-colors hover:bg-[var(--c-bg-sub)]">
+            </SettingsButton>
+            <SettingsButton variant="secondary" onClick={() => setConfirmDelete(false)}>
               {m.cancel}
-            </button>
+            </SettingsButton>
           </div>
         ) : (
-          <button
+          <SettingsIconButton
+            label={m.deleteProvider}
+            danger
             onClick={() => setConfirmDelete(true)}
-            className="inline-flex items-center gap-1.5 rounded-md border border-[var(--c-border-subtle)] px-3 py-1.5 text-xs font-medium text-[var(--c-text-muted)] transition-colors hover:border-red-500/30 hover:text-red-500"
           >
             <Trash2 size={12} />
-          </button>
+          </SettingsIconButton>
         )}
-        <button
+        <SettingsButton
+          variant="primary"
           onClick={handleSave}
           disabled={saving || !formName.trim()}
-          className="rounded-md bg-[var(--c-btn-bg)] px-4 py-1.5 text-sm font-medium text-[var(--c-btn-text)] transition-colors hover:opacity-90 disabled:opacity-50"
+          icon={saving ? <Loader2 size={14} className="animate-spin" /> : undefined}
         >
-          {saving ? <Loader2 size={14} className="animate-spin" /> : m.save}
-        </button>
+          {m.save}
+        </SettingsButton>
       </div>
 
       {/* models */}
@@ -556,7 +531,6 @@ function ModelsSection({
         advanced_json: payload.advancedJSON,
         tags: payload.tags,
       })
-      setEditingModel(null)
       onChanged()
     } catch (e) {
       throw new Error(isApiError(e) ? e.message : m.saveFailed)
@@ -574,49 +548,48 @@ function ModelsSection({
         <h4 className="text-sm font-medium text-[var(--c-text-primary)]">{m.modelsSection}</h4>
         <div className="flex items-center gap-2">
           {provider.models.length > 0 && (
-            <button
+            <SettingsButton
+              variant="danger"
               onClick={() => void handleDeleteAll()}
               disabled={deletingAll}
-              className="inline-flex items-center gap-1.5 rounded-md border border-[var(--c-border-subtle)] px-3 py-1.5 text-xs font-medium text-[var(--c-text-muted)] transition-colors hover:border-red-500/30 hover:text-red-500 disabled:opacity-50"
+              icon={deletingAll ? <Loader2 size={12} className="animate-spin" /> : <Trash2 size={12} />}
             >
-              {deletingAll ? <Loader2 size={12} className="animate-spin" /> : <Trash2 size={12} />}
               {m.deleteAll}
-            </button>
+            </SettingsButton>
           )}
           {loadingAvailable && !available && (
             <Loader2 size={12} className="animate-spin text-[var(--c-text-muted)]" />
           )}
           {unconfiguredCount > 0 && (
-            <button
+            <SettingsButton
+              variant="secondary"
               onClick={() => void handleImportAll()}
               disabled={importing}
-              className="inline-flex items-center gap-1.5 rounded-md border border-[var(--c-border-subtle)] px-3 py-1.5 text-xs font-medium text-[var(--c-text-secondary)] transition-colors hover:bg-[var(--c-bg-sub)] disabled:opacity-50"
+              icon={<Download size={12} />}
             >
-              <Download size={12} />
               {importing ? m.importing : `${m.importAll} (${unconfiguredCount})`}
-            </button>
+            </SettingsButton>
           )}
-          <button
+          <SettingsButton
+            variant="primary"
             onClick={() => setCreatingModel(true)}
-            className="rounded-md bg-[var(--c-btn-bg)] px-3 py-1.5 text-xs font-medium text-[var(--c-btn-text)] transition-colors hover:opacity-90"
           >
             {m.addModel}
-          </button>
+          </SettingsButton>
         </div>
       </div>
       {availableError && (
-        <p className="mt-1 text-xs text-[var(--c-error-text)]">{availableError}</p>
+        <p className="mt-1 text-xs text-red-400">{availableError}</p>
       )}
 
-      {err && <p className="mt-2 text-xs text-[var(--c-error-text)]">{err}</p>}
+      {err && <p className="mt-2 text-xs text-red-400">{err}</p>}
 
       {provider.models.length > 0 && (
         <div className="mt-3">
-          <input
+          <SettingsInput
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder={m.searchPlaceholder}
-            className={inputCls + ' w-full'}
           />
         </div>
       )}
@@ -639,20 +612,20 @@ function ModelsSection({
                 )}
               </div>
               <div className="flex items-center gap-1.5 flex-shrink-0">
-                <PillToggle checked={pm.show_in_picker} onChange={() => void handleTogglePicker(pm.id, pm.show_in_picker)} />
-                <button
+                <SettingsSwitch checked={pm.show_in_picker} onChange={() => void handleTogglePicker(pm.id, pm.show_in_picker)} />
+                <SettingsIconButton
+                  label={m.modelOptionsTitle}
                   onClick={() => setEditingModel(pm)}
-                  className="rounded p-1.5 text-[var(--c-text-muted)] transition-colors hover:bg-[var(--c-bg-sub)] hover:text-[var(--c-text-secondary)]"
-                  title={m.modelOptionsTitle}
                 >
                   <SlidersHorizontal size={14} />
-                </button>
-                <button
+                </SettingsIconButton>
+                <SettingsIconButton
+                  label={m.deleteModel}
+                  danger
                   onClick={() => void handleDeleteModel(pm.id)}
-                  className="rounded p-1.5 text-[var(--c-text-muted)] transition-colors hover:bg-[var(--c-bg-sub)] hover:text-red-500"
                 >
                   <Trash2 size={14} />
-                </button>
+                </SettingsIconButton>
               </div>
             </div>
           ))

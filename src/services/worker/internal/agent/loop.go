@@ -542,20 +542,6 @@ func (l *Loop) Run(
 				if runCtx.PipelineRC != nil && runCtx.PipelineRC.HookRuntime != nil && runCtx.PipelineRC.HookRegistry != nil {
 					runCtx.PipelineRC.HookRuntime.AfterToolCall(ctx, runCtx.PipelineRC, call, result)
 				}
-				if shouldCompleteGenerationTask(runCtx, call.ToolName, toolResult) {
-					if delta := generationTaskArtifactDelta(toolResult); delta != "" {
-						if err := yield(emitter.Emit("message.delta", llm.StreamMessageDelta{
-							ContentDelta: delta,
-							Role:         "assistant",
-						}.ToDataJSON(), nil, nil)); err != nil {
-							return err
-						}
-					}
-					if runCtx.RolloutRecorder != nil {
-						appendRolloutSync(ctx, runCtx.RolloutRecorder, MakeRunEnd("completed"))
-					}
-					return yield(emitter.Emit("run.completed", completionTotals.Apply(turn.CompletedDataJSON), nil, nil))
-				}
 			}
 		}
 
@@ -711,7 +697,6 @@ func (l *Loop) Run(
 			request.Tools = filterToolSpecs(request.Tools, func(spec llm.ToolSpec) bool {
 				return pipeline.IsHeartbeatDecisionToolName(spec.Name)
 			})
-			messages = stripImagePartsFromMessages(messages)
 		}
 
 		// end_reply: terminate run without further output
@@ -997,7 +982,6 @@ func (l *Loop) executeToolCall(
 		Model:                            runCtx.Model,
 		MemoryScope:                      runCtx.MemoryScope,
 		AgentID:                          runCtx.AgentID,
-		InputJSON:                        copyMap(runCtx.InputJSON),
 		TimeoutMs:                        runCtx.ToolTimeoutMs,
 		Budget:                           copyMap(runCtx.ToolBudget),
 		PerToolSoftLimits:                tools.CopyPerToolSoftLimits(runCtx.PerToolSoftLimits),
@@ -1231,62 +1215,6 @@ func isContinuationBudgetError(err *tools.ExecutionError) bool {
 		return false
 	}
 	return err.ErrorClass == ErrorClassToolContinuationBudgetExceeded || err.ErrorClass == ErrorClassToolContinuationLimitExceeded
-}
-
-func shouldCompleteGenerationTask(runCtx RunContext, toolName string, toolResult llm.StreamToolResult) bool {
-	if toolResult.Error != nil {
-		return false
-	}
-	task, _ := runCtx.InputJSON["generation_task"].(string)
-	task = strings.ToLower(strings.TrimSpace(task))
-	switch task {
-	case "image":
-		return toolName == "image_generate"
-	case "video":
-		return toolName == "video_generate"
-	default:
-		return false
-	}
-}
-
-func generationTaskArtifactDelta(toolResult llm.StreamToolResult) string {
-	if toolResult.ResultJSON == nil {
-		return ""
-	}
-	rawArtifacts := generationTaskArtifacts(toolResult.ResultJSON["artifacts"])
-	if len(rawArtifacts) == 0 {
-		return ""
-	}
-	key, _ := rawArtifacts[0]["key"].(string)
-	if strings.TrimSpace(key) == "" {
-		return ""
-	}
-	alt, _ := rawArtifacts[0]["title"].(string)
-	if strings.TrimSpace(alt) == "" {
-		alt, _ = rawArtifacts[0]["filename"].(string)
-	}
-	if strings.TrimSpace(alt) == "" {
-		alt = "generated artifact"
-	}
-	alt = strings.NewReplacer("[", "\\[", "]", "\\]", "\n", " ").Replace(alt)
-	return fmt.Sprintf("![%s](artifact:%s)", alt, key)
-}
-
-func generationTaskArtifacts(raw any) []map[string]any {
-	if artifacts, ok := raw.([]map[string]any); ok {
-		return artifacts
-	}
-	items, ok := raw.([]any)
-	if !ok {
-		return nil
-	}
-	out := make([]map[string]any, 0, len(items))
-	for _, item := range items {
-		if artifact, ok := item.(map[string]any); ok {
-			out = append(out, artifact)
-		}
-	}
-	return out
 }
 
 func hasReasoningIterationLimit(limit int) bool {
@@ -2289,15 +2217,15 @@ func promptCacheMarkerIndex(messages []llm.Message, runCtx RunContext) int {
 	if lastIdx < 0 {
 		return -1
 	}
+	markerIdx := lastIdx
 	if pipeline.IsHeartbeatRunContext(runCtx.PipelineRC) {
-		return heartbeatPromptCacheMarkerIndex(messages)
-	}
-	if isChannelRunContext(runCtx.PipelineRC) && strings.TrimSpace(messages[lastIdx].Role) == "user" {
+		markerIdx = heartbeatPromptCacheMarkerIndex(messages)
+	} else if isChannelRunContext(runCtx.PipelineRC) && strings.TrimSpace(messages[lastIdx].Role) == "user" {
 		if idx := lastAssistantMessageIndexBefore(messages, lastIdx); idx >= 0 {
-			return idx
+			markerIdx = idx
 		}
 	}
-	return lastIdx
+	return promptCacheMarkerBeforeImageTail(messages, markerIdx)
 }
 
 func isHeartbeatDecisionPhase(request *llm.Request) bool {
@@ -2312,119 +2240,11 @@ func prepareHeartbeatDecisionPhaseRequest(request *llm.Request) {
 	if !isHeartbeatDecisionPhase(request) {
 		return
 	}
-	request.Messages = heartbeatDecisionPhaseMessages(request.Messages)
 	if heartbeatTools := filterToolSpecs(request.Tools, func(spec llm.ToolSpec) bool {
 		return !pipeline.IsHeartbeatDecisionToolName(spec.Name)
 	}); len(heartbeatTools) > 0 {
 		request.Tools = heartbeatTools
 	}
-	request.PromptPlan = nil
-}
-
-func heartbeatDecisionPhaseMessages(messages []llm.Message) []llm.Message {
-	if len(messages) == 0 {
-		return nil
-	}
-	heartbeatIdx := -1
-	for i, msg := range messages {
-		if messageHasText(msg, "[SYSTEM_HEARTBEAT_CHECK]") {
-			heartbeatIdx = i
-			break
-		}
-	}
-	if heartbeatIdx < 0 {
-		heartbeatIdx = len(messages)
-	}
-
-	const historyLimit = 12
-	history := make([]llm.Message, 0, historyLimit)
-	for i := heartbeatIdx - 1; i >= 0 && len(history) < historyLimit; i-- {
-		cloned, ok := heartbeatDecisionVisibleMessage(messages[i])
-		if !ok {
-			continue
-		}
-		history = append(history, cloned)
-	}
-	out := make([]llm.Message, 0, len(history)+len(messages)-heartbeatIdx)
-	for i := len(history) - 1; i >= 0; i-- {
-		out = append(out, history[i])
-	}
-	for _, msg := range messages[heartbeatIdx:] {
-		if cloned, ok := heartbeatDecisionVisibleMessage(msg); ok {
-			out = append(out, cloned)
-		}
-	}
-	return out
-}
-
-func heartbeatDecisionVisibleMessage(msg llm.Message) (llm.Message, bool) {
-	role := strings.TrimSpace(msg.Role)
-	if role != "user" && role != "assistant" {
-		return llm.Message{}, false
-	}
-	parts := make([]llm.ContentPart, 0, len(msg.Content))
-	for _, part := range msg.Content {
-		if strings.TrimSpace(part.Text) == "" {
-			continue
-		}
-		parts = append(parts, llm.ContentPart{
-			Type:        part.Type,
-			Text:        part.Text,
-			TrustSource: part.TrustSource,
-		})
-	}
-	if len(parts) == 0 {
-		return llm.Message{}, false
-	}
-	return llm.Message{Role: role, Content: parts}, true
-}
-
-func stripImagePartsFromMessages(messages []llm.Message) []llm.Message {
-	if len(messages) == 0 {
-		return messages
-	}
-	out := make([]llm.Message, len(messages))
-	copy(out, messages)
-	for i := range out {
-		parts, changed := stripImageParts(out[i].Content)
-		if changed {
-			out[i].Content = parts
-		}
-	}
-	return out
-}
-
-func stripImageParts(parts []llm.ContentPart) ([]llm.ContentPart, bool) {
-	if len(parts) == 0 {
-		return parts, false
-	}
-	out := make([]llm.ContentPart, 0, len(parts))
-	changed := false
-	for _, part := range parts {
-		if part.Kind() != messagecontent.PartTypeImage {
-			out = append(out, part)
-			continue
-		}
-		changed = true
-		key := ""
-		if part.Attachment != nil {
-			key = strings.TrimSpace(part.Attachment.Key)
-		}
-		if key != "" {
-			out = append(out, llm.ContentPart{
-				Type:        messagecontent.PartTypeText,
-				Text:        "[attachment_key:" + key + "]",
-				TrustSource: part.TrustSource,
-			})
-		}
-	}
-	if len(out) == 0 {
-		out = append(out, llm.ContentPart{
-			Type: messagecontent.PartTypeText,
-			Text: "[image omitted]",
-		})
-	}
-	return out, changed
 }
 
 func heartbeatPromptCacheMarkerIndex(messages []llm.Message) int {
@@ -2439,6 +2259,41 @@ func heartbeatPromptCacheMarkerIndex(messages []llm.Message) int {
 		return len(messages) - 1
 	}
 	return lastAssistantMessageIndexBefore(messages, heartbeatIdx)
+}
+
+func promptCacheMarkerBeforeImageTail(messages []llm.Message, markerIdx int) int {
+	if markerIdx < 0 || len(messages) == 0 {
+		return markerIdx
+	}
+	if markerIdx >= len(messages) {
+		markerIdx = len(messages) - 1
+	}
+	firstImageIdx := firstImageMessageIndexAtOrBefore(messages, markerIdx)
+	if firstImageIdx < 0 {
+		return markerIdx
+	}
+	return lastAssistantMessageIndexBefore(messages, firstImageIdx)
+}
+
+func firstImageMessageIndexAtOrBefore(messages []llm.Message, maxIdx int) int {
+	if maxIdx >= len(messages) {
+		maxIdx = len(messages) - 1
+	}
+	for i := 0; i <= maxIdx; i++ {
+		if messageHasImagePart(messages[i]) {
+			return i
+		}
+	}
+	return -1
+}
+
+func messageHasImagePart(msg llm.Message) bool {
+	for _, part := range msg.Content {
+		if part.Kind() == messagecontent.PartTypeImage {
+			return true
+		}
+	}
+	return false
 }
 
 func lastAssistantMessageIndexBefore(messages []llm.Message, before int) int {

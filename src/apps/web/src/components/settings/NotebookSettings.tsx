@@ -5,10 +5,12 @@ import remarkGfm from 'remark-gfm'
 import { ConfirmDialog, Modal, formatDateTime } from '@arkloop/shared'
 import { SpinnerIcon } from '@arkloop/shared/components/auth-ui'
 import { useLocale } from '../../contexts/LocaleContext'
-import { getDesktopApi } from '@arkloop/shared/desktop'
 import type { MemoryEntry } from '@arkloop/shared/desktop'
 import { secondaryButtonSmCls, secondaryButtonBorderStyle } from '../buttonStyles'
+import { SettingsButton } from './_SettingsButton'
+import { settingsInputCls } from './_SettingsInput'
 import { SettingsSectionHeader } from './_SettingsSectionHeader'
+import { getDesktopMemoryApi } from '../../desktopMemoryApi'
 
 function formatDate(iso: string): string {
   return formatDateTime(iso, { includeZone: false })
@@ -20,7 +22,7 @@ function categoryColor(category: string): string {
     preferences: 'bg-purple-500/15 text-purple-400',
     entities: 'bg-amber-500/15 text-amber-400',
     events: 'bg-green-500/15 text-green-400',
-    cases: 'bg-red-500/15 text-[var(--c-error-text)]',
+    cases: 'bg-red-500/15 text-red-400',
     patterns: 'bg-teal-500/15 text-teal-400',
     general: 'bg-[var(--c-bg-deep)] text-[var(--c-text-muted)]',
   }
@@ -87,18 +89,17 @@ function EntryCard({
                   if (e.key === 'Escape') { cancelEdit() }
                 }}
                 rows={3}
-                className="w-full resize-none rounded-lg px-2 py-1.5 text-sm text-[var(--c-text-primary)] outline-none"
-                style={{ border: '1px solid var(--c-border)', background: 'var(--c-bg-input)' }}
+                className={`${settingsInputCls('md')} h-auto min-h-[84px] resize-none py-2`}
               />
               <div className="flex items-center gap-2">
-                <button
+                <SettingsButton
+                  variant="primary"
                   onClick={() => void saveEdit()}
                   disabled={saving || !editValue.trim()}
-                  className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-[var(--c-btn-bg)] px-4 py-1.5 text-sm font-medium text-[var(--c-btn-text)] transition-[filter] hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-40"
+                  icon={saving ? <SpinnerIcon /> : undefined}
                 >
-                  {saving && <SpinnerIcon />}
                   Save
-                </button>
+                </SettingsButton>
                 <button
                   onClick={cancelEdit}
                   className={secondaryButtonSmCls}
@@ -136,7 +137,7 @@ function EntryCard({
               </button>
               <button
                 onClick={() => onDelete(entry.id)}
-                className="rounded-lg p-1 text-[var(--c-text-muted)] transition-colors hover:text-[var(--c-error-text)]"
+                className="rounded-lg p-1 text-[var(--c-text-muted)] transition-colors hover:text-red-400"
               >
                 <Trash2 size={12} />
               </button>
@@ -269,7 +270,9 @@ function NotebookCard({
 // Main component
 // ---------------------------------------------------------------------------
 
-export function NotebookSettings() {
+type Props = { accessToken?: string }
+
+export function NotebookSettings({ accessToken }: Props) {
   const { t } = useLocale()
   const ds = t.desktopSettings
 
@@ -283,19 +286,19 @@ export function NotebookSettings() {
   const [confirmClearAll, setConfirmClearAll] = useState(false)
   const [modalOpen, setModalOpen] = useState(false)
 
-  const api = getDesktopApi()
+  const memoryApi = getDesktopMemoryApi(accessToken)
 
   const loadEntries = useCallback(async (quiet = false) => {
-    if (!api?.memory) { setLoading(false); return }
+    if (!memoryApi) { setLoading(false); return }
     if (!quiet) setLoading(true); else setRefreshing(true)
     try {
-      const resp = await api.memory.list()
+      const resp = await memoryApi.list()
       setEntries(resp.entries ?? [])
     } catch { /* ignore */ } finally {
       setLoading(false)
       setRefreshing(false)
     }
-  }, [api])
+  }, [memoryApi])
 
   useEffect(() => {
     void loadEntries()
@@ -303,36 +306,36 @@ export function NotebookSettings() {
 
   const handleAdd = useCallback(async () => {
     const content = addContent.trim()
-    if (!content || !api?.memory) return
+    if (!content || !memoryApi) return
     setAdding(true)
     try {
-      await api.memory.add(content)
+      await memoryApi.add(content)
       setAddContent('')
       await loadEntries(true)
     } catch { /* ignore */ } finally {
       setAdding(false)
     }
-  }, [addContent, api, loadEntries])
+  }, [addContent, memoryApi, loadEntries])
 
   const handleDelete = useCallback(async (id: string) => {
-    if (!api?.memory) return
-    try { await api.memory.delete(id); setEntries((p) => p.filter((e) => e.id !== id)) } catch { /* ignore */ }
+    if (!memoryApi) return
+    try { await memoryApi.delete(id); setEntries((p) => p.filter((e) => e.id !== id)) } catch { /* ignore */ }
     setConfirmDeleteId(null)
-  }, [api])
+  }, [memoryApi])
 
   const handleEdit = useCallback(async (id: string, newContent: string, category: string) => {
-    if (!api?.memory) return
-    await api.memory.delete(id)
-    await api.memory.add(newContent, category)
+    if (!memoryApi) return
+    await memoryApi.delete(id)
+    await memoryApi.add(newContent, category)
     await loadEntries(true)
-  }, [api, loadEntries])
+  }, [memoryApi, loadEntries])
 
   const handleClearAll = useCallback(async () => {
-    if (!api?.memory) return
-    for (const e of entries) { try { await api.memory.delete(e.id) } catch { /* ignore */ } }
+    if (!memoryApi) return
+    for (const e of entries) { try { await memoryApi.delete(e.id) } catch { /* ignore */ } }
     setEntries([])
     setConfirmClearAll(false)
-  }, [api, entries])
+  }, [memoryApi, entries])
 
   const filteredEntries = searchQuery.trim()
     ? entries.filter((e) => {
@@ -354,7 +357,7 @@ export function NotebookSettings() {
     )
   }
 
-  if (!api?.memory) {
+  if (!memoryApi) {
     return (
       <div className="flex flex-col gap-4">
         <SettingsSectionHeader title={ds.notebookSettingsTitle} description={ds.notebookSettingsDesc} />
@@ -388,18 +391,17 @@ export function NotebookSettings() {
           }}
           placeholder={ds.notebookAddPlaceholder}
           rows={4}
-          className="w-full resize-none rounded-lg px-3 py-2.5 text-sm text-[var(--c-text-primary)] placeholder:text-[var(--c-text-muted)] outline-none"
-          style={{ border: '0.5px solid var(--c-border-subtle)', background: 'var(--c-bg-input)' }}
+          className={`${settingsInputCls('md')} h-auto min-h-[108px] resize-none py-2.5`}
         />
-        <button
+        <SettingsButton
+          variant="primary"
           onClick={() => void handleAdd()}
           disabled={adding || !addContent.trim()}
-          className="flex w-full items-center justify-center gap-1.5 rounded-lg py-2.5 text-sm font-medium transition-[filter] hover:[filter:brightness(1.08)] disabled:opacity-40"
-          style={{ background: 'var(--c-btn-bg)', color: 'var(--c-btn-text)' }}
+          className="w-full"
+          icon={adding ? <SpinnerIcon /> : <Plus size={14} />}
         >
-          {adding ? <SpinnerIcon /> : <Plus size={14} />}
           {ds.notebookAddButton}
-        </button>
+        </SettingsButton>
       </div>
 
       {/* notebook preview card */}
@@ -440,12 +442,14 @@ export function NotebookSettings() {
                 <RefreshCw size={14} className={refreshing ? 'animate-spin' : ''} />
               </button>
               {entries.length > 0 && (
-                <button
+                <SettingsButton
+                  variant="danger"
                   onClick={() => setConfirmClearAll(true)}
-                  className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs text-[var(--c-error-text)] transition-colors hover:bg-red-500/10"
+                  className="text-xs"
+                  icon={<Trash2 size={12} />}
                 >
-                  <Trash2 size={12} />{ds.memoryClearAll}
-                </button>
+                  {ds.memoryClearAll}
+                </SettingsButton>
               )}
             </div>
           </div>

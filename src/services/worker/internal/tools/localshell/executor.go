@@ -12,13 +12,13 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"sync"
 	"time"
 
 	"arkloop/services/worker/internal/tools"
-	"arkloop/services/worker/internal/tools/writeperm"
 )
 
 const (
@@ -36,10 +36,15 @@ var localShellAllowedEnvKeys = []string{
 	"LOGNAME",
 	"PATH",
 	"SHELL",
+	"ComSpec",
 	"TEMP",
 	"TMP",
 	"TMPDIR",
+	"PATHEXT",
+	"SystemRoot",
 	"USER",
+	"USERPROFILE",
+	"WINDIR",
 }
 
 type Executor struct {
@@ -117,21 +122,12 @@ func (e *Executor) executeExecCommand(
 	if rewritten := rtkRewrite(ctx, command); rewritten != "" {
 		command = rewritten
 	}
-	cwd, err := e.resolveCwd(reqArgs.Cwd, execCtx.WorkDir)
-	if err != nil {
-		return errResult(errorArgsInvalid, err.Error(), started)
-	}
-	for _, path := range DetectModifiedFiles(command, cwd) {
-		if err := writeperm.Check(ctx, e.workDir, path, "exec_command"); err != nil {
-			return errResult(errorArgsInvalid, err.Error(), started)
-		}
-	}
 
 	req := ExecCommandRequest{
 		RunID:     execCtx.RunID.String(),
 		Command:   command,
 		Mode:      reqArgs.Mode,
-		Cwd:       cwd,
+		Cwd:       resolveExecCwd(reqArgs.Cwd, execCtx.WorkDir, e.workDir),
 		TimeoutMs: reqArgs.TimeoutMs,
 		Size:      reqArgs.Size,
 		Env:       sanitizeLocalEnvPatches(reqArgs.Env),
@@ -149,20 +145,6 @@ func (e *Executor) executeExecCommand(
 		return mapLocalProcessError(runErr, started)
 	}
 	return buildProcessResult(resp, ExecCommandAgentSpec.Name, execCtx.RunID.String(), execCtx.PerToolSoftLimits, started)
-}
-
-func (e *Executor) resolveCwd(requested string, runWorkDir string) (string, error) {
-	cwd := resolveExecCwd(requested, runWorkDir, e.workDir)
-	cwd = strings.TrimSpace(cwd)
-	if cwd == "" {
-		cwd = e.workDir
-	}
-	cleaned := filepath.Clean(cwd)
-	root := filepath.Clean(e.workDir)
-	if cleaned != root && !strings.HasPrefix(cleaned, root+string(filepath.Separator)) {
-		return "", fmt.Errorf("cwd %q is outside the workspace", cwd)
-	}
-	return cleaned, nil
 }
 
 func (e *Executor) executeContinueProcess(args map[string]any, execCtx tools.ExecutionContext, started time.Time) tools.ExecutionResult {
@@ -472,7 +454,7 @@ func sanitizeLocalEnvPatches(overrides map[string]*string) map[string]*string {
 			continue
 		}
 		key := strings.TrimSpace(parts[0])
-		if key == "" || slices.Contains(localShellAllowedEnvKeys, key) {
+		if key == "" || isLocalShellAllowedEnvKey(key) {
 			continue
 		}
 		patches[key] = nil
@@ -484,6 +466,15 @@ func sanitizeLocalEnvPatches(overrides map[string]*string) map[string]*string {
 		return nil
 	}
 	return patches
+}
+
+func isLocalShellAllowedEnvKey(key string) bool {
+	if runtime.GOOS == "windows" {
+		return slices.ContainsFunc(localShellAllowedEnvKeys, func(allowed string) bool {
+			return strings.EqualFold(key, allowed)
+		})
+	}
+	return slices.Contains(localShellAllowedEnvKeys, key)
 }
 
 func isProcessNotFound(err error) bool {
@@ -585,8 +576,15 @@ func readIntArg(args map[string]any, key string) int {
 func sanitizeOutput(s string) string {
 	lines := strings.Split(s, "\n")
 	for i, line := range lines {
+		line = strings.TrimSuffix(line, "\r")
 		parts := strings.Split(line, "\r")
-		lines[i] = parts[len(parts)-1]
+		for j := len(parts) - 1; j >= 0; j-- {
+			if parts[j] != "" {
+				line = parts[j]
+				break
+			}
+		}
+		lines[i] = line
 	}
 	s = strings.Join(lines, "\n")
 

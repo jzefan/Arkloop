@@ -1,38 +1,30 @@
 import { useRef, useEffect, useState, useCallback } from 'react'
 import { Maximize2, Minimize2 } from 'lucide-react'
-
-type MermaidApi = typeof import('mermaid')['default']
+import mermaid from 'mermaid'
 
 const DEBOUNCE_MS = 200
 const MIN_HEIGHT = 200
 const COLLAPSED_MAX_HEIGHT = 400
 
-// Mermaid is ~200KB+ gzip and is only needed when a chat actually renders a
-// diagram. Defer the import until first render so it doesn't bloat the main
-// bundle. The promise is shared across all instances.
-let mermaidPromise: Promise<MermaidApi> | null = null
-function loadMermaid(): Promise<MermaidApi> {
-  if (mermaidPromise) return mermaidPromise
-  mermaidPromise = import('mermaid').then((mod) => {
-    const api = mod.default
-    api.initialize({
-      startOnLoad: false,
-      theme: 'base',
-      themeVariables: {
-        primaryColor: 'var(--c-bg-sub)',
-        primaryTextColor: 'var(--c-text-primary)',
-        primaryBorderColor: 'var(--c-border)',
-        lineColor: 'var(--c-text-tertiary)',
-        secondaryColor: 'var(--c-bg-deep)',
-        tertiaryColor: 'var(--c-bg-page)',
-        fontFamily: "system-ui, -apple-system, 'Segoe UI', sans-serif",
-      },
-      flowchart: { htmlLabels: false, curve: 'basis' },
-      securityLevel: 'strict',
-    })
-    return api
+let mermaidInitialized = false
+function ensureMermaidInit() {
+  if (mermaidInitialized) return
+  mermaidInitialized = true
+  mermaid.initialize({
+    startOnLoad: false,
+    theme: 'base',
+    themeVariables: {
+      primaryColor: 'var(--c-bg-sub)',
+      primaryTextColor: 'var(--c-text-primary)',
+      primaryBorderColor: 'var(--c-border)',
+      lineColor: 'var(--c-text-tertiary)',
+      secondaryColor: 'var(--c-bg-deep)',
+      tertiaryColor: 'var(--c-bg-page)',
+      fontFamily: "system-ui, -apple-system, 'Segoe UI', sans-serif",
+    },
+    flowchart: { htmlLabels: false, curve: 'basis' },
+    securityLevel: 'strict',
   })
-  return mermaidPromise
 }
 
 let renderCounter = 0
@@ -50,8 +42,9 @@ export function MermaidBlock({ content }: Props) {
 
   const renderMermaid = useCallback(async (code: string) => {
     if (!containerRef.current || !code.trim()) return
+    ensureMermaidInit()
+
     try {
-      const mermaid = await loadMermaid()
       const id = `mermaid-${++renderCounter}`
       const { svg } = await mermaid.render(id, code.trim())
       if (containerRef.current) {

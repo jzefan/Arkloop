@@ -20,7 +20,6 @@ import (
 	"arkloop/services/worker/internal/tools/builtin"
 	channeltelegram "arkloop/services/worker/internal/tools/builtin/channel_telegram"
 	heartbeattool "arkloop/services/worker/internal/tools/builtin/heartbeat_decision"
-	imagegenerate "arkloop/services/worker/internal/tools/builtin/image_generate"
 	"github.com/google/uuid"
 )
 
@@ -165,78 +164,6 @@ func TestAgentLoopExecutesToolCalls(t *testing.T) {
 	}
 	if !seenCompleted {
 		t.Fatalf("expected run.completed")
-	}
-}
-
-func TestAgentLoopCompletesImageGenerationTaskAfterSuccessfulTool(t *testing.T) {
-	registry := tools.NewRegistry()
-	if err := registry.Register(imagegenerate.AgentSpec); err != nil {
-		t.Fatalf("register image_generate failed: %v", err)
-	}
-	executor := tools.NewDispatchingExecutor(registry, tools.NewPolicyEnforcer(registry, tools.AllowlistFromNames([]string{imagegenerate.ToolName})))
-	if err := executor.Bind(imagegenerate.ToolName, stubToolExecutor{result: tools.ExecutionResult{
-		ResultJSON: map[string]any{
-			"provider":  "zenmux",
-			"model":     "openai/gpt-image-2",
-			"mime_type": "image/png",
-			"bytes":     123,
-			"artifacts": []map[string]any{{
-				"key":       "account/run/generated-image.png",
-				"filename":  "generated-image.png",
-				"mime_type": "image/png",
-				"title":     "generated-image",
-				"display":   "inline",
-			}},
-		},
-	}}); err != nil {
-		t.Fatalf("bind image_generate failed: %v", err)
-	}
-
-	gateway := &generationTaskGateway{}
-	loop := NewLoop(gateway, executor)
-	var got []events.RunEvent
-	err := loop.Run(
-		context.Background(),
-		RunContext{
-			RunID:               uuid.New(),
-			TraceID:             "trace",
-			InputJSON:           map[string]any{"generation_task": "image"},
-			ReasoningIterations: 5,
-			ToolExecutor:        executor,
-			ToolTimeoutMs:       intPtr(1000),
-			CancelSignal:        func() bool { return false },
-		},
-		llm.Request{Model: "stub", Tools: []llm.ToolSpec{imagegenerate.LlmSpec}},
-		events.NewEmitter("trace"),
-		func(ev events.RunEvent) error {
-			got = append(got, ev)
-			return nil
-		},
-	)
-	if err != nil {
-		t.Fatalf("loop.Run failed: %v", err)
-	}
-	if gateway.calls != 1 {
-		t.Fatalf("expected one model call, got %d", gateway.calls)
-	}
-	if countEventType(got, "tool.call") != 1 {
-		t.Fatalf("expected one tool.call, got events %#v", got)
-	}
-	if got[len(got)-1].Type != "run.completed" {
-		t.Fatalf("expected final run.completed, got %s", got[len(got)-1].Type)
-	}
-	foundArtifactDelta := false
-	for _, ev := range got {
-		if ev.Type != "message.delta" {
-			continue
-		}
-		text, _ := ev.DataJSON["content_delta"].(string)
-		if strings.Contains(text, "artifact:account/run/generated-image.png") {
-			foundArtifactDelta = true
-		}
-	}
-	if !foundArtifactDelta {
-		t.Fatalf("expected artifact markdown delta, got %#v", got)
 	}
 }
 
@@ -404,11 +331,8 @@ func TestAgentLoopHeartbeatDecisionReplyTrueStopsWithoutSecondLlmTurn(t *testing
 	if containsToolSpec(gateway.requests[1].Tools, heartbeattool.ToolName) {
 		t.Fatalf("expected Phase 2 to remove heartbeat_decision tool, got %#v", gateway.requests[1].Tools)
 	}
-	if requestHasImagePart(gateway.requests[1]) {
-		t.Fatalf("expected Phase 2 heartbeat reply request to strip images: %#v", gateway.requests[1].Messages)
-	}
-	if !requestHasText(gateway.requests[1], "[attachment_key:attachments/latest.png]") {
-		t.Fatalf("expected Phase 2 to retain attachment key placeholder: %#v", gateway.requests[1].Messages)
+	if !requestHasImagePart(gateway.requests[1]) {
+		t.Fatalf("expected Phase 2 heartbeat reply request to keep images: %#v", gateway.requests[1].Messages)
 	}
 	assertHasEvent(t, got, "run.completed")
 	for _, ev := range got {
@@ -2414,6 +2338,44 @@ func TestPrepareTurnRequestPromptCacheHeartbeatSkipsVolatileTail(t *testing.T) {
 	}
 }
 
+func TestPrepareTurnRequestPromptCacheHeartbeatStopsBeforeImageTail(t *testing.T) {
+	request := llm.Request{
+		Messages: []llm.Message{
+			{Role: "user", Content: []llm.ContentPart{{Text: "old user"}}},
+			{Role: "assistant", Content: []llm.ContentPart{{Text: "old reply"}}},
+			{Role: "user", Content: []llm.ContentPart{{Type: messagecontent.PartTypeImage, Attachment: &messagecontent.AttachmentRef{Key: "attachments/photo.png"}, Data: []byte("image")}}},
+			{Role: "assistant", Content: []llm.ContentPart{{Text: "reply after image"}}},
+			{Role: "user", Content: []llm.ContentPart{{Text: "[SYSTEM_HEARTBEAT_CHECK]\ntime_utc: 2026-04-30T11:20:38Z"}}},
+		},
+		PromptPlan: &llm.PromptPlan{
+			MessageCache: llm.MessageCachePlan{
+				Enabled:            true,
+				MarkerMessageIndex: 4,
+			},
+		},
+	}
+
+	prepareTurnRequestPromptCache(&request, RunContext{
+		PipelineRC: &pipeline.RunContext{
+			HeartbeatRun: true,
+			AgentConfig:  &pipeline.ResolvedAgentConfig{PromptCacheControl: "system_prompt"},
+		},
+	}, &promptCacheTurnState{StableMarkerIndex: -1})
+
+	if !request.PromptPlan.MessageCache.Enabled {
+		t.Fatalf("expected message cache enabled, got %#v", request.PromptPlan.MessageCache)
+	}
+	if got, want := request.PromptPlan.MessageCache.MarkerMessageIndex, 1; got != want {
+		t.Fatalf("unexpected marker index: got %d want %d", got, want)
+	}
+	if got, want := request.PromptPlan.MessageCache.ToolResultCacheCutIndex, 1; got != want {
+		t.Fatalf("unexpected tool result cut index: got %d want %d", got, want)
+	}
+	if !messageHasImagePart(request.Messages[2]) {
+		t.Fatalf("expected image to remain in request: %#v", request.Messages[2])
+	}
+}
+
 func TestPrepareTurnRequestPromptCacheHeartbeatRequiresStableBoundary(t *testing.T) {
 	request := llm.Request{
 		Messages: []llm.Message{
@@ -2468,7 +2430,7 @@ func TestPrepareTurnRequestPromptCacheHeartbeatDecisionPhaseSkipsMessageCache(t 
 	}
 }
 
-func TestPrepareHeartbeatDecisionPhaseRequestShrinksPrompt(t *testing.T) {
+func TestPrepareHeartbeatDecisionPhaseRequestKeepsPromptAndRestrictsTools(t *testing.T) {
 	messages := []llm.Message{
 		{Role: "system", Content: []llm.ContentPart{{Text: "large system prompt"}}},
 	}
@@ -2498,28 +2460,29 @@ func TestPrepareHeartbeatDecisionPhaseRequestShrinksPrompt(t *testing.T) {
 
 	prepareHeartbeatDecisionPhaseRequest(&request)
 
-	if request.PromptPlan != nil {
-		t.Fatalf("expected prompt plan to be removed, got %#v", request.PromptPlan)
+	if request.PromptPlan == nil || len(request.PromptPlan.SystemBlocks) != 1 {
+		t.Fatalf("expected prompt plan to be preserved, got %#v", request.PromptPlan)
+	}
+	if request.PromptPlan.SystemBlocks[0].Text != "large system prompt" {
+		t.Fatalf("expected system prompt block to be preserved, got %#v", request.PromptPlan.SystemBlocks)
 	}
 	if len(request.Tools) != 1 || request.Tools[0].Name != heartbeattool.ToolName {
 		t.Fatalf("expected only heartbeat_decision tool, got %#v", request.Tools)
 	}
-	if len(request.Messages) != 14 {
-		t.Fatalf("unexpected shrunken message count: got %d", len(request.Messages))
+	if len(request.Messages) != len(messages) {
+		t.Fatalf("expected messages to be preserved, got %d want %d", len(request.Messages), len(messages))
 	}
-	for _, msg := range request.Messages {
-		if msg.Role == "system" || msg.Role == "tool" {
-			t.Fatalf("unexpected role in heartbeat decision request: %#v", msg)
-		}
-		if len(msg.ToolCalls) > 0 {
-			t.Fatalf("unexpected tool calls in heartbeat decision request: %#v", msg)
-		}
+	if request.Messages[0].Role != "system" || request.Messages[0].Content[0].Text != "large system prompt" {
+		t.Fatalf("expected system message to be preserved, got %#v", request.Messages[0])
+	}
+	if request.Messages[21].Role != "tool" || request.Messages[21].Content[0].Text != "tool result" {
+		t.Fatalf("expected tool history to be preserved, got %#v", request.Messages[21])
 	}
 	if !messageHasText(request.Messages[len(request.Messages)-2], "[SYSTEM_HEARTBEAT_CHECK]") {
 		t.Fatalf("expected heartbeat check to be retained, got %#v", request.Messages)
 	}
-	if request.Messages[0].Content[0].Text != "history 08" {
-		t.Fatalf("expected oldest retained history to be history 08, got %q", request.Messages[0].Content[0].Text)
+	if request.Messages[1].Content[0].Text != "history 00" {
+		t.Fatalf("expected full history to be retained, got %q", request.Messages[1].Content[0].Text)
 	}
 }
 
@@ -2559,6 +2522,47 @@ func TestPrepareTurnRequestPromptCacheChannelSkipsLatestUserTail(t *testing.T) {
 	}
 }
 
+func TestPrepareTurnRequestPromptCacheChannelStopsBeforeImageTail(t *testing.T) {
+	request := llm.Request{
+		Messages: []llm.Message{
+			{Role: "user", Content: []llm.ContentPart{{Text: "old user"}}},
+			{Role: "assistant", Content: []llm.ContentPart{{Text: "old reply"}}},
+			{Role: "user", Content: []llm.ContentPart{{Type: messagecontent.PartTypeImage, Attachment: &messagecontent.AttachmentRef{Key: "attachments/photo.png"}, Data: []byte("image")}}},
+			{Role: "assistant", Content: []llm.ContentPart{{Text: "reply after image"}}},
+			{Role: "user", Content: []llm.ContentPart{{Text: "latest telegram delivery"}}},
+		},
+		PromptPlan: &llm.PromptPlan{
+			MessageCache: llm.MessageCachePlan{
+				Enabled:            true,
+				MarkerMessageIndex: 4,
+			},
+		},
+	}
+
+	prepareTurnRequestPromptCache(&request, RunContext{
+		PipelineRC: &pipeline.RunContext{
+			ChannelContext: &pipeline.ChannelContext{
+				ChannelType:      "telegram",
+				ConversationType: "private",
+			},
+			AgentConfig: &pipeline.ResolvedAgentConfig{PromptCacheControl: "system_prompt"},
+		},
+	}, &promptCacheTurnState{StableMarkerIndex: -1})
+
+	if !request.PromptPlan.MessageCache.Enabled {
+		t.Fatalf("expected message cache enabled, got %#v", request.PromptPlan.MessageCache)
+	}
+	if got, want := request.PromptPlan.MessageCache.MarkerMessageIndex, 1; got != want {
+		t.Fatalf("unexpected marker index: got %d want %d", got, want)
+	}
+	if got, want := request.PromptPlan.MessageCache.ToolResultCacheCutIndex, 1; got != want {
+		t.Fatalf("unexpected tool result cut index: got %d want %d", got, want)
+	}
+	if !messageHasImagePart(request.Messages[2]) {
+		t.Fatalf("expected image to remain in request: %#v", request.Messages[2])
+	}
+}
+
 func containsToolSpec(specs []llm.ToolSpec, name string) bool {
 	for _, spec := range specs {
 		if spec.Name == name {
@@ -2574,15 +2578,6 @@ func requestHasImagePart(request llm.Request) bool {
 			if part.Kind() == messagecontent.PartTypeImage {
 				return true
 			}
-		}
-	}
-	return false
-}
-
-func requestHasText(request llm.Request, text string) bool {
-	for _, msg := range request.Messages {
-		if messageHasText(msg, text) {
-			return true
 		}
 	}
 	return false
@@ -3081,24 +3076,6 @@ func (s stubToolExecutor) Execute(ctx context.Context, toolName string, args map
 	_ = execCtx
 	_ = traceID
 	return s.result
-}
-
-type generationTaskGateway struct {
-	calls int
-}
-
-func (g *generationTaskGateway) Stream(ctx context.Context, request llm.Request, yield func(llm.StreamEvent) error) error {
-	_ = ctx
-	_ = request
-	g.calls++
-	if err := yield(llm.ToolCall{
-		ToolCallID:    "image_call_1",
-		ToolName:      imagegenerate.ToolName,
-		ArgumentsJSON: map[string]any{"prompt": "draw"},
-	}); err != nil {
-		return err
-	}
-	return yield(llm.StreamRunCompleted{})
 }
 
 func (g *scriptedGateway) Stream(ctx context.Context, request llm.Request, yield func(llm.StreamEvent) error) error {

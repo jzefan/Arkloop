@@ -66,6 +66,13 @@ export type ResolveIdentityResponse =
         email?: string
       }
     }
+  | {
+      next_step: 'setup_required'
+      prefill?: {
+        login?: string
+        email?: string
+      }
+    }
 
 export type MeResponse = {
   id: string
@@ -204,6 +211,23 @@ export type SelectablePersona = {
 export async function login(req: LoginRequest): Promise<LoginResponse> {
   return await apiFetch<LoginResponse>('/v1/auth/login', {
     method: 'POST',
+    body: JSON.stringify(req),
+  })
+}
+
+export async function createLocalSession(desktopToken: string, signal?: AbortSignal): Promise<LoginResponse> {
+  return await apiFetch<LoginResponse>('/v1/auth/local-session', {
+    method: 'POST',
+    accessToken: desktopToken,
+    signal,
+    _isRetry: true,
+  })
+}
+
+export async function setLocalOwnerPassword(req: { username: string; password: string }, desktopToken: string): Promise<LoginResponse> {
+  return await apiFetch<LoginResponse>('/v1/auth/local-owner-password', {
+    method: 'POST',
+    accessToken: desktopToken,
     body: JSON.stringify(req),
   })
 }
@@ -521,6 +545,7 @@ export type CreateThreadRequest = {
   mode?: ThreadMode
   project_id?: string
   collaboration_mode?: CollaborationMode
+  learning_mode_enabled?: boolean
 }
 
 export type ThreadMode = 'chat' | 'work'
@@ -542,6 +567,7 @@ export type ThreadResponse = {
   is_private: boolean
   collaboration_mode: CollaborationMode
   collaboration_mode_revision: number
+  learning_mode_enabled: boolean
   title_locked?: boolean
   hidden?: boolean
   updated_at?: string
@@ -818,6 +844,18 @@ export async function updateThreadCollaborationMode(
   })
 }
 
+export async function updateThreadLearningMode(
+  accessToken: string,
+  threadId: string,
+  enabled: boolean,
+): Promise<ThreadResponse> {
+  return await apiFetch<ThreadResponse>(`/v1/threads/${threadId}`, {
+    method: 'PATCH',
+    accessToken,
+    body: JSON.stringify({ learning_mode_enabled: enabled }),
+  })
+}
+
 export async function updateThreadMode(
   accessToken: string,
   threadId: string,
@@ -1026,8 +1064,6 @@ export type RunReasoningMode =
 
 export type CreateRunOptions = {
   resumeFromRunId?: string | null
-  generationTask?: 'image' | 'video' | null
-  generationModel?: string | null
 }
 
 export async function createRun(
@@ -1040,9 +1076,7 @@ export async function createRun(
   options?: CreateRunOptions,
 ): Promise<CreateRunResponse> {
   const resumeFromRunId = options?.resumeFromRunId?.trim()
-  const generationTask = options?.generationTask?.trim()
-  const generationModel = options?.generationModel?.trim()
-  const hasBody = personaId || modelOverride || workDir || reasoningMode || resumeFromRunId || generationTask || generationModel
+  const hasBody = personaId || modelOverride || workDir || reasoningMode || resumeFromRunId
   return await apiFetch<CreateRunResponse>(`/v1/threads/${threadId}/runs`, {
     method: 'POST',
     accessToken,
@@ -1053,8 +1087,6 @@ export async function createRun(
           ...(workDir ? { work_dir: workDir } : {}),
           ...(reasoningMode ? { reasoning_mode: reasoningMode } : {}),
           ...(resumeFromRunId ? { resume_from_run_id: resumeFromRunId } : {}),
-          ...(generationTask ? { generation_task: generationTask } : {}),
-          ...(generationModel ? { generation_model: generationModel } : {}),
         })
       : undefined,
   })
@@ -1646,6 +1678,9 @@ export type LlmProvider = {
   account_id?: string | null
   scope: string
   provider: string
+  source?: string
+  read_only?: boolean
+  auth_mode?: string
   name: string
   key_prefix: string | null
   base_url: string | null
@@ -1754,6 +1789,16 @@ export async function deleteLlmProvider(
 ): Promise<{ ok: boolean }> {
   return await apiFetch<{ ok: boolean }>(withScope(`/v1/llm-providers/${id}`, BYOK_SCOPE), {
     method: 'DELETE',
+    accessToken,
+  })
+}
+
+export async function copyLlmProvider(
+  accessToken: string,
+  id: string,
+): Promise<LlmProvider> {
+  return await apiFetch<LlmProvider>(withScope(`/v1/llm-providers/${id}/copy`, BYOK_SCOPE), {
+    method: 'POST',
     accessToken,
   })
 }
@@ -2271,8 +2316,7 @@ export async function getWeixinQRCodeStatus(accessToken: string, qrcode: string)
 export interface ExternalSkill {
   name: string
   path: string
-  instruction_path?: string
-  description?: string
+  instruction_path: string
 }
 
 export interface ExternalSkillDir {

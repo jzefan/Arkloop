@@ -140,14 +140,6 @@ func RegisterTrackE(r *Registry) error {
 			Sensitive:   false,
 			Scope:       ScopeBoth,
 		},
-		{
-			Key:         "video_generative.model",
-			Type:        TypeString,
-			Default:     "",
-			Description: "默认视频生成模型，格式 provider^model",
-			Sensitive:   false,
-			Scope:       ScopeBoth,
-		},
 	}
 
 	for _, e := range entries {

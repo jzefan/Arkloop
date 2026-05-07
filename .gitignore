@@ -56,8 +56,10 @@ src/apps/developers/dist
 src/apps/developers/.astro
 src/apps/developers/.next
 src/apps/developers/.source
+src/apps/developers/public/showcase.mp4
 src/services/api/api
 src/services/api/migrate
+src/services/gateway/gateway
 .data/
 src/services/desktop/bin/
 src/apps/desktop/dist/
@@ -71,6 +73,6 @@ src/apps/desktop/resources/arkloop-sidecar
 src/services/desktop/desktop
 /sandbox
 release-files/
-ark
+/ark
 .cache
 .gstack/
