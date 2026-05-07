@@ -356,6 +356,7 @@ export type ArkloopDesktopApi = {
   app: {
     getVersion: () => Promise<string>
     quit: () => Promise<void>
+    restart: () => Promise<void>
     getOsUsername: () => Promise<string>
     openExternal: (url: string) => Promise<void>
   }
@@ -551,6 +552,7 @@ const api: ArkloopDesktopApi = {
   app: {
     getVersion: () => ipcRenderer.invoke('arkloop:app:version'),
     quit: () => ipcRenderer.invoke('arkloop:app:quit'),
+    restart: () => ipcRenderer.invoke('arkloop:app:restart'),
     getOsUsername: () => ipcRenderer.invoke('arkloop:app:os-username'),
     openExternal: (url: string) => ipcRenderer.invoke('arkloop:app:open-external', url),
   },

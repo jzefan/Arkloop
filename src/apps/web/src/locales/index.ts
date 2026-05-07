@@ -907,6 +907,10 @@ export interface LocaleStrings {
     developer: string;
     agentCoreHeader: string;
     managementHeader: string;
+    restartAppTitle: string;
+    restartAppDesc: string;
+    restartAppButton: string;
+    restartAppRestarting: string;
     // general settings
     profileSection: string;
     localModeLabel: string;

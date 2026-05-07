@@ -405,6 +405,12 @@ export function registerIpcHandlers(
     app.quit()
   })
 
+  ipcMain.handle('arkloop:app:restart', () => {
+    const { app } = require('electron')
+    app.relaunch()
+    app.quit()
+  })
+
   ipcMain.handle('arkloop:app:open-external', async (_event, url: string) => {
     let parsed: URL
     try {

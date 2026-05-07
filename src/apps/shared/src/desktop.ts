@@ -260,6 +260,7 @@ export type ArkloopDesktopApi = {
   app: {
     getVersion: () => Promise<string>
     quit: () => Promise<void>
+    restart?: () => Promise<void>
     getOsUsername?: () => Promise<string>
     openExternal?: (url: string) => Promise<void>
   }

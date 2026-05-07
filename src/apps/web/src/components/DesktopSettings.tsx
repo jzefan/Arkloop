@@ -20,6 +20,7 @@ import {
   Loader2,
   Shield,
   Info,
+  RotateCw,
 } from "lucide-react";
 import { getDesktopApi } from "@arkloop/shared/desktop";
 import type { MeResponse } from "../api";
@@ -176,6 +177,7 @@ export function DesktopSettings({
       platformSettingsError: "",
       executionModeError: "",
     });
+  const [appRestarting, setAppRestarting] = useState(false);
   const activePaneNeedsHydration =
     activeKey === "chat" ||
     activeKey === "connection";
@@ -385,6 +387,18 @@ export function DesktopSettings({
 
   const handleTabChange = selectSection;
 
+  const handleRestartApp = async () => {
+    const restart = desktopApi?.app.restart;
+    if (!restart || appRestarting) return;
+    setAppRestarting(true);
+    try {
+      await restart();
+    } catch (err) {
+      console.error("[desktop-settings] restart app failed:", err);
+      setAppRestarting(false);
+    }
+  };
+
   const renderNav = (entries: NavEntry[]) =>
     entries.map((entry) => {
       if ("header" in entry) {
@@ -548,6 +562,27 @@ export function DesktopSettings({
             onScroll={(e) => setScrolled((e.currentTarget as HTMLDivElement).scrollTop > 8)}
           >
             {hydrationLoading && activePaneNeedsHydration ? <SettingsPaneFallback /> : renderContent()}
+            {desktopApi?.app.restart && (
+              <div className="mt-8 flex items-center justify-between gap-4 border-t border-[var(--c-border-subtle)] pt-5">
+                <div className="min-w-0">
+                  <div className="text-[14px] font-medium text-[var(--c-text-heading)]">
+                    {ds.restartAppTitle}
+                  </div>
+                  <div className="mt-1 max-w-[560px] text-[12px] leading-5 text-[var(--c-text-tertiary)]">
+                    {ds.restartAppDesc}
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleRestartApp}
+                  disabled={appRestarting}
+                  className="inline-flex h-9 shrink-0 items-center gap-2 rounded-lg border border-[var(--c-border)] bg-[var(--c-bg-input)] px-3 text-[13px] font-medium text-[var(--c-text-primary)] transition-colors hover:bg-[var(--c-bg-deep)] disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  <RotateCw size={15} className={appRestarting ? "animate-spin" : ""} />
+                  {appRestarting ? ds.restartAppRestarting : ds.restartAppButton}
+                </button>
+              </div>
+            )}
           </div>
         </div>
       </motion.div>

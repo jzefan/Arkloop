@@ -6,6 +6,7 @@ let container: HTMLDivElement
 let root: ReturnType<typeof createRoot> | null
 const actEnvironment = globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
 const originalActEnvironment = actEnvironment.IS_REACT_ACT_ENVIRONMENT
+let desktopRestartMock: ReturnType<typeof vi.fn>
 
 async function flushEffects() {
   await act(async () => {
@@ -22,6 +23,7 @@ function setInputValue(input: HTMLInputElement, value: string) {
 
 async function loadDesktopSettingsSubject() {
   vi.resetModules()
+  desktopRestartMock = vi.fn().mockResolvedValue(undefined)
   vi.doMock('../api-admin', () => ({
     listPlatformSettings: vi.fn().mockResolvedValue([]),
   }))
@@ -48,6 +50,9 @@ async function loadDesktopSettingsSubject() {
           network: { proxyEnabled: false, requestTimeoutMs: 30000, retryCount: 1 },
         }),
         onChanged: vi.fn(() => () => {}),
+      },
+      app: {
+        restart: desktopRestartMock,
       },
     }),
   }))
@@ -273,6 +278,38 @@ describe('DesktopSettings', () => {
     })
     await flushEffects()
     expect(container.textContent).toContain('about page')
+  })
+
+  it('在设置内容末尾提供桌面端重启入口', async () => {
+    const { DesktopSettings, LocaleProvider } = await loadDesktopSettingsSubject()
+
+    await act(async () => {
+      root!.render(
+        <LocaleProvider>
+          <Suspense fallback={<div>loading</div>}>
+            <DesktopSettings
+              me={null}
+              accessToken="token"
+              initialSection="general"
+              onClose={() => {}}
+              onLogout={() => {}}
+            />
+          </Suspense>
+        </LocaleProvider>,
+      )
+    })
+    await flushEffects()
+
+    const restartButton = Array.from(container.querySelectorAll('button'))
+      .find((button) => button.textContent?.includes('重启 Arkloop'))
+    expect(restartButton).toBeTruthy()
+
+    await act(async () => {
+      restartButton!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      await Promise.resolve()
+    })
+
+    expect(desktopRestartMock).toHaveBeenCalledTimes(1)
   })
 })
 
