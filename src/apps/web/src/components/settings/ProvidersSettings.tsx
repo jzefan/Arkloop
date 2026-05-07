@@ -76,6 +76,10 @@ function localAuthModeLabel(provider: LlmProvider, p: ReturnType<typeof useLocal
   return null
 }
 
+function isCustomLocalModel(model: LlmProviderModel): boolean {
+  return model.advanced_json?.local_model_custom === true
+}
+
 function vendorLabel(
   key: string,
   p: { vendorOpenai: string; vendorOpenaiChat: string; vendorAnthropic: string; vendorGemini: string; vendorDeepSeek?: string; vendorZenMaxOpenAI?: string; vendorZenMaxGemini?: string; vendorZenMaxClaude?: string },
@@ -813,7 +817,7 @@ function ProviderDetail({
             </ProviderDetailRow>
           </ProviderDetailCard>
         </ProviderDetailSection>
-        <ModelsSection provider={provider} accessToken={accessToken} onChanged={onUpdated} p={p} readOnly />
+        <ModelsSection provider={provider} accessToken={accessToken} onChanged={onUpdated} p={p} readOnly localModelManagement />
       </div>
     )
   }
@@ -881,6 +885,7 @@ function ModelsSection({
   onChanged,
   p,
   readOnly = false,
+  localModelManagement = false,
   autoImportModels = false,
   onAutoImportStarted,
 }: {
@@ -889,6 +894,7 @@ function ModelsSection({
   onChanged: () => void
   p: ReturnType<typeof useLocale>['t']['adminProviders']
   readOnly?: boolean
+  localModelManagement?: boolean
   autoImportModels?: boolean
   onAutoImportStarted?: () => void
 }) {
@@ -1057,6 +1063,7 @@ function ModelsSection({
   const importDisabled = importing || loadingAvailable || (hasLoadedAvailable && unconfiguredCount === 0)
   const deleteAllDisabled = deletingAll || provider.models.length === 0
   const sectionError = availableError ?? actionError
+  const canManageModels = !readOnly || localModelManagement
   const importButtonLabel =
     loadingAvailable || importing
       ? (p.importing ?? '...')
@@ -1095,35 +1102,39 @@ function ModelsSection({
       <ProviderDetailCard>
         <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-4">
           <h4 className="text-[13px] font-medium text-[var(--c-text-primary)]">{p.modelsSection}</h4>
-        {!readOnly && (
+        {canManageModels && (
           <div className="flex flex-wrap items-center gap-2">
-            <SettingsIconButton
-              label={p.deleteAll ?? 'Delete all'}
-              danger
-              onClick={() => setShowDeleteAllConfirm(true)}
-              disabled={deleteAllDisabled}
-            >
-              {deletingAll ? <Loader2 size={12} className="animate-spin" /> : <Trash2 size={12} />}
-            </SettingsIconButton>
-            <SettingsButton
-              variant="secondary"
-              onClick={() => void handleImportAll()}
-              disabled={importDisabled}
-              className={importButtonLabel || availableError ? undefined : 'w-[32px] px-0'}
-              icon={loadingAvailable || importing
-                ? <Loader2 size={12} className="animate-spin" />
-                : (
-                    <>
-                      {availableError && <X size={12} className="text-[var(--c-status-error-text)]" />}
-                      <Download
-                        size={12}
-                        className={availableError ? 'text-[var(--c-status-error-text)]' : undefined}
-                      />
-                    </>
-                  )}
-            >
-              {importButtonLabel}
-            </SettingsButton>
+            {!readOnly && (
+              <>
+                <SettingsIconButton
+                  label={p.deleteAll ?? 'Delete all'}
+                  danger
+                  onClick={() => setShowDeleteAllConfirm(true)}
+                  disabled={deleteAllDisabled}
+                >
+                  {deletingAll ? <Loader2 size={12} className="animate-spin" /> : <Trash2 size={12} />}
+                </SettingsIconButton>
+                <SettingsButton
+                  variant="secondary"
+                  onClick={() => void handleImportAll()}
+                  disabled={importDisabled}
+                  className={importButtonLabel || availableError ? undefined : 'w-[32px] px-0'}
+                  icon={loadingAvailable || importing
+                    ? <Loader2 size={12} className="animate-spin" />
+                    : (
+                        <>
+                          {availableError && <X size={12} className="text-[var(--c-status-error-text)]" />}
+                          <Download
+                            size={12}
+                            className={availableError ? 'text-[var(--c-status-error-text)]' : undefined}
+                          />
+                        </>
+                      )}
+                >
+                  {importButtonLabel}
+                </SettingsButton>
+              </>
+            )}
             {sectionError && <ErrorDetailsButton error={sectionError} />}
             <ModelTestButton
               accessToken={accessToken}
@@ -1162,6 +1173,7 @@ function ModelsSection({
               onEdit={setEditingModel}
               onDelete={handleDeleteModel}
               readOnly={readOnly}
+              canDelete={!readOnly || (localModelManagement && isCustomLocalModel(pm))}
             />
           ))
         )}
@@ -1213,7 +1225,7 @@ function ModelsSection({
       />
       )}
 
-      {!readOnly && creatingModel && (
+      {canManageModels && creatingModel && (
       <ModelOptionsModal
         open
         mode="create"
@@ -1256,7 +1268,7 @@ function ModelsSection({
           try {
             await createProviderModel(accessToken, provider.id, {
               model: payload.model,
-              show_in_picker: false,
+              show_in_picker: localModelManagement ? true : false,
               tags: payload.tags.length > 0 ? payload.tags : undefined,
               advanced_json: payload.advancedJSON ?? undefined,
             })
@@ -1287,12 +1299,13 @@ function ModelsSection({
   )
 }
 
-const ModelRow = memo(function ModelRow({ pm, onToggle, onEdit, onDelete, readOnly = false }: {
+const ModelRow = memo(function ModelRow({ pm, onToggle, onEdit, onDelete, readOnly = false, canDelete = false }: {
   pm: LlmProviderModel
   onToggle: (id: string, current: boolean) => void
   onEdit: (pm: LlmProviderModel) => void
   onDelete: (id: string) => void
   readOnly?: boolean
+  canDelete?: boolean
 }) {
   return (
     <div
@@ -1306,27 +1319,25 @@ const ModelRow = memo(function ModelRow({ pm, onToggle, onEdit, onDelete, readOn
         )}
       </div>
       <div className="flex w-full shrink-0 items-center justify-end gap-2 sm:w-auto">
-        {readOnly ? (
-          <SettingsSwitch checked={pm.show_in_picker} onChange={() => onToggle(pm.id, pm.show_in_picker)} />
-        ) : (
-          <>
-            <SettingsSwitch checked={pm.show_in_picker} onChange={() => onToggle(pm.id, pm.show_in_picker)} />
-            <SettingsIconButton
-              label="Edit model"
-              variant="plain"
-              onClick={() => onEdit(pm)}
-            >
-              <SlidersHorizontal size={14} />
-            </SettingsIconButton>
-            <SettingsIconButton
-              label="Delete model"
-              variant="plain"
-              danger
-              onClick={() => onDelete(pm.id)}
-            >
-              <Trash2 size={14} />
-            </SettingsIconButton>
-          </>
+        <SettingsSwitch checked={pm.show_in_picker} onChange={() => onToggle(pm.id, pm.show_in_picker)} />
+        {!readOnly && (
+          <SettingsIconButton
+            label="Edit model"
+            variant="plain"
+            onClick={() => onEdit(pm)}
+          >
+            <SlidersHorizontal size={14} />
+          </SettingsIconButton>
+        )}
+        {canDelete && (
+          <SettingsIconButton
+            label="Delete model"
+            variant="plain"
+            danger
+            onClick={() => onDelete(pm.id)}
+          >
+            <Trash2 size={14} />
+          </SettingsIconButton>
         )}
       </div>
     </div>

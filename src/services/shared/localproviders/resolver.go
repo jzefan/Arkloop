@@ -160,6 +160,13 @@ type claudeSettings struct {
 
 type localProviderPreferences struct {
 	HiddenModels map[string]map[string]bool `json:"hidden_models"`
+	CustomModels map[string][]customModel   `json:"custom_models"`
+}
+
+type customModel struct {
+	ID              string `json:"id"`
+	ContextLength   int    `json:"context_length,omitempty"`
+	MaxOutputTokens int    `json:"max_output_tokens,omitempty"`
 }
 
 type keychainLookup struct {
@@ -261,13 +268,15 @@ func (r *Resolver) codexModels() []Model {
 
 func (r *Resolver) claudeCodeModels() []Model {
 	settings := r.readClaudeSettings()
-	if models := r.claudeConfiguredModels(settings); len(models) > 0 {
-		return models
+	if configured := r.claudeConfiguredModels(settings); len(configured) > 0 {
+		return r.mergeCustomModels(ClaudeCodeProviderID, configured, settings.model)
 	}
 	if models := r.claudeGatewayModels(settings); len(models) > 0 {
-		return models
+		return r.mergeCustomModels(ClaudeCodeProviderID, models, settings.model)
 	}
-	return applyClaudeSelectedModel(ClaudeCodeModels(), settings.model)
+	models := ClaudeCodeModels()
+	models = r.mergeCustomModels(ClaudeCodeProviderID, models, settings.model)
+	return applyClaudeSelectedModel(models, settings.model)
 }
 
 func (r *Resolver) SetModelVisible(providerID string, modelID string, visible bool) error {
@@ -297,6 +306,64 @@ func (r *Resolver) SetModelVisible(providerID string, modelID string, visible bo
 	return resolver.writeLocalProviderPreferences(prefs)
 }
 
+func (r *Resolver) AddCustomModel(providerID string, modelID string) error {
+	resolver := r.ensure()
+	providerID = strings.TrimSpace(providerID)
+	modelID = strings.TrimSpace(modelID)
+	if providerID == "" || modelID == "" {
+		return fmt.Errorf("%w: empty local provider model", ErrCredentialUnavailable)
+	}
+	if _, ok := ProviderIDFromUUID(ProviderUUID(providerID)); !ok {
+		return fmt.Errorf("%w: unknown local provider %s", ErrCredentialUnavailable, providerID)
+	}
+	prefs := resolver.readLocalProviderPreferences()
+	if prefs.CustomModels == nil {
+		prefs.CustomModels = map[string][]customModel{}
+	}
+	for _, model := range prefs.CustomModels[providerID] {
+		if model.ID == modelID {
+			return nil
+		}
+	}
+	prefs.CustomModels[providerID] = append(prefs.CustomModels[providerID], customModel{ID: modelID})
+	return resolver.writeLocalProviderPreferences(prefs)
+}
+
+func (r *Resolver) DeleteCustomModel(providerID string, modelID string) error {
+	resolver := r.ensure()
+	providerID = strings.TrimSpace(providerID)
+	modelID = strings.TrimSpace(modelID)
+	if providerID == "" || modelID == "" {
+		return fmt.Errorf("%w: empty local provider model", ErrCredentialUnavailable)
+	}
+	prefs := resolver.readLocalProviderPreferences()
+	models := prefs.CustomModels[providerID]
+	next := models[:0]
+	removed := false
+	for _, model := range models {
+		if model.ID == modelID {
+			removed = true
+			continue
+		}
+		next = append(next, model)
+	}
+	if !removed {
+		return fmt.Errorf("%w: custom local provider model not found", ErrCredentialUnavailable)
+	}
+	if len(next) == 0 {
+		delete(prefs.CustomModels, providerID)
+	} else {
+		prefs.CustomModels[providerID] = next
+	}
+	if hidden := prefs.HiddenModels[providerID]; hidden != nil {
+		delete(hidden, modelID)
+		if len(hidden) == 0 {
+			delete(prefs.HiddenModels, providerID)
+		}
+	}
+	return resolver.writeLocalProviderPreferences(prefs)
+}
+
 func (r *Resolver) applyModelPreferences(providerID string, models []Model) []Model {
 	prefs := r.readLocalProviderPreferences()
 	hidden := prefs.HiddenModels[providerID]
@@ -322,6 +389,85 @@ func (r *Resolver) applyModelPreferences(providerID string, models []Model) []Mo
 		models[firstVisible].Default = true
 	}
 	return models
+}
+
+func (r *Resolver) mergeCustomModels(providerID string, models []Model, selected string) []Model {
+	prefs := r.readLocalProviderPreferences()
+	customs := prefs.CustomModels[providerID]
+	if len(customs) == 0 {
+		return models
+	}
+	customModels := make([]Model, 0, len(customs))
+	for _, custom := range customs {
+		id := strings.TrimSpace(custom.ID)
+		if id == "" {
+			continue
+		}
+		contextLength := custom.ContextLength
+		if contextLength <= 0 {
+			contextLength = 200000
+		}
+		maxOutputTokens := custom.MaxOutputTokens
+		if maxOutputTokens <= 0 {
+			maxOutputTokens = 8192
+		}
+		customModels = append(customModels, Model{
+			ID:              id,
+			ContextLength:   contextLength,
+			MaxOutputTokens: maxOutputTokens,
+			ToolCalling:     true,
+			Reasoning:       true,
+			Custom:          true,
+			Default:         strings.TrimSpace(selected) == id,
+			Priority:        950 - len(customModels)*10,
+		})
+	}
+	return mergeModels(customModels, models)
+}
+
+func mergeModels(primary []Model, fallback []Model) []Model {
+	out := make([]Model, 0, len(primary)+len(fallback))
+	seen := make(map[string]int, len(primary)+len(fallback))
+	hasDefault := false
+	for _, model := range primary {
+		id := strings.TrimSpace(model.ID)
+		if id == "" {
+			continue
+		}
+		model.ID = id
+		if _, exists := seen[id]; exists {
+			continue
+		}
+		if model.Default {
+			if hasDefault {
+				model.Default = false
+			} else {
+				hasDefault = true
+			}
+		}
+		seen[id] = len(out)
+		out = append(out, model)
+	}
+	for _, model := range fallback {
+		id := strings.TrimSpace(model.ID)
+		if id == "" {
+			continue
+		}
+		model.ID = id
+		if _, exists := seen[id]; exists {
+			continue
+		}
+		if model.Default {
+			if hasDefault {
+				model.Default = false
+			} else {
+				hasDefault = true
+			}
+		}
+		seen[id] = len(out)
+		out = append(out, model)
+	}
+	return out
 }
 
 func (r *Resolver) Resolve(ctx context.Context, providerID string, options ResolveOptions) (Credential, error) {
@@ -1148,14 +1294,23 @@ func (r *Resolver) localProviderPreferencesPath() string {
 func (r *Resolver) readLocalProviderPreferences() localProviderPreferences {
 	raw, err := os.ReadFile(r.localProviderPreferencesPath())
 	if err != nil {
-		return localProviderPreferences{HiddenModels: map[string]map[string]bool{}}
+		return localProviderPreferences{
+			HiddenModels: map[string]map[string]bool{},
+			CustomModels: map[string][]customModel{},
+		}
 	}
 	var prefs localProviderPreferences
 	if err := json.Unmarshal(raw, &prefs); err != nil {
-		return localProviderPreferences{HiddenModels: map[string]map[string]bool{}}
+		return localProviderPreferences{
+			HiddenModels: map[string]map[string]bool{},
+			CustomModels: map[string][]customModel{},
+		}
 	}
 	if prefs.HiddenModels == nil {
 		prefs.HiddenModels = map[string]map[string]bool{}
+	}
+	if prefs.CustomModels == nil {
+		prefs.CustomModels = map[string][]customModel{}
 	}
 	return prefs
 }

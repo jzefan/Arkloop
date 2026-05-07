@@ -26,6 +26,7 @@ type Model struct {
 	Reasoning       bool
 	Default         bool
 	Hidden          bool
+	Custom          bool
 	Priority        int
 }
 

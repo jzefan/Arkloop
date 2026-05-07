@@ -59,6 +59,7 @@ func TestLocalProviderFromStatusIsReadOnlyAndSecretFree(t *testing.T) {
 			Reasoning:       true,
 			Default:         true,
 			Hidden:          true,
+			Custom:          true,
 			Priority:        900,
 		}},
 	}, userID)
@@ -75,6 +76,9 @@ func TestLocalProviderFromStatusIsReadOnlyAndSecretFree(t *testing.T) {
 	if len(provider.Models) != 1 || provider.Models[0].ShowInPicker || provider.Models[0].IsDefault {
 		t.Fatalf("unexpected local routes: %#v", provider.Models)
 	}
+	if provider.Models[0].AdvancedJSON["local_model_custom"] != true {
+		t.Fatalf("expected custom local model marker, got %#v", provider.Models[0].AdvancedJSON)
+	}
 }
 
 func TestLocalProviderMutationGuard(t *testing.T) {
@@ -90,9 +94,9 @@ func TestLocalProviderMutationGuard(t *testing.T) {
 	}{
 		{name: "patch provider", parts: []string{providerID.String()}, method: nethttp.MethodPatch, want: true},
 		{name: "delete provider", parts: []string{providerID.String()}, method: nethttp.MethodDelete, want: true},
-		{name: "create model", parts: []string{providerID.String(), "models"}, method: nethttp.MethodPost, want: true},
+		{name: "create model", parts: []string{providerID.String(), "models"}, method: nethttp.MethodPost, want: false},
 		{name: "patch model picker", parts: []string{providerID.String(), "models", uuid.NewString()}, method: nethttp.MethodPatch, want: false},
-		{name: "delete model", parts: []string{providerID.String(), "models", uuid.NewString()}, method: nethttp.MethodDelete, want: true},
+		{name: "delete model", parts: []string{providerID.String(), "models", uuid.NewString()}, method: nethttp.MethodDelete, want: false},
 		{name: "available models read", parts: []string{providerID.String(), "available-models"}, method: nethttp.MethodGet, want: false},
 		{name: "model test read", parts: []string{providerID.String(), "models", uuid.NewString(), "test"}, method: nethttp.MethodPost, want: false},
 	}

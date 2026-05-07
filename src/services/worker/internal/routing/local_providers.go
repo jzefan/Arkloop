@@ -90,6 +90,7 @@ func localRouteID(providerID string, modelID string) string {
 
 func localRouteAdvancedJSON(model localproviders.Model) map[string]any {
 	return map[string]any{
+		"local_model_custom": model.Custom,
 		availableCatalogAdvancedKey: map[string]any{
 			"id":                  model.ID,
 			"name":                model.ID,

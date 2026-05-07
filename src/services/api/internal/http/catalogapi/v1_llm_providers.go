@@ -178,6 +178,10 @@ func llmProviderEntry(
 			return
 		}
 		if isLocalProviderUUID(providerID) {
+			if len(parts) == 2 && parts[1] == "models" && r.Method == nethttp.MethodPost {
+				createLocalProviderModel(w, r, traceID, providerID, authService, membershipRepo)
+				return
+			}
 			if len(parts) == 3 && parts[1] == "models" && r.Method == nethttp.MethodPatch {
 				modelID, err := uuid.Parse(parts[2])
 				if err != nil {
@@ -185,6 +189,15 @@ func llmProviderEntry(
 					return
 				}
 				patchLocalProviderModel(w, r, traceID, providerID, modelID, authService, membershipRepo)
+				return
+			}
+			if len(parts) == 3 && parts[1] == "models" && r.Method == nethttp.MethodDelete {
+				modelID, err := uuid.Parse(parts[2])
+				if err != nil {
+					httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "invalid model id", traceID, nil)
+					return
+				}
+				deleteLocalProviderModel(w, r, traceID, providerID, modelID, authService, membershipRepo)
 				return
 			}
 			if isLocalProviderMutation(parts, r.Method) {
@@ -259,6 +272,65 @@ func llmProviderEntry(
 	}
 }
 
+func createLocalProviderModel(
+	w nethttp.ResponseWriter,
+	r *nethttp.Request,
+	traceID string,
+	providerID uuid.UUID,
+	authService *auth.Service,
+	membershipRepo *data.AccountMembershipRepository,
+) {
+	actor, ok := authenticateLLMProviderActor(w, r, traceID, authService, membershipRepo)
+	if !ok {
+		return
+	}
+	var req createLlmProviderModelRequest
+	if err := httpkit.DecodeJSON(r, &req); err != nil {
+		httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "request validation failed", traceID, nil)
+		return
+	}
+	scopeText := strings.TrimSpace(req.Scope)
+	if scopeText == "" {
+		scopeText = data.LlmRouteScopeUser
+	}
+	scope, ok := resolveLlmProviderScope(w, r, traceID, actor, &scopeText)
+	if !ok {
+		return
+	}
+	if scope != data.LlmRouteScopeUser {
+		httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "local provider scope must be user", traceID, nil)
+		return
+	}
+	modelID := strings.TrimSpace(req.Model)
+	if modelID == "" {
+		httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "model is required", traceID, nil)
+		return
+	}
+	localProviderID, ok := localProviderIDFromUUID(providerID)
+	if !ok {
+		httpkit.WriteError(w, nethttp.StatusNotFound, "not_found", "provider not found", traceID, nil)
+		return
+	}
+	resolver := localproviders.NewResolver(localproviders.Options{})
+	if err := resolver.AddCustomModel(localProviderID, modelID); err != nil {
+		httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", err.Error(), traceID, nil)
+		return
+	}
+	if req.ShowInPicker != nil {
+		if err := resolver.SetModelVisible(localProviderID, modelID, *req.ShowInPicker); err != nil {
+			httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "failed to update model", traceID, nil)
+			return
+		}
+	}
+	status, model, ok := findLocalProviderModel(r.Context(), resolver, localProviderID, localRouteUUID(localProviderID, modelID))
+	if !ok {
+		writeLlmProviderServiceError(r.Context(), w, traceID, llmproviders.ModelNotFoundError{ID: localRouteUUID(localProviderID, modelID)})
+		return
+	}
+	route := localRouteFromModel(status, providerID, model, time.Now().UTC())
+	httpkit.WriteJSON(w, traceID, nethttp.StatusCreated, toLlmProviderModelResponse(route, status.Provider))
+}
+
 func patchLocalProviderModel(
 	w nethttp.ResponseWriter,
 	r *nethttp.Request,
@@ -328,6 +400,49 @@ func patchLocalProviderModel(
 	httpkit.WriteJSON(w, traceID, nethttp.StatusOK, toLlmProviderModelResponse(route, status.Provider))
 }
 
+func deleteLocalProviderModel(
+	w nethttp.ResponseWriter,
+	r *nethttp.Request,
+	traceID string,
+	providerID uuid.UUID,
+	modelID uuid.UUID,
+	authService *auth.Service,
+	membershipRepo *data.AccountMembershipRepository,
+) {
+	actor, ok := authenticateLLMProviderActor(w, r, traceID, authService, membershipRepo)
+	if !ok {
+		return
+	}
+	scope, ok := resolveLlmProviderScope(w, r, traceID, actor, nil)
+	if !ok {
+		return
+	}
+	if scope != data.LlmRouteScopeUser {
+		httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "local provider scope must be user", traceID, nil)
+		return
+	}
+	localProviderID, ok := localProviderIDFromUUID(providerID)
+	if !ok {
+		httpkit.WriteError(w, nethttp.StatusNotFound, "not_found", "provider not found", traceID, nil)
+		return
+	}
+	resolver := localproviders.NewResolver(localproviders.Options{})
+	_, model, ok := findLocalProviderModel(r.Context(), resolver, localProviderID, modelID)
+	if !ok {
+		writeLlmProviderServiceError(r.Context(), w, traceID, llmproviders.ModelNotFoundError{ID: modelID})
+		return
+	}
+	if !model.Custom {
+		httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "validation.error", "only custom local provider models can be deleted", traceID, nil)
+		return
+	}
+	if err := resolver.DeleteCustomModel(localProviderID, model.ID); err != nil {
+		httpkit.WriteError(w, nethttp.StatusInternalServerError, "internal.error", "failed to delete model", traceID, nil)
+		return
+	}
+	httpkit.WriteJSON(w, traceID, nethttp.StatusOK, map[string]bool{"ok": true})
+}
+
 func localProviderModelPatchOnlyTogglesPicker(body map[string]json.RawMessage) bool {
 	for key := range body {
 		if key != "scope" && key != "show_in_picker" {
@@ -359,9 +474,9 @@ func isLocalProviderMutation(parts []string, method string) bool {
 	case len(parts) == 2 && parts[1] == "copy":
 		return method == nethttp.MethodPost
 	case len(parts) == 2 && parts[1] == "models":
-		return method == nethttp.MethodPost
+		return false
 	case len(parts) == 3 && parts[1] == "models":
-		return method == nethttp.MethodDelete
+		return false
 	default:
 		return false
 	}

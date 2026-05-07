@@ -58,6 +58,7 @@ func localProviderFromStatus(status localproviders.ProviderStatus, userID uuid.U
 
 func localRouteFromModel(status localproviders.ProviderStatus, providerUUID uuid.UUID, model localproviders.Model, now time.Time) data.LlmRoute {
 	advancedJSON := map[string]any{
+		"local_model_custom": model.Custom,
 		llmproviders.AvailableCatalogAdvancedKey: map[string]any{
 			"id":                  model.ID,
 			"name":                model.ID,

@@ -767,6 +767,64 @@ func TestProviderStatusesApplyLocalModelVisibility(t *testing.T) {
 	}
 }
 
+func TestResolverPersistsAndListsCustomLocalModels(t *testing.T) {
+	home := t.TempDir()
+	writeTestJSON(t, filepath.Join(home, ".claude.json"), map[string]any{"primaryApiKey": "sk-ant-local"})
+
+	resolver := NewResolver(Options{HomeDir: home, DisableKeychain: true, Env: map[string]string{}})
+	if err := resolver.AddCustomModel(ClaudeCodeProviderID, "claude-opus-4-7"); err != nil {
+		t.Fatalf("AddCustomModel: %v", err)
+	}
+
+	statuses := resolver.ProviderStatuses(context.Background())
+	if len(statuses) != 1 {
+		t.Fatalf("expected one local provider, got %#v", statuses)
+	}
+	var found *Model
+	for index := range statuses[0].Models {
+		if statuses[0].Models[index].ID == "claude-opus-4-7" {
+			found = &statuses[0].Models[index]
+		}
+	}
+	if found == nil {
+		t.Fatalf("custom model was not listed: %#v", statuses[0].Models)
+	}
+	if !found.Custom || found.ContextLength != 200000 || found.MaxOutputTokens != 8192 || found.Hidden {
+		t.Fatalf("unexpected custom model metadata: %#v", found)
+	}
+
+	reloaded := NewResolver(Options{HomeDir: home, DisableKeychain: true, Env: map[string]string{}})
+	statuses = reloaded.ProviderStatuses(context.Background())
+	for _, model := range statuses[0].Models {
+		if model.ID == "claude-opus-4-7" && model.Custom {
+			return
+		}
+	}
+	t.Fatalf("custom model was not persisted: %#v", statuses[0].Models)
+}
+
+func TestResolverDeletesOnlyCustomLocalModels(t *testing.T) {
+	home := t.TempDir()
+	writeTestJSON(t, filepath.Join(home, ".claude.json"), map[string]any{"primaryApiKey": "sk-ant-local"})
+
+	resolver := NewResolver(Options{HomeDir: home, DisableKeychain: true, Env: map[string]string{}})
+	if err := resolver.AddCustomModel(ClaudeCodeProviderID, "claude-opus-4-7"); err != nil {
+		t.Fatalf("AddCustomModel: %v", err)
+	}
+	if err := resolver.DeleteCustomModel(ClaudeCodeProviderID, "claude-opus-4-7"); err != nil {
+		t.Fatalf("DeleteCustomModel custom: %v", err)
+	}
+	statuses := resolver.ProviderStatuses(context.Background())
+	for _, model := range statuses[0].Models {
+		if model.ID == "claude-opus-4-7" {
+			t.Fatalf("custom model still listed after delete: %#v", statuses[0].Models)
+		}
+	}
+	if err := resolver.DeleteCustomModel(ClaudeCodeProviderID, "claude-opus-4-6"); err == nil {
+		t.Fatal("expected built-in model delete to fail")
+	}
+}
+
 func writeTestJSON(t *testing.T, path string, value map[string]any) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
