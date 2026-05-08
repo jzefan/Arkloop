@@ -31,7 +31,7 @@ type SearchLocale = {
   acceptLanguage: string
 }
 
-const SEARCH_TIMEOUT_MS = 25_000
+const SEARCH_ENGINE_TIMEOUT_MS = 12_000
 const SEARCH_POLL_MS = 250
 const DEFAULT_MAX_RESULTS = 5
 const MAX_RESULTS = 50
@@ -93,7 +93,7 @@ async function handleBrowserSearchRequest(req: http.IncomingMessage, res: http.S
   const maxResults = normalizeMaxResults(requestURL.searchParams.get('max_results'))
 
   try {
-    const payload = await searchStartpageInBrowser(query, maxResults)
+    const payload = await searchInBrowser(query, maxResults)
     writeJSON(res, 200, payload)
   } catch (error) {
     const message = error instanceof Error ? error.message : 'search failed'
@@ -104,7 +104,12 @@ async function handleBrowserSearchRequest(req: http.IncomingMessage, res: http.S
   }
 }
 
-async function searchStartpageInBrowser(query: string, maxResults: number): Promise<BrowserSearchPayload> {
+type BrowserSearchTarget = {
+  name: string
+  url: string
+}
+
+async function searchInBrowser(query: string, maxResults: number): Promise<BrowserSearchPayload> {
   const win = new BrowserWindow({
     show: false,
     width: 1280,
@@ -123,14 +128,23 @@ async function searchStartpageInBrowser(query: string, maxResults: number): Prom
     win.webContents.setUserAgent(browserSearchUserAgent())
 
     const locale = browserSearchLocale(query)
-    await withTimeout(
-      win.loadURL(buildStartpageSearchURL(query), {
-        extraHeaders: `Accept-Language: ${locale.acceptLanguage}\n`,
-      }),
-      SEARCH_TIMEOUT_MS,
-      'browser search load timed out',
-    )
-    return await waitForBrowserResults(win, maxResults)
+    const errors: string[] = []
+    for (const target of buildBrowserSearchTargets(query)) {
+      try {
+        await withTimeout(
+          win.loadURL(target.url, {
+            extraHeaders: `Accept-Language: ${locale.acceptLanguage}\n`,
+          }),
+          SEARCH_ENGINE_TIMEOUT_MS,
+          `${target.name} search load timed out`,
+        )
+        return await waitForBrowserResults(win, maxResults, target.name)
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'search failed'
+        errors.push(`${target.name}: ${message}`)
+      }
+    }
+    throw new Error(`browser search failed (${errors.join('; ')})`)
   } finally {
     if (!win.isDestroyed()) {
       win.destroy()
@@ -138,8 +152,8 @@ async function searchStartpageInBrowser(query: string, maxResults: number): Prom
   }
 }
 
-async function waitForBrowserResults(win: BrowserWindow, maxResults: number): Promise<BrowserSearchPayload> {
-  const deadline = Date.now() + SEARCH_TIMEOUT_MS
+async function waitForBrowserResults(win: BrowserWindow, maxResults: number, engineName: string): Promise<BrowserSearchPayload> {
+  const deadline = Date.now() + SEARCH_ENGINE_TIMEOUT_MS
   let lastState: BrowserSearchState | null = null
 
   while (Date.now() < deadline) {
@@ -152,13 +166,13 @@ async function waitForBrowserResults(win: BrowserWindow, maxResults: number): Pr
       }
     }
     if (state.challenge) {
-      throw new Error('browser search returned a challenge page')
+      throw new Error(`${engineName} returned a challenge page`)
     }
     await delay(SEARCH_POLL_MS)
   }
 
   const suffix = lastState?.title ? ` (${lastState.title})` : ''
-  throw new Error(`browser search timed out${suffix}`)
+  throw new Error(`${engineName} search timed out${suffix}`)
 }
 
 async function readBrowserSearchState(win: BrowserWindow): Promise<BrowserSearchState> {
@@ -224,9 +238,24 @@ function normalizeBrowserSearchResult(value: unknown): BrowserSearchResult | nul
   return { title, url, snippet }
 }
 
+function buildBrowserSearchTargets(query: string): BrowserSearchTarget[] {
+  return [
+    { name: 'startpage', url: buildStartpageSearchURL(query) },
+    { name: 'bing', url: buildBingSearchURL(query) },
+  ]
+}
+
 function buildStartpageSearchURL(query: string): string {
   const url = new URL('https://www.startpage.com/sp/search')
   url.searchParams.set('query', query)
+  return url.toString()
+}
+
+function buildBingSearchURL(query: string): string {
+  const url = new URL('https://www.bing.com/search')
+  url.searchParams.set('q', query)
+  url.searchParams.set('setlang', 'zh-CN')
+  url.searchParams.set('cc', 'CN')
   return url.toString()
 }
 

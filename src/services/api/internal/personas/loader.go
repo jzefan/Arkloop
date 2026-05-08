@@ -61,6 +61,7 @@ type RepoPersona struct {
 	SoulFile            string                `yaml:"soul_file"`
 	IsSystem            bool                  `yaml:"is_system"`
 	IsBuiltin           bool                  `yaml:"is_builtin"`
+	SettingsVisible     *bool                 `yaml:"settings_visible,omitempty"`
 	DirName             string                `yaml:"-"`
 	SoulMD              string                `yaml:"-"`
 	PromptMD            string                `yaml:"-"`

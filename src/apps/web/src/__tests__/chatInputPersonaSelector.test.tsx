@@ -111,6 +111,7 @@ describe('ChatInput persona selector', () => {
     mockedListSelectablePersonas.mockResolvedValue([
       { persona_key: 'normal', selector_name: 'Normal', selector_order: 1 },
       { persona_key: 'extended-search', selector_name: 'Search', selector_order: 2 },
+      { persona_key: 'industry-education-index', selector_name: '双高产教融合评估', selector_order: 0 },
     ])
     mockedListLlmProviders.mockResolvedValue([])
     writeSelectedPersonaKeyToStorage('normal')
@@ -240,6 +241,115 @@ describe('ChatInput persona selector', () => {
     })
 
     expect((textarea as HTMLTextAreaElement).value).toBe('')
+
+    act(() => {
+      root.unmount()
+    })
+    container.remove()
+  })
+
+  it('输入 @ 后展示智能体列表，选择后切换智能体并移除触发词', async () => {
+    const onSubmit = vi.fn<(event: FormEvent<HTMLFormElement>, personaKey: string) => void>((event) => event.preventDefault())
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const root = createRoot(container)
+
+    await act(async () => {
+      root.render(
+        <LocaleProvider>
+          <ChatInput
+            onSubmit={onSubmit}
+            accessToken="token"
+          />
+        </LocaleProvider>,
+      )
+    })
+    await act(async () => {
+      await flushMicrotasks()
+    })
+
+    const textarea = container.querySelector('textarea') as HTMLTextAreaElement | null
+    expect(textarea).not.toBeNull()
+    if (!textarea) return
+
+    await act(async () => {
+      const props = readTextareaReactProps(textarea)
+      setTextareaValue(textarea, '@双高 评估苏州职业技术大学')
+      textarea.setSelectionRange(3, 3)
+      props.onChange({ currentTarget: textarea })
+      await flushMicrotasks()
+    })
+
+    const mentionMenu = container.querySelector('[data-testid="persona-mention-menu"]')
+    expect(mentionMenu).not.toBeNull()
+    if (!mentionMenu) return
+
+    const personaOption = Array.from(mentionMenu.querySelectorAll('button')).find(
+      (button) => button.textContent?.includes('双高产教融合评估'),
+    ) as HTMLButtonElement | null
+    expect(personaOption).not.toBeNull()
+    if (!personaOption) return
+
+    await act(async () => {
+      personaOption.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }))
+      personaOption.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      await flushMicrotasks()
+    })
+
+    expect(textarea.value).toBe('评估苏州职业技术大学')
+
+    const form = container.querySelector('form')
+    expect(form).not.toBeNull()
+    if (!form) return
+
+    await act(async () => {
+      form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
+    })
+
+    expect(onSubmit).toHaveBeenCalledTimes(1)
+    expect(onSubmit.mock.calls[0]?.[1]).toBe('industry-education-index')
+
+    act(() => {
+      root.unmount()
+    })
+    container.remove()
+  })
+
+  it('只输入 @ 时展示全部可选智能体', async () => {
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const root = createRoot(container)
+
+    await act(async () => {
+      root.render(
+        <LocaleProvider>
+          <ChatInput
+            onSubmit={(event) => event.preventDefault()}
+            accessToken="token"
+          />
+        </LocaleProvider>,
+      )
+    })
+    await act(async () => {
+      await flushMicrotasks()
+    })
+
+    const textarea = container.querySelector('textarea') as HTMLTextAreaElement | null
+    expect(textarea).not.toBeNull()
+    if (!textarea) return
+
+    await act(async () => {
+      const props = readTextareaReactProps(textarea)
+      setTextareaValue(textarea, '@')
+      textarea.setSelectionRange(1, 1)
+      props.onChange({ currentTarget: textarea })
+      await flushMicrotasks()
+    })
+
+    const mentionMenu = container.querySelector('[data-testid="persona-mention-menu"]')
+    expect(mentionMenu?.textContent).toContain('Normal')
+    expect(mentionMenu?.textContent).toContain('Search')
+    expect(mentionMenu?.textContent).toContain('双高产教融合评估')
 
     act(() => {
       root.unmount()

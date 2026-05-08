@@ -208,6 +208,10 @@ func NewRoutingMiddleware(
 			)
 			return appendAndCommitSingle(ctx, rc.Pool, rc.Run, runsRepo, eventsRepo, failed, releaseFn, rc.BroadcastRDB, rc.EventBus)
 		}
+		if rc.InputJSON == nil {
+			rc.InputJSON = map[string]any{}
+		}
+		rc.InputJSON["available_models"] = selectorConfig.AvailableModelOptions(rc.InputJSON)
 
 		var (
 			gateway                  llm.Gateway

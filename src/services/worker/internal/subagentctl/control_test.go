@@ -117,6 +117,55 @@ func TestServiceSpawnAndWaitCompleted(t *testing.T) {
 	}
 }
 
+func TestServiceSpawnWritesModelOverrideToChildRunStarted(t *testing.T) {
+	db := testutil.SetupPostgresDatabase(t, "arkloop_subagentctl_spawn_model")
+	pool, err := pgxpool.New(context.Background(), db.DSN)
+	if err != nil {
+		t.Fatalf("pgxpool.New: %v", err)
+	}
+	t.Cleanup(pool.Close)
+
+	accountID := uuid.New()
+	projectID := uuid.New()
+	threadID := uuid.New()
+	runID := uuid.New()
+	userID := uuid.New()
+	seedThreadAndRun(t, pool, accountID, threadID, &projectID, &userID, runID)
+
+	parentRun := data.Run{ID: runID, AccountID: accountID, ThreadID: threadID, ProjectID: &projectID, CreatedByUserID: &userID}
+	jobQueue := &stubJobQueue{}
+	service := NewService(pool, nil, jobQueue, parentRun, "trace-model", SubAgentLimits{}, BackpressureConfig{}, nil)
+
+	req := isolatedSpawnRequest("collect facts")
+	req.Model = "deepseek官方^deepseek-chat"
+	snapshot, err := service.Spawn(context.Background(), req)
+	if err != nil {
+		t.Fatalf("spawn: %v", err)
+	}
+	if snapshot.CurrentRunID == nil {
+		t.Fatal("expected current_run_id")
+	}
+
+	var raw []byte
+	if err := pool.QueryRow(context.Background(),
+		`SELECT data_json
+		   FROM run_events
+		  WHERE run_id = $1
+		    AND type = 'run.started'
+		  LIMIT 1`,
+		*snapshot.CurrentRunID,
+	).Scan(&raw); err != nil {
+		t.Fatalf("load child run.started: %v", err)
+	}
+	var started map[string]any
+	if err := json.Unmarshal(raw, &started); err != nil {
+		t.Fatalf("unmarshal child run.started: %v", err)
+	}
+	if got := started["model"]; got != "deepseek官方^deepseek-chat" {
+		t.Fatalf("expected model override in run.started, got %#v", got)
+	}
+}
+
 func TestServiceSendInputCreatesQueuedRunDirectly(t *testing.T) {
 	db := testutil.SetupPostgresDatabase(t, "arkloop_subagentctl_resume")
 	pool, err := pgxpool.New(context.Background(), db.DSN)

@@ -1,0 +1,12 @@
+id: industry-education-synthesizer
+version: "1"
+title: 双高产教融合报告撰写员
+description: 汇总评估员结果并生成正式 Markdown 报告。
+user_selectable: false
+settings_visible: false
+budgets:
+    reasoning_iterations: 99900
+    temperature: 0.3
+reasoning_mode: auto
+prompt_cache_control: system_prompt
+executor_type: agent.simple

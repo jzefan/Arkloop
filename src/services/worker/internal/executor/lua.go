@@ -17,6 +17,7 @@ import (
 	"arkloop/services/worker/internal/pipeline"
 	"arkloop/services/worker/internal/subagentctl"
 	"arkloop/services/worker/internal/tools"
+	askuser "arkloop/services/worker/internal/tools/builtin/askuser"
 	"github.com/google/uuid"
 
 	lua "github.com/yuin/gopher-lua"
@@ -167,6 +168,7 @@ func (rt *luaRuntime) register(L *lua.LState) {
 	L.SetField(contextTable, "get", L.NewFunction(rt.contextGet))
 	L.SetField(contextTable, "set_output", L.NewFunction(rt.contextSetOutput))
 	L.SetField(contextTable, "emit", L.NewFunction(rt.contextEmit))
+	L.SetField(contextTable, "ask_user", L.NewFunction(rt.contextAskUser))
 	L.SetGlobal("context", contextTable)
 
 	jsonTable := L.NewTable()
@@ -206,8 +208,25 @@ func (rt *luaRuntime) agentSpawn(L *lua.LState) int {
 		L.Push(lua.LString(err.Error()))
 		return 2
 	}
+	if err := rt.emitAgentToolCall("agent.spawn", map[string]any{
+		"persona_id":   req.PersonaID,
+		"context_mode": req.ContextMode,
+		"profile":      req.Profile,
+		"model":        req.Model,
+		"nickname":     optionalStringValue(req.Nickname),
+	}); err != nil {
+		L.Push(lua.LNil)
+		L.Push(lua.LString(err.Error()))
+		return 2
+	}
 	snapshot, err := rt.rc.SubAgentControl.Spawn(rt.ctx, req)
 	if err != nil {
+		_ = rt.emitAgentToolResult("agent.spawn", nil, err)
+		L.Push(lua.LNil)
+		L.Push(lua.LString(err.Error()))
+		return 2
+	}
+	if err := rt.emitAgentToolResult("agent.spawn", statusSnapshotData(snapshot), nil); err != nil {
 		L.Push(lua.LNil)
 		L.Push(lua.LString(err.Error()))
 		return 2
@@ -284,8 +303,22 @@ func (rt *luaRuntime) agentWait(L *lua.LState) int {
 		L.Push(lua.LString(err.Error()))
 		return 2
 	}
+	if err := rt.emitAgentToolCall("agent.wait", map[string]any{
+		"sub_agent_id": subAgentID.String(),
+		"timeout_ms":   timeout.Milliseconds(),
+	}); err != nil {
+		L.Push(lua.LNil)
+		L.Push(lua.LString(err.Error()))
+		return 2
+	}
 	snapshot, err := rt.rc.SubAgentControl.Wait(rt.ctx, subagentctl.WaitRequest{SubAgentIDs: []uuid.UUID{subAgentID}, Timeout: timeout})
 	if err != nil {
+		_ = rt.emitAgentToolResult("agent.wait", nil, err)
+		L.Push(lua.LNil)
+		L.Push(lua.LString(err.Error()))
+		return 2
+	}
+	if err := rt.emitAgentToolResult("agent.wait", statusSnapshotData(snapshot), nil); err != nil {
 		L.Push(lua.LNil)
 		L.Push(lua.LString(err.Error()))
 		return 2
@@ -483,13 +516,10 @@ func (rt *luaRuntime) toolsCall(L *lua.LState) int {
 		StreamEvent:                      func(ev events.RunEvent) error { return rt.yield(ev) },
 	}
 	result := rt.rc.ToolExecutor.Execute(rt.ctx, toolName, args, execCtx, "")
-
-	for _, ev := range result.Events {
-		if err := rt.yield(ev); err != nil {
-			L.Push(lua.LNil)
-			L.Push(lua.LString(err.Error()))
-			return 2
-		}
+	if err := rt.emitToolExecutionEvents(toolName, args, result); err != nil {
+		L.Push(lua.LNil)
+		L.Push(lua.LString(err.Error()))
+		return 2
 	}
 
 	if result.Error != nil {
@@ -508,6 +538,69 @@ func (rt *luaRuntime) toolsCall(L *lua.LState) int {
 	L.Push(lua.LString(string(encoded)))
 	L.Push(lua.LNil)
 	return 2
+}
+
+func (rt *luaRuntime) emitToolExecutionEvents(toolName string, args map[string]any, result tools.ExecutionResult) error {
+	for _, ev := range result.Events {
+		if err := rt.yield(ev); err != nil {
+			return err
+		}
+	}
+	emittedCall := false
+	for _, ev := range result.Events {
+		if ev.Type == "tool.call" {
+			emittedCall = true
+			break
+		}
+	}
+	if !emittedCall {
+		if err := rt.yield(rt.emitter.Emit("tool.call", map[string]any{
+			"tool_name": toolName,
+			"arguments": args,
+		}, stringPtr(toolName), nil)); err != nil {
+			return err
+		}
+	}
+	var errorClass *string
+	if result.Error != nil {
+		errorClass = stringPtr(result.Error.ErrorClass)
+	}
+	resultData := map[string]any{
+		"tool_name": toolName,
+	}
+	if result.ResultJSON != nil {
+		resultData["result"] = result.ResultJSON
+	}
+	if result.Error != nil {
+		resultData["error"] = map[string]any{
+			"error_class": result.Error.ErrorClass,
+			"message":     result.Error.Message,
+		}
+	}
+	return rt.yield(rt.emitter.Emit("tool.result", resultData, stringPtr(toolName), errorClass))
+}
+
+func (rt *luaRuntime) emitAgentToolCall(toolName string, args map[string]any) error {
+	return rt.yield(rt.emitter.Emit("tool.call", map[string]any{
+		"tool_name": toolName,
+		"arguments": args,
+	}, stringPtr(toolName), nil))
+}
+
+func (rt *luaRuntime) emitAgentToolResult(toolName string, result map[string]any, resultErr error) error {
+	data := map[string]any{"tool_name": toolName}
+	var errorClass *string
+	if result != nil {
+		data["result"] = result
+	}
+	if resultErr != nil {
+		errorClass = stringPtr("subagent.error")
+		data["error"] = map[string]any{
+			"error_class": *errorClass,
+			"message":     resultErr.Error(),
+		}
+	}
+	return rt.yield(rt.emitter.Emit("tool.result", data, stringPtr(toolName), errorClass))
 }
 
 // context.get(key) -> value（string 直接返回，其他类型 JSON marshal）
@@ -567,6 +660,80 @@ func (rt *luaRuntime) contextSetOutput(L *lua.LState) int {
 	return 0
 }
 
+// context.ask_user(args_json) -> (result_json, err)
+func (rt *luaRuntime) contextAskUser(L *lua.LState) int {
+	if rt.ctx.Err() != nil {
+		L.Push(lua.LNil)
+		L.Push(lua.LString(rt.ctx.Err().Error()))
+		return 2
+	}
+	if rt.rc.WaitForInput == nil {
+		L.Push(lua.LNil)
+		L.Push(lua.LString("context.ask_user requires human-in-the-loop support"))
+		return 2
+	}
+
+	argsJSON := L.CheckString(1)
+	var args map[string]any
+	if err := json.Unmarshal([]byte(argsJSON), &args); err != nil {
+		L.Push(lua.LNil)
+		L.Push(lua.LString(fmt.Sprintf("context.ask_user: invalid args JSON: %s", err.Error())))
+		return 2
+	}
+	message, schema, normErr := askuser.ValidateAndNormalize(args)
+	if normErr != nil {
+		L.Push(lua.LNil)
+		L.Push(lua.LString(normErr.Error()))
+		return 2
+	}
+
+	requestID := uuid.NewString()
+	if err := rt.yield(rt.emitter.Emit(pipeline.EventTypeInputRequested, map[string]any{
+		"request_id":      requestID,
+		"message":         message,
+		"requestedSchema": schema,
+	}, nil, nil)); err != nil {
+		L.Push(lua.LNil)
+		L.Push(lua.LString(err.Error()))
+		return 2
+	}
+
+	waitCtx := rt.ctx
+	var cancel context.CancelFunc
+	if rt.rc.PausedInputTimeout > 0 {
+		waitCtx, cancel = context.WithTimeout(rt.ctx, rt.rc.PausedInputTimeout)
+		defer cancel()
+	}
+	text, ok := rt.rc.WaitForInput(waitCtx)
+	if !ok || strings.TrimSpace(text) == "" {
+		L.Push(lua.LNil)
+		L.Push(lua.LString("waiting for user input was dismissed or timed out"))
+		return 2
+	}
+	if rt.rc.UserPromptScanFunc != nil {
+		if err := rt.rc.UserPromptScanFunc(rt.ctx, text, "ask_user"); err != nil {
+			L.Push(lua.LNil)
+			L.Push(lua.LString(err.Error()))
+			return 2
+		}
+	}
+	rt.rc.AppendRuntimeUserMessage(text)
+
+	var parsed any
+	if err := json.Unmarshal([]byte(text), &parsed); err != nil {
+		parsed = text
+	}
+	encoded, err := json.Marshal(map[string]any{"user_response": parsed})
+	if err != nil {
+		L.Push(lua.LNil)
+		L.Push(lua.LString(err.Error()))
+		return 2
+	}
+	L.Push(lua.LString(string(encoded)))
+	L.Push(lua.LNil)
+	return 2
+}
+
 // context.emit(event_type, data) -> (ok, err)
 // data 接受 Lua table（自动转 map）或 JSON string。
 func (rt *luaRuntime) contextEmit(L *lua.LState) int {
@@ -618,6 +785,7 @@ func (rt *luaRuntime) parseSpawnRequest(tbl *lua.LTable) (subagentctl.SpawnReque
 		"nickname":     {},
 		"inherit":      {},
 		"profile":      {},
+		"model":        {},
 	}); err != nil {
 		return subagentctl.SpawnRequest{}, err
 	}
@@ -641,6 +809,10 @@ func (rt *luaRuntime) parseSpawnRequest(tbl *lua.LTable) (subagentctl.SpawnReque
 		return subagentctl.SpawnRequest{}, err
 	}
 	nickname, err := luaOptionalStringPtr(tbl.RawGetString("nickname"), "agent.spawn: nickname")
+	if err != nil {
+		return subagentctl.SpawnRequest{}, err
+	}
+	model, err := luaOptionalString(tbl.RawGetString("model"), "agent.spawn: model")
 	if err != nil {
 		return subagentctl.SpawnRequest{}, err
 	}
@@ -669,6 +841,7 @@ func (rt *luaRuntime) parseSpawnRequest(tbl *lua.LTable) (subagentctl.SpawnReque
 		Inherit:     inherit,
 		Input:       input,
 		Profile:     spawnProfile,
+		Model:       model,
 		ParentContext: subagentctl.SpawnParentContext{
 			ToolAllowlist: append([]string(nil), sortedToolNames(rt.rc.AllowlistSet)...),
 			ToolDenylist:  append([]string(nil), rt.rc.ToolDenylist...),
@@ -822,6 +995,13 @@ func luaOptionalStringPtr(value lua.LValue, field string) (*string, error) {
 	return &trimmed, nil
 }
 
+func luaOptionalString(value lua.LValue, field string) (string, error) {
+	if value == lua.LNil {
+		return "", nil
+	}
+	return luaRequiredString(value, field)
+}
+
 func luaOptionalBoolPtr(value lua.LValue, field string) (*bool, error) {
 	if value == lua.LNil {
 		return nil, nil
@@ -874,6 +1054,61 @@ func statusSnapshotToLuaTable(L *lua.LState, snapshot subagentctl.StatusSnapshot
 	setLuaOptionalTimeField(tbl, "completed_at", snapshot.CompletedAt)
 	setLuaOptionalTimeField(tbl, "closed_at", snapshot.ClosedAt)
 	return tbl
+}
+
+func statusSnapshotData(snapshot subagentctl.StatusSnapshot) map[string]any {
+	data := map[string]any{
+		"id":     snapshot.SubAgentID.String(),
+		"status": snapshot.Status,
+		"depth":  snapshot.Depth,
+	}
+	if snapshot.ContextMode != "" {
+		data["context_mode"] = snapshot.ContextMode
+	}
+	if snapshot.Role != nil {
+		data["role"] = *snapshot.Role
+	}
+	if snapshot.PersonaID != nil {
+		data["persona_id"] = *snapshot.PersonaID
+	}
+	if snapshot.Nickname != nil {
+		data["nickname"] = *snapshot.Nickname
+	}
+	if snapshot.CurrentRunID != nil {
+		data["current_run_id"] = snapshot.CurrentRunID.String()
+	}
+	if snapshot.LastCompletedRunID != nil {
+		data["last_completed_run_id"] = snapshot.LastCompletedRunID.String()
+	}
+	if snapshot.LastOutputRef != nil {
+		data["last_output_ref"] = *snapshot.LastOutputRef
+	}
+	if snapshot.LastError != nil {
+		data["last_error"] = *snapshot.LastError
+	}
+	if snapshot.LastEventSeq != nil {
+		data["last_event_seq"] = *snapshot.LastEventSeq
+	}
+	if snapshot.LastEventType != nil {
+		data["last_event_type"] = *snapshot.LastEventType
+	}
+	if snapshot.StartedAt != nil {
+		data["started_at"] = snapshot.StartedAt.UTC().Format(time.RFC3339Nano)
+	}
+	if snapshot.CompletedAt != nil {
+		data["completed_at"] = snapshot.CompletedAt.UTC().Format(time.RFC3339Nano)
+	}
+	if snapshot.ClosedAt != nil {
+		data["closed_at"] = snapshot.ClosedAt.UTC().Format(time.RFC3339Nano)
+	}
+	return data
+}
+
+func optionalStringValue(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return strings.TrimSpace(*value)
 }
 
 func setLuaStringField(tbl *lua.LTable, key string, value string) {
@@ -1730,43 +1965,8 @@ func (rt *luaRuntime) toolsCallParallel(L *lua.LState) int {
 			}
 			result := rt.rc.ToolExecutor.Execute(rt.ctx, c.name, c.args, execCtx, "")
 
-			// 序列化事件推送
 			mu.Lock()
-			for _, ev := range result.Events {
-				_ = rt.yield(ev)
-			}
-			// 补发 tool.call（若 executor 未发射）
-			emittedCall := false
-			for _, ev := range result.Events {
-				if ev.Type == "tool.call" {
-					emittedCall = true
-					break
-				}
-			}
-			if !emittedCall {
-				_ = rt.yield(rt.emitter.Emit("tool.call", map[string]any{
-					"tool_name": c.name,
-					"arguments": c.args,
-				}, stringPtr(c.name), nil))
-			}
-			// 发射 tool.result
-			var errorClass *string
-			if result.Error != nil {
-				errorClass = stringPtr(result.Error.ErrorClass)
-			}
-			resultData := map[string]any{
-				"tool_name": c.name,
-			}
-			if result.ResultJSON != nil {
-				resultData["result"] = result.ResultJSON
-			}
-			if result.Error != nil {
-				resultData["error"] = map[string]any{
-					"error_class": result.Error.ErrorClass,
-					"message":     result.Error.Message,
-				}
-			}
-			_ = rt.yield(rt.emitter.Emit("tool.result", resultData, stringPtr(c.name), errorClass))
+			_ = rt.emitToolExecutionEvents(c.name, c.args, result)
 			mu.Unlock()
 
 			if result.Error != nil {

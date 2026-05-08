@@ -1,0 +1,12 @@
+id: industry-education-evaluator
+version: "1"
+title: 双高产教融合评估员
+description: 针对共享事实包输出双高/高职产教融合维度评分。
+user_selectable: false
+settings_visible: false
+budgets:
+    reasoning_iterations: 99900
+    temperature: 0.2
+reasoning_mode: auto
+prompt_cache_control: system_prompt
+executor_type: agent.simple

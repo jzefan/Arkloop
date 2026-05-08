@@ -406,7 +406,7 @@ func ComposeDesktopEngine(ctx context.Context, db data.DesktopDB, bus eventbus.E
 		return nil, fmt.Errorf("register desktop artifact tools: %w", err)
 	}
 	if artifactToolsRegistered {
-		slog.InfoContext(ctx, "desktop: stored artifact tools registered", "tools", []string{"create_artifact", "document_write", "image_generate"})
+		slog.InfoContext(ctx, "desktop: stored artifact tools registered", "tools", []string{"create_artifact", "document_write", "markdown_to_pdf", "image_generate"})
 	}
 	if lspManager != nil {
 		allLlmSpecs = append(allLlmSpecs, lsp.LSPToolLLMSpec)
@@ -3156,6 +3156,10 @@ func desktopRouting(
 
 		rc.Gateway = gateway
 		rc.SelectedRoute = decision.Selected
+		if rc.InputJSON == nil {
+			rc.InputJSON = map[string]any{}
+		}
+		rc.InputJSON["available_models"] = cfg.AvailableModelOptions(rc.InputJSON)
 		if rc.Temperature == nil {
 			rc.Temperature = routing.RouteDefaultTemperature(decision.Selected.Route)
 		}

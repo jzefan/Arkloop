@@ -100,6 +100,28 @@ func TestToolExecutorSpawnReturnsHandle(t *testing.T) {
 	}
 }
 
+func TestToolExecutorSpawnPassesModelOverride(t *testing.T) {
+	subAgentID := uuid.New()
+	exec := &ToolExecutor{Control: stubControl{spawn: func(_ context.Context, req subagentctl.SpawnRequest) (subagentctl.StatusSnapshot, error) {
+		if req.Model != "qwen官方^qwen-max" {
+			t.Fatalf("expected model override, got %q", req.Model)
+		}
+		return subagentctl.StatusSnapshot{SubAgentID: subAgentID, Depth: 1, Status: "queued"}, nil
+	}, wait: func(_ context.Context, _ subagentctl.WaitRequest) (subagentctl.StatusSnapshot, error) {
+		return subagentctl.StatusSnapshot{}, nil
+	}}}
+
+	result := exec.Execute(context.Background(), AgentSpec.Name, map[string]any{
+		"persona_id":   "industry-education-evaluator",
+		"context_mode": "isolated",
+		"input":        "score",
+		"model":        "qwen官方^qwen-max",
+	}, tools.ExecutionContext{}, "")
+	if result.Error != nil {
+		t.Fatalf("unexpected error: %+v", result.Error)
+	}
+}
+
 func TestToolExecutorSpawnRejectsMissingContextMode(t *testing.T) {
 	exec := &ToolExecutor{Control: stubControl{spawn: func(_ context.Context, _ subagentctl.SpawnRequest) (subagentctl.StatusSnapshot, error) {
 		return subagentctl.StatusSnapshot{}, nil

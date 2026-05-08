@@ -152,12 +152,24 @@ func listLiteAgents(
 	}
 
 	dbPersonaKeys := make(map[string]bool, len(dbPersonas))
+	hiddenRepoPersonaKeys := make(map[string]bool)
+	for _, rp := range repoPersonas {
+		if !repoPersonaSettingsVisible(rp) {
+			hiddenRepoPersonaKeys[strings.TrimSpace(rp.ID)] = true
+		}
+	}
 	resp := make([]liteAgentResponse, 0, len(dbPersonas)+len(repoPersonas))
 	for _, p := range dbPersonas {
+		if hiddenRepoPersonaKeys[p.PersonaKey] && p.SyncMode == data.PersonaSyncModePlatformFileMirror {
+			continue
+		}
 		dbPersonaKeys[p.PersonaKey] = true
 		resp = append(resp, toLiteAgentFromDB(p))
 	}
 	for _, rp := range repoPersonas {
+		if !repoPersonaSettingsVisible(rp) {
+			continue
+		}
 		if dbPersonaKeys[rp.ID] {
 			continue
 		}
@@ -165,6 +177,10 @@ func listLiteAgents(
 	}
 
 	httpkit.WriteJSON(w, traceID, nethttp.StatusOK, resp)
+}
+
+func repoPersonaSettingsVisible(rp personas.RepoPersona) bool {
+	return rp.SettingsVisible == nil || *rp.SettingsVisible
 }
 
 func createLiteAgent(

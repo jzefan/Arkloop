@@ -85,7 +85,7 @@ func (f *SubAgentRunFactory) CreateSpawnRun(
 	}
 	childRunID, err := f.createQueuedRun(ctx, tx, parentRun, createdSubAgent, childThreadID, &snapshot, forcedRunID, data.SubAgentEventTypeSpawned, map[string]any{
 		"thread_id": childThreadID.String(),
-	}, nil)
+	}, nil, spawnReq.Model)
 	if err != nil {
 		return data.SubAgentRecord{}, uuid.Nil, err
 	}
@@ -142,7 +142,7 @@ func (f *SubAgentRunFactory) CreateRunForExistingSubAgent(
 			return uuid.Nil, fmt.Errorf("copy reconstructed messages: %w", err)
 		}
 	}
-	return f.createQueuedRun(ctx, tx, *ownerRun, subAgent, threadID, snapshot, forcedRunID, primaryEventType, payload, errorClass)
+	return f.createQueuedRun(ctx, tx, *ownerRun, subAgent, threadID, snapshot, forcedRunID, primaryEventType, payload, errorClass, "")
 }
 
 func (f *SubAgentRunFactory) CreateRunFromPendingInputs(ctx context.Context, tx pgx.Tx, subAgent data.SubAgentRecord) (*uuid.UUID, error) {
@@ -186,7 +186,7 @@ func (f *SubAgentRunFactory) CreateRunFromPendingInputs(ctx context.Context, tx 
 		"input_bytes":   len([]byte(combined)),
 		"pending_count": len(items),
 		"from_pending":  true,
-	}, nil)
+	}, nil, "")
 	if err != nil {
 		return nil, err
 	}
@@ -226,6 +226,7 @@ func (f *SubAgentRunFactory) createQueuedRun(
 	primaryEventType string,
 	primaryPayload map[string]any,
 	errorClass *string,
+	modelOverride string,
 ) (uuid.UUID, error) {
 	childRunID := uuid.New()
 	if forcedRunID != nil && *forcedRunID != uuid.Nil {
@@ -265,7 +266,7 @@ func (f *SubAgentRunFactory) createQueuedRun(
 		return uuid.Nil, fmt.Errorf("alloc seq: %w", err)
 	}
 	personaID := derefString(subAgent.PersonaID)
-	eventData, err := json.Marshal(buildRunStartedData(subAgent, snapshot, personaID))
+	eventData, err := json.Marshal(buildRunStartedData(subAgent, snapshot, personaID, modelOverride))
 	if err != nil {
 		return uuid.Nil, fmt.Errorf("marshal run.started data: %w", err)
 	}
@@ -313,7 +314,7 @@ func (f *SubAgentRunFactory) copySnapshotMessages(ctx context.Context, tx pgx.Tx
 	return nil
 }
 
-func buildRunStartedData(subAgent data.SubAgentRecord, snapshot *ContextSnapshot, personaID string) map[string]any {
+func buildRunStartedData(subAgent data.SubAgentRecord, snapshot *ContextSnapshot, personaID string, modelOverride string) map[string]any {
 	payload := map[string]any{
 		"persona_id":   personaID,
 		"sub_agent_id": subAgent.ID.String(),
@@ -321,6 +322,9 @@ func buildRunStartedData(subAgent data.SubAgentRecord, snapshot *ContextSnapshot
 	}
 	if subAgent.Role != nil && strings.TrimSpace(*subAgent.Role) != "" {
 		payload["role"] = strings.TrimSpace(*subAgent.Role)
+	}
+	if model := strings.TrimSpace(modelOverride); model != "" {
+		payload["model"] = model
 	}
 	if snapshot == nil {
 		return payload

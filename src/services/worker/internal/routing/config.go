@@ -110,6 +110,59 @@ type ProviderRoutingConfig struct {
 	Routes         []ProviderRouteRule
 }
 
+// AvailableModelOptions exposes route selectors that can be safely shown to
+// runtime scripts without leaking credentials or secrets.
+func (c ProviderRoutingConfig) AvailableModelOptions(input map[string]any) []map[string]any {
+	credentialsByID := map[string]ProviderCredential{}
+	for _, credential := range c.Credentials {
+		credentialsByID[credential.ID] = credential
+	}
+	type option struct {
+		value map[string]any
+		sort  string
+	}
+	options := make([]option, 0, len(c.Routes))
+	seen := map[string]struct{}{}
+	for _, route := range c.Routes {
+		if !route.Matches(input) {
+			continue
+		}
+		credential, ok := credentialsByID[route.CredentialID]
+		if !ok {
+			continue
+		}
+		model := strings.TrimSpace(route.Model)
+		if model == "" {
+			continue
+		}
+		selector := model
+		if credentialName := strings.TrimSpace(credential.Name); credentialName != "" {
+			selector = credentialName + "^" + model
+		}
+		if _, exists := seen[selector]; exists {
+			continue
+		}
+		seen[selector] = struct{}{}
+		value := map[string]any{
+			"selector":        selector,
+			"model":           model,
+			"provider_kind":   string(credential.ProviderKind),
+			"credential_name": strings.TrimSpace(credential.Name),
+			"owner_kind":      string(credential.OwnerKind),
+		}
+		options = append(options, option{
+			value: value,
+			sort:  strings.ToLower(string(credential.ProviderKind) + "\x00" + strings.TrimSpace(credential.Name) + "\x00" + model),
+		})
+	}
+	sort.SliceStable(options, func(i, j int) bool { return options[i].sort < options[j].sort })
+	out := make([]map[string]any, 0, len(options))
+	for _, item := range options {
+		out = append(out, item.value)
+	}
+	return out
+}
+
 // PlatformOnly returns a copy with only platform-scoped credentials and non-AccountScoped routes.
 func (c ProviderRoutingConfig) PlatformOnly() ProviderRoutingConfig {
 	out := ProviderRoutingConfig{}

@@ -9,6 +9,7 @@ import (
 	"arkloop/services/worker/internal/tools"
 	documentwritetool "arkloop/services/worker/internal/tools/builtin/document_write"
 	imagegeneratetool "arkloop/services/worker/internal/tools/builtin/image_generate"
+	markdowntopdftool "arkloop/services/worker/internal/tools/builtin/markdown_to_pdf"
 )
 
 // registerStoredArtifactTools wires tools that require persisted artifact storage.
@@ -27,6 +28,7 @@ func registerStoredArtifactTools(
 
 	artifactExecutor := documentwritetool.NewToolExecutor(store)
 	imageExecutor := imagegeneratetool.NewToolExecutor(store, db, configResolver, routingLoader)
+	markdownToPDFExecutor := markdowntopdftool.NewToolExecutor(store)
 	registered := false
 	for _, item := range []struct {
 		agentSpec tools.AgentToolSpec
@@ -35,6 +37,7 @@ func registerStoredArtifactTools(
 	}{
 		{agentSpec: documentwritetool.CreateArtifactAgentSpec, llmSpec: documentwritetool.CreateArtifactLlmSpec, executor: artifactExecutor},
 		{agentSpec: documentwritetool.AgentSpec, llmSpec: documentwritetool.LlmSpec, executor: artifactExecutor},
+		{agentSpec: markdowntopdftool.AgentSpec, llmSpec: markdowntopdftool.LlmSpec, executor: markdownToPDFExecutor},
 		{agentSpec: imagegeneratetool.AgentSpec, llmSpec: imagegeneratetool.LlmSpec, executor: imageExecutor},
 	} {
 		wasRegistered, err := registerToolIfMissing(toolRegistry, item.agentSpec)

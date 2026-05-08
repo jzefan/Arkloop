@@ -42,6 +42,33 @@ func TestDBProviderToKindZenMax(t *testing.T) {
 	}
 }
 
+func TestAvailableModelOptionsUsesExactSelectorsAndFiltersWhen(t *testing.T) {
+	cfg := ProviderRoutingConfig{
+		Credentials: []ProviderCredential{
+			{ID: "cred-deepseek", Name: "deepseek official", OwnerKind: CredentialScopeUser, ProviderKind: ProviderKindDeepSeek},
+			{ID: "cred-qwen", Name: "qwen proxy", OwnerKind: CredentialScopeUser, ProviderKind: ProviderKindOpenAI},
+			{ID: "cred-hidden", Name: "doubao hidden", OwnerKind: CredentialScopeUser, ProviderKind: ProviderKindOpenAI},
+		},
+		Routes: []ProviderRouteRule{
+			{ID: "deepseek", Model: "deepseek-chat", CredentialID: "cred-deepseek", When: map[string]any{}},
+			{ID: "qwen", Model: "qwen-max", CredentialID: "cred-qwen", When: map[string]any{"persona_id": "industry-education-index"}},
+			{ID: "hidden", Model: "doubao-seed-1-6", CredentialID: "cred-hidden", When: map[string]any{"persona_id": "other"}},
+		},
+	}
+
+	got := cfg.AvailableModelOptions(map[string]any{"persona_id": "industry-education-index"})
+	if len(got) != 2 {
+		t.Fatalf("expected 2 visible options, got %#v", got)
+	}
+	values := map[string]bool{}
+	for _, item := range got {
+		values[item["selector"].(string)] = true
+	}
+	if !values["deepseek official^deepseek-chat"] || !values["qwen proxy^qwen-max"] {
+		t.Fatalf("unexpected selectors: %#v", values)
+	}
+}
+
 func TestGetHighestPriorityRouteByCredentialName_Found(t *testing.T) {
 	cfg := ProviderRoutingConfig{
 		DefaultRouteID: "default",

@@ -63,6 +63,7 @@ func (p *ChildRunPlanner) PlanSpawn(req SpawnRequest) (childRunPlan, error) {
 	if resolved.SourceType == "" {
 		resolved.SourceType = data.SubAgentSourceTypeThreadSpawn
 	}
+	resolved.Model = strings.TrimSpace(req.Model)
 	return childRunPlan{
 		Mode:             childRunPlanModeCreateRun,
 		Spawn:            &resolved,

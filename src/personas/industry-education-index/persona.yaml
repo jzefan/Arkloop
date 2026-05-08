@@ -1,0 +1,23 @@
+id: industry-education-index
+version: "1"
+title: 双高产教融合评估
+description: 搜索公开资料并使用多模型子智能体生成双高/高职产教融合指数报告。
+soul_file: prompt.md
+user_selectable: true
+selector_name: 双高产教融合评估
+selector_order: 0
+is_builtin: true
+core_tools:
+    - ask_user
+    - web_search
+    - web_fetch
+    - document_write
+    - markdown_to_pdf
+budgets:
+    reasoning_iterations: 99900
+    temperature: 0.4
+reasoning_mode: auto
+prompt_cache_control: system_prompt
+executor_type: agent.lua
+executor_config:
+    script_file: agent.lua

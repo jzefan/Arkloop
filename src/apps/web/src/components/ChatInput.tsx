@@ -36,6 +36,10 @@ import { ModelPicker } from './ModelPicker'
 import { AutoResizeTextarea, measureTextareaHeight } from '@arkloop/shared'
 import { useLatest } from '../hooks/useLatest'
 import { useInputPerfDebug } from '../hooks/useInputPerfDebug'
+import {
+  filterPersonaMentionCandidates,
+  getLeadingPersonaMentionQuery,
+} from '../personaInvocation'
 
 export type ChatInputHandle = {
   clear: () => void
@@ -229,6 +233,8 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
 
   const [selectablePersonas, setSelectablePersonas] = useState<SelectablePersona[]>([])
   const [selectedPersonaKey, setSelectedPersonaKey] = useState(readSelectedPersonaKeyFromStorage)
+  const [personaMentionDismissed, setPersonaMentionDismissed] = useState(false)
+  const [personaMentionActiveIndex, setPersonaMentionActiveIndex] = useState(0)
   const [focused, setFocused] = useState(false)
   const [collapsingGrid, setCollapsingGrid] = useState(false)
   const [pastedModalAttachment, setPastedModalAttachment] = useState<Attachment | null>(null)
@@ -319,6 +325,21 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
     () => personas.find((persona) => persona.persona_key === selectedPersonaKey) ?? null,
     [personas, selectedPersonaKey],
   )
+
+  const personaMentionQuery = useMemo(() => getLeadingPersonaMentionQuery(draft), [draft])
+  const personaMentionCandidates = useMemo(
+    () => personaMentionQuery === null ? [] : filterPersonaMentionCandidates(personas, personaMentionQuery),
+    [personaMentionQuery, personas],
+  )
+  const showPersonaMentionMenu = !disabled
+    && !personaMentionDismissed
+    && personaMentionQuery !== null
+    && personaMentionCandidates.length > 0
+
+  useEffect(() => {
+    setPersonaMentionActiveIndex(0)
+    if (personaMentionQuery !== null) setPersonaMentionDismissed(false)
+  }, [personaMentionQuery])
 
   const handleModelChange = useCallback((model: string | null) => {
     setSelectedModel(model)
@@ -523,6 +544,20 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
     }
   }, [selectedPersonaKey, chipExiting, persistSelectedPersona, deactivateMode])
 
+  const applyPersonaMentionSelection = useCallback((persona: SelectablePersona) => {
+    const nextDraft = draft.replace(/^\s*@[^\s@]*\s*/u, '')
+    resetHistoryCursor()
+    trackedSetDraft(nextDraft)
+    persistSelectedPersona(persona.persona_key)
+    setPersonaMentionDismissed(true)
+    requestAnimationFrame(() => {
+      const target = textareaRef.current
+      if (!target) return
+      target.focus({ preventScroll: true })
+      target.setSelectionRange(nextDraft.length, nextDraft.length)
+    })
+  }, [draft, persistSelectedPersona, resetHistoryCursor, trackedSetDraft])
+
   const formatRecordingTime = (secs: number) => {
     const m = Math.floor(secs / 60)
     const s = secs % 60
@@ -626,6 +661,29 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
 
   const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     const isComposing = isComposingEvent(e.nativeEvent)
+    if (!isComposing && showPersonaMentionMenu) {
+      if (e.key === 'ArrowDown') {
+        e.preventDefault()
+        setPersonaMentionActiveIndex((index) => (index + 1) % personaMentionCandidates.length)
+        return
+      }
+      if (e.key === 'ArrowUp') {
+        e.preventDefault()
+        setPersonaMentionActiveIndex((index) => (index - 1 + personaMentionCandidates.length) % personaMentionCandidates.length)
+        return
+      }
+      if (e.key === 'Enter' || e.key === 'Tab') {
+        e.preventDefault()
+        const persona = personaMentionCandidates[personaMentionActiveIndex] ?? personaMentionCandidates[0]
+        if (persona) applyPersonaMentionSelection(persona)
+        return
+      }
+      if (e.key === 'Escape') {
+        e.preventDefault()
+        setPersonaMentionDismissed(true)
+        return
+      }
+    }
     if (!isComposing && e.key === 'ArrowUp' && handleHistoryNavigation('up', e.currentTarget)) {
       e.preventDefault()
       return
@@ -690,10 +748,85 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
 
   const handleDraftChange = (target: HTMLTextAreaElement) => {
     resetHistoryCursor()
+    if (getLeadingPersonaMentionQuery(target.value) !== null) {
+      setPersonaMentionDismissed(false)
+    }
     if (!isComposingRef.current && document.activeElement === target && willWorkInputLayoutChange(target.value, target)) {
       pendingTextareaFocusRef.current = readTextareaSelection(target)
     }
     trackedSetDraft(target.value)
+  }
+
+  const renderPersonaMentionMenu = () => {
+    if (!showPersonaMentionMenu) return null
+    return (
+      <div
+        data-testid="persona-mention-menu"
+        style={{
+          position: 'absolute',
+          left: 0,
+          right: 0,
+          bottom: 'calc(100% + 8px)',
+          zIndex: 30,
+          border: '0.5px solid var(--c-border-subtle)',
+          borderRadius: '12px',
+          background: 'var(--c-bg-input)',
+          boxShadow: 'var(--c-input-shadow-focus)',
+          padding: '6px',
+          maxHeight: '260px',
+          overflowY: 'auto',
+        }}
+      >
+        {personaMentionCandidates.map((persona, index) => {
+          const active = index === personaMentionActiveIndex
+          return (
+            <button
+              key={persona.persona_key}
+              type="button"
+              onMouseDown={(event) => event.preventDefault()}
+              onMouseEnter={() => setPersonaMentionActiveIndex(index)}
+              onClick={() => applyPersonaMentionSelection(persona)}
+              style={{
+                display: 'flex',
+                width: '100%',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                gap: '12px',
+                border: 'none',
+                borderRadius: '8px',
+                background: active ? 'var(--c-bg-sub)' : 'transparent',
+                color: 'var(--c-text-primary)',
+                cursor: 'pointer',
+                padding: '9px 10px',
+                textAlign: 'left',
+              }}
+            >
+              <span
+                style={{
+                  minWidth: 0,
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  whiteSpace: 'nowrap',
+                  fontSize: '14px',
+                  fontWeight: 430,
+                }}
+              >
+                {persona.selector_name}
+              </span>
+              <span
+                style={{
+                  flexShrink: 0,
+                  color: 'var(--c-text-tertiary)',
+                  fontSize: '12px',
+                }}
+              >
+                @{persona.persona_key}
+              </span>
+            </button>
+          )
+        })}
+      </div>
+    )
   }
 
   const handleCompositionStart = () => {
@@ -921,6 +1054,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                 : {}),
             }}
           >
+            {renderPersonaMentionMenu()}
             <AutoResizeTextarea
               ref={textareaRef}
               rows={1}
@@ -1040,8 +1174,10 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                   display: 'flex',
                   alignItems: 'center',
                   padding: '0 8px 0 4px',
+                  position: 'relative',
                 }}
               >
+                {renderPersonaMentionMenu()}
                 <AutoResizeTextarea
                   ref={textareaRef}
                   rows={1}

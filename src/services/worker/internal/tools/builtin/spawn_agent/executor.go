@@ -133,6 +133,10 @@ var LlmSpec = llm.ToolSpec{
 				"enum":        []string{"explore", "task", "strong"},
 				"description": "Model capability tier for the sub-agent. explore=fast/cheap, task=balanced, strong=best reasoning.",
 			},
+			"model": map[string]any{
+				"type":        "string",
+				"description": "Optional explicit model selector for the child run, formatted as provider^model.",
+			},
 		},
 		"required":             []string{"persona_id", "context_mode", "input"},
 		"additionalProperties": false,
@@ -381,7 +385,7 @@ func applyResolvedProfile(req *subagentctl.SpawnRequest, value string) bool {
 func parseSpawnArgs(args map[string]any, execCtx tools.ExecutionContext) (subagentctl.SpawnRequest, error) {
 	for key := range args {
 		switch key {
-		case "persona_id", "role", "nickname", "context_mode", "inherit", "input", "profile":
+		case "persona_id", "role", "nickname", "context_mode", "inherit", "input", "profile", "model":
 		default:
 			return subagentctl.SpawnRequest{}, argsError("unknown parameter: " + key)
 		}
@@ -456,6 +460,13 @@ func parseSpawnArgs(args map[string]any, execCtx tools.ExecutionContext) (subage
 				return subagentctl.SpawnRequest{}, argsError("profile must be one of: explore, task, strong")
 			}
 		}
+	}
+	if raw, ok := args["model"]; ok {
+		value, ok := raw.(string)
+		if !ok {
+			return subagentctl.SpawnRequest{}, argsError("model must be a string")
+		}
+		req.Model = strings.TrimSpace(value)
 	}
 	return req, nil
 }

@@ -19,6 +19,7 @@ var runtimeManagedToolNames = map[string]struct{}{
 	"conversation_search":  {},
 	"create_artifact":      {},
 	"document_write":       {},
+	"markdown_to_pdf":      {},
 	"exec_command":         {},
 	"continue_process":     {},
 	"group_history_search": {},

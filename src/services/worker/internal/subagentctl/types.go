@@ -48,6 +48,7 @@ type SpawnRequest struct {
 	Input       string
 	SourceType  string // 默认 "thread_spawn"，platform agent 设为 "platform_agent"
 	Profile     string // explore / task / strong
+	Model       string
 
 	ParentContext SpawnParentContext
 }
@@ -70,6 +71,7 @@ type ResolvedSpawnRequest struct {
 	Inherit     ResolvedSpawnInherit
 	Input       string
 	SourceType  string
+	Model       string
 
 	ParentContext SpawnParentContext
 }
