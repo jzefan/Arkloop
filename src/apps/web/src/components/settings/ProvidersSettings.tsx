@@ -50,15 +50,15 @@ import {
 } from './HeadersEditor'
 
 const VENDOR_PRESETS = [
-  { key: 'openai_responses', provider: 'openai', openai_api_mode: 'responses' },
-  { key: 'openai_chat_completions', provider: 'openai', openai_api_mode: 'chat_completions' },
-  { key: 'anthropic_message', provider: 'anthropic', openai_api_mode: undefined },
-  { key: 'gemini', provider: 'gemini', openai_api_mode: undefined },
   { key: 'deepseek', provider: 'deepseek', openai_api_mode: undefined },
-  { key: 'doubao', provider: 'doubao', openai_api_mode: undefined },
   { key: 'qwen', provider: 'qwen', openai_api_mode: undefined },
+  { key: 'doubao', provider: 'doubao', openai_api_mode: undefined },
   { key: 'yuanbao', provider: 'yuanbao', openai_api_mode: undefined },
   { key: 'kimi', provider: 'kimi', openai_api_mode: undefined },
+  { key: 'openai_responses', provider: 'openai', openai_api_mode: 'responses' },
+  { key: 'openai_chat_completions', provider: 'openai', openai_api_mode: 'chat_completions' },
+  { key: 'gemini', provider: 'gemini', openai_api_mode: undefined },
+  { key: 'anthropic_message', provider: 'anthropic', openai_api_mode: undefined },
   { key: 'zenmax', provider: 'zenmax', openai_api_mode: undefined },
 ] as const
 
@@ -104,7 +104,7 @@ function vendorLabel(
     gemini: p.vendorGemini,
     deepseek: p.vendorDeepSeek ?? 'DeepSeek',
     doubao: p.vendorDoubao ?? 'Doubao',
-    qwen: p.vendorQwen ?? 'Qwen',
+    qwen: p.vendorQwen ?? 'QWen',
     yuanbao: p.vendorYuanbao ?? 'Yuanbao',
     kimi: p.vendorKimi ?? 'Kimi',
     zenmax: p.vendorZenMax ?? 'ZENMAX',

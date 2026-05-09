@@ -416,6 +416,49 @@ describe('ProvidersSettings', () => {
     }))
   })
 
+  it('新增供应商类型下拉按指定顺序展示', async () => {
+    const { ProvidersSettings, LocaleProvider } = await loadSubject()
+
+    await act(async () => {
+      root!.render(
+        <LocaleProvider>
+          <ProvidersSettings accessToken="token" />
+        </LocaleProvider>,
+      )
+    })
+    await flushEffects()
+
+    const addButton = findButton(container, /添加供应商|Add provider/)
+    expect(addButton).toBeTruthy()
+    await act(async () => {
+      addButton!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+    await flushEffects()
+
+    const vendorButton = Array.from(document.body.querySelectorAll('button')).find((button) => button.textContent?.includes('OpenAI'))
+    expect(vendorButton).toBeTruthy()
+    await act(async () => {
+      vendorButton!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+    await flushEffects()
+
+    const optionLabels = Array.from(document.body.querySelectorAll('.dropdown-menu button, .dropdown-menu-up button'))
+      .map((button) => (button.textContent ?? '').trim())
+      .filter(Boolean)
+
+    expect(optionLabels.slice(0, 9)).toEqual([
+      'DeepSeek',
+      'QWen',
+      'Doubao',
+      'Yuanbao',
+      'Kimi',
+      'OpenAI (Responses)',
+      'OpenAI (Chat Completions)',
+      'Google Gemini',
+      'Anthropic',
+    ])
+  })
+
   it('新增 DeepSeek 供应商时不提交 openai_api_mode', async () => {
     const createdProvider = {
       id: 'provider-deepseek',
@@ -675,7 +718,7 @@ describe('ProvidersSettings', () => {
     })
     await flushEffects()
 
-    const qwenOption = Array.from(document.body.querySelectorAll('button')).find((button) => button.textContent?.includes('Qwen'))
+    const qwenOption = Array.from(document.body.querySelectorAll('button')).find((button) => button.textContent?.includes('QWen'))
     expect(qwenOption).toBeTruthy()
     await act(async () => {
       qwenOption!.dispatchEvent(new MouseEvent('click', { bubbles: true }))

@@ -25,14 +25,15 @@ import { SettingsSelect } from './settings/_SettingsSelect'
 import { SettingsSwitch } from './settings/_SettingsSwitch'
 
 const PROVIDER_PRESETS = [
-  { key: 'openai_responses', provider: 'openai', openai_api_mode: 'responses' },
-  { key: 'openai_chat_completions', provider: 'openai', openai_api_mode: 'chat_completions' },
-  { key: 'anthropic_message', provider: 'anthropic', openai_api_mode: undefined },
   { key: 'deepseek', provider: 'deepseek', openai_api_mode: undefined },
-  { key: 'doubao', provider: 'doubao', openai_api_mode: undefined },
   { key: 'qwen', provider: 'qwen', openai_api_mode: undefined },
+  { key: 'doubao', provider: 'doubao', openai_api_mode: undefined },
   { key: 'yuanbao', provider: 'yuanbao', openai_api_mode: undefined },
   { key: 'kimi', provider: 'kimi', openai_api_mode: undefined },
+  { key: 'openai_responses', provider: 'openai', openai_api_mode: 'responses' },
+  { key: 'openai_chat_completions', provider: 'openai', openai_api_mode: 'chat_completions' },
+  { key: 'gemini', provider: 'gemini', openai_api_mode: undefined },
+  { key: 'anthropic_message', provider: 'anthropic', openai_api_mode: undefined },
   { key: 'zenmax', provider: 'zenmax', openai_api_mode: undefined },
 ] as const
 
@@ -58,7 +59,7 @@ function presetLabel(
     anthropic_message: m.vendorAnthropicMessage,
     deepseek: m.vendorDeepSeek ?? 'DeepSeek',
     doubao: m.vendorDoubao ?? 'Doubao',
-    qwen: m.vendorQwen ?? 'Qwen',
+    qwen: m.vendorQwen ?? 'QWen',
     yuanbao: m.vendorYuanbao ?? 'Yuanbao',
     kimi: m.vendorKimi ?? 'Kimi',
     zenmax: m.vendorZenMax ?? 'ZENMAX',

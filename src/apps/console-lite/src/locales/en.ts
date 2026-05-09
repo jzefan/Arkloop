@@ -77,7 +77,7 @@ export const en: LocaleStrings = {
     clientTypeGemini: 'Google Gemini',
     clientTypeDeepSeek: 'DeepSeek',
     clientTypeDoubao: 'Doubao',
-    clientTypeQwen: 'Qwen',
+    clientTypeQwen: 'QWen',
     clientTypeYuanbao: 'Yuanbao',
     clientTypeKimi: 'Kimi',
     clientTypeZenMaxOpenAI: 'OpenAI',

@@ -82,16 +82,28 @@ function toApiFormat(provider: string, mode: string | null | undefined): ApiForm
 }
 
 const API_FORMAT_LABELS: Record<ApiFormat, string> = {
-  openai_chat_completions: 'OpenAI Chat Completions',
-  openai_responses: 'OpenAI Responses',
-  anthropic: 'Anthropic',
-  gemini: 'Google Gemini',
   deepseek: 'DeepSeek',
+  qwen: 'QWen',
   doubao: 'Doubao',
-  qwen: 'Qwen',
   yuanbao: 'Yuanbao',
   kimi: 'Kimi',
+  openai_responses: 'OpenAI Responses',
+  openai_chat_completions: 'OpenAI Chat Completions',
+  gemini: 'Google Gemini',
+  anthropic: 'Anthropic',
 }
+
+const API_FORMAT_OPTIONS: ApiFormat[] = [
+  'deepseek',
+  'qwen',
+  'doubao',
+  'yuanbao',
+  'kimi',
+  'openai_responses',
+  'openai_chat_completions',
+  'gemini',
+  'anthropic',
+]
 
 type ModelFormState = {
   model: string
@@ -650,15 +662,9 @@ export function ProvidersPage() {
                       value={providerForm.apiFormat}
                       onChange={(e) => setProviderForm((prev) => ({ ...prev, apiFormat: e.target.value as ApiFormat }))}
                     >
-                      <option value="openai_chat_completions">OpenAI Chat Completions</option>
-                      <option value="openai_responses">OpenAI Responses</option>
-                      <option value="anthropic">Anthropic</option>
-                      <option value="gemini">Google Gemini</option>
-                      <option value="deepseek">DeepSeek</option>
-                      <option value="doubao">Doubao</option>
-                      <option value="qwen">Qwen</option>
-                      <option value="yuanbao">Yuanbao</option>
-                      <option value="kimi">Kimi</option>
+                      {API_FORMAT_OPTIONS.map((format) => (
+                        <option key={format} value={format}>{API_FORMAT_LABELS[format]}</option>
+                      ))}
                     </select>
                   </FormField>
                   <FormField label={tc.fieldBaseUrl}>
@@ -765,15 +771,9 @@ export function ProvidersPage() {
             </FormField>
             <FormField label={tc.fieldProvider}>
               <select className={INPUT_CLS} value={createForm.apiFormat} onChange={(e) => { setCreateForm((prev) => ({ ...prev, apiFormat: e.target.value as ApiFormat })); setCreateError('') }}>
-                <option value="openai_chat_completions">OpenAI Chat Completions</option>
-                <option value="openai_responses">OpenAI Responses</option>
-                <option value="anthropic">Anthropic</option>
-                <option value="gemini">Google Gemini</option>
-                <option value="deepseek">DeepSeek</option>
-                <option value="doubao">Doubao</option>
-                <option value="qwen">Qwen</option>
-                <option value="yuanbao">Yuanbao</option>
-                <option value="kimi">Kimi</option>
+                {API_FORMAT_OPTIONS.map((format) => (
+                  <option key={format} value={format}>{API_FORMAT_LABELS[format]}</option>
+                ))}
               </select>
             </FormField>
             <FormField label={tc.fieldApiKey}>
