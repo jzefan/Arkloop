@@ -417,20 +417,15 @@ func ResolveGatewayConfigFromSelectedRoute(selected routing.SelectedProviderRout
 			OpenAI:       &protocol,
 		}, nil
 	case routing.ProviderKindDeepSeek:
-		transport.BaseURL = strings.TrimRight(strings.TrimSpace(transport.BaseURL), "/")
-		if transport.BaseURL == "" {
-			transport.BaseURL = "https://api.deepseek.com"
-		}
-		protocol, err := llm.ResolveOpenAIProtocolConfig("chat_completions", advancedJSON)
-		if err != nil {
-			return llm.ResolvedGatewayConfig{}, err
-		}
-		return llm.ResolvedGatewayConfig{
-			ProtocolKind: protocol.PrimaryKind,
-			Model:        selected.Route.Model,
-			Transport:    transport,
-			OpenAI:       &protocol,
-		}, nil
+		return resolveOpenAICompatibleGatewayConfig(selected.Route.Model, transport, advancedJSON, "https://api.deepseek.com")
+	case routing.ProviderKindDoubao:
+		return resolveOpenAICompatibleGatewayConfig(selected.Route.Model, transport, advancedJSON, "https://ark.cn-beijing.volces.com/api/v3")
+	case routing.ProviderKindQwen:
+		return resolveOpenAICompatibleGatewayConfig(selected.Route.Model, transport, advancedJSON, "https://dashscope.aliyuncs.com/compatible-mode/v1")
+	case routing.ProviderKindYuanbao:
+		return resolveOpenAICompatibleGatewayConfig(selected.Route.Model, transport, advancedJSON, "https://api.hunyuan.cloud.tencent.com/v1")
+	case routing.ProviderKindKimi:
+		return resolveOpenAICompatibleGatewayConfig(selected.Route.Model, transport, advancedJSON, "https://api.moonshot.cn/v1")
 	case routing.ProviderKindZenMax:
 		transport.BaseURL = strings.TrimRight(strings.TrimSpace(transport.BaseURL), "/")
 		zenMaxProtocol := resolveZenMaxProtocol(advancedJSON)
@@ -508,6 +503,23 @@ func ResolveGatewayConfigFromSelectedRoute(selected routing.SelectedProviderRout
 	default:
 		return llm.ResolvedGatewayConfig{}, fmt.Errorf("unknown provider_kind: %s", credential.ProviderKind)
 	}
+}
+
+func resolveOpenAICompatibleGatewayConfig(model string, transport llm.TransportConfig, advancedJSON map[string]any, defaultBaseURL string) (llm.ResolvedGatewayConfig, error) {
+	transport.BaseURL = strings.TrimRight(strings.TrimSpace(transport.BaseURL), "/")
+	if transport.BaseURL == "" {
+		transport.BaseURL = defaultBaseURL
+	}
+	protocol, err := llm.ResolveOpenAIProtocolConfig("chat_completions", advancedJSON)
+	if err != nil {
+		return llm.ResolvedGatewayConfig{}, err
+	}
+	return llm.ResolvedGatewayConfig{
+		ProtocolKind: protocol.PrimaryKind,
+		Model:        model,
+		Transport:    transport,
+		OpenAI:       &protocol,
+	}, nil
 }
 
 func ResolveGatewayConfigFromSelectedRouteForRequest(ctx context.Context, selected routing.SelectedProviderRoute, emitDebugEvents bool, llmMaxResponseBytes int) (llm.ResolvedGatewayConfig, error) {

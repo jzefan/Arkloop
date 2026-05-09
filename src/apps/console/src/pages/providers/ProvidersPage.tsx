@@ -36,7 +36,16 @@ const BUTTON_PRIMARY_CLS =
 const BUTTON_DANGER_CLS =
   'rounded-lg border border-[var(--c-border)] px-3 py-1.5 text-sm text-red-500 transition-colors hover:bg-[var(--c-bg-sub)] disabled:opacity-50'
 
-type ApiFormat = 'openai_chat_completions' | 'openai_responses' | 'anthropic' | 'gemini'
+type ApiFormat =
+  | 'openai_chat_completions'
+  | 'openai_responses'
+  | 'anthropic'
+  | 'gemini'
+  | 'deepseek'
+  | 'doubao'
+  | 'qwen'
+  | 'yuanbao'
+  | 'kimi'
 
 type ProviderFormState = {
   name: string
@@ -52,12 +61,22 @@ function splitApiFormat(fmt: ApiFormat): { provider: string; openai_api_mode: st
     case 'openai_responses': return { provider: 'openai', openai_api_mode: 'responses' }
     case 'anthropic': return { provider: 'anthropic', openai_api_mode: null }
     case 'gemini': return { provider: 'gemini', openai_api_mode: null }
+    case 'deepseek': return { provider: 'deepseek', openai_api_mode: null }
+    case 'doubao': return { provider: 'doubao', openai_api_mode: null }
+    case 'qwen': return { provider: 'qwen', openai_api_mode: null }
+    case 'yuanbao': return { provider: 'yuanbao', openai_api_mode: null }
+    case 'kimi': return { provider: 'kimi', openai_api_mode: null }
   }
 }
 
 function toApiFormat(provider: string, mode: string | null | undefined): ApiFormat {
   if (provider === 'anthropic') return 'anthropic'
   if (provider === 'gemini') return 'gemini'
+  if (provider === 'deepseek') return 'deepseek'
+  if (provider === 'doubao') return 'doubao'
+  if (provider === 'qwen') return 'qwen'
+  if (provider === 'yuanbao') return 'yuanbao'
+  if (provider === 'kimi') return 'kimi'
   if (mode === 'chat_completions') return 'openai_chat_completions'
   return 'openai_responses'
 }
@@ -67,6 +86,11 @@ const API_FORMAT_LABELS: Record<ApiFormat, string> = {
   openai_responses: 'OpenAI Responses',
   anthropic: 'Anthropic',
   gemini: 'Google Gemini',
+  deepseek: 'DeepSeek',
+  doubao: 'Doubao',
+  qwen: 'Qwen',
+  yuanbao: 'Yuanbao',
+  kimi: 'Kimi',
 }
 
 type ModelFormState = {
@@ -629,6 +653,12 @@ export function ProvidersPage() {
                       <option value="openai_chat_completions">OpenAI Chat Completions</option>
                       <option value="openai_responses">OpenAI Responses</option>
                       <option value="anthropic">Anthropic</option>
+                      <option value="gemini">Google Gemini</option>
+                      <option value="deepseek">DeepSeek</option>
+                      <option value="doubao">Doubao</option>
+                      <option value="qwen">Qwen</option>
+                      <option value="yuanbao">Yuanbao</option>
+                      <option value="kimi">Kimi</option>
                     </select>
                   </FormField>
                   <FormField label={tc.fieldBaseUrl}>
@@ -738,6 +768,12 @@ export function ProvidersPage() {
                 <option value="openai_chat_completions">OpenAI Chat Completions</option>
                 <option value="openai_responses">OpenAI Responses</option>
                 <option value="anthropic">Anthropic</option>
+                <option value="gemini">Google Gemini</option>
+                <option value="deepseek">DeepSeek</option>
+                <option value="doubao">Doubao</option>
+                <option value="qwen">Qwen</option>
+                <option value="yuanbao">Yuanbao</option>
+                <option value="kimi">Kimi</option>
               </select>
             </FormField>
             <FormField label={tc.fieldApiKey}>

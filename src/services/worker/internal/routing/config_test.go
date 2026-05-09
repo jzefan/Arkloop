@@ -42,6 +42,37 @@ func TestDBProviderToKindZenMax(t *testing.T) {
 	}
 }
 
+func TestProviderKindOpenAICompatibleVendors(t *testing.T) {
+	tests := []struct {
+		raw  string
+		want ProviderKind
+	}{
+		{"doubao", ProviderKindDoubao},
+		{"qwen", ProviderKindQwen},
+		{"yuanbao", ProviderKindYuanbao},
+		{"kimi", ProviderKindKimi},
+	}
+	for _, tt := range tests {
+		t.Run(tt.raw, func(t *testing.T) {
+			got, err := parseProviderKind(tt.raw)
+			if err != nil {
+				t.Fatalf("parseProviderKind() error = %v", err)
+			}
+			if got != tt.want {
+				t.Fatalf("parseProviderKind() = %q, want %q", got, tt.want)
+			}
+
+			got, err = dbProviderToKind(tt.raw)
+			if err != nil {
+				t.Fatalf("dbProviderToKind() error = %v", err)
+			}
+			if got != tt.want {
+				t.Fatalf("dbProviderToKind() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestAvailableModelOptionsUsesExactSelectorsAndFiltersWhen(t *testing.T) {
 	cfg := ProviderRoutingConfig{
 		Credentials: []ProviderCredential{

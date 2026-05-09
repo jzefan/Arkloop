@@ -22,6 +22,8 @@ const (
 	defaultDeepSeekBaseURL            = "https://api.deepseek.com"
 	defaultDoubaoBaseURL              = "https://ark.cn-beijing.volces.com/api/v3"
 	defaultQwenBaseURL                = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+	defaultYuanbaoBaseURL             = "https://api.hunyuan.cloud.tencent.com/v1"
+	defaultKimiBaseURL                = "https://api.moonshot.cn/v1"
 	defaultZenMaxOpenAIBaseURL        = "https://zenmux.ai/api/v1"
 	defaultZenMaxAnthropicBaseURL     = "https://zenmux.ai/api/anthropic"
 	defaultZenMaxGeminiCatalogBaseURL = "https://zenmux.ai/api/vertex-ai/v1beta"

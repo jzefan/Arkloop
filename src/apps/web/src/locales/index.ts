@@ -572,6 +572,8 @@ export interface LocaleStrings {
     vendorDeepSeek: string
     vendorDoubao: string
     vendorQwen: string
+    vendorYuanbao: string
+    vendorKimi: string
     vendorZenMax: string
     applyToAll: string
     applyingToAll: string
@@ -1416,6 +1418,8 @@ export interface LocaleStrings {
     vendorDeepSeek: string;
     vendorDoubao: string;
     vendorQwen: string;
+    vendorYuanbao: string;
+    vendorKimi: string;
     vendorZenMax: string;
     openVikingBackend: string;
     openVikingBackendHint: string;

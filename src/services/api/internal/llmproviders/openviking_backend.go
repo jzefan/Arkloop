@@ -30,7 +30,7 @@ func ResolveOpenVikingBackend(provider string, advancedJSON map[string]any) stri
 	switch strings.ToLower(strings.TrimSpace(provider)) {
 	case "openai":
 		return OpenVikingBackendOpenAI
-	case "anthropic", "gemini":
+	case "anthropic", "gemini", "deepseek", "doubao", "qwen", "yuanbao", "kimi", "zenmax":
 		return OpenVikingBackendOpenAICompatible
 	default:
 		return ""

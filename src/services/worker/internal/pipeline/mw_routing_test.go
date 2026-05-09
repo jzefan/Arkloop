@@ -396,6 +396,42 @@ func TestResolveGatewayConfigFromSelectedRoute_ZenMaxProtocols(t *testing.T) {
 	}
 }
 
+func TestResolveGatewayConfigFromSelectedRoute_OpenAICompatibleVendorDefaults(t *testing.T) {
+	tests := []struct {
+		name        string
+		kind        routing.ProviderKind
+		model       string
+		wantBaseURL string
+	}{
+		{name: "deepseek", kind: routing.ProviderKindDeepSeek, model: "deepseek-chat", wantBaseURL: "https://api.deepseek.com"},
+		{name: "doubao", kind: routing.ProviderKindDoubao, model: "doubao-seed-1-6", wantBaseURL: "https://ark.cn-beijing.volces.com/api/v3"},
+		{name: "qwen", kind: routing.ProviderKindQwen, model: "qwen-plus", wantBaseURL: "https://dashscope.aliyuncs.com/compatible-mode/v1"},
+		{name: "yuanbao", kind: routing.ProviderKindYuanbao, model: "hunyuan-turbos-latest", wantBaseURL: "https://api.hunyuan.cloud.tencent.com/v1"},
+		{name: "kimi", kind: routing.ProviderKindKimi, model: "moonshot-v1-8k", wantBaseURL: "https://api.moonshot.cn/v1"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg, err := pipeline.ResolveGatewayConfigFromSelectedRoute(routing.SelectedProviderRoute{
+				Route: routing.ProviderRouteRule{ID: "route", Model: tt.model},
+				Credential: routing.ProviderCredential{
+					ID:           "cred",
+					ProviderKind: tt.kind,
+					APIKeyValue:  strPtr("sk-test"),
+				},
+			}, false, 0)
+			if err != nil {
+				t.Fatalf("ResolveGatewayConfigFromSelectedRoute() error = %v", err)
+			}
+			if cfg.ProtocolKind != llm.ProtocolKindOpenAIChatCompletions {
+				t.Fatalf("ProtocolKind = %q, want %q", cfg.ProtocolKind, llm.ProtocolKindOpenAIChatCompletions)
+			}
+			if cfg.Transport.BaseURL != tt.wantBaseURL {
+				t.Fatalf("BaseURL = %q, want %q", cfg.Transport.BaseURL, tt.wantBaseURL)
+			}
+		})
+	}
+}
+
 func TestRoutingMiddleware_MissingApiKey_Panics(t *testing.T) {
 	cfg := routing.ProviderRoutingConfig{
 		DefaultRouteID: "route-nokey",

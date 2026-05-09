@@ -57,6 +57,8 @@ const VENDOR_PRESETS = [
   { key: 'deepseek', provider: 'deepseek', openai_api_mode: undefined },
   { key: 'doubao', provider: 'doubao', openai_api_mode: undefined },
   { key: 'qwen', provider: 'qwen', openai_api_mode: undefined },
+  { key: 'yuanbao', provider: 'yuanbao', openai_api_mode: undefined },
+  { key: 'kimi', provider: 'kimi', openai_api_mode: undefined },
   { key: 'zenmax', provider: 'zenmax', openai_api_mode: undefined },
 ] as const
 
@@ -82,7 +84,18 @@ function isCustomLocalModel(model: LlmProviderModel): boolean {
 
 function vendorLabel(
   key: string,
-  p: { vendorOpenai: string; vendorOpenaiChat: string; vendorAnthropic: string; vendorGemini: string; vendorDeepSeek?: string; vendorDoubao?: string; vendorQwen?: string; vendorZenMax?: string },
+  p: {
+    vendorOpenai: string
+    vendorOpenaiChat: string
+    vendorAnthropic: string
+    vendorGemini: string
+    vendorDeepSeek?: string
+    vendorDoubao?: string
+    vendorQwen?: string
+    vendorYuanbao?: string
+    vendorKimi?: string
+    vendorZenMax?: string
+  },
 ): string {
   const map: Record<string, string> = {
     openai_responses: p.vendorOpenai,
@@ -92,6 +105,8 @@ function vendorLabel(
     deepseek: p.vendorDeepSeek ?? 'DeepSeek',
     doubao: p.vendorDoubao ?? 'Doubao',
     qwen: p.vendorQwen ?? 'Qwen',
+    yuanbao: p.vendorYuanbao ?? 'Yuanbao',
+    kimi: p.vendorKimi ?? 'Kimi',
     zenmax: p.vendorZenMax ?? 'ZENMAX',
   }
   return map[key] ?? key
@@ -103,13 +118,24 @@ function toVendorKey(provider: string, mode: string | null): VendorPresetKey {
   if (provider === 'deepseek') return 'deepseek'
   if (provider === 'doubao') return 'doubao'
   if (provider === 'qwen') return 'qwen'
+  if (provider === 'yuanbao') return 'yuanbao'
+  if (provider === 'kimi') return 'kimi'
   if (provider === 'zenmax') return 'zenmax'
   if (mode === 'chat_completions') return 'openai_chat_completions'
   return 'openai_responses'
 }
 
 function defaultOpenVikingBackendForVendor(provider: string): OpenVikingBackendKey {
-  if (provider === 'anthropic' || provider === 'gemini' || provider === 'deepseek' || provider === 'doubao' || provider === 'qwen' || provider === 'zenmax') return 'openai_compatible'
+  if (
+    provider === 'anthropic' ||
+    provider === 'gemini' ||
+    provider === 'deepseek' ||
+    provider === 'doubao' ||
+    provider === 'qwen' ||
+    provider === 'yuanbao' ||
+    provider === 'kimi' ||
+    provider === 'zenmax'
+  ) return 'openai_compatible'
   return 'openai'
 }
 
@@ -117,6 +143,8 @@ function presetBaseUrlPlaceholder(preset: VendorPresetKey, p: ReturnType<typeof 
   if (preset === 'deepseek') return 'https://api.deepseek.com'
   if (preset === 'doubao') return 'https://ark.cn-beijing.volces.com/api/v3'
   if (preset === 'qwen') return 'https://dashscope.aliyuncs.com/compatible-mode/v1'
+  if (preset === 'yuanbao') return 'https://api.hunyuan.cloud.tencent.com/v1'
+  if (preset === 'kimi') return 'https://api.moonshot.cn/v1'
   if (preset === 'zenmax') return 'https://zenmux.ai/api/v1'
   return p.baseUrlPlaceholder ?? 'https://api.example.com/v1'
 }

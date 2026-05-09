@@ -31,12 +31,27 @@ const PROVIDER_PRESETS = [
   { key: 'deepseek', provider: 'deepseek', openai_api_mode: undefined },
   { key: 'doubao', provider: 'doubao', openai_api_mode: undefined },
   { key: 'qwen', provider: 'qwen', openai_api_mode: undefined },
+  { key: 'yuanbao', provider: 'yuanbao', openai_api_mode: undefined },
+  { key: 'kimi', provider: 'kimi', openai_api_mode: undefined },
   { key: 'zenmax', provider: 'zenmax', openai_api_mode: undefined },
 ] as const
 
 type ProviderPresetKey = typeof PROVIDER_PRESETS[number]['key']
 
-function presetLabel(key: string, m: { vendorOpenaiResponses: string; vendorOpenaiChatCompletions: string; vendorAnthropicMessage: string; vendorDeepSeek?: string; vendorDoubao?: string; vendorQwen?: string; vendorZenMax?: string }): string {
+function presetLabel(
+  key: string,
+  m: {
+    vendorOpenaiResponses: string
+    vendorOpenaiChatCompletions: string
+    vendorAnthropicMessage: string
+    vendorDeepSeek?: string
+    vendorDoubao?: string
+    vendorQwen?: string
+    vendorYuanbao?: string
+    vendorKimi?: string
+    vendorZenMax?: string
+  },
+): string {
   const map: Record<string, string> = {
     openai_responses: m.vendorOpenaiResponses,
     openai_chat_completions: m.vendorOpenaiChatCompletions,
@@ -44,6 +59,8 @@ function presetLabel(key: string, m: { vendorOpenaiResponses: string; vendorOpen
     deepseek: m.vendorDeepSeek ?? 'DeepSeek',
     doubao: m.vendorDoubao ?? 'Doubao',
     qwen: m.vendorQwen ?? 'Qwen',
+    yuanbao: m.vendorYuanbao ?? 'Yuanbao',
+    kimi: m.vendorKimi ?? 'Kimi',
     zenmax: m.vendorZenMax ?? 'ZENMAX',
   }
   return map[key] ?? key
@@ -54,6 +71,8 @@ function toPresetKey(provider: string, mode: string | null): ProviderPresetKey {
   if (provider === 'deepseek') return 'deepseek'
   if (provider === 'doubao') return 'doubao'
   if (provider === 'qwen') return 'qwen'
+  if (provider === 'yuanbao') return 'yuanbao'
+  if (provider === 'kimi') return 'kimi'
   if (provider === 'zenmax') return 'zenmax'
   if (mode === 'chat_completions') return 'openai_chat_completions'
   return 'openai_responses'

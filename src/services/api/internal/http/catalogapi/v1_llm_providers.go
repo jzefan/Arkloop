@@ -118,6 +118,8 @@ var validLlmProviders = map[string]bool{
 	"deepseek":  true,
 	"doubao":    true,
 	"qwen":      true,
+	"yuanbao":   true,
+	"kimi":      true,
 	"zenmax":    true,
 }
 

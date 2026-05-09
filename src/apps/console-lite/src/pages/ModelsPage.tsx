@@ -33,6 +33,10 @@ const PROVIDER_PRESETS = [
   { key: 'anthropic_message', provider: 'anthropic', openai_api_mode: undefined },
   { key: 'gemini', provider: 'gemini', openai_api_mode: undefined },
   { key: 'deepseek', provider: 'deepseek', openai_api_mode: undefined },
+  { key: 'doubao', provider: 'doubao', openai_api_mode: undefined },
+  { key: 'qwen', provider: 'qwen', openai_api_mode: undefined },
+  { key: 'yuanbao', provider: 'yuanbao', openai_api_mode: undefined },
+  { key: 'kimi', provider: 'kimi', openai_api_mode: undefined },
   { key: 'zenmax_openai', provider: 'zenmax', openai_api_mode: 'chat_completions', zenmax_protocol: 'openai' },
   { key: 'zenmax_gemini', provider: 'zenmax', openai_api_mode: undefined, zenmax_protocol: 'gemini' },
   { key: 'zenmax_claude', provider: 'zenmax', openai_api_mode: undefined, zenmax_protocol: 'anthropic' },
@@ -45,6 +49,10 @@ function toPresetKey(provider: string, mode: string | null, advancedJSON?: Recor
   if (provider === 'anthropic') return 'anthropic_message'
   if (provider === 'gemini') return 'gemini'
   if (provider === 'deepseek') return 'deepseek'
+  if (provider === 'doubao') return 'doubao'
+  if (provider === 'qwen') return 'qwen'
+  if (provider === 'yuanbao') return 'yuanbao'
+  if (provider === 'kimi') return 'kimi'
   if (provider === 'zenmax') {
     const protocol = readZenMaxProtocol(advancedJSON)
     if (protocol === 'gemini') return 'zenmax_gemini'
@@ -57,6 +65,10 @@ function toPresetKey(provider: string, mode: string | null, advancedJSON?: Recor
 
 function presetBaseUrlPlaceholder(preset: ProviderPresetKey): string {
   if (preset === 'deepseek') return 'https://api.deepseek.com'
+  if (preset === 'doubao') return 'https://ark.cn-beijing.volces.com/api/v3'
+  if (preset === 'qwen') return 'https://dashscope.aliyuncs.com/compatible-mode/v1'
+  if (preset === 'yuanbao') return 'https://api.hunyuan.cloud.tencent.com/v1'
+  if (preset === 'kimi') return 'https://api.moonshot.cn/v1'
   if (preset === 'zenmax_openai') return 'https://zenmux.ai/api/v1'
   if (preset === 'zenmax_gemini') return 'https://zenmux.ai/api/vertex-ai'
   if (preset === 'zenmax_claude') return 'https://zenmux.ai/api/anthropic'
@@ -861,6 +873,10 @@ function presetLabel(key: string, tc: ReturnType<typeof useLocale>['t']['models'
     anthropic_message: tc.clientTypeAnthropic ?? 'Anthropic Messages',
     gemini: tc.clientTypeGemini ?? 'Google Gemini',
     deepseek: tc.clientTypeDeepSeek ?? 'DeepSeek',
+    doubao: tc.clientTypeDoubao ?? 'Doubao',
+    qwen: tc.clientTypeQwen ?? 'Qwen',
+    yuanbao: tc.clientTypeYuanbao ?? 'Yuanbao',
+    kimi: tc.clientTypeKimi ?? 'Kimi',
     zenmax_openai: tc.clientTypeZenMaxOpenAI ?? 'OpenAI',
     zenmax_gemini: tc.clientTypeZenMaxGemini ?? 'Gemini',
     zenmax_claude: tc.clientTypeZenMaxClaude ?? 'Claude',

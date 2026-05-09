@@ -717,7 +717,7 @@ func TestLlmRoutesProviderModelsMigration(t *testing.T) {
 	}
 }
 
-func TestMigrateLlmCredentialProviderConstraintAllowsQwenAndDoubao(t *testing.T) {
+func TestMigrateLlmCredentialProviderConstraintAllowsOpenAICompatibleProviders(t *testing.T) {
 	db := testutil.SetupPostgresDatabase(t, "migrate_llm_provider_constraint")
 	ctx := context.Background()
 
@@ -731,8 +731,8 @@ func TestMigrateLlmCredentialProviderConstraintAllowsQwenAndDoubao(t *testing.T)
 	if err != nil {
 		t.Fatalf("new provider: %v", err)
 	}
-	if _, err := provider.UpTo(ctx, 91); err != nil {
-		t.Fatalf("up to 91: %v", err)
+	if _, err := provider.UpTo(ctx, 185); err != nil {
+		t.Fatalf("up to 185: %v", err)
 	}
 
 	orgID := uuid.New()
@@ -740,7 +740,7 @@ func TestMigrateLlmCredentialProviderConstraintAllowsQwenAndDoubao(t *testing.T)
 		t.Fatalf("insert org: %v", err)
 	}
 
-	for _, providerName := range []string{"qwen", "doubao"} {
+	for _, providerName := range []string{"qwen", "doubao", "yuanbao", "kimi"} {
 		if _, err := sqlDB.ExecContext(ctx, `
 			INSERT INTO llm_credentials (id, org_id, provider, name, advanced_json)
 			VALUES ($1, $2, $3, $4, '{}'::jsonb)

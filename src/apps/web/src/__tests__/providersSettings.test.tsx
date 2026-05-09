@@ -709,6 +709,150 @@ describe('ProvidersSettings', () => {
     }))
   })
 
+  it('新增 Yuanbao 供应商时不提交 openai_api_mode', async () => {
+    const createdProvider = {
+      id: 'provider-yuanbao',
+      name: 'yuanbao官方',
+      provider: 'yuanbao',
+      openai_api_mode: null,
+      base_url: 'https://api.hunyuan.cloud.tencent.com/v1',
+      advanced_json: {},
+      models: [],
+    }
+    createLlmProvider.mockResolvedValueOnce(createdProvider)
+    listLlmProviders.mockResolvedValueOnce([]).mockResolvedValueOnce([createdProvider])
+
+    const { ProvidersSettings, LocaleProvider } = await loadSubject()
+
+    await act(async () => {
+      root!.render(
+        <LocaleProvider>
+          <ProvidersSettings accessToken="token" />
+        </LocaleProvider>,
+      )
+    })
+    await flushEffects()
+
+    const addButton = findButton(container, /添加供应商|Add provider/)
+    expect(addButton).toBeTruthy()
+    await act(async () => {
+      addButton!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+    await flushEffects()
+
+    const vendorButton = Array.from(document.body.querySelectorAll('button')).find((button) => button.textContent?.includes('OpenAI'))
+    expect(vendorButton).toBeTruthy()
+    await act(async () => {
+      vendorButton!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+    await flushEffects()
+
+    const yuanbaoOption = Array.from(document.body.querySelectorAll('button')).find((button) => button.textContent?.includes('Yuanbao'))
+    expect(yuanbaoOption).toBeTruthy()
+    await act(async () => {
+      yuanbaoOption!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+    await flushEffects()
+
+    const inputs = Array.from(document.body.querySelectorAll('input')) as HTMLInputElement[]
+    const nameInput = inputs.find((input) => input.placeholder === 'My Provider')
+    const apiKeyInput = inputs.find((input) => input.type === 'password')
+    expect(nameInput).toBeTruthy()
+    expect(apiKeyInput).toBeTruthy()
+
+    await act(async () => {
+      setInputValue(nameInput!, 'yuanbao官方')
+      setInputValue(apiKeyInput!, 'sk-yuanbao')
+    })
+    await flushEffects()
+
+    const saveButton = findButton(document.body, /保存|Save/)
+    expect(saveButton).toBeTruthy()
+    await act(async () => {
+      saveButton!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+    await flushEffects()
+
+    expect(createLlmProvider).toHaveBeenCalledWith('token', expect.objectContaining({
+      name: 'yuanbao官方',
+      provider: 'yuanbao',
+      api_key: 'sk-yuanbao',
+      openai_api_mode: undefined,
+    }))
+  })
+
+  it('新增 Kimi 供应商时不提交 openai_api_mode', async () => {
+    const createdProvider = {
+      id: 'provider-kimi',
+      name: 'kimi官方',
+      provider: 'kimi',
+      openai_api_mode: null,
+      base_url: 'https://api.moonshot.cn/v1',
+      advanced_json: {},
+      models: [],
+    }
+    createLlmProvider.mockResolvedValueOnce(createdProvider)
+    listLlmProviders.mockResolvedValueOnce([]).mockResolvedValueOnce([createdProvider])
+
+    const { ProvidersSettings, LocaleProvider } = await loadSubject()
+
+    await act(async () => {
+      root!.render(
+        <LocaleProvider>
+          <ProvidersSettings accessToken="token" />
+        </LocaleProvider>,
+      )
+    })
+    await flushEffects()
+
+    const addButton = findButton(container, /添加供应商|Add provider/)
+    expect(addButton).toBeTruthy()
+    await act(async () => {
+      addButton!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+    await flushEffects()
+
+    const vendorButton = Array.from(document.body.querySelectorAll('button')).find((button) => button.textContent?.includes('OpenAI'))
+    expect(vendorButton).toBeTruthy()
+    await act(async () => {
+      vendorButton!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+    await flushEffects()
+
+    const kimiOption = Array.from(document.body.querySelectorAll('button')).find((button) => button.textContent?.includes('Kimi'))
+    expect(kimiOption).toBeTruthy()
+    await act(async () => {
+      kimiOption!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+    await flushEffects()
+
+    const inputs = Array.from(document.body.querySelectorAll('input')) as HTMLInputElement[]
+    const nameInput = inputs.find((input) => input.placeholder === 'My Provider')
+    const apiKeyInput = inputs.find((input) => input.type === 'password')
+    expect(nameInput).toBeTruthy()
+    expect(apiKeyInput).toBeTruthy()
+
+    await act(async () => {
+      setInputValue(nameInput!, 'kimi官方')
+      setInputValue(apiKeyInput!, 'sk-kimi')
+    })
+    await flushEffects()
+
+    const saveButton = findButton(document.body, /保存|Save/)
+    expect(saveButton).toBeTruthy()
+    await act(async () => {
+      saveButton!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+    await flushEffects()
+
+    expect(createLlmProvider).toHaveBeenCalledWith('token', expect.objectContaining({
+      name: 'kimi官方',
+      provider: 'kimi',
+      api_key: 'sk-kimi',
+      openai_api_mode: undefined,
+    }))
+  })
+
   it('新增供应商时在高级选项保存 Headers', async () => {
     const { ProvidersSettings, LocaleProvider } = await loadSubject()
 

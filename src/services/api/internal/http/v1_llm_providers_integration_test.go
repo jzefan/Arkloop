@@ -761,7 +761,7 @@ func TestLlmProvidersAvailableModelsQwenUsesOpenAICompatibleModelsList(t *testin
 	}
 }
 
-func TestLlmProvidersCreateQwenAndDoubaoProviders(t *testing.T) {
+func TestLlmProvidersCreateOpenAICompatibleVendorProviders(t *testing.T) {
 	env := setupLlmProvidersTestEnv(t)
 
 	tests := []struct {
@@ -771,6 +771,8 @@ func TestLlmProvidersCreateQwenAndDoubaoProviders(t *testing.T) {
 	}{
 		{name: "qwen", provider: "qwen", apiKey: "sk-qwen-123456"},
 		{name: "doubao", provider: "doubao", apiKey: "sk-doubao-123456"},
+		{name: "yuanbao", provider: "yuanbao", apiKey: "sk-yuanbao-123456"},
+		{name: "kimi", provider: "kimi", apiKey: "sk-kimi-123456"},
 	}
 
 	for _, tt := range tests {

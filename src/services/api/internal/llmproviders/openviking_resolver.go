@@ -249,6 +249,16 @@ func defaultModelBaseURL(credential data.LlmCredential) string {
 		return defaultOpenAIBaseURL
 	case "anthropic":
 		return defaultAnthropicBaseURL
+	case "deepseek":
+		return defaultDeepSeekBaseURL
+	case "doubao":
+		return defaultDoubaoBaseURL
+	case "qwen":
+		return defaultQwenBaseURL
+	case "yuanbao":
+		return defaultYuanbaoBaseURL
+	case "kimi":
+		return defaultKimiBaseURL
 	case "zenmax":
 		switch resolveZenMaxProtocol(credential.AdvancedJSON) {
 		case "anthropic":

@@ -80,6 +80,10 @@ export interface LocaleStrings {
     clientTypeAnthropic: string
     clientTypeGemini: string
     clientTypeDeepSeek: string
+    clientTypeDoubao: string
+    clientTypeQwen: string
+    clientTypeYuanbao: string
+    clientTypeKimi: string
     clientTypeZenMaxOpenAI: string
     clientTypeZenMaxGemini: string
     clientTypeZenMaxClaude: string

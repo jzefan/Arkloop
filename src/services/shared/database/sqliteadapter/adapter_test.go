@@ -84,7 +84,7 @@ func TestOpen_Pragmas(t *testing.T) {
 // Migrations
 // ---------------------------------------------------------------------------
 
-func TestAutoMigrateAllowsQwenAndDoubaoProviders(t *testing.T) {
+func TestAutoMigrateAllowsOpenAICompatibleProviders(t *testing.T) {
 	t.Parallel()
 	pool := migratedTestDB(t)
 	ctx := context.Background()
@@ -93,7 +93,7 @@ func TestAutoMigrateAllowsQwenAndDoubaoProviders(t *testing.T) {
 		t.Fatalf("insert account: %v", err)
 	}
 
-	for _, provider := range []string{"qwen", "doubao"} {
+	for _, provider := range []string{"qwen", "doubao", "yuanbao", "kimi"} {
 		credentialID := "cred-" + provider
 		if _, err := pool.Exec(ctx, `
 			INSERT INTO llm_credentials (id, account_id, provider, name, advanced_json, owner_kind)

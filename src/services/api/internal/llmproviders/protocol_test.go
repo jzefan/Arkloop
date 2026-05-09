@@ -91,6 +91,42 @@ func TestResolveCatalogProtocolConfigQwenDefaultsToChatCompletions(t *testing.T)
 	}
 }
 
+func TestResolveCatalogProtocolConfigYuanbaoDefaultsToChatCompletions(t *testing.T) {
+	cfg, err := ResolveCatalogProtocolConfig(data.LlmCredential{
+		Provider: "yuanbao",
+	}, "sk-yuanbao")
+	if err != nil {
+		t.Fatalf("ResolveCatalogProtocolConfig() error = %v", err)
+	}
+	if cfg.Kind != ProtocolKindOpenAIChatCompletions {
+		t.Fatalf("Kind = %q, want %q", cfg.Kind, ProtocolKindOpenAIChatCompletions)
+	}
+	if cfg.BaseURL != defaultYuanbaoBaseURL {
+		t.Fatalf("BaseURL = %q, want %q", cfg.BaseURL, defaultYuanbaoBaseURL)
+	}
+	if cfg.OpenAI.APIMode != "chat_completions" {
+		t.Fatalf("OpenAI.APIMode = %q, want chat_completions", cfg.OpenAI.APIMode)
+	}
+}
+
+func TestResolveCatalogProtocolConfigKimiDefaultsToChatCompletions(t *testing.T) {
+	cfg, err := ResolveCatalogProtocolConfig(data.LlmCredential{
+		Provider: "kimi",
+	}, "sk-kimi")
+	if err != nil {
+		t.Fatalf("ResolveCatalogProtocolConfig() error = %v", err)
+	}
+	if cfg.Kind != ProtocolKindOpenAIChatCompletions {
+		t.Fatalf("Kind = %q, want %q", cfg.Kind, ProtocolKindOpenAIChatCompletions)
+	}
+	if cfg.BaseURL != defaultKimiBaseURL {
+		t.Fatalf("BaseURL = %q, want %q", cfg.BaseURL, defaultKimiBaseURL)
+	}
+	if cfg.OpenAI.APIMode != "chat_completions" {
+		t.Fatalf("OpenAI.APIMode = %q, want chat_completions", cfg.OpenAI.APIMode)
+	}
+}
+
 func TestResolveCatalogProtocolConfigZenMaxProtocols(t *testing.T) {
 	tests := []struct {
 		name          string
