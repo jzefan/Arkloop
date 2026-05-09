@@ -116,6 +116,8 @@ var validLlmProviders = map[string]bool{
 	"anthropic": true,
 	"gemini":    true,
 	"deepseek":  true,
+	"doubao":    true,
+	"qwen":      true,
 	"zenmax":    true,
 }
 

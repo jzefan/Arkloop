@@ -83,6 +83,7 @@ type ProviderRouteRule struct {
 	CredentialID        string
 	When                map[string]any
 	AdvancedJSON        map[string]any
+	HideFromPicker      bool
 	Multiplier          float64
 	CostPer1kInput      *float64
 	CostPer1kOutput     *float64
@@ -124,6 +125,9 @@ func (c ProviderRoutingConfig) AvailableModelOptions(input map[string]any) []map
 	options := make([]option, 0, len(c.Routes))
 	seen := map[string]struct{}{}
 	for _, route := range c.Routes {
+		if route.HideFromPicker {
+			continue
+		}
 		if !route.Matches(input) {
 			continue
 		}
@@ -392,6 +396,14 @@ func LoadRoutingConfigFromEnv() (ProviderRoutingConfig, error) {
 			CredentialID: credID,
 			When:         when,
 			AdvancedJSON: advancedJSON,
+			HideFromPicker: func() bool {
+				raw, exists := obj["show_in_picker"]
+				if !exists || raw == nil {
+					return false
+				}
+				show, ok := raw.(bool)
+				return ok && !show
+			}(),
 		})
 	}
 
@@ -602,7 +614,7 @@ func LoadRoutingConfigFromDB(ctx context.Context, pool *pgxpool.Pool, accountID 
 	)
 	if accountID == nil {
 		rows, err = pool.Query(ctx, `
-		SELECT r.id, r.credential_id, r.model, r.when_json, r.is_default,
+		SELECT r.id, r.credential_id, r.model, r.when_json, r.is_default, r.show_in_picker,
 		       r.advanced_json, r.multiplier, r.cost_per_1k_input, r.cost_per_1k_output,
 		       r.cost_per_1k_cache_write, r.cost_per_1k_cache_read,
 		       r.priority, r.account_id,
@@ -621,7 +633,7 @@ func LoadRoutingConfigFromDB(ctx context.Context, pool *pgxpool.Pool, accountID 
 	`)
 	} else {
 		rows, err = pool.Query(ctx, `
-		SELECT r.id, r.credential_id, r.model, r.when_json, r.is_default,
+		SELECT r.id, r.credential_id, r.model, r.when_json, r.is_default, r.show_in_picker,
 		       r.advanced_json, r.multiplier, r.cost_per_1k_input, r.cost_per_1k_output,
 		       r.cost_per_1k_cache_write, r.cost_per_1k_cache_read,
 		       r.priority, r.account_id,
@@ -651,6 +663,7 @@ func LoadRoutingConfigFromDB(ctx context.Context, pool *pgxpool.Pool, accountID 
 		model               string
 		whenJSON            []byte
 		isDefault           bool
+		showInPicker        bool
 		routeAdvancedJSON   []byte
 		multiplier          float64
 		costPer1kInput      *float64
@@ -674,7 +687,7 @@ func LoadRoutingConfigFromDB(ctx context.Context, pool *pgxpool.Pool, accountID 
 	for rows.Next() {
 		var rd rowData
 		if err := rows.Scan(
-			&rd.routeID, &rd.credentialID, &rd.model, &rd.whenJSON, &rd.isDefault,
+			&rd.routeID, &rd.credentialID, &rd.model, &rd.whenJSON, &rd.isDefault, &rd.showInPicker,
 			&rd.routeAdvancedJSON, &rd.multiplier, &rd.costPer1kInput, &rd.costPer1kOutput,
 			&rd.costPer1kCacheWrite, &rd.costPer1kCacheRead,
 			&rd.priority, &rd.accountID,
@@ -806,6 +819,7 @@ func LoadRoutingConfigFromDB(ctx context.Context, pool *pgxpool.Pool, accountID 
 			CredentialID:        credIDStr,
 			When:                when,
 			AdvancedJSON:        routeAdvancedJSON,
+			HideFromPicker:      !rd.showInPicker,
 			Multiplier:          multiplier,
 			CostPer1kInput:      rd.costPer1kInput,
 			CostPer1kOutput:     rd.costPer1kOutput,

@@ -1067,11 +1067,92 @@ func TestLoadDesktopRoutingConfigCanonicalizesGeminiModel(t *testing.T) {
 	if err != nil {
 		t.Fatalf("loadDesktopRoutingConfig: %v", err)
 	}
-	if len(cfg.Routes) != 1 {
-		t.Fatalf("expected one route, got %d", len(cfg.Routes))
+	var gotModel string
+	for _, route := range cfg.Routes {
+		if route.ID == routeID.String() {
+			gotModel = route.Model
+			break
+		}
 	}
-	if cfg.Routes[0].Model != "gemini-2.5-pro" {
-		t.Fatalf("expected canonical gemini model, got %q", cfg.Routes[0].Model)
+	if gotModel != "gemini-2.5-pro" {
+		t.Fatalf("expected canonical gemini model, got %q", gotModel)
+	}
+}
+
+func TestLoadDesktopRoutingConfigHidesModelsDisabledForPicker(t *testing.T) {
+	ctx := context.Background()
+	dataDir := t.TempDir()
+	t.Setenv("ARKLOOP_DATA_DIR", dataDir)
+
+	keyBytes := [32]byte{}
+	for idx := range keyBytes {
+		keyBytes[idx] = byte(idx + 41)
+	}
+	if err := os.WriteFile(filepath.Join(dataDir, "encryption.key"), []byte(hex.EncodeToString(keyBytes[:])), 0o600); err != nil {
+		t.Fatalf("write encryption key: %v", err)
+	}
+
+	sqlitePool, err := sqliteadapter.AutoMigrate(ctx, filepath.Join(dataDir, "desktop.db"))
+	if err != nil {
+		t.Fatalf("auto migrate sqlite: %v", err)
+	}
+	defer sqlitePool.Close()
+
+	db := sqlitepgx.New(sqlitePool.Unwrap())
+	accountID := uuid.New()
+	secretID := uuid.New()
+	credentialID := uuid.New()
+	visibleRouteID := uuid.New()
+	hiddenRouteID := uuid.New()
+
+	for _, stmt := range []struct {
+		sql  string
+		args []any
+	}{
+		{
+			sql:  `INSERT INTO accounts (id, slug, name, type, status) VALUES ($1, $2, $3, 'personal', 'active')`,
+			args: []any{accountID, "desktop-picker-" + accountID.String(), "Desktop Picker"},
+		},
+		{
+			sql:  `INSERT INTO secrets (id, account_id, name, encrypted_value, key_version) VALUES ($1, $2, $3, $4, 1)`,
+			args: []any{secretID, accountID, "desktop-qianwen-secret", encryptDesktopChannelToken(t, keyBytes, "qianwen-test-key")},
+		},
+		{
+			sql:  `INSERT INTO llm_credentials (id, account_id, provider, name, secret_id, key_prefix, advanced_json) VALUES ($1, $2, 'openai', 'qianwen', $3, 'qwen-t', '{"base_url":"https://dashscope.aliyuncs.com/compatible-mode/v1"}')`,
+			args: []any{credentialID, accountID, secretID},
+		},
+		{
+			sql:  `INSERT INTO llm_routes (id, account_id, credential_id, model, priority, is_default, show_in_picker, when_json, advanced_json, multiplier) VALUES ($1, $2, $3, $4, 20, 1, true, '{}', '{}', 1.0)`,
+			args: []any{visibleRouteID, accountID, credentialID, "qwen3.6-plus"},
+		},
+		{
+			sql:  `INSERT INTO llm_routes (id, account_id, credential_id, model, priority, is_default, show_in_picker, when_json, advanced_json, multiplier) VALUES ($1, $2, $3, $4, 10, 0, false, '{}', '{}', 1.0)`,
+			args: []any{hiddenRouteID, accountID, credentialID, "qwen3.6-max-preview"},
+		},
+	} {
+		if _, err := db.Exec(ctx, stmt.sql, stmt.args...); err != nil {
+			t.Fatalf("seed routing config: %v", err)
+		}
+	}
+
+	cfg, err := loadDesktopRoutingConfig(ctx, db)
+	if err != nil {
+		t.Fatalf("loadDesktopRoutingConfig: %v", err)
+	}
+	got := cfg.AvailableModelOptions(map[string]any{})
+	var qianwenSelectors []string
+	for _, item := range got {
+		if item["credential_name"] == "qianwen" {
+			if selector, ok := item["selector"].(string); ok {
+				qianwenSelectors = append(qianwenSelectors, selector)
+			}
+		}
+	}
+	if !slices.Contains(qianwenSelectors, "qianwen^qwen3.6-plus") {
+		t.Fatalf("expected enabled qianwen model in picker, got %#v", qianwenSelectors)
+	}
+	if slices.Contains(qianwenSelectors, "qianwen^qwen3.6-max-preview") {
+		t.Fatalf("disabled qianwen model should not be in picker: %#v", qianwenSelectors)
 	}
 }
 
@@ -2992,6 +3073,96 @@ func TestDesktopSubAgentContextRestoresRoutingFromSnapshotFallback(t *testing.T)
 			t.Fatalf("unexpected route_id: %#v", got)
 		}
 		if got := rc.InputJSON["model"]; got != "anthropic^claude-sonnet-4-5" {
+			t.Fatalf("unexpected model: %#v", got)
+		}
+		return nil
+	}); err != nil {
+		t.Fatalf("middleware failed: %v", err)
+	}
+}
+
+func TestDesktopSubAgentContextDoesNotOverrideExplicitModelWithSnapshotRoute(t *testing.T) {
+	ctx := context.Background()
+
+	sqlitePool, err := sqliteadapter.AutoMigrate(ctx, filepath.Join(t.TempDir(), "desktop.db"))
+	if err != nil {
+		t.Fatalf("auto migrate sqlite: %v", err)
+	}
+	defer sqlitePool.Close()
+
+	db := sqlitepgx.New(sqlitePool.Unwrap())
+
+	accountID := uuid.New()
+	projectID := uuid.New()
+	parentThreadID := uuid.New()
+	childThreadID := uuid.New()
+	parentRunID := uuid.New()
+	childRunID := uuid.New()
+	subAgentID := uuid.New()
+
+	for _, stmt := range []struct {
+		sql  string
+		args []any
+	}{
+		{
+			sql:  `INSERT INTO accounts (id, slug, name, type, status) VALUES ($1, $2, $3, 'personal', 'active')`,
+			args: []any{accountID, "desktop-subagent-model-" + accountID.String(), "Desktop SubAgent Model"},
+		},
+		{
+			sql:  `INSERT INTO projects (id, account_id, name, visibility) VALUES ($1, $2, $3, 'private')`,
+			args: []any{projectID, accountID, "Model Project"},
+		},
+		{
+			sql:  `INSERT INTO threads (id, account_id, project_id, is_private) VALUES ($1, $2, $3, TRUE), ($4, $2, $3, TRUE)`,
+			args: []any{parentThreadID, accountID, projectID, childThreadID},
+		},
+		{
+			sql:  `INSERT INTO runs (id, account_id, thread_id, status) VALUES ($1, $2, $3, 'running'), ($4, $2, $5, 'running')`,
+			args: []any{parentRunID, accountID, parentThreadID, childRunID, childThreadID},
+		},
+		{
+			sql: `INSERT INTO sub_agents
+				(id, account_id, owner_thread_id, agent_thread_id, origin_run_id, depth, source_type, context_mode, status, current_run_id)
+				VALUES ($1, $2, $3, $4, $5, 1, $6, $7, $8, $9)`,
+			args: []any{subAgentID, accountID, parentThreadID, childThreadID, parentRunID, data.SubAgentSourceTypeThreadSpawn, data.SubAgentContextModeIsolated, data.SubAgentStatusQueued, childRunID},
+		},
+	} {
+		if _, err := db.Exec(ctx, stmt.sql, stmt.args...); err != nil {
+			t.Fatalf("seed data: %v", err)
+		}
+	}
+
+	tx, err := db.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		t.Fatalf("begin snapshot tx: %v", err)
+	}
+	storage := subagentctl.NewSnapshotStorage()
+	if err := storage.Save(ctx, tx, subAgentID, subagentctl.ContextSnapshot{
+		ContextMode: data.SubAgentContextModeIsolated,
+		Routing: &subagentctl.ContextSnapshotRouting{
+			RouteID: "route-parent",
+			Model:   "anthropic^claude-sonnet-4-5",
+		},
+	}); err != nil {
+		t.Fatalf("save snapshot: %v", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatalf("commit snapshot: %v", err)
+	}
+
+	rc := &pipeline.RunContext{
+		Run: data.Run{ID: childRunID, AccountID: accountID, ThreadID: childThreadID, ParentRunID: &parentRunID},
+		InputJSON: map[string]any{
+			"model": "qianwen^qwen3.6-plus-2026-04-02",
+		},
+	}
+
+	mw := desktopSubAgentContext(db, storage)
+	if err := mw(ctx, rc, func(_ context.Context, rc *pipeline.RunContext) error {
+		if got, ok := rc.InputJSON["route_id"]; ok {
+			t.Fatalf("snapshot route_id should not override explicit model, got %#v", got)
+		}
+		if got := rc.InputJSON["model"]; got != "qianwen^qwen3.6-plus-2026-04-02" {
 			t.Fatalf("unexpected model: %#v", got)
 		}
 		return nil

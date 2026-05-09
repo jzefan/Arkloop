@@ -14,7 +14,7 @@ import { VerifyEmailPage } from './components/VerifyEmailPage'
 import { OnboardingWizard } from './components/OnboardingWizard'
 import { HeadlessSetupPage } from './components/HeadlessSetupPage'
 import { useLocale } from './contexts/LocaleContext'
-import { shouldDelayLocalSession, shouldUseLocalSetupRoute } from './appAuthStartup'
+import { shouldDelayLocalSession } from './appAuthStartup'
 import {
   clearActiveThreadIdInStorage,
   readActiveThreadIdFromStorage,
@@ -328,8 +328,6 @@ function App() {
   }
   if (onboardingDone === false) return <OnboardingWizard onComplete={handleOnboardingComplete} />
 
-  const useLocalSetupRoute = shouldUseLocalSetupRoute(isLocalMode(), accessToken)
-
   return (
     <Routes>
       <Route path="/setup" element={<HeadlessSetupPage onLoggedIn={handleLoggedIn} />} />
@@ -339,7 +337,7 @@ function App() {
         <Route path="*" element={<LoadingPage label={t.loading} />} />
       ) : !accessToken ? (
         <>
-          <Route path="/login" element={useLocalSetupRoute ? <HeadlessSetupPage onLoggedIn={handleLoggedIn} /> : <AuthPage onLoggedIn={handleLoggedIn} />} />
+          <Route path="/login" element={<AuthPage onLoggedIn={handleLoggedIn} />} />
           <Route path="/register" element={<Navigate to="/login" replace />} />
           <Route path="*" element={<Navigate to="/login" replace />} />
         </>

@@ -107,6 +107,68 @@ func TestSubAgentContextMiddlewareRestoresRouteAndNarrowsAllowlist(t *testing.T)
 	}
 }
 
+func TestSubAgentContextMiddlewareDoesNotOverrideExplicitModelWithSnapshotRoute(t *testing.T) {
+	db := testutil.SetupPostgresDatabase(t, "pipeline_subagent_context_model_override")
+	pool, err := pgxpool.New(context.Background(), db.DSN)
+	if err != nil {
+		t.Fatalf("pgxpool.New: %v", err)
+	}
+	t.Cleanup(pool.Close)
+
+	accountID := uuid.New()
+	projectID := uuid.New()
+	parentThreadID := uuid.New()
+	childThreadID := uuid.New()
+	parentRunID := uuid.New()
+	childRunID := uuid.New()
+	subAgentID := uuid.New()
+	if _, err := pool.Exec(context.Background(), `INSERT INTO threads (id, account_id, project_id) VALUES ($1, $2, $3), ($4, $2, $3)`, parentThreadID, accountID, projectID, childThreadID); err != nil {
+		t.Fatalf("insert threads: %v", err)
+	}
+	if _, err := pool.Exec(context.Background(), `INSERT INTO runs (id, account_id, thread_id, status) VALUES ($1, $2, $3, 'running'), ($4, $2, $5, 'running')`, parentRunID, accountID, parentThreadID, childRunID, childThreadID); err != nil {
+		t.Fatalf("insert runs: %v", err)
+	}
+	if _, err := pool.Exec(context.Background(), `INSERT INTO sub_agents (id, account_id, owner_thread_id, agent_thread_id, origin_run_id, depth, source_type, context_mode, status, current_run_id) VALUES ($1, $2, $3, $4, $5, 1, $6, $7, $8, $9)`, subAgentID, accountID, parentThreadID, childThreadID, parentRunID, data.SubAgentSourceTypeThreadSpawn, data.SubAgentContextModeIsolated, data.SubAgentStatusQueued, childRunID); err != nil {
+		t.Fatalf("insert sub_agent: %v", err)
+	}
+
+	tx, err := pool.Begin(context.Background())
+	if err != nil {
+		t.Fatalf("begin tx: %v", err)
+	}
+	storage := subagentctl.NewSnapshotStorage()
+	if err := storage.Save(context.Background(), tx, subAgentID, subagentctl.ContextSnapshot{
+		ContextMode: data.SubAgentContextModeIsolated,
+		Runtime: subagentctl.ContextSnapshotRuntime{
+			RouteID: "route_parent",
+			Model:   "anthropic^claude-sonnet-4-5",
+		},
+	}); err != nil {
+		t.Fatalf("save snapshot: %v", err)
+	}
+	if err := tx.Commit(context.Background()); err != nil {
+		t.Fatalf("commit snapshot: %v", err)
+	}
+
+	rc := &RunContext{
+		Run:       data.Run{ID: childRunID, AccountID: accountID, ThreadID: childThreadID, ParentRunID: &parentRunID},
+		Pool:      pool,
+		InputJSON: map[string]any{"model": "qianwen^qwen3.6-plus-2026-04-02"},
+	}
+	mw := NewSubAgentContextMiddleware(storage)
+	if err := mw(context.Background(), rc, func(_ context.Context, rc *RunContext) error {
+		if got, ok := rc.InputJSON["route_id"]; ok {
+			return fmt.Errorf("snapshot route_id should not override explicit model, got %#v", got)
+		}
+		if got := rc.InputJSON["model"]; got != "qianwen^qwen3.6-plus-2026-04-02" {
+			return fmt.Errorf("unexpected model: %#v", got)
+		}
+		return nil
+	}); err != nil {
+		t.Fatalf("middleware failed: %v", err)
+	}
+}
+
 func TestSubAgentContextMiddlewareNarrowsRoleExpandedAllowlist(t *testing.T) {
 	db := testutil.SetupPostgresDatabase(t, "pipeline_subagent_context_role")
 	pool, err := pgxpool.New(context.Background(), db.DSN)

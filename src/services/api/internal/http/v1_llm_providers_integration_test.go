@@ -723,6 +723,74 @@ func TestLlmProvidersAvailableModelsOpenRouterIncludesEmbeddings(t *testing.T) {
 	}
 }
 
+func TestLlmProvidersAvailableModelsQwenUsesOpenAICompatibleModelsList(t *testing.T) {
+	env := setupLlmProvidersTestEnv(t)
+	var authorization string
+	upstream := httptest.NewServer(nethttp.HandlerFunc(func(w nethttp.ResponseWriter, r *nethttp.Request) {
+		authorization = r.Header.Get("Authorization")
+		if r.URL.Path != "/compatible-mode/v1/models" {
+			t.Fatalf("unexpected upstream path: %s", r.URL.Path)
+		}
+		httpkit.WriteJSON(w, "", nethttp.StatusOK, map[string]any{
+			"data": []map[string]any{{"id": "qwen-max"}, {"id": "qwen-plus"}},
+		})
+	}))
+	defer upstream.Close()
+
+	createProviderResp := doJSON(env.handler, nethttp.MethodPost, "/v1/llm-providers", map[string]any{
+		"name":     "qwen-import",
+		"provider": "qwen",
+		"api_key":  "sk-qwen-import-123456",
+		"base_url": upstream.URL + "/compatible-mode/v1",
+	}, authHeader(env.adminToken))
+	if createProviderResp.Code != nethttp.StatusCreated {
+		t.Fatalf("create provider: %d %s", createProviderResp.Code, createProviderResp.Body.String())
+	}
+	provider := decodeJSONBody[llmProviderResponse](t, createProviderResp.Body.Bytes())
+
+	availableResp := doJSON(env.handler, nethttp.MethodGet, "/v1/llm-providers/"+provider.ID+"/available-models", nil, authHeader(env.adminToken))
+	if availableResp.Code != nethttp.StatusOK {
+		t.Fatalf("available models: %d %s", availableResp.Code, availableResp.Body.String())
+	}
+	if authorization != "Bearer sk-qwen-import-123456" {
+		t.Fatalf("unexpected authorization header: %q", authorization)
+	}
+	payload := decodeJSONBody[llmProviderAvailableModelsResponse](t, availableResp.Body.Bytes())
+	if len(payload.Models) != 2 {
+		t.Fatalf("unexpected qwen models payload: %#v", payload)
+	}
+}
+
+func TestLlmProvidersCreateQwenAndDoubaoProviders(t *testing.T) {
+	env := setupLlmProvidersTestEnv(t)
+
+	tests := []struct {
+		name     string
+		provider string
+		apiKey   string
+	}{
+		{name: "qwen", provider: "qwen", apiKey: "sk-qwen-123456"},
+		{name: "doubao", provider: "doubao", apiKey: "sk-doubao-123456"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			createProviderResp := doJSON(env.handler, nethttp.MethodPost, "/v1/llm-providers", map[string]any{
+				"name":     tt.name + "-provider",
+				"provider": tt.provider,
+				"api_key":  tt.apiKey,
+			}, authHeader(env.adminToken))
+			if createProviderResp.Code != nethttp.StatusCreated {
+				t.Fatalf("create provider: %d %s", createProviderResp.Code, createProviderResp.Body.String())
+			}
+			provider := decodeJSONBody[llmProviderResponse](t, createProviderResp.Body.Bytes())
+			if provider.Provider != tt.provider {
+				t.Fatalf("provider = %q, want %q", provider.Provider, tt.provider)
+			}
+		})
+	}
+}
+
 func TestLlmProvidersDeleteRemovesSecret(t *testing.T) {
 	env := setupLlmProvidersTestEnv(t)
 

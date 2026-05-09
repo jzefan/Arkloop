@@ -570,9 +570,9 @@ export interface LocaleStrings {
     vendorOpenaiChatCompletions: string
     vendorAnthropicMessage: string
     vendorDeepSeek: string
-    vendorZenMaxOpenAI: string
-    vendorZenMaxGemini: string
-    vendorZenMaxClaude: string
+    vendorDoubao: string
+    vendorQwen: string
+    vendorZenMax: string
     applyToAll: string
     applyingToAll: string
     applyDone: string
@@ -1414,9 +1414,9 @@ export interface LocaleStrings {
     vendorAnthropic: string;
     vendorGemini: string;
     vendorDeepSeek: string;
-    vendorZenMaxOpenAI: string;
-    vendorZenMaxGemini: string;
-    vendorZenMaxClaude: string;
+    vendorDoubao: string;
+    vendorQwen: string;
+    vendorZenMax: string;
     openVikingBackend: string;
     openVikingBackendHint: string;
     openVikingBackendOpenAI: string;

@@ -2818,8 +2818,9 @@ func desktopSubAgentContext(db data.DesktopDB, storage *subagentctl.SnapshotStor
 			return next(ctx, rc)
 		}
 		routing := snapshot.EffectiveRouting()
+		_, hasExplicitModel := rc.InputJSON["model"]
 		if routeID := strings.TrimSpace(routing.RouteID); routeID != "" {
-			if _, ok := rc.InputJSON["route_id"]; !ok {
+			if _, ok := rc.InputJSON["route_id"]; !ok && !hasExplicitModel {
 				rc.InputJSON["route_id"] = routeID
 			}
 		}
@@ -4917,7 +4918,7 @@ func loadDesktopRoutingConfig(ctx context.Context, db data.DesktopDB) (routing.P
 	}
 
 	routeRows, err := tx.Query(ctx,
-		`SELECT id, credential_id, model, priority, is_default, when_json, advanced_json,
+		`SELECT id, credential_id, model, priority, is_default, show_in_picker, when_json, advanced_json,
 		        multiplier, cost_per_1k_input, cost_per_1k_output, cost_per_1k_cache_write, cost_per_1k_cache_read
 		 FROM llm_routes ORDER BY priority DESC`)
 	if err != nil {
@@ -4929,11 +4930,12 @@ func loadDesktopRoutingConfig(ctx context.Context, db data.DesktopDB) (routing.P
 		var (
 			id, credentialID, model, whenStr, advancedStr string
 			priority, isDefault                           int
+			showInPicker                                  bool
 			multiplier                                    float64
 			costIn, costOut, costCW, costCR               *float64
 		)
 		if err := routeRows.Scan(&id, &credentialID, &model, &priority, &isDefault,
-			&whenStr, &advancedStr, &multiplier, &costIn, &costOut, &costCW, &costCR); err != nil {
+			&showInPicker, &whenStr, &advancedStr, &multiplier, &costIn, &costOut, &costCW, &costCR); err != nil {
 			routeRows.Close()
 			return routing.ProviderRoutingConfig{}, fmt.Errorf("scan llm_routes: %w", err)
 		}
@@ -4961,7 +4963,8 @@ func loadDesktopRoutingConfig(ctx context.Context, db data.DesktopDB) (routing.P
 			When: when, AdvancedJSON: adv, Multiplier: multiplier,
 			CostPer1kInput: costIn, CostPer1kOutput: costOut,
 			CostPer1kCacheWrite: costCW, CostPer1kCacheRead: costCR,
-			Priority: priority,
+			Priority:       priority,
+			HideFromPicker: !showInPicker,
 		})
 		if isDefault != 0 && defaultRouteID == "" {
 			defaultRouteID = id

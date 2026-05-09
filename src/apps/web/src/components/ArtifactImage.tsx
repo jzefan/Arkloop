@@ -22,7 +22,7 @@ export function ArtifactImage({ artifact, accessToken, pathPrefix = '/v1/artifac
 
   useEffect(() => {
     let cancelled = false
-    const url = `${apiBaseUrl()}${pathPrefix}/${artifact.key}`
+    const url = `${apiBaseUrl()}${pathPrefix}/${artifact.key.split("/").map(encodeURIComponent).join("/")}`
 
     fetch(url, {
       headers: { Authorization: `Bearer ${accessToken}` },

@@ -22,6 +22,7 @@ export interface EnumFieldSchema {
   description?: string
   enum: string[]
   enumNames?: string[]
+  enumDescriptions?: string[]
   default?: string
 }
 
@@ -39,6 +40,8 @@ export interface ArrayEnumFieldSchema {
   title?: string
   description?: string
   items: { type: 'string'; enum: string[] }
+  enumNames?: string[]
+  enumDescriptions?: string[]
   minItems?: number
   maxItems?: number
   default?: string[]
@@ -98,6 +101,7 @@ export interface RequestedSchema {
   properties: Record<string, FieldSchema>
   required?: string[]
   _fieldOrder?: string[]
+  _dismissLabel?: string
 }
 
 export interface UserInputRequest {

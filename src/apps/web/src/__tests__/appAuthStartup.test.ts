@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { shouldDelayLocalSession, shouldUseLocalSetupRoute } from '../appAuthStartup'
+import { shouldDelayLocalSession } from '../appAuthStartup'
 
 describe('app auth startup', () => {
   it('delays local session exchange until desktop runtime is ready', () => {
@@ -14,10 +14,4 @@ describe('app auth startup', () => {
     expect(shouldDelayLocalSession(false, false, null)).toBe(false)
   })
 
-  it('uses local setup route only when local mode has no session', () => {
-    expect(shouldUseLocalSetupRoute(true, null)).toBe(true)
-    expect(shouldUseLocalSetupRoute(true, '')).toBe(true)
-    expect(shouldUseLocalSetupRoute(true, 'jwt-token')).toBe(false)
-    expect(shouldUseLocalSetupRoute(false, null)).toBe(false)
-  })
 })

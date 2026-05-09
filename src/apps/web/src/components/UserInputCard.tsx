@@ -144,6 +144,7 @@ export default function UserInputCard({ request, onSubmit, onDismiss, disabled }
   const isSingleSelect = fields.length === 1 && (isEnumField(fields[0][1]) || isOneOfField(fields[0][1]))
   const isCurrentSelect = useWizard && (isEnumField(fields[page][1]) || isOneOfField(fields[page][1]))
   const visibleFields = useWizard ? [fields[page]] : fields
+  const dismissLabel = request.requestedSchema._dismissLabel?.trim() || t.userInput.dismiss
 
   return (
     <div
@@ -175,7 +176,7 @@ export default function UserInputCard({ request, onSubmit, onDismiss, disabled }
           type="button"
           onClick={handleDismiss}
           disabled={submitting || !!disabled}
-          aria-label={t.userInput.dismiss}
+          aria-label={dismissLabel}
           className="flex h-6 w-6 items-center justify-center rounded-md border-none bg-transparent cursor-pointer disabled:opacity-30 transition-[background-color] duration-[60ms] hover:bg-[var(--c-bg-deep)] flex-shrink-0 mt-0.5"
           style={{ color: 'var(--c-text-muted)' }}
         >
@@ -293,7 +294,7 @@ export default function UserInputCard({ request, onSubmit, onDismiss, disabled }
               className="rounded-lg px-3 py-1.5 text-[13px] border-none bg-transparent cursor-pointer transition-[background-color] duration-[60ms] disabled:opacity-40 hover:bg-[var(--c-bg-deep)]"
               style={{ color: 'var(--c-text-secondary)' }}
             >
-              {t.userInput.dismiss}
+              {dismissLabel}
             </button>
           </div>
         </div>
@@ -356,7 +357,7 @@ function FieldLabel({ title, description }: { title?: string; description?: stri
 // --- Select (enum) ---
 
 interface SelectFieldProps {
-  field: { title?: string; description?: string; enum: string[]; enumNames?: string[] }
+  field: { title?: string; description?: string; enum: string[]; enumNames?: string[]; enumDescriptions?: string[] }
   value: string | undefined
   disabled: boolean
   onChange: (val: string) => void
@@ -384,6 +385,7 @@ function SelectField({ field, value, disabled, onChange, onQuickSubmit }: Select
               <OptionRow
                 index={idx}
                 label={label}
+                description={field.enumDescriptions?.[idx]}
                 selected={selected}
                 disabled={disabled}
                 isHovered={isHovered}
@@ -453,7 +455,7 @@ function OneOfSelectField({ field, value, disabled, onChange, onQuickSubmit }: O
 // --- Multiselect (enum) ---
 
 interface MultiSelectEnumFieldProps {
-  field: { title?: string; description?: string; items: { enum: string[] } }
+  field: { title?: string; description?: string; items: { enum: string[] }; enumNames?: string[]; enumDescriptions?: string[] }
   value: string[]
   disabled: boolean
   onChange: (val: string[]) => void
@@ -468,8 +470,8 @@ function MultiSelectEnumField({ field, value, disabled, onChange }: MultiSelectE
     <div>
       <FieldLabel title={field.title} description={field.description} />
       <div className="flex flex-col gap-0.5">
-        {field.items.enum.map(opt => (
-          <CheckboxRow key={opt} label={opt} checked={value.includes(opt)} disabled={disabled} onClick={() => toggle(opt)} />
+        {field.items.enum.map((opt, idx) => (
+          <CheckboxRow key={opt} label={field.enumNames?.[idx] ?? opt} description={field.enumDescriptions?.[idx]} checked={value.includes(opt)} disabled={disabled} onClick={() => toggle(opt)} />
         ))}
       </div>
     </div>
@@ -621,6 +623,7 @@ function NumberField({ fieldKey, field, value, disabled, onChange }: NumberField
 interface OptionRowProps {
   index: number
   label: string
+  description?: string
   selected: boolean
   disabled: boolean
   isHovered: boolean
@@ -629,7 +632,7 @@ interface OptionRowProps {
   onClick: () => void
 }
 
-function OptionRow({ index, label, selected, disabled, isHovered, onHover, onHoverEnd, onClick }: OptionRowProps) {
+function OptionRow({ index, label, description, selected, disabled, isHovered, onHover, onHoverEnd, onClick }: OptionRowProps) {
   const badgeBg = selected ? 'var(--c-text-primary)' : isHovered && !disabled ? 'var(--c-border-subtle)' : 'var(--c-bg-deep)'
   const badgeColor = selected ? 'var(--c-bg-page)' : isHovered && !disabled ? 'var(--c-text-secondary)' : 'var(--c-text-muted)'
 
@@ -656,8 +659,15 @@ function OptionRow({ index, label, selected, disabled, isHovered, onHover, onHov
       >
         {index + 1}
       </div>
-      <span className="flex-1 text-[14.5px] font-light" style={{ color: 'var(--c-text-primary)' }}>
-        {label}
+      <span className="flex min-w-0 flex-1 flex-col">
+        <span className="text-[14.5px] font-light" style={{ color: 'var(--c-text-primary)' }}>
+          {label}
+        </span>
+        {description && (
+          <span className="mt-0.5 text-[12px] leading-snug" style={{ color: 'var(--c-text-muted)' }}>
+            {description}
+          </span>
+        )}
       </span>
       <ArrowRight
         size={13}
@@ -671,12 +681,13 @@ function OptionRow({ index, label, selected, disabled, isHovered, onHover, onHov
 
 interface CheckboxRowProps {
   label: string
+  description?: string
   checked: boolean
   disabled: boolean
   onClick: () => void
 }
 
-function CheckboxRow({ label, checked, disabled, onClick }: CheckboxRowProps) {
+function CheckboxRow({ label, description, checked, disabled, onClick }: CheckboxRowProps) {
   return (
     <div
       role="checkbox"
@@ -699,8 +710,15 @@ function CheckboxRow({ label, checked, disabled, onClick }: CheckboxRowProps) {
       >
         <Check size={12} />
       </div>
-      <span className="flex-1 text-[14.5px] font-light" style={{ color: 'var(--c-text-primary)' }}>
-        {label}
+      <span className="flex min-w-0 flex-1 flex-col">
+        <span className="text-[14.5px] font-light" style={{ color: 'var(--c-text-primary)' }}>
+          {label}
+        </span>
+        {description && (
+          <span className="mt-0.5 text-[12px] leading-snug" style={{ color: 'var(--c-text-muted)' }}>
+            {description}
+          </span>
+        )}
       </span>
     </div>
   )

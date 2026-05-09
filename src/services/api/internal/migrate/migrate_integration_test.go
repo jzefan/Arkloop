@@ -717,6 +717,39 @@ func TestLlmRoutesProviderModelsMigration(t *testing.T) {
 	}
 }
 
+func TestMigrateLlmCredentialProviderConstraintAllowsQwenAndDoubao(t *testing.T) {
+	db := testutil.SetupPostgresDatabase(t, "migrate_llm_provider_constraint")
+	ctx := context.Background()
+
+	sqlDB, err := openDB(db.DSN)
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	defer func() { _ = sqlDB.Close() }()
+
+	provider, err := newProvider(sqlDB)
+	if err != nil {
+		t.Fatalf("new provider: %v", err)
+	}
+	if _, err := provider.UpTo(ctx, 91); err != nil {
+		t.Fatalf("up to 91: %v", err)
+	}
+
+	orgID := uuid.New()
+	if _, err := sqlDB.ExecContext(ctx, `INSERT INTO orgs (id, slug, name) VALUES ($1, 'migrate-provider-constraint-org', 'Migrate Provider Constraint Org')`, orgID); err != nil {
+		t.Fatalf("insert org: %v", err)
+	}
+
+	for _, providerName := range []string{"qwen", "doubao"} {
+		if _, err := sqlDB.ExecContext(ctx, `
+			INSERT INTO llm_credentials (id, org_id, provider, name, advanced_json)
+			VALUES ($1, $2, $3, $4, '{}'::jsonb)
+		`, uuid.New(), orgID, providerName, providerName+"-provider"); err != nil {
+			t.Fatalf("insert %s credential: %v", providerName, err)
+		}
+	}
+}
+
 func TestWebSearchBasicProviderMigration(t *testing.T) {
 	db := testutil.SetupPostgresDatabase(t, "migrate_web_search_basic")
 	ctx := context.Background()

@@ -73,6 +73,30 @@ func ResolveCatalogProtocolConfig(provider data.LlmCredential, apiKey string) (C
 			OpenAI:     OpenAICatalogConfig{APIMode: "chat_completions"},
 			Credential: provider,
 		}, nil
+	case "doubao":
+		resolvedBaseURL := strings.TrimRight(baseURL, "/")
+		if resolvedBaseURL == "" {
+			resolvedBaseURL = defaultDoubaoBaseURL
+		}
+		return CatalogProtocolConfig{
+			Kind:       ProtocolKindOpenAIChatCompletions,
+			BaseURL:    resolvedBaseURL,
+			APIKey:     apiKey,
+			OpenAI:     OpenAICatalogConfig{APIMode: "chat_completions"},
+			Credential: provider,
+		}, nil
+	case "qwen":
+		resolvedBaseURL := strings.TrimRight(baseURL, "/")
+		if resolvedBaseURL == "" {
+			resolvedBaseURL = defaultQwenBaseURL
+		}
+		return CatalogProtocolConfig{
+			Kind:       ProtocolKindOpenAIChatCompletions,
+			BaseURL:    resolvedBaseURL,
+			APIKey:     apiKey,
+			OpenAI:     OpenAICatalogConfig{APIMode: "chat_completions"},
+			Credential: provider,
+		}, nil
 	case "zenmax":
 		protocol := resolveZenMaxProtocol(provider.AdvancedJSON)
 		switch protocol {

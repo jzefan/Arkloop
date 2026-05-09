@@ -98,7 +98,7 @@ export function DocumentPanel({ artifact, artifacts, accessToken, runId, onClose
 
   useEffect(() => {
     setLoadState({ status: 'loading' })
-    const url = `${apiBaseUrl()}/v1/artifacts/${artifact.key}`
+    const url = `${apiBaseUrl()}/v1/artifacts/${artifact.key.split("/").map(encodeURIComponent).join("/")}`
     fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } })
       .then(async (res) => {
         if (!res.ok) throw new Error(`${res.status}`)
@@ -119,7 +119,7 @@ export function DocumentPanel({ artifact, artifacts, accessToken, runId, onClose
     if (downloading) return
     setDownloading(true)
     try {
-      const url = `${apiBaseUrl()}/v1/artifacts/${artifact.key}`
+      const url = `${apiBaseUrl()}/v1/artifacts/${artifact.key.split("/").map(encodeURIComponent).join("/")}`
       const res = await fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } })
       if (!res.ok) throw new Error(`${res.status}`)
       const blob = await res.blob()
@@ -133,8 +133,8 @@ export function DocumentPanel({ artifact, artifacts, accessToken, runId, onClose
       URL.revokeObjectURL(blobUrl)
       setDownloadDone(true)
       setTimeout(() => setDownloadDone(false), 1500)
-    } catch {
-      // 静默失败
+    } catch (err) {
+      console.error('document download failed', err instanceof Error ? err.message : err)
     } finally {
       setDownloading(false)
     }

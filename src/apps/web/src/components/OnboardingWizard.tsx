@@ -37,6 +37,7 @@ import {
 import type { AvailableModel, LlmProvider, LlmProviderModel } from "../api";
 import type { AgentImportDiscovery, ImportItemKey, ImportSourceKind } from "@arkloop/shared/desktop";
 import { routeAdvancedJsonFromAvailableCatalog } from "@arkloop/shared/llm/available-catalog-advanced-json";
+import { compareAvailableModelsNewestFirst } from "@arkloop/shared/llm/model-catalog-sort";
 
 type Step =
   | "welcome"
@@ -589,11 +590,11 @@ export function OnboardingWizard({ onComplete }: Props) {
   const providerVerified =
     step === "provider" && verifyStatus === "verified" && !!createdProviderId;
 
-  // Models filtered + sorted (stable sort — enabled first by initial state)
+  // Models filtered + sorted (enabled first, then newest first)
   const sortedModels = useMemo(() => {
     return [...availableModels].sort((a, b) => {
       if (a.configured !== b.configured) return a.configured ? -1 : 1;
-      return (a.name || a.id).localeCompare(b.name || b.id);
+      return compareAvailableModelsNewestFirst(a, b);
     });
   }, [availableModels]);
 

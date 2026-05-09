@@ -488,6 +488,227 @@ describe('ProvidersSettings', () => {
     }))
   })
 
+  it('新增 ZENMAX 供应商时只显示单一类型且不提交 zenmax_protocol', async () => {
+    const createdProvider = {
+      id: 'provider-zenmax',
+      name: 'ZENMAX 官方',
+      provider: 'zenmax',
+      openai_api_mode: undefined,
+      base_url: 'https://zenmux.ai/api/v1',
+      advanced_json: {},
+      models: [],
+    }
+    createLlmProvider.mockResolvedValueOnce(createdProvider)
+    listLlmProviders.mockResolvedValueOnce([]).mockResolvedValueOnce([createdProvider])
+
+    const { ProvidersSettings, LocaleProvider } = await loadSubject()
+
+    await act(async () => {
+      root!.render(
+        <LocaleProvider>
+          <ProvidersSettings accessToken="token" />
+        </LocaleProvider>,
+      )
+    })
+    await flushEffects()
+
+    const addButton = findButton(container, /添加供应商|Add provider/)
+    expect(addButton).toBeTruthy()
+    await act(async () => {
+      addButton!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+    await flushEffects()
+
+    const vendorButton = Array.from(document.body.querySelectorAll('button')).find((button) => button.textContent?.includes('OpenAI'))
+    expect(vendorButton).toBeTruthy()
+    await act(async () => {
+      vendorButton!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+    await flushEffects()
+
+    const zenmaxOptions = Array.from(document.body.querySelectorAll('button')).filter((button) => button.textContent?.includes('ZENMAX'))
+    expect(zenmaxOptions).toHaveLength(1)
+    await act(async () => {
+      zenmaxOptions[0]!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+    await flushEffects()
+
+    expect(document.body.textContent).not.toContain('Claude')
+    expect(document.body.textContent).not.toContain('Gemini')
+
+    const inputs = Array.from(document.body.querySelectorAll('input')) as HTMLInputElement[]
+    const nameInput = inputs.find((input) => input.placeholder === 'My Provider')
+    const apiKeyInput = inputs.find((input) => input.type === 'password')
+    expect(nameInput).toBeTruthy()
+    expect(apiKeyInput).toBeTruthy()
+
+    await act(async () => {
+      setInputValue(nameInput!, 'ZENMAX 官方')
+      setInputValue(apiKeyInput!, 'sk-zenmax')
+    })
+    await flushEffects()
+
+    const saveButton = findButton(document.body, /保存|Save/)
+    expect(saveButton).toBeTruthy()
+    await act(async () => {
+      saveButton!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+    await flushEffects()
+
+    expect(createLlmProvider).toHaveBeenCalledWith('token', expect.objectContaining({
+      name: 'ZENMAX 官方',
+      provider: 'zenmax',
+      api_key: 'sk-zenmax',
+      advanced_json: expect.not.objectContaining({
+        zenmax_protocol: expect.anything(),
+      }),
+    }))
+  })
+
+  it('新增 Doubao 供应商时不提交 openai_api_mode', async () => {
+    const createdProvider = {
+      id: 'provider-doubao',
+      name: 'doubao官方',
+      provider: 'doubao',
+      openai_api_mode: null,
+      base_url: 'https://ark.cn-beijing.volces.com/api/v3',
+      advanced_json: {},
+      models: [],
+    }
+    createLlmProvider.mockResolvedValueOnce(createdProvider)
+    listLlmProviders.mockResolvedValueOnce([]).mockResolvedValueOnce([createdProvider])
+
+    const { ProvidersSettings, LocaleProvider } = await loadSubject()
+
+    await act(async () => {
+      root!.render(
+        <LocaleProvider>
+          <ProvidersSettings accessToken="token" />
+        </LocaleProvider>,
+      )
+    })
+    await flushEffects()
+
+    const addButton = findButton(container, /添加供应商|Add provider/)
+    expect(addButton).toBeTruthy()
+    await act(async () => {
+      addButton!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+    await flushEffects()
+
+    const vendorButton = Array.from(document.body.querySelectorAll('button')).find((button) => button.textContent?.includes('OpenAI'))
+    expect(vendorButton).toBeTruthy()
+    await act(async () => {
+      vendorButton!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+    await flushEffects()
+
+    const doubaoOption = Array.from(document.body.querySelectorAll('button')).find((button) => button.textContent?.includes('Doubao'))
+    expect(doubaoOption).toBeTruthy()
+    await act(async () => {
+      doubaoOption!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+    await flushEffects()
+
+    const inputs = Array.from(document.body.querySelectorAll('input')) as HTMLInputElement[]
+    const nameInput = inputs.find((input) => input.placeholder === 'My Provider')
+    const apiKeyInput = inputs.find((input) => input.type === 'password')
+    expect(nameInput).toBeTruthy()
+    expect(apiKeyInput).toBeTruthy()
+
+    await act(async () => {
+      setInputValue(nameInput!, 'doubao官方')
+      setInputValue(apiKeyInput!, 'sk-doubao')
+    })
+    await flushEffects()
+
+    const saveButton = findButton(document.body, /保存|Save/)
+    expect(saveButton).toBeTruthy()
+    await act(async () => {
+      saveButton!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+    await flushEffects()
+
+    expect(createLlmProvider).toHaveBeenCalledWith('token', expect.objectContaining({
+      name: 'doubao官方',
+      provider: 'doubao',
+      api_key: 'sk-doubao',
+      openai_api_mode: undefined,
+    }))
+  })
+
+  it('新增 Qwen 供应商时不提交 openai_api_mode', async () => {
+    const createdProvider = {
+      id: 'provider-qwen',
+      name: 'qwen官方',
+      provider: 'qwen',
+      openai_api_mode: null,
+      base_url: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+      advanced_json: {},
+      models: [],
+    }
+    createLlmProvider.mockResolvedValueOnce(createdProvider)
+    listLlmProviders.mockResolvedValueOnce([]).mockResolvedValueOnce([createdProvider])
+
+    const { ProvidersSettings, LocaleProvider } = await loadSubject()
+
+    await act(async () => {
+      root!.render(
+        <LocaleProvider>
+          <ProvidersSettings accessToken="token" />
+        </LocaleProvider>,
+      )
+    })
+    await flushEffects()
+
+    const addButton = findButton(container, /添加供应商|Add provider/)
+    expect(addButton).toBeTruthy()
+    await act(async () => {
+      addButton!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+    await flushEffects()
+
+    const vendorButton = Array.from(document.body.querySelectorAll('button')).find((button) => button.textContent?.includes('OpenAI'))
+    expect(vendorButton).toBeTruthy()
+    await act(async () => {
+      vendorButton!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+    await flushEffects()
+
+    const qwenOption = Array.from(document.body.querySelectorAll('button')).find((button) => button.textContent?.includes('Qwen'))
+    expect(qwenOption).toBeTruthy()
+    await act(async () => {
+      qwenOption!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+    await flushEffects()
+
+    const inputs = Array.from(document.body.querySelectorAll('input')) as HTMLInputElement[]
+    const nameInput = inputs.find((input) => input.placeholder === 'My Provider')
+    const apiKeyInput = inputs.find((input) => input.type === 'password')
+    expect(nameInput).toBeTruthy()
+    expect(apiKeyInput).toBeTruthy()
+
+    await act(async () => {
+      setInputValue(nameInput!, 'qwen官方')
+      setInputValue(apiKeyInput!, 'sk-qwen')
+    })
+    await flushEffects()
+
+    const saveButton = findButton(document.body, /保存|Save/)
+    expect(saveButton).toBeTruthy()
+    await act(async () => {
+      saveButton!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+    await flushEffects()
+
+    expect(createLlmProvider).toHaveBeenCalledWith('token', expect.objectContaining({
+      name: 'qwen官方',
+      provider: 'qwen',
+      api_key: 'sk-qwen',
+      openai_api_mode: undefined,
+    }))
+  })
+
   it('新增供应商时在高级选项保存 Headers', async () => {
     const { ProvidersSettings, LocaleProvider } = await loadSubject()
 

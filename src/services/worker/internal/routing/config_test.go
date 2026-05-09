@@ -69,6 +69,26 @@ func TestAvailableModelOptionsUsesExactSelectorsAndFiltersWhen(t *testing.T) {
 	}
 }
 
+func TestAvailableModelOptionsFiltersHiddenPickerRoutes(t *testing.T) {
+	cfg := ProviderRoutingConfig{
+		Credentials: []ProviderCredential{
+			{ID: "cred-qwen", Name: "qianwen", OwnerKind: CredentialScopeUser, ProviderKind: ProviderKindOpenAI},
+		},
+		Routes: []ProviderRouteRule{
+			{ID: "enabled", Model: "qwen-plus", CredentialID: "cred-qwen", When: map[string]any{}},
+			{ID: "hidden", Model: "qwen-image", CredentialID: "cred-qwen", When: map[string]any{}, HideFromPicker: true},
+		},
+	}
+
+	got := cfg.AvailableModelOptions(map[string]any{})
+	if len(got) != 1 {
+		t.Fatalf("expected only enabled picker route, got %#v", got)
+	}
+	if got[0]["selector"] != "qianwen^qwen-plus" {
+		t.Fatalf("unexpected selector: %#v", got[0])
+	}
+}
+
 func TestGetHighestPriorityRouteByCredentialName_Found(t *testing.T) {
 	cfg := ProviderRoutingConfig{
 		DefaultRouteID: "default",

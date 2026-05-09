@@ -18,6 +18,7 @@
     "./components/prompt-injection": "./src/components/prompt-injection/index.ts",
     "./run-turns": "./src/run-turns.ts",
     "./llm/available-catalog-advanced-json": "./src/llm/availableCatalogAdvancedJson.ts",
+    "./llm/model-catalog-sort": "./src/llm/modelCatalogSort.ts",
     "./debug": "./src/debug-bus.ts"
   },
   "peerDependencies": {

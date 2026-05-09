@@ -84,6 +84,32 @@ func TestOpen_Pragmas(t *testing.T) {
 // Migrations
 // ---------------------------------------------------------------------------
 
+func TestAutoMigrateAllowsQwenAndDoubaoProviders(t *testing.T) {
+	t.Parallel()
+	pool := migratedTestDB(t)
+	ctx := context.Background()
+
+	if _, err := pool.Exec(ctx, `INSERT INTO accounts (id, slug, name, type) VALUES (?, 'sqlite-llm-provider-test', 'SQLite LLM Provider Test', 'workspace')`, "acct-1"); err != nil {
+		t.Fatalf("insert account: %v", err)
+	}
+
+	for _, provider := range []string{"qwen", "doubao"} {
+		credentialID := "cred-" + provider
+		if _, err := pool.Exec(ctx, `
+			INSERT INTO llm_credentials (id, account_id, provider, name, advanced_json, owner_kind)
+			VALUES (?, ?, ?, ?, '{}', 'account')
+		`, credentialID, "acct-1", provider, provider+"-provider"); err != nil {
+			t.Fatalf("insert %s provider: %v", provider, err)
+		}
+		if _, err := pool.Exec(ctx, `
+			INSERT INTO llm_routes (id, account_id, credential_id, model, priority, is_default, tags, when_json)
+			VALUES (?, ?, ?, ?, 0, 0, '[]', '{}')
+		`, "route-"+provider, "acct-1", credentialID, provider+"-model"); err != nil {
+			t.Fatalf("insert %s route: %v", provider, err)
+		}
+	}
+}
+
 func TestAutoMigrate(t *testing.T) {
 	t.Parallel()
 	pool := migratedTestDB(t)
@@ -139,6 +165,7 @@ func TestAutoMigrate(t *testing.T) {
 	}
 
 	assertSQLiteForeignKeyTargets(t, ctx, pool, "run_events", "runs")
+	assertSQLiteForeignKeyTargets(t, ctx, pool, "llm_routes", "accounts", "projects", "llm_credentials")
 	assertSQLiteForeignKeyTargets(t, ctx, pool, "sub_agent_events", "sub_agents", "runs")
 	assertSQLiteForeignKeyTargets(t, ctx, pool, "sub_agent_pending_inputs", "sub_agents")
 	assertSQLiteForeignKeyTargets(t, ctx, pool, "sub_agent_context_snapshots", "sub_agents")
@@ -241,6 +268,61 @@ func TestRepairMissingColumnsBackfillsChannelOwner(t *testing.T) {
 	}
 	if ownerUserID != "owner-1" {
 		t.Fatalf("unexpected channel owner: got %q want owner-1", ownerUserID)
+	}
+}
+
+func TestRepairMissingColumnsRepairsLLMRoutesLegacyCredentialFK(t *testing.T) {
+	t.Parallel()
+	pool := openTestDB(t)
+	ctx := context.Background()
+
+	setup := []string{
+		`CREATE TABLE accounts (id TEXT PRIMARY KEY)`,
+		`CREATE TABLE projects (id TEXT PRIMARY KEY)`,
+		`CREATE TABLE llm_credentials (id TEXT PRIMARY KEY, account_id TEXT NOT NULL, provider TEXT NOT NULL, name TEXT NOT NULL)`,
+		`CREATE TABLE llm_routes (
+			id TEXT PRIMARY KEY,
+			account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+			project_id TEXT REFERENCES projects(id) ON DELETE CASCADE,
+			credential_id TEXT NOT NULL REFERENCES llm_credentials_legacy_00093(id) ON DELETE CASCADE,
+			model TEXT NOT NULL,
+			priority INTEGER NOT NULL DEFAULT 0,
+			is_default INTEGER NOT NULL DEFAULT 0,
+			tags TEXT NOT NULL DEFAULT '[]',
+			when_json TEXT NOT NULL DEFAULT '{}',
+			advanced_json TEXT NOT NULL DEFAULT '{}',
+			multiplier REAL NOT NULL DEFAULT 1.0,
+			cost_per_1k_input REAL,
+			cost_per_1k_output REAL,
+			cost_per_1k_cache_write REAL,
+			cost_per_1k_cache_read REAL,
+			created_at TEXT NOT NULL DEFAULT (datetime('now')),
+			route_key TEXT,
+			show_in_picker INTEGER NOT NULL DEFAULT 1
+		)`,
+	}
+	for _, stmt := range setup {
+		if _, err := pool.Exec(ctx, stmt); err != nil {
+			t.Fatalf("setup: %s: %v", stmt, err)
+		}
+	}
+
+	if err := repairMissingColumns(ctx, pool.Unwrap()); err != nil {
+		t.Fatalf("repair missing columns: %v", err)
+	}
+	assertSQLiteForeignKeyTargets(t, ctx, pool, "llm_routes", "accounts", "projects", "llm_credentials")
+
+	if _, err := pool.Exec(ctx, `INSERT INTO accounts (id) VALUES ('acct-1')`); err != nil {
+		t.Fatalf("insert account: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO llm_credentials (id, account_id, provider, name) VALUES ('cred-1', 'acct-1', 'openai', 'OpenAI')`); err != nil {
+		t.Fatalf("insert credential: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO llm_routes (id, account_id, credential_id, model)
+		VALUES ('route-1', 'acct-1', 'cred-1', 'gpt-5.4')
+	`); err != nil {
+		t.Fatalf("insert route after repair: %v", err)
 	}
 }
 

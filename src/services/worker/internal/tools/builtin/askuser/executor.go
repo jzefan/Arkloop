@@ -3,6 +3,7 @@ package askuser
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"arkloop/services/worker/internal/tools"
@@ -99,6 +100,9 @@ func ValidateAndNormalize(args map[string]any) (string, map[string]any, error) {
 	if len(orderedKeys) > 0 {
 		schema["_fieldOrder"] = orderedKeys
 	}
+	if dismissLabel, _ := args["dismissLabel"].(string); strings.TrimSpace(dismissLabel) != "" {
+		schema["_dismissLabel"] = strings.TrimSpace(dismissLabel)
+	}
 	if len(requiredKeys) > 0 {
 		schema["required"] = requiredKeys
 	}
@@ -142,6 +146,9 @@ func normalizeStringProp(key string, field, prop map[string]any) (map[string]any
 		if names, ok := field["enumNames"]; ok {
 			prop["enumNames"] = names
 		}
+		if descriptions, ok := field["enumDescriptions"]; ok {
+			prop["enumDescriptions"] = descriptions
+		}
 	}
 	if oneOfVal, ok := field["oneOf"]; ok {
 		if err := validateOneOfItems(key, oneOfVal); err != nil {
@@ -161,6 +168,12 @@ func normalizeArrayProp(key string, field, prop map[string]any) (map[string]any,
 			return nil, err
 		}
 		prop["items"] = map[string]any{"type": "string", "enum": enumVal}
+		if names, ok := field["enumNames"]; ok {
+			prop["enumNames"] = names
+		}
+		if descriptions, ok := field["enumDescriptions"]; ok {
+			prop["enumDescriptions"] = descriptions
+		}
 		return prop, nil
 	}
 	if hasOneOf {

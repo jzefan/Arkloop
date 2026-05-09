@@ -447,14 +447,36 @@ let isQuitting = false
 let shutdownInProgress = false
 let powerSaveBlockerId: number | null = null
 let keepAwakeSessionActive = false
+let lastAppliedLaunchAtLogin: boolean | null = null
+let launchAtLoginPermissionDeniedLogged = false
 
-function applyDesktopPreferences(config: AppConfig): void {
+function applyLaunchAtLoginPreference(config: AppConfig): void {
+  const desired = config.desktop.launchAtLogin
+  if (lastAppliedLaunchAtLogin !== null && lastAppliedLaunchAtLogin === desired) {
+    return
+  }
   try {
-    app.setLoginItemSettings({ openAtLogin: config.desktop.launchAtLogin })
+    app.setLoginItemSettings({ openAtLogin: desired })
+    lastAppliedLaunchAtLogin = desired
+    launchAtLoginPermissionDeniedLogged = false
   } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    if (message.includes('Operation not permitted') || message.includes('未能完成该操作')) {
+      if (!launchAtLoginPermissionDeniedLogged) {
+        launchAtLoginPermissionDeniedLogged = true
+        console.warn('[desktop] login_item_permission_denied', {
+          hint: 'macOS denied startup item update. Disable "Open at login" or grant permission in System Settings.',
+          error,
+        })
+      }
+      return
+    }
     console.error('[desktop] login_item_update_failed', { error })
   }
+}
 
+function applyDesktopPreferences(config: AppConfig): void {
+  applyLaunchAtLoginPreference(config)
   if (config.desktop.keepScreenAwake && keepAwakeSessionActive) {
     if (powerSaveBlockerId === null || !powerSaveBlocker.isStarted(powerSaveBlockerId)) {
       powerSaveBlockerId = powerSaveBlocker.start('prevent-display-sleep')
@@ -470,7 +492,17 @@ function applyDesktopPreferences(config: AppConfig): void {
 
 function setKeepAwakeSessionActive(active: boolean): void {
   keepAwakeSessionActive = active
-  applyDesktopPreferences(loadConfig())
+  const config = loadConfig()
+  if (config.desktop.keepScreenAwake && keepAwakeSessionActive) {
+    if (powerSaveBlockerId === null || !powerSaveBlocker.isStarted(powerSaveBlockerId)) {
+      powerSaveBlockerId = powerSaveBlocker.start('prevent-display-sleep')
+    }
+    return
+  }
+  if (powerSaveBlockerId !== null && powerSaveBlocker.isStarted(powerSaveBlockerId)) {
+    powerSaveBlocker.stop(powerSaveBlockerId)
+  }
+  powerSaveBlockerId = null
 }
 
 if (!hasSingleInstanceLock) {

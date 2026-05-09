@@ -21,8 +21,9 @@ func NewSubAgentContextMiddleware(storage *subagentctl.SnapshotStorage) RunMiddl
 			return next(ctx, rc)
 		}
 		rc.InheritedPromptCacheSnapshot = subagentctl.ClonePromptCacheSnapshot(snapshot.PromptCache)
+		_, hasExplicitModel := rc.InputJSON["model"]
 		if routeID := strings.TrimSpace(snapshot.Runtime.RouteID); routeID != "" {
-			if _, ok := rc.InputJSON["route_id"]; !ok {
+			if _, ok := rc.InputJSON["route_id"]; !ok && !hasExplicitModel {
 				rc.InputJSON["route_id"] = routeID
 			}
 		}

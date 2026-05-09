@@ -125,6 +125,7 @@ func TestResolveBuiltinUsesEnvAndProviders(t *testing.T) {
 		"grep",
 		"image_generate",
 		"interrupt_agent",
+		"markdown_to_pdf",
 		"memory_edit",
 		"memory_forget",
 		"memory_list",

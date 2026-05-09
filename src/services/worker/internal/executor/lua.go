@@ -148,8 +148,10 @@ func (rt *luaRuntime) register(L *lua.LState) {
 	L.SetField(agentTable, "spawn", L.NewFunction(rt.agentSpawn))
 	L.SetField(agentTable, "send", L.NewFunction(rt.agentSend))
 	L.SetField(agentTable, "wait", L.NewFunction(rt.agentWait))
+	L.SetField(agentTable, "wait_any", L.NewFunction(rt.agentWaitAny))
 	L.SetField(agentTable, "resume", L.NewFunction(rt.agentResume))
 	L.SetField(agentTable, "close", L.NewFunction(rt.agentClose))
+	L.SetField(agentTable, "interrupt", L.NewFunction(rt.agentInterrupt))
 	L.SetField(agentTable, "classify", L.NewFunction(rt.agentClassify))
 	L.SetField(agentTable, "generate", L.NewFunction(rt.agentGenerate))
 	L.SetField(agentTable, "stream", L.NewFunction(rt.agentStream))
@@ -166,6 +168,7 @@ func (rt *luaRuntime) register(L *lua.LState) {
 
 	contextTable := L.NewTable()
 	L.SetField(contextTable, "get", L.NewFunction(rt.contextGet))
+	L.SetField(contextTable, "now_ms", L.NewFunction(rt.contextNowMs))
 	L.SetField(contextTable, "set_output", L.NewFunction(rt.contextSetOutput))
 	L.SetField(contextTable, "emit", L.NewFunction(rt.contextEmit))
 	L.SetField(contextTable, "ask_user", L.NewFunction(rt.contextAskUser))
@@ -328,6 +331,58 @@ func (rt *luaRuntime) agentWait(L *lua.LState) int {
 	return 2
 }
 
+func (rt *luaRuntime) agentWaitAny(L *lua.LState) int {
+	if rt.ctx.Err() != nil {
+		L.Push(lua.LNil)
+		L.Push(lua.LString(rt.ctx.Err().Error()))
+		return 2
+	}
+	if rt.rc.SubAgentControl == nil {
+		L.Push(lua.LNil)
+		L.Push(lua.LString("agent.wait_any not available: SubAgentControl not initialized"))
+		return 2
+	}
+	subAgentIDs, err := parseLuaSubAgentIDs(L.Get(1), "agent.wait_any: ids")
+	if err != nil {
+		L.Push(lua.LNil)
+		L.Push(lua.LString(err.Error()))
+		return 2
+	}
+	timeout, err := parseLuaTimeout(L.Get(2), "agent.wait_any: timeout_ms")
+	if err != nil {
+		L.Push(lua.LNil)
+		L.Push(lua.LString(err.Error()))
+		return 2
+	}
+	idStrings := make([]string, 0, len(subAgentIDs))
+	for _, id := range subAgentIDs {
+		idStrings = append(idStrings, id.String())
+	}
+	if err := rt.emitAgentToolCall("agent.wait_any", map[string]any{
+		"sub_agent_ids": idStrings,
+		"timeout_ms":    timeout.Milliseconds(),
+	}); err != nil {
+		L.Push(lua.LNil)
+		L.Push(lua.LString(err.Error()))
+		return 2
+	}
+	snapshot, err := rt.rc.SubAgentControl.Wait(rt.ctx, subagentctl.WaitRequest{SubAgentIDs: subAgentIDs, Timeout: timeout})
+	if err != nil {
+		_ = rt.emitAgentToolResult("agent.wait_any", nil, err)
+		L.Push(lua.LNil)
+		L.Push(lua.LString(err.Error()))
+		return 2
+	}
+	if err := rt.emitAgentToolResult("agent.wait_any", statusSnapshotData(snapshot), nil); err != nil {
+		L.Push(lua.LNil)
+		L.Push(lua.LString(err.Error()))
+		return 2
+	}
+	L.Push(statusSnapshotToLuaTable(L, snapshot))
+	L.Push(lua.LNil)
+	return 2
+}
+
 func (rt *luaRuntime) agentResume(L *lua.LState) int {
 	if rt.ctx.Err() != nil {
 		L.Push(lua.LNil)
@@ -375,6 +430,55 @@ func (rt *luaRuntime) agentClose(L *lua.LState) int {
 	}
 	snapshot, err := rt.rc.SubAgentControl.Close(rt.ctx, subagentctl.CloseRequest{SubAgentID: subAgentID})
 	if err != nil {
+		L.Push(lua.LNil)
+		L.Push(lua.LString(err.Error()))
+		return 2
+	}
+	L.Push(statusSnapshotToLuaTable(L, snapshot))
+	L.Push(lua.LNil)
+	return 2
+}
+
+func (rt *luaRuntime) agentInterrupt(L *lua.LState) int {
+	if rt.ctx.Err() != nil {
+		L.Push(lua.LNil)
+		L.Push(lua.LString(rt.ctx.Err().Error()))
+		return 2
+	}
+	if rt.rc.SubAgentControl == nil {
+		L.Push(lua.LNil)
+		L.Push(lua.LString("agent.interrupt not available: SubAgentControl not initialized"))
+		return 2
+	}
+	subAgentID, err := parseLuaSubAgentID(L.Get(1), "agent.interrupt: id")
+	if err != nil {
+		L.Push(lua.LNil)
+		L.Push(lua.LString(err.Error()))
+		return 2
+	}
+	reason := strings.TrimSpace(L.OptString(2, ""))
+	args := map[string]any{
+		"sub_agent_id": subAgentID.String(),
+	}
+	if reason != "" {
+		args["reason"] = reason
+	}
+	if err := rt.emitAgentToolCall("agent.interrupt", args); err != nil {
+		L.Push(lua.LNil)
+		L.Push(lua.LString(err.Error()))
+		return 2
+	}
+	snapshot, err := rt.rc.SubAgentControl.Interrupt(rt.ctx, subagentctl.InterruptRequest{
+		SubAgentID: subAgentID,
+		Reason:     reason,
+	})
+	if err != nil {
+		_ = rt.emitAgentToolResult("agent.interrupt", nil, err)
+		L.Push(lua.LNil)
+		L.Push(lua.LString(err.Error()))
+		return 2
+	}
+	if err := rt.emitAgentToolResult("agent.interrupt", statusSnapshotData(snapshot), nil); err != nil {
 		L.Push(lua.LNil)
 		L.Push(lua.LString(err.Error()))
 		return 2
@@ -613,6 +717,15 @@ func (rt *luaRuntime) contextGet(L *lua.LState) int {
 	case "system_prompt":
 		L.Push(lua.LString(rt.rc.MaterializedSystemPrompt()))
 		return 1
+	case "run_id":
+		L.Push(lua.LString(rt.rc.Run.ID.String()))
+		return 1
+	case "account_id":
+		L.Push(lua.LString(rt.rc.Run.AccountID.String()))
+		return 1
+	case "thread_id":
+		L.Push(lua.LString(rt.rc.Run.ThreadID.String()))
+		return 1
 	case "messages":
 		msgs := make([]map[string]any, 0, len(rt.rc.Messages))
 		for _, m := range rt.rc.Messages {
@@ -651,6 +764,12 @@ func (rt *luaRuntime) contextGet(L *lua.LState) int {
 			L.Push(lua.LString(string(encoded)))
 		}
 	}
+	return 1
+}
+
+// context.now_ms() -> unix timestamp milliseconds
+func (rt *luaRuntime) contextNowMs(L *lua.LState) int {
+	L.Push(lua.LNumber(time.Now().UnixMilli()))
 	return 1
 }
 
@@ -970,6 +1089,25 @@ func parseLuaSubAgentID(value lua.LValue, field string) (uuid.UUID, error) {
 		return uuid.Nil, fmt.Errorf("%s must be a valid UUID", field)
 	}
 	return id, nil
+}
+
+func parseLuaSubAgentIDs(value lua.LValue, field string) ([]uuid.UUID, error) {
+	tbl, ok := value.(*lua.LTable)
+	if !ok {
+		return nil, fmt.Errorf("%s must be a non-empty array", field)
+	}
+	ids := make([]uuid.UUID, 0, tbl.Len())
+	for i := 1; i <= tbl.Len(); i++ {
+		id, err := parseLuaSubAgentID(tbl.RawGetInt(i), fmt.Sprintf("%s[%d]", field, i))
+		if err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	if len(ids) == 0 {
+		return nil, fmt.Errorf("%s must be a non-empty array", field)
+	}
+	return ids, nil
 }
 
 func luaRequiredString(value lua.LValue, field string) (string, error) {

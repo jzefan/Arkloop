@@ -29,6 +29,7 @@ const singleSelect: UserInputRequest = {
         type: 'string' as const,
         title: 'Database',
         enum: ['postgres', 'mysql'],
+        enumDescriptions: ['Open source relational database', 'Popular relational database'],
       },
     },
     required: ['db'],
@@ -55,6 +56,24 @@ const multiField: UserInputRequest = {
       },
     },
     required: ['db'],
+  },
+}
+
+const requiredMultiSelect: UserInputRequest = {
+  request_id: 'req_models',
+  message: '请选择用于评估的模型。',
+  requestedSchema: {
+    _dismissLabel: '使用当前模型',
+    properties: {
+      models: {
+        type: 'array' as const,
+        title: '评估模型',
+        description: '默认不选择模型；不选择并点击“使用当前模型”时，将沿用当前聊天模型。',
+        items: { type: 'string' as const, enum: ['deepseek', 'qwen'] },
+        minItems: 1,
+      },
+    },
+    required: ['models'],
   },
 }
 
@@ -91,6 +110,7 @@ describe('UserInputCard', () => {
       expect(container.textContent).toContain('Which database?')
       expect(container.textContent).toContain('postgres')
       expect(container.textContent).toContain('mysql')
+      expect(container.textContent).toContain('Open source relational database')
     })
 
     it('renders oneOf options with titles', () => {
@@ -155,6 +175,26 @@ describe('UserInputCard', () => {
       expect(response.answers.db).toBe('pg')
       expect(response.answers.features).toEqual(['auth', 'search'])
     })
+
+    it('disables submit for required multiselect until an option is selected', () => {
+      const onSubmit = vi.fn()
+      renderCard(requiredMultiSelect, onSubmit)
+
+      const submitBtn = findBtn('提交') ?? findBtn('Submit')
+      expect(submitBtn).toBeTruthy()
+      expect((submitBtn as HTMLButtonElement).disabled).toBe(true)
+      expect(container.textContent).toContain('使用当前模型')
+      expect(container.textContent).toContain('默认不选择模型')
+
+      const checkboxes = container.querySelectorAll('[role="checkbox"]')
+      act(() => { (checkboxes[0] as HTMLElement).click() })
+
+      expect((submitBtn as HTMLButtonElement).disabled).toBe(false)
+      act(() => { submitBtn!.click() })
+      expect(onSubmit).toHaveBeenCalledTimes(1)
+      const response = onSubmit.mock.calls[0][0] as UserInputResponse
+      expect(response.answers.models).toEqual(['deepseek'])
+    })
   })
 
   describe('dismiss', () => {
@@ -167,6 +207,17 @@ describe('UserInputCard', () => {
         container.querySelector('button[aria-label="Skip"]')
       expect(skipBtn).toBeTruthy()
       act(() => { (skipBtn as HTMLElement).click() })
+
+      expect(onDismiss).toHaveBeenCalledTimes(1)
+    })
+
+    it('uses custom dismiss label when provided', () => {
+      const onDismiss = vi.fn()
+      renderCard(requiredMultiSelect, vi.fn(), onDismiss)
+
+      const useCurrentBtn = findBtn('使用当前模型')
+      expect(useCurrentBtn).toBeTruthy()
+      act(() => { useCurrentBtn!.click() })
 
       expect(onDismiss).toHaveBeenCalledTimes(1)
     })

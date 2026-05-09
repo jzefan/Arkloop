@@ -8,6 +8,7 @@ import { Modal } from '../../components/Modal'
 import { ConfirmDialog } from '../../components/ConfirmDialog'
 import { Badge } from '../../components/Badge'
 import { AutoResizeTextarea, useToast, PillToggle } from '@arkloop/shared'
+import { sortAvailableModelsNewestFirst } from '@arkloop/shared/llm/model-catalog-sort'
 import { isApiError } from '../../api'
 import { useLocale } from '../../contexts/LocaleContext'
 import {
@@ -434,7 +435,7 @@ export function ProvidersPage() {
     setImportSelected(new Set())
     try {
 			const data = await listAvailableModels(selectedProvider.id, scope, accessToken)
-      setAvailableModels(data.models.filter((item) => !item.configured))
+      setAvailableModels(sortAvailableModelsNewestFirst(data.models.filter((item) => !item.configured)))
     } catch (err) {
       setAvailableModels([])
       setImportError(isApiError(err) ? err.message : tc.importModelsError)

@@ -209,6 +209,18 @@ function findArtifactByKey(artifacts: ArtifactRef[], key: string): ArtifactRef |
   return artifacts.find((a) => a.key === key)
 }
 
+function extractTextContent(node: ReactNode): string {
+  if (node == null) return ''
+  if (typeof node === 'string') return node
+  if (typeof node === 'number') return String(node)
+  if (Array.isArray(node)) return node.map(extractTextContent).join('')
+  if (typeof node === 'object' && 'props' in node) {
+    const props = (node as { props?: { children?: ReactNode } }).props
+    if (props?.children != null) return extractTextContent(props.children)
+  }
+  return ''
+}
+
 const EXT_MIME: Record<string, string> = {
   png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif',
   svg: 'image/svg+xml', webp: 'image/webp', html: 'text/html', htm: 'text/html',
@@ -294,7 +306,15 @@ function ArtifactAwareLink({ href, children }: { href?: string; children?: React
     const key = href.slice(ARTIFACT_PREFIX.length)
     const artifact = findArtifactByKey(artifacts, key)
 
-    if (!artifact || !accessToken) return <>{children}</>
+    if (!artifact) {
+      // 上下文中找不到 artifact 引用时，从链接信息合成一个用于下载回退
+      if (!accessToken) return <>{children}</>
+      const fallbackFilename = extractTextContent(children) || key.split('/').pop() || 'file'
+      const synthetic: ArtifactRef = { key, filename: fallbackFilename, size: 0, mime_type: guessMimeType(key), display: undefined }
+      return <ArtifactDownload artifact={synthetic} accessToken={accessToken} />
+    }
+
+    if (!accessToken) return <>{children}</>
 
     // LLM 可能用 [text](artifact:key) 而非 ![text](artifact:key)，统一按 mime_type 分派
     if (artifact.mime_type.startsWith('image/')) {

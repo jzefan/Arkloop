@@ -23,7 +23,7 @@ export function ImageThumbnailCard({ artifact, accessToken, pathPrefix = '/v1/ar
 
   useEffect(() => {
     let cancelled = false
-    const url = `${apiBaseUrl()}${pathPrefix}/${artifact.key}`
+    const url = `${apiBaseUrl()}${pathPrefix}/${artifact.key.split("/").map(encodeURIComponent).join("/")}`
     fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } })
       .then((res) => {
         if (!res.ok) throw new Error(`${res.status}`)

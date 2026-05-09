@@ -2,6 +2,3 @@ export function shouldDelayLocalSession(localMode: boolean, sidecarReady: boolea
   return localMode && (!sidecarReady || onboardingDone !== true)
 }
 
-export function shouldUseLocalSetupRoute(localMode: boolean, accessToken: string | null): boolean {
-  return localMode && !accessToken
-}

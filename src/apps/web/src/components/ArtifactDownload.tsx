@@ -22,7 +22,8 @@ export function ArtifactDownload({ artifact, accessToken, pathPrefix = '/v1/arti
     if (downloading) return
     setDownloading(true)
     try {
-      const url = `${apiBaseUrl()}${pathPrefix}/${artifact.key}`
+      const safeKey = artifact.key.split('/').map(encodeURIComponent).join('/')
+      const url = `${apiBaseUrl()}${pathPrefix}/${safeKey}`
       const res = await fetch(url, {
         headers: { Authorization: `Bearer ${accessToken}` },
       })
@@ -36,8 +37,8 @@ export function ArtifactDownload({ artifact, accessToken, pathPrefix = '/v1/arti
       a.click()
       document.body.removeChild(a)
       URL.revokeObjectURL(blobUrl)
-    } catch {
-      // 静默失败，不阻断 UI
+    } catch (err) {
+      console.error('artifact download failed', err instanceof Error ? err.message : err)
     } finally {
       setDownloading(false)
     }
