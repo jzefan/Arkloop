@@ -3,12 +3,10 @@ package markdowntopdf
 import (
 	"bytes"
 	"context"
-	"os"
 	"strings"
 	"testing"
 
 	"arkloop/services/shared/objectstore"
-	sharedtoolruntime "arkloop/services/shared/toolruntime"
 	"arkloop/services/worker/internal/tools"
 
 	"github.com/google/uuid"
@@ -130,95 +128,63 @@ func TestExecuteStoresPDFArtifactMetadata(t *testing.T) {
 	}
 }
 
-func TestExecuteUsesSandboxArtifactWhenAvailable(t *testing.T) {
+func TestExecuteGeneratesStandardPDFWithoutSandbox(t *testing.T) {
 	store := &recordingStore{}
-	sandbox := &stubSandboxExecutor{result: tools.ExecutionResult{ResultJSON: map[string]any{
-		"artifacts": []map[string]any{{
-			"key":       "acc/run/1/rendered.pdf",
-			"filename":  "rendered.pdf",
-			"size":      int64(4096),
-			"mime_type": "application/pdf",
-		}},
-	}}}
-	res := NewToolExecutor(store, sandbox).Execute(context.Background(), ToolName, map[string]any{
-		"filename": "report.pdf",
-		"title":    "正式报告",
-		"content":  "# 正式报告\n\nSee [学校官网](https://example.edu.cn/report) for details.",
-	}, tools.ExecutionContext{RunID: uuid.New()}, "call_1")
-
-	if res.Error != nil {
-		t.Fatalf("unexpected error: %v", res.Error)
-	}
-	if store.key != "" {
-		t.Fatalf("expected sandbox path to skip local upload, got %s", store.key)
-	}
-	artifact := singleArtifact(t, res)
-	if artifact["key"] != "acc/run/1/rendered.pdf" {
-		t.Fatalf("unexpected artifact key: %#v", artifact["key"])
-	}
-	env, ok := sandbox.args["env"].(map[string]any)
-	if !ok {
-		t.Fatalf("expected sandbox env args, got %#v", sandbox.args["env"])
-	}
-	if _, ok := env[sandboxHTMLBase64EnvKey].(string); !ok {
-		t.Fatalf("expected html payload env var, got %#v", env)
-	}
-	if _, ok := env[hostOutputEnvKey].(string); !ok {
-		t.Fatalf("expected host output env var, got %#v", env)
-	}
-	profiles, ok := sandbox.ctx.Budget["sandbox_profiles"].(map[string]any)
-	if !ok || profiles[sandboxExecToolName] != sandboxExecTier {
-		t.Fatalf("expected browser sandbox profile override, got %#v", sandbox.ctx.Budget)
-	}
-}
-
-func TestExecuteUploadsHostRenderedPDFWhenLocalFileExists(t *testing.T) {
-	store := &recordingStore{}
+	sandboxCalled := false
 	sandbox := &stubSandboxExecutor{
-		result: tools.ExecutionResult{ResultJSON: map[string]any{"exit_code": 0}},
-		executeHook: func(args map[string]any) {
-			env, ok := args["env"].(map[string]any)
-			if !ok {
-				return
-			}
-			hostPath, _ := env[hostOutputEnvKey].(string)
-			if hostPath == "" {
-				return
-			}
-			_ = os.WriteFile(hostPath, []byte("%PDF-1.4 host"), 0o600)
+		result: tools.ExecutionResult{Error: &tools.ExecutionError{ErrorClass: tools.ErrorClassToolExecutionFailed, Message: "sandbox should not be used"}},
+		executeHook: func(map[string]any) {
+			sandboxCalled = true
 		},
 	}
 	res := NewToolExecutor(store, sandbox).Execute(context.Background(), ToolName, map[string]any{
 		"filename": "report.pdf",
 		"title":    "正式报告",
-		"content":  "# 正式报告\n\n正文。",
-	}, tools.ExecutionContext{RunID: uuid.New(), RuntimeSnapshot: &sharedtoolruntime.RuntimeSnapshot{}}, "call_1")
+		"content":  "# 正式报告\n\n> **综合评级：A 优秀**\n\n## 数据来源\n\n- [学校官网](https://example.edu.cn/report)\n\n| 荣誉 / 排名 | 级别 / 来源 |\n| --- | --- |\n| 双高计划 | 教育部 |\n\n正文包含中文、English 和 2026 年度指标。",
+	}, tools.ExecutionContext{RunID: uuid.New()}, "call_1")
 
 	if res.Error != nil {
 		t.Fatalf("unexpected error: %v", res.Error)
 	}
-	if !bytes.HasPrefix(store.data, []byte("%PDF-1.4 host")) {
-		t.Fatalf("expected uploaded host PDF bytes, got %q", store.data)
+	if sandboxCalled {
+		t.Fatal("expected standard Go PDF renderer to avoid sandbox/browser dependency")
+	}
+	artifact := singleArtifact(t, res)
+	if artifact["filename"] != "report.pdf" {
+		t.Fatalf("unexpected filename: %#v", artifact["filename"])
+	}
+	for _, snippet := range [][]byte{
+		[]byte("%PDF-1.4"),
+		[]byte("/MediaBox [0 0 595 842]"),
+		[]byte("/BaseFont /STSong-Light"),
+		[]byte("raw:正式报告"),
+		[]byte("raw:· 学校官网 (https://example.edu.cn/report)"),
+		[]byte("raw:table-cell:双高计划"),
+		[]byte("raw:Page 1 of"),
+	} {
+		if !bytes.Contains(store.data, snippet) {
+			t.Fatalf("expected standard PDF to contain %q", snippet)
+		}
 	}
 }
 
-func TestExecuteFallsBackOnlyWhenRuntimeUnavailable(t *testing.T) {
+func TestExecuteDoesNotDependOnBrowserRuntime(t *testing.T) {
 	store := &recordingStore{}
 	sandbox := &stubSandboxExecutor{result: tools.ExecutionResult{Error: &tools.ExecutionError{ErrorClass: tools.ErrorClassToolExecutionFailed, Message: "Cannot find module 'playwright'"}}}
 	res := NewToolExecutor(store, sandbox).Execute(context.Background(), ToolName, map[string]any{
 		"filename": "report.pdf",
-		"content":  "# Report",
+		"content":  "# 报告\n\n正文。",
 	}, tools.ExecutionContext{RunID: uuid.New()}, "call_1")
 
 	if res.Error != nil {
-		t.Fatalf("expected legacy fallback on runtime unavailable, got %v", res.Error)
+		t.Fatalf("expected standard renderer to work without browser runtime, got %v", res.Error)
 	}
 	if !bytes.HasPrefix(store.data, []byte("%PDF-1.4")) {
-		t.Fatalf("expected fallback legacy PDF bytes")
+		t.Fatalf("expected standard PDF bytes")
 	}
 }
 
-func TestExecuteReturnsErrorWhenRendererFailsButRuntimeExists(t *testing.T) {
+func TestExecuteIgnoresBrowserRendererFailures(t *testing.T) {
 	store := &recordingStore{}
 	sandbox := &stubSandboxExecutor{result: tools.ExecutionResult{Error: &tools.ExecutionError{ErrorClass: tools.ErrorClassToolExecutionFailed, Message: "page.pdf failed: navigation crashed"}}}
 	res := NewToolExecutor(store, sandbox).Execute(context.Background(), ToolName, map[string]any{
@@ -226,49 +192,64 @@ func TestExecuteReturnsErrorWhenRendererFailsButRuntimeExists(t *testing.T) {
 		"content":  "# Report",
 	}, tools.ExecutionContext{RunID: uuid.New()}, "call_1")
 
-	if res.Error == nil {
-		t.Fatal("expected render error")
+	if res.Error != nil {
+		t.Fatalf("expected standard renderer to ignore browser renderer failures, got %v", res.Error)
 	}
-	if store.key != "" {
-		t.Fatalf("expected no fallback upload on runtime-present failure, got %s", store.key)
+	if !bytes.HasPrefix(store.data, []byte("%PDF-1.4")) {
+		t.Fatalf("expected standard PDF bytes")
 	}
 }
 
-func TestRenderFormalReportHTMLUsesRequestedFonts(t *testing.T) {
-	html, err := renderFormalReportHTML("正式报告", "# 正式报告\n\n正文\n\n```go\nfmt.Println(\"hi\")\n```")
+func TestRenderStandardFormalReportPDFIncludesHeadingListTableAndFooter(t *testing.T) {
+	pdf, err := renderStandardFormalReportPDF("正式报告", "## 数据来源\n\n- [学校官网](https://example.edu.cn)\n\n| 荣誉 / 排名 | 级别 / 来源 |\n| --- | --- |\n| 双高计划 | 教育部 |")
 	if err != nil {
-		t.Fatalf("render html: %v", err)
+		t.Fatalf("render pdf: %v", err)
 	}
-	if !strings.Contains(html, `"STFangsong", "FangSong", "仿宋", "STFangsong-Light", "Songti SC", serif`) {
-		t.Fatalf("expected chinese body font stack in html: %s", html)
-	}
-	if !strings.Contains(html, `Menlo, Monaco, "Courier New", monospace`) {
-		t.Fatalf("expected code font stack in html: %s", html)
-	}
-	if !strings.Contains(html, "@page") || !strings.Contains(html, "size: A4") {
-		t.Fatalf("expected print page css in html: %s", html)
-	}
-}
-
-func TestRenderFormalReportHTMLRendersMarkdownStructure(t *testing.T) {
-	html, err := renderFormalReportHTML("正式报告", "## 数据来源\n\n- [学校官网](https://example.edu.cn)\n\n| 列 | 值 |\n| --- | --- |\n| A | B |")
-	if err != nil {
-		t.Fatalf("render html: %v", err)
-	}
-	for _, snippet := range []string{"<h2>数据来源</h2>", "<li><a href=\"https://example.edu.cn\">学校官网</a></li>", "<table>"} {
-		if !strings.Contains(html, snippet) {
-			t.Fatalf("expected snippet %q in html: %s", snippet, html)
-		}
-	}
-}
-
-func TestRenderLegacyFormalReportPDFIncludesHeadingAndBulletStyling(t *testing.T) {
-	pdf := renderLegacyFormalReportPDF("正式报告", "## 数据来源\n\n- [学校官网](https://example.edu.cn)")
-	if !bytes.Contains(pdf, []byte("/F1 15 Tf")) {
+	if !bytes.Contains(pdf, []byte("/F1 15")) {
 		t.Fatalf("expected second-level heading font size in PDF stream")
 	}
 	if !bytes.Contains(pdf, []byte("raw:· 学校官网 (https://example.edu.cn)")) {
 		t.Fatalf("expected bullet and link text in PDF stream")
+	}
+	if !bytes.Contains(pdf, []byte("raw:table-cell:双高计划")) {
+		t.Fatalf("expected table cell text in PDF stream")
+	}
+	if !bytes.Contains(pdf, []byte("raw:Page 1 of")) {
+		t.Fatalf("expected page footer in PDF stream")
+	}
+}
+
+func TestRenderStandardFormalReportPDFDrawsTableGridAndCells(t *testing.T) {
+	pdf, err := renderStandardFormalReportPDF("正式报告", "| 荣誉 / 排名 | 级别 / 来源 | 详情 |\n| --- | --- | --- |\n| 双高高职相关公开信息 | 苏州工业职业技术学院 | http://www.siit.cn |\n| 产教融合、校企合作或专业群建设线索 | 公开资料待复核 | 需后续核验 |")
+	if err != nil {
+		t.Fatalf("render pdf: %v", err)
+	}
+	for _, snippet := range [][]byte{
+		[]byte(" re S\n"),
+		[]byte("raw:table-cell:荣誉 / 排名"),
+		[]byte("raw:table-cell:苏州工业职业技术学院"),
+		[]byte("raw:table-cell:http://www.siit.cn"),
+	} {
+		if !bytes.Contains(pdf, snippet) {
+			t.Fatalf("expected table PDF to contain %q", snippet)
+		}
+	}
+	if bytes.Contains(pdf, []byte("raw:荣誉 / 排名    级别 / 来源")) {
+		t.Fatalf("expected table to be rendered as cells, not a joined text row")
+	}
+}
+
+func TestRenderStandardFormalReportPDFPaginatesLongReports(t *testing.T) {
+	longBody := strings.Repeat("这是用于验证标准 PDF 分页能力的长段落，包含产教融合、校企合作、实训基地、人才培养质量和数据来源等信息。\n\n", 80)
+	pdf, err := renderStandardFormalReportPDF("长报告", "# 长报告\n\n"+longBody)
+	if err != nil {
+		t.Fatalf("render pdf: %v", err)
+	}
+	if bytes.Count(pdf, []byte("/Type /Page ")) < 2 {
+		t.Fatalf("expected multiple PDF pages")
+	}
+	if !bytes.Contains(pdf, []byte("raw:Page 2 of")) {
+		t.Fatalf("expected second page footer")
 	}
 }
 

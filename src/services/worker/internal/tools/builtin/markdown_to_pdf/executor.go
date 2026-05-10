@@ -3,17 +3,12 @@ package markdowntopdf
 import (
 	"bytes"
 	"context"
-	"encoding/base64"
-	"encoding/json"
 	"fmt"
-	stdhtml "html"
-	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
 	"unicode/utf16"
-	"unicode/utf8"
 
 	"arkloop/services/shared/objectstore"
 	"arkloop/services/worker/internal/tools"
@@ -29,16 +24,17 @@ const (
 	errorArgsInvalid  = "tool.args_invalid"
 	errorUploadFailed = "tool.upload_failed"
 
-	pdfMimeType             = "application/pdf"
-	sandboxExecToolName     = "exec_command"
-	sandboxExecTimeoutMs    = 120000
-	sandboxExecTier         = "browser"
-	sandboxHTMLBase64EnvKey = "ARKLOOP_PDF_HTML_BASE64"
-	sandboxOutputEnvKey     = "ARKLOOP_PDF_OUTPUT"
-	hostOutputEnvKey        = "ARKLOOP_PDF_HOST_OUTPUT"
-)
+	pdfMimeType = "application/pdf"
 
-const sandboxRenderCommand = `node -e 'const fs = require("fs"); const path = require("path"); const { chromium } = require("playwright"); (async()=>{ const html = Buffer.from(process.env.ARKLOOP_PDF_HTML_BASE64 || "", "base64").toString("utf8"); const output = process.env.ARKLOOP_PDF_OUTPUT || "/tmp/output/report.pdf"; const hostOutput = process.env.ARKLOOP_PDF_HOST_OUTPUT || ""; fs.mkdirSync(path.dirname(output), { recursive: true }); if (hostOutput) fs.mkdirSync(path.dirname(hostOutput), { recursive: true }); const browser = await chromium.launch({ headless: true, executablePath: process.env.AGENT_BROWSER_CHROME_PATH || "/usr/bin/chromium", args: ["--no-sandbox", "--disable-dev-shm-usage"] }); try { const page = await browser.newPage(); await page.setContent(html, { waitUntil: "load" }); await page.emulateMedia({ media: "print" }); await page.pdf({ path: output, format: "A4", printBackground: true, preferCSSPageSize: true, margin: { top: "18mm", right: "16mm", bottom: "20mm", left: "16mm" } }); if (hostOutput) fs.copyFileSync(output, hostOutput); } finally { await browser.close(); } })().catch((err)=>{ console.error(err && err.stack ? err.stack : String(err)); process.exit(1); });'`
+	pdfPageWidth    = 595.0
+	pdfPageHeight   = 842.0
+	pdfMarginLeft   = 72.0
+	pdfMarginRight  = 72.0
+	pdfContentTop   = 770.0
+	pdfFooterY      = 50.0
+	pdfContentWidth = pdfPageWidth - pdfMarginLeft - pdfMarginRight
+	pdfTableGap     = 12.0
+)
 
 var (
 	markdownLinkPattern = regexp.MustCompile(`\[([^\]]+)\]\(([^)]+)\)`)
@@ -49,24 +45,12 @@ type ToolExecutor struct {
 	store interface {
 		PutObject(ctx context.Context, key string, data []byte, options objectstore.PutOptions) error
 	}
-	sandboxExecutor tools.Executor
-}
-
-type artifactResult struct {
-	Key      string `json:"key"`
-	Filename string `json:"filename"`
-	Size     int64  `json:"size"`
-	MimeType string `json:"mime_type"`
 }
 
 func NewToolExecutor(store interface {
 	PutObject(ctx context.Context, key string, data []byte, options objectstore.PutOptions) error
-}, sandboxExecutor ...tools.Executor) *ToolExecutor {
-	executor := &ToolExecutor{store: store}
-	if len(sandboxExecutor) > 0 {
-		executor.sandboxExecutor = sandboxExecutor[0]
-	}
-	return executor
+}, _ ...tools.Executor) *ToolExecutor {
+	return &ToolExecutor{store: store}
 }
 
 func (e *ToolExecutor) Execute(
@@ -105,102 +89,12 @@ func (e *ToolExecutor) Execute(
 		title = strings.TrimSuffix(filepath.Base(filename), filepath.Ext(filename))
 	}
 
-	htmlDoc, err := renderFormalReportHTML(title, content)
+	pdfBytes, err := renderStandardFormalReportPDF(title, content)
 	if err != nil {
-		return errResult(tools.ErrorClassToolExecutionFailed, fmt.Sprintf("render html failed: %s", err.Error()), started)
+		return errResult(tools.ErrorClassToolExecutionFailed, fmt.Sprintf("render pdf failed: %s", err.Error()), started)
 	}
 
-	if sandboxResult, ok := e.tryRenderWithSandbox(ctx, execCtx, filename, title, htmlDoc, started); ok {
-		return sandboxResult
-	}
-
-	pdfBytes := renderLegacyFormalReportPDF(title, content)
 	return e.uploadLocalPDF(ctx, execCtx, filename, title, pdfBytes, started)
-}
-
-func (e *ToolExecutor) tryRenderWithSandbox(
-	ctx context.Context,
-	execCtx tools.ExecutionContext,
-	filename string,
-	title string,
-	htmlDoc string,
-	started time.Time,
-) (tools.ExecutionResult, bool) {
-	if e == nil || e.sandboxExecutor == nil {
-		return tools.ExecutionResult{}, false
-	}
-
-	outputFilename := sandboxOutputFilename(filename, started)
-	sandboxOutputPath := filepath.ToSlash(filepath.Join("/tmp/output", outputFilename))
-	hostOutputPath := filepath.Join(os.TempDir(), outputFilename)
-	sandboxArgs := map[string]any{
-		"command":    sandboxRenderCommand,
-		"mode":       "buffered",
-		"timeout_ms": sandboxExecTimeoutMs,
-		"env": map[string]any{
-			sandboxHTMLBase64EnvKey: base64.StdEncoding.EncodeToString([]byte(htmlDoc)),
-			sandboxOutputEnvKey:     sandboxOutputPath,
-			hostOutputEnvKey:        hostOutputPath,
-		},
-	}
-	sandboxCtx := execCtx
-	sandboxCtx.Budget = cloneBudgetWithSandboxProfile(execCtx.Budget, sandboxExecToolName, sandboxExecTier)
-	result := e.sandboxExecutor.Execute(ctx, sandboxExecToolName, sandboxArgs, sandboxCtx, "")
-	if result.Error != nil {
-		if isRuntimeUnavailable(result.Error, result.ResultJSON) {
-			return tools.ExecutionResult{}, false
-		}
-		return result, true
-	}
-
-	if hostResult, ok := e.tryReadHostRenderedPDF(ctx, execCtx, filename, title, hostOutputPath, started); ok {
-		return hostResult, true
-	}
-
-	artifacts, ok := decodeArtifactResults(result.ResultJSON["artifacts"])
-	if !ok || len(artifacts) == 0 {
-		exitCode := intValue(result.ResultJSON["exit_code"])
-		if exitCode != 0 {
-			message := renderFailureMessage(result.ResultJSON, exitCode)
-			err := &tools.ExecutionError{ErrorClass: tools.ErrorClassToolExecutionFailed, Message: message}
-			if isRuntimeUnavailable(err, result.ResultJSON) {
-				return tools.ExecutionResult{}, false
-			}
-			return tools.ExecutionResult{Error: err, DurationMs: durationMs(started)}, true
-		}
-		return errResult(tools.ErrorClassToolExecutionFailed, "PDF render produced no artifact", started), true
-	}
-
-	normalized := normalizeArtifactResults(artifacts, filename, title)
-	if len(normalized) == 0 {
-		return errResult(tools.ErrorClassToolExecutionFailed, "PDF render produced no downloadable artifact", started), true
-	}
-
-	return tools.ExecutionResult{
-		ResultJSON: map[string]any{
-			"artifacts": normalized,
-		},
-		DurationMs: durationMs(started),
-	}, true
-}
-
-func (e *ToolExecutor) tryReadHostRenderedPDF(
-	ctx context.Context,
-	execCtx tools.ExecutionContext,
-	filename string,
-	title string,
-	hostOutputPath string,
-	started time.Time,
-) (tools.ExecutionResult, bool) {
-	data, err := os.ReadFile(hostOutputPath)
-	if err != nil {
-		return tools.ExecutionResult{}, false
-	}
-	defer func() { _ = os.Remove(hostOutputPath) }()
-	if len(data) == 0 {
-		return errResult(tools.ErrorClassToolExecutionFailed, "desktop PDF render produced empty output", started), true
-	}
-	return e.uploadLocalPDF(ctx, execCtx, filename, title, data, started), true
 }
 
 func (e *ToolExecutor) uploadLocalPDF(
@@ -259,228 +153,6 @@ func normalizePDFFilename(filename string) string {
 	return strings.TrimSuffix(filename, ext) + ".pdf"
 }
 
-func renderFormalReportHTML(title, markdown string) (string, error) {
-	var body bytes.Buffer
-	if err := reportMarkdown.Convert([]byte(markdown), &body); err != nil {
-		return "", err
-	}
-
-	safeTitle := stdhtml.EscapeString(strings.TrimSpace(title))
-	var titleBlock strings.Builder
-	if shouldInjectTitle(title, markdown) {
-		titleBlock.WriteString(`<header class="report-header"><h1 class="report-title">`)
-		titleBlock.WriteString(safeTitle)
-		titleBlock.WriteString(`</h1></header>`)
-	}
-
-	return `<!doctype html>
-<html lang="zh-CN">
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>` + safeTitle + `</title>
-  <style>
-    :root {
-      color-scheme: light;
-      --report-text: #24292f;
-      --report-muted: #59636e;
-      --report-border: #d0d7de;
-      --report-border-muted: #eaeef2;
-      --report-surface: #ffffff;
-      --report-surface-subtle: #f6f8fa;
-      --report-link: #0969da;
-      --report-code-bg: rgba(175, 184, 193, 0.2);
-      --report-shadow: 0 1px 2px rgba(31, 35, 40, 0.04);
-      --report-font-body: "STFangsong", "FangSong", "仿宋", "STFangsong-Light", "Songti SC", serif;
-      --report-font-code: Menlo, Monaco, "Courier New", monospace;
-    }
-    @page {
-      size: A4;
-      margin: 18mm 16mm 20mm;
-    }
-    * {
-      box-sizing: border-box;
-    }
-    html {
-      background: var(--report-surface);
-    }
-    body {
-      margin: 0;
-      color: var(--report-text);
-      background: var(--report-surface);
-      font-family: var(--report-font-body);
-      font-size: 12pt;
-      line-height: 1.75;
-      -webkit-font-smoothing: antialiased;
-      text-rendering: optimizeLegibility;
-      word-break: break-word;
-    }
-    main {
-      width: 100%;
-      margin: 0 auto;
-    }
-    .report-header {
-      margin: 0 0 18pt;
-      padding-bottom: 10pt;
-      border-bottom: 1px solid var(--report-border);
-      page-break-after: avoid;
-    }
-    .report-title {
-      margin: 0;
-      font-size: 22pt;
-      font-weight: 700;
-      line-height: 1.3;
-      letter-spacing: 0;
-    }
-    .markdown-body {
-      color: var(--report-text);
-      font-family: var(--report-font-body);
-      font-size: 12pt;
-      line-height: 1.75;
-    }
-    .markdown-body > *:first-child {
-      margin-top: 0;
-    }
-    .markdown-body > *:last-child {
-      margin-bottom: 0;
-    }
-    .markdown-body h1,
-    .markdown-body h2,
-    .markdown-body h3,
-    .markdown-body h4,
-    .markdown-body h5,
-    .markdown-body h6 {
-      margin-top: 1.6em;
-      margin-bottom: 0.7em;
-      font-weight: 700;
-      line-height: 1.35;
-      page-break-after: avoid;
-      page-break-inside: avoid;
-      letter-spacing: 0;
-    }
-    .markdown-body h1 {
-      font-size: 20pt;
-      border-bottom: 1px solid var(--report-border);
-      padding-bottom: 0.3em;
-    }
-    .markdown-body h2 {
-      font-size: 16pt;
-      border-bottom: 1px solid var(--report-border-muted);
-      padding-bottom: 0.25em;
-    }
-    .markdown-body h3 {
-      font-size: 14pt;
-    }
-    .markdown-body p,
-    .markdown-body ul,
-    .markdown-body ol,
-    .markdown-body blockquote,
-    .markdown-body pre,
-    .markdown-body table {
-      margin-top: 0;
-      margin-bottom: 1em;
-    }
-    .markdown-body ul,
-    .markdown-body ol {
-      padding-left: 1.5em;
-    }
-    .markdown-body li + li {
-      margin-top: 0.3em;
-    }
-    .markdown-body li > ul,
-    .markdown-body li > ol {
-      margin-top: 0.35em;
-      margin-bottom: 0.35em;
-    }
-    .markdown-body a {
-      color: var(--report-link);
-      text-decoration: none;
-      overflow-wrap: anywhere;
-    }
-    .markdown-body strong {
-      font-weight: 700;
-    }
-    .markdown-body em {
-      font-style: italic;
-    }
-    .markdown-body code,
-    .markdown-body pre,
-    .markdown-body kbd,
-    .markdown-body samp {
-      font-family: var(--report-font-code);
-    }
-    .markdown-body code {
-      padding: 0.14em 0.35em;
-      border-radius: 6px;
-      background: var(--report-code-bg);
-      font-size: 0.92em;
-    }
-    .markdown-body pre {
-      padding: 14px 16px;
-      overflow: hidden;
-      background: var(--report-surface-subtle);
-      border: 1px solid var(--report-border-muted);
-      border-radius: 10px;
-      box-shadow: var(--report-shadow);
-      page-break-inside: avoid;
-      white-space: pre-wrap;
-      word-break: break-word;
-    }
-    .markdown-body pre code {
-      padding: 0;
-      background: transparent;
-      border-radius: 0;
-      font-size: 0.9em;
-      line-height: 1.65;
-    }
-    .markdown-body blockquote {
-      margin-left: 0;
-      padding: 0.2em 1em;
-      color: var(--report-muted);
-      border-left: 4px solid var(--report-border);
-      background: var(--report-surface-subtle);
-    }
-    .markdown-body table {
-      width: 100%;
-      border-collapse: collapse;
-      font-size: 10.5pt;
-      page-break-inside: avoid;
-    }
-    .markdown-body th,
-    .markdown-body td {
-      padding: 8px 10px;
-      border: 1px solid var(--report-border);
-      text-align: left;
-      vertical-align: top;
-    }
-    .markdown-body th {
-      background: var(--report-surface-subtle);
-      font-weight: 700;
-    }
-    .markdown-body tr:nth-child(even) td {
-      background: #fbfcfd;
-    }
-    .markdown-body hr {
-      border: 0;
-      border-top: 1px solid var(--report-border);
-      margin: 1.5em 0;
-    }
-    .markdown-body img,
-    .markdown-body svg {
-      max-width: 100%;
-      page-break-inside: avoid;
-    }
-  </style>
-</head>
-<body>
-  <main>
-    ` + titleBlock.String() + `
-    <article class="markdown-body">` + body.String() + `</article>
-  </main>
-</body>
-</html>`, nil
-}
-
 func shouldInjectTitle(title, markdown string) bool {
 	title = normalizeHeadingText(title)
 	if title == "" {
@@ -503,153 +175,13 @@ func normalizeHeadingText(value string) string {
 	return strings.Join(strings.Fields(strings.TrimSpace(value)), " ")
 }
 
-func sandboxOutputFilename(filename string, started time.Time) string {
-	base := filepath.Base(filename)
-	if base == "." || base == "" {
-		base = "report.pdf"
-	}
-	return fmt.Sprintf("%d-%s", started.UnixNano(), base)
-}
-
-func cloneBudgetWithSandboxProfile(budget map[string]any, key string, tier string) map[string]any {
-	cloned := map[string]any{}
-	for existingKey, value := range budget {
-		cloned[existingKey] = value
-	}
-	profiles := map[string]any{}
-	if rawProfiles, ok := cloned["sandbox_profiles"].(map[string]any); ok {
-		for existingKey, value := range rawProfiles {
-			profiles[existingKey] = value
-		}
-	}
-	profiles[key] = tier
-	cloned["sandbox_profiles"] = profiles
-	return cloned
-}
-
-func isSandboxUnavailable(err *tools.ExecutionError) bool {
-	if err == nil {
-		return false
-	}
-	switch strings.TrimSpace(err.ErrorClass) {
-	case "config.missing", "tool.unavailable", "tool.not_registered":
-		return true
-	default:
-		return false
-	}
-}
-
-func isRuntimeUnavailable(err *tools.ExecutionError, resultJSON map[string]any) bool {
-	if isSandboxUnavailable(err) {
-		return true
-	}
-	message := ""
-	if err != nil {
-		message = err.Message
-	}
-	if strings.TrimSpace(message) == "" {
-		message = strings.TrimSpace(strings.Join([]string{stringValue(resultJSON["stderr"]), stringValue(resultJSON["stdout"])}, "\n"))
-	}
-	lower := strings.ToLower(message)
-	for _, marker := range []string{
-		"cannot find module 'playwright'",
-		"cannot find module \"playwright\"",
-		"playwright",
-		"chromium",
-		"agent_browser_chrome_path",
-		"node: not found",
-		"node.exe",
-		"is not recognized as an internal or external command",
-	} {
-		if strings.Contains(lower, marker) {
-			return true
-		}
-	}
-	return false
-}
-
-func renderFailureMessage(resultJSON map[string]any, exitCode int) string {
-	message := strings.TrimSpace(strings.Join([]string{stringValue(resultJSON["stderr"]), stringValue(resultJSON["stdout"])}, "\n"))
-	if message == "" {
-		message = fmt.Sprintf("PDF render failed with exit code %d", exitCode)
-	}
-	return message
-}
-
-func decodeArtifactResults(raw any) ([]artifactResult, bool) {
-	if raw == nil {
-		return nil, false
-	}
-	payload, err := json.Marshal(raw)
-	if err != nil {
-		return nil, false
-	}
-	var artifacts []artifactResult
-	if err := json.Unmarshal(payload, &artifacts); err != nil {
-		return nil, false
-	}
-	return artifacts, true
-}
-
-func normalizeArtifactResults(artifacts []artifactResult, filename string, title string) []map[string]any {
-	out := make([]map[string]any, 0, len(artifacts))
-	for _, artifact := range artifacts {
-		if strings.TrimSpace(artifact.Key) == "" {
-			continue
-		}
-		mimeType := strings.TrimSpace(artifact.MimeType)
-		if mimeType == "" {
-			mimeType = pdfMimeType
-		}
-		out = append(out, map[string]any{
-			"key":       artifact.Key,
-			"filename":  filename,
-			"size":      artifact.Size,
-			"mime_type": mimeType,
-			"title":     title,
-			"display":   "download",
-		})
-	}
-	return out
-}
-
-func stringValue(raw any) string {
-	value, _ := raw.(string)
-	return value
-}
-
-func intValue(raw any) int {
-	switch value := raw.(type) {
-	case int:
-		return value
-	case int32:
-		return int(value)
-	case int64:
-		return int(value)
-	case float64:
-		return int(value)
-	default:
-		return 0
-	}
-}
-
-func renderLegacyFormalReportPDF(title, markdown string) []byte {
-	lines := markdownToReportLines(title, markdown)
-	if len(lines) == 0 {
-		lines = []reportLine{{Text: title, FontSize: 18, Leading: 22, IsBold: true}}
+func renderStandardFormalReportPDF(title, markdown string) ([]byte, error) {
+	blocks := markdownToReportBlocks(title, markdown)
+	if len(blocks) == 0 {
+		blocks = []reportBlock{{Line: reportLine{Text: title, FontSize: 18, Leading: 22, IsBold: true}}}
 	}
 
-	const linesPerPage = 42
-	var pages [][]reportLine
-	for i := 0; i < len(lines); {
-		end := i + linesPerPage
-		if end > len(lines) {
-			end = len(lines)
-		}
-		// Try not to split tables or lists if possible (simple heuristic)
-		pages = append(pages, lines[i:end])
-		i = end
-	}
+	pages := paginateReportBlocks(blocks)
 
 	var objects []string
 	objects = append(objects, "<< /Type /Catalog /Pages 2 0 R >>")
@@ -659,18 +191,20 @@ func renderLegacyFormalReportPDF(title, markdown string) []byte {
 		kids = append(kids, fmt.Sprintf("%d 0 R", pageObj))
 	}
 	objects = append(objects, fmt.Sprintf("<< /Type /Pages /Kids [%s] /Count %d >>", strings.Join(kids, " "), len(pages)))
-	fontObj := 3 + len(pages)*2
+	cjkFontObj := 3 + len(pages)*2
+	latinFontObj := cjkFontObj + 2
 
-	for i, pageLines := range pages {
+	for i, pageBlocks := range pages {
 		pageObj := 3 + i*2
 		contentObj := pageObj + 1
-		objects = append(objects, fmt.Sprintf("<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 %d 0 R >> >> /Contents %d 0 R >>", fontObj, contentObj))
-		stream := buildPageContentStream(pageLines, i+1, len(pages))
+		objects = append(objects, fmt.Sprintf("<< /Type /Page /Parent 2 0 R /MediaBox [0 0 %.0f %.0f] /Resources << /Font << /F1 %d 0 R /F2 %d 0 R >> >> /Contents %d 0 R >>", pdfPageWidth, pdfPageHeight, cjkFontObj, latinFontObj, contentObj))
+		stream := buildPageContentStream(pageBlocks, i+1, len(pages))
 		objects = append(objects, fmt.Sprintf("<< /Length %d >>\nstream\n%s\nendstream", len(stream), stream))
 	}
 	objects = append(objects,
-		fmt.Sprintf("<< /Type /Font /Subtype /Type0 /BaseFont /STFangsong-Light /Encoding /UniGB-UCS2-H /DescendantFonts [%d 0 R] >>", fontObj+1),
-		"<< /Type /Font /Subtype /CIDFontType0 /BaseFont /STFangsong-Light /CIDSystemInfo << /Registry (Adobe) /Ordering (GB1) /Supplement 2 >> >>",
+		fmt.Sprintf("<< /Type /Font /Subtype /Type0 /BaseFont /STSong-Light /Encoding /UniGB-UCS2-H /DescendantFonts [%d 0 R] >>", cjkFontObj+1),
+		"<< /Type /Font /Subtype /CIDFontType0 /BaseFont /STSong-Light /CIDSystemInfo << /Registry (Adobe) /Ordering (GB1) /Supplement 2 >> >>",
+		"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>",
 	)
 
 	var out bytes.Buffer
@@ -687,7 +221,66 @@ func renderLegacyFormalReportPDF(title, markdown string) []byte {
 		fmt.Fprintf(&out, "%010d 00000 n \n", offsets[i])
 	}
 	fmt.Fprintf(&out, "trailer\n<< /Size %d /Root 1 0 R >>\nstartxref\n%d\n%%%%EOF\n", len(objects)+1, xrefOffset)
-	return out.Bytes()
+	pdfBytes := out.Bytes()
+	if !bytes.HasPrefix(pdfBytes, []byte("%PDF-1.4")) {
+		return nil, fmt.Errorf("invalid pdf header")
+	}
+	return pdfBytes, nil
+}
+
+func paginateReportBlocks(blocks []reportBlock) [][]reportBlock {
+	const pageBottomPadding = 24.0
+	maxHeight := pdfContentTop - pdfFooterY - pageBottomPadding
+	var pages [][]reportBlock
+	var page []reportBlock
+	usedHeight := 0.0
+	for _, block := range blocks {
+		blockHeight := reportBlockHeight(block)
+		if len(page) > 0 && usedHeight+blockHeight > maxHeight {
+			pages = append(pages, page)
+			page = nil
+			usedHeight = 0
+			if block.Table == nil && strings.TrimSpace(block.Line.Text) == "" {
+				continue
+			}
+		}
+		page = append(page, block)
+		usedHeight += blockHeight
+	}
+	if len(page) > 0 {
+		pages = append(pages, page)
+	}
+	if len(pages) == 0 {
+		return [][]reportBlock{{}}
+	}
+	return pages
+}
+
+func reportBlockHeight(block reportBlock) float64 {
+	if block.Table != nil {
+		return block.Table.Height + pdfTableGap
+	}
+	return reportLineHeight(block.Line)
+}
+
+func reportLineHeight(line reportLine) float64 {
+	fontSize := line.FontSize
+	if fontSize <= 0 {
+		fontSize = 12
+	}
+	leading := line.Leading
+	if leading <= 0 {
+		leading = fontSize + 4
+	}
+	if strings.TrimSpace(line.Text) == "" {
+		return float64(leading) / 2.0
+	}
+	return float64(leading)
+}
+
+type reportBlock struct {
+	Line  reportLine
+	Table *reportTable
 }
 
 type reportLine struct {
@@ -699,13 +292,42 @@ type reportLine struct {
 	IsBullet bool
 }
 
-func buildPageContentStream(lines []reportLine, pageNumber, pageCount int) string {
-	var b strings.Builder
-	b.WriteString("BT\n/F1 12 Tf\n72 770 Td\n")
-	lastX := 72.0
-	lastY := 770.0
+type reportTable struct {
+	Rows         []reportTableRow
+	ColumnWidths []float64
+	Height       float64
+}
 
-	for _, line := range lines {
+type reportTableRow struct {
+	Cells    []reportTableCell
+	Height   float64
+	IsHeader bool
+}
+
+type reportTableCell struct {
+	Lines []string
+	Bold  bool
+}
+
+func buildPageContentStream(blocks []reportBlock, pageNumber, pageCount int) string {
+	var b strings.Builder
+	b.WriteString("BT\n")
+	lastX := pdfMarginLeft
+	lastY := pdfContentTop
+	fmt.Fprintf(&b, "%0.2f %0.2f Td\n", lastX, lastY)
+
+	for _, block := range blocks {
+		if block.Table != nil {
+			b.WriteString("ET\n")
+			writePDFTable(&b, block.Table, lastX, lastY)
+			lastY -= block.Table.Height + pdfTableGap
+			lastX = pdfMarginLeft
+			b.WriteString("BT\n")
+			fmt.Fprintf(&b, "%0.2f %0.2f Td\n", lastX, lastY)
+			continue
+		}
+
+		line := block.Line
 		fontSize := line.FontSize
 		if fontSize <= 0 {
 			fontSize = 12
@@ -715,14 +337,13 @@ func buildPageContentStream(lines []reportLine, pageNumber, pageCount int) strin
 			leading = fontSize + 4
 		}
 
-		// Reset X if indented
-		targetX := 72.0 + float64(line.Indent)*12.0
+		targetX := pdfMarginLeft + float64(line.Indent)*12.0
 		if targetX != lastX {
-			fmt.Fprintf(&b, "%f %f Td\n", targetX-lastX, 0.0)
+			fmt.Fprintf(&b, "%0.2f %0.2f Td\n", targetX-lastX, 0.0)
 			lastX = targetX
 		}
 
-		fmt.Fprintf(&b, "/F1 %d Tf\n%d TL\n", fontSize, leading)
+		fmt.Fprintf(&b, "%d TL\n", leading)
 		if line.IsBold {
 			b.WriteString("2 Tr 0.4 w\n")
 		} else {
@@ -735,36 +356,126 @@ func buildPageContentStream(lines []reportLine, pageNumber, pageCount int) strin
 		}
 
 		if strings.TrimSpace(text) == "" {
-			fmt.Fprintf(&b, "0 -%d Td\n", leading/2)
-			lastY -= float64(leading) / 2.0
+			blankHeight := reportLineHeight(line)
+			fmt.Fprintf(&b, "0 -%0.2f Td\n", blankHeight)
+			lastY -= blankHeight
 			continue
 		}
 
-		fmt.Fprintf(&b, "%% raw:%s\n<%s> Tj\nT*\n", escapePDFComment(text), encodePDFTextHex(text))
+		fmt.Fprintf(&b, "%% raw:%s\n", escapePDFComment(text))
+		writePDFTextRuns(&b, text, fontSize)
+		b.WriteString("\nT*\n")
 		lastY -= float64(leading)
 	}
 
-	// Footer
-	b.WriteString("0 Tr 0 w\n/F1 10 Tf\n")
-	footerY := 50.0
-	fmt.Fprintf(&b, "%f %f Td\n", 72.0-lastX, footerY-lastY)
+	b.WriteString("0 Tr 0 w\n")
+	fmt.Fprintf(&b, "%0.2f %0.2f Td\n", pdfMarginLeft-lastX, pdfFooterY-lastY)
 	pageText := fmt.Sprintf("Page %d of %d", pageNumber, pageCount)
-	fmt.Fprintf(&b, "<%s> Tj\n", encodePDFTextHex(pageText))
+	fmt.Fprintf(&b, "%% raw:%s\n", escapePDFComment(pageText))
+	writePDFTextRuns(&b, pageText, 10)
 	b.WriteString("ET")
 	return b.String()
 }
 
+func writePDFTextRuns(b *strings.Builder, text string, fontSize int) {
+	for _, run := range splitPDFTextRuns(text) {
+		if run.Text == "" {
+			continue
+		}
+		if run.CJK {
+			fmt.Fprintf(b, "/F1 %d Tf <%s> Tj\n", fontSize, encodePDFTextHex(run.Text))
+			continue
+		}
+		fmt.Fprintf(b, "/F2 %d Tf (%s) Tj\n", fontSize, escapePDFLiteral(run.Text))
+	}
+}
+
+func writePDFTable(b *strings.Builder, table *reportTable, x float64, y float64) {
+	if table == nil {
+		return
+	}
+	currentY := y
+	for _, row := range table.Rows {
+		currentX := x
+		for col, cell := range row.Cells {
+			width := table.ColumnWidths[col]
+			fmt.Fprintf(b, "0 Tr 0 w\n%0.2f %0.2f %0.2f %0.2f re S\n", currentX, currentY-row.Height, width, row.Height)
+			textY := currentY - 15
+			for lineIndex, line := range cell.Lines {
+				if lineIndex == 0 {
+					fmt.Fprintf(b, "%% raw:table-cell:%s\n", escapePDFComment(line))
+				}
+				b.WriteString("BT\n")
+				fmt.Fprintf(b, "%0.2f %0.2f Td\n", currentX+6, textY-float64(lineIndex)*13)
+				if cell.Bold {
+					b.WriteString("2 Tr 0.35 w\n")
+				} else {
+					b.WriteString("0 Tr 0 w\n")
+				}
+				writePDFTextRuns(b, line, 9)
+				b.WriteString("ET\n")
+			}
+			currentX += width
+		}
+		currentY -= row.Height
+	}
+}
+
+type pdfTextRun struct {
+	Text string
+	CJK  bool
+}
+
+func splitPDFTextRuns(text string) []pdfTextRun {
+	var runs []pdfTextRun
+	var current strings.Builder
+	currentCJK := false
+	started := false
+	for _, r := range text {
+		runeUsesCIDFont := usesCIDFont(r)
+		if started && runeUsesCIDFont != currentCJK {
+			runs = append(runs, pdfTextRun{Text: current.String(), CJK: currentCJK})
+			current.Reset()
+		}
+		current.WriteRune(r)
+		currentCJK = runeUsesCIDFont
+		started = true
+	}
+	if current.Len() > 0 {
+		runs = append(runs, pdfTextRun{Text: current.String(), CJK: currentCJK})
+	}
+	return runs
+}
+
 func markdownToReportLines(title, markdown string) []reportLine {
+	blocks := markdownToReportBlocks(title, markdown)
+	lines := make([]reportLine, 0, len(blocks))
+	for _, block := range blocks {
+		if block.Table == nil {
+			lines = append(lines, block.Line)
+			continue
+		}
+		lines = append(lines, reportLine{Text: "[表格数据]", FontSize: 10, Leading: 14, IsBold: true})
+		for _, row := range block.Table.Rows {
+			var cells []string
+			for _, cell := range row.Cells {
+				cells = append(cells, strings.Join(cell.Lines, " "))
+			}
+			lines = append(lines, reportLine{Text: strings.Join(cells, "    "), FontSize: 10, Leading: 14})
+		}
+	}
+	return lines
+}
+
+func markdownToReportBlocks(title, markdown string) []reportBlock {
 	reader := text.NewReader([]byte(markdown))
 	parser := reportMarkdown.Parser()
 	doc := parser.Parse(reader)
 
-	var lines []reportLine
+	var blocks []reportBlock
 	if shouldInjectTitle(title, markdown) {
-		lines = append(lines,
-			reportLine{Text: title, FontSize: 18, Leading: 24, IsBold: true},
-			reportLine{},
-		)
+		blocks = appendLineBlocks(blocks, title, 0, 18, 24, true, 0, false)
+		blocks = append(blocks, lineBlock(reportLine{}))
 	}
 
 	ast.Walk(doc, func(n ast.Node, entering bool) (ast.WalkStatus, error) {
@@ -781,65 +492,249 @@ func markdownToReportLines(title, markdown string) []reportLine {
 			} else if level >= 3 {
 				fontSize = 13
 			}
-			text := string(node.Text(reader.Source()))
-			lines = append(lines, reportLine{Text: text, FontSize: fontSize, Leading: fontSize + 6, IsBold: true})
-			lines = append(lines, reportLine{})
+			text := inlineText(node, reader.Source())
+			blocks = appendLineBlocks(blocks, text, 0, fontSize, fontSize+6, true, 0, false)
+			blocks = append(blocks, lineBlock(reportLine{}))
 			return ast.WalkSkipChildren, nil
 
 		case *ast.Paragraph:
-			content := string(n.Text(reader.Source()))
-			lines = appendWrappedLines(lines, content, 80, 12, 18, false, 0, false)
-			lines = append(lines, reportLine{})
+			content := inlineText(n, reader.Source())
+			blocks = appendLineBlocks(blocks, content, 80, 12, 18, false, 0, false)
+			blocks = append(blocks, lineBlock(reportLine{}))
 			return ast.WalkSkipChildren, nil
 
 		case *ast.ListItem:
-			// Simple list handling
-			content := string(n.Text(reader.Source()))
-			lines = appendWrappedLines(lines, content, 75, 12, 18, false, 1, true)
+			content := inlineText(n, reader.Source())
+			blocks = appendLineBlocks(blocks, content, 75, 12, 18, false, 1, true)
 			return ast.WalkSkipChildren, nil
 
 		case *ast.FencedCodeBlock, *ast.CodeBlock:
-			lines = append(lines, reportLine{Text: "--- Code ---", FontSize: 10, Leading: 14, IsBold: true})
+			blocks = append(blocks, lineBlock(reportLine{Text: "--- Code ---", FontSize: 10, Leading: 14, IsBold: true}))
 			for i := 0; i < node.Lines().Len(); i++ {
 				line := node.Lines().At(i)
-				lines = append(lines, reportLine{Text: string(line.Value(reader.Source())), FontSize: 10, Leading: 14})
+				blocks = append(blocks, lineBlock(reportLine{Text: string(line.Value(reader.Source())), FontSize: 10, Leading: 14}))
 			}
-			lines = append(lines, reportLine{})
+			blocks = append(blocks, lineBlock(reportLine{}))
 			return ast.WalkSkipChildren, nil
 
 		case *ast.Blockquote:
-			content := string(n.Text(reader.Source()))
-			lines = appendWrappedLines(lines, "> "+content, 75, 12, 18, false, 1, false)
-			lines = append(lines, reportLine{})
+			content := inlineText(n, reader.Source())
+			blocks = appendLineBlocks(blocks, "> "+content, 75, 12, 18, false, 1, false)
+			blocks = append(blocks, lineBlock(reportLine{}))
 			return ast.WalkSkipChildren, nil
 
 		case *ast.ThematicBreak:
-			lines = append(lines, reportLine{Text: "________________________________________________________________________________", FontSize: 10, Leading: 12})
-			lines = append(lines, reportLine{})
+			blocks = append(blocks, lineBlock(reportLine{Text: "________________________________________________________________________________", FontSize: 10, Leading: 12}))
+			blocks = append(blocks, lineBlock(reportLine{}))
 			return ast.WalkSkipChildren, nil
 
 		case *extast.Table:
-			// Simple table rendering: row by row with separator
-			lines = append(lines, reportLine{Text: "[表格数据]", FontSize: 10, Leading: 14, IsBold: true})
-			for row := node.FirstChild(); row != nil; row = row.NextSibling() {
-				var cells []string
-				for cell := row.FirstChild(); cell != nil; cell = cell.NextSibling() {
-					cells = append(cells, string(cell.Text(reader.Source())))
-				}
-				rowText := "| " + strings.Join(cells, " | ") + " |"
-				lines = appendWrappedLines(lines, rowText, 80, 10, 14, false, 0, false)
-			}
-			lines = append(lines, reportLine{})
+			blocks = append(blocks, buildTableBlocks(node, reader.Source())...)
+			blocks = append(blocks, lineBlock(reportLine{}))
 			return ast.WalkSkipChildren, nil
 		}
 
 		return ast.WalkContinue, nil
 	})
 
-	return lines
+	return blocks
+}
+
+func lineBlock(line reportLine) reportBlock {
+	return reportBlock{Line: line}
+}
+
+func appendLineBlocks(blocks []reportBlock, line string, maxRunes int, fontSize int, leading int, isBold bool, indent int, isBullet bool) []reportBlock {
+	for _, reportLine := range wrapReportLines(line, maxRunes, fontSize, leading, isBold, indent, isBullet) {
+		blocks = append(blocks, lineBlock(reportLine))
+	}
+	return blocks
+}
+
+func buildTableBlocks(table *extast.Table, source []byte) []reportBlock {
+	rows := extractTableRows(table, source)
+	if len(rows) == 0 {
+		return nil
+	}
+	return []reportBlock{{
+		Table: buildReportTable(rows),
+	}}
+}
+
+func extractTableRows(table *extast.Table, source []byte) [][]string {
+	var rows [][]string
+	for row := table.FirstChild(); row != nil; row = row.NextSibling() {
+		var cells []string
+		for cell := row.FirstChild(); cell != nil; cell = cell.NextSibling() {
+			cells = append(cells, nodeText(cell, source))
+		}
+		if len(cells) > 0 {
+			rows = append(rows, cells)
+		}
+	}
+	return rows
+}
+
+func buildReportTable(rows [][]string) *reportTable {
+	columnCount := 0
+	for _, row := range rows {
+		if len(row) > columnCount {
+			columnCount = len(row)
+		}
+	}
+	if columnCount == 0 {
+		return nil
+	}
+
+	columnWidths := tableColumnWidths(rows, columnCount)
+	reportRows := make([]reportTableRow, 0, len(rows))
+	totalHeight := 0.0
+	for rowIndex, row := range rows {
+		cells := make([]reportTableCell, 0, columnCount)
+		rowLineCount := 1
+		for col := 0; col < columnCount; col++ {
+			text := ""
+			if col < len(row) {
+				text = row[col]
+			}
+			lines := wrapTextByWidth(cleanInlineMarkup(text), 9, columnWidths[col]-12)
+			if len(lines) == 0 {
+				lines = []string{""}
+			}
+			if len(lines) > rowLineCount {
+				rowLineCount = len(lines)
+			}
+			cells = append(cells, reportTableCell{Lines: lines, Bold: rowIndex == 0})
+		}
+		rowHeight := float64(rowLineCount)*13.0 + 10.0
+		if rowHeight < 24 {
+			rowHeight = 24
+		}
+		reportRows = append(reportRows, reportTableRow{Cells: cells, Height: rowHeight, IsHeader: rowIndex == 0})
+		totalHeight += rowHeight
+	}
+	return &reportTable{Rows: reportRows, ColumnWidths: columnWidths, Height: totalHeight}
+}
+
+func tableColumnWidths(rows [][]string, columnCount int) []float64 {
+	weights := make([]float64, columnCount)
+	for col := 0; col < columnCount; col++ {
+		weights[col] = 1
+	}
+	for _, row := range rows {
+		for col, cell := range row {
+			if col >= columnCount {
+				continue
+			}
+			width := textWidth(cleanInlineMarkup(cell), 9)
+			if width > weights[col] {
+				weights[col] = width
+			}
+		}
+	}
+
+	minWidth := 72.0
+	totalMinWidth := minWidth * float64(columnCount)
+	availableWidth := pdfContentWidth
+	if totalMinWidth > availableWidth {
+		minWidth = availableWidth / float64(columnCount)
+	}
+
+	totalWeight := 0.0
+	for _, weight := range weights {
+		totalWeight += weight
+	}
+	if totalWeight <= 0 {
+		totalWeight = float64(columnCount)
+	}
+
+	widths := make([]float64, columnCount)
+	remaining := availableWidth
+	for col := 0; col < columnCount; col++ {
+		width := availableWidth * weights[col] / totalWeight
+		if width < minWidth {
+			width = minWidth
+		}
+		widths[col] = width
+		remaining -= width
+	}
+	if remaining < 0 {
+		scale := availableWidth / (availableWidth - remaining)
+		for col := range widths {
+			widths[col] *= scale
+		}
+	}
+	return widths
+}
+
+func cleanInlineMarkup(line string) string {
+	line = markdownLinkPattern.ReplaceAllString(line, "$1 ($2)")
+	line = strings.ReplaceAll(line, "**", "")
+	line = strings.ReplaceAll(line, "__", "")
+	line = strings.ReplaceAll(line, "*", "")
+	line = strings.ReplaceAll(line, "_", "")
+	line = strings.ReplaceAll(line, "`", "")
+	return strings.TrimSpace(line)
+}
+
+func nodeText(n ast.Node, source []byte) string {
+	value := inlineText(n, source)
+	if value != "" {
+		return value
+	}
+	return normalizeInlineText(string(n.Text(source)))
+}
+
+func inlineText(n ast.Node, source []byte) string {
+	var parts []string
+	for child := n.FirstChild(); child != nil; child = child.NextSibling() {
+		appendInlineText(&parts, child, source)
+	}
+	return normalizeInlineText(strings.Join(parts, ""))
+}
+
+func appendInlineText(parts *[]string, n ast.Node, source []byte) {
+	switch node := n.(type) {
+	case *ast.Text:
+		*parts = append(*parts, string(node.Value(source)))
+		if node.SoftLineBreak() || node.HardLineBreak() {
+			*parts = append(*parts, " ")
+		}
+		return
+	case *ast.String:
+		*parts = append(*parts, string(node.Value))
+		return
+	case *ast.CodeSpan:
+		*parts = append(*parts, inlineText(node, source))
+		return
+	case *ast.AutoLink:
+		*parts = append(*parts, string(node.URL(source)))
+		return
+	case *ast.Link:
+		label := inlineText(node, source)
+		destination := strings.TrimSpace(string(node.Destination))
+		if destination != "" {
+			*parts = append(*parts, fmt.Sprintf("%s (%s)", label, destination))
+			return
+		}
+		*parts = append(*parts, label)
+		return
+	}
+
+	for child := n.FirstChild(); child != nil; child = child.NextSibling() {
+		appendInlineText(parts, child, source)
+	}
+}
+
+func normalizeInlineText(s string) string {
+	return strings.Join(strings.Fields(strings.TrimSpace(s)), " ")
 }
 
 func appendWrappedLines(lines []reportLine, line string, maxRunes int, fontSize int, leading int, isBold bool, indent int, isBullet bool) []reportLine {
+	return append(lines, wrapReportLines(line, maxRunes, fontSize, leading, isBold, indent, isBullet)...)
+}
+
+func wrapReportLines(line string, maxRunes int, fontSize int, leading int, isBold bool, indent int, isBullet bool) []reportLine {
 	line = strings.ReplaceAll(line, "\n", " ")
 	line = markdownLinkPattern.ReplaceAllString(line, "$1 ($2)")
 	line = strings.ReplaceAll(line, "**", "")
@@ -847,68 +742,118 @@ func appendWrappedLines(lines []reportLine, line string, maxRunes int, fontSize 
 	line = strings.ReplaceAll(line, "*", "")
 	line = strings.ReplaceAll(line, "_", "")
 	line = strings.ReplaceAll(line, "`", "")
-	line = insertCJKLatinSpacing(line)
 
-	// CJK 文本每行容纳字符数约为拉丁文本的 55%
-	if hasCJK(line) {
-		maxRunes = int(float64(maxRunes) * 0.55)
-		if maxRunes < 20 {
-			maxRunes = 20
+	availableWidth := pdfContentWidth - float64(indent)*12.0
+	if isBullet {
+		availableWidth -= textWidth("· ", fontSize)
+	}
+	if availableWidth < 120 {
+		availableWidth = 120
+	}
+	if maxRunes > 0 {
+		maxWidthByRunes := float64(maxRunes) * float64(fontSize) * 0.5
+		if maxWidthByRunes < availableWidth {
+			availableWidth = maxWidthByRunes
 		}
 	}
-
-	if utf8.RuneCountInString(line) <= maxRunes {
-		return append(lines, reportLine{Text: line, FontSize: fontSize, Leading: leading, IsBold: isBold, Indent: indent, IsBullet: isBullet})
+	wrapped := wrapTextByWidth(line, fontSize, availableWidth)
+	if len(wrapped) == 0 {
+		return []reportLine{{Text: line, FontSize: fontSize, Leading: leading, IsBold: isBold, Indent: indent, IsBullet: isBullet}}
 	}
-
-	runes := []rune(line)
-	cjk := hasCJK(line)
-	first := true
-	for len(runes) > 0 {
-		cut := maxRunes
-		if len(runes) < cut {
-			cut = len(runes)
-		} else if !cjk {
-			// 拉丁文本优先在空格处断行
-			for cut > maxRunes/2 && cut < len(runes) && runes[cut] != ' ' {
-				cut--
-			}
-			if cut <= maxRunes/2 {
-				cut = maxRunes
-			}
-		}
-		// CJK 文本在任意字符处断行，无需搜索空格
-
-		bullet := isBullet && first
-		lines = append(lines, reportLine{Text: strings.TrimSpace(string(runes[:cut])), FontSize: fontSize, Leading: leading, IsBold: isBold, Indent: indent, IsBullet: bullet})
-		runes = runes[cut:]
-		first = false
+	lines := make([]reportLine, 0, len(wrapped))
+	for i, wrappedLine := range wrapped {
+		lines = append(lines, reportLine{Text: wrappedLine, FontSize: fontSize, Leading: leading, IsBold: isBold, Indent: indent, IsBullet: isBullet && i == 0})
 	}
 	return lines
 }
 
-func hasCJK(s string) bool {
-	for _, r := range s {
-		if r >= 0x2E80 && r <= 0x9FFF {
-			return true
-		}
-		if r >= 0xAC00 && r <= 0xD7AF {
-			return true
-		} // Hangul
-		if r >= 0xF900 && r <= 0xFAFF {
-			return true
-		} // CJK Compatibility
-		if r >= 0xFE30 && r <= 0xFE4F {
-			return true
-		} // CJK Compatibility Forms
-		if r >= 0xFF00 && r <= 0xFFEF {
-			return true
-		} // Halfwidth/Fullwidth
+func wrapTextByWidth(text string, fontSize int, maxWidth float64) []string {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return []string{text}
 	}
-	return false
+
+	var lines []string
+	var current []rune
+	currentWidth := 0.0
+	lastBreak := -1
+	widthAtBreak := 0.0
+
+	flush := func() {
+		value := strings.TrimSpace(string(current))
+		if value != "" {
+			lines = append(lines, value)
+		}
+		current = current[:0]
+		currentWidth = 0
+		lastBreak = -1
+		widthAtBreak = 0
+	}
+
+	for _, r := range []rune(text) {
+		if r == '\n' {
+			flush()
+			continue
+		}
+		width := runeWidth(r, fontSize)
+		if currentWidth+width > maxWidth && len(current) > 0 {
+			if lastBreak > 0 {
+				lines = append(lines, strings.TrimSpace(string(current[:lastBreak])))
+				remainder := append([]rune(nil), current[lastBreak:]...)
+				current = []rune(strings.TrimLeftFunc(string(remainder), func(r rune) bool { return r == ' ' || r == '\t' }))
+				currentWidth = textWidth(string(current), fontSize)
+				lastBreak = -1
+				widthAtBreak = 0
+			} else {
+				flush()
+			}
+		}
+		current = append(current, r)
+		currentWidth += width
+		if isBreakableRune(r) {
+			lastBreak = len(current)
+			widthAtBreak = currentWidth
+		}
+		if widthAtBreak > maxWidth {
+			flush()
+		}
+	}
+	flush()
+	return lines
 }
 
-func isCJK(r rune) bool {
+func textWidth(text string, fontSize int) float64 {
+	width := 0.0
+	for _, r := range text {
+		width += runeWidth(r, fontSize)
+	}
+	return width
+}
+
+func runeWidth(r rune, fontSize int) float64 {
+	if r == '\t' {
+		return float64(fontSize) * 1.2
+	}
+	if r == ' ' {
+		return float64(fontSize) * 0.28
+	}
+	if usesCIDFont(r) {
+		return float64(fontSize)
+	}
+	if strings.ContainsRune("ilI.,:;!|", r) {
+		return float64(fontSize) * 0.28
+	}
+	if strings.ContainsRune("mwMW@#%&", r) {
+		return float64(fontSize) * 0.85
+	}
+	return float64(fontSize) * 0.52
+}
+
+func isBreakableRune(r rune) bool {
+	return r == ' ' || r == '\t' || r == '/' || r == '-' || r == '_' || r == '，' || r == '。' || r == '、' || r == '；' || r == '：'
+}
+
+func isCJKLikeRune(r rune) bool {
 	return (r >= 0x2E80 && r <= 0x9FFF) ||
 		(r >= 0xAC00 && r <= 0xD7AF) ||
 		(r >= 0xF900 && r <= 0xFAFF) ||
@@ -916,26 +861,8 @@ func isCJK(r rune) bool {
 		(r >= 0xFF00 && r <= 0xFFEF)
 }
 
-func insertCJKLatinSpacing(s string) string {
-	if !hasCJK(s) {
-		return s
-	}
-	runes := []rune(s)
-	var b strings.Builder
-	b.Grow(len(runes) + len(runes)/5)
-	for i, r := range runes {
-		b.WriteRune(r)
-		if i < len(runes)-1 {
-			next := runes[i+1]
-			cjkCur := isCJK(r)
-			cjkNext := isCJK(next)
-			// CJK ↔ 拉丁字符之间插入微间距
-			if cjkCur != cjkNext && r != ' ' && next != ' ' && r != ' ' && next != ' ' {
-				b.WriteRune(' ')
-			}
-		}
-	}
-	return b.String()
+func usesCIDFont(r rune) bool {
+	return r > 126 || isCJKLikeRune(r)
 }
 
 func encodePDFTextHex(s string) string {
@@ -951,6 +878,26 @@ func escapePDFComment(s string) string {
 	s = strings.ReplaceAll(s, "\r", " ")
 	s = strings.ReplaceAll(s, "\n", " ")
 	return strings.TrimSpace(s)
+}
+
+func escapePDFLiteral(s string) string {
+	var b strings.Builder
+	for _, r := range s {
+		switch r {
+		case '\\', '(', ')':
+			b.WriteByte('\\')
+			b.WriteRune(r)
+		case '\r', '\n':
+			b.WriteByte(' ')
+		default:
+			if r >= 32 && r <= 126 {
+				b.WriteRune(r)
+				continue
+			}
+			fmt.Fprintf(&b, "\\%03o", r)
+		}
+	}
+	return b.String()
 }
 
 func errResult(errorClass, message string, started time.Time) tools.ExecutionResult {
