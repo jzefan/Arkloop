@@ -406,6 +406,12 @@ func ResolveGatewayConfigFromSelectedRoute(selected routing.SelectedProviderRout
 		if credential.OpenAIMode != nil {
 			apiMode = *credential.OpenAIMode
 		}
+		if advancedJSON == nil {
+			advancedJSON = map[string]any{}
+		}
+		if _, ok := advancedJSON["stream_options"]; !ok {
+			advancedJSON["stream_options"] = map[string]any{"include_usage": true}
+		}
 		protocol, err := llm.ResolveOpenAIProtocolConfig(apiMode, advancedJSON)
 		if err != nil {
 			return llm.ResolvedGatewayConfig{}, err
@@ -417,7 +423,7 @@ func ResolveGatewayConfigFromSelectedRoute(selected routing.SelectedProviderRout
 			OpenAI:       &protocol,
 		}, nil
 	case routing.ProviderKindDeepSeek:
-		return resolveOpenAICompatibleGatewayConfig(selected.Route.Model, transport, advancedJSON, "https://api.deepseek.com")
+		return resolveOpenAICompatibleGatewayConfig(selected.Route.Model, transport, advancedJSON, "https://api.deepseek.com/v1")
 	case routing.ProviderKindDoubao:
 		return resolveOpenAICompatibleGatewayConfig(selected.Route.Model, transport, advancedJSON, "https://ark.cn-beijing.volces.com/api/v3")
 	case routing.ProviderKindQwen:

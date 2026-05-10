@@ -319,7 +319,7 @@ func ComposeNativeEngine(ctx context.Context, pool *pgxpool.Pool, directPool *pg
 		allLlmSpecs = append(allLlmSpecs, conversationtool.GroupSearchLlmSpec)
 	}
 
-	allLlmSpecs, artifactToolsRegistered, err := registerStoredArtifactTools(toolRegistry, executors, allLlmSpecs, artifactStore, pool, configResolver, routingLoader)
+	allLlmSpecs, artifactToolsRegistered, err := registerStoredArtifactTools(toolRegistry, executors, allLlmSpecs, artifactStore, dynamicSandboxExec, pool, configResolver, routingLoader)
 	if err != nil {
 		return nil, err
 	}

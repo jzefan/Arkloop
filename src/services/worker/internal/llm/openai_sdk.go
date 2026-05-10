@@ -226,7 +226,7 @@ func (g *openAISDKGateway) chatPayload(request Request, llmCallID string) (map[s
 	if err != nil {
 		return nil, 0, StreamLlmRequest{}, err
 	}
-	payload := map[string]any{"model": request.Model, "messages": messagesPayload, "stream": true, "stream_options": map[string]any{"include_usage": true}}
+	payload := map[string]any{"model": request.Model, "messages": messagesPayload, "stream": true}
 	if request.Temperature != nil {
 		payload["temperature"] = *request.Temperature
 	}

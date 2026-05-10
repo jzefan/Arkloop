@@ -9,6 +9,16 @@ function formatSize(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
 }
 
+function encodeSafeSegment(segment: string): string {
+  try {
+    const decoded = decodeURIComponent(segment)
+    if (decoded !== segment) return encodeURIComponent(decoded)
+  } catch {
+    // 不是合法百分号编码，按原始字符串处理
+  }
+  return encodeURIComponent(segment)
+}
+
 type Props = {
   artifact: ArtifactRef
   accessToken: string
@@ -22,7 +32,7 @@ export function ArtifactDownload({ artifact, accessToken, pathPrefix = '/v1/arti
     if (downloading) return
     setDownloading(true)
     try {
-      const safeKey = artifact.key.split('/').map(encodeURIComponent).join('/')
+      const safeKey = artifact.key.split('/').map(encodeSafeSegment).join('/')
       const url = `${apiBaseUrl()}${pathPrefix}/${safeKey}`
       const res = await fetch(url, {
         headers: { Authorization: `Bearer ${accessToken}` },

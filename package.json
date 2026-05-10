@@ -13,5 +13,8 @@
 			"electron-winstaller",
 			"sharp"
 		]
+	},
+	"dependencies": {
+		"playwright": "^1.59.1"
 	}
 }

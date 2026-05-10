@@ -505,6 +505,15 @@ func deltaTexts(evs []events.RunEvent) []string {
 	return out
 }
 
+func mustJSON(t *testing.T, value any) string {
+	t.Helper()
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		t.Fatalf("marshal json: %v", err)
+	}
+	return string(encoded)
+}
+
 func TestLuaExecutor_SubAgentLegacyBindingsRemoved(t *testing.T) {
 	evs := runLuaScript(t, `
 if agent.run == nil and agent.run_parallel == nil then
@@ -747,6 +756,80 @@ context.set_output(waited.status)
 	}
 }
 
+func TestLuaExecutor_SubAgentWaitEmitsDisplayDescription(t *testing.T) {
+	subAgentID := uuid.New()
+	rc := buildLuaRC(nil)
+	rc.SubAgentControl = stubSubAgentControl{
+		wait: func(_ context.Context, req subagentctl.WaitRequest) (subagentctl.StatusSnapshot, error) {
+			return subagentctl.StatusSnapshot{SubAgentID: req.SubAgentIDs[0], Status: data.SubAgentStatusCompleted}, nil
+		},
+	}
+
+	evs := runLuaScript(t, `
+local waited, err = agent.wait("`+subAgentID.String()+`", 15000, {
+  display_description = "等待 QWen / qwen3.5-plus 返回评估结果；每15秒检查一次"
+})
+if err ~= nil then error(err) end
+context.set_output(waited.status)
+`, rc)
+
+	for _, ev := range evs {
+		if ev.Type != "tool.call" || ev.ToolName == nil || *ev.ToolName != "agent.wait" {
+			continue
+		}
+		if ev.DataJSON["display_description"] != "等待 QWen / qwen3.5-plus 返回评估结果；每15秒检查一次" {
+			t.Fatalf("unexpected top-level display_description: %#v", ev.DataJSON["display_description"])
+		}
+		args, ok := ev.DataJSON["arguments"].(map[string]any)
+		if !ok {
+			t.Fatalf("expected wait call arguments, got %#v", ev.DataJSON)
+		}
+		if args["sub_agent_id"] != subAgentID.String() || args["timeout_ms"] != int64(15000) {
+			t.Fatalf("expected raw diagnostic fields to remain, got %#v", args)
+		}
+		return
+	}
+	t.Fatalf("expected agent.wait tool.call, got %#v", evs)
+}
+
+func TestLuaExecutor_SubAgentWaitTimeoutExplainsDisplayDescription(t *testing.T) {
+	subAgentID := uuid.New()
+	rc := buildLuaRC(nil)
+	rc.SubAgentControl = stubSubAgentControl{
+		wait: func(context.Context, subagentctl.WaitRequest) (subagentctl.StatusSnapshot, error) {
+			return subagentctl.StatusSnapshot{}, context.DeadlineExceeded
+		},
+	}
+
+	evs := runLuaScript(t, `
+local waited, err = agent.wait("`+subAgentID.String()+`", 15000, {
+  display_description = "等待 DeepSeek / deepseek-v4-flash 返回评估结果（最长8分钟）（已等待19秒/480秒）；每15秒检查一次"
+})
+if waited ~= nil then error("unexpected wait result") end
+context.set_output(err or "")
+`, rc)
+
+	for _, ev := range evs {
+		if ev.Type != "tool.result" || ev.ToolName == nil || *ev.ToolName != "agent.wait" {
+			continue
+		}
+		errPayload, _ := ev.DataJSON["error"].(map[string]any)
+		message, _ := errPayload["message"].(string)
+		for _, want := range []string{
+			"等待 DeepSeek / deepseek-v4-flash 返回评估结果",
+			"15秒",
+			"检查窗口",
+			"模型仍可能继续运行",
+		} {
+			if !strings.Contains(message, want) {
+				t.Fatalf("expected timeout explanation to contain %q, got %q", want, message)
+			}
+		}
+		return
+	}
+	t.Fatalf("expected failed agent.wait tool.result, got %#v", evs)
+}
+
 func TestLuaExecutor_SubAgentWaitAnyPassesMultipleIDs(t *testing.T) {
 	firstID := uuid.New()
 	secondID := uuid.New()
@@ -784,6 +867,353 @@ context.set_output(waited.id .. "|" .. (waited.output or ""))
 	texts := deltaTexts(evs)
 	if len(texts) == 0 || texts[0] != secondID.String()+"|second completed first" {
 		t.Fatalf("expected second sub agent output, got: %v", texts)
+	}
+}
+
+func TestLuaExecutor_SubAgentWaitAnyEmitsDisplayDescription(t *testing.T) {
+	firstID := uuid.New()
+	secondID := uuid.New()
+	rc := buildLuaRC(nil)
+	rc.SubAgentControl = stubSubAgentControl{
+		wait: func(_ context.Context, req subagentctl.WaitRequest) (subagentctl.StatusSnapshot, error) {
+			return subagentctl.StatusSnapshot{SubAgentID: req.SubAgentIDs[1], Status: data.SubAgentStatusCompleted}, nil
+		},
+	}
+
+	evs := runLuaScript(t, `
+local waited, err = agent.wait_any({"`+firstID.String()+`", "`+secondID.String()+`"}, 15000, {
+  display_description = "并行等待 2 个评估模型返回结果；每15秒检查一次"
+})
+if err ~= nil then error(err) end
+context.set_output(waited.status)
+`, rc)
+
+	for _, ev := range evs {
+		if ev.Type != "tool.call" || ev.ToolName == nil || *ev.ToolName != "agent.wait_any" {
+			continue
+		}
+		if ev.DataJSON["display_description"] != "并行等待 2 个评估模型返回结果；每15秒检查一次" {
+			t.Fatalf("unexpected top-level display_description: %#v", ev.DataJSON["display_description"])
+		}
+		args, ok := ev.DataJSON["arguments"].(map[string]any)
+		if !ok {
+			t.Fatalf("expected wait_any call arguments, got %#v", ev.DataJSON)
+		}
+		if args["timeout_ms"] != int64(15000) {
+			t.Fatalf("expected timeout_ms=15000, got %#v", args)
+		}
+		return
+	}
+	t.Fatalf("expected agent.wait_any tool.call, got %#v", evs)
+}
+
+func TestLuaExecutor_SubAgentWaitAnyTimeoutExplainsDisplayDescription(t *testing.T) {
+	firstID := uuid.New()
+	secondID := uuid.New()
+	rc := buildLuaRC(nil)
+	rc.SubAgentControl = stubSubAgentControl{
+		wait: func(context.Context, subagentctl.WaitRequest) (subagentctl.StatusSnapshot, error) {
+			return subagentctl.StatusSnapshot{}, context.DeadlineExceeded
+		},
+	}
+
+	evs := runLuaScript(t, `
+local waited, err = agent.wait_any({"`+firstID.String()+`", "`+secondID.String()+`"}, 15000, {
+  display_description = "并行等待 2 个评估模型返回结果（最长8分钟）（已等待15秒/480秒）；每15秒检查一次"
+})
+if waited ~= nil then error("unexpected wait_any result") end
+context.set_output(err or "")
+`, rc)
+
+	for _, ev := range evs {
+		if ev.Type != "tool.result" || ev.ToolName == nil || *ev.ToolName != "agent.wait_any" {
+			continue
+		}
+		errPayload, _ := ev.DataJSON["error"].(map[string]any)
+		message, _ := errPayload["message"].(string)
+		for _, want := range []string{
+			"并行等待 2 个评估模型返回结果",
+			"15秒",
+			"检查窗口",
+			"没有任何模型在本轮检查中返回完成、失败或可用输出",
+			"模型仍可能继续运行",
+		} {
+			if !strings.Contains(message, want) {
+				t.Fatalf("expected timeout explanation to contain %q, got %q", want, message)
+			}
+		}
+		return
+	}
+	t.Fatalf("expected failed agent.wait_any tool.result, got %#v", evs)
+}
+
+func TestIndustryEducationIndexAgentLuaWaitAnyTimeoutNamesPendingModels(t *testing.T) {
+	scriptBytes, err := os.ReadFile(industryEducationIndexAgentLuaPath(t))
+	if err != nil {
+		t.Fatalf("read industry education agent lua: %v", err)
+	}
+
+	rc := buildLuaRC(nil)
+	rc.InputJSON = map[string]any{
+		"user_prompt": "评估深圳职业技术大学",
+		"available_models": []map[string]any{
+			{"selector": "deepseek official^deepseek-v4-flash", "model": "deepseek-v4-flash", "provider_kind": "deepseek", "credential_name": "deepseek official"},
+			{"selector": "QWen^qwen3.5-flash-2026-02-23", "model": "qwen3.5-flash-2026-02-23", "provider_kind": "openai", "credential_name": "QWen"},
+		},
+	}
+	answers := []string{
+		`{"mode":"分别评估"}`,
+		`{"models":["deepseek official^deepseek-v4-flash","QWen^qwen3.5-flash-2026-02-23"]}`,
+	}
+	rc.WaitForInput = func(_ context.Context) (string, bool) {
+		if len(answers) == 0 {
+			return "", false
+		}
+		answer := answers[0]
+		answers = answers[1:]
+		return answer, true
+	}
+
+	reg := tools.NewRegistry()
+	if err := reg.Register(tools.AgentToolSpec{Name: "web_search", Version: "1", Description: "search", RiskLevel: tools.RiskLevelLow}); err != nil {
+		t.Fatalf("register web_search: %v", err)
+	}
+	dispatch := tools.NewDispatchingExecutor(reg, tools.NewPolicyEnforcer(reg, tools.AllowlistFromNames([]string{"web_search"})))
+	if err := dispatch.Bind("web_search", stubLuaToolExecutor{
+		execute: func(context.Context, string, map[string]any, tools.ExecutionContext, string) tools.ExecutionResult {
+			return tools.ExecutionResult{ResultJSON: map[string]any{
+				"results": []map[string]any{{
+					"title":   "深圳职业技术大学官网",
+					"url":     "https://www.szpu.edu.cn/",
+					"snippet": "深圳职业技术大学推进产教融合和校企合作。",
+				}},
+			}}
+		},
+	}); err != nil {
+		t.Fatalf("bind web_search: %v", err)
+	}
+	rc.ToolExecutor = dispatch
+
+	waitCalls := 0
+	rc.SubAgentControl = stubSubAgentControl{
+		spawn: func(_ context.Context, req subagentctl.SpawnRequest) (subagentctl.StatusSnapshot, error) {
+			subAgentID := uuid.New()
+			personaID := req.PersonaID
+			return subagentctl.StatusSnapshot{
+				SubAgentID:  subAgentID,
+				Status:      data.SubAgentStatusQueued,
+				PersonaID:   &personaID,
+				ContextMode: req.ContextMode,
+			}, nil
+		},
+		wait: func(_ context.Context, req subagentctl.WaitRequest) (subagentctl.StatusSnapshot, error) {
+			waitCalls++
+			if waitCalls > 1 {
+				return subagentctl.StatusSnapshot{}, errors.New("stop after first wait_any timeout")
+			}
+			return subagentctl.StatusSnapshot{}, context.DeadlineExceeded
+		},
+	}
+
+	evs := runLuaScript(t, string(scriptBytes), rc)
+	var sawReadableWaitAnyTimeout bool
+	for _, ev := range evs {
+		if ev.ToolName == nil || *ev.ToolName != "agent.wait_any" {
+			continue
+		}
+		description, _ := ev.DataJSON["display_description"].(string)
+		if ev.Type == "tool.call" {
+			if strings.Contains(description, "DeepSeek / deepseek-v4-flash") &&
+				strings.Contains(description, "Qwen / qwen3.5-flash-2026-02-23") {
+				sawReadableWaitAnyTimeout = true
+			}
+			continue
+		}
+		if ev.Type != "tool.result" {
+			continue
+		}
+		errPayload, _ := ev.DataJSON["error"].(map[string]any)
+		message, _ := errPayload["message"].(string)
+		if !strings.Contains(message, "DeepSeek / deepseek-v4-flash") ||
+			!strings.Contains(message, "Qwen / qwen3.5-flash-2026-02-23") ||
+			!strings.Contains(message, "没有任何模型在本轮检查中返回完成、失败或可用输出") {
+			t.Fatalf("expected wait_any timeout to name pending models and detailed reason, got %q", message)
+		}
+	}
+	if !sawReadableWaitAnyTimeout {
+		t.Fatalf("expected agent.wait_any call display description to include model names, got events %#v", evs)
+	}
+}
+
+func TestIndustryEducationIndexAgentLuaSpawnsParallelEvaluatorsWithoutParentStreamAgent(t *testing.T) {
+	scriptBytes, err := os.ReadFile(industryEducationIndexAgentLuaPath(t))
+	if err != nil {
+		t.Fatalf("read industry education agent lua: %v", err)
+	}
+
+	rc := buildLuaRC(&luaSeqGateway{
+		events: []llm.StreamEvent{
+			llm.StreamRunFailed{Error: llm.GatewayError{Message: "parent stream_agent should not be called", ErrorClass: llm.ErrorClassInternalError}},
+		},
+	})
+	rc.InputJSON = map[string]any{
+		"user_prompt": "评估深圳职业技术大学",
+		"available_models": []map[string]any{
+			{"selector": "deepseek official^deepseek-chat", "model": "deepseek-chat", "provider_kind": "deepseek", "credential_name": "deepseek official"},
+			{"selector": "qwen proxy^qwen-max", "model": "qwen-max", "provider_kind": "openai", "credential_name": "qwen proxy"},
+		},
+	}
+	answers := []string{
+		`{"mode":"综合评估"}`,
+		`{"models":["deepseek official^deepseek-chat","qwen proxy^qwen-max"]}`,
+	}
+	rc.WaitForInput = func(_ context.Context) (string, bool) {
+		if len(answers) == 0 {
+			return "", false
+		}
+		answer := answers[0]
+		answers = answers[1:]
+		return answer, true
+	}
+
+	reg := tools.NewRegistry()
+	for _, spec := range []tools.AgentToolSpec{
+		{Name: "web_search", Version: "1", Description: "search", RiskLevel: tools.RiskLevelLow},
+		{Name: "web_fetch", Version: "1", Description: "fetch", RiskLevel: tools.RiskLevelLow},
+		{Name: "document_write", Version: "1", Description: "doc", RiskLevel: tools.RiskLevelLow},
+		{Name: "markdown_to_pdf", Version: "1", Description: "pdf", RiskLevel: tools.RiskLevelLow},
+	} {
+		if err := reg.Register(spec); err != nil {
+			t.Fatalf("register %s: %v", spec.Name, err)
+		}
+	}
+	dispatch := tools.NewDispatchingExecutor(reg, tools.NewPolicyEnforcer(reg, tools.AllowlistFromNames([]string{
+		"web_search",
+		"web_fetch",
+		"document_write",
+		"markdown_to_pdf",
+	})))
+	if err := dispatch.Bind("web_search", stubLuaToolExecutor{
+		execute: func(context.Context, string, map[string]any, tools.ExecutionContext, string) tools.ExecutionResult {
+			return tools.ExecutionResult{ResultJSON: map[string]any{
+				"results": []map[string]any{{
+					"title":   "深圳职业技术大学官网",
+					"url":     "https://www.szpu.edu.cn/",
+					"snippet": "深圳职业技术大学是高职院校，推进双高、产教融合和专业群建设。",
+				}},
+			}}
+		},
+	}); err != nil {
+		t.Fatalf("bind web_search: %v", err)
+	}
+	if err := dispatch.Bind("web_fetch", stubLuaToolExecutor{
+		execute: func(context.Context, string, map[string]any, tools.ExecutionContext, string) tools.ExecutionResult {
+			return tools.ExecutionResult{ResultJSON: map[string]any{
+				"content": "学校围绕产教融合、校企合作和专业群建设开展人才培养。",
+			}}
+		},
+	}); err != nil {
+		t.Fatalf("bind web_fetch: %v", err)
+	}
+	if err := dispatch.Bind("document_write", stubLuaToolExecutor{
+		execute: func(context.Context, string, map[string]any, tools.ExecutionContext, string) tools.ExecutionResult {
+			return tools.ExecutionResult{ResultJSON: map[string]any{
+				"artifacts": []map[string]any{{"filename": "report.md", "mime_type": "text/markdown"}},
+			}}
+		},
+	}); err != nil {
+		t.Fatalf("bind document_write: %v", err)
+	}
+	if err := dispatch.Bind("markdown_to_pdf", stubLuaToolExecutor{
+		execute: func(context.Context, string, map[string]any, tools.ExecutionContext, string) tools.ExecutionResult {
+			return tools.ExecutionResult{ResultJSON: map[string]any{
+				"artifacts": []map[string]any{{"filename": "report.pdf", "mime_type": "application/pdf", "display": "download"}},
+			}}
+		},
+	}); err != nil {
+		t.Fatalf("bind markdown_to_pdf: %v", err)
+	}
+	rc.ToolExecutor = dispatch
+
+	outputs := map[uuid.UUID]string{}
+	var evaluatorModels []string
+	rc.SubAgentControl = stubSubAgentControl{
+		spawn: func(_ context.Context, req subagentctl.SpawnRequest) (subagentctl.StatusSnapshot, error) {
+			subAgentID := uuid.New()
+			personaID := req.PersonaID
+			switch req.PersonaID {
+			case "industry-education-evaluator":
+				evaluatorModels = append(evaluatorModels, req.Model)
+				outputs[subAgentID] = `{"eligible":true,"model_label":"评估模型","dimensions":[{"name":"基础与机制","weight":25,"score":80.0,"data_confidence":"medium"},{"name":"资源共建共享","weight":25,"score":80.0,"data_confidence":"medium"},{"name":"产学建设与服务","weight":25,"score":80.0,"data_confidence":"medium"},{"name":"人才培养质量","weight":25,"score":80.0,"data_confidence":"medium"}]}`
+			case "industry-education-synthesizer":
+				outputs[subAgentID] = "# 深圳职业技术大学 · 产教融合指数报告（2026年)"
+			default:
+				t.Fatalf("unexpected persona: %s", req.PersonaID)
+			}
+			return subagentctl.StatusSnapshot{
+				SubAgentID:  subAgentID,
+				Status:      data.SubAgentStatusQueued,
+				PersonaID:   &personaID,
+				ContextMode: req.ContextMode,
+			}, nil
+		},
+		wait: func(_ context.Context, req subagentctl.WaitRequest) (subagentctl.StatusSnapshot, error) {
+			subAgentID := req.SubAgentIDs[0]
+			output := outputs[subAgentID]
+			return subagentctl.StatusSnapshot{SubAgentID: subAgentID, Status: data.SubAgentStatusCompleted, LastOutput: &output}, nil
+		},
+	}
+
+	evs := runLuaScript(t, string(scriptBytes), rc)
+	if got, want := strings.Join(evaluatorModels, ","), "deepseek official^deepseek-chat,qwen proxy^qwen-max"; got != want {
+		t.Fatalf("expected parent to spawn both evaluator models in parallel, got %q", got)
+	}
+	for _, ev := range evs {
+		if ev.ToolName != nil && *ev.ToolName == "agent.stream_agent" {
+			t.Fatalf("parent index agent must not call stream_agent directly: %#v", ev)
+		}
+		if ev.Type == "run.failed" {
+			t.Fatalf("parent stream_agent fallback was triggered: %#v", ev.DataJSON)
+		}
+	}
+}
+
+func TestIndustryEducationEvaluatorAgentLuaUsesStreamAgent(t *testing.T) {
+	scriptBytes, err := os.ReadFile(industryEducationEvaluatorAgentLuaPath(t))
+	if err != nil {
+		t.Fatalf("read industry education evaluator lua: %v", err)
+	}
+
+	gw := &luaSeqGateway{
+		events: []llm.StreamEvent{
+			llm.StreamMessageDelta{ContentDelta: "基础与机制说明。\n", Role: "assistant"},
+			llm.StreamMessageDelta{ContentDelta: `{"eligible":true,"model_label":"DeepSeek","school_name":"深圳职业技术大学","year":"2026","dimensions":[{"name":"基础与机制","weight":25,"score":80.0,"data_confidence":"medium"},{"name":"资源共建共享","weight":25,"score":80.0,"data_confidence":"medium"},{"name":"产学建设与服务","weight":25,"score":80.0,"data_confidence":"medium"},{"name":"人才培养质量","weight":25,"score":80.0,"data_confidence":"medium"}]}`, Role: "assistant"},
+			llm.StreamRunCompleted{},
+		},
+	}
+	rc := buildLuaRC(gw)
+	rc.Messages = []llm.Message{{
+		Role:    "user",
+		Content: []llm.TextPart{{Text: `{"task":"evaluate","model_label":"DeepSeek","model_selector":"deepseek official^deepseek-chat","school_name":"深圳职业技术大学","year":"2026","fact_pack":{"eligibility":{"verified":true},"sources":[],"facts":[]}}`}},
+	}}
+	var resolvedAgentName string
+	rc.ResolveGatewayForAgentName = func(_ context.Context, agentName string) (llm.Gateway, *routing.SelectedProviderRoute, error) {
+		resolvedAgentName = agentName
+		return gw, &routing.SelectedProviderRoute{
+			Route: routing.ProviderRouteRule{
+				ID:    "deepseek-route",
+				Model: "deepseek-chat",
+			},
+		}, nil
+	}
+
+	evs := runLuaScript(t, string(scriptBytes), rc)
+	if resolvedAgentName != "deepseek official^deepseek-chat" {
+		t.Fatalf("expected evaluator to stream through selected model, got %q", resolvedAgentName)
+	}
+	texts := strings.Join(deltaTexts(evs), "")
+	if !strings.Contains(texts, "基础与机制说明") || !strings.Contains(texts, `"eligible":true`) {
+		t.Fatalf("expected streamed evaluator output, got %q", texts)
 	}
 }
 
@@ -1479,6 +1909,15 @@ func industryEducationIndexAgentLuaPath(t *testing.T) string {
 	return filepath.Clean(filepath.Join(filepath.Dir(file), "../../../../personas/industry-education-index/agent.lua"))
 }
 
+func industryEducationEvaluatorAgentLuaPath(t *testing.T) string {
+	t.Helper()
+	_, file, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("failed to resolve test file path")
+	}
+	return filepath.Clean(filepath.Join(filepath.Dir(file), "../../../../personas/industry-education-evaluator/agent.lua"))
+}
+
 func TestLuaToolsCallEmitsToolEvents(t *testing.T) {
 	rc := buildLuaRC(nil)
 	reg := tools.NewRegistry()
@@ -1691,6 +2130,213 @@ func TestIndustryEducationIndexAgentLuaContinuePromptDoesNotBecomeSchoolName(t *
 	texts := strings.Join(deltaTexts(evs), "")
 	if !strings.Contains(texts, "评估未完成：需要先提供院校名称") {
 		t.Fatalf("expected missing school name hint, got %q", texts)
+	}
+}
+
+func TestIndustryEducationIndexAgentLuaMatchesSchoolNameFromGeneralCatalog(t *testing.T) {
+	scriptBytes, err := os.ReadFile(industryEducationIndexAgentLuaPath(t))
+	if err != nil {
+		t.Fatalf("read industry education agent lua: %v", err)
+	}
+
+	rc := buildLuaRC(nil)
+	rc.InputJSON = map[string]any{
+		"user_prompt":  "帮我看一下北京大学",
+		"school_names": `{"source":"test","schools":[{"name":"北京大学","level":"本科"}]}`,
+	}
+	answers := []string{
+		`{"mode":"单模型评估"}`,
+		`{"models":["deepseek-chat"]}`,
+	}
+	rc.WaitForInput = func(_ context.Context) (string, bool) {
+		if len(answers) == 0 {
+			return "", false
+		}
+		answer := answers[0]
+		answers = answers[1:]
+		return answer, true
+	}
+
+	reg := tools.NewRegistry()
+	if err := reg.Register(tools.AgentToolSpec{Name: "web_search", Version: "1", Description: "search", RiskLevel: tools.RiskLevelLow}); err != nil {
+		t.Fatalf("register web_search: %v", err)
+	}
+	dispatch := tools.NewDispatchingExecutor(reg, tools.NewPolicyEnforcer(reg, tools.AllowlistFromNames([]string{"web_search"})))
+	var searchQueries []string
+	if err := dispatch.Bind("web_search", stubLuaToolExecutor{
+		execute: func(_ context.Context, _ string, args map[string]any, _ tools.ExecutionContext, _ string) tools.ExecutionResult {
+			if rawQueries, ok := args["queries"].([]any); ok {
+				for _, rawQuery := range rawQueries {
+					if query, ok := rawQuery.(string); ok {
+						searchQueries = append(searchQueries, query)
+					}
+				}
+			}
+			return tools.ExecutionResult{Error: &tools.ExecutionError{Message: "stop after query capture"}}
+		},
+	}); err != nil {
+		t.Fatalf("bind web_search: %v", err)
+	}
+	rc.ToolExecutor = dispatch
+
+	_ = runLuaScript(t, string(scriptBytes), rc)
+	if len(searchQueries) == 0 {
+		t.Fatal("expected web_search queries")
+	}
+	for _, query := range searchQueries {
+		if strings.Contains(query, "一下北京大学") || strings.Contains(query, "帮我看一下北京大学") {
+			t.Fatalf("search query kept prompt wording: %q", query)
+		}
+		if !strings.Contains(query, "北京大学") {
+			t.Fatalf("search query lost catalog school name: %q", query)
+		}
+	}
+}
+
+func TestIndustryEducationIndexAgentLuaNormalizesColloquialSchoolNameFromCatalog(t *testing.T) {
+	scriptBytes, err := os.ReadFile(industryEducationIndexAgentLuaPath(t))
+	if err != nil {
+		t.Fatalf("read industry education agent lua: %v", err)
+	}
+
+	rc := buildLuaRC(nil)
+	rc.InputJSON = map[string]any{
+		"user_prompt":  "继续评估一下江苏农牧科技职业学院",
+		"school_names": `{"source":"test","schools":[{"name":"江苏农牧科技职业学院","level":"专科"}]}`,
+		"available_models": []map[string]any{
+			{"selector": "deepseek official^deepseek-chat", "model": "deepseek-chat", "provider_kind": "deepseek", "credential_name": "deepseek official"},
+		},
+	}
+	answers := []string{
+		`{"mode":"单模型评估"}`,
+		`{"models":["deepseek official^deepseek-chat"]}`,
+	}
+	rc.WaitForInput = func(_ context.Context) (string, bool) {
+		if len(answers) == 0 {
+			return "", false
+		}
+		answer := answers[0]
+		answers = answers[1:]
+		return answer, true
+	}
+
+	reg := tools.NewRegistry()
+	for _, spec := range []tools.AgentToolSpec{
+		{Name: "web_search", Version: "1", Description: "search", RiskLevel: tools.RiskLevelLow},
+		{Name: "web_fetch", Version: "1", Description: "fetch", RiskLevel: tools.RiskLevelLow},
+		{Name: "document_write", Version: "1", Description: "doc", RiskLevel: tools.RiskLevelLow},
+		{Name: "markdown_to_pdf", Version: "1", Description: "pdf", RiskLevel: tools.RiskLevelLow},
+	} {
+		if err := reg.Register(spec); err != nil {
+			t.Fatalf("register %s: %v", spec.Name, err)
+		}
+	}
+	dispatch := tools.NewDispatchingExecutor(reg, tools.NewPolicyEnforcer(reg, tools.AllowlistFromNames([]string{
+		"web_search",
+		"web_fetch",
+		"document_write",
+		"markdown_to_pdf",
+	})))
+	var searchQueries []string
+	if err := dispatch.Bind("web_search", stubLuaToolExecutor{
+		execute: func(_ context.Context, _ string, args map[string]any, _ tools.ExecutionContext, _ string) tools.ExecutionResult {
+			if rawQueries, ok := args["queries"].([]any); ok {
+				for _, rawQuery := range rawQueries {
+					if query, ok := rawQuery.(string); ok {
+						searchQueries = append(searchQueries, query)
+					}
+				}
+			}
+			return tools.ExecutionResult{ResultJSON: map[string]any{
+				"results": []map[string]any{{
+					"title":   "江苏农牧科技职业学院官网",
+					"url":     "https://www.jsahvc.edu.cn/",
+					"snippet": "江苏农牧科技职业学院是高职院校，推进产教融合和校企合作。",
+				}},
+			}}
+		},
+	}); err != nil {
+		t.Fatalf("bind web_search: %v", err)
+	}
+	if err := dispatch.Bind("web_fetch", stubLuaToolExecutor{
+		execute: func(context.Context, string, map[string]any, tools.ExecutionContext, string) tools.ExecutionResult {
+			return tools.ExecutionResult{ResultJSON: map[string]any{
+				"content": "江苏农牧科技职业学院围绕职业教育、产教融合和校企合作开展人才培养。",
+			}}
+		},
+	}); err != nil {
+		t.Fatalf("bind web_fetch: %v", err)
+	}
+	if err := dispatch.Bind("document_write", stubLuaToolExecutor{
+		execute: func(context.Context, string, map[string]any, tools.ExecutionContext, string) tools.ExecutionResult {
+			return tools.ExecutionResult{ResultJSON: map[string]any{
+				"artifacts": []map[string]any{{"filename": "report.md", "mime_type": "text/markdown"}},
+			}}
+		},
+	}); err != nil {
+		t.Fatalf("bind document_write: %v", err)
+	}
+	if err := dispatch.Bind("markdown_to_pdf", stubLuaToolExecutor{
+		execute: func(context.Context, string, map[string]any, tools.ExecutionContext, string) tools.ExecutionResult {
+			return tools.ExecutionResult{ResultJSON: map[string]any{
+				"artifacts": []map[string]any{{"filename": "report.pdf", "mime_type": "application/pdf", "display": "download"}},
+			}}
+		},
+	}); err != nil {
+		t.Fatalf("bind markdown_to_pdf: %v", err)
+	}
+	rc.ToolExecutor = dispatch
+
+	outputs := map[uuid.UUID]string{}
+	var evaluatorInput string
+	rc.SubAgentControl = stubSubAgentControl{
+		spawn: func(_ context.Context, req subagentctl.SpawnRequest) (subagentctl.StatusSnapshot, error) {
+			subAgentID := uuid.New()
+			personaID := req.PersonaID
+			switch req.PersonaID {
+			case "industry-education-evaluator":
+				evaluatorInput = req.Input
+				outputs[subAgentID] = `{"eligible":true,"model_label":"DeepSeek","dimensions":[{"name":"基础与机制","weight":25,"score":80.0,"data_confidence":"medium"},{"name":"资源共建共享","weight":25,"score":80.0,"data_confidence":"medium"},{"name":"产学建设与服务","weight":25,"score":80.0,"data_confidence":"medium"},{"name":"人才培养质量","weight":25,"score":80.0,"data_confidence":"medium"}]}`
+			case "industry-education-synthesizer":
+				outputs[subAgentID] = "# 江苏农牧科技职业学院 · 产教融合指数报告（2026年）\n\n## 综合评级与产教融合指数得分"
+			default:
+				t.Fatalf("unexpected persona: %s", req.PersonaID)
+			}
+			return subagentctl.StatusSnapshot{
+				SubAgentID:  subAgentID,
+				Status:      data.SubAgentStatusQueued,
+				PersonaID:   &personaID,
+				ContextMode: req.ContextMode,
+			}, nil
+		},
+		wait: func(_ context.Context, req subagentctl.WaitRequest) (subagentctl.StatusSnapshot, error) {
+			subAgentID := req.SubAgentIDs[0]
+			output := outputs[subAgentID]
+			return subagentctl.StatusSnapshot{SubAgentID: subAgentID, Status: data.SubAgentStatusCompleted, LastOutput: &output}, nil
+		},
+	}
+
+	evs := runLuaScript(t, string(scriptBytes), rc)
+	texts := strings.Join(deltaTexts(evs), "")
+	if len(searchQueries) == 0 {
+		t.Fatal("expected web_search queries")
+	}
+	for _, query := range searchQueries {
+		if strings.Contains(query, "一下江苏农牧科技职业学院") {
+			t.Fatalf("search query kept colloquial prefix: %q", query)
+		}
+		if !strings.Contains(query, "江苏农牧科技职业学院") {
+			t.Fatalf("search query lost normalized school name: %q", query)
+		}
+	}
+	if strings.Contains(evaluatorInput, "一下江苏农牧科技职业学院") {
+		t.Fatalf("evaluator input kept colloquial prefix: %q", evaluatorInput)
+	}
+	if !strings.Contains(texts, "江苏农牧科技职业学院 · 产教融合指数报告（2026年）") {
+		t.Fatalf("expected normalized report output, got %q", texts)
+	}
+	if strings.Contains(texts, "一下江苏农牧科技职业学院") {
+		t.Fatalf("final output kept colloquial prefix, got %q", texts)
 	}
 }
 
@@ -3171,8 +3817,7 @@ func TestIndustryEducationIndexAgentLuaRunsWithSubAgentsAndArtifacts(t *testing.
 	outputs := map[uuid.UUID]string{}
 	errs := map[uuid.UUID]error{}
 	var evaluatorModels []string
-	var synthesizerModel string
-	var synthesizerInput string
+	var synthesizerSpawned bool
 	var waitTimeouts []time.Duration
 	rc.SubAgentControl = stubSubAgentControl{
 		spawn: func(_ context.Context, req subagentctl.SpawnRequest) (subagentctl.StatusSnapshot, error) {
@@ -3183,9 +3828,8 @@ func TestIndustryEducationIndexAgentLuaRunsWithSubAgentsAndArtifacts(t *testing.
 				evaluatorModels = append(evaluatorModels, req.Model)
 				outputs[subAgentID] = `{"eligible":true,"model_label":"评估模型","total_score":80.0,"rating":"A 优秀","dimensions":[{"name":"基础与机制","weight":25,"score":80.0,"data_confidence":"medium"},{"name":"资源共建共享","weight":25,"score":80.0,"data_confidence":"medium"},{"name":"产学建设与服务","weight":25,"score":80.0,"data_confidence":"medium"},{"name":"人才培养质量","weight":25,"score":80.0,"data_confidence":"medium"}],"core_honors":[],"highlights":[],"improvements":[],"missing":[]}`
 			case "industry-education-synthesizer":
-				synthesizerModel = req.Model
-				synthesizerInput = req.Input
-				outputs[subAgentID] = "# 深圳职业技术大学 · 产教融合指数报告（2026年）\n\n## 综合评级与产教融合指数得分\n\n- 产教融合指数得分：80.0/100.0"
+				synthesizerSpawned = true
+				outputs[subAgentID] = "# unexpected synthesizer report"
 			default:
 				errs[subAgentID] = errors.New("unexpected persona: " + req.PersonaID)
 			}
@@ -3239,35 +3883,284 @@ func TestIndustryEducationIndexAgentLuaRunsWithSubAgentsAndArtifacts(t *testing.
 	if strings.Join(evaluatorModels, ",") != strings.Join(wantModels, ",") {
 		t.Fatalf("unexpected evaluator models: got %v want %v", evaluatorModels, wantModels)
 	}
-	if synthesizerModel != "deepseek official^deepseek-chat" {
-		t.Fatalf("expected synthesizer to use first selected model alias, got %q", synthesizerModel)
+	if synthesizerSpawned {
+		t.Fatalf("expected report to be generated by built-in fast renderer without spawning synthesizer")
 	}
-	if len(waitTimeouts) != 4 {
-		t.Fatalf("expected three evaluator waits plus one synthesizer wait, got %d", len(waitTimeouts))
+	if len(waitTimeouts) != 3 {
+		t.Fatalf("expected three evaluator waits and no synthesizer wait, got %d", len(waitTimeouts))
 	}
-	for i, timeout := range waitTimeouts[:3] {
+	var sawEvaluatorWaitDescription bool
+	var sawSynthesizerWaitDescription bool
+	for _, ev := range evs {
+		if ev.Type != "tool.call" || ev.ToolName == nil {
+			continue
+		}
+		if *ev.ToolName != "agent.wait" && *ev.ToolName != "agent.wait_any" {
+			continue
+		}
+		description, _ := ev.DataJSON["display_description"].(string)
+		if strings.Contains(description, "评估") && strings.Contains(description, "每15秒检查一次") {
+			sawEvaluatorWaitDescription = true
+		}
+		if strings.Contains(description, "撰写报告正文") && strings.Contains(description, "每15秒检查一次") {
+			sawSynthesizerWaitDescription = true
+		}
+	}
+	if !sawEvaluatorWaitDescription {
+		t.Fatalf("expected readable evaluator wait tool description, got events %#v", evs)
+	}
+	if sawSynthesizerWaitDescription {
+		t.Fatalf("did not expect report-writing wait description after fast report generation, got events %#v", evs)
+	}
+	for i, timeout := range waitTimeouts {
 		if timeout > 15*time.Second || timeout < 1*time.Millisecond {
 			t.Fatalf("evaluator wait %d timeout = %s, want bounded slice <=15s", i, timeout)
 		}
 	}
-	if waitTimeouts[3] != 8*time.Minute {
-		t.Fatalf("synthesizer wait timeout = %s, want 8m", waitTimeouts[3])
+}
+
+func TestIndustryEducationIndexAgentLuaFastReportGenerationDoesNotWaitForSynthesizer(t *testing.T) {
+	scriptBytes, err := os.ReadFile(industryEducationIndexAgentLuaPath(t))
+	if err != nil {
+		t.Fatalf("read industry education agent lua: %v", err)
 	}
-	var synthPayload struct {
-		PerModelComputed []struct {
-			ModelLabel string  `json:"model_label"`
-			TotalScore float64 `json:"total_score"`
-			Rating     string  `json:"rating"`
-		} `json:"per_model_computed"`
+
+	rc := buildLuaRC(nil)
+	rc.InputJSON = map[string]any{
+		"user_prompt": "评估深圳职业技术大学",
+		"available_models": []map[string]any{
+			{"selector": "deepseek official^deepseek-chat", "model": "deepseek-chat", "provider_kind": "deepseek", "credential_name": "deepseek official"},
+		},
 	}
-	if err := json.Unmarshal([]byte(synthesizerInput), &synthPayload); err != nil {
-		t.Fatalf("decode synthesizer input: %v", err)
+	answers := []string{
+		`{"mode":"单模型评估"}`,
+		`{"models":["deepseek official^deepseek-chat"]}`,
 	}
-	if len(synthPayload.PerModelComputed) != 3 {
-		t.Fatalf("expected per_model_computed for three models, got %#v", synthPayload.PerModelComputed)
+	rc.WaitForInput = func(_ context.Context) (string, bool) {
+		if len(answers) == 0 {
+			return "", false
+		}
+		answer := answers[0]
+		answers = answers[1:]
+		return answer, true
 	}
-	if synthPayload.PerModelComputed[0].TotalScore != 80 || synthPayload.PerModelComputed[0].Rating != "A 优秀" {
-		t.Fatalf("unexpected per-model computed score: %#v", synthPayload.PerModelComputed[0])
+
+	reg := tools.NewRegistry()
+	for _, spec := range []tools.AgentToolSpec{
+		{Name: "web_search", Version: "1", Description: "search", RiskLevel: tools.RiskLevelLow},
+		{Name: "web_fetch", Version: "1", Description: "fetch", RiskLevel: tools.RiskLevelLow},
+		{Name: "document_write", Version: "1", Description: "doc", RiskLevel: tools.RiskLevelLow},
+		{Name: "markdown_to_pdf", Version: "1", Description: "pdf", RiskLevel: tools.RiskLevelLow},
+	} {
+		if err := reg.Register(spec); err != nil {
+			t.Fatalf("register %s: %v", spec.Name, err)
+		}
+	}
+	dispatch := tools.NewDispatchingExecutor(reg, tools.NewPolicyEnforcer(reg, tools.AllowlistFromNames([]string{
+		"web_search",
+		"web_fetch",
+		"document_write",
+		"markdown_to_pdf",
+	})))
+	if err := dispatch.Bind("web_search", stubLuaToolExecutor{
+		execute: func(context.Context, string, map[string]any, tools.ExecutionContext, string) tools.ExecutionResult {
+			return tools.ExecutionResult{ResultJSON: map[string]any{
+				"results": []map[string]any{{
+					"title":   "深圳职业技术大学官网",
+					"url":     "https://www.szpu.edu.cn/",
+					"snippet": "深圳职业技术大学是高职院校，推进双高、产教融合和专业群建设。",
+				}},
+			}}
+		},
+	}); err != nil {
+		t.Fatalf("bind web_search: %v", err)
+	}
+	if err := dispatch.Bind("web_fetch", stubLuaToolExecutor{
+		execute: func(context.Context, string, map[string]any, tools.ExecutionContext, string) tools.ExecutionResult {
+			return tools.ExecutionResult{ResultJSON: map[string]any{
+				"content": "学校围绕产教融合、校企合作和专业群建设开展人才培养。",
+			}}
+		},
+	}); err != nil {
+		t.Fatalf("bind web_fetch: %v", err)
+	}
+	if err := dispatch.Bind("document_write", stubLuaToolExecutor{
+		execute: func(context.Context, string, map[string]any, tools.ExecutionContext, string) tools.ExecutionResult {
+			return tools.ExecutionResult{ResultJSON: map[string]any{
+				"artifacts": []map[string]any{{"filename": "report.md", "mime_type": "text/markdown"}},
+			}}
+		},
+	}); err != nil {
+		t.Fatalf("bind document_write: %v", err)
+	}
+	if err := dispatch.Bind("markdown_to_pdf", stubLuaToolExecutor{
+		execute: func(context.Context, string, map[string]any, tools.ExecutionContext, string) tools.ExecutionResult {
+			return tools.ExecutionResult{ResultJSON: map[string]any{
+				"artifacts": []map[string]any{{"filename": "report.pdf", "mime_type": "application/pdf", "display": "download"}},
+			}}
+		},
+	}); err != nil {
+		t.Fatalf("bind markdown_to_pdf: %v", err)
+	}
+	rc.ToolExecutor = dispatch
+
+	outputs := map[uuid.UUID]string{}
+	var synthesizerSpawned bool
+	rc.SubAgentControl = stubSubAgentControl{
+		spawn: func(_ context.Context, req subagentctl.SpawnRequest) (subagentctl.StatusSnapshot, error) {
+			subAgentID := uuid.New()
+			personaID := req.PersonaID
+			switch req.PersonaID {
+			case "industry-education-evaluator":
+				outputs[subAgentID] = `{"eligible":true,"model_label":"DeepSeek","dimensions":[{"name":"基础与机制","weight":25,"score":80.0,"data_confidence":"medium"},{"name":"资源共建共享","weight":25,"score":80.0,"data_confidence":"medium"},{"name":"产学建设与服务","weight":25,"score":80.0,"data_confidence":"medium"},{"name":"人才培养质量","weight":25,"score":80.0,"data_confidence":"medium"}]}`
+			case "industry-education-synthesizer":
+				synthesizerSpawned = true
+				outputs[subAgentID] = "# unexpected synthesizer report"
+			default:
+				t.Fatalf("unexpected persona: %s", req.PersonaID)
+			}
+			return subagentctl.StatusSnapshot{
+				SubAgentID:  subAgentID,
+				Status:      data.SubAgentStatusQueued,
+				PersonaID:   &personaID,
+				ContextMode: req.ContextMode,
+			}, nil
+		},
+		wait: func(_ context.Context, req subagentctl.WaitRequest) (subagentctl.StatusSnapshot, error) {
+			subAgentID := req.SubAgentIDs[0]
+			output := outputs[subAgentID]
+			return subagentctl.StatusSnapshot{SubAgentID: subAgentID, Status: data.SubAgentStatusCompleted, LastOutput: &output}, nil
+		},
+	}
+
+	evs := runLuaScript(t, string(scriptBytes), rc)
+	if synthesizerSpawned {
+		t.Fatalf("expected fast report generation without spawning synthesizer")
+	}
+	texts := strings.Join(deltaTexts(evs), "")
+	if !strings.Contains(texts, "深圳职业技术大学 · 产教融合指数报告（2026年）") ||
+		!strings.Contains(texts, "## 一、基础与机制") ||
+		!strings.Contains(texts, "生成文件") {
+		t.Fatalf("expected built-in structured report output, got %q", texts)
+	}
+	var sawWritingProgress bool
+	var sawFastReportProgress bool
+	for _, ev := range evs {
+		if ev.Type != "todo.updated" {
+			continue
+		}
+		progressJSON := mustJSON(t, ev.DataJSON)
+		if strings.Contains(progressJSON, "正在撰写报告正文") {
+			sawWritingProgress = true
+		}
+		if strings.Contains(progressJSON, "生成报告文件") || strings.Contains(progressJSON, "报告文件已生成") {
+			sawFastReportProgress = true
+		}
+	}
+	if sawWritingProgress {
+		t.Fatalf("did not expect long report-writing progress after fast report generation, got events %#v", evs)
+	}
+	if !sawFastReportProgress {
+		t.Fatalf("expected fast report file progress, got events %#v", evs)
+	}
+	var sawReportWaitDescription bool
+	for _, ev := range evs {
+		if ev.Type != "tool.call" || ev.ToolName == nil || *ev.ToolName != "agent.wait" {
+			continue
+		}
+		description, _ := ev.DataJSON["display_description"].(string)
+		if strings.Contains(description, "正在撰写报告正文") && strings.Contains(description, "每15秒检查一次") {
+			sawReportWaitDescription = true
+			break
+		}
+	}
+	if sawReportWaitDescription {
+		t.Fatalf("did not expect report wait description after fast report generation, got events %#v", evs)
+	}
+}
+
+func TestIndustryEducationIndexAgentLuaEvaluatorWaitTimeoutExplainsModel(t *testing.T) {
+	scriptBytes, err := os.ReadFile(industryEducationIndexAgentLuaPath(t))
+	if err != nil {
+		t.Fatalf("read industry education agent lua: %v", err)
+	}
+
+	rc := buildLuaRC(nil)
+	rc.InputJSON = map[string]any{
+		"user_prompt": "评估深圳职业技术大学",
+		"available_models": []map[string]any{
+			{"selector": "deepseek official^deepseek-v4-flash", "model": "deepseek-v4-flash", "provider_kind": "deepseek", "credential_name": "deepseek official"},
+		},
+	}
+	answers := []string{
+		`{"mode":"单模型评估"}`,
+		`{"models":["deepseek official^deepseek-v4-flash"]}`,
+	}
+	rc.WaitForInput = func(_ context.Context) (string, bool) {
+		if len(answers) == 0 {
+			return "", false
+		}
+		answer := answers[0]
+		answers = answers[1:]
+		return answer, true
+	}
+
+	reg := tools.NewRegistry()
+	if err := reg.Register(tools.AgentToolSpec{Name: "web_search", Version: "1", Description: "search", RiskLevel: tools.RiskLevelLow}); err != nil {
+		t.Fatalf("register web_search: %v", err)
+	}
+	dispatch := tools.NewDispatchingExecutor(reg, tools.NewPolicyEnforcer(reg, tools.AllowlistFromNames([]string{"web_search"})))
+	if err := dispatch.Bind("web_search", stubLuaToolExecutor{
+		execute: func(context.Context, string, map[string]any, tools.ExecutionContext, string) tools.ExecutionResult {
+			return tools.ExecutionResult{ResultJSON: map[string]any{
+				"results": []map[string]any{{
+					"title":   "深圳职业技术大学官网",
+					"url":     "https://www.szpu.edu.cn/",
+					"snippet": "深圳职业技术大学推进产教融合和校企合作。",
+				}},
+			}}
+		},
+	}); err != nil {
+		t.Fatalf("bind web_search: %v", err)
+	}
+	rc.ToolExecutor = dispatch
+
+	rc.SubAgentControl = stubSubAgentControl{
+		spawn: func(_ context.Context, req subagentctl.SpawnRequest) (subagentctl.StatusSnapshot, error) {
+			subAgentID := uuid.New()
+			personaID := req.PersonaID
+			return subagentctl.StatusSnapshot{
+				SubAgentID:  subAgentID,
+				Status:      data.SubAgentStatusQueued,
+				PersonaID:   &personaID,
+				ContextMode: req.ContextMode,
+			}, nil
+		},
+		wait: func(context.Context, subagentctl.WaitRequest) (subagentctl.StatusSnapshot, error) {
+			return subagentctl.StatusSnapshot{}, context.DeadlineExceeded
+		},
+		interrupt: func(_ context.Context, req subagentctl.InterruptRequest) (subagentctl.StatusSnapshot, error) {
+			return subagentctl.StatusSnapshot{SubAgentID: req.SubAgentID, Status: data.SubAgentStatusClosed}, nil
+		},
+	}
+
+	evs := runLuaScript(t, string(scriptBytes), rc)
+	var sawReadableTimeout bool
+	for _, ev := range evs {
+		if ev.Type != "tool.result" || ev.ToolName == nil || *ev.ToolName != "agent.wait" {
+			continue
+		}
+		errPayload, _ := ev.DataJSON["error"].(map[string]any)
+		message, _ := errPayload["message"].(string)
+		if strings.Contains(message, "DeepSeek / deepseek-v4-flash") &&
+			strings.Contains(message, "检查窗口") &&
+			strings.Contains(message, "模型仍可能继续运行") {
+			sawReadableTimeout = true
+			break
+		}
+	}
+	if !sawReadableTimeout {
+		t.Fatalf("expected readable evaluator timeout with model name, got events %#v", evs)
 	}
 }
 
@@ -3429,6 +4322,20 @@ func TestIndustryEducationIndexAgentLuaEmitsProgressTodos(t *testing.T) {
 	if len(progressToolResultIDs) < 4 {
 		t.Fatalf("expected synthetic todo_write tool.result updates, got %#v", progressToolResultIDs)
 	}
+	finalSnapshot := snapshots[len(snapshots)-1]
+	if len(finalSnapshot) != 5 {
+		t.Fatalf("expected five progress todos after splitting report and PDF steps, got %d: %#v", len(finalSnapshot), finalSnapshot)
+	}
+	seenIDs := map[string]bool{}
+	for _, item := range finalSnapshot {
+		id, _ := item["id"].(string)
+		seenIDs[id] = true
+	}
+	for _, id := range []string{"sources", "evaluate", "score", "report", "pdf"} {
+		if !seenIDs[id] {
+			t.Fatalf("expected final progress todos to include id %q, got %#v", id, finalSnapshot)
+		}
+	}
 	joined := ""
 	for _, snapshot := range snapshots {
 		for _, item := range snapshot {
@@ -3444,6 +4351,8 @@ func TestIndustryEducationIndexAgentLuaEmitsProgressTodos(t *testing.T) {
 		"DeepSeek / deepseek-chat 评估完成",
 		"综合评分",
 		"生成报告文件",
+		"转化为 PDF 文件",
+		"PDF 文件已生成",
 	} {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("expected progress todos to contain %q, got %q", want, joined)

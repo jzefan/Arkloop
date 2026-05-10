@@ -401,7 +401,7 @@ func ComposeDesktopEngine(ctx context.Context, db data.DesktopDB, bus eventbus.E
 	if useOV && memProvider != nil {
 		allLlmSpecs = append(allLlmSpecs, memorytool.MemoryLlmSpecs()...)
 	}
-	allLlmSpecs, artifactToolsRegistered, err := registerStoredArtifactTools(toolRegistry, executors, allLlmSpecs, artifactStore, db, promptInjection.Resolver, routingLoader)
+	allLlmSpecs, artifactToolsRegistered, err := registerStoredArtifactTools(toolRegistry, executors, allLlmSpecs, artifactStore, shellExec, db, promptInjection.Resolver, routingLoader)
 	if err != nil {
 		return nil, fmt.Errorf("register desktop artifact tools: %w", err)
 	}

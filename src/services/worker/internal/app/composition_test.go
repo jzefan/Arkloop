@@ -112,7 +112,7 @@ func TestRegisterStoredArtifactTools(t *testing.T) {
 	registry := tools.NewRegistry()
 	executors := map[string]tools.Executor{}
 
-	specs, registered, err := registerStoredArtifactTools(registry, executors, nil, fakeArtifactStore{}, nil, nil, nil)
+	specs, registered, err := registerStoredArtifactTools(registry, executors, nil, fakeArtifactStore{}, nil, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("register stored artifact tools: %v", err)
 	}
@@ -137,7 +137,7 @@ func TestRegisterStoredArtifactToolsSkipsNilStore(t *testing.T) {
 	executors := map[string]tools.Executor{}
 	baseSpecs := []llm.ToolSpec{{Name: "existing"}}
 
-	specs, registered, err := registerStoredArtifactTools(registry, executors, baseSpecs, nil, nil, nil, nil)
+	specs, registered, err := registerStoredArtifactTools(registry, executors, baseSpecs, nil, nil, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("register stored artifact tools: %v", err)
 	}

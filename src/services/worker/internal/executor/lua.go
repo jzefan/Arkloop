@@ -3,6 +3,7 @@ package executor
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -306,17 +307,24 @@ func (rt *luaRuntime) agentWait(L *lua.LState) int {
 		L.Push(lua.LString(err.Error()))
 		return 2
 	}
-	if err := rt.emitAgentToolCall("agent.wait", map[string]any{
+	displayDescription, err := parseLuaWaitDisplayDescription(L.Get(3), "agent.wait: opts")
+	if err != nil {
+		L.Push(lua.LNil)
+		L.Push(lua.LString(err.Error()))
+		return 2
+	}
+	args := map[string]any{
 		"sub_agent_id": subAgentID.String(),
 		"timeout_ms":   timeout.Milliseconds(),
-	}); err != nil {
+	}
+	if err := rt.emitAgentToolCall("agent.wait", args, displayDescription); err != nil {
 		L.Push(lua.LNil)
 		L.Push(lua.LString(err.Error()))
 		return 2
 	}
 	snapshot, err := rt.rc.SubAgentControl.Wait(rt.ctx, subagentctl.WaitRequest{SubAgentIDs: []uuid.UUID{subAgentID}, Timeout: timeout})
 	if err != nil {
-		_ = rt.emitAgentToolResult("agent.wait", nil, err)
+		_ = rt.emitAgentToolResult("agent.wait", nil, humanizeAgentWaitError("agent.wait", err, displayDescription, timeout))
 		L.Push(lua.LNil)
 		L.Push(lua.LString(err.Error()))
 		return 2
@@ -358,17 +366,24 @@ func (rt *luaRuntime) agentWaitAny(L *lua.LState) int {
 	for _, id := range subAgentIDs {
 		idStrings = append(idStrings, id.String())
 	}
-	if err := rt.emitAgentToolCall("agent.wait_any", map[string]any{
+	displayDescription, err := parseLuaWaitDisplayDescription(L.Get(3), "agent.wait_any: opts")
+	if err != nil {
+		L.Push(lua.LNil)
+		L.Push(lua.LString(err.Error()))
+		return 2
+	}
+	args := map[string]any{
 		"sub_agent_ids": idStrings,
 		"timeout_ms":    timeout.Milliseconds(),
-	}); err != nil {
+	}
+	if err := rt.emitAgentToolCall("agent.wait_any", args, displayDescription); err != nil {
 		L.Push(lua.LNil)
 		L.Push(lua.LString(err.Error()))
 		return 2
 	}
 	snapshot, err := rt.rc.SubAgentControl.Wait(rt.ctx, subagentctl.WaitRequest{SubAgentIDs: subAgentIDs, Timeout: timeout})
 	if err != nil {
-		_ = rt.emitAgentToolResult("agent.wait_any", nil, err)
+		_ = rt.emitAgentToolResult("agent.wait_any", nil, humanizeAgentWaitError("agent.wait_any", err, displayDescription, timeout))
 		L.Push(lua.LNil)
 		L.Push(lua.LString(err.Error()))
 		return 2
@@ -684,11 +699,17 @@ func (rt *luaRuntime) emitToolExecutionEvents(toolName string, args map[string]a
 	return rt.yield(rt.emitter.Emit("tool.result", resultData, stringPtr(toolName), errorClass))
 }
 
-func (rt *luaRuntime) emitAgentToolCall(toolName string, args map[string]any) error {
-	return rt.yield(rt.emitter.Emit("tool.call", map[string]any{
+func (rt *luaRuntime) emitAgentToolCall(toolName string, args map[string]any, displayDescription ...string) error {
+	payload := map[string]any{
 		"tool_name": toolName,
 		"arguments": args,
-	}, stringPtr(toolName), nil))
+	}
+	if len(displayDescription) > 0 {
+		if text := strings.TrimSpace(displayDescription[0]); text != "" {
+			payload["display_description"] = text
+		}
+	}
+	return rt.yield(rt.emitter.Emit("tool.call", payload, stringPtr(toolName), nil))
 }
 
 func (rt *luaRuntime) emitAgentToolResult(toolName string, result map[string]any, resultErr error) error {
@@ -1062,6 +1083,63 @@ func parseLuaSendOptions(value lua.LValue) (bool, error) {
 		return false, fmt.Errorf("agent.send: opts.interrupt must be a boolean")
 	}
 	return bool(interrupt), nil
+}
+
+func parseLuaWaitDisplayDescription(value lua.LValue, field string) (string, error) {
+	if value == lua.LNil {
+		return "", nil
+	}
+	if text, ok := value.(lua.LString); ok {
+		return strings.TrimSpace(string(text)), nil
+	}
+	tbl, ok := value.(*lua.LTable)
+	if !ok {
+		return "", fmt.Errorf("%s must be a string or table", field)
+	}
+	if err := ensureLuaTableKeys(tbl, field, map[string]struct{}{"display_description": {}}); err != nil {
+		return "", err
+	}
+	raw := tbl.RawGetString("display_description")
+	if raw == lua.LNil {
+		return "", nil
+	}
+	text, ok := raw.(lua.LString)
+	if !ok {
+		return "", fmt.Errorf("%s.display_description must be a string", field)
+	}
+	return strings.TrimSpace(string(text)), nil
+}
+
+func humanizeAgentWaitError(toolName string, err error, displayDescription string, timeout time.Duration) error {
+	if err == nil {
+		return nil
+	}
+	description := strings.TrimSpace(displayDescription)
+	if description == "" || !isAgentWaitTimeoutError(err) {
+		return err
+	}
+	seconds := int((timeout + time.Second - time.Millisecond) / time.Second)
+	if seconds < 1 {
+		seconds = 1
+	}
+	reason := "本次等待检查窗口内没有收到该模型的完成结果"
+	if toolName == "agent.wait_any" {
+		reason = "本次并行等待检查窗口内，没有任何模型在本轮检查中返回完成、失败或可用输出"
+	}
+	return fmt.Errorf("%s：%s；检查窗口已到达%d秒上限，模型仍可能继续运行；系统会继续按计划检查，直到模型返回或达到总等待上限。原始错误：%s", description, reason, seconds, err.Error())
+}
+
+func isAgentWaitTimeoutError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
+	text := strings.ToLower(strings.TrimSpace(err.Error()))
+	return strings.Contains(text, "deadline exceeded") ||
+		strings.Contains(text, "timeout") ||
+		strings.Contains(text, "超时")
 }
 
 func parseLuaTimeout(value lua.LValue, field string) (time.Duration, error) {

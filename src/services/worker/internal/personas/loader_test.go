@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"arkloop/services/worker/internal/testutil"
@@ -263,6 +264,36 @@ func TestLoadPersonaWithExecutorScriptFile(t *testing.T) {
 	}
 	if _, exists := def.ExecutorConfig["script_file"]; exists {
 		t.Fatalf("expected script_file removed after loading")
+	}
+}
+
+func TestLoadPersonaWithExecutorDataFile(t *testing.T) {
+	dir := t.TempDir()
+	writePersonaFiles(t, dir, "test_lua",
+		"id: test_lua\nversion: \"1\"\ntitle: Test Lua\nexecutor_type: agent.lua\nexecutor_config:\n  script_file: agent.lua\n  school_names_file: school_names.json\n",
+		"# prompt",
+	)
+	if err := os.WriteFile(filepath.Join(dir, "test_lua", "agent.lua"), []byte("context.set_output('ok')\n"), 0644); err != nil {
+		t.Fatalf("WriteFile agent.lua failed: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "test_lua", "school_names.json"), []byte(`{"source":"test","schools":[{"name":"北京大学","level":"本科"}]}`), 0644); err != nil {
+		t.Fatalf("WriteFile school_names.json failed: %v", err)
+	}
+
+	registry, err := LoadRegistry(dir)
+	if err != nil {
+		t.Fatalf("LoadRegistry failed: %v", err)
+	}
+	def, ok := registry.Get("test_lua")
+	if !ok {
+		t.Fatalf("expected test_lua persona loaded")
+	}
+	raw, ok := def.ExecutorConfig["school_names"].(string)
+	if !ok || !strings.Contains(raw, "北京大学") {
+		t.Fatalf("expected executor_config.school_names from data file, got %#v", def.ExecutorConfig["school_names"])
+	}
+	if _, exists := def.ExecutorConfig["school_names_file"]; exists {
+		t.Fatalf("expected school_names_file removed after loading")
 	}
 }
 

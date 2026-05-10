@@ -87,6 +87,16 @@ type LoadState =
   | { status: 'binary' }
   | { status: 'error'; message: string }
 
+function encodeSafeSegment(segment: string): string {
+  try {
+    const decoded = decodeURIComponent(segment)
+    if (decoded !== segment) return encodeURIComponent(decoded)
+  } catch {
+    // 不是合法百分号编码，按原始字符串处理
+  }
+  return encodeURIComponent(segment)
+}
+
 export function DocumentPanel({ artifact, artifacts, accessToken, runId, onClose }: Props) {
   const { t } = useLocale()
   const [loadState, setLoadState] = useState<LoadState>({ status: 'loading' })
@@ -98,7 +108,7 @@ export function DocumentPanel({ artifact, artifacts, accessToken, runId, onClose
 
   useEffect(() => {
     setLoadState({ status: 'loading' })
-    const url = `${apiBaseUrl()}/v1/artifacts/${artifact.key.split("/").map(encodeURIComponent).join("/")}`
+    const url = `${apiBaseUrl()}/v1/artifacts/${artifact.key.split("/").map(encodeSafeSegment).join("/")}`
     fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } })
       .then(async (res) => {
         if (!res.ok) throw new Error(`${res.status}`)
@@ -119,7 +129,7 @@ export function DocumentPanel({ artifact, artifacts, accessToken, runId, onClose
     if (downloading) return
     setDownloading(true)
     try {
-      const url = `${apiBaseUrl()}/v1/artifacts/${artifact.key.split("/").map(encodeURIComponent).join("/")}`
+      const url = `${apiBaseUrl()}/v1/artifacts/${artifact.key.split("/").map(encodeSafeSegment).join("/")}`
       const res = await fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } })
       if (!res.ok) throw new Error(`${res.status}`)
       const blob = await res.blob()

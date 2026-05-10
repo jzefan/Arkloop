@@ -19,7 +19,7 @@ const (
 	availableModelsRespBytes = 8 << 20
 
 	defaultOpenAIBaseURL              = "https://api.openai.com/v1"
-	defaultDeepSeekBaseURL            = "https://api.deepseek.com"
+	defaultDeepSeekBaseURL            = "https://api.deepseek.com/v1"
 	defaultDoubaoBaseURL              = "https://ark.cn-beijing.volces.com/api/v3"
 	defaultQwenBaseURL                = "https://dashscope.aliyuncs.com/compatible-mode/v1"
 	defaultYuanbaoBaseURL             = "https://api.hunyuan.cloud.tencent.com/v1"

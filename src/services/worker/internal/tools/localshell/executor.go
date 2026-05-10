@@ -45,6 +45,11 @@ var localShellAllowedEnvKeys = []string{
 	"USER",
 	"USERPROFILE",
 	"WINDIR",
+	"NODE_PATH",
+	"AGENT_BROWSER_CHROME_PATH",
+	"ARKLOOP_PDF_HTML_BASE64",
+	"ARKLOOP_PDF_OUTPUT",
+	"ARKLOOP_PDF_HOST_OUTPUT",
 }
 
 type Executor struct {

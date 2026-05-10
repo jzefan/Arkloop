@@ -74,6 +74,7 @@ local function init_progress_todos(model_count)
     { id = "evaluate", content = "调用 " .. tostring(model_count) .. " 个评估模型", status = "pending" },
     { id = "score", content = "综合评分", status = "pending" },
     { id = "report", content = "生成报告文件", status = "pending" },
+    { id = "pdf", content = "转化为 PDF 文件", status = "pending" },
   }
   emit_progress_todos()
 end
@@ -172,19 +173,188 @@ local function looks_like_non_school_input(text)
   return false
 end
 
+local SCHOOL_NAMES_CACHE = nil
+
+local function school_names()
+  if SCHOOL_NAMES_CACHE ~= nil then return SCHOOL_NAMES_CACHE end
+  SCHOOL_NAMES_CACHE = {}
+  local raw = context.get("school_names")
+  if raw == nil or raw == "" then raw = context.get("vocational_colleges") end
+  if raw == nil or raw == "" then return SCHOOL_NAMES_CACHE end
+  local parsed, err = json.decode(raw)
+  if err ~= nil or parsed == nil then return SCHOOL_NAMES_CACHE end
+  local rows = parsed
+  if type(parsed) == "table" and type(parsed.schools) == "table" then
+    rows = parsed.schools
+  end
+  for _, item in ipairs(rows) do
+    local name = ""
+    if type(item) == "string" then
+      name = trim(item)
+    elseif type(item) == "table" then
+      name = trim(item.name)
+    end
+    if name ~= "" then
+      table.insert(SCHOOL_NAMES_CACHE, name)
+    end
+  end
+  table.sort(SCHOOL_NAMES_CACHE, function(a, b)
+    return string.len(a) > string.len(b)
+  end)
+  return SCHOOL_NAMES_CACHE
+end
+
+local function replace_plain_all(text, needle, replacement)
+  if needle == "" then return text end
+  local pieces = {}
+  local start_pos = 1
+  while true do
+    local from_pos, to_pos = string.find(text, needle, start_pos, true)
+    if from_pos == nil then
+      table.insert(pieces, string.sub(text, start_pos))
+      break
+    end
+    table.insert(pieces, string.sub(text, start_pos, from_pos - 1))
+    table.insert(pieces, replacement)
+    start_pos = to_pos + 1
+  end
+  return table.concat(pieces)
+end
+
+local function normalize_school_match_text(text)
+  local normalized = trim(text)
+  for _, token in ipairs({ " ", "\t", "\n", "\r", "　", "，", "。", "、", ",", ".", "?", "？", "!", "！", "；", ";", "：", ":", "“", "”", "\"", "'", "《", "》", "（", "）", "(", ")" }) do
+    normalized = replace_plain_all(normalized, token, "")
+  end
+  return normalized
+end
+
+local function match_school_name(text)
+  local haystack = normalize_school_match_text(text)
+  if haystack == "" then return "" end
+  for _, name in ipairs(school_names()) do
+    local needle = normalize_school_match_text(name)
+    if needle ~= "" and string.find(haystack, needle, 1, true) then
+      return name
+    end
+  end
+  return ""
+end
+
+local SCHOOL_QUERY_PREFIXES = {
+  "请继续评估一下",
+  "请继续评估",
+  "继续评估一下",
+  "继续评估",
+  "请帮我评估一下",
+  "请帮我评估",
+  "帮我评估一下",
+  "帮我评估",
+  "评估一下",
+  "请分析一下",
+  "帮我分析一下",
+  "分析一下",
+  "看一下",
+  "查一下",
+  "了解一下",
+  "请帮我",
+  "麻烦你",
+  "麻烦",
+  "帮我",
+  "请",
+  "一下子",
+  "一下",
+  "下",
+  "对",
+  "关于",
+}
+
+local function starts_with(text, prefix)
+  return prefix ~= "" and string.sub(text, 1, string.len(prefix)) == prefix
+end
+
+local function strip_school_query_prefixes(text)
+  local cleaned = trim(text)
+  local changed = true
+  while changed do
+    changed = false
+    for _, prefix in ipairs(SCHOOL_QUERY_PREFIXES) do
+      if starts_with(cleaned, prefix) then
+        cleaned = trim(string.sub(cleaned, string.len(prefix) + 1))
+        changed = true
+        break
+      end
+    end
+  end
+  return cleaned
+end
+
+local SCHOOL_SUFFIXES = {
+  "职业技术大学",
+  "职业技术学院",
+  "职业大学",
+  "职业学院",
+  "高等专科学校",
+  "专科学校",
+}
+
+local function trim_leading_school_noise(text)
+  local cleaned = strip_school_query_prefixes(text)
+  local earliest = nil
+  for _, marker in ipairs({ "学校", "院校", "高校" }) do
+    local _, stop = string.find(cleaned, marker, 1, true)
+    if stop ~= nil and stop < string.len(cleaned) then
+      if earliest == nil or stop < earliest then earliest = stop end
+    end
+  end
+  if earliest ~= nil then
+    cleaned = trim(string.sub(cleaned, earliest + 1))
+  end
+  return cleaned
+end
+
+local function extract_by_school_suffix(text)
+  local cleaned = trim_leading_school_noise(text)
+  if cleaned == "" then return "" end
+  local best_stop = nil
+  for _, suffix in ipairs(SCHOOL_SUFFIXES) do
+    local _, stop = string.find(cleaned, suffix, 1, true)
+    if stop ~= nil and (best_stop == nil or stop < best_stop) then
+      best_stop = stop
+    end
+  end
+  if best_stop == nil then return cleaned end
+  return trim(string.sub(cleaned, 1, best_stop))
+end
+
+local function normalize_school_candidate(text)
+  local matched = match_school_name(text)
+  if matched ~= "" then return matched end
+  return extract_by_school_suffix(text)
+end
+
 local function extract_school_name(text)
+  local matched = match_school_name(text)
+  if matched ~= "" then return matched end
   for _, keyword in ipairs({ "评估", "分析" }) do
     local found = extract_after_keyword(text, keyword)
-    if found ~= "" and not looks_like_non_school_input(found) then return found end
+    if found ~= "" and not looks_like_non_school_input(found) then
+      local normalized = normalize_school_candidate(found)
+      if normalized ~= "" and not looks_like_non_school_input(normalized) then return normalized end
+    end
   end
   local after_for = extract_after_keyword(text, "为")
   if after_for ~= "" then
     local found = trim(take_before_plain(after_for, "生成"))
-    if found ~= "" and not looks_like_non_school_input(found) then return found end
+    if found ~= "" and not looks_like_non_school_input(found) then
+      local normalized = normalize_school_candidate(found)
+      if normalized ~= "" and not looks_like_non_school_input(normalized) then return normalized end
+    end
   end
   local cleaned = trim(text)
   if cleaned ~= "" and string.len(cleaned) <= 80 and not looks_like_non_school_input(cleaned) then
-    return cleaned
+    local normalized = normalize_school_candidate(cleaned)
+    if normalized ~= "" and not looks_like_non_school_input(normalized) then return normalized end
   end
   return ""
 end
@@ -416,14 +586,14 @@ local function search_error_message(provider_name, search_err)
   local lower_err = string.lower(raw_err)
   if string.find(lower_err, "timeout", 1, true) or string.find(raw_err, "超时", 1, true) then
     if provider_name == "web_search.basic" then
-      return "联网搜索超时，当前提供商为 web_search.basic，可能无法稳定返回可核验院校身份的公开结果。请稍后重试；若仍超时，请在“接入”中将 browser-search 端点切换到 Tavily 或 SearXNG 后重试。原始信息：" .. raw_err
+      return "联网搜索超时，当前提供商为 web_search.basic，未获取到可用于核验院校身份的公开结果。请稍后重试；若仍超时，请在“接入”中将 browser-search 端点切换到 Tavily 或 SearXNG 后重试。原始信息：" .. raw_err
     end
     return "联网搜索超时，当前提供商暂未返回可用于核验院校身份的公开结果。请稍后重试；若仍超时，请在“接入”中切换联网搜索提供商后重试。原始信息：" .. raw_err
   end
   if provider_name == "web_search.basic" then
-    return "当前使用的联网搜索提供商为 web_search.basic，可能无法稳定返回可核验院校身份的公开结果。请在“接入”中切换到 Tavily 或 SearXNG 后重试。原始信息：" .. raw_err
+    return "当前使用的联网搜索提供商为 web_search.basic，未返回可用于核验院校身份的公开结果。请在“接入”中切换到 Tavily 或 SearXNG 后重试。原始信息：" .. raw_err
   end
-  return "当前搜索提供商未返回可用于核验院校身份的公开结果。请检查“接入”中的联网搜索配置，建议切换到 Tavily 或 SearXNG 后重试。原始信息：" .. raw_err
+  return "当前搜索提供商未返回可用于核验院校身份的公开结果。请稍后重试，或在“接入”中切换联网搜索提供商。原始信息：" .. raw_err
 end
 
 local function search_sources(school_name, year, analysis_focus)
@@ -592,6 +762,20 @@ local function rating_for_score(total)
   if total >= 70 then return "B 良好" end
   if total >= 60 then return "C 达标" end
   return "D 待提升"
+end
+
+local function extract_reasoning_text(raw_text)
+  local text = trim(raw_text)
+  if text == "" then return "" end
+  -- 找到 JSON 起始位置，之前的文本作为分析说明
+  local json_start = string.find(text, "{", 1, true)
+  if json_start == nil or json_start <= 1 then return "" end
+  local prefix = trim(string.sub(text, 1, json_start - 1))
+  -- 超过 200 字截断
+  if string.len(prefix) > 600 then
+    prefix = utf8_safe_prefix(prefix, 600) .. "…"
+  end
+  return prefix
 end
 
 local function validate_evaluation(raw_text)
@@ -846,9 +1030,20 @@ end
 
 local function failure_reason_text(reason)
   if reason == nil or trim(reason) == "" then
-    return "未知错误"
+    return "未返回有效评估结果"
   end
-  return trim(reason)
+  local raw_reason = trim(reason)
+  local lower_reason = string.lower(raw_reason)
+  if string.find(lower_reason, "timeout", 1, true) or string.find(lower_reason, "超时", 1, true) then
+    return "模型调用超时：" .. raw_reason
+  end
+  if string.find(lower_reason, "json", 1, true) or string.find(lower_reason, "格式", 1, true) then
+    return "返回内容格式不符合要求：" .. raw_reason
+  end
+  if string.find(lower_reason, "eligible", 1, true) then
+    return "未能确认院校资格：" .. raw_reason
+  end
+  return raw_reason
 end
 
 local function format_failures(failures)
@@ -892,6 +1087,7 @@ local function spawn_evaluators(school_name, year, mode, models, fact_pack)
     local input = {
       task = "evaluate",
       model_label = model_label(model),
+      model_selector = model_selector(model),
       school_name = school_name,
       year = year,
       mode = mode,
@@ -943,9 +1139,7 @@ local function wait_for_evaluators(children, single_model)
       if slices_left <= 0 then return 1 end
       return WAIT_SLICE_MS
     end
-    if deadline_ms == nil or type(context.now_ms) ~= "function" then
-      return WAIT_MS
-    end
+    if type(context.now_ms) ~= "function" then return WAIT_MS end
     local now = context.now_ms()
     if type(now) ~= "number" then return WAIT_MS end
     local remaining = math.floor(deadline_ms - now)
@@ -973,6 +1167,22 @@ local function wait_for_evaluators(children, single_model)
     local total_seconds = math.floor(WAIT_MS / 1000)
     if elapsed > total_seconds then elapsed = total_seconds end
     return base .. "（已等待" .. tostring(elapsed) .. "秒/" .. tostring(total_seconds) .. "秒）"
+  end
+
+  local function wait_tool_description(base, wait_timeout)
+    local seconds = math.floor(((wait_timeout or WAIT_SLICE_MS) + 999) / 1000)
+    if seconds < 1 then seconds = 1 end
+    return wait_progress_text(base) .. "；每" .. tostring(seconds) .. "秒检查一次"
+  end
+
+  local function pending_labels(wait_ids)
+    local labels = {}
+    for _, id in ipairs(wait_ids) do
+      local item = by_id[id]
+      if item ~= nil then table.insert(labels, progress_model_label(item.model)) end
+    end
+    if #labels == 0 then return "评估模型" end
+    return table.concat(labels, "、")
   end
 
   local function interrupt_pending(wait_ids, reason)
@@ -1008,7 +1218,7 @@ local function wait_for_evaluators(children, single_model)
       for _, id in ipairs(wait_ids) do
         local pending_item = by_id[id]
         if pending_item ~= nil then
-          table.insert(failures, { model = pending_item.model, error = "执行失败或超时：等待8分钟未完成" })
+          table.insert(failures, { model = pending_item.model, error = "执行失败或超时：等待8分钟未完成；评估模型未在等待时间内返回结果" })
         end
       end
       pending = {}
@@ -1023,11 +1233,13 @@ local function wait_for_evaluators(children, single_model)
       if type(now) == "number" then wait_slice_started_ms = now end
     end
     if single_model or #wait_ids == 1 or type(agent.wait_any) ~= "function" then
-      set_progress_step("evaluate", "in_progress", "调用 " .. tostring(total) .. " 个评估模型", wait_progress_text("等待 " .. label .. " 返回评估结果（最长8分钟）"))
-      resolved, wait_err = agent.wait(wait_ids[1], wait_timeout)
+      local description = wait_tool_description("等待 " .. label .. " 返回评估结果（最长8分钟）", wait_timeout)
+      set_progress_step("evaluate", "in_progress", "调用 " .. tostring(total) .. " 个评估模型", description)
+      resolved, wait_err = agent.wait(wait_ids[1], wait_timeout, { display_description = description })
     else
-      set_progress_step("evaluate", "in_progress", "调用 " .. tostring(total) .. " 个评估模型", wait_progress_text("并行等待 " .. tostring(#wait_ids) .. " 个评估模型返回结果（最长8分钟）"))
-      resolved, wait_err = agent.wait_any(wait_ids, wait_timeout)
+      local description = wait_tool_description("并行等待 " .. tostring(#wait_ids) .. " 个评估模型返回结果（" .. pending_labels(wait_ids) .. "，最长8分钟）", wait_timeout)
+      set_progress_step("evaluate", "in_progress", "调用 " .. tostring(total) .. " 个评估模型", description)
+      resolved, wait_err = agent.wait_any(wait_ids, wait_timeout, { display_description = description })
     end
 
     local should_continue_wait = false
@@ -1041,102 +1253,99 @@ local function wait_for_evaluators(children, single_model)
           waited_long_enough = (elapsed + 200) >= wait_timeout
         end
       end
-      if still_remaining > 1 and slices_left > 0 then
-        if waited_long_enough then
-          set_progress_step("evaluate", "in_progress", "调用 " .. tostring(total) .. " 个评估模型", wait_progress_text("模型仍在运行，继续等待（最长8分钟）"))
-          should_continue_wait = true
-        end
+      if still_remaining > 1 and slices_left > 0 and waited_long_enough then
+        set_progress_step("evaluate", "in_progress", "调用 " .. tostring(total) .. " 个评估模型", wait_progress_text("模型仍在运行，继续等待（最长8分钟）"))
+        should_continue_wait = true
       end
     end
     if should_continue_wait then
       -- Keep pending children and continue slicing wait windows until deadline.
     else
-
-    if wait_err ~= nil and not single_model and #wait_ids > 1 and resolved == nil then
-      if is_timeout_wait_error(wait_err) then
-        interrupt_pending(wait_ids, "评估等待超时或失败，已终止剩余模型")
-      end
-      for _, id in ipairs(wait_ids) do
-        local pending_item = by_id[id]
-        if pending_item ~= nil then
-          local pending_label = progress_model_label(pending_item.model)
-          local pending_resolved, pending_wait_err = agent.wait(id, 1)
-          local pending_error = "执行失败或超时：" .. tostring(wait_err)
-          if pending_wait_err ~= nil then
-            pending_error = "执行失败或超时：" .. tostring(pending_wait_err)
-          elseif pending_resolved == nil then
-            pending_error = "未返回内容"
-          elseif pending_resolved.last_error ~= nil and trim(pending_resolved.last_error) ~= "" then
-            pending_error = trim(pending_resolved.last_error)
-          elseif pending_resolved.output == nil then
-            pending_error = "未返回内容"
-          else
-            local pending_evaluation, pending_reason = validate_evaluation(pending_resolved.output)
-            if pending_evaluation ~= nil then
-              pending_evaluation.model_label = pending_evaluation.model_label or model_label(pending_item.model)
-              table.insert(evaluations, pending_evaluation)
-              set_progress_step("evaluate", "in_progress", "调用 " .. tostring(total) .. " 个评估模型", pending_label .. " 评估完成（" .. tostring(#evaluations) .. "/" .. tostring(total) .. "）")
-              pending_error = nil
+      if wait_err ~= nil and not single_model and #wait_ids > 1 and resolved == nil then
+        if is_timeout_wait_error(wait_err) then
+          interrupt_pending(wait_ids, "评估等待超时或失败，已终止剩余模型")
+        end
+        for _, id in ipairs(wait_ids) do
+          local pending_item = by_id[id]
+          if pending_item ~= nil then
+            local pending_label = progress_model_label(pending_item.model)
+            local pending_resolved, pending_wait_err = agent.wait(id, 1, { display_description = "检查 " .. pending_label .. " 是否已有可用评估结果" })
+            local pending_error = "执行失败或超时：" .. tostring(wait_err)
+            if pending_wait_err ~= nil then
+              pending_error = "执行失败或超时：" .. tostring(pending_wait_err)
+            elseif pending_resolved == nil then
+              pending_error = "未返回内容"
+            elseif pending_resolved.last_error ~= nil and trim(pending_resolved.last_error) ~= "" then
+              pending_error = trim(pending_resolved.last_error)
+            elseif pending_resolved.output == nil then
+              pending_error = "未返回内容"
             else
-              pending_error = pending_reason or "返回内容不符合评估格式"
+              local pending_evaluation, pending_reason = validate_evaluation(pending_resolved.output)
+              if pending_evaluation ~= nil then
+                pending_evaluation.model_label = pending_evaluation.model_label or model_label(pending_item.model)
+                table.insert(evaluations, pending_evaluation)
+                set_progress_step("evaluate", "in_progress", "调用 " .. tostring(total) .. " 个评估模型", pending_label .. " 评估完成（" .. tostring(#evaluations) .. "/" .. tostring(total) .. "）")
+                pending_error = nil
+              else
+                pending_error = pending_reason or "返回内容不符合评估格式"
+              end
+            end
+            if pending_error ~= nil then
+              table.insert(failures, { model = pending_item.model, error = pending_error })
+              set_progress_step("evaluate", "in_progress", "调用 " .. tostring(total) .. " 个评估模型", pending_label .. " 评估失败，继续处理可用结果")
             end
           end
-          if pending_error ~= nil then
-            table.insert(failures, { model = pending_item.model, error = pending_error })
-          end
-          set_progress_step("evaluate", "in_progress", "调用 " .. tostring(total) .. " 个评估模型", pending_label .. " 评估失败，继续处理可用结果")
+        end
+        pending = {}
+        by_id = {}
+        break
+      end
+
+      local item = nil
+      if resolved ~= nil and resolved.id ~= nil and by_id[resolved.id] ~= nil then
+        item = by_id[resolved.id]
+      else
+        item = first_item
+      end
+      label = progress_model_label(item.model)
+
+      local next_pending = {}
+      for _, id in ipairs(pending) do
+        if id ~= item.child.id then
+          table.insert(next_pending, id)
         end
       end
-      pending = {}
-      by_id = {}
-      break
-    end
+      pending = next_pending
+      by_id[item.child.id] = nil
 
-    local item = nil
-    if resolved ~= nil and resolved.id ~= nil and by_id[resolved.id] ~= nil then
-      item = by_id[resolved.id]
-    else
-      item = first_item
-    end
-    label = progress_model_label(item.model)
-
-    local next_pending = {}
-    for _, id in ipairs(pending) do
-      if id ~= item.child.id then
-        table.insert(next_pending, id)
-      end
-    end
-    pending = next_pending
-    by_id[item.child.id] = nil
-
-    if wait_err ~= nil then
-      table.insert(failures, { model = item.model, error = "执行失败或超时：" .. tostring(wait_err) })
-      set_progress_step("evaluate", "in_progress", "调用 " .. tostring(total) .. " 个评估模型", label .. " 评估失败，继续处理可用结果")
-      if single_model then return evaluations, failures end
-    elseif resolved == nil then
-      table.insert(failures, { model = item.model, error = "未返回内容" })
-      set_progress_step("evaluate", "in_progress", "调用 " .. tostring(total) .. " 个评估模型", label .. " 未返回内容，继续处理可用结果")
-      if single_model then return evaluations, failures end
-    elseif resolved.last_error ~= nil and trim(resolved.last_error) ~= "" then
-      table.insert(failures, { model = item.model, error = trim(resolved.last_error) })
-      set_progress_step("evaluate", "in_progress", "调用 " .. tostring(total) .. " 个评估模型", label .. " 评估失败，继续处理可用结果")
-      if single_model then return evaluations, failures end
-    elseif resolved.output == nil then
-      table.insert(failures, { model = item.model, error = "未返回内容" })
-      set_progress_step("evaluate", "in_progress", "调用 " .. tostring(total) .. " 个评估模型", label .. " 未返回内容，继续处理可用结果")
-      if single_model then return evaluations, failures end
-    else
-      local evaluation, reason = validate_evaluation(resolved.output)
-      if evaluation == nil then
-        table.insert(failures, { model = item.model, error = reason or "返回内容不符合评估格式" })
-        set_progress_step("evaluate", "in_progress", "调用 " .. tostring(total) .. " 个评估模型", label .. " 返回格式需复核，继续处理可用结果")
+      if wait_err ~= nil then
+        table.insert(failures, { model = item.model, error = "执行失败或超时：" .. tostring(wait_err) })
+        set_progress_step("evaluate", "in_progress", "调用 " .. tostring(total) .. " 个评估模型", label .. " 评估失败，继续处理可用结果")
+        if single_model then return evaluations, failures end
+      elseif resolved == nil then
+        table.insert(failures, { model = item.model, error = "未返回内容" })
+        set_progress_step("evaluate", "in_progress", "调用 " .. tostring(total) .. " 个评估模型", label .. " 未返回内容，继续处理可用结果")
+        if single_model then return evaluations, failures end
+      elseif resolved.last_error ~= nil and trim(resolved.last_error) ~= "" then
+        table.insert(failures, { model = item.model, error = trim(resolved.last_error) })
+        set_progress_step("evaluate", "in_progress", "调用 " .. tostring(total) .. " 个评估模型", label .. " 评估失败，继续处理可用结果")
+        if single_model then return evaluations, failures end
+      elseif resolved.output == nil then
+        table.insert(failures, { model = item.model, error = "未返回内容" })
+        set_progress_step("evaluate", "in_progress", "调用 " .. tostring(total) .. " 个评估模型", label .. " 未返回内容，继续处理可用结果")
         if single_model then return evaluations, failures end
       else
-        evaluation.model_label = evaluation.model_label or model_label(item.model)
-        table.insert(evaluations, evaluation)
-        set_progress_step("evaluate", "in_progress", "调用 " .. tostring(total) .. " 个评估模型", label .. " 评估完成（" .. tostring(#evaluations) .. "/" .. tostring(total) .. "）")
+        local evaluation, reason = validate_evaluation(resolved.output)
+        if evaluation == nil then
+          table.insert(failures, { model = item.model, error = reason or "返回内容不符合评估格式" })
+          set_progress_step("evaluate", "in_progress", "调用 " .. tostring(total) .. " 个评估模型", label .. " 返回格式需复核，继续处理可用结果")
+          if single_model then return evaluations, failures end
+        else
+          evaluation.model_label = evaluation.model_label or model_label(item.model)
+          table.insert(evaluations, evaluation)
+          set_progress_step("evaluate", "in_progress", "调用 " .. tostring(total) .. " 个评估模型", label .. " 评估完成（" .. tostring(#evaluations) .. "/" .. tostring(total) .. "）")
+        end
       end
-    end
     end
   end
   local completed = #evaluations
@@ -1308,7 +1517,7 @@ local function artifact_link(result, fallback_filename)
 end
 
 local function write_outputs(school_name, year, markdown, status_line)
-  set_progress_step("report", "in_progress", "生成报告文件", "正在写入 Markdown 并导出 PDF")
+  set_progress_step("report", "in_progress", "生成报告文件", "正在写入 Markdown 文件")
   local base = school_name .. "_产教融合指数报告_" .. year
   local md_name = base .. ".md"
   local pdf_name = base .. ".pdf"
@@ -1316,6 +1525,12 @@ local function write_outputs(school_name, year, markdown, status_line)
     filename = md_name,
     content = markdown,
   })
+  if md_err ~= nil then
+    set_progress_step("report", "completed", "报告文件生成异常", "Markdown 文件保存暂未成功，可稍后重试")
+  else
+    set_progress_step("report", "completed", "报告文件已生成", "Markdown 文件已生成，准备转化 PDF")
+  end
+  set_progress_step("pdf", "in_progress", "转化为 PDF 文件", "Markdown 已处理，正在转化为 PDF")
   local pdf_result, pdf_err = tool_call("markdown_to_pdf", {
     filename = pdf_name,
     content = markdown,
@@ -1323,13 +1538,14 @@ local function write_outputs(school_name, year, markdown, status_line)
   local suffix = "\n\n---\n\n生成文件：" .. artifact_link(md_result, md_name)
   if pdf_err == nil and pdf_result ~= nil then
     suffix = suffix .. "、" .. artifact_link(pdf_result, pdf_name)
+    set_progress_step("pdf", "completed", "PDF 文件已生成", "PDF 文件已转化完成")
   else
-    suffix = suffix .. "\n\nPDF 导出失败：" .. tostring(pdf_err or "unknown_error") .. "。已保留 Markdown 文件，可稍后重试导出。"
+    suffix = suffix .. "\n\nPDF 导出暂未成功，已保留 Markdown 文件，可稍后重试导出。"
+    set_progress_step("pdf", "completed", "PDF 文件生成异常", "PDF 转化暂未成功，已保留 Markdown 文件")
   end
   if md_err ~= nil then
-    suffix = suffix .. "\n\nMarkdown artifact 写入失败：" .. tostring(md_err)
+    suffix = suffix .. "\n\n报告文件保存暂未成功，可稍后重试。"
   end
-  set_progress_step("report", "completed", "报告文件已生成", "Markdown 与 PDF 文件已处理完成")
   local final_status = status_line
   if trim(final_status) == "" then
     final_status = "评估完成：已生成《" .. school_name .. " 产教融合指数报告（" .. year .. "年）》及相关文件。"
@@ -1404,41 +1620,7 @@ local computed = {
   rating = rating,
 }
 
-local template = context.get("report_template") or ""
-local synth_input = {
-  task = "synthesize",
-  school_name = school_name,
-  year = year,
-  mode = mode,
-  fact_pack = fact_pack,
-	  computed = computed,
-	  per_model_computed = per_model_computed(evaluations),
-	  evaluations = evaluations,
-  report_template = template,
-}
-
-local report_markdown = nil
-local synth_model = model_selector(selected_models[1])
-local synth_args = {
-  persona_id = SYNTHESIZER_PERSONA_ID,
-  context_mode = "isolated",
-  profile = "task",
-  nickname = "报告撰写",
-  input = json.encode(synth_input),
-}
-if trim(synth_model) ~= "" then
-  synth_args.model = synth_model
-end
-local synth, synth_err = agent.spawn(synth_args)
-if synth ~= nil then
-  local resolved, wait_err = agent.wait(synth.id, WAIT_MS)
-  if wait_err == nil and resolved ~= nil and resolved.output ~= nil and trim(resolved.output) ~= "" then
-    report_markdown = trim(resolved.output)
-  end
-end
-
-if report_markdown == nil then
-  report_markdown = fallback_report(school_name, year, computed, fact_pack, evaluations)
-end
+set_progress_step("report", "in_progress", "生成报告文件", "正在生成结构化 Markdown 报告")
+local report_markdown = fallback_report(school_name, year, computed, fact_pack, evaluations)
 
 write_outputs(school_name, year, report_markdown, "评估完成：已生成《" .. school_name .. " 产教融合指数报告（" .. year .. "年）》及相关文件。")

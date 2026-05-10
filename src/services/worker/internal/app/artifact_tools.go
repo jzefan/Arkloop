@@ -18,6 +18,7 @@ func registerStoredArtifactTools(
 	executors map[string]tools.Executor,
 	specs []llm.ToolSpec,
 	store objectstore.Store,
+	sandboxExecutor tools.Executor,
 	db workerdata.QueryDB,
 	configResolver sharedconfig.Resolver,
 	routingLoader *routing.ConfigLoader,
@@ -28,7 +29,7 @@ func registerStoredArtifactTools(
 
 	artifactExecutor := documentwritetool.NewToolExecutor(store)
 	imageExecutor := imagegeneratetool.NewToolExecutor(store, db, configResolver, routingLoader)
-	markdownToPDFExecutor := markdowntopdftool.NewToolExecutor(store)
+	markdownToPDFExecutor := markdowntopdftool.NewToolExecutor(store, sandboxExecutor)
 	registered := false
 	for _, item := range []struct {
 		agentSpec tools.AgentToolSpec

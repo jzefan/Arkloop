@@ -244,9 +244,8 @@ func loadSinglePersona(yamlPath string) (Definition, error) {
 		TitleSummarizer:     titleSummarizer,
 		ResultSummarizer:    resultSummarizer,
 
-		IsSystem:                asOptionalBool(obj["is_system"]),
-		IsBuiltin:               asOptionalBool(obj["is_builtin"]),
-
+		IsSystem:  asOptionalBool(obj["is_system"]),
+		IsBuiltin: asOptionalBool(obj["is_builtin"]),
 
 		HeartbeatEnabled:         hbEnabled,
 		HeartbeatIntervalMinutes: hbInterval,
@@ -476,6 +475,13 @@ func parseExecutorConfig(value any, executorType string, personaDir string) (map
 		return out, nil
 	}
 
+	if err := loadExecutorDataFile(out, personaDir, "school_names_file", "school_names"); err != nil {
+		return nil, err
+	}
+	if err := loadExecutorDataFile(out, personaDir, "vocational_colleges_file", "vocational_colleges"); err != nil {
+		return nil, err
+	}
+
 	scriptFileRaw, hasScriptFile := out["script_file"]
 	if !hasScriptFile || scriptFileRaw == nil {
 		return out, nil
@@ -503,6 +509,35 @@ func parseExecutorConfig(value any, executorType string, personaDir string) (map
 	out["script"] = script
 	delete(out, "script_file")
 	return out, nil
+}
+
+func loadExecutorDataFile(config map[string]any, personaDir string, fileKey string, targetKey string) error {
+	fileRaw, hasFile := config[fileKey]
+	if !hasFile || fileRaw == nil {
+		return nil
+	}
+	if raw, ok := config[targetKey].(string); ok && strings.TrimSpace(raw) != "" {
+		return fmt.Errorf("executor_config.%s and executor_config.%s cannot both be set", targetKey, fileKey)
+	}
+	fileName, err := asNonEmptyString(fileRaw, "executor_config."+fileKey)
+	if err != nil {
+		return err
+	}
+	path, err := resolvePersonaLocalPath(personaDir, fileName)
+	if err != nil {
+		return fmt.Errorf("executor_config.%s: %w", fileKey, err)
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return fmt.Errorf("executor_config.%s: %w", fileKey, err)
+	}
+	content := strings.TrimSpace(string(raw))
+	if content == "" {
+		return fmt.Errorf("executor_config.%s: file must not be empty", fileKey)
+	}
+	config[targetKey] = content
+	delete(config, fileKey)
+	return nil
 }
 
 func resolvePersonaLocalPath(personaDir string, pathValue string) (string, error) {
