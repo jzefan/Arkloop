@@ -9,7 +9,7 @@ import {
   Settings,
   XCircle,
 } from "lucide-react";
-import { ErrorCallout, isApiError, type AppError } from "@arkloop/shared";
+import { ErrorCallout, isApiError, PRODUCT_BRAND_NAME, type AppError } from "@arkloop/shared";
 import {
   Reveal,
   inputCls,
@@ -2217,7 +2217,7 @@ export function OnboardingWizard({ onComplete }: Props) {
           zIndex: 1,
         }}
       >
-        &copy; 2026 Arkloop
+        &copy; 2026 {PRODUCT_BRAND_NAME}
       </footer>
     </div>
   );

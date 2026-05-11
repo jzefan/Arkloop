@@ -821,6 +821,7 @@ apply_runtime_env() {
   set_value ARKLOOP_PGBOUNCER_URL "postgresql://${pg_user}:${pg_pass}@127.0.0.1:5433/${pg_db}"
   set_value ARKLOOP_REDIS_URL "redis://:${redis_pass}@127.0.0.1:6379/0"
   set_value ARKLOOP_GATEWAY_REDIS_URL "redis://:${redis_pass}@127.0.0.1:6379/1"
+  set_if_empty ARKLOOP_IMAGE_REPOSITORY "ghcr.io/jzefan/arkloop"
   set_if_empty ARKLOOP_GATEWAY_CORS_ALLOWED_ORIGINS "http://localhost:19080,http://localhost:19081,http://localhost:19082"
 
   case "$RESOLVED_CONSOLE" in

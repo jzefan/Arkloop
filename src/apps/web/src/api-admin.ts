@@ -400,3 +400,35 @@ export async function listAuditLogs(
     { accessToken },
   )
 }
+
+// ---------------------------------------------------------------------------
+// Admin Users
+// ---------------------------------------------------------------------------
+
+export type AdminUser = {
+  id: string
+  login?: string
+  username: string
+  email?: string
+  status: string
+  avatar_url?: string
+  locale?: string
+  timezone?: string
+  last_login_at?: string
+  created_at: string
+}
+
+export async function listAdminUsers(
+  accessToken: string,
+  params?: { q?: string; status?: string; limit?: number },
+): Promise<AdminUser[]> {
+  const qs = new URLSearchParams()
+  if (params?.q) qs.set('q', params.q)
+  if (params?.status) qs.set('status', params.status)
+  if (params?.limit != null) qs.set('limit', String(params.limit))
+  const query = qs.toString()
+  return apiFetch<AdminUser[]>(
+    `/v1/admin/users${query ? `?${query}` : ''}`,
+    { accessToken },
+  )
+}

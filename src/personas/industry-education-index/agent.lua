@@ -122,6 +122,51 @@ local function utf8_safe_prefix(text, max_bytes)
   return string.sub(text, 1, cut)
 end
 
+-- truncate_for_body 用于报告正文中的事实摘录：
+-- 1. 如果原文不超过 max_bytes，原样返回；
+-- 2. 否则先按 UTF-8 安全切到 max_bytes，再尝试回溯到最近的句末标点
+--    （。！？；!?;）或次级分隔符（，、,）以避免句子/引号被切开；
+-- 3. 被截断时末尾附加 "…"，让读者知道这是摘录。
+-- 仅用于展示给用户的正文，不用于内部数据管线。
+local function truncate_for_body(text, max_bytes)
+  local raw = tostring(text or "")
+  if raw == "" then return "" end
+  if string.len(raw) <= max_bytes then return raw end
+  local prefix = utf8_safe_prefix(raw, max_bytes)
+  if prefix == "" then return "" end
+  local sentence_delims = { "。", "！", "？", "；", "!", "?", ";" }
+  local minor_delims = { "，", "、", "," }
+  local function last_of(list)
+    local best = nil
+    for _, delim in ipairs(list) do
+      local pos = 0
+      while true do
+        local found = string.find(prefix, delim, pos + 1, true)
+        if found == nil then break end
+        pos = found
+      end
+      if pos > 0 and (best == nil or pos > best) then best = pos end
+    end
+    return best
+  end
+  local cut_end = last_of(sentence_delims)
+  -- 只在找到的句末靠近切口（至少占 60%）时使用，避免过度缩短
+  if cut_end == nil or cut_end < math.floor(string.len(prefix) * 0.6) then
+    local minor = last_of(minor_delims)
+    if minor ~= nil and minor > math.floor(string.len(prefix) * 0.6) then
+      cut_end = minor - 1
+    end
+  end
+  local body
+  if cut_end ~= nil and cut_end > 0 then
+    body = string.sub(prefix, 1, cut_end)
+  else
+    body = prefix
+  end
+  body = body:match("^(.-)%s*$") or body
+  return body .. "…"
+end
+
 local function contains_any(text, keywords)
   for _, keyword in ipairs(keywords) do
     if string.find(text, keyword, 1, true) then return true end
@@ -596,56 +641,343 @@ local function search_error_message(provider_name, search_err)
   return "当前搜索提供商未返回可用于核验院校身份的公开结果。请稍后重试，或在“接入”中切换联网搜索提供商。原始信息：" .. raw_err
 end
 
+-- 来源分级与权重
+-- High (weight=3): 教育部、省级教育厅、.gov.cn、.edu.cn、双高官方、权威名单
+-- Medium (weight=2): 主流新闻媒体（人民网、新华网、光明网、央视、央广、中国教育报、澎湃、中新网等）
+-- Low (weight=1): 其他互联网信息（百科、论坛、自媒体、招生网、社交媒体等）
+local AUTHORITATIVE_URL_KEYWORDS = {
+  ".edu.cn",
+  ".gov.cn",
+  "moe.gov.cn",
+  "moe.edu.cn",
+  "cee.edu.cn",
+  "ncee.edu.cn",
+  "cnais.gov.cn",
+  "stats.gov.cn",
+  "tech.gov.cn",
+  "chinadaily.com.cn/gov",
+}
+
+local AUTHORITATIVE_TITLE_KEYWORDS = {
+  "教育部",
+  "国务院",
+  "教育厅",
+  "人社厅",
+  "人力资源和社会保障部",
+  "发展改革委",
+  "人大常委会",
+  "教育工作委员会",
+  "双高计划",
+  "高水平高职学校建设",
+  "高水平专业群建设",
+  "全国职业教育",
+  "官方公告",
+  "官方通知",
+  "政府网",
+  "政府工作报告",
+}
+
+local NEWS_URL_KEYWORDS = {
+  "people.com.cn",
+  "xinhuanet.com",
+  "news.cn",
+  "gmw.cn",
+  "chinanews.com",
+  "cctv.com",
+  "cnr.cn",
+  "thepaper.cn",
+  "jiemian.com",
+  "yicai.com",
+  "caixin.com",
+  "eastday.com",
+  "sina.com.cn/news",
+  "163.com/news",
+  "ifeng.com/news",
+  "huanqiu.com",
+  "zjol.com.cn",
+  "gmw.com",
+  "stcn.com",
+  "workercn.cn",
+  "jyb.cn",
+  "chinaedu.com.cn",
+  "eol.cn/news",
+  "pedaily.cn",
+  "21jingji.com",
+}
+
+local NEWS_TITLE_KEYWORDS = {
+  "人民网",
+  "新华网",
+  "新华社",
+  "光明网",
+  "光明日报",
+  "中国新闻网",
+  "央视",
+  "央广",
+  "中国教育报",
+  "中国青年报",
+  "经济日报",
+  "工人日报",
+  "科技日报",
+  "澎湃新闻",
+  "界面新闻",
+  "第一财经",
+  "21世纪经济报道",
+  "财经",
+  "日报",
+  "晚报",
+  "时报",
+  "新闻",
+  "报道",
+}
+
+local function to_lower(text)
+  if text == nil then return "" end
+  return string.lower(tostring(text))
+end
+
+local function contains_any_ci(text, keywords)
+  local lower = to_lower(text)
+  if lower == "" then return false end
+  for _, keyword in ipairs(keywords) do
+    if string.find(lower, string.lower(keyword), 1, true) then return true end
+  end
+  return false
+end
+
+local function contains_any_raw(text, keywords)
+  if text == nil or text == "" then return false end
+  for _, keyword in ipairs(keywords) do
+    if string.find(text, keyword, 1, true) then return true end
+  end
+  return false
+end
+
+-- classify_source 根据 URL 与标题判断来源层级，返回 tier 名称、权重和标签。
+-- 权重仅用于排序和提示子评估员加权；不直接影响机械计算的分数。
+local function classify_source(url, title)
+  local url_str = trim(url)
+  local title_str = trim(title)
+  if contains_any_ci(url_str, AUTHORITATIVE_URL_KEYWORDS)
+      or contains_any_raw(title_str, AUTHORITATIVE_TITLE_KEYWORDS) then
+    return "authoritative", 3, "权威来源"
+  end
+  if contains_any_ci(url_str, NEWS_URL_KEYWORDS)
+      or contains_any_raw(title_str, NEWS_TITLE_KEYWORDS) then
+    return "news", 2, "新闻媒体"
+  end
+  return "general", 1, "公开资料"
+end
+
+local function tier_label(tier)
+  if tier == "authoritative" then return "权威来源" end
+  if tier == "news" then return "新闻媒体" end
+  return "公开资料"
+end
+
+-- run_search_batch 调用一次 web_search，返回结果数组；失败时返回空数组并记录原因。
+local function run_search_batch(queries, max_results, collected_errors)
+  if queries == nil or #queries == 0 then return {} end
+  local payload = { queries = queries, max_results = max_results or 12 }
+  local result, err = tool_call("web_search", payload)
+  if err ~= nil then
+    if collected_errors ~= nil then
+      table.insert(collected_errors, trim(tostring(err)))
+    end
+    return {}
+  end
+  if result == nil or result.results == nil then return {} end
+  return result.results
+end
+
 local function search_sources(school_name, year, analysis_focus)
-  local queries = {
-    school_name,
+  -- 三层查询：权威 > 新闻 > 通用。每层独立调用 web_search（每次最多 5 条 query），
+  -- 以便尽量覆盖教育部、省级教育厅、校园官网、主流新闻和其他公开资料。
+  local authoritative_queries = {
     school_name .. " 官网",
-    school_name .. " 双高 高水平高职 专业群",
-    school_name .. " 产教融合 校企合作 实训基地 " .. year,
-    school_name .. " 人才培养 就业质量 技能竞赛 科研服务 " .. year,
+    school_name .. " site:edu.cn",
+    school_name .. " site:gov.cn 双高",
+    school_name .. " 教育部 双高计划 高水平高职学校",
+    school_name .. " 毕业生就业质量 年度报告",
+  }
+  local news_queries = {
+    school_name .. " 人民网 产教融合",
+    school_name .. " 新华网 校企合作",
+    school_name .. " 光明网 新闻",
+    school_name .. " 中国教育报 产教融合",
+    school_name .. " 澎湃新闻",
   }
   local normalized_focus = trim(analysis_focus)
+  local general_queries = {
+    school_name,
+    school_name .. " 双高 高水平高职 专业群",
+    school_name .. " 产教融合 校企合作 实训基地 " .. year,
+    school_name .. " 人才培养 就业质量 技能竞赛 " .. year,
+    school_name .. " 科研 社会服务 产业学院",
+  }
   if normalized_focus ~= "" then
-    queries[#queries] = queries[#queries] .. " " .. normalized_focus
-  end
-  local search_result, search_err = tool_call("web_search", { queries = queries, max_results = 12 })
-  if search_err ~= nil or search_result == nil or search_result.results == nil or #search_result.results == 0 then
-    return nil, search_error_message(active_web_search_provider_name(), search_err)
+    general_queries[#general_queries] = general_queries[#general_queries] .. " " .. normalized_focus
   end
 
+  local collected_errors = {}
+  local authoritative_hits = run_search_batch(authoritative_queries, 12, collected_errors)
+  local news_hits = run_search_batch(news_queries, 10, collected_errors)
+  local general_hits = run_search_batch(general_queries, 12, collected_errors)
+
+  -- 统一去重并分层
   local sources = {}
   local facts = {}
-  local fetch_calls = {}
   local seen_urls = {}
-  for i, hit in ipairs(search_result.results) do
-    if #sources >= 24 then break end
+  local high_urls = {}
+  local medium_urls = {}
+  local low_urls = {}
+
+  local function register_hit(hit)
+    if #sources >= 48 then return end
     local url = trim(hit.url)
+    local title = trim(hit.title)
     local dedupe_key = url
-    if dedupe_key == "" then dedupe_key = trim(hit.title) .. "::" .. trim(hit.snippet) end
-    if dedupe_key ~= "" and seen_urls[dedupe_key] == nil then
-      seen_urls[dedupe_key] = true
-      local id = "S" .. tostring(#sources + 1)
-      local label = trim(hit.title)
-      if label == "" then label = "公开来源 " .. tostring(#sources + 1) end
-      table.insert(sources, { id = id, label = label, url = url })
-      table.insert(facts, {
-        claim = trim(hit.snippet),
-        source_ids = { id },
-      })
-      if url ~= "" and #fetch_calls < 6 then
-        table.insert(fetch_calls, { id = id, url = url })
+    if dedupe_key == "" then dedupe_key = title .. "::" .. trim(hit.snippet) end
+    if dedupe_key == "" or seen_urls[dedupe_key] ~= nil then return end
+    seen_urls[dedupe_key] = true
+
+    local tier, weight, tier_text = classify_source(url, title)
+    local id = "S" .. tostring(#sources + 1)
+    local label = title
+    if label == "" then label = tier_text .. " " .. tostring(#sources + 1) end
+    table.insert(sources, {
+      id = id,
+      label = label,
+      url = url,
+      tier = tier,
+      weight = weight,
+      tier_label = tier_text,
+    })
+    table.insert(facts, {
+      claim = trim(hit.snippet),
+      source_ids = { id },
+      tier = tier,
+      weight = weight,
+    })
+    if url ~= "" then
+      if tier == "authoritative" then
+        table.insert(high_urls, { id = id, url = url })
+      elseif tier == "news" then
+        table.insert(medium_urls, { id = id, url = url })
+      else
+        table.insert(low_urls, { id = id, url = url })
       end
     end
   end
 
-  for _, item in ipairs(fetch_calls) do
+  for _, hit in ipairs(authoritative_hits) do register_hit(hit) end
+  for _, hit in ipairs(news_hits) do register_hit(hit) end
+  for _, hit in ipairs(general_hits) do register_hit(hit) end
+
+  if #sources == 0 then
+    local reason = "empty_results"
+    if #collected_errors > 0 then
+      reason = table.concat(collected_errors, "; ")
+    end
+    return nil, search_error_message(active_web_search_provider_name(), reason)
+  end
+
+  -- 按权重稳定排序：权威优先，其次新闻，最后其他。
+  -- sources 按 id 的尾部数字维持相对顺序，facts 没有 id，按 source_ids[1] 对齐。
+  local function first_source_idx(fact)
+    local sids = fact.source_ids
+    if sids == nil or #sids == 0 then return 0 end
+    local num = tonumber(string.sub(tostring(sids[1]), 2))
+    if num == nil then return 0 end
+    return num
+  end
+  local function sort_sources_by_weight(list)
+    table.sort(list, function(a, b)
+      if a.weight == b.weight then
+        local an = tonumber(string.sub(tostring(a.id or ""), 2)) or 0
+        local bn = tonumber(string.sub(tostring(b.id or ""), 2)) or 0
+        return an < bn
+      end
+      return (a.weight or 0) > (b.weight or 0)
+    end)
+  end
+  local function sort_facts_by_weight(list)
+    table.sort(list, function(a, b)
+      if (a.weight or 0) == (b.weight or 0) then
+        return first_source_idx(a) < first_source_idx(b)
+      end
+      return (a.weight or 0) > (b.weight or 0)
+    end)
+  end
+  sort_sources_by_weight(sources)
+  sort_facts_by_weight(facts)
+
+  -- 重新编号，让主智能体/子评估员看到的 source id 按照权重从高到低排列，
+  -- 以便 evaluator 优先引用高权重来源。
+  local id_map = {}
+  for idx, source in ipairs(sources) do
+    local new_id = "S" .. tostring(idx)
+    id_map[source.id] = new_id
+    source.id = new_id
+  end
+  for _, fact in ipairs(facts) do
+    if fact.source_ids ~= nil then
+      for i, sid in ipairs(fact.source_ids) do
+        if id_map[sid] ~= nil then fact.source_ids[i] = id_map[sid] end
+      end
+    end
+  end
+
+  -- 决定要抓取的页面：优先抓取权威，再抓新闻；总量限制 10 个，避免长时间等待。
+  local fetch_budget = 10
+  local fetch_targets = {}
+  local function push_fetch(list, limit)
+    local count = 0
+    for _, item in ipairs(list) do
+      if count >= limit or #fetch_targets >= fetch_budget then break end
+      local new_id = id_map[item.id] or item.id
+      table.insert(fetch_targets, { id = new_id, url = item.url })
+      count = count + 1
+    end
+  end
+  push_fetch(high_urls, 6)
+  push_fetch(medium_urls, 3)
+  push_fetch(low_urls, 2)
+
+  for _, item in ipairs(fetch_targets) do
     local fetched = tool_call("web_fetch", { url = item.url, max_length = 3600 })
     if fetched ~= nil and fetched.content ~= nil then
+      -- 抓取的正文继承来源权重
+      local source_tier = "general"
+      local source_weight = 1
+      for _, s in ipairs(sources) do
+        if s.id == item.id then
+          source_tier = s.tier
+          source_weight = s.weight
+          break
+        end
+      end
       table.insert(facts, {
         claim = utf8_safe_prefix(trim(fetched.content), 1200),
         source_ids = { item.id },
+        tier = source_tier,
+        weight = source_weight,
       })
     end
+  end
+
+  -- 重新排一次序（fetch 追加的正文也按权重靠前）。
+  sort_facts_by_weight(facts)
+
+  -- 生成权威来源 id 列表，供 eligibility.basis 引用。
+  local authoritative_source_ids = {}
+  for _, source in ipairs(sources) do
+    if source.tier == "authoritative" and #authoritative_source_ids < 5 then
+      table.insert(authoritative_source_ids, source.id)
+    end
+  end
+  if #authoritative_source_ids == 0 and #sources > 0 then
+    table.insert(authoritative_source_ids, sources[1].id)
   end
 
   local evidence_text = ""
@@ -672,6 +1004,12 @@ local function search_sources(school_name, year, analysis_focus)
     verified = true
   end
 
+  -- 统计每层来源数量，方便 evaluator 在 basis 中体现权重倾向。
+  local tier_counts = { authoritative = 0, news = 0, general = 0 }
+  for _, source in ipairs(sources) do
+    tier_counts[source.tier] = (tier_counts[source.tier] or 0) + 1
+  end
+
   return {
     school_name = school_name,
     year = year,
@@ -679,13 +1017,23 @@ local function search_sources(school_name, year, analysis_focus)
       verified = verified,
       type = verified and "高职/双高相关院校" or "未核验",
       basis = verified and "公开来源中出现高职、职业技术、双高或高水平高职相关信息。" or "公开来源不足以确认院校类型。",
-      source_ids = (#sources > 0) and { "S1" } or {},
+      source_ids = authoritative_source_ids,
     },
     sources = sources,
     facts = facts,
     missing = { "{{就业率}}", "{{企业满意度}}", "{{校企合作企业数量}}" },
     conflicts = {},
     analysis_focus = trim(analysis_focus),
+    source_weighting = {
+      policy = "authoritative>news>general",
+      tiers = {
+        { tier = "authoritative", weight = 3, label = "权威来源", description = "教育部、省级教育厅、校园官网、双高官方名单、政府门户（.gov.cn/.edu.cn 等）" },
+        { tier = "news", weight = 2, label = "新闻媒体", description = "人民网、新华网、光明网、中国教育报等主流媒体报道" },
+        { tier = "general", weight = 1, label = "公开资料", description = "其他互联网信息、百科、论坛、自媒体等" },
+      },
+      counts = tier_counts,
+      instruction = "评估员应优先引用 authoritative 来源；news 类用于补充，可佐证但证据置信度最高为 medium；general 类仅作为线索，证据置信度应降为 low，并提示需进一步核验。",
+    },
   }, nil
 end
 
@@ -949,13 +1297,54 @@ local function computed_dimension(computed, idx, name)
 end
 
 local function compact_fact_by_keywords(fact_pack, keywords, fallback)
+  -- 搜索引擎返回的 snippet 常把命中片段之间用 "..." 或 "…" 拼接，
+  -- 直接展示会出现多段被截断的不连贯文本。这里做两件事：
+  -- 1. 遍历事实包中所有与主题关键字匹配的 fact；
+  -- 2. 对每个 fact，按 "..." / "…" 分割出片段，选出最长的一段连续文本；
+  --    然后在所有 fact 的最佳片段里再取最长的，作为正文展示内容。
+  -- 这样优先使用 web_fetch 得到的完整正文；当只有搜索摘要可用时，
+  -- 也至少能展示一段完整、自然的句子，而不是带省略号的碎片拼接。
+  local function pick_longest_fragment(text)
+    if text == nil or text == "" then return "" end
+    local parts = {}
+    local pos = 1
+    while true do
+      local ascii_start, ascii_end = string.find(text, "...", pos, true)
+      local uni_start, uni_end = string.find(text, "…", pos, true)
+      local start_pos, end_pos
+      if ascii_start ~= nil and (uni_start == nil or ascii_start < uni_start) then
+        start_pos, end_pos = ascii_start, ascii_end
+      elseif uni_start ~= nil then
+        start_pos, end_pos = uni_start, uni_end
+      else
+        break
+      end
+      table.insert(parts, string.sub(text, pos, start_pos - 1))
+      pos = end_pos + 1
+    end
+    table.insert(parts, string.sub(text, pos))
+    local best = ""
+    for _, part in ipairs(parts) do
+      local t = trim(part)
+      if string.len(t) > string.len(best) then best = t end
+    end
+    return best
+  end
+
+  local best_fragment = ""
   for _, fact in ipairs(fact_pack.facts or {}) do
     local claim = trim(fact.claim)
     if claim ~= "" and contains_any(claim, keywords) then
-      return utf8_safe_prefix(claim, 180)
+      local fragment = pick_longest_fragment(claim)
+      if string.len(fragment) > string.len(best_fragment) then
+        best_fragment = fragment
+      end
     end
   end
-  return fallback
+  if best_fragment == "" then return fallback end
+  -- 取到最长片段后，再做一次总长度保护：480 字节≈160 汉字，
+  -- 在正文展示中足够丰富；仍超过时在句末标点处自然收尾并加"…"。
+  return truncate_for_body(best_fragment, 480)
 end
 
 local function insert_source_table(lines, honors, fact_pack)
@@ -1357,6 +1746,180 @@ local function wait_for_evaluators(children, single_model)
   return evaluations, failures
 end
 
+local function score_text_or_missing(value)
+  if value == nil then return "未出分" end
+  return string.format("%.1f", value)
+end
+
+local function rating_or_missing(value)
+  if value == nil or trim(value) == "" then return "未出评级" end
+  return trim(value)
+end
+
+local function confidence_label(value)
+  local raw = trim(value)
+  if raw == "" then return "low" end
+  return raw
+end
+
+local function md_escape_cell(value)
+  local text = trim(value)
+  if text == "" then return "" end
+  text = string.gsub(text, "|", "\\|")
+  text = string.gsub(text, "\n", " ")
+  text = string.gsub(text, "\r", " ")
+  return text
+end
+
+-- insert_model_comparison_table appends a single table listing each
+-- evaluator model's four dimension scores, mechanically computed total and
+-- rating. Included whenever we have two or more evaluator models so the
+-- reader can see model-level variance; skipped for 单模型评估 where a
+-- one-row table would duplicate the main report body.
+local function insert_model_comparison_table(lines, evaluations)
+  if evaluations == nil or #evaluations < 2 then return false end
+  local per_models = per_model_computed(evaluations)
+  table.insert(lines, "## 附录 A：各模型指数得分对比")
+  table.insert(lines, "")
+  table.insert(lines, "本表机械呈现每个评估模型对四个固定维度的独立评分，以及按 25% 等权重计算得到的各模型总分与评级，便于对比不同模型的判断差异。正文分数为各模型维度均值。")
+  table.insert(lines, "")
+  table.insert(lines, "| 模型 | " .. DIMENSIONS[1] .. " | " .. DIMENSIONS[2] .. " | " .. DIMENSIONS[3] .. " | " .. DIMENSIONS[4] .. " | 总分 | 评级 |")
+  table.insert(lines, "|---|---|---|---|---|---|---|")
+  for _, model_computed in ipairs(per_models) do
+    local label = md_escape_cell(model_computed.model_label or "未知模型")
+    local d1 = score_text_or_missing((model_computed.dimensions[1] or {}).score)
+    local d2 = score_text_or_missing((model_computed.dimensions[2] or {}).score)
+    local d3 = score_text_or_missing((model_computed.dimensions[3] or {}).score)
+    local d4 = score_text_or_missing((model_computed.dimensions[4] or {}).score)
+    local total = score_text_or_missing(model_computed.total_score)
+    local rating = md_escape_cell(rating_or_missing(model_computed.rating))
+    table.insert(lines, "| " .. label .. " | " .. d1 .. " | " .. d2 .. " | " .. d3 .. " | " .. d4 .. " | " .. total .. " | " .. rating .. " |")
+  end
+  table.insert(lines, "")
+  return true
+end
+
+-- insert_model_analysis_appendix appends one subsection per evaluator model
+-- containing its four-dimension basis (scoring rationale + evidence
+-- confidence), honors, highlights, improvements and missing placeholders.
+-- This is the "每个模型的分析输出" the user requested as a PDF appendix;
+-- we include it in Markdown too so both artifacts stay in sync.
+local function insert_model_analysis_appendix(lines, evaluations, fact_pack)
+  if evaluations == nil or #evaluations < 2 then return false end
+  table.insert(lines, "## 附录 B：各模型分析输出")
+  table.insert(lines, "")
+  table.insert(lines, "以下为每个评估模型对四个固定维度的独立分析、证据置信度与识别到的荣誉、亮点与改进建议，仅作为模型差异的存证，不改变正文中机械计算的综合评分与评级。")
+  table.insert(lines, "")
+  for _, evaluation in ipairs(evaluations) do
+    local label = trim(evaluation.model_label)
+    if label == "" then label = "未标注模型" end
+    table.insert(lines, "### " .. label)
+    table.insert(lines, "")
+    local model_computed = computed_for_evaluation(evaluation)
+    table.insert(lines, "- **模型总分**：" .. score_text_or_missing(model_computed.total_score) .. " / 100")
+    table.insert(lines, "- **模型评级**：" .. rating_or_missing(model_computed.rating))
+    table.insert(lines, "")
+    for idx, dim_name in ipairs(DIMENSIONS) do
+      local dim = (evaluation.dimensions or {})[idx] or {}
+      local score = score_text_or_missing(dim.score)
+      local confidence = confidence_label(dim.data_confidence)
+      table.insert(lines, "**" .. tostring(idx) .. ". " .. dim_name .. "（得分：" .. score .. "，证据置信度：" .. confidence .. "）**")
+      table.insert(lines, "")
+      local basis = trim(dim.basis)
+      if basis == "" then
+        table.insert(lines, "模型未提供额外分析依据。")
+      else
+        table.insert(lines, basis)
+      end
+      table.insert(lines, "")
+      local subscores = dim.subscores
+      if subscores ~= nil and #subscores > 0 then
+        for _, sub in ipairs(subscores) do
+          local sub_name = trim(sub.name)
+          if sub_name ~= "" then
+            local sub_score = score_text_or_missing(sub.score)
+            local sub_basis = trim(sub.basis)
+            local line = "- **" .. sub_name .. "**（" .. sub_score .. "）"
+            if sub_basis ~= "" then line = line .. "：" .. sub_basis end
+            table.insert(lines, line)
+          end
+        end
+        table.insert(lines, "")
+      end
+    end
+
+    local model_honors = evaluation.honors or {}
+    if #model_honors > 0 then
+      table.insert(lines, "**荣誉与排名识别**")
+      table.insert(lines, "")
+      for _, honor in ipairs(model_honors) do
+        local text = trim(honor.text or honor.name or honor.title)
+        if text ~= "" then
+          local src = trim(honor.source_id)
+          if src ~= "" then
+            text = text .. "（来源：" .. source_label(fact_pack, src) .. "）"
+          end
+          table.insert(lines, "- " .. text)
+        end
+      end
+      table.insert(lines, "")
+    end
+
+    local model_highlights = evaluation.highlights or {}
+    if #model_highlights > 0 then
+      table.insert(lines, "**亮点识别**")
+      table.insert(lines, "")
+      for _, item in ipairs(model_highlights) do
+        local name = trim(item.name or item.title)
+        local basis = trim(item.basis or item.text)
+        if name ~= "" or basis ~= "" then
+          if name == "" then name = "产教融合亮点" end
+          local line = "- **" .. name .. "**"
+          if basis ~= "" then line = line .. "：" .. basis end
+          table.insert(lines, line)
+        end
+      end
+      table.insert(lines, "")
+    end
+
+    local model_improvements = evaluation.improvements or {}
+    if #model_improvements > 0 then
+      table.insert(lines, "**改进建议**")
+      table.insert(lines, "")
+      for _, item in ipairs(model_improvements) do
+        local text = trim(item.text or item.name)
+        if text ~= "" then
+          local dim_label = trim(item.dimension)
+          local priority = trim(item.priority)
+          local prefix = "- "
+          if dim_label ~= "" then prefix = prefix .. "**" .. dim_label .. "**" end
+          if priority ~= "" then
+            if dim_label ~= "" then prefix = prefix .. "（" .. priority .. "优先）：" else prefix = prefix .. "（" .. priority .. "优先）" end
+          elseif dim_label ~= "" then
+            prefix = prefix .. "："
+          end
+          table.insert(lines, prefix .. text)
+        end
+      end
+      table.insert(lines, "")
+    end
+
+    local model_missing = evaluation.missing_placeholders or evaluation.missing or {}
+    if #model_missing > 0 then
+      table.insert(lines, "**待复核数据**")
+      table.insert(lines, "")
+      for _, item in ipairs(model_missing) do
+        local text = trim(item)
+        if text ~= "" then
+          table.insert(lines, "- " .. text)
+        end
+      end
+      table.insert(lines, "")
+    end
+  end
+  return true
+end
+
 local function fallback_report(school_name, year, computed, fact_pack, evaluations)
   local total = computed.total_score or "{{产教融合指数得分}}"
   local dim1 = computed_dimension(computed, 1, DIMENSIONS[1])
@@ -1366,8 +1929,7 @@ local function fallback_report(school_name, year, computed, fact_pack, evaluatio
   local honors = collect_evaluation_items(evaluations, "honors")
   local highlights = collect_evaluation_items(evaluations, "highlights")
   local improvements = collect_evaluation_items(evaluations, "improvements")
-  local missing = collect_missing_placeholders(evaluations, fact_pack)
-  local lines = {
+  local missing = collect_missing_placeholders(evaluations, fact_pack)  local lines = {
     "# " .. school_name .. " · 产教融合指数报告（" .. year .. "年）",
     "",
     "---",
@@ -1432,8 +1994,28 @@ local function fallback_report(school_name, year, computed, fact_pack, evaluatio
   table.insert(lines, "")
   table.insert(lines, "## 数据来源")
   table.insert(lines, "")
+  local weighting = fact_pack.source_weighting
+  if weighting ~= nil and weighting.counts ~= nil then
+    local parts = {}
+    if (weighting.counts.authoritative or 0) > 0 then
+      table.insert(parts, "权威来源 " .. tostring(weighting.counts.authoritative) .. " 条")
+    end
+    if (weighting.counts.news or 0) > 0 then
+      table.insert(parts, "新闻媒体 " .. tostring(weighting.counts.news) .. " 条")
+    end
+    if (weighting.counts.general or 0) > 0 then
+      table.insert(parts, "公开资料 " .. tostring(weighting.counts.general) .. " 条")
+    end
+    if #parts > 0 then
+      table.insert(lines, "来源权重：权威来源 > 新闻媒体 > 公开资料。本次共检索 " .. table.concat(parts, "、") .. "。")
+      table.insert(lines, "")
+    end
+  end
   for _, source in ipairs(fact_pack.sources or {}) do
-    table.insert(lines, "- [" .. trim(source.label) .. "](" .. trim(source.url) .. ")")
+    local tag = trim(source.tier_label)
+    if tag == "" then tag = tier_label(source.tier) end
+    local prefix = tag ~= "" and ("[" .. tag .. "] ") or ""
+    table.insert(lines, "- " .. prefix .. "[" .. trim(source.label) .. "](" .. trim(source.url) .. ")")
   end
   table.insert(lines, "")
   table.insert(lines, "## 数据局限性声明")
@@ -1443,6 +2025,16 @@ local function fallback_report(school_name, year, computed, fact_pack, evaluatio
   table.insert(lines, "## 复核说明")
   table.insert(lines, "")
   table.insert(lines, "涉及政策认定、荣誉资格、项目名单和关键统计指标时，应以教育主管部门、学校官网或正式材料的最新公示为准。")
+
+  -- Appendices: per-model comparison table + per-model analysis.
+  -- Both sections apply only when we have two or more evaluator models;
+  -- 单模型评估 skips them because there is nothing to compare.
+  if evaluations ~= nil and #evaluations >= 2 then
+    table.insert(lines, "")
+    insert_model_comparison_table(lines, evaluations)
+    insert_model_analysis_appendix(lines, evaluations, fact_pack)
+  end
+
   return table.concat(lines, "\n")
 end
 
@@ -1455,7 +2047,10 @@ local function diagnostic_report(school_name, year, failures, fact_pack)
   table.insert(lines, "## 已核验公开来源")
   table.insert(lines, "")
   for _, source in ipairs(fact_pack.sources or {}) do
-    table.insert(lines, "- [" .. trim(source.label) .. "](" .. trim(source.url) .. ")")
+    local tag = trim(source.tier_label)
+    if tag == "" then tag = tier_label(source.tier) end
+    local prefix = tag ~= "" and ("[" .. tag .. "] ") or ""
+    table.insert(lines, "- " .. prefix .. "[" .. trim(source.label) .. "](" .. trim(source.url) .. ")")
   end
   if #((fact_pack.sources or {})) == 0 then
     table.insert(lines, "- 未记录可展示来源。")
@@ -1468,7 +2063,7 @@ local function diagnostic_report(school_name, year, failures, fact_pack)
     if fact.source_ids ~= nil and #fact.source_ids > 0 then
       source_ids = "（来源：" .. table.concat(fact.source_ids, "、") .. "）"
     end
-    table.insert(lines, "- " .. utf8_safe_prefix(trim(fact.claim), 260) .. source_ids)
+    table.insert(lines, "- " .. truncate_for_body(trim(fact.claim), 420) .. source_ids)
   end
   if #((fact_pack.facts or {})) == 0 then
     table.insert(lines, "- 未提取到可展示事实。")
@@ -1531,8 +2126,13 @@ local function write_outputs(school_name, year, markdown, status_line)
     set_progress_step("report", "completed", "报告文件已生成", "Markdown 文件已生成，准备转化 PDF")
   end
   set_progress_step("pdf", "in_progress", "转化为 PDF 文件", "Markdown 已处理，正在转化为 PDF")
+  -- Pass an explicit `title` that matches the markdown's own H1 so the PDF
+  -- page header shows a clean display title ("… · 产教融合指数报告（YYYY
+  -- 年）") instead of the filename-derived default with underscores.
+  local display_title = school_name .. " · 产教融合指数报告（" .. year .. "年）"
   local pdf_result, pdf_err = tool_call("markdown_to_pdf", {
     filename = pdf_name,
+    title = display_title,
     content = markdown,
   })
   local suffix = "\n\n---\n\n生成文件：" .. artifact_link(md_result, md_name)

@@ -30,6 +30,7 @@ afterEach(() => {
   vi.doUnmock('../storage')
   vi.doUnmock('@arkloop/shared')
   vi.doUnmock('@arkloop/shared/desktop')
+  vi.doUnmock('../components/settings/_SettingsSwitch')
   vi.resetModules()
   vi.clearAllMocks()
   if (originalActEnvironment === undefined) {
@@ -73,24 +74,26 @@ describe('DeveloperSettings', () => {
         app: { getVersion: vi.fn().mockResolvedValue('1.0.0') },
       }),
     }))
+    vi.doMock('../components/settings/_SettingsSwitch', () => ({
+      SettingsSwitch: ({
+        checked,
+        disabled,
+        onChange,
+      }: {
+        checked: boolean
+        disabled?: boolean
+        onChange: (next: boolean) => void
+      }) => (
+        <button type="button" disabled={disabled} onClick={() => onChange(!checked)}>
+          {checked ? 'ON' : 'OFF'}
+        </button>
+      ),
+    }))
     vi.doMock('@arkloop/shared', async () => {
       const actual = await vi.importActual<typeof import('@arkloop/shared')>('@arkloop/shared')
       return {
         ...actual,
         useToast: () => ({ addToast }),
-        PillToggle: ({
-          checked,
-          disabled,
-          onChange,
-        }: {
-          checked: boolean
-          disabled?: boolean
-          onChange: (next: boolean) => void
-        }) => (
-          <button type="button" disabled={disabled} onClick={() => onChange(!checked)}>
-            {checked ? 'ON' : 'OFF'}
-          </button>
-        ),
       }
     })
 
@@ -135,24 +138,26 @@ describe('DeveloperSettings', () => {
         app: { getVersion: vi.fn().mockResolvedValue('1.0.0') },
       }),
     }))
+    vi.doMock('../components/settings/_SettingsSwitch', () => ({
+      SettingsSwitch: ({
+        checked,
+        disabled,
+        onChange,
+      }: {
+        checked: boolean
+        disabled?: boolean
+        onChange: (next: boolean) => void
+      }) => (
+        <button type="button" disabled={disabled} onClick={() => onChange(!checked)}>
+          {checked ? 'ON' : 'OFF'}
+        </button>
+      ),
+    }))
     vi.doMock('@arkloop/shared', async () => {
       const actual = await vi.importActual<typeof import('@arkloop/shared')>('@arkloop/shared')
       return {
         ...actual,
         useToast: () => ({ addToast }),
-        PillToggle: ({
-          checked,
-          disabled,
-          onChange,
-        }: {
-          checked: boolean
-          disabled?: boolean
-          onChange: (next: boolean) => void
-        }) => (
-          <button type="button" disabled={disabled} onClick={() => onChange(!checked)}>
-            {checked ? 'ON' : 'OFF'}
-          </button>
-        ),
       }
     })
 
@@ -206,24 +211,26 @@ describe('DeveloperSettings', () => {
         app: { getVersion: vi.fn().mockResolvedValue('1.0.0') },
       }),
     }))
+    vi.doMock('../components/settings/_SettingsSwitch', () => ({
+      SettingsSwitch: ({
+        checked,
+        disabled,
+        onChange,
+      }: {
+        checked: boolean
+        disabled?: boolean
+        onChange: (next: boolean) => void
+      }) => (
+        <button type="button" disabled={disabled} onClick={() => onChange(!checked)}>
+          {checked ? 'ON' : 'OFF'}
+        </button>
+      ),
+    }))
     vi.doMock('@arkloop/shared', async () => {
       const actual = await vi.importActual<typeof import('@arkloop/shared')>('@arkloop/shared')
       return {
         ...actual,
         useToast: () => ({ addToast }),
-        PillToggle: ({
-          checked,
-          disabled,
-          onChange,
-        }: {
-          checked: boolean
-          disabled?: boolean
-          onChange: (next: boolean) => void
-        }) => (
-          <button type="button" disabled={disabled} onClick={() => onChange(!checked)}>
-            {checked ? 'ON' : 'OFF'}
-          </button>
-        ),
       }
     })
 

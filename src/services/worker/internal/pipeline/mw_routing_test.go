@@ -403,7 +403,7 @@ func TestResolveGatewayConfigFromSelectedRoute_OpenAICompatibleVendorDefaults(t 
 		model       string
 		wantBaseURL string
 	}{
-		{name: "deepseek", kind: routing.ProviderKindDeepSeek, model: "deepseek-chat", wantBaseURL: "https://api.deepseek.com"},
+		{name: "deepseek", kind: routing.ProviderKindDeepSeek, model: "deepseek-chat", wantBaseURL: "https://api.deepseek.com/v1"},
 		{name: "doubao", kind: routing.ProviderKindDoubao, model: "doubao-seed-1-6", wantBaseURL: "https://ark.cn-beijing.volces.com/api/v3"},
 		{name: "qwen", kind: routing.ProviderKindQwen, model: "qwen-plus", wantBaseURL: "https://dashscope.aliyuncs.com/compatible-mode/v1"},
 		{name: "yuanbao", kind: routing.ProviderKindYuanbao, model: "hunyuan-turbos-latest", wantBaseURL: "https://api.hunyuan.cloud.tencent.com/v1"},

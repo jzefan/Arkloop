@@ -34,11 +34,22 @@
       "source_ids": ["S1"]
     },
     "sources": [
-      {"id": "S1", "label": "学校官网", "url": "https://..."}
+      {"id": "S1", "label": "学校官网", "url": "https://...", "tier": "authoritative", "weight": 3, "tier_label": "权威来源"},
+      {"id": "S2", "label": "人民网报道", "url": "https://...", "tier": "news", "weight": 2, "tier_label": "新闻媒体"}
     ],
     "facts": [
-      {"claim": "学校入选中国特色高水平高职学校和专业建设计划", "source_ids": ["S1"]}
+      {"claim": "学校入选中国特色高水平高职学校和专业建设计划", "source_ids": ["S1"], "tier": "authoritative", "weight": 3}
     ],
+    "source_weighting": {
+      "policy": "authoritative>news>general",
+      "tiers": [
+        {"tier": "authoritative", "weight": 3, "label": "权威来源"},
+        {"tier": "news", "weight": 2, "label": "新闻媒体"},
+        {"tier": "general", "weight": 1, "label": "公开资料"}
+      ],
+      "counts": {"authoritative": 3, "news": 2, "general": 1},
+      "instruction": "评估员应优先引用 authoritative 来源；news 类可佐证但证据置信度最高为 medium；general 类仅作为线索，证据置信度应降为 low。"
+    },
     "missing": ["{{就业率}}"],
     "conflicts": [
       {"topic": "排名", "description": "不同公开来源口径不一致", "source_ids": ["S2", "S3"]}
@@ -71,6 +82,13 @@
 ## 来源与占位符
 
 - 事实、荣誉、排名、项目、指标、时间均必须能追溯到事实包中的 `source_id`。
+- 每个 `source` 带有 `tier`（`authoritative` / `news` / `general`）和 `weight`（3 / 2 / 1）；`facts` 继承其引用来源的权重。`fact_pack.source_weighting` 还提供分层说明。
+- 按权重加权判断证据强度：
+  - **authoritative（权重 3）**：教育部、省级教育厅、校园官网、双高计划名单、政府公告等权威来源。只要存在对应权威来源支撑，可给出 `data_confidence = high`。
+  - **news（权重 2）**：主流新闻媒体的报道（人民网、新华网、光明网、中国教育报等）。在没有权威来源支撑时，`data_confidence` 最高为 `medium`。
+  - **general（权重 1）**：其他互联网资料、论坛、自媒体、招生网。`data_confidence` 最高为 `low`，并提示需要进一步核验。
+- 在 `basis` 中优先引用权威来源编号；若仅靠新闻或公开资料支撑，请在 `basis` 中说明“证据来自新闻报道”或“来自公开资料，需进一步核验”。
+- 权威来源与其他层级存在冲突时，以权威来源为准；请在 `improvements` 或 `basis` 中说明冲突处理。
 - 未验证或缺失的数据保留为占位符，例如 `{{就业率}}`、`{{双高建设单位层次}}`。
 - 不得用行业常识、主观推断或相近院校数据填补事实缺口；可以用专业判断解释“已有事实意味着什么”，但要通过 `data_confidence` 反映证据充分性。
 - `basis` 应简洁说明评分依据，并包含所用 `source_id`。

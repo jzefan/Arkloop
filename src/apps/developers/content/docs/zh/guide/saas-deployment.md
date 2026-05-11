@@ -22,6 +22,8 @@ This guide covers deploying Arkloop in SaaS mode (`--mode saas`), which is inten
 ./setup.sh install --mode saas --profile standard --non-interactive --prod
 ```
 
+`--prod` 默认使用 `ARKLOOP_IMAGE_REPOSITORY=ghcr.io/jzefan/arkloop`，会拉取当前自有仓库构建出的 `arkloop-{service}` 镜像。需要切换到其他 GHCR 命名空间时，在运行安装命令前设置 `ARKLOOP_IMAGE_REPOSITORY`。
+
 SaaS mode automatically enables:
 - **PGBouncer** — Connection pooling for high concurrency
 - **SeaweedFS** — S3-compatible object storage for persistent files

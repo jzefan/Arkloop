@@ -1,4 +1,5 @@
 import { AuthLayout, SpinnerIcon } from './auth-ui'
+import { PRODUCT_BRAND_NAME } from '../brand'
 
 type Props = {
   label: string
@@ -8,7 +9,7 @@ type Props = {
   retryLabel?: string
 }
 
-export function LoadingPage({ label, brandLabel = 'Arkloop', error, onRetry, retryLabel }: Props) {
+export function LoadingPage({ label, brandLabel = PRODUCT_BRAND_NAME, error, onRetry, retryLabel }: Props) {
   return (
     <AuthLayout>
       <div

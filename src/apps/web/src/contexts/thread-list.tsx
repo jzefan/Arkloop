@@ -8,7 +8,7 @@ import {
   useState,
   type ReactNode,
 } from 'react'
-import { silentRefresh } from '@arkloop/shared'
+import { PRODUCT_BRAND_NAME, silentRefresh } from '@arkloop/shared'
 import { getDesktopApi, isDesktop, isLocalMode } from '@arkloop/shared/desktop'
 import {
   isApiError,
@@ -217,7 +217,7 @@ export function ThreadListProvider({ children }: { children: ReactNode }) {
       if (config.desktop?.desktopNotifications === false) return
       const threadsById = new Map(threadsRef.current.map((thread) => [thread.id, thread]))
       await Promise.all(items.map(async (item) => {
-        const title = normalizeNotificationText(item.title ?? threadsById.get(item.threadId)?.title ?? '') || 'Arkloop'
+        const title = normalizeNotificationText(item.title ?? threadsById.get(item.threadId)?.title ?? '') || PRODUCT_BRAND_NAME
         let body = ''
         try {
           body = lastUserPromptPreview(await listMessages(accessToken, item.threadId, 40))

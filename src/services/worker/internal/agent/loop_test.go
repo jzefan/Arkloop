@@ -1020,7 +1020,7 @@ func TestAgentLoopEmitsContextPressureAnchorIncludingCacheReadTokens(t *testing.
 }
 
 func TestAgentLoopCompactsBeforeSecondTurnWhenToolOutputInflatesContext(t *testing.T) {
-	huge := strings.Repeat("x", 20_000)
+	huge := strings.Repeat("x", 90_000)
 	gateway := &compactingGateway{toolText: huge}
 	loop := NewLoop(gateway, buildEchoDispatcher(t))
 	emitter := events.NewEmitter("trace")

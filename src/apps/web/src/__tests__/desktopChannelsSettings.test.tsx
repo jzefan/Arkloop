@@ -224,7 +224,7 @@ describe('DesktopSettings', () => {
         <LocaleProvider>
           <Suspense fallback={<div>loading</div>}>
             <DesktopSettings
-              me={null}
+              me={{ id: '1', username: 'admin', email_verified: true, email_verification_required: false, work_enabled: false, role: 'platform_admin' }}
               accessToken="token"
               initialSection="memory"
               onClose={() => {}}
@@ -300,8 +300,9 @@ describe('DesktopSettings', () => {
     })
     await flushEffects()
 
-    const restartButton = Array.from(container.querySelectorAll('button'))
-      .find((button) => button.textContent?.includes('重启 Arkloop'))
+    const allButtons = Array.from(container.querySelectorAll('button'))
+    const restartButton = allButtons
+      .find((button) => button.textContent?.includes('重启 智能体平台'))
     expect(restartButton).toBeTruthy()
 
     await act(async () => {

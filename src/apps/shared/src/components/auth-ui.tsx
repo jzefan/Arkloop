@@ -1,6 +1,7 @@
 import type { ReactNode, RefObject } from 'react'
 import { isApiError } from '../api/client'
 import type { AppError } from './ErrorCallout'
+import { PRODUCT_BRAND_NAME } from '../brand'
 
 export function SpinnerIcon() {
   return (
@@ -117,7 +118,7 @@ export function AuthLayout({ children }: { children: ReactNode }) {
         </section>
       </div>
       <footer style={{ textAlign: 'center', padding: '16px', fontSize: '12px', color: 'var(--c-text-muted)', position: 'relative', zIndex: 1 }}>
-        &copy; 2026 Arkloop
+        &copy; 2026 {PRODUCT_BRAND_NAME}
       </footer>
     </div>
   )

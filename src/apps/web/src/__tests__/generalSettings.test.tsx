@@ -149,6 +149,42 @@ describe('GeneralSettings', () => {
     expect(api.listSpawnProfiles).toHaveBeenCalledWith('token')
   })
 
+  it('本地模式用户卡片显示退出按钮并触发退出', async () => {
+    const { api, LocaleProvider, GeneralSettings } = await loadSubject()
+    vi.mocked(api.listLlmProviders).mockResolvedValue([])
+    vi.mocked(api.listSpawnProfiles).mockResolvedValue([])
+    const onLogout = vi.fn()
+
+    await act(async () => {
+      root.render(
+        <LocaleProvider>
+          <GeneralSettings
+            accessToken="token"
+            me={{
+              id: 'user-1',
+              username: 'desktop-user',
+              email_verified: true,
+              email_verification_required: false,
+              work_enabled: true,
+              timezone: 'Asia/Singapore',
+              account_timezone: null,
+            }}
+            onLogout={onLogout}
+          />
+        </LocaleProvider>,
+      )
+    })
+
+    const logoutButton = container.querySelector('button[aria-label="退出登录"]') as HTMLButtonElement | null
+    expect(logoutButton).not.toBeNull()
+
+    await act(async () => {
+      logoutButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+
+    expect(onLogout).toHaveBeenCalledTimes(1)
+  })
+
   it('本地模式用户卡片内联编辑后端用户名', async () => {
     const { api, LocaleProvider, GeneralSettings } = await loadSubject()
     vi.mocked(api.listLlmProviders).mockResolvedValue([])

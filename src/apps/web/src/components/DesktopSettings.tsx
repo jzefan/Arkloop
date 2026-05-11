@@ -24,6 +24,7 @@ import {
 } from "lucide-react";
 import { getDesktopApi } from "@arkloop/shared/desktop";
 import type { MeResponse } from "../api";
+import { isPlatformAdmin } from "../api";
 import type { DesktopConfig } from "@arkloop/shared/desktop";
 import { listPlatformSettings } from "../api-admin";
 import { bridgeClient } from "../api-bridge";
@@ -87,7 +88,10 @@ const NAV_ENTRIES: NavEntry[] = [
   { key: "appearance", icon: Palette },
   { key: "providers",  icon: Cpu },
   { key: "channels",   icon: Radio },
-  // 第二段：agent 核心组件（英文专有名词区）
+];
+
+const AGENT_CORE_ENTRIES: NavEntry[] = [
+  // 第二段：agent 核心组件（英文专有名词区）— 仅超级用户可见
   { header: "agentCoreHeader" },
   { key: "skills",           icon: Puzzle },
   { key: "mcp",              icon: Server },
@@ -95,6 +99,9 @@ const NAV_ENTRIES: NavEntry[] = [
   { key: "memory",           icon: Database },
   { key: "chat",             icon: MessageSquare },
   { key: "promptInjection",  icon: Shield },
+];
+
+const MANAGEMENT_ENTRIES: NavEntry[] = [
   // 第三段：低频管理
   { header: "managementHeader" },
   { key: "tools",      icon: Wrench },
@@ -296,10 +303,15 @@ export function DesktopSettings({
   }, []);
 
   const navEntries = useMemo(() => {
-    const entries = [...NAV_ENTRIES];
+    const isAdmin = isPlatformAdmin(me);
+    const entries: NavEntry[] = [
+      ...NAV_ENTRIES,
+      ...(isAdmin ? AGENT_CORE_ENTRIES : []),
+      ...MANAGEMENT_ENTRIES,
+    ];
     if (devMode) entries.push({ key: "developer" as DesktopSettingsKey, icon: Code2 });
     return entries;
-  }, [devMode]);
+  }, [devMode, me]);
 
   const settingsMotionStyle = {
     willChange: "transform, opacity",

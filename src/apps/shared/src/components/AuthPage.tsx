@@ -6,6 +6,7 @@ import {
   SpinnerIcon, normalizeError, Reveal, PasswordEye, AuthLayout,
   TRANSITION, inputCls, inputStyle, labelStyle,
 } from './auth-ui'
+import { PRODUCT_BRAND_NAME } from '../brand'
 import type { Locale } from '../contexts/LocaleContext'
 import type { LoginRequest, LoginResponse } from '../api/types'
 
@@ -110,10 +111,8 @@ export function AuthPage({ onLoggedIn, brandLabel, locale, t, api }: Props) {
   const [regLogin, setRegLogin] = useState('')
   const [regEmail, setRegEmail] = useState('')
   const [regPassword, setRegPassword] = useState('')
-  const [regInviteCode, setRegInviteCode] = useState('')
   const [regSubmitting, setRegSubmitting] = useState(false)
   const [registerEmailLocked, setRegisterEmailLocked] = useState(false)
-  const [registrationMode, setRegistrationMode] = useState<'invite_only' | 'open'>('invite_only')
 
   const [error, setError] = useState<AppError | null>(null)
   const [captchaSiteKey, setCaptchaSiteKey] = useState('')
@@ -125,17 +124,11 @@ export function AuthPage({ onLoggedIn, brandLabel, locale, t, api }: Props) {
   const regFirstRef = useRef<HTMLInputElement>(null)
 
   const hasResolveFlow = !!api.resolveIdentity
-  const inviteRequired = registrationMode === 'invite_only'
 
   useEffect(() => {
-    void Promise.all([
-      api.getCaptchaConfig()
-        .then((res) => { if (res.enabled) setCaptchaSiteKey(res.site_key) })
-        .catch(() => {}),
-      api.getRegistrationMode?.()
-        .then((res) => setRegistrationMode(res.mode))
-        .catch(() => {}),
-    ].filter(Boolean))
+    void api.getCaptchaConfig()
+      .then((res) => { if (res.enabled) setCaptchaSiteKey(res.site_key) })
+      .catch(() => {})
   }, [api])
 
   useEffect(() => () => { if (countdownRef.current) clearInterval(countdownRef.current) }, [])
@@ -242,7 +235,6 @@ export function AuthPage({ onLoggedIn, brandLabel, locale, t, api }: Props) {
             setRegLogin(res.prefill?.login ?? '')
             setRegEmail(res.prefill?.email ?? '')
             setRegPassword('')
-            setRegInviteCode('')
             setRegisterEmailLocked(Boolean(res.prefill?.email))
             setFlowToken('')
             setOtpAvailable(false)
@@ -323,7 +315,6 @@ export function AuthPage({ onLoggedIn, brandLabel, locale, t, api }: Props) {
           email: regEmail.trim(),
           locale,
           cf_turnstile_token: captchaSiteKey ? turnstileToken : undefined,
-          ...(regInviteCode.trim() ? { invite_code: regInviteCode.trim() } : {}),
         })
         onLoggedIn(resp.access_token)
       } catch (err) {
@@ -349,11 +340,10 @@ export function AuthPage({ onLoggedIn, brandLabel, locale, t, api }: Props) {
     }
     if (phase === 'register') {
       if (!regLogin.trim() || !regEmail.trim() || !registerPasswordMeetsPolicy(regPassword)) return false
-      if (inviteRequired && !regInviteCode.trim()) return false
       return captchaOk
     }
     return false
-  }, [phase, identity, password, otpEmail, otpCode, regLogin, regEmail, regPassword, regInviteCode, inviteRequired, isLoading, captchaSiteKey, turnstileToken, flowToken, hasResolveFlow])
+  }, [phase, identity, password, otpEmail, otpCode, regLogin, regEmail, regPassword, isLoading, captchaSiteKey, turnstileToken, flowToken, hasResolveFlow])
 
   const btnLabel = useMemo(() => {
     if (phase === 'otp-email') return t.otpSendBtn
@@ -393,7 +383,7 @@ export function AuthPage({ onLoggedIn, brandLabel, locale, t, api }: Props) {
               color: 'var(--c-text-primary)',
               lineHeight: 1,
             }}>
-              Arkloop
+              {PRODUCT_BRAND_NAME}
             </div>
 
             <div style={{ position: 'relative', height: '22px', marginTop: '8px' }}>
@@ -582,18 +572,6 @@ export function AuthPage({ onLoggedIn, brandLabel, locale, t, api }: Props) {
                     autoComplete="new-password"
                   />
                   <div style={{ fontSize: '11px', color: 'var(--c-placeholder)', marginTop: '6px', paddingLeft: '2px' }}>{t.registerPasswordHint ?? ''}</div>
-                </div>
-                <div>
-                  <label style={labelStyle}>{inviteRequired ? (t.enterInviteCode ?? '') : (t.enterInviteCodeOptional ?? '')}</label>
-                  <input
-                    className={inputCls}
-                    style={inputStyle}
-                    type="text"
-                    placeholder={inviteRequired ? (t.enterInviteCode ?? '') : (t.enterInviteCodeOptional ?? '')}
-                    value={regInviteCode}
-                    onChange={(e) => setRegInviteCode(e.target.value)}
-                    autoComplete="off"
-                  />
                 </div>
               </div>
             </Reveal>

@@ -4,6 +4,7 @@ import { Lock } from 'lucide-react'
 import { MessageBubble } from './MessageBubble'
 import { getSharedThread, verifySharePassword, isApiError, type SharedThreadResponse } from '../api'
 import { useLocale } from '../contexts/LocaleContext'
+import { PRODUCT_BRAND_NAME } from '@arkloop/shared'
 
 function SpinnerIcon() {
   return (
@@ -86,7 +87,7 @@ export function SharePage() {
         className="text-base font-semibold tracking-tight"
         style={{ color: 'var(--c-text-primary)' }}
       >
-        Arkloop
+        {PRODUCT_BRAND_NAME}
       </button>
       <div className="flex items-center gap-2">
         <button

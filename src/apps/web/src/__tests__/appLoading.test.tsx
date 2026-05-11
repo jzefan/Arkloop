@@ -95,7 +95,7 @@ describe('App loading state', () => {
     })
 
     expect(restoreAccessSession).toHaveBeenCalledTimes(1)
-    expect(container.textContent).toContain('Arkloop')
+    expect(container.textContent).toContain('智能体平台')
     expect(container.textContent).toContain('加载中...')
 
     act(() => {

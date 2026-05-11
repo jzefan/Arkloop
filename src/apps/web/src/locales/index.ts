@@ -1,4 +1,5 @@
 import type { PromptInjectionTexts } from "@arkloop/shared/components/prompt-injection";
+import { replaceLegacyBrandText } from "@arkloop/shared";
 import { zh } from "./zh";
 import { en } from "./en";
 
@@ -59,6 +60,7 @@ export interface LocaleStrings {
     channels: string;
     connection: string;
     updates: string;
+    users: string;
   };
   // settings
   getHelp: string;
@@ -877,6 +879,19 @@ export interface LocaleStrings {
     title: string;
     description: string;
     auditLoading: string;
+  };
+
+  users: {
+    title: string;
+    searchPlaceholder: string;
+    username: string;
+    email: string;
+    status: string;
+    createdAt: string;
+    lastLogin: string;
+    active: string;
+    suspended: string;
+    noUsers: string;
   };
 
   // desktop settings navigation
@@ -1710,6 +1725,29 @@ export interface LocaleStrings {
   };
 }
 
-export const locales: Record<Locale, LocaleStrings> = { zh, en };
+function withBrandedLocaleStrings<T>(value: T): T {
+  if (typeof value === "string") {
+    return replaceLegacyBrandText(value) as T;
+  }
+  if (typeof value === "function") {
+    return ((...args: unknown[]) => {
+      const result = (value as (...innerArgs: unknown[]) => unknown)(...args);
+      return typeof result === "string" ? replaceLegacyBrandText(result) : result;
+    }) as T;
+  }
+  if (Array.isArray(value)) {
+    return value.map((item) => withBrandedLocaleStrings(item)) as T;
+  }
+  if (!value || typeof value !== "object") {
+    return value;
+  }
+  const mapped: Record<string, unknown> = {};
+  for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
+    mapped[key] = withBrandedLocaleStrings(child);
+  }
+  return mapped as T;
+}
+
+export const locales: Record<Locale, LocaleStrings> = withBrandedLocaleStrings({ zh, en });
 
 export const SUPPORTED_LOCALES: Locale[] = ["zh", "en"];

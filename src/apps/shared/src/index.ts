@@ -30,6 +30,13 @@ export type { Theme } from './contexts/ThemeContext'
 
 export { createLocaleContext } from './contexts/LocaleContext'
 export type { Locale } from './contexts/LocaleContext'
+export {
+  PRODUCT_BRAND_NAME,
+  PRODUCT_DESKTOP_VERSION,
+  PRODUCT_SOURCE_LABEL,
+  PRODUCT_SOURCE_URL,
+  replaceLegacyBrandText,
+} from './brand'
 export { TimeZoneProvider, useTimeZone } from './contexts/TimeZoneContext'
 export {
   detectDeviceTimeZone,

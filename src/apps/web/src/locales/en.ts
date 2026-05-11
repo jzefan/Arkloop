@@ -48,6 +48,7 @@ export const en: LocaleStrings = {
     channels: "Telegram",
     connection: "Connection",
     updates: "Updates",
+    users: "Users",
   },
   getHelp: "Get help",
   submitSuggestion: "Suggest",
@@ -954,6 +955,19 @@ export const en: LocaleStrings = {
     layerToolScan: "Tool Output Scan",
     layerToolScanDesc:
       "Scan tool outputs for indirect injection, sanitize before injecting into context.",
+  },
+
+  users: {
+    title: "Users",
+    searchPlaceholder: "Search users...",
+    username: "Username",
+    email: "Email",
+    status: "Status",
+    createdAt: "Registered",
+    lastLogin: "Last Login",
+    active: "Active",
+    suspended: "Suspended",
+    noUsers: "No users",
   },
 
   desktopSettings: {

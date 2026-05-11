@@ -468,6 +468,15 @@ export function GeneralSettings({ me, accessToken, onLogout, onMeUpdated }: Prop
                 <span className="truncate text-xs text-[var(--c-text-tertiary)]">{me.email}</span>
               ) : null}
             </div>
+            <SettingsButton
+              variant="danger"
+              onClick={onLogout}
+              icon={<LogOut size={14} />}
+              aria-label={t.logout}
+              className="ml-auto shrink-0"
+            >
+              {t.logout}
+            </SettingsButton>
           </div>
         </GeneralCard>
       </GeneralSection>
@@ -618,20 +627,6 @@ export function GeneralSettings({ me, accessToken, onLogout, onMeUpdated }: Prop
               </SettingsButton>
             )}
           />
-          {!isLocalMode() && (
-            <GeneralRow
-              title={t.logout}
-              control={(
-                <SettingsButton
-                  variant="danger"
-                  onClick={onLogout}
-                  icon={<LogOut size={14} />}
-                >
-                  {t.logout}
-                </SettingsButton>
-              )}
-            />
-          )}
         </GeneralCard>
       </GeneralSection>
     </div>

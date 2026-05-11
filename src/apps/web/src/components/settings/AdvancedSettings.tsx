@@ -18,7 +18,7 @@ import {
   type LucideIcon,
 } from 'lucide-react'
 import { getDesktopApi } from '@arkloop/shared/desktop'
-import { Modal, formatDateTime, useTimeZone, useToast } from '@arkloop/shared'
+import { Modal, PRODUCT_BRAND_NAME, formatDateTime, useTimeZone, useToast } from '@arkloop/shared'
 import type {
   AgentImportDiscovery,
   DesktopExportSection,
@@ -356,7 +356,7 @@ function NetworkPane({ onReloadOverview }: { onReloadOverview: () => Promise<voi
             <input
               value={config.userAgent}
               onChange={(e) => setConfig((p) => ({ ...p, userAgent: e.target.value }))}
-              placeholder="Arkloop Desktop"
+              placeholder={`${PRODUCT_BRAND_NAME} Desktop`}
               className={INPUT}
             />
           </div>

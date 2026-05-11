@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useTheme } from "../contexts/ThemeContext";
+import { PRODUCT_BRAND_NAME } from "@arkloop/shared";
 
 // face geometry and timing (fills are theme-dependent, applied at render)
 const FACES = [
@@ -83,7 +84,7 @@ type Props = {
 export function LogoDrawAnimation({
   onComplete,
   size = 120,
-  brandName = "Arkloop",
+  brandName = PRODUCT_BRAND_NAME,
 }: Props) {
   const [phase, setPhase] = useState<Phase>("drawing");
   const timersRef = useRef<ReturnType<typeof setTimeout>[]>([]);

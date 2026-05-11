@@ -406,15 +406,19 @@ func ResolveGatewayConfigFromSelectedRoute(selected routing.SelectedProviderRout
 		if credential.OpenAIMode != nil {
 			apiMode = *credential.OpenAIMode
 		}
-		if advancedJSON == nil {
-			advancedJSON = map[string]any{}
-		}
-		if _, ok := advancedJSON["stream_options"]; !ok {
-			advancedJSON["stream_options"] = map[string]any{"include_usage": true}
-		}
 		protocol, err := llm.ResolveOpenAIProtocolConfig(apiMode, advancedJSON)
 		if err != nil {
 			return llm.ResolvedGatewayConfig{}, err
+		}
+		// `stream_options` is on the OpenAI advanced_json denylist so users
+		// can't override it, but the gateway itself always wants usage
+		// accounting back on streaming responses. Inject the default into
+		// the resolved payload after the denylist check (not before).
+		if protocol.AdvancedPayloadJSON == nil {
+			protocol.AdvancedPayloadJSON = map[string]any{}
+		}
+		if _, ok := protocol.AdvancedPayloadJSON["stream_options"]; !ok {
+			protocol.AdvancedPayloadJSON["stream_options"] = map[string]any{"include_usage": true}
 		}
 		return llm.ResolvedGatewayConfig{
 			ProtocolKind: protocol.PrimaryKind,

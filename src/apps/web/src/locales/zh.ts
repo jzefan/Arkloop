@@ -48,6 +48,7 @@ export const zh: LocaleStrings = {
     channels: "接入渠道",
     connection: "连接",
     updates: "更新",
+    users: "用户管理",
   },
   getHelp: "获取帮助",
   submitSuggestion: "提建议",
@@ -944,6 +945,19 @@ export const zh: LocaleStrings = {
     layerBlockingDesc: "检测到注入时直接拦截请求，阻止进入 Agent",
     layerToolScan: "工具输出扫描",
     layerToolScanDesc: "扫描工具返回内容中的间接注入，消毒后再注入上下文",
+  },
+
+  users: {
+    title: "用户管理",
+    searchPlaceholder: "搜索用户...",
+    username: "用户名",
+    email: "邮箱",
+    status: "状态",
+    createdAt: "注册时间",
+    lastLogin: "最后登录",
+    active: "正常",
+    suspended: "已封禁",
+    noUsers: "暂无用户",
   },
 
   desktopSettings: {

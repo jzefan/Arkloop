@@ -23,7 +23,7 @@ import {
 import type { ThreadGtdBucket, ThreadResponse, UpdateThreadSidebarRequest } from '../api'
 import { listStarredThreadIds, starThread, unstarThread, updateThreadTitle, deleteThread, updateThreadSidebarState } from '../api'
 import { isLocalMode, isDesktop } from '@arkloop/shared/desktop'
-import { ConfirmDialog } from '@arkloop/shared'
+import { ConfirmDialog, PRODUCT_BRAND_NAME } from '@arkloop/shared'
 import { useLocale } from '../contexts/LocaleContext'
 import { ShareModal } from './ShareModal'
 import { beginPerfTrace, endPerfTrace, isPerfDebugEnabled, recordPerfValue } from '../perfDebug'
@@ -1512,7 +1512,7 @@ export function Sidebar({
         ) : (
           <div className="flex min-h-[56px] items-center justify-between px-4 py-3">
             <div className="flex items-center gap-2 overflow-hidden">
-              <h1 className="text-[16px] font-semibold tracking-tight text-[var(--c-text-primary)] shrink-0">Arkloop</h1>
+              <h1 className="text-[16px] font-semibold tracking-tight text-[var(--c-text-primary)] shrink-0">{PRODUCT_BRAND_NAME}</h1>
               <div
                 style={{
                   display: 'flex',

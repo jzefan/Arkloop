@@ -2,12 +2,17 @@ name: Build & Push Images
 
 on:
   push:
+    branches: ['main']
     tags: ['v*']
   workflow_dispatch:
     inputs:
       version:
         description: 'Version tag (e.g. v0.5.0)'
         required: false
+      image_repository:
+        description: 'Image repository prefix, without service suffix'
+        required: false
+        default: 'ghcr.io/jzefan/arkloop'
 
 permissions:
   contents: read
@@ -63,12 +68,13 @@ jobs:
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ghcr.io/qqqqqf-q/arkloop-${{ matrix.name }}
+          images: ${{ inputs.image_repository || 'ghcr.io/jzefan/arkloop' }}-${{ matrix.name }}
           tags: |
             type=ref,event=branch
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
             type=sha,prefix=sha-
+            type=raw,value=latest,enable={{is_default_branch}}
             type=raw,value=${{ inputs.version }},enable=${{ inputs.version != '' }}
 
       - name: Build and push

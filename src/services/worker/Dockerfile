@@ -36,7 +36,9 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 # --- Runtime: Debian slim (glibc) ---
 FROM debian:bookworm-slim
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates tzdata curl && rm -rf /var/lib/apt/lists/*
+    ca-certificates tzdata curl \
+    fonts-wqy-zenhei \
+    && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /opt/onnxruntime/lib/libonnxruntime*.so* /usr/lib/
 RUN ldconfig

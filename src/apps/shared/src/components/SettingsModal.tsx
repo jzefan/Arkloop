@@ -13,6 +13,7 @@ import {
 import { useTheme } from '../contexts/ThemeContext'
 import type { Theme } from '../contexts/ThemeContext'
 import type { Locale } from '../contexts/LocaleContext'
+import { PRODUCT_BRAND_NAME } from '../brand'
 
 type Tab = 'account' | 'settings'
 
@@ -62,7 +63,7 @@ export function SettingsModal({ me, onClose, onLogout, brandLabel, roleLabel, lo
           style={{ borderRight: '0.5px solid var(--c-border-console)' }}
         >
           <div className="mb-3 px-4">
-            <span className="text-sm font-semibold text-[var(--c-text-heading)]">Arkloop</span>
+            <span className="text-sm font-semibold text-[var(--c-text-heading)]">{PRODUCT_BRAND_NAME}</span>
             <span className="ml-1.5 rounded bg-[var(--c-bg-tag)] px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-wider text-[var(--c-text-muted)]">
               {brandLabel}
             </span>

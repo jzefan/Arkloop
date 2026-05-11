@@ -15,7 +15,7 @@ import {
 import { getMe, logout, isApiError, type MeResponse } from '../api'
 import { ConsoleSettingsModal } from '../components/SettingsModal'
 import { useLocale } from '../contexts/LocaleContext'
-import { useOperations } from '@arkloop/shared'
+import { PRODUCT_BRAND_NAME, useOperations } from '@arkloop/shared'
 import type { LocaleStrings } from '../locales'
 import { NavButton, AccessDeniedPage, FullScreenLoading, TimeZoneProvider } from '@arkloop/shared'
 
@@ -219,7 +219,7 @@ export function ConsoleLayout({ accessToken, onLoggedOut }: Props) {
         {/* 标题栏 */}
         <div className="flex min-h-[46px] items-center justify-between px-4 py-3">
           <div className="flex items-center gap-2">
-            <h1 className="text-sm font-semibold tracking-wide text-[var(--c-text-primary)]">Arkloop</h1>
+            <h1 className="text-sm font-semibold tracking-wide text-[var(--c-text-primary)]">{PRODUCT_BRAND_NAME}</h1>
             <span className="rounded bg-[var(--c-bg-tag)] px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wider text-[var(--c-text-muted)]">
               Console
             </span>

@@ -213,7 +213,7 @@ describe('AppLayout loading state', () => {
     expect(mockedListThreads).toHaveBeenCalledWith('token', { limit: 200, mode: 'chat' })
     expect(mockedListThreads).toHaveBeenCalledWith('token', { limit: 200, mode: 'work' })
     expect(mockedGetMyCredits).toHaveBeenCalledWith('token')
-    expect(container.textContent).toContain('Arkloop')
+    expect(container.textContent).toContain('智能体平台')
     expect(container.textContent).toContain('加载中...')
 
     act(() => {

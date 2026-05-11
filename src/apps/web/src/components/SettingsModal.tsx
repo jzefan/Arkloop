@@ -3,6 +3,7 @@ import type { LucideIcon } from 'lucide-react'
 import {
   X,
   User,
+  Users,
   Settings,
   ChevronLeft,
   Coins,
@@ -16,6 +17,7 @@ import {
   RefreshCw,
 } from 'lucide-react'
 import type { MeResponse } from '../api'
+import { isPlatformAdmin } from '../api'
 import { useLocale } from '../contexts/LocaleContext'
 import { useTheme } from '../contexts/ThemeContext'
 import { SkillsSettingsContent } from './SkillsSettingsContent'
@@ -32,8 +34,10 @@ import { UpdateSettingsContent } from './settings/UpdateSettings'
 import { ToolsSettings } from './settings/ToolsSettings'
 import { TimeZoneSettings } from './settings/TimeZoneSettings'
 import { isDesktop, isLocalMode } from '@arkloop/shared/desktop'
+import { PRODUCT_BRAND_NAME } from '@arkloop/shared'
+import { UsersSettings } from './settings/UsersSettings'
 
-export type SettingsTab = 'account' | 'appearance' | 'settings' | 'tools' | 'skills' | 'credits' | 'models' | 'agents' | 'channels' | 'connection' | 'updates'
+export type SettingsTab = 'account' | 'appearance' | 'settings' | 'tools' | 'skills' | 'credits' | 'models' | 'agents' | 'channels' | 'connection' | 'updates' | 'users'
 
 type NavItem = { key: SettingsTab; icon: LucideIcon }
 
@@ -72,8 +76,10 @@ export function SettingsModal({ me, accessToken, initialTab = 'account', onClose
   const [activeKey, setActiveKey] = useState<SettingsTab>(initialTab)
   const [profileView, setProfileView] = useState(false)
   const localMode = isLocalMode()
+  const isAdmin = isPlatformAdmin(me)
   const navItems = (isDesktop() ? DESKTOP_NAV_ITEMS : BASE_NAV_ITEMS)
     .filter(item => !(localMode && item.key === 'credits'))
+    .concat(isAdmin ? [{ key: 'users' as SettingsTab, icon: Users }] : [])
   const userInitial = me?.username?.charAt(0).toUpperCase() ?? '?'
   const activeLabel = t.nav[activeKey as keyof typeof t.nav] ?? t.nav.account
 
@@ -102,7 +108,7 @@ export function SettingsModal({ me, accessToken, initialTab = 'account', onClose
           style={{ borderRight: '0.5px solid rgba(0,0,0,0.14)' }}
         >
           <div className="mb-2 px-4 py-1">
-            <span className="text-sm font-semibold text-[var(--c-text-heading)]">Arkloop</span>
+            <span className="text-sm font-semibold text-[var(--c-text-heading)]">{PRODUCT_BRAND_NAME}</span>
           </div>
 
           <nav className="flex flex-col gap-[2px] px-2">
@@ -206,6 +212,9 @@ export function SettingsModal({ me, accessToken, initialTab = 'account', onClose
             )}
             {activeKey === 'updates' && isDesktop() && (
               <UpdateSettingsContent />
+            )}
+            {activeKey === 'users' && isAdmin && (
+              <UsersSettings accessToken={accessToken} />
             )}
           </div>
         </div>

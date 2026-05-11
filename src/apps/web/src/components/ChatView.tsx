@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useCallback, useMemo, useSyncExtern
 import { useLocation, useNavigate } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import { ArrowDown, ArrowUpFromLine, ChevronDown, ChevronRight, CornerDownLeft, Pencil, Trash2 } from 'lucide-react'
-import { AutoResizeTextarea, DebugTrigger } from '@arkloop/shared'
+import { AutoResizeTextarea, DebugTrigger, PRODUCT_BRAND_NAME } from '@arkloop/shared'
 import { ChatInput, type Attachment, type ChatInputHandle } from './ChatInput'
 import { RunDetailPanel } from './RunDetailPanel'
 import type { CodeExecution } from './CodeExecutionCard'
@@ -2829,7 +2829,7 @@ export const ChatView = memo(function ChatView() {
           chatInputEl
         )}
         <p style={{ color: 'var(--c-text-muted)', fontSize: '11px', letterSpacing: '-0.3px', textAlign: 'center', marginBottom: 0, marginTop: '-2px' }}>
-          Arkloop is AI and can make mistakes. Please double-check responses.
+          {`${PRODUCT_BRAND_NAME} is AI and can make mistakes. Please double-check responses.`}
         </p>
       </div>
 

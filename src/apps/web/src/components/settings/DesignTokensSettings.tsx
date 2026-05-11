@@ -16,7 +16,7 @@ import {
   X,
   Zap,
 } from 'lucide-react'
-import { ConfirmDialog } from '@arkloop/shared'
+import { ConfirmDialog, PRODUCT_BRAND_NAME } from '@arkloop/shared'
 import { SettingsSectionHeader } from './_SettingsSectionHeader'
 import { SettingsButton, SettingsCopyButton, SettingsIconButton, settingsDangerText, settingsSecondaryFrameBorder } from './_SettingsButton'
 import { SettingsInput, SettingsSearchInput } from './_SettingsInput'
@@ -953,7 +953,7 @@ function CompositionsPreview() {
     <TokenPageSection
       eyebrow="Compositions"
       title="真实设置样本"
-      description="这些样本贴近当前 Arkloop desktop 页面结构，用来检查 token 是否能解释真实界面。"
+      description={`这些样本贴近当前 ${PRODUCT_BRAND_NAME} desktop 页面结构，用来检查 token 是否能解释真实界面。`}
     >
       <RuleGrid rules={compositionRules} />
 

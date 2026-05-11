@@ -160,7 +160,7 @@ describe('UpdateSettingsContent', () => {
 
     expect(container.textContent).toContain('桌面应用')
     expect(container.textContent).toContain('组件')
-    expect(container.textContent).toContain('1.0.0')
+    expect(container.textContent).toContain('0.0.1')
     expect(container.textContent).toContain('1.0.1')
 
     const downloadButton = Array.from(container.querySelectorAll('button')).find((button) => button.textContent?.trim() === '下载')

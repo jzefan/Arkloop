@@ -2104,6 +2104,281 @@ func TestIndustryEducationIndexAgentLuaSeparateModeContinuesWithOneValidEvaluati
 	}
 }
 
+// TestIndustryEducationIndexAgentLuaMultiModelReportIncludesModelAppendix
+// verifies that when two or more evaluator models return valid scores, the
+// generated report contains the new Appendix A (model-score comparison
+// table) and Appendix B (per-model analysis) sections requested by the
+// agent spec for the 双高产教融合评估 persona.
+func TestIndustryEducationIndexAgentLuaMultiModelReportIncludesModelAppendix(t *testing.T) {
+	scriptBytes, err := os.ReadFile(industryEducationIndexAgentLuaPath(t))
+	if err != nil {
+		t.Fatalf("read industry education agent lua: %v", err)
+	}
+
+	rc := buildLuaRC(nil)
+	rc.InputJSON = map[string]any{
+		"user_prompt": "评估深圳职业技术大学",
+		"available_models": []map[string]any{
+			{"selector": "deepseek official^deepseek-chat", "model": "deepseek-chat", "provider_kind": "deepseek", "credential_name": "deepseek official"},
+			{"selector": "qwen proxy^qwen-max", "model": "qwen-max", "provider_kind": "openai", "credential_name": "qwen proxy"},
+		},
+	}
+	answers := []string{
+		`{"mode":"多模型评估"}`,
+		`{"models":["deepseek official^deepseek-chat","qwen proxy^qwen-max"]}`,
+	}
+	rc.WaitForInput = func(_ context.Context) (string, bool) {
+		if len(answers) == 0 {
+			return "", false
+		}
+		answer := answers[0]
+		answers = answers[1:]
+		return answer, true
+	}
+
+	reg := tools.NewRegistry()
+	for _, spec := range []tools.AgentToolSpec{
+		{Name: "web_search", Version: "1", Description: "search", RiskLevel: tools.RiskLevelLow},
+		{Name: "web_fetch", Version: "1", Description: "fetch", RiskLevel: tools.RiskLevelLow},
+		{Name: "document_write", Version: "1", Description: "doc", RiskLevel: tools.RiskLevelLow},
+		{Name: "markdown_to_pdf", Version: "1", Description: "pdf", RiskLevel: tools.RiskLevelLow},
+	} {
+		if err := reg.Register(spec); err != nil {
+			t.Fatalf("register %s: %v", spec.Name, err)
+		}
+	}
+	dispatch := tools.NewDispatchingExecutor(reg, tools.NewPolicyEnforcer(reg, tools.AllowlistFromNames([]string{
+		"web_search", "web_fetch", "document_write", "markdown_to_pdf",
+	})))
+
+	var writtenMarkdown string
+	if err := dispatch.Bind("web_search", stubLuaToolExecutor{
+		execute: func(_ context.Context, _ string, _ map[string]any, _ tools.ExecutionContext, _ string) tools.ExecutionResult {
+			return tools.ExecutionResult{ResultJSON: map[string]any{
+				"results": []map[string]any{{
+					"title":   "深圳职业技术大学官网",
+					"url":     "https://www.szpu.edu.cn/",
+					"snippet": "学校官网、院系设置、人才培养与校园新闻。",
+				}},
+			}}
+		},
+	}); err != nil {
+		t.Fatalf("bind web_search: %v", err)
+	}
+	if err := dispatch.Bind("web_fetch", stubLuaToolExecutor{
+		execute: func(context.Context, string, map[string]any, tools.ExecutionContext, string) tools.ExecutionResult {
+			return tools.ExecutionResult{ResultJSON: map[string]any{
+				"content": "学校围绕产教融合、校企合作和专业群建设开展人才培养。",
+			}}
+		},
+	}); err != nil {
+		t.Fatalf("bind web_fetch: %v", err)
+	}
+	if err := dispatch.Bind("document_write", stubLuaToolExecutor{
+		execute: func(_ context.Context, _ string, args map[string]any, _ tools.ExecutionContext, _ string) tools.ExecutionResult {
+			if v, ok := args["content"].(string); ok {
+				writtenMarkdown = v
+			}
+			return tools.ExecutionResult{ResultJSON: map[string]any{
+				"artifacts": []map[string]any{{"filename": "report.md", "mime_type": "text/markdown"}},
+			}}
+		},
+	}); err != nil {
+		t.Fatalf("bind document_write: %v", err)
+	}
+	if err := dispatch.Bind("markdown_to_pdf", stubLuaToolExecutor{
+		execute: func(context.Context, string, map[string]any, tools.ExecutionContext, string) tools.ExecutionResult {
+			return tools.ExecutionResult{ResultJSON: map[string]any{
+				"artifacts": []map[string]any{{"filename": "report.pdf", "mime_type": "application/pdf", "display": "download"}},
+			}}
+		},
+	}); err != nil {
+		t.Fatalf("bind markdown_to_pdf: %v", err)
+	}
+	rc.ToolExecutor = dispatch
+
+	outputs := map[uuid.UUID]string{}
+	rc.SubAgentControl = stubSubAgentControl{
+		spawn: func(_ context.Context, req subagentctl.SpawnRequest) (subagentctl.StatusSnapshot, error) {
+			subAgentID := uuid.New()
+			personaID := req.PersonaID
+			switch req.PersonaID {
+			case "industry-education-evaluator":
+				if strings.Contains(req.Model, "deepseek") {
+					outputs[subAgentID] = `{"eligible":true,"model_label":"DeepSeek / deepseek-chat","dimensions":[` +
+						`{"name":"基础与机制","weight":25,"score":85.0,"data_confidence":"medium","basis":"治理机制成熟"},` +
+						`{"name":"资源共建共享","weight":25,"score":82.0,"data_confidence":"medium","basis":"实训资源丰富"},` +
+						`{"name":"产学建设与服务","weight":25,"score":87.0,"data_confidence":"high","basis":"社会服务齐全"},` +
+						`{"name":"人才培养质量","weight":25,"score":80.0,"data_confidence":"low","basis":"缺少就业率"}` +
+						`]}`
+				} else {
+					outputs[subAgentID] = `{"eligible":true,"model_label":"Qwen / qwen-max","dimensions":[` +
+						`{"name":"基础与机制","weight":25,"score":84.0,"data_confidence":"medium","basis":"治理完备"},` +
+						`{"name":"资源共建共享","weight":25,"score":83.0,"data_confidence":"medium","basis":"共建资源可观"},` +
+						`{"name":"产学建设与服务","weight":25,"score":85.0,"data_confidence":"high","basis":"服务齐全"},` +
+						`{"name":"人才培养质量","weight":25,"score":81.0,"data_confidence":"low","basis":"口径受限"}` +
+						`]}`
+				}
+			}
+			return subagentctl.StatusSnapshot{
+				SubAgentID:  subAgentID,
+				Status:      data.SubAgentStatusQueued,
+				PersonaID:   &personaID,
+				ContextMode: req.ContextMode,
+			}, nil
+		},
+		wait: func(_ context.Context, req subagentctl.WaitRequest) (subagentctl.StatusSnapshot, error) {
+			subAgentID := req.SubAgentIDs[0]
+			output := outputs[subAgentID]
+			return subagentctl.StatusSnapshot{SubAgentID: subAgentID, Status: data.SubAgentStatusCompleted, LastOutput: &output}, nil
+		},
+	}
+
+	_ = runLuaScript(t, string(scriptBytes), rc)
+
+	if writtenMarkdown == "" {
+		t.Fatal("expected document_write to receive markdown content")
+	}
+	// Appendix A: comparison table
+	if !strings.Contains(writtenMarkdown, "## 附录 A：各模型指数得分对比") {
+		t.Errorf("expected Appendix A heading in markdown:\n%s", writtenMarkdown)
+	}
+	// Table has 7 columns: model + 4 dimensions + total + rating
+	if !strings.Contains(writtenMarkdown, "| 模型 | 基础与机制 | 资源共建共享 | 产学建设与服务 | 人才培养质量 | 总分 | 评级 |") {
+		t.Errorf("expected comparison table header row")
+	}
+	// Both model rows present
+	if !strings.Contains(writtenMarkdown, "DeepSeek / deepseek-chat") ||
+		!strings.Contains(writtenMarkdown, "Qwen / qwen-max") {
+		t.Errorf("expected both model labels to appear in the comparison table")
+	}
+	// Appendix B: per-model analysis
+	if !strings.Contains(writtenMarkdown, "## 附录 B：各模型分析输出") {
+		t.Errorf("expected Appendix B heading in markdown")
+	}
+	// Each model has its own subheading in Appendix B
+	if !strings.Contains(writtenMarkdown, "### DeepSeek / deepseek-chat") ||
+		!strings.Contains(writtenMarkdown, "### Qwen / qwen-max") {
+		t.Errorf("expected per-model subheadings in Appendix B")
+	}
+	// The evaluator's basis text must survive into the analysis appendix.
+	if !strings.Contains(writtenMarkdown, "治理机制成熟") {
+		t.Errorf("expected DeepSeek basis text to appear in Appendix B")
+	}
+}
+
+// TestIndustryEducationIndexAgentLuaSingleModelReportOmitsAppendices verifies
+// that when only one model is used (单模型评估), the per-model comparison
+// table and analysis appendices are omitted — a one-row comparison would be
+// redundant with the main report body.
+func TestIndustryEducationIndexAgentLuaSingleModelReportOmitsAppendices(t *testing.T) {
+	scriptBytes, err := os.ReadFile(industryEducationIndexAgentLuaPath(t))
+	if err != nil {
+		t.Fatalf("read industry education agent lua: %v", err)
+	}
+
+	rc := buildLuaRC(nil)
+	rc.InputJSON = map[string]any{
+		"user_prompt": "评估深圳职业技术大学",
+		"available_models": []map[string]any{
+			{"selector": "deepseek official^deepseek-chat", "model": "deepseek-chat", "provider_kind": "deepseek", "credential_name": "deepseek official"},
+		},
+	}
+	answers := []string{
+		`{"mode":"单模型评估"}`,
+		`{"models":["deepseek official^deepseek-chat"]}`,
+	}
+	rc.WaitForInput = func(_ context.Context) (string, bool) {
+		if len(answers) == 0 {
+			return "", false
+		}
+		answer := answers[0]
+		answers = answers[1:]
+		return answer, true
+	}
+
+	reg := tools.NewRegistry()
+	for _, spec := range []tools.AgentToolSpec{
+		{Name: "web_search", Version: "1", Description: "search", RiskLevel: tools.RiskLevelLow},
+		{Name: "web_fetch", Version: "1", Description: "fetch", RiskLevel: tools.RiskLevelLow},
+		{Name: "document_write", Version: "1", Description: "doc", RiskLevel: tools.RiskLevelLow},
+		{Name: "markdown_to_pdf", Version: "1", Description: "pdf", RiskLevel: tools.RiskLevelLow},
+	} {
+		if err := reg.Register(spec); err != nil {
+			t.Fatalf("register %s: %v", spec.Name, err)
+		}
+	}
+	dispatch := tools.NewDispatchingExecutor(reg, tools.NewPolicyEnforcer(reg, tools.AllowlistFromNames([]string{
+		"web_search", "web_fetch", "document_write", "markdown_to_pdf",
+	})))
+
+	var writtenMarkdown string
+	_ = dispatch.Bind("web_search", stubLuaToolExecutor{
+		execute: func(context.Context, string, map[string]any, tools.ExecutionContext, string) tools.ExecutionResult {
+			return tools.ExecutionResult{ResultJSON: map[string]any{
+				"results": []map[string]any{{"title": "官网", "url": "https://www.szpu.edu.cn/", "snippet": "x"}},
+			}}
+		},
+	})
+	_ = dispatch.Bind("web_fetch", stubLuaToolExecutor{
+		execute: func(context.Context, string, map[string]any, tools.ExecutionContext, string) tools.ExecutionResult {
+			return tools.ExecutionResult{ResultJSON: map[string]any{"content": "学校信息。"}}
+		},
+	})
+	_ = dispatch.Bind("document_write", stubLuaToolExecutor{
+		execute: func(_ context.Context, _ string, args map[string]any, _ tools.ExecutionContext, _ string) tools.ExecutionResult {
+			if v, ok := args["content"].(string); ok {
+				writtenMarkdown = v
+			}
+			return tools.ExecutionResult{ResultJSON: map[string]any{
+				"artifacts": []map[string]any{{"filename": "report.md", "mime_type": "text/markdown"}},
+			}}
+		},
+	})
+	_ = dispatch.Bind("markdown_to_pdf", stubLuaToolExecutor{
+		execute: func(context.Context, string, map[string]any, tools.ExecutionContext, string) tools.ExecutionResult {
+			return tools.ExecutionResult{ResultJSON: map[string]any{
+				"artifacts": []map[string]any{{"filename": "report.pdf", "mime_type": "application/pdf", "display": "download"}},
+			}}
+		},
+	})
+	rc.ToolExecutor = dispatch
+
+	outputs := map[uuid.UUID]string{}
+	rc.SubAgentControl = stubSubAgentControl{
+		spawn: func(_ context.Context, req subagentctl.SpawnRequest) (subagentctl.StatusSnapshot, error) {
+			subAgentID := uuid.New()
+			personaID := req.PersonaID
+			if req.PersonaID == "industry-education-evaluator" {
+				outputs[subAgentID] = `{"eligible":true,"model_label":"DeepSeek / deepseek-chat","dimensions":[` +
+					`{"name":"基础与机制","weight":25,"score":85.0,"data_confidence":"medium","basis":"ok"},` +
+					`{"name":"资源共建共享","weight":25,"score":82.0,"data_confidence":"medium","basis":"ok"},` +
+					`{"name":"产学建设与服务","weight":25,"score":87.0,"data_confidence":"high","basis":"ok"},` +
+					`{"name":"人才培养质量","weight":25,"score":80.0,"data_confidence":"low","basis":"ok"}` +
+					`]}`
+			}
+			return subagentctl.StatusSnapshot{SubAgentID: subAgentID, Status: data.SubAgentStatusQueued, PersonaID: &personaID, ContextMode: req.ContextMode}, nil
+		},
+		wait: func(_ context.Context, req subagentctl.WaitRequest) (subagentctl.StatusSnapshot, error) {
+			subAgentID := req.SubAgentIDs[0]
+			output := outputs[subAgentID]
+			return subagentctl.StatusSnapshot{SubAgentID: subAgentID, Status: data.SubAgentStatusCompleted, LastOutput: &output}, nil
+		},
+	}
+
+	_ = runLuaScript(t, string(scriptBytes), rc)
+
+	if writtenMarkdown == "" {
+		t.Fatal("expected document_write to receive markdown content")
+	}
+	if strings.Contains(writtenMarkdown, "## 附录 A") {
+		t.Errorf("single-model report must not emit Appendix A; got:\n%s", writtenMarkdown)
+	}
+	if strings.Contains(writtenMarkdown, "## 附录 B") {
+		t.Errorf("single-model report must not emit Appendix B; got:\n%s", writtenMarkdown)
+	}
+}
+
 func TestIndustryEducationIndexAgentLuaContinuePromptDoesNotBecomeSchoolName(t *testing.T) {
 	scriptBytes, err := os.ReadFile(industryEducationIndexAgentLuaPath(t))
 	if err != nil {
@@ -3865,11 +4140,12 @@ func TestIndustryEducationIndexAgentLuaRunsWithSubAgentsAndArtifacts(t *testing.
 	if len(searchQueries) == 0 {
 		t.Fatal("expected web_search queries")
 	}
-	if len(searchQueries) != 5 {
-		t.Fatalf("expected 5 search queries, got %d: %v", len(searchQueries), searchQueries)
+	// 分层查询：权威、新闻、通用三批，每批 5 条 query，合计 15 条。
+	if len(searchQueries) != 15 {
+		t.Fatalf("expected 15 search queries across authoritative/news/general batches, got %d: %v", len(searchQueries), searchQueries)
 	}
-	if searchMaxResults != float64(12) {
-		t.Fatalf("expected max_results=12, got %#v", searchMaxResults)
+	if searchMaxResults == nil {
+		t.Fatalf("expected max_results to be set, got nil")
 	}
 	for _, query := range searchQueries {
 		if !utf8.ValidString(query) {

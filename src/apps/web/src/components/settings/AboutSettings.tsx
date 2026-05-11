@@ -1,6 +1,12 @@
 import { useEffect, useState } from 'react'
-import { ExternalLink, Github, HardDrive } from 'lucide-react'
-import { getDesktopApi, getDesktopAppVersion, type DesktopAdvancedOverview } from '@arkloop/shared/desktop'
+import { HardDrive } from 'lucide-react'
+import {
+  PRODUCT_BRAND_NAME,
+  PRODUCT_DESKTOP_VERSION,
+  PRODUCT_SOURCE_LABEL,
+  PRODUCT_SOURCE_URL,
+} from '@arkloop/shared'
+import { getDesktopApi, type DesktopAdvancedOverview } from '@arkloop/shared/desktop'
 import { useLocale } from '../../contexts/LocaleContext'
 import { openExternal } from '../../openExternal'
 import { readDeveloperMode, writeDeveloperMode } from '../../storage'
@@ -8,15 +14,12 @@ import { SettingsSection } from './_SettingsSection'
 import { SettingsSectionHeader } from './_SettingsSectionHeader'
 import { UpdateSettingsContent } from './UpdateSettings'
 import { SettingsSwitch } from './_SettingsSwitch'
-import { SettingsButton } from './_SettingsButton'
 
 export function AboutSettings({ accessToken: _accessToken }: { accessToken: string }) {
   const { t } = useLocale()
   const ds = t.desktopSettings
   const api = getDesktopApi()
-  const localAppVersion = getDesktopAppVersion() ?? ''
   const [devMode, setDevMode] = useState(() => readDeveloperMode())
-  const [fallbackVersion, setFallbackVersion] = useState('')
   const [overview, setOverview] = useState<DesktopAdvancedOverview | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -42,26 +45,8 @@ export function AboutSettings({ accessToken: _accessToken }: { accessToken: stri
     }
   }, [api, t.requestFailed])
 
-  useEffect(() => {
-    if (overview?.appVersion) return
-    if (!api?.app) {
-      setFallbackVersion(localAppVersion)
-      return
-    }
-    let active = true
-    void api.app.getVersion()
-      .then((version) => {
-        if (active) setFallbackVersion(version)
-      })
-      .catch(() => {})
-    return () => {
-      active = false
-    }
-  }, [api, localAppVersion, overview?.appVersion])
-
-  const appName = overview?.appName ?? 'Arkloop'
-  const appVersion = overview?.appVersion ?? fallbackVersion
-  const links = overview?.links ?? []
+  const appName = PRODUCT_BRAND_NAME
+  const appVersion = PRODUCT_DESKTOP_VERSION
   const iconDataUrl = overview?.iconDataUrl ?? null
 
   return (
@@ -86,18 +71,14 @@ export function AboutSettings({ accessToken: _accessToken }: { accessToken: stri
               {appVersion || (loading ? '...' : '')}
             </div>
           </div>
-          <div className="flex basis-full flex-wrap gap-2 xl:ml-auto xl:basis-auto xl:justify-end">
-            {links.map((link) => (
-              <SettingsButton
-                key={link.url}
-                onClick={() => openExternal(link.url)}
-                variant="secondary"
-                className="shrink-0"
-                icon={link.label === 'GitHub' ? <Github size={14} /> : <ExternalLink size={14} />}
-              >
-                {link.label}
-              </SettingsButton>
-            ))}
+          <div className="flex basis-full items-center xl:ml-auto xl:basis-auto">
+            <button
+              type="button"
+              onClick={() => openExternal(PRODUCT_SOURCE_URL)}
+              className="text-sm font-medium text-[var(--c-accent)] underline-offset-2 transition-opacity hover:underline hover:opacity-80"
+            >
+              {PRODUCT_SOURCE_LABEL}
+            </button>
           </div>
         </div>
       </SettingsSection>

@@ -83,6 +83,12 @@ export type MeResponse = {
   work_enabled: boolean
   timezone?: string | null
   account_timezone?: string | null
+  role?: string
+  permissions?: string[]
+}
+
+export function isPlatformAdmin(me: MeResponse | null): boolean {
+  return me?.role === 'platform_admin'
 }
 
 export type SkillReference = {

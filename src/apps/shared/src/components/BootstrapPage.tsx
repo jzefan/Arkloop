@@ -8,6 +8,7 @@ import {
   TRANSITION, inputCls, inputStyle, labelStyle,
 } from './auth-ui'
 import type { Locale } from '../contexts/LocaleContext'
+import { PRODUCT_BRAND_NAME } from '../brand'
 
 export type BootstrapTranslations = {
   bootstrap: {
@@ -199,7 +200,7 @@ export function BootstrapPage({ onLoggedIn, t, locale, consoles, tokenOverride, 
               color: 'var(--c-text-primary)',
               lineHeight: 1,
             }}>
-              Arkloop
+              {PRODUCT_BRAND_NAME}
             </div>
 
             <div style={{ position: 'relative', height: '22px', marginTop: '8px' }}>

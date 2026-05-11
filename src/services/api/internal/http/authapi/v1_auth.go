@@ -2,7 +2,6 @@ package authapi
 
 import (
 	httpkit "arkloop/services/api/internal/http/httpkit"
-	"context"
 	"errors"
 	"net"
 	"net/mail"
@@ -504,16 +503,7 @@ func registrationMode(flagService *featureflag.Service) func(nethttp.ResponseWri
 		}
 
 		traceID := observability.TraceIDFromContext(r.Context())
-		mode := "open"
-		if flagService != nil {
-			mode = "invite_only"
-			open, err := flagService.IsGloballyEnabled(r.Context(), "registration.open")
-			if err == nil && open {
-				mode = "open"
-			}
-		}
-
-		httpkit.WriteJSON(w, traceID, nethttp.StatusOK, registrationModeResponse{Mode: mode})
+		httpkit.WriteJSON(w, traceID, nethttp.StatusOK, registrationModeResponse{Mode: "open"})
 	}
 }
 
@@ -562,9 +552,6 @@ func resolveIdentity(
 		}
 
 		inviteRequired := false
-		if resolved.NextStep == auth.ResolveNextStepRegister {
-			inviteRequired = !isOpenRegistration(r.Context(), flagService)
-		}
 
 		if auditWriter != nil {
 			auditWriter.WriteAuthResolved(r.Context(), traceID, body.Identity, string(resolved.NextStep))
@@ -582,17 +569,6 @@ func resolveIdentity(
 		}
 		httpkit.WriteJSON(w, traceID, nethttp.StatusOK, resp)
 	}
-}
-
-func isOpenRegistration(ctx context.Context, flagService *featureflag.Service) bool {
-	openRegistration := flagService == nil
-	if flagService != nil {
-		open, err := flagService.IsGloballyEnabled(ctx, "registration.open")
-		if err == nil {
-			openRegistration = open
-		}
-	}
-	return openRegistration
 }
 
 func register(
@@ -641,15 +617,7 @@ func register(
 			return
 		}
 
-		// 注册模式检查
-		openRegistration := isOpenRegistration(r.Context(), flagService)
-
-		if !openRegistration && body.InviteCode == "" {
-			httpkit.WriteError(w, nethttp.StatusUnprocessableEntity, "auth.invite_code_required", "invite code is required", traceID, nil)
-			return
-		}
-
-		created, err := registrationService.Register(r.Context(), body.Login, body.Password, body.Email, body.Locale, body.InviteCode, !openRegistration)
+		created, err := registrationService.Register(r.Context(), body.Login, body.Password, body.Email, body.Locale, body.InviteCode, false)
 		if err != nil {
 			var loginExists auth.LoginExistsError
 			if errors.As(err, &loginExists) {

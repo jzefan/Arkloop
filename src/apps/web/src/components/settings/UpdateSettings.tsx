@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import { RefreshCw } from 'lucide-react'
-import { Button } from '@arkloop/shared'
+import { Button, PRODUCT_DESKTOP_VERSION } from '@arkloop/shared'
 import { SpinnerIcon } from '@arkloop/shared/components/auth-ui'
 import { useLocale } from '../../contexts/LocaleContext'
 import { getDesktopApi, getDesktopAppVersion, type UpdaterComponent, type AppUpdaterState } from '@arkloop/shared/desktop'
@@ -43,7 +43,7 @@ function getAppUpdaterApi() {
 }
 
 function localHeadlessAppUpdaterState(): AppUpdaterState | null {
-  const currentVersion = getDesktopAppVersion()
+  const currentVersion = getDesktopAppVersion() ?? PRODUCT_DESKTOP_VERSION
   if (!currentVersion) return null
   return {
     supported: false,
@@ -299,8 +299,8 @@ export function UpdateSettingsContent() {
             {t.desktopSettings.appUpdateVersion}
           </span>
           <div className="flex min-w-[12rem] flex-1 items-center gap-2 text-sm text-[var(--c-text-secondary)]">
-            {appUpdateState?.currentVersion && <span>{appUpdateState.currentVersion}</span>}
-            {appUpdateState?.latestVersion && appUpdateState.latestVersion !== appUpdateState.currentVersion && (
+            <span>{PRODUCT_DESKTOP_VERSION}</span>
+            {appUpdateState?.latestVersion && appUpdateState.latestVersion !== PRODUCT_DESKTOP_VERSION && (
               <>
                 <span style={{ color: 'var(--c-text-muted)' }}>→</span>
                 <span
