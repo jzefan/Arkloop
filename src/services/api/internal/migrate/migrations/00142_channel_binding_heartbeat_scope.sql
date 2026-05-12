@@ -30,13 +30,13 @@ INSERT INTO scheduled_triggers (
     updated_at
 )
 WITH target_persona AS (
-    SELECT DISTINCT ON (account_id, key)
+    SELECT DISTINCT ON (account_id, persona_key)
            id,
            account_id,
-           key
+           persona_key
       FROM personas
      WHERE deleted_at IS NULL
-     ORDER BY account_id, key, created_at DESC
+     ORDER BY account_id, persona_key, created_at DESC
 )
 SELECT
     gen_random_uuid(),
@@ -54,7 +54,7 @@ SELECT
     ON ci.id = st.channel_identity_id
   JOIN target_persona AS tp
     ON tp.account_id = st.account_id
-   AND tp.key = st.persona_key
+   AND tp.persona_key = st.persona_key
   JOIN channel_group_threads AS cgt
     ON cgt.platform_chat_id = ci.platform_subject_id
    AND cgt.persona_id = tp.id

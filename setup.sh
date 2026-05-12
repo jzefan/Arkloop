@@ -956,8 +956,28 @@ preflight_install() {
   [ -n "$gateway_port" ] || gateway_port="19000"
   if [ "$RESOLVED_GATEWAY" = "on" ] && port_in_use "$gateway_port"; then
     if ! service_ready gateway >/dev/null 2>&1; then
-      warn "$(t gateway_port_in_use "$gateway_port")"
-      failures=1
+      log "$(t gateway_port_in_use "$gateway_port"), stopping existing services..."
+      "${COMPOSE_BASE_CMD[@]}" down --remove-orphans 2>/dev/null || true
+      # Stop any docker container binding this port
+      if [ "$DOCKER_OK" = "1" ]; then
+        local cid
+        cid="$(docker ps -q --filter "publish=${gateway_port}" 2>/dev/null || true)"
+        if [ -n "$cid" ]; then
+          docker stop $cid 2>/dev/null || true
+        fi
+      fi
+      sleep 2
+      if port_in_use "$gateway_port"; then
+        # Last resort: kill host process
+        if command -v lsof >/dev/null 2>&1; then
+          lsof -ti :"$gateway_port" 2>/dev/null | xargs kill -9 2>/dev/null || true
+          sleep 1
+        fi
+      fi
+      if port_in_use "$gateway_port"; then
+        warn "$(t gateway_port_in_use "$gateway_port")"
+        failures=1
+      fi
     fi
   fi
 
@@ -1021,6 +1041,11 @@ run_install() {
   compose_base_cmd "$COMPOSE_PROFILES"
   read_lines_to_array "$COMPOSE_SERVICES" SELECTED_SERVICES_ARRAY
 
+  if [ "$USE_PROD_IMAGES" = "1" ] && [ "${#SELECTED_SERVICES_ARRAY[@]}" -gt 0 ]; then
+    log "$(t upgrade_pulling)"
+    "${COMPOSE_BASE_CMD[@]}" pull "${SELECTED_SERVICES_ARRAY[@]}"
+  fi
+
   local -a phase_one=()
   local -a phase_two=()
   local service
@@ -1034,13 +1059,21 @@ run_install() {
 
   if [ "${#phase_one[@]}" -gt 0 ]; then
     log "$(t starting_modules "${phase_one[*]}")"
-    local cmd=("${COMPOSE_BASE_CMD[@]}" up -d "${phase_one[@]}")
+    local cmd=("${COMPOSE_BASE_CMD[@]}" up -d)
+    if [ "$USE_PROD_IMAGES" = "1" ]; then
+      cmd+=("--no-build")
+    fi
+    cmd+=("${phase_one[@]}")
     "${cmd[@]}"
   fi
 
   if [ "${#phase_two[@]}" -gt 0 ]; then
     log "$(t starting_gateway)"
-    local cmd=("${COMPOSE_BASE_CMD[@]}" up -d "${phase_two[@]}")
+    local cmd=("${COMPOSE_BASE_CMD[@]}" up -d)
+    if [ "$USE_PROD_IMAGES" = "1" ]; then
+      cmd+=("--no-build")
+    fi
+    cmd+=("${phase_two[@]}")
     "${cmd[@]}"
   fi
 

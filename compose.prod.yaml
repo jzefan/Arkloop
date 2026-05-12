@@ -13,28 +13,37 @@
 
 services:
   migrate:
+    build: null
     image: ${ARKLOOP_IMAGE_REPOSITORY:-ghcr.io/jzefan/arkloop}-api:${ARKLOOP_VERSION:-latest}
 
   api:
+    build: null
     image: ${ARKLOOP_IMAGE_REPOSITORY:-ghcr.io/jzefan/arkloop}-api:${ARKLOOP_VERSION:-latest}
 
   gateway:
+    build: null
     image: ${ARKLOOP_IMAGE_REPOSITORY:-ghcr.io/jzefan/arkloop}-gateway:${ARKLOOP_VERSION:-latest}
 
   worker:
+    build: null
     image: ${ARKLOOP_IMAGE_REPOSITORY:-ghcr.io/jzefan/arkloop}-worker:${ARKLOOP_VERSION:-latest}
 
   sandbox:
+    build: null
     image: ${ARKLOOP_IMAGE_REPOSITORY:-ghcr.io/jzefan/arkloop}-sandbox:${ARKLOOP_VERSION:-latest}
 
   sandbox-docker:
+    build: null
     image: ${ARKLOOP_IMAGE_REPOSITORY:-ghcr.io/jzefan/arkloop}-sandbox:${ARKLOOP_VERSION:-latest}
 
   console:
+    build: null
     image: ${ARKLOOP_IMAGE_REPOSITORY:-ghcr.io/jzefan/arkloop}-console:${ARKLOOP_VERSION:-latest}
 
   console-lite:
+    build: null
     image: ${ARKLOOP_IMAGE_REPOSITORY:-ghcr.io/jzefan/arkloop}-console-lite:${ARKLOOP_VERSION:-latest}
 
   bridge:
+    build: null
     image: ${ARKLOOP_IMAGE_REPOSITORY:-ghcr.io/jzefan/arkloop}-bridge:${ARKLOOP_VERSION:-latest}

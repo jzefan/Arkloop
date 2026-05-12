@@ -76,3 +76,6 @@ release-files/
 /ark
 .cache
 .gstack/
+
+# Local deployment entrypoints with server/user-specific values
+scripts/*.local.sh

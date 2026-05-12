@@ -254,7 +254,8 @@ export async function apiFetch<T>(
     return (await response.json()) as T
   }
 
-  if (response.status === 401 && !init?._isRetry) {
+  const isAuthEndpoint = /^\/v1\/auth\/(login|refresh|resolve|captcha-config|local-session|local-owner-password|email\/otp\/)/.test(path)
+  if (response.status === 401 && !init?._isRetry && !isAuthEndpoint) {
     try {
       const newToken = await silentRefresh()
       return await apiFetch<T>(path, { ...init, accessToken: newToken, _isRetry: true })
