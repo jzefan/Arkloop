@@ -121,7 +121,7 @@ ARKLOOP_EXAM_BASE_URL=https://exam.example.edu     # required when enabled
 
 - `knowledge_bases(id, workspace_ref, account_id, name, description, visibility, integration_mode, exam_course_id?, created_by, created_at, updated_at)`
 - `kb_documents(id, kb_id, original_filename, mime_type, blob_sha256, size_bytes, status, error_message, parse_meta_json, created_by, created_at, updated_at)` —— 原始文件按 sha256 走现有 Workspace blob 存储复用，不重复保存
-- `kb_chunks(id, kb_id, document_id, ordinal, heading_path, block_refs_json, chunk_type, text, token_count, embedding vector(2560), metadata_json, created_at)` —— `embedding` 列使用 **pgvector** 扩展（维度 **2560**，对应 Doubao `doubao-embedding-text-240715`）；建 hnsw 索引（`vector_cosine_ops`）
+- `kb_chunks(id, kb_id, document_id, ordinal, heading_path, block_refs_json, chunk_type, text, token_count, embedding vector(<S0>), metadata_json, created_at)` —— `embedding` 列使用 **pgvector** 扩展；维度对应 Doubao `doubao-embedding-text-240715`，具体数字**待 design 文档 Spike S0 用 `cmd/embedprobe` 验证**后写定（候选记忆值 2560，未确认；不可凭记忆写 DDL）；建 hnsw 索引（`vector_cosine_ops`）
 - `kb_knowledge_points(id, kb_id, name, parent_id?, exam_knowledge_point_id?, sort_order, created_at)` —— 两种模式都用的轻量知识点表：
   - Standalone：完全在本地维护，自由层级
   - Linked：作为 exam 知识点树在 ArkLoop 侧的镜像/快照，`exam_knowledge_point_id` 关联到 exam（同步策略：persona 操作时按需拉取/刷新，不做后台同步）
@@ -182,10 +182,11 @@ ARKLOOP_EXAM_BASE_URL=https://exam.example.edu     # required when enabled
   - `GET  /v1/knowledge-bases/:id/documents` / `GET .../documents/:id` — 状态查询
   - `DELETE /v1/knowledge-bases/:id/documents/:id` — 删除单文档（同时清向量）
   - `GET  /v1/knowledge-bases/:id/search?q=&k=` — 调试用检索接口
-- 摄入流水线作为现有 api 服务的 job 调度系统的一个 job 类型：`kb_ingest`
+- 摄入流水线 `kb_ingest` 作为 job 类型跑在 **worker** 队列里（理由：解析依赖 sandbox、embedder 调外部 LLM provider，都是 worker 原生能力；api 调 sandbox 无先例）。API 端只负责"REST 接收上传 → 落 `kb_documents` → 投 worker queue → 返回 job_id"。
   - 状态机：`queued → parsing → chunking → embedding → upserting → ready`，任何步骤失败 → `failed` + `error_message`
   - 串行流水线：A → B → C → D（每一步幂等，失败可从最后成功步重试）
   - 单 document 失败不影响同 KB 其他 document
+  - M0 例外：M0 阶段无 queue，debug endpoint 同步调用 shared 包；M1 改为 worker queue 不破坏 shared 包接口（详见 design 文档）
 
 #### F. QuestionStore（独立包 `src/services/shared/questionstore/`，**新增深模块**）
 
@@ -277,7 +278,7 @@ ARKLOOP_EXAM_BASE_URL=https://exam.example.edu     # required when enabled
 ### 关键架构约束
 
 - KB 资源通过 Workspace 路径鉴权（`workspace_ref` → `account_memberships`）；不另起 ACL
-- 摄入流水线只跑在 api 服务里（用现有 job 系统），不放 worker，避免占用 agent 推理路径
+- 摄入流水线跑在 worker 队列里（M1 起），api 仅做触发和状态查询；不与 agent 推理路径共用 worker 实例（部署时可分组）
 - Worker 通过 `worker/internal/data/kb_chunks_repo.go` 直连 PgBouncer 读 `kb_chunks`（沿用现有 `runs_repo` 模式，零额外 HTTP 跳数；schema 通过 `shared/database` 包跨服务同步管理）
 - **题目/试卷数据零本地存储**——ArkLoop 不复制 exam 的真相源
 - 所有 KB 接口走 Gateway → API 路径，复用现有 rate limiting / risk scoring
