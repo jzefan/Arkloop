@@ -5,6 +5,7 @@ ALTER TABLE threads
 ALTER TABLE messages
     ADD COLUMN IF NOT EXISTS thread_seq BIGINT;
 
+-- +goose StatementBegin
 CREATE OR REPLACE FUNCTION assign_message_thread_seq() RETURNS trigger AS $$
 BEGIN
     IF NEW.thread_seq IS NULL THEN
@@ -20,6 +21,7 @@ BEGIN
     RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
+-- +goose StatementEnd
 
 DROP TRIGGER IF EXISTS trg_messages_assign_thread_seq ON messages;
 CREATE TRIGGER trg_messages_assign_thread_seq

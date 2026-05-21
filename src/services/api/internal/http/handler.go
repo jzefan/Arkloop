@@ -15,8 +15,10 @@ import (
 	"arkloop/services/api/internal/http/billingapi"
 	"arkloop/services/api/internal/http/catalogapi"
 	"arkloop/services/api/internal/http/conversationapi"
+	"arkloop/services/api/internal/http/kbdebugapi"
 	"arkloop/services/api/internal/http/platformapi"
 	"arkloop/services/api/internal/http/scheduledjobsapi"
+	"arkloop/services/api/internal/kbingest"
 
 	"arkloop/services/api/internal/audit"
 	"arkloop/services/api/internal/auth"
@@ -163,6 +165,10 @@ type HandlerConfig struct {
 
 	RepoPersonas       []personas.RepoPersona
 	PersonaSyncTrigger interface{ Trigger() }
+
+	// Optional M0 kb-debug routes (nil disables them).
+	KBIngestService *kbingest.Service
+	KBDebugToken    string
 }
 
 type artifactStore interface {
@@ -429,6 +435,10 @@ func NewHandler(cfg HandlerConfig) nethttp.Handler {
 			ThreadRepo:            cfg.ThreadRepo,
 			Pool:                  cfg.Pool,
 		})
+	}
+
+	if cfg.KBIngestService != nil {
+		kbdebugapi.Register(mux, cfg.KBDebugToken, cfg.KBIngestService, cfg.KBIngestService)
 	}
 
 	notFound := nethttp.HandlerFunc(func(w nethttp.ResponseWriter, r *nethttp.Request) {

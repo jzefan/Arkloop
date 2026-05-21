@@ -1059,6 +1059,9 @@ run_install() {
 
   if [ "${#phase_one[@]}" -gt 0 ]; then
     log "$(t starting_modules "${phase_one[*]}")"
+    # NOTE: 自 book-kb-rag M0 起，postgres 镜像由 postgres:16-alpine 改为
+    # pgvector/pgvector:pg16。已有部署升级方式：docker compose pull postgres
+    # 后 docker compose up -d postgres；数据卷无需迁移（同一 pg 16 minor）。
     local cmd=("${COMPOSE_BASE_CMD[@]}" up -d)
     if [ "$USE_PROD_IMAGES" = "1" ]; then
       cmd+=("--no-build")

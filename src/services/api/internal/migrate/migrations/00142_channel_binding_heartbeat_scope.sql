@@ -1,5 +1,8 @@
 -- +goose Up
 
+ALTER TABLE personas
+    ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
+
 ALTER TABLE channel_identity_links
     ADD COLUMN IF NOT EXISTS heartbeat_enabled INTEGER NOT NULL DEFAULT 0,
     ADD COLUMN IF NOT EXISTS heartbeat_interval_minutes INTEGER NOT NULL DEFAULT 30,
@@ -30,13 +33,13 @@ INSERT INTO scheduled_triggers (
     updated_at
 )
 WITH target_persona AS (
-    SELECT DISTINCT ON (account_id, persona_key)
-           id,
-           account_id,
-           persona_key
+    SELECT DISTINCT ON (personas.account_id, personas.persona_key)
+           personas.id,
+           personas.account_id,
+           personas.persona_key
       FROM personas
-     WHERE deleted_at IS NULL
-     ORDER BY account_id, persona_key, created_at DESC
+     WHERE personas.deleted_at IS NULL
+     ORDER BY personas.account_id, personas.persona_key, personas.created_at DESC
 )
 SELECT
     gen_random_uuid(),

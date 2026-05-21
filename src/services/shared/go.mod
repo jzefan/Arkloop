@@ -13,6 +13,7 @@ require (
 	github.com/jackc/pgx/v5 v5.8.0
 	github.com/klauspost/compress v1.18.4
 	github.com/pressly/goose/v3 v3.27.0
+	github.com/pkoukk/tiktoken-go v0.1.8
 	github.com/redis/go-redis/v9 v9.18.0
 	github.com/yuin/goldmark v1.7.8
 	golang.org/x/net v0.50.0
@@ -41,6 +42,7 @@ require (
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/dgryski/go-rendezvous v0.0.0-20200823014737-9f7001d12a5f // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
+	github.com/dlclark/regexp2 v1.10.0 // indirect
 	github.com/gorilla/websocket v1.4.2
 	github.com/jackc/pgpassfile v1.0.0 // indirect
 	github.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761 // indirect

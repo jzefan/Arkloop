@@ -36,8 +36,8 @@ const (
 	defaultDirectPoolAcquireTimeoutMs = 200
 	defaultMaxInFlight                = 256
 
-	redisURLEnv                    = "ARKLOOP_REDIS_URL"
-	gatewayRedisURLEnv             = "ARKLOOP_GATEWAY_REDIS_URL"
+	redisURLEnv                        = "ARKLOOP_REDIS_URL"
+	gatewayRedisURLEnv                 = "ARKLOOP_GATEWAY_REDIS_URL"
 	maxConcurrentRunsPerAccountEnv     = "ARKLOOP_MAX_CONCURRENT_RUNS_PER_ACCOUNT"
 	defaultMaxConcurrentRunsPerAccount = int64(10)
 
@@ -47,9 +47,9 @@ const (
 	s3BucketEnv    = "ARKLOOP_S3_BUCKET"
 	s3RegionEnv    = "ARKLOOP_S3_REGION"
 
-	sseHeartbeatSecondsEnv    = "ARKLOOP_SSE_HEARTBEAT_SECONDS"
-	sseBatchLimitEnv          = "ARKLOOP_SSE_BATCH_LIMIT"
-	sseCatchUpThresholdEnv    = "ARKLOOP_SSE_CATCH_UP_THRESHOLD"
+	sseHeartbeatSecondsEnv = "ARKLOOP_SSE_HEARTBEAT_SECONDS"
+	sseBatchLimitEnv       = "ARKLOOP_SSE_BATCH_LIMIT"
+	sseCatchUpThresholdEnv = "ARKLOOP_SSE_CATCH_UP_THRESHOLD"
 
 	bootstrapPlatformAdminEnv = "ARKLOOP_BOOTSTRAP_PLATFORM_ADMIN"
 
@@ -66,9 +66,22 @@ const (
 	turnstileSiteKeyEnv     = "ARKLOOP_TURNSTILE_SITE_KEY"
 	turnstileAllowedHostEnv = "ARKLOOP_TURNSTILE_ALLOWED_HOST"
 
-	defaultSSEHeartbeatSeconds    = 15.0
-	defaultSSEBatchLimit          = 500
-	defaultSSECatchUpThreshold    = 50
+	kbDebugTokenEnv             = "ARKLOOP_DEBUG_TOKEN"
+	arkAPIKeyEnv                = "ARK_API_KEY"
+	arkAPIKeyFallbackEnv        = "ARKLOOP_DOUBAO_API_KEY"
+	arkBaseURLEnv               = "ARK_BASE_URL"
+	arkBaseURLFallbackEnv       = "ARKLOOP_DOUBAO_BASE_URL"
+	arkEmbedModelEnv            = "ARK_EMBED_MODEL"
+	arkEmbedBatchEnv            = "ARK_EMBED_BATCH"
+	arkEmbedDimEnv              = "ARK_EMBED_DIM"
+	defaultDoubaoEmbedBaseURL   = "https://ark.cn-beijing.volces.com/api/v3"
+	defaultDoubaoEmbedModel     = "doubao-embedding-text-240715"
+	defaultDoubaoEmbedBatchSize = 32
+	defaultDoubaoEmbedDim       = 1024
+
+	defaultSSEHeartbeatSeconds = 15.0
+	defaultSSEBatchLimit       = 500
+	defaultSSECatchUpThreshold = 50
 )
 
 type SSEConfig struct {
@@ -101,8 +114,8 @@ type Config struct {
 	Auth                       *auth.Config
 	SSE                        SSEConfig
 
-	RedisURL                string
-	GatewayRedisURL         string
+	RedisURL                    string
+	GatewayRedisURL             string
 	MaxConcurrentRunsPerAccount int64
 
 	S3Endpoint     string
@@ -122,22 +135,34 @@ type Config struct {
 	TurnstileSecretKey   string
 	TurnstileSiteKey     string
 	TurnstileAllowedHost string
+
+	// KB debug routes (M0 only; M1 retires these).
+	KBDebugToken         string
+	DoubaoEmbedAPIKey    string
+	DoubaoEmbedBaseURL   string
+	DoubaoEmbedModel     string
+	DoubaoEmbedBatchSize int
+	DoubaoEmbedDim       int
 }
 
 func DefaultConfig() Config {
 	return Config{
-		Addr:                       defaultAddr,
-		DBPoolMaxConns:             defaultDBPoolMaxConns,
-		DBPoolMinConns:             defaultDBPoolMinConns,
-		DBDirectPoolMaxConns:       defaultDBDirectPoolMaxConns,
-		DBDirectPoolMinConns:       defaultDBDirectPoolMinConns,
-		DBPoolStatsIntervalSeconds: defaultDBPoolStatsIntervalSeconds,
-		DirectPoolAcquireTimeoutMs: defaultDirectPoolAcquireTimeoutMs,
-		MaxInFlight:                defaultMaxInFlight,
-		SSE:                        defaultSSEConfig(),
+		Addr:                        defaultAddr,
+		DBPoolMaxConns:              defaultDBPoolMaxConns,
+		DBPoolMinConns:              defaultDBPoolMinConns,
+		DBDirectPoolMaxConns:        defaultDBDirectPoolMaxConns,
+		DBDirectPoolMinConns:        defaultDBDirectPoolMinConns,
+		DBPoolStatsIntervalSeconds:  defaultDBPoolStatsIntervalSeconds,
+		DirectPoolAcquireTimeoutMs:  defaultDirectPoolAcquireTimeoutMs,
+		MaxInFlight:                 defaultMaxInFlight,
+		SSE:                         defaultSSEConfig(),
 		MaxConcurrentRunsPerAccount: defaultMaxConcurrentRunsPerAccount,
-		RunTimeoutMinutes:          defaultRunTimeoutMinutes,
-		RunEventsRetentionMonths:   defaultRunEventsRetentionMonths,
+		RunTimeoutMinutes:           defaultRunTimeoutMinutes,
+		RunEventsRetentionMonths:    defaultRunEventsRetentionMonths,
+		DoubaoEmbedBaseURL:          defaultDoubaoEmbedBaseURL,
+		DoubaoEmbedModel:            defaultDoubaoEmbedModel,
+		DoubaoEmbedBatchSize:        defaultDoubaoEmbedBatchSize,
+		DoubaoEmbedDim:              defaultDoubaoEmbedDim,
 	}
 }
 
@@ -331,6 +356,37 @@ func LoadConfigFromEnv() (Config, error) {
 		cfg.TurnstileAllowedHost = raw
 	}
 
+	if raw, ok := lookupEnv(kbDebugTokenEnv); ok {
+		cfg.KBDebugToken = raw
+	}
+	if raw, ok := lookupEnv(arkAPIKeyEnv); ok {
+		cfg.DoubaoEmbedAPIKey = raw
+	} else if raw, ok := lookupEnv(arkAPIKeyFallbackEnv); ok {
+		cfg.DoubaoEmbedAPIKey = raw
+	}
+	if raw, ok := lookupEnv(arkBaseURLEnv); ok {
+		cfg.DoubaoEmbedBaseURL = raw
+	} else if raw, ok := lookupEnv(arkBaseURLFallbackEnv); ok {
+		cfg.DoubaoEmbedBaseURL = raw
+	}
+	if raw, ok := lookupEnv(arkEmbedModelEnv); ok {
+		cfg.DoubaoEmbedModel = raw
+	}
+	if raw, ok := lookupEnv(arkEmbedBatchEnv); ok {
+		v, err := parsePositiveInt(raw)
+		if err != nil {
+			return Config{}, fmt.Errorf("%s: %w", arkEmbedBatchEnv, err)
+		}
+		cfg.DoubaoEmbedBatchSize = v
+	}
+	if raw, ok := lookupEnv(arkEmbedDimEnv); ok {
+		v, err := parsePositiveInt(raw)
+		if err != nil {
+			return Config{}, fmt.Errorf("%s: %w", arkEmbedDimEnv, err)
+		}
+		cfg.DoubaoEmbedDim = v
+	}
+
 	if err := cfg.Validate(); err != nil {
 		return Config{}, err
 	}
@@ -374,6 +430,12 @@ func (c Config) Validate() error {
 	}
 	if c.MaxInFlight < 0 {
 		return fmt.Errorf("max in-flight must not be negative")
+	}
+	if c.DoubaoEmbedBatchSize <= 0 {
+		return fmt.Errorf("doubao embed batch size must be greater than 0")
+	}
+	if c.DoubaoEmbedDim <= 0 {
+		return fmt.Errorf("doubao embed dim must be greater than 0")
 	}
 
 	if c.Auth != nil {
