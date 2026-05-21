@@ -117,7 +117,7 @@ export function LiteLayout({ accessToken, onLoggedOut }: Props) {
           <aside className="flex h-full w-[220px] shrink-0 flex-col border-r border-[var(--c-border-console)] bg-[var(--c-bg-sidebar)]">
             <div className="flex min-h-[46px] items-center px-4 py-3">
               <div className="flex items-center gap-2">
-                <h1 className="text-sm font-semibold tracking-wide text-[var(--c-text-primary)]">Arkloop</h1>
+                <h1 className="text-sm font-semibold tracking-wide text-[var(--c-text-primary)]">CJRH Agent</h1>
                 <span className="rounded bg-[var(--c-bg-tag)] px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wider text-[var(--c-text-muted)]">
                   Lite
                 </span>

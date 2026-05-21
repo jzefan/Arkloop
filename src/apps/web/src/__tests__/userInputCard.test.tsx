@@ -93,11 +93,12 @@ function renderCard(
   request: UserInputRequest,
   onSubmit: (r: UserInputResponse) => void = vi.fn(),
   onDismiss: () => void = vi.fn(),
+  onCancel?: () => void,
 ) {
   act(() => {
     root.render(
       <LocaleProvider>
-        <UserInputCard request={request} onSubmit={onSubmit} onDismiss={onDismiss} />
+        <UserInputCard request={request} onSubmit={onSubmit} onDismiss={onDismiss} onCancel={onCancel} />
       </LocaleProvider>,
     )
   })
@@ -231,6 +232,49 @@ describe('UserInputCard', () => {
       })
 
       expect(onDismiss).toHaveBeenCalledTimes(1)
+    })
+  })
+
+  describe('cancel (X button) when onCancel provided', () => {
+    it('routes top-right X to onCancel, not onDismiss', () => {
+      const onDismiss = vi.fn()
+      const onCancel = vi.fn()
+      renderCard(multiField, vi.fn(), onDismiss, onCancel)
+
+      const cancelBtn =
+        container.querySelector('button[aria-label="取消"]') ??
+        container.querySelector('button[aria-label="Cancel"]')
+      expect(cancelBtn).toBeTruthy()
+      act(() => { (cancelBtn as HTMLElement).click() })
+
+      expect(onCancel).toHaveBeenCalledTimes(1)
+      expect(onDismiss).not.toHaveBeenCalled()
+    })
+
+    it('footer dismiss button still routes to onDismiss with custom label', () => {
+      const onDismiss = vi.fn()
+      const onCancel = vi.fn()
+      renderCard(requiredMultiSelect, vi.fn(), onDismiss, onCancel)
+
+      const useCurrentBtn = findBtn('使用当前模型')
+      expect(useCurrentBtn).toBeTruthy()
+      act(() => { useCurrentBtn!.click() })
+
+      expect(onDismiss).toHaveBeenCalledTimes(1)
+      expect(onCancel).not.toHaveBeenCalled()
+    })
+
+    it('ESC key routes to onCancel when provided', () => {
+      const onDismiss = vi.fn()
+      const onCancel = vi.fn()
+      renderCard(singleSelect, vi.fn(), onDismiss, onCancel)
+
+      act(() => {
+        window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
+      })
+
+      expect(onCancel).toHaveBeenCalledTimes(1)
+      expect(onDismiss).not.toHaveBeenCalled()
     })
   })
 })

@@ -736,6 +736,19 @@ func (w *eventWriter) Append(
 					return err
 				}
 			}
+			// Defensive: if THIS run was itself a callback run (run_kind ==
+			// subagent_callback) and finishes without the agent loop having
+			// folded the callback into pendingCallbackIDs, mark it consumed
+			// here. Without this, the callback stays unconsumed forever, and
+			// EnqueueOldestPendingCallbackIfIdle keeps re-enqueueing runs for
+			// it (~280ms cycle), permanently locking the thread as busy
+			// with status='running' callback runs. Idempotent: MarkConsumed's
+			// SQL is `WHERE consumed_at IS NULL`, so re-running is a no-op.
+			if w.callbackID != nil && *w.callbackID != uuid.Nil {
+				if err := (data.ThreadSubAgentCallbacksRepository{}).MarkConsumed(ctx, w.tx, *w.callbackID, runID); err != nil {
+					return err
+				}
+			}
 		}
 		if err := w.usageRepo.Insert(ctx, w.tx, w.run.AccountID, runID, w.model,
 			w.totalInputTokens, w.totalOutputTokens,

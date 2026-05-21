@@ -228,7 +228,11 @@ type toolCatalogResponse struct {
 type llmProviderResponse struct {
 	ID            string                     `json:"id"`
 	AccountID     string                     `json:"account_id"`
+	Scope         string                     `json:"scope"`
 	Provider      string                     `json:"provider"`
+	Source        string                     `json:"source,omitempty"`
+	ReadOnly      bool                       `json:"read_only,omitempty"`
+	AuthMode      string                     `json:"auth_mode,omitempty"`
 	Name          string                     `json:"name"`
 	KeyPrefix     *string                    `json:"key_prefix"`
 	BaseURL       *string                    `json:"base_url"`

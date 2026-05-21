@@ -7,6 +7,8 @@
 #   -v /path/to/vmlinux:/opt/sandbox/vmlinux
 #   -v /path/to/rootfs.ext4:/opt/sandbox/rootfs.ext4
 FROM golang:1.26-alpine AS builder
+ENV GOPROXY=https://goproxy.cn,https://goproxy.io,https://proxy.golang.org,direct
+ENV GOSUMDB=sum.golang.google.cn
 WORKDIR /workspace
 COPY src/services/sandbox/go.mod src/services/sandbox/go.sum src/services/sandbox/
 COPY src/services/shared/go.mod src/services/shared/go.sum src/services/shared/

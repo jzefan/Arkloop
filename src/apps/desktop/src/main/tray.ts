@@ -40,11 +40,11 @@ function getTrayIcon(): Electron.NativeImage {
 
 export function createTray(getWindow: () => BrowserWindow | null, showWindow: ShowWindow): Tray {
   tray = new Tray(getTrayIcon())
-  tray.setToolTip('Arkloop')
+  tray.setToolTip('CJRH Agent')
 
   const contextMenu = Menu.buildFromTemplate([
     {
-      label: 'Show Arkloop',
+      label: 'Show CJRH Agent',
       click: () => showWindow(),
     },
     {
@@ -57,7 +57,7 @@ export function createTray(getWindow: () => BrowserWindow | null, showWindow: Sh
     },
     { type: 'separator' },
     {
-      label: 'Quit Arkloop',
+      label: 'Quit CJRH Agent',
       click: () => app.quit(),
     },
   ])

@@ -15,6 +15,7 @@ import (
 	"arkloop/services/worker/internal/tools/builtin/glob"
 	"arkloop/services/worker/internal/tools/builtin/grep"
 	loadskill "arkloop/services/worker/internal/tools/builtin/load_skill"
+	"arkloop/services/worker/internal/tools/builtin/exam"
 	loadtools "arkloop/services/worker/internal/tools/builtin/load_tools"
 	read "arkloop/services/worker/internal/tools/builtin/read"
 	showwidget "arkloop/services/worker/internal/tools/builtin/show_widget"
@@ -64,6 +65,10 @@ func AgentSpecs() []tools.AgentToolSpec {
 		todowrite.AgentSpec,
 		enterplanmode.AgentSpec,
 		exitplanmode.AgentSpec,
+		exam.RecognizeCatalogImageAgentSpec,
+		exam.ParseCatalogExcelAgentSpec,
+		exam.CreateCatalogTreeAgentSpec,
+		exam.GenerateQuestionsAgentSpec,
 	}
 }
 
@@ -89,6 +94,10 @@ func LlmSpecs() []llm.ToolSpec {
 		todowrite.LlmSpec,
 		enterplanmode.LlmSpec,
 		exitplanmode.LlmSpec,
+		exam.RecognizeCatalogImageLlmSpec,
+		exam.ParseCatalogExcelLlmSpec,
+		exam.CreateCatalogTreeLlmSpec,
+		exam.GenerateQuestionsLlmSpec,
 	}
 }
 
@@ -96,6 +105,15 @@ func LlmSpecs() []llm.ToolSpec {
 // rdb 可选；非 nil 时用于跨实例通知推送。
 func Executors(pool *pgxpool.Pool, rdb *redis.Client, resolver sharedconfig.Resolver, skillStore objectstore.Store) (map[string]tools.Executor, *fileops.FileTracker) {
 	tracker := fileops.NewFileTracker()
+	// exam tools are bound to a shared client (loads from env). When env is
+	// missing, NewClient returns an error and we register a stub that responds
+	// IsNotConfigured() == true so the policy layer hides them from the model.
+	var examExec *exam.ToolExecutor
+	if examClient, err := exam.NewClient(); err == nil {
+		examExec = exam.NewToolExecutor(examClient)
+	} else {
+		examExec = exam.NewToolExecutor(nil)
+	}
 	return map[string]tools.Executor{
 		TimelineTitleAgentSpec.Name:       TimelineTitleExecutor{},
 		loadskill.AgentSpec.Name:          loadskill.NewToolExecutor(skillStore),
@@ -122,5 +140,9 @@ func Executors(pool *pgxpool.Pool, rdb *redis.Client, resolver sharedconfig.Reso
 		todowrite.AgentSpec.Name:          &todowrite.Executor{},
 		enterplanmode.AgentSpec.Name:      enterplanmode.New(),
 		exitplanmode.AgentSpec.Name:       exitplanmode.New(),
+		exam.ToolNameRecognizeCatalogImage: examExec,
+		exam.ToolNameParseCatalogExcel:     examExec,
+		exam.ToolNameCreateCatalogTree:     examExec,
+		exam.ToolNameGenerateQuestions:     examExec,
 	}, tracker
 }

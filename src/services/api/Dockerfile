@@ -1,5 +1,7 @@
 # syntax=docker/dockerfile:1
 FROM golang:1.26-alpine AS builder
+ENV GOPROXY=https://goproxy.cn,https://goproxy.io,https://proxy.golang.org,direct
+ENV GOSUMDB=sum.golang.google.cn
 WORKDIR /workspace
 COPY src/services/api/go.mod src/services/api/go.sum src/services/api/
 COPY src/services/shared/go.mod src/services/shared/go.sum src/services/shared/
@@ -13,12 +15,14 @@ COPY src/skills src/skills
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
     go build -ldflags="-s -w" -o /api ./src/services/api/cmd/api && \
-    go build -ldflags="-s -w" -o /migrate ./src/services/api/cmd/migrate
+    go build -ldflags="-s -w" -o /migrate ./src/services/api/cmd/migrate && \
+    go build -ldflags="-s -w" -o /oauth-seed ./src/services/api/cmd/oauth-seed
 
 FROM alpine:3.21
 RUN apk add --no-cache ca-certificates tzdata wget
-COPY --from=builder /api     /usr/local/bin/api
-COPY --from=builder /migrate /usr/local/bin/migrate
+COPY --from=builder /api        /usr/local/bin/api
+COPY --from=builder /migrate    /usr/local/bin/migrate
+COPY --from=builder /oauth-seed /usr/local/bin/oauth-seed
 COPY --from=builder /workspace/src/personas /usr/local/share/arkloop/personas
 COPY --from=builder /workspace/src/skills /usr/local/share/arkloop/skills
 ENV ARKLOOP_PERSONAS_ROOT=/usr/local/share/arkloop/personas

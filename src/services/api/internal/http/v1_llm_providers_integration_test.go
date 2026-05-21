@@ -155,6 +155,54 @@ func TestLlmProvidersRejectLegacyProjectIDQuery(t *testing.T) {
 	assertErrorEnvelope(t, resp, nethttp.StatusUnprocessableEntity, "validation.error")
 }
 
+func TestLlmProvidersUserScopeIncludesReadOnlyPlatformPresets(t *testing.T) {
+	env := setupLlmProvidersTestEnv(t)
+
+	platformProviderResp := doJSON(env.handler, nethttp.MethodPost, "/v1/llm-providers?scope=platform", map[string]any{
+		"name":     "DeepSeek",
+		"provider": "deepseek",
+		"api_key":  "sk-platform",
+	}, authHeader(env.adminToken))
+	if platformProviderResp.Code != nethttp.StatusCreated {
+		t.Fatalf("create platform provider: %d %s", platformProviderResp.Code, platformProviderResp.Body.String())
+	}
+	platformProvider := decodeJSONBody[llmProviderResponse](t, platformProviderResp.Body.Bytes())
+	platformModelResp := doJSON(env.handler, nethttp.MethodPost, "/v1/llm-providers/"+platformProvider.ID+"/models?scope=platform", map[string]any{
+		"model":          "deepseek-v4-flash",
+		"show_in_picker": true,
+	}, authHeader(env.adminToken))
+	if platformModelResp.Code != nethttp.StatusCreated {
+		t.Fatalf("create platform model: %d %s", platformModelResp.Code, platformModelResp.Body.String())
+	}
+
+	userProviderResp := doJSON(env.handler, nethttp.MethodPost, "/v1/llm-providers?scope=user", map[string]any{
+		"name":     "user-openai",
+		"provider": "openai",
+		"api_key":  "sk-user",
+	}, authHeader(env.adminToken))
+	if userProviderResp.Code != nethttp.StatusCreated {
+		t.Fatalf("create user provider: %d %s", userProviderResp.Code, userProviderResp.Body.String())
+	}
+
+	listResp := doJSON(env.handler, nethttp.MethodGet, "/v1/llm-providers?scope=user", nil, authHeader(env.adminToken))
+	if listResp.Code != nethttp.StatusOK {
+		t.Fatalf("list user providers: %d %s", listResp.Code, listResp.Body.String())
+	}
+	providers := decodeJSONBody[[]llmProviderResponse](t, listResp.Body.Bytes())
+	if len(providers) != 2 {
+		t.Fatalf("expected platform and user providers, got %#v", providers)
+	}
+	if providers[0].Scope != data.LlmRouteScopePlatform || !providers[0].ReadOnly {
+		t.Fatalf("expected first provider to be read-only platform preset, got %#v", providers[0])
+	}
+	if len(providers[0].Models) != 1 || providers[0].Models[0].Model != "deepseek-v4-flash" {
+		t.Fatalf("unexpected platform models: %#v", providers[0].Models)
+	}
+	if providers[1].Scope != data.LlmRouteScopeUser || providers[1].ReadOnly {
+		t.Fatalf("expected second provider to be editable user provider, got %#v", providers[1])
+	}
+}
+
 func TestLlmProvidersCRUDAndDefaultPromotion(t *testing.T) {
 	env := setupLlmProvidersTestEnv(t)
 

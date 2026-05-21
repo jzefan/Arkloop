@@ -38,6 +38,7 @@ import {
 } from '@arkloop/shared/desktop'
 
 const ScheduledJobsPage = lazy(() => import('./pages/scheduled-jobs/ScheduledJobsPage'))
+const OAuthConsentPage = lazy(() => import('./components/OAuthConsentPage').then((m) => ({ default: m.OAuthConsentPage })))
 
 const sessionRestoreRetries = 12
 const sessionRestoreDelayMs = 1000
@@ -333,6 +334,7 @@ function App() {
       <Route path="/setup" element={<HeadlessSetupPage onLoggedIn={handleLoggedIn} />} />
       <Route path="/verify" element={<VerifyEmailPage />} />
       <Route path="/s/:token" element={<SharePage />} />
+      <Route path="/oauth/consent" element={<Suspense fallback={<LoadingPage label={t.loading} />}><OAuthConsentPage /></Suspense>} />
       {!authChecked ? (
         <Route path="*" element={<LoadingPage label={t.loading} />} />
       ) : !accessToken ? (

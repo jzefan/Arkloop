@@ -21,6 +21,16 @@ COMPOSE_OK="0"
 COMPOSE_BASE_CMD=()
 HAD_ENV_FILE_BEFORE_INSTALL="0"
 
+# Detect available Python >= 3.7
+PYTHON=""
+for _py in python3.12 python3 python; do
+  if command -v "$_py" >/dev/null 2>&1; then
+    PYTHON="$_py"
+    break
+  fi
+done
+[ -n "$PYTHON" ] || { echo "Error: Python 3.7+ not found. Install python3 and retry." >&2; exit 1; }
+
 normalize_setup_lang() {
   local lang="$1"
   case "$lang" in
@@ -277,7 +287,7 @@ check_docker_tools() {
 }
 
 python_env_get() {
-  python3 - "$ENV_FILE" "$1" <<'PY'
+  $PYTHON - "$ENV_FILE" "$1" <<'PY'
 import sys
 from pathlib import Path
 path = Path(sys.argv[1])
@@ -295,7 +305,7 @@ PY
 }
 
 python_env_set() {
-  python3 - "$ENV_FILE" "$1" "$2" <<'PY'
+  $PYTHON - "$ENV_FILE" "$1" "$2" <<'PY'
 import sys
 from pathlib import Path
 path = Path(sys.argv[1])
@@ -326,7 +336,7 @@ PY
 }
 
 python_env_delete() {
-  python3 - "$ENV_FILE" "$1" <<'PY'
+  $PYTHON - "$ENV_FILE" "$1" <<'PY'
 import sys
 from pathlib import Path
 path = Path(sys.argv[1])
@@ -347,7 +357,7 @@ PY
 }
 
 python_state_get() {
-  python3 - "$INSTALL_STATE_FILE" "$1" <<'PY'
+  $PYTHON - "$INSTALL_STATE_FILE" "$1" <<'PY'
 import sys
 from pathlib import Path
 path = Path(sys.argv[1])
@@ -365,7 +375,7 @@ PY
 }
 
 python_state_set() {
-  python3 - "$INSTALL_STATE_FILE" "$1" "$2" <<'PY'
+  $PYTHON - "$INSTALL_STATE_FILE" "$1" "$2" <<'PY'
 import sys
 from pathlib import Path
 path = Path(sys.argv[1])
@@ -407,7 +417,7 @@ generate_hex() {
   if command -v openssl >/dev/null 2>&1; then
     openssl rand -hex "$1"
   else
-    python3 - "$1" <<'PY'
+    $PYTHON - "$1" <<'PY'
 import secrets, sys
 print(secrets.token_hex(int(sys.argv[1])))
 PY
@@ -418,7 +428,7 @@ generate_base64() {
   if command -v openssl >/dev/null 2>&1; then
     openssl rand -base64 "$1" | tr -d '\n'
   else
-    python3 - "$1" <<'PY'
+    $PYTHON - "$1" <<'PY'
 import base64, secrets, sys
 print(base64.b64encode(secrets.token_bytes(int(sys.argv[1]))).decode())
 PY
@@ -486,7 +496,7 @@ set_install_state() {
 }
 
 port_in_use() {
-  python3 - "$1" <<'PY'
+  $PYTHON - "$1" <<'PY'
 import socket, sys
 port = int(sys.argv[1])
 with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
@@ -568,7 +578,7 @@ resolve_plan() {
   local browser="$6"
   local web_tools="$7"
   local gateway="$8"
-  local cmd=(python3 "$MODULE_HELPER" resolve --modules "$MODULES_FILE" --host-os "$HOST_OS")
+  local cmd=($PYTHON "$MODULE_HELPER" resolve --modules "$MODULES_FILE" --host-os "$HOST_OS")
   if [ "$HAS_KVM" = "1" ]; then
     cmd+=(--has-kvm)
   fi
@@ -649,7 +659,7 @@ compose_ps_lines() {
   fi
   local raw
   raw="$(${COMPOSE_BASE_CMD[@]} ps -a --format json 2>/dev/null || true)"
-  python3 - <<'PY' "$raw"
+  $PYTHON - <<'PY' "$raw"
 import json, sys
 raw = sys.argv[1].strip()
 if not raw:
@@ -885,6 +895,16 @@ apply_runtime_env() {
   python_env_delete ARKLOOP_WEB_FETCH_PROVIDER
   python_env_delete ARKLOOP_WEB_FETCH_FIRECRAWL_BASE_URL
 
+  set_if_empty ARKLOOP_DEEPSEEK_API_KEY ""
+  set_if_empty ARKLOOP_QWEN_API_KEY ""
+  set_if_empty ARKLOOP_DOUBAO_API_KEY ""
+  set_if_empty ARKLOOP_DEEPSEEK_MODELS "deepseek-v4-flash,deepseek-v4-pro"
+  set_if_empty ARKLOOP_QWEN_MODELS "qwen3.5-plus,qwen3-max-2026-01-23"
+  set_if_empty ARKLOOP_DOUBAO_MODELS "doubao-seed-2-0-lite-260428,doubao-seed-2-0-mini-260428"
+  set_if_empty ARKLOOP_DEEPSEEK_BASE_URL ""
+  set_if_empty ARKLOOP_QWEN_BASE_URL ""
+  set_if_empty ARKLOOP_DOUBAO_BASE_URL ""
+
   python_env_delete ARKLOOP_INSTALL_PROFILE
   python_env_delete ARKLOOP_INSTALL_MODE
   python_env_delete ARKLOOP_INSTALL_MEMORY
@@ -1062,6 +1082,8 @@ run_install() {
     local cmd=("${COMPOSE_BASE_CMD[@]}" up -d)
     if [ "$USE_PROD_IMAGES" = "1" ]; then
       cmd+=("--no-build")
+    else
+      cmd+=("--build")
     fi
     cmd+=("${phase_one[@]}")
     "${cmd[@]}"
@@ -1072,6 +1094,8 @@ run_install() {
     local cmd=("${COMPOSE_BASE_CMD[@]}" up -d)
     if [ "$USE_PROD_IMAGES" = "1" ]; then
       cmd+=("--no-build")
+    else
+      cmd+=("--build")
     fi
     cmd+=("${phase_two[@]}")
     "${cmd[@]}"

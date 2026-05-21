@@ -1,6 +1,6 @@
 appId: com.arkloop.desktop
-productName: Arkloop
-copyright: Copyright (c) Arkloop
+productName: CJRH Agent
+copyright: Copyright (c) CJRH Agent
 
 directories:
   output: release

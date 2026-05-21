@@ -45,6 +45,8 @@ export type ChatInputHandle = {
   clear: () => void
   setValue: (text: string) => void
   getValue: () => string
+  selectPersona: (personaKey: string) => void
+  focus: () => void
 }
 
 export type Attachment = {
@@ -218,6 +220,8 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
       setDraft(text)
     },
     getValue: () => draftRef.current,
+    selectPersona: (personaKey: string) => persistSelectedPersonaRef.current(personaKey),
+    focus: () => textareaRef.current?.focus(),
   }))
 
   const { wrapOnChange } = useInputPerfDebug()
@@ -284,6 +288,16 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
     writeSelectedPersonaKeyToStorage(personaKey)
     onPersonaChange?.(personaKey)
   }, [onPersonaChange])
+  // Stable ref to persistSelectedPersona so effects below can call the latest
+  // version without depending on its identity. Without this, the
+  // selectable-personas fetch effect re-fires every time the parent's
+  // onPersonaChange callback is reallocated (which happens on every parent
+  // render via React's normal closure semantics), producing an infinite GET
+  // loop on /v1/me/selectable-personas. See chat input loop fix.
+  const persistSelectedPersonaRef = useRef(persistSelectedPersona)
+  useEffect(() => {
+    persistSelectedPersonaRef.current = persistSelectedPersona
+  }, [persistSelectedPersona])
 
   useEffect(() => {
     let cancelled = false
@@ -304,7 +318,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
 
         const preferredKey = readSelectedPersonaKeyFromStorage()
         const nextKey = pickPreferredPersonaKey(personas, preferredKey)
-        if (nextKey !== preferredKey) persistSelectedPersona(nextKey)
+        if (nextKey !== preferredKey) persistSelectedPersonaRef.current(nextKey)
       })
       .catch(() => {
         if (cancelled) return
@@ -312,7 +326,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
       })
 
     return () => { cancelled = true }
-  }, [accessToken, persistSelectedPersona])
+  }, [accessToken])
 
   const personas = useMemo(
     () => selectablePersonas.length > 0

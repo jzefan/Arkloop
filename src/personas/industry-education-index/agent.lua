@@ -1,5 +1,11 @@
 local EVALUATOR_PERSONA_ID = "industry-education-evaluator"
 local SYNTHESIZER_PERSONA_ID = "industry-education-synthesizer"
+-- WAIT_MS 上界 services/api ARKLOOP_RUN_TIMEOUT_MINUTES：
+-- 这里等待评估子 agent 的最长时间是 8min；单模型评估失败时会再 spawn 一次，
+-- 最坏链路 ≈ 2 × WAIT_MS = 16min。修改本值时必须同步检查
+-- src/services/api/internal/app/config.go 的 defaultRunTimeoutMinutes 与
+-- minRecommendedRunTimeoutMinutes，否则 stale run reaper 会把仍在等待的
+-- root run 当作卡死强制 fail，进而触发 runs.thread_busy。
 local WAIT_MS = 8 * 60 * 1000
 local WAIT_SLICE_MS = 15 * 1000
 local WAIT_SLICE_LIMIT = math.floor(WAIT_MS / WAIT_SLICE_MS) + 1
@@ -793,27 +799,38 @@ end
 local function search_sources(school_name, year, analysis_focus)
   -- 三层查询：权威 > 新闻 > 通用。每层独立调用 web_search（每次最多 5 条 query），
   -- 以便尽量覆盖教育部、省级教育厅、校园官网、主流新闻和其他公开资料。
+  --
+  -- 查询语料按双高产教融合评估的六个维度组织，避免出现仅含校名的裸查询
+  -- ——后者会让 baidu/sogou 等中文引擎按校名关键字命中无关的热门内容
+  -- （例如校名含"刑警"会返回小说《刑警的妻子》之类）。每条 query 都附带
+  -- 领域限定词，对应：
+  --   基础与机制：章程/治理结构、师资/教学团队
+  --   资源共建共享：实训基地/共建/共享、校企共建/产业学院/实训基地
+  --   产学建设与服务：产教融合/校企合作、产业学院/现代学徒制、社会服务/应用研究
+  --   人才培养质量：毕业生就业质量/年度报告、技能竞赛/获奖
+  --   优势亮点：优势/特色/亮点/双高
+  --   提升方向：改革/不足/提升/规划
   local authoritative_queries = {
     school_name .. " 官网",
     school_name .. " site:edu.cn",
-    school_name .. " site:gov.cn 双高",
+    school_name .. " 章程 治理结构 site:edu.cn",
     school_name .. " 教育部 双高计划 高水平高职学校",
     school_name .. " 毕业生就业质量 年度报告",
   }
   local news_queries = {
-    school_name .. " 人民网 产教融合",
-    school_name .. " 新华网 校企合作",
-    school_name .. " 光明网 新闻",
-    school_name .. " 中国教育报 产教融合",
-    school_name .. " 澎湃新闻",
+    school_name .. " 产教融合 校企合作",
+    school_name .. " 实训基地 共建 共享",
+    school_name .. " 产业学院 现代学徒制",
+    school_name .. " 技能竞赛 获奖",
+    school_name .. " 社会服务 应用研究",
   }
   local normalized_focus = trim(analysis_focus)
   local general_queries = {
-    school_name,
     school_name .. " 双高 高水平高职 专业群",
-    school_name .. " 产教融合 校企合作 实训基地 " .. year,
-    school_name .. " 人才培养 就业质量 技能竞赛 " .. year,
-    school_name .. " 科研 社会服务 产业学院",
+    school_name .. " 师资 教学团队 高水平",
+    school_name .. " 优势 特色 亮点 双高",
+    school_name .. " 改革 不足 提升 规划",
+    school_name .. " 校企共建 产业学院 实训基地 " .. year,
   }
   if normalized_focus ~= "" then
     general_queries[#general_queries] = general_queries[#general_queries] .. " " .. normalized_focus
@@ -1038,9 +1055,11 @@ local function search_sources(school_name, year, analysis_focus)
 end
 
 local function valid_score(value)
-  if type(value) ~= "number" then return nil end
-  if value < 0 or value > 100 then return nil end
-  return math.floor(value * 10 + 0.5) / 10
+  local num = value
+  if type(value) == "string" then num = tonumber(value) end
+  if type(num) ~= "number" then return nil end
+  if num < 0 or num > 100 then return nil end
+  return math.floor(num * 10 + 0.5) / 10
 end
 
 local function strip_fenced_json(text)
@@ -1152,6 +1171,7 @@ local function validate_evaluation(raw_text)
   if count ~= #DIMENSIONS then
     return nil, "维度数量不完整"
   end
+  local scored_count = 0
   for _, name in ipairs(DIMENSIONS) do
     if by_name[name] == nil then
       return nil, "维度顺序或名称不符合要求"
@@ -1161,6 +1181,10 @@ local function validate_evaluation(raw_text)
       return nil, "维度分数超出允许范围"
     end
     by_name[name].score = valid_score(raw_score)
+    if by_name[name].score ~= nil then scored_count = scored_count + 1 end
+  end
+  if scored_count == 0 then
+    return nil, "所有维度分数均为空，模型未给出有效评分"
   end
   decoded.dimensions = {
     by_name[DIMENSIONS[1]],
@@ -2198,6 +2222,24 @@ if #children == 0 then
 end
 
 local evaluations, failures = wait_for_evaluators(children, mode == "单模型评估")
+if #evaluations == 0 and mode == "单模型评估" then
+  local is_timeout = false
+  for _, f in ipairs(failures) do
+    if string.find(tostring(f.error or ""), "超时", 1, true) then is_timeout = true; break end
+  end
+  if not is_timeout then
+    set_progress_step("evaluate", "in_progress", "评估模型未返回有效评分，正在重试", "自动重试一次")
+    local retry_children = spawn_evaluators(school_name, year, mode, selected_models, fact_pack)
+    if #retry_children > 0 then
+      local retry_evals, retry_fails = wait_for_evaluators(retry_children, true)
+      if #retry_evals > 0 then
+        evaluations = retry_evals
+      else
+        for _, f in ipairs(retry_fails) do table.insert(failures, f) end
+      end
+    end
+  end
+end
 if #evaluations == 0 then
   set_progress_step("score", "completed", "综合评分", "没有可用评分，将生成诊断报告")
   local diagnostic = diagnostic_report(school_name, year, failures, fact_pack)

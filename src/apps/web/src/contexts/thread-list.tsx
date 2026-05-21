@@ -280,7 +280,13 @@ export function ThreadListProvider({ children }: { children: ReactNode }) {
       const updated = current.active_run_id === activeRunId && current.title === nextTitle
         ? current
         : { ...current, active_run_id: activeRunId, title: nextTitle }
-      if (activeRunId != null && idx > 0) {
+      // Only bubble to top on the idle → running transition. Without this
+      // guard, every SSE thread_run_state push during long evaluations
+      // (sub-agent callback runs publish state every ~280ms) would re-jump
+      // the thread to position 0, causing visible flicker in the sidebar
+      // ordering — even when the thread has been continuously running.
+      const justStartedRunning = !wasRunning && isRunning
+      if (justStartedRunning && idx > 0) {
         return [updated, ...prev.slice(0, idx), ...prev.slice(idx + 1)]
       }
       if (updated === current) return prev

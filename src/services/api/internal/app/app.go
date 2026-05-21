@@ -16,6 +16,7 @@ import (
 
 	"arkloop/services/api/internal/audit"
 	"arkloop/services/api/internal/auth"
+	"arkloop/services/api/internal/auth/oidc"
 	"arkloop/services/api/internal/crypto"
 	"arkloop/services/api/internal/data"
 	"arkloop/services/api/internal/entitlement"
@@ -280,6 +281,14 @@ func (a *Application) Run(ctx context.Context) error {
 		jobRepo           *data.JobRepository
 		scheduledJobsRepo *data.ScheduledJobsRepository
 
+		// OIDC IdP repos (T2/T3)
+		oauthClientsRepo       *data.OAuthClientRepository
+		oauthAuthCodesRepo     *data.OAuthAuthorizationCodeRepository
+		oauthRefreshTokensRepo *data.OAuthRefreshTokenRepository
+		oauthConsentsRepo      *data.OAuthConsentRepository
+		oidcSigningKeysRepo    *data.OIDCSigningKeyRepository
+		oidcService            *oidc.Service
+
 		emailVerifyTokenRepo *data.EmailVerificationTokenRepository
 
 		authService          *auth.Service
@@ -519,6 +528,37 @@ func (a *Application) Run(ctx context.Context) error {
 			return err
 		}
 
+		oauthClientsRepo, err = data.NewOAuthClientRepository(pool)
+		if err != nil {
+			return err
+		}
+		oauthAuthCodesRepo, err = data.NewOAuthAuthorizationCodeRepository(pool)
+		if err != nil {
+			return err
+		}
+		oauthRefreshTokensRepo, err = data.NewOAuthRefreshTokenRepository(pool)
+		if err != nil {
+			return err
+		}
+		oauthConsentsRepo, err = data.NewOAuthConsentRepository(pool)
+		if err != nil {
+			return err
+		}
+		oidcSigningKeysRepo, err = data.NewOIDCSigningKeyRepository(pool)
+		if err != nil {
+			return err
+		}
+		if keyRing, kerr := crypto.NewKeyRingFromEnv(); kerr == nil && keyRing != nil {
+			oidcService, err = oidc.NewService(oidcSigningKeysRepo, keyRing, 5*time.Minute)
+			if err != nil {
+				return err
+			}
+			if _, err := oidcService.EnsureActiveKey(ctx); err != nil {
+				a.logger.Warn("ensure oidc active key failed", "err", err)
+				// non-fatal: OIDC endpoints will fail later if no key
+			}
+		}
+
 		jobRepo, err = data.NewJobRepository(pool)
 		if err != nil {
 			return err
@@ -543,6 +583,9 @@ func (a *Application) Run(ctx context.Context) error {
 		if keyRingErr == nil {
 			secretsRepo, err = data.NewSecretsRepository(pool, keyRing)
 			if err != nil {
+				return err
+			}
+			if err := syncPlatformModelPresets(ctx, pool, llmCredRepo, llmRoutesRepo, secretsRepo, a.logger); err != nil {
 				return err
 			}
 		} else {
@@ -635,6 +678,18 @@ func (a *Application) Run(ctx context.Context) error {
 
 	// start stale run reaper (R73: fix Redis concurrent counter leak)
 	if pool != nil && runLimiter != nil {
+		// status_updated_at 仅在 status 变迁时刷新，长时间停留在 agent.wait 的
+		// run 在这段时间内不会刷新该列。超时窗口必须覆盖最坏 persona 等待路径，
+		// 否则 reaper 会把仍在等待评估子 agent 的健康 run 当作"卡死"强制 fail，
+		// 进而触发 thread_busy 的连锁问题（见 config.go 的 runTimeoutMinutesEnv 注释）。
+		if a.config.RunTimeoutMinutes < minRecommendedRunTimeoutMinutes {
+			a.logger.Warn(
+				"ARKLOOP_RUN_TIMEOUT_MINUTES below recommended floor; stale run reaper may force-fail long-running personas",
+				"configured_minutes", a.config.RunTimeoutMinutes,
+				"recommended_minimum_minutes", minRecommendedRunTimeoutMinutes,
+				"reason", "industry-education-index/agent.lua worst-case wait ≈ 16min (WAIT_MS 8min + auto-retry)",
+			)
+		}
 		reaper := jobs.NewStaleRunReaper(runEventRepo, runLimiter, auditRepo, pool, a.logger, a.config.RunTimeoutMinutes)
 		go reaper.Run(ctx)
 	}
@@ -655,37 +710,49 @@ func (a *Application) Run(ctx context.Context) error {
 		go stagingReaper.Run(ctx)
 	}
 
+	a.logger.Info("milestone: about to net.Listen", "addr", a.config.Addr)
 	listener, err := net.Listen("tcp", a.config.Addr)
 	if err != nil {
+		a.logger.Error("net.Listen failed", "addr", a.config.Addr, "err", err)
 		return err
 	}
 	defer func() { _ = listener.Close() }()
+	a.logger.Info("milestone: net.Listen ok")
 
 	personasRoot, err := personas.BuiltinPersonasRoot()
 	if err != nil {
+		a.logger.Error("BuiltinPersonasRoot failed", "err", err)
 		return err
 	}
+	a.logger.Info("milestone: personasRoot", "path", personasRoot)
 	repoPersonas, err := personas.LoadFromDir(personasRoot)
 	if err != nil {
+		a.logger.Error("LoadFromDir failed", "path", personasRoot, "err", err)
 		return err
 	}
+	a.logger.Info("milestone: personas loaded", "count", len(repoPersonas))
 
 	var personaSyncManager *personasync.Manager
 	if pool != nil && personasRepo != nil {
 		if deleted, err := personasRepo.DeleteInvalidLuaRuntimeRows(ctx); err != nil {
+			a.logger.Error("DeleteInvalidLuaRuntimeRows failed", "err", err)
 			return err
 		} else if deleted > 0 {
 			a.logger.Warn("persona_runtime_rows_deleted", "rows", deleted)
 		}
 		personaSyncManager = personasync.NewManager(personasRoot, pool, personasRepo, a.logger)
+		a.logger.Info("milestone: about to SyncNow")
 		if err := personaSyncManager.SyncNow(ctx); err != nil {
+			a.logger.Error("personaSync SyncNow failed", "err", err)
 			return err
 		}
+		a.logger.Info("milestone: SyncNow ok")
 		if refreshed, refreshErr := personas.LoadFromDir(personasRoot); refreshErr == nil {
 			repoPersonas = refreshed
 		}
 		go personaSyncManager.Run(ctx)
 	}
+	a.logger.Info("milestone: persona block done")
 
 	// Platform skill seeder
 	var skillSeeder *skillseed.Seeder
@@ -832,6 +899,15 @@ func (a *Application) Run(ctx context.Context) error {
 			FeatureFlagsRepo:             featureFlagsRepo,
 			FeatureFlagService:           featureFlagSvc,
 			NotificationsRepo:            notificationsRepo,
+			OAuthClientsRepo:             oauthClientsRepo,
+			OAuthAuthCodesRepo:           oauthAuthCodesRepo,
+			OAuthRefreshTokensRepo:       oauthRefreshTokensRepo,
+			OAuthConsentsRepo:            oauthConsentsRepo,
+			RefreshTokensRepo:            refreshTokenRepo,
+			OIDCService:                  oidcService,
+			OIDCIssuer:                   oidcIssuerFromConfig(a.config.Auth),
+			OIDCConsentPath:              oidcConsentPathFromConfig(a.config.Auth),
+			InternalServiceToken:         internalServiceTokenFromConfig(a.config.Auth),
 			AuditLogRepo:                 auditRepo,
 			UsersRepo:                    userRepo,
 			AccountRepo:                  accountRepo,
@@ -880,6 +956,7 @@ func (a *Application) Run(ctx context.Context) error {
 	go func() {
 		errCh <- server.Serve(listener)
 	}()
+	a.logger.Info("http server starting", "addr", a.config.Addr)
 
 	select {
 	case <-ctx.Done():
@@ -887,6 +964,10 @@ func (a *Application) Run(ctx context.Context) error {
 		if err == nil || errors.Is(err, http.ErrServerClosed) {
 			return nil
 		}
+		// Without this log line the error vanishes silently and the deferred
+		// pool.Close() blocks forever waiting on idle SSE connections, leaving
+		// the container in a confusing "Up (unhealthy)" zombie state.
+		a.logger.Error("http server failed", "err", err)
 		return err
 	}
 
@@ -1081,4 +1162,27 @@ func (a *entitlementAdapter) Resolve(ctx context.Context, accountID uuid.UUID, k
 		return auth.EntitlementValue{}, err
 	}
 	return auth.EntitlementValue{Raw: val.Raw, Type: val.Type}, nil
+}
+
+// ─── OIDC config accessors (nil-safe) ─────────────────────────────────────
+
+func oidcIssuerFromConfig(c *auth.Config) string {
+	if c == nil {
+		return ""
+	}
+	return c.OIDCIssuer
+}
+
+func oidcConsentPathFromConfig(c *auth.Config) string {
+	if c == nil {
+		return ""
+	}
+	return c.OIDCConsentPath
+}
+
+func internalServiceTokenFromConfig(c *auth.Config) string {
+	if c == nil {
+		return ""
+	}
+	return c.InternalServiceToken
 }

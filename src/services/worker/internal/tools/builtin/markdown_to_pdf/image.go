@@ -29,8 +29,7 @@ const (
 	httpImageTimeout = 5 * time.Second
 )
 
-// LoadedImage holds decoded image metadata plus the original file bytes
-// (what gopdf actually embeds into the PDF).
+// LoadedImage holds decoded image metadata plus the original file bytes.
 type LoadedImage struct {
 	Data   []byte // original encoded bytes (JPEG/PNG/GIF)
 	Format string // "jpeg", "png", "gif"
@@ -38,8 +37,8 @@ type LoadedImage struct {
 	Height int    // in pixels
 }
 
-// LoadImage resolves a markdown image reference into bytes suitable for
-// gopdf.ImageFrom. The reference may be:
+// LoadImage resolves a markdown image reference into bytes and metadata.
+// The reference may be:
 //
 //   - http:// or https:// URL
 //   - data:image/<type>;base64,<b64> URI
@@ -189,7 +188,6 @@ func decodeImageBytes(data []byte) (*LoadedImage, error) {
 	}
 	switch format {
 	case "png", "jpeg", "gif":
-		// gopdf supports these natively via ImageFrom.
 	default:
 		return nil, fmt.Errorf("unsupported image format: %s", format)
 	}

@@ -1,4 +1,6 @@
 FROM golang:1.26-alpine AS builder
+ENV GOPROXY=https://goproxy.cn,https://goproxy.io,https://proxy.golang.org,direct
+ENV GOSUMDB=sum.golang.google.cn
 WORKDIR /build
 COPY src/services/bridge/go.mod src/services/bridge/go.sum src/services/bridge/
 COPY src/services/shared/go.mod src/services/shared/go.sum src/services/shared/

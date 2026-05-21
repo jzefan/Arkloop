@@ -124,10 +124,6 @@ func (r *LlmRoutesRepository) Create(ctx context.Context, params CreateLlmRouteP
 	if err != nil {
 		return LlmRoute{}, fmt.Errorf("marshal advanced_json: %w", err)
 	}
-	tagsJSON, err := json.Marshal(params.Tags)
-	if err != nil {
-		return LlmRoute{}, fmt.Errorf("marshal tags: %w", err)
-	}
 	if params.Multiplier <= 0 {
 		params.Multiplier = 1.0
 	}
@@ -143,26 +139,22 @@ func (r *LlmRoutesRepository) Create(ctx context.Context, params CreateLlmRouteP
 
 	var route LlmRoute
 	var rawAdvancedJSON []byte
-	var rawTagsJSON []byte
 	err = r.db.QueryRow(
 		ctx,
 		`INSERT INTO llm_routes (account_id, project_id, credential_id, model, priority, is_default, show_in_picker, tags, when_json, advanced_json, multiplier, cost_per_1k_input, cost_per_1k_output, cost_per_1k_cache_write, cost_per_1k_cache_read)
 		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10::jsonb, $11, $12, $13, $14, $15)
 		 RETURNING id, project_id, credential_id, model, priority, is_default, show_in_picker, tags, when_json, advanced_json, multiplier, cost_per_1k_input, cost_per_1k_output, cost_per_1k_cache_write, cost_per_1k_cache_read, created_at`,
-		accountIDParam, projectIDParam, params.CredentialID, params.Model, params.Priority, params.IsDefault, params.ShowInPicker, string(tagsJSON), string(params.WhenJSON),
+		accountIDParam, projectIDParam, params.CredentialID, params.Model, params.Priority, params.IsDefault, params.ShowInPicker, params.Tags, string(params.WhenJSON),
 		string(advancedJSONBytes), params.Multiplier, params.CostPer1kInput, params.CostPer1kOutput, params.CostPer1kCacheWrite, params.CostPer1kCacheRead,
 	).Scan(
 		&route.ID, &route.ProjectID, &route.CredentialID, &route.Model,
-		&route.Priority, &route.IsDefault, &route.ShowInPicker, &rawTagsJSON, &route.WhenJSON, &rawAdvancedJSON,
+		&route.Priority, &route.IsDefault, &route.ShowInPicker, &route.Tags, &route.WhenJSON, &rawAdvancedJSON,
 		&route.Multiplier, &route.CostPer1kInput, &route.CostPer1kOutput,
 		&route.CostPer1kCacheWrite, &route.CostPer1kCacheRead,
 		&route.CreatedAt,
 	)
 	if err != nil {
 		return LlmRoute{}, mapLlmRouteWriteError(err, params.CredentialID, params.Model)
-	}
-	if len(rawTagsJSON) > 0 {
-		_ = json.Unmarshal(rawTagsJSON, &route.Tags)
 	}
 	if route.Tags == nil {
 		route.Tags = []string{}
@@ -263,20 +255,16 @@ func (r *LlmRoutesRepository) Update(ctx context.Context, params UpdateLlmRouteP
 	if err != nil {
 		return LlmRoute{}, fmt.Errorf("marshal advanced_json: %w", err)
 	}
-	tagsJSON, err := json.Marshal(params.Tags)
-	if err != nil {
-		return LlmRoute{}, fmt.Errorf("marshal tags: %w", err)
-	}
 	if params.Multiplier <= 0 {
 		params.Multiplier = 1.0
 	}
 
 	query := `UPDATE llm_routes
-		 SET model = $2, priority = $3, is_default = $4, show_in_picker = $5, tags = $6::jsonb, when_json = $7::jsonb,
+		 SET model = $2, priority = $3, is_default = $4, show_in_picker = $5, tags = $6, when_json = $7::jsonb,
 		     advanced_json = $8::jsonb, multiplier = $9, cost_per_1k_input = $10, cost_per_1k_output = $11,
 		     cost_per_1k_cache_write = $12, cost_per_1k_cache_read = $13
 		 WHERE id = $1`
-	args := []any{params.RouteID, params.Model, params.Priority, params.IsDefault, params.ShowInPicker, string(tagsJSON), string(params.WhenJSON), string(advancedJSONBytes), params.Multiplier,
+	args := []any{params.RouteID, params.Model, params.Priority, params.IsDefault, params.ShowInPicker, params.Tags, string(params.WhenJSON), string(advancedJSONBytes), params.Multiplier,
 		params.CostPer1kInput, params.CostPer1kOutput, params.CostPer1kCacheWrite, params.CostPer1kCacheRead}
 	query, args, err = appendLlmRouteScopeFilter(query, args, params.AccountID, params.Scope)
 	if err != nil {
@@ -416,18 +404,14 @@ type llmRouteScanner interface {
 func scanLlmRoute(row llmRouteScanner) (LlmRoute, error) {
 	var route LlmRoute
 	var rawAdvancedJSON []byte
-	var rawTagsJSON []byte
 	err := row.Scan(
 		&route.ID, &route.ProjectID, &route.CredentialID, &route.Model,
-		&route.Priority, &route.IsDefault, &route.ShowInPicker, &rawTagsJSON, &route.WhenJSON, &rawAdvancedJSON,
+		&route.Priority, &route.IsDefault, &route.ShowInPicker, &route.Tags, &route.WhenJSON, &rawAdvancedJSON,
 		&route.Multiplier, &route.CostPer1kInput, &route.CostPer1kOutput,
 		&route.CostPer1kCacheWrite, &route.CostPer1kCacheRead,
 		&route.CreatedAt,
 	)
 	if err == nil {
-		if len(rawTagsJSON) > 0 {
-			_ = json.Unmarshal(rawTagsJSON, &route.Tags)
-		}
 		if route.Tags == nil {
 			route.Tags = []string{}
 		}
@@ -546,6 +530,8 @@ func mapLlmRouteWriteError(err error, credentialID uuid.UUID, model string) erro
 	if errors.As(err, &pgErr) && pgErr.Code == "23505" {
 		switch pgErr.ConstraintName {
 		case "ux_llm_routes_credential_model":
+			return LlmRouteModelConflictError{CredentialID: credentialID, Model: model}
+		case "ux_llm_routes_credential_model_lower":
 			return LlmRouteModelConflictError{CredentialID: credentialID, Model: model}
 		case "ux_llm_routes_credential_default":
 			return LlmRouteModelConflictError{CredentialID: credentialID, Model: model}

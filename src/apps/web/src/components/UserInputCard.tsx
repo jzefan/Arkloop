@@ -38,11 +38,15 @@ function buildInitialValues(schema: UserInputRequest['requestedSchema']): Record
 interface Props {
   request: UserInputRequest
   onSubmit: (response: UserInputResponse) => void
+  // 底部"使用当前模型/跳过"按钮：保留"提交空答案"的语义，由 persona 自己决定如何回退。
   onDismiss: () => void
+  // 右上角 X 按钮 / Esc：取消整条 run（关闭 = 放弃，不让 persona 走默认分支继续执行）。
+  // 不提供时回退到 onDismiss，保持向后兼容。
+  onCancel?: () => void
   disabled?: boolean
 }
 
-export default function UserInputCard({ request, onSubmit, onDismiss, disabled }: Props) {
+export default function UserInputCard({ request, onSubmit, onDismiss, onCancel, disabled }: Props) {
   const { t } = useLocale()
   const fields = useMemo(() => {
     const order = request.requestedSchema._fieldOrder
@@ -132,19 +136,31 @@ export default function UserInputCard({ request, onSubmit, onDismiss, disabled }
     onDismiss()
   }, [submitting, disabled, onDismiss])
 
+  const handleCancel = useCallback(() => {
+    if (submitting || disabled) return
+    if (onCancel) {
+      onCancel()
+      return
+    }
+    onDismiss()
+  }, [submitting, disabled, onCancel, onDismiss])
+
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') { e.preventDefault(); handleDismiss() }
+      if (e.key === 'Escape') { e.preventDefault(); handleCancel() }
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [handleDismiss])
+  }, [handleCancel])
 
   // 只有单个 select/oneOf 字段时，点选即提交
   const isSingleSelect = fields.length === 1 && (isEnumField(fields[0][1]) || isOneOfField(fields[0][1]))
   const isCurrentSelect = useWizard && (isEnumField(fields[page][1]) || isOneOfField(fields[page][1]))
   const visibleFields = useWizard ? [fields[page]] : fields
   const dismissLabel = request.requestedSchema._dismissLabel?.trim() || t.userInput.dismiss
+  // 右上角 X 的 aria-label：取消运行用统一的 "取消/Cancel"，避免和底部
+  // dismissLabel 共享同一个 aria-label 导致 a11y 工具 / 测试无法区分两个按钮。
+  const cancelLabel = onCancel ? t.userInput.cancel : dismissLabel
 
   return (
     <div
@@ -174,9 +190,9 @@ export default function UserInputCard({ request, onSubmit, onDismiss, disabled }
         )}
         <button
           type="button"
-          onClick={handleDismiss}
+          onClick={handleCancel}
           disabled={submitting || !!disabled}
-          aria-label={dismissLabel}
+          aria-label={cancelLabel}
           className="flex h-6 w-6 items-center justify-center rounded-md border-none bg-transparent cursor-pointer disabled:opacity-30 transition-[background-color] duration-[60ms] hover:bg-[var(--c-bg-deep)] flex-shrink-0 mt-0.5"
           style={{ color: 'var(--c-text-muted)' }}
         >

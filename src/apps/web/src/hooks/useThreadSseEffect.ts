@@ -85,6 +85,7 @@ export function useThreadSseEffect({
     setError,
     setInjectionBlocked,
     injectionBlockedRunIdRef,
+    answeredInputRequestIdsRef,
     setAwaitingInput,
     setPendingUserInput,
     setCheckInDraft,
@@ -720,14 +721,17 @@ export function useThreadSseEffect({
       }
 
       if (event.type === 'input-request') {
-        // SSE 重连时会重放历史事件，只有 run 实际继续执行的事件才能证明 input 已被回答
+        const data = agentEventDataRecord(event.data)
+        // SSE 重连/重放时跳过已在本会话内回答过的请求
+        const replayRequestId = (data?.requestId ?? data?.request_id) as string | undefined
+        if (replayRequestId && answeredInputRequestIdsRef.current.has(replayRequestId)) continue
+
+        // 任意更高序号的同 run 事件均可证明 input 已被回答
         const hasRunContinued = sse.events.some(
-          (e) => e.streamId === event.streamId && e.order > event.order
-            && (e.type === 'tool-result' || isTerminalAgentEventType(e.type)),
+          (e) => e.streamId === event.streamId && e.order > event.order,
         )
         if (hasRunContinued) continue
 
-        const data = agentEventDataRecord(event.data)
         const message = data?.message as string | undefined
         const schema = data?.requestedSchema as RequestedSchema | undefined
         if (message && schema && schema.properties && Object.keys(schema.properties).length > 0) {

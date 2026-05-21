@@ -72,6 +72,7 @@ export function useChatActions({ scrollToBottom }: UseChatActionsDeps) {
     setTerminalRunDisplayId,
     setTerminalRunHandoffStatus,
     setTerminalRunCoveredRunIds,
+    markInputAnswered,
   } = useRunLifecycle()
   const {
     resetLiveState,
@@ -387,6 +388,7 @@ export function useChatActions({ scrollToBottom }: UseChatActionsDeps) {
     if (!activeRunId) return
     setError(null)
     setInjectionBlocked(null)
+    if (response.request_id) markInputAnswered(response.request_id)
     try {
       await agentClient.provideInput(activeRunId, JSON.stringify(response.answers))
       setPendingUserInput(null)
@@ -397,12 +399,13 @@ export function useChatActions({ scrollToBottom }: UseChatActionsDeps) {
       }
       setError(normalizeError(err))
     }
-  }, [agentClient, activeRunId, onLoggedOut, setError, setInjectionBlocked, setPendingUserInput])
+  }, [agentClient, activeRunId, markInputAnswered, onLoggedOut, setError, setInjectionBlocked, setPendingUserInput])
 
   const handleUserInputDismiss = useCallback(async () => {
     if (!activeRunId || !pendingUserInput) return
     setError(null)
     setInjectionBlocked(null)
+    if (pendingUserInput.request_id) markInputAnswered(pendingUserInput.request_id)
     try {
       await agentClient.provideInput(activeRunId, JSON.stringify({}))
       setPendingUserInput(null)
@@ -413,7 +416,7 @@ export function useChatActions({ scrollToBottom }: UseChatActionsDeps) {
       }
       setError(normalizeError(err))
     }
-  }, [agentClient, activeRunId, onLoggedOut, pendingUserInput, setError, setInjectionBlocked, setPendingUserInput])
+  }, [agentClient, activeRunId, markInputAnswered, onLoggedOut, pendingUserInput, setError, setInjectionBlocked, setPendingUserInput])
 
   const handleAsrError = useCallback((err: unknown) => {
     if (isApiError(err) && err.status === 401) {

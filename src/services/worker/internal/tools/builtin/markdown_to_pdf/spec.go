@@ -9,8 +9,8 @@ const ToolName = "markdown_to_pdf"
 
 var AgentSpec = tools.AgentToolSpec{
 	Name:        ToolName,
-	Version:     "2",
-	Description: "convert Markdown content to a formatted A4 PDF artifact (headings, lists, tables, images, code blocks). Uses a system CJK font.",
+	Version:     "3",
+	Description: "convert Markdown content to a formatted A4 PDF artifact (headings, lists, tables, images, code blocks). Rendered by a headless Chromium instance for high-quality CJK typography.",
 	RiskLevel:   tools.RiskLevelLow,
 	SideEffects: true,
 }
@@ -22,8 +22,7 @@ var LlmSpec = llm.ToolSpec{
 			"Supports headings (H1-H6), paragraphs, ordered/unordered lists (with nesting), " +
 			"GitHub-flavoured tables, images (http/https/data URIs), fenced code blocks, " +
 			"blockquotes, horizontal rules and inline links. " +
-			"The default font is the host system's CJK TrueType font (e.g. Songti on macOS). " +
-			"Pass font_path to override with a specific .ttf/.ttc file. " +
+			"Rendered by a headless Chromium instance with a CJK-capable system font. " +
 			"Use after final report Markdown is complete.",
 	),
 	JSONSchema: map[string]any{
@@ -31,7 +30,7 @@ var LlmSpec = llm.ToolSpec{
 		"properties": map[string]any{
 			"title": map[string]any{
 				"type":        "string",
-				"description": "Shown in the page header and used as the H1 if the markdown does not start with one.",
+				"description": "Shown in the PDF metadata title and used as the H1 if the markdown does not start with one.",
 			},
 			"filename": map[string]any{
 				"type":        "string",
@@ -45,10 +44,6 @@ var LlmSpec = llm.ToolSpec{
 			"content": map[string]any{
 				"type":        "string",
 				"description": "final Markdown content",
-			},
-			"font_path": map[string]any{
-				"type":        "string",
-				"description": "Optional absolute path to a TrueType font (.ttf) or TrueType Collection (.ttc). When unset, the tool probes standard OS font paths.",
 			},
 			"image_roots": map[string]any{
 				"type":        "array",

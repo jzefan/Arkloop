@@ -181,21 +181,34 @@ func (r *RunEventRepository) CreateRootRunWithClaimAndResumeFrom(
 	if active, err := r.GetActiveRootRunForThread(ctx, threadID); err != nil {
 		return Run{}, RunEvent{}, err
 	} else if active != nil {
-		// heartbeat run 不阻塞 normal run，只有 heartbeat vs heartbeat 才互斥
+		activeData, err := r.firstEventData(ctx, active)
+		if err != nil {
+			return Run{}, RunEvent{}, err
+		}
+		activeKind := runKindFromData(activeData)
 		incomingKind := runKindFromData(startedData)
-		if !strings.EqualFold(incomingKind, runkind.Heartbeat) {
-			activeData, err := r.firstEventData(ctx, active)
-			if err != nil {
+		incomingIsHeartbeat := strings.EqualFold(incomingKind, runkind.Heartbeat)
+		incomingIsCallback := strings.EqualFold(incomingKind, runkind.SubagentCallback)
+		activeIsHeartbeat := strings.EqualFold(activeKind, runkind.Heartbeat)
+		activeIsCallback := strings.EqualFold(activeKind, runkind.SubagentCallback)
+
+		switch {
+		case activeIsCallback && !incomingIsCallback:
+			// subagent_callback run 是纯内部记账（消费 thread_subagent_callbacks
+			// 表里的待处理回调），永远不应该阻塞用户发起的请求。直接把它强制
+			// 终态化，并把 thread 上所有还没消费的 callback 记录一并标记 consumed，
+			// 避免 worker terminal 钩子再调 EnqueueOldestPendingCallbackIfIdle
+			// 重新建一条 callback run 引发死循环。
+			if err := r.supersedeSubagentCallbackRun(ctx, active, threadID); err != nil {
 				return Run{}, RunEvent{}, err
 			}
-			if strings.EqualFold(runKindFromData(activeData), runkind.Heartbeat) {
-				if err := r.resolveHeartbeatConflict(ctx, active, activeData, threadID); err != nil {
-					return Run{}, RunEvent{}, err
-				}
-			} else {
-				return Run{}, RunEvent{}, ErrThreadBusy
+		case activeIsHeartbeat && !incomingIsHeartbeat:
+			if err := r.resolveHeartbeatConflict(ctx, active, activeData, threadID); err != nil {
+				return Run{}, RunEvent{}, err
 			}
-		} else {
+		default:
+			// 其余冲突一律拒绝：heartbeat vs heartbeat、callback vs callback、
+			// 以及任何 normal vs normal 情形。
 			return Run{}, RunEvent{}, ErrThreadBusy
 		}
 	}
@@ -226,6 +239,61 @@ func runKindFromData(data map[string]any) string {
 	}
 	raw, _ := data[runStartedRunKindKey].(string)
 	return strings.TrimSpace(raw)
+}
+
+// supersedeSubagentCallbackRun 把挡路的 callback run 直接强制终态化，并清掉
+// 这个 thread 上所有未消费的 callback 记录，避免 worker terminal 钩子再次
+// EnqueueOldestPendingCallbackIfIdle 把另一条 callback run 顶上来。
+//
+// 之所以可以这样做：callback run 不向用户产出任何可见消息，它的唯一职责
+// 就是消费 thread_subagent_callbacks 里的 pending 记录。我们这里把这件事
+// 直接代它做完，所以丢弃这条正在运行的 callback run 不会丢任何业务语义。
+//
+// 注意：这条更新会让 callback run 的 status 变成 'cancelled' 且写入 run.cancelled
+// 终态事件。Worker 那一侧如果还在处理这条 run，cancel_guard 中间件会检测到
+// 终态事件并停止后续 emit；如果还没起跑，job 队列消费时进入 handler_agent_loop
+// 会看到已有终态事件而走 short-circuit 路径。
+func (r *RunEventRepository) supersedeSubagentCallbackRun(ctx context.Context, active *Run, threadID uuid.UUID) error {
+	if active == nil || active.ID == uuid.Nil {
+		return nil
+	}
+	if _, err := r.db.Exec(ctx,
+		`WITH terminal AS (
+		     UPDATE runs
+		        SET status = 'cancelled',
+		            status_updated_at = now()
+		      WHERE id = $1
+		        AND status IN ('running', 'cancelling')
+		     RETURNING id
+		 ),
+		 next_seq AS (
+		     SELECT COALESCE(MAX(seq), 0) + 1 AS seq
+		       FROM run_events
+		      WHERE run_id = $1
+		 )
+		 INSERT INTO run_events (run_id, seq, type, data_json, error_class)
+		 SELECT terminal.id,
+		        next_seq.seq,
+		        'run.cancelled',
+		        '{"reason":"superseded_by_user_run"}'::jsonb,
+		        'runs.callback_superseded'
+		   FROM terminal, next_seq`,
+		active.ID,
+	); err != nil {
+		return fmt.Errorf("supersede callback run: %w", err)
+	}
+	if _, err := r.db.Exec(ctx,
+		`UPDATE thread_subagent_callbacks
+		    SET consumed_at = now(),
+		        consumed_by_run_id = $1
+		  WHERE thread_id = $2
+		    AND consumed_at IS NULL`,
+		active.ID,
+		threadID,
+	); err != nil {
+		return fmt.Errorf("mark thread callbacks consumed: %w", err)
+	}
+	return nil
 }
 
 // resolveHeartbeatConflict 在 normal run 放行 heartbeat 时决定是否 cancel heartbeat。

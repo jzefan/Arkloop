@@ -93,11 +93,20 @@ func (ThreadSubAgentCallbacksRepository) ListPendingByThread(ctx context.Context
 	if threadID == uuid.Nil {
 		return nil, fmt.Errorf("thread_id must not be empty")
 	}
+	// Defensive: callbacks older than 10 minutes that are still unconsumed
+	// are treated as orphaned and excluded. Background: when a parent agent
+	// run finishes without including a callback in its pendingCallbackIDs,
+	// the callback never gets consumed_at set, and EnqueueOldestPendingCallback
+	// would otherwise re-enqueue runs for it forever (~280ms cycle observed in
+	// production), permanently locking the thread as busy. Normal callbacks
+	// are consumed within seconds; the 10-minute window is a safe upper bound
+	// before declaring a callback orphaned.
 	rows, err := db.Query(ctx,
 		`SELECT id, account_id, thread_id, sub_agent_id, source_run_id, status, payload_json, created_at, consumed_at, consumed_by_run_id
 		   FROM thread_subagent_callbacks
 		  WHERE thread_id = $1
 		    AND consumed_at IS NULL
+		    AND created_at > now() - interval '10 minutes'
 		  ORDER BY created_at ASC, id ASC`,
 		threadID,
 	)

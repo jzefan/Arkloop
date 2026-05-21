@@ -80,11 +80,11 @@ export const INSTALL_COMMANDS: Record<string, string> = {
 
 // Agent prompts per module
 export const AGENT_PROMPTS: Record<string, string> = {
-  'openviking': 'Install OpenViking memory system for Arkloop. Run: ./setup.sh install --memory openviking',
-  'sandbox-docker': 'Install Docker sandbox for Arkloop code execution. Run: ./setup.sh install --sandbox docker',
-  'searxng': 'Install SearXNG self-hosted search for Arkloop. Run: ./setup.sh install --web-tools self-hosted',
-  'firecrawl': 'Install Firecrawl web scraper for Arkloop. Run: ./setup.sh install --web-tools self-hosted',
-  'browser': 'Install browser automation module for Arkloop. Run: ./setup.sh install --browser on',
+  'openviking': 'Install OpenViking memory system for CJRH Agent. Run: ./setup.sh install --memory openviking',
+  'sandbox-docker': 'Install Docker sandbox for CJRH Agent code execution. Run: ./setup.sh install --sandbox docker',
+  'searxng': 'Install SearXNG self-hosted search for CJRH Agent. Run: ./setup.sh install --web-tools self-hosted',
+  'firecrawl': 'Install Firecrawl web scraper for CJRH Agent. Run: ./setup.sh install --web-tools self-hosted',
+  'browser': 'Install browser automation module for CJRH Agent. Run: ./setup.sh install --browser on',
   'prompt-guard': 'Install local Prompt Guard model for Arkloop. Run: ./setup.sh install --guard local',
   'console': 'Upgrade to full Arkloop console. Run: ./setup.sh install --console full',
 }

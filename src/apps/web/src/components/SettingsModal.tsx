@@ -27,8 +27,7 @@ import { ChannelsSettingsContent } from './ChannelsSettingsContent'
 import { ConnectionSettingsContent } from './ConnectionSettingsContent'
 import { AccountContent, ProfileContent } from './settings/AccountSettings'
 import { AppearanceContent, LanguageContent, ThemeContent } from './settings/AppearanceSettings'
-import { InviteCodeContent } from './settings/InviteSettings'
-import { HelpContent, ReportFeedbackContent } from './settings/HelpSettings'
+import { ReportFeedbackContent } from './settings/HelpSettings'
 import { CreditsContent } from './settings/CreditsSettings'
 import { UpdateSettingsContent } from './settings/UpdateSettings'
 import { ToolsSettings } from './settings/ToolsSettings'
@@ -182,9 +181,7 @@ export function SettingsModal({ me, accessToken, initialTab = 'account', onClose
                 <LanguageContent locale={locale} setLocale={setLocale} label={t.language} />
                 <TimeZoneSettings me={me} accessToken={accessToken} onMeUpdated={onMeUpdated} />
                 <ThemeContent theme={theme} setTheme={setTheme} label={t.appearance} t={t} />
-                <InviteCodeContent accessToken={accessToken} />
                 <div className="flex flex-col gap-2">
-                  <HelpContent label={t.getHelp} />
                   <ReportFeedbackContent accessToken={accessToken} />
                 </div>
               </div>

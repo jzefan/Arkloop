@@ -6,7 +6,6 @@ import {
   Search,
   Clock,
   PanelLeftClose,
-  Bolt,
   Glasses,
   MoreHorizontal,
   Star,
@@ -19,6 +18,8 @@ import {
   CheckCircle,
   ChevronRight,
   Plus,
+  Settings,
+  LogOut,
 } from 'lucide-react'
 import type { ThreadGtdBucket, ThreadResponse, UpdateThreadSidebarRequest } from '../api'
 import { listStarredThreadIds, starThread, unstarThread, updateThreadTitle, deleteThread, updateThreadSidebarState } from '../api'
@@ -257,7 +258,7 @@ export function Sidebar({
   onThreadDeleted,
   beforeNavigateToThread,
 }: Props) {
-  const { me, accessToken } = useAuth()
+  const { me, accessToken, logout } = useAuth()
   const {
     runningThreadIds,
     completedUnreadThreadIds,
@@ -281,6 +282,8 @@ export function Sidebar({
   const { t } = useLocale()
 
   const [starredIds, setStarredIds] = useState<string[]>([])
+  const [userMenuOpen, setUserMenuOpen] = useState(false)
+  const userMenuRef = useRef<HTMLDivElement>(null)
   const [menuThreadId, setMenuThreadId] = useState<string | null>(null)
   const [shareModalThreadId, setShareModalThreadId] = useState<string | null>(null)
   const [menuPos, setMenuPos] = useState<{ x: number; y: number }>({ x: 0, y: 0 })
@@ -313,7 +316,6 @@ export function Sidebar({
   const pinnedDropRef = useRef<HTMLDivElement>(null)
   const projectGroupRefs = useRef<Map<string, HTMLDivElement>>(new Map())
   const gtdGroupRefs = useRef<Map<GtdBucket, HTMLDivElement>>(new Map())
-  const settingsPointerTraceRef = useRef<ReturnType<typeof beginPerfTrace>>(null)
   const collapsePointerTraceRef = useRef<ReturnType<typeof beginPerfTrace>>(null)
   const searchPointerTraceRef = useRef<ReturnType<typeof beginPerfTrace>>(null)
   const { starredSet, starredThreads, regularThreads } = useMemo(() => {
@@ -1131,6 +1133,17 @@ export function Sidebar({
   }, [deleteConfirmThreadId])
 
   useEffect(() => {
+    if (!userMenuOpen) return
+    const handler = (e: MouseEvent) => {
+      if (userMenuRef.current && !userMenuRef.current.contains(e.target as HTMLElement)) {
+        setUserMenuOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [userMenuOpen])
+
+  useEffect(() => {
     const handler = (e: Event) => {
       const enabled = (e as CustomEvent<boolean>).detail
       setGtdEnabled(enabled)
@@ -1508,7 +1521,12 @@ export function Sidebar({
       {/* Non-desktop title bar or spacer */}
       {!desktopMode && (
         collapsed ? (
-          <div className="h-3" />
+          <button
+            onClick={() => onToggleCollapse('sidebar')}
+            className="flex h-[48px] w-full items-center justify-center"
+          >
+            <span className="text-[15px] font-bold text-[var(--c-text-primary)]">{PRODUCT_BRAND_NAME.charAt(0)}</span>
+          </button>
         ) : (
           <div className="flex min-h-[56px] items-center justify-between px-4 py-3">
             <div className="flex items-center gap-2 overflow-hidden">
@@ -1737,65 +1755,63 @@ export function Sidebar({
           transition: 'border-top-color 280ms cubic-bezier(0.16,1,0.3,1)',
         }}
       >
-        {!collapsed && !isLocalMode() && (
-          <button
-            onClick={() => onOpenSettings('account')}
-            className="flex w-full items-center gap-3 rounded-xl px-3 py-[10px] transition-[background-color] duration-[60ms] hover:bg-[var(--c-bg-deep)]"
-            style={{ border: '0.5px solid var(--c-border-subtle)' }}
-          >
-            <div
-              className="flex h-[39px] w-[39px] shrink-0 items-center justify-center rounded-full text-[15px] font-medium"
+        {!isLocalMode() && (collapsed ? (
+          <div className="flex justify-center">
+            <button
+              onClick={() => onOpenSettings('settings')}
+              className="flex h-8 w-8 items-center justify-center rounded-full transition-[background-color] duration-[60ms] hover:bg-[var(--c-bg-deep)]"
               style={{ background: 'var(--c-avatar-bg)', color: 'var(--c-avatar-text)' }}
             >
-              {userInitial}
-            </div>
-            <div className="flex min-w-0 flex-1 flex-col gap-[2px] text-left">
-              <div className="truncate text-sm font-medium text-[var(--c-text-secondary)]">
-                {me?.username ?? t.loading}
+              <span className="text-xs font-medium">{userInitial}</span>
+            </button>
+          </div>
+        ) : (
+          <div ref={userMenuRef} className="relative">
+            {userMenuOpen && (
+              <div
+                className="absolute bottom-full left-0 mb-1 w-full rounded-lg border border-[var(--c-border)] bg-[var(--c-bg-page)] py-1 shadow-lg"
+                style={{ zIndex: 50 }}
+              >
+                <button
+                  onClick={() => { setUserMenuOpen(false); onOpenSettings('settings') }}
+                  className="flex w-full items-center gap-2 px-3 py-[6px] text-sm text-[var(--c-text-secondary)] hover:bg-[var(--c-bg-deep)]"
+                >
+                  <Settings size={15} />
+                  {t.nav.settings}
+                </button>
+                <button
+                  onClick={() => { setUserMenuOpen(false); logout() }}
+                  className="flex w-full items-center gap-2 px-3 py-[6px] text-sm text-[var(--c-text-secondary)] hover:bg-[var(--c-bg-deep)]"
+                >
+                  <LogOut size={15} />
+                  {t.logout}
+                </button>
               </div>
-              <div className="text-xs font-normal text-[var(--c-text-tertiary)]">
-                {t.enterprisePlan}
-              </div>
+            )}
+            <div className="flex items-center">
+              <button
+                onClick={() => setUserMenuOpen(v => !v)}
+                className="flex min-w-0 flex-1 items-center gap-2 rounded-md px-1 py-[6px] transition-[background-color] duration-[60ms] hover:bg-[var(--c-bg-deep)]"
+              >
+                <div
+                  className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-xs font-medium"
+                  style={{ background: 'var(--c-avatar-bg)', color: 'var(--c-avatar-text)' }}
+                >
+                  {userInitial}
+                </div>
+                <span className="truncate text-sm text-[var(--c-text-secondary)]">
+                  {me?.username ?? t.loading}
+                </span>
+              </button>
+              <button
+                onClick={() => onOpenSettings('settings')}
+                className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-[var(--c-text-icon)] transition-[background-color,color] duration-[60ms] hover:bg-[var(--c-bg-deep)] hover:text-[var(--c-text-primary)]"
+              >
+                <Settings size={15} />
+              </button>
             </div>
-          </button>
-        )}
-
-        {/* Settings button: fixed pl-1 so the icon x-position never
-            changes during sidebar collapse/expand — no justifyContent flip. */}
-        <div className="mt-0.5 pl-1">
-          <button
-            onClick={() => {
-              endPerfTrace(settingsPointerTraceRef.current, {
-                phase: 'click',
-                collapsed,
-                threadCount: threads.length,
-                starredCount: starredIds.length,
-                runningCount: runningThreadIds.size,
-                appMode: appMode ?? 'chat',
-                pathname: location.pathname,
-              })
-              settingsPointerTraceRef.current = null
-              onOpenSettings('settings')
-            }}
-            onPointerDown={() => {
-              settingsPointerTraceRef.current = beginPerfTrace('sidebar_settings_interaction', {
-                phase: 'pointerdown',
-                collapsed,
-                threadCount: threads.length,
-                starredCount: starredIds.length,
-                runningCount: runningThreadIds.size,
-                appMode: appMode ?? 'chat',
-                pathname: location.pathname,
-              })
-            }}
-            onPointerLeave={() => {
-              settingsPointerTraceRef.current = null
-            }}
-            className="flex h-8 w-8 items-center justify-center rounded-md text-[var(--c-text-icon)] transition-[background-color,color,transform] duration-[60ms] hover:bg-[var(--c-bg-deep)] hover:text-[var(--c-text-primary)] active:scale-[0.96]"
-          >
-            <Bolt size={18} />
-          </button>
-        </div>
+          </div>
+        ))}
       </div>
 
       </aside>

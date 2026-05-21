@@ -171,7 +171,7 @@ func NewEngineV1(deps EngineV1Deps) (*EngineV1, error) {
 	if len(dropped) > 0 {
 		slog.Warn("base tool allowlist dropped unbound executors", "tools", dropped)
 	}
-	baseAllowlistSet = filteredBaseAllowlist
+	baseAllowlistSet = restoreRuntimeProviderGroups(baseAllowlistSet, filteredBaseAllowlist, deps.ToolRegistry)
 
 	if _, err := pipeline.BuildDispatchExecutor(deps.ToolRegistry, deps.ToolExecutors, baseAllowlistSet); err != nil {
 		return nil, err
@@ -266,6 +266,18 @@ func NewEngineV1(deps EngineV1Deps) (*EngineV1, error) {
 		releaseSlot:           releaseSlot,
 		rolloutBlobStore:      deps.RolloutBlobStore,
 	}, nil
+}
+
+func restoreRuntimeProviderGroups(original, filtered map[string]struct{}, registry *tools.Registry) map[string]struct{} {
+	out := pipeline.CopyStringSet(filtered)
+	for name := range original {
+		group := pipeline.ResolveToolGroupName(registry, name)
+		switch group {
+		case "web_search", "web_fetch":
+			out[group] = struct{}{}
+		}
+	}
+	return out
 }
 
 type pgxExternalThreadLinks struct {

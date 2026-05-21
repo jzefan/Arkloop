@@ -27,7 +27,7 @@ import { syncLocalVersions } from './updater'
 import { ensureBrowserSearchServer, closeBrowserSearchServer } from './browser-search'
 import type { AppConfig, ApplyConfigUpdateOptions } from './types'
 
-app.setName('Arkloop')
+app.setName('CJRH Agent')
 
 if (process.platform === 'win32') {
   app.commandLine.appendSwitch('enable-lcd-text')
@@ -358,7 +358,7 @@ function createWindow(): BrowserWindow {
     height: config.window.height,
     minWidth: 760,
     minHeight: 600,
-    title: 'Arkloop',
+    title: 'CJRH Agent',
     show: false,
     webPreferences: {
       preload: path.join(__dirname, '..', 'preload', 'index.js'),
@@ -374,7 +374,7 @@ function createWindow(): BrowserWindow {
 
   win.on('page-title-updated', (event) => {
     event.preventDefault()
-    win.setTitle('Arkloop')
+    win.setTitle('CJRH Agent')
   })
 
   // 窗口大小变化时持久化

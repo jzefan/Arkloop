@@ -13,17 +13,15 @@ import (
 )
 
 const (
-	errorArgsInvalid    = "tool.args_invalid"
-	errorUploadFailed   = "tool.upload_failed"
-	errorFontNotFound   = "tool.font_not_found"
-	errorRenderFailed   = "tool.render_failed"
-	pdfMimeType         = "application/pdf"
-	pdfDisplayDownload  = "download"
-	defaultFontSelector = ""
+	errorArgsInvalid   = "tool.args_invalid"
+	errorUploadFailed  = "tool.upload_failed"
+	errorRenderFailed  = "tool.render_failed"
+	pdfMimeType        = "application/pdf"
+	pdfDisplayDownload = "download"
 )
 
-// ToolExecutor implements the markdown_to_pdf tool using signintech/gopdf
-// for layout and a system-resident TrueType font for glyph rendering.
+// ToolExecutor implements the markdown_to_pdf tool using Goldmark (Markdown→HTML)
+// and a headless Chromium instance (HTML→PDF via CDP PrintToPDF).
 type ToolExecutor struct {
 	store interface {
 		PutObject(ctx context.Context, key string, data []byte, options objectstore.PutOptions) error
@@ -31,10 +29,9 @@ type ToolExecutor struct {
 	logger *slog.Logger
 }
 
-// NewToolExecutor constructs a ToolExecutor. Extra executors (sandbox etc.)
-// passed by the caller are ignored — we no longer shell out to any external
-// renderer. They are accepted to preserve the pre-existing constructor
-// signature so the caller site (artifact_tools.go) needs no changes.
+// NewToolExecutor constructs a ToolExecutor. Extra executors passed by the
+// caller are ignored — we no longer shell out to any external process.
+// They are accepted to preserve the pre-existing constructor signature.
 func NewToolExecutor(store interface {
 	PutObject(ctx context.Context, key string, data []byte, options objectstore.PutOptions) error
 }, _ ...tools.Executor) *ToolExecutor {
@@ -42,7 +39,7 @@ func NewToolExecutor(store interface {
 }
 
 // Execute converts the caller-supplied Markdown into a PDF artifact and
-// uploads it to the configured object store. See spec.go for schema.
+// uploads it to the configured object store. See spec.go for the schema.
 func (e *ToolExecutor) Execute(
 	ctx context.Context,
 	_ string,
@@ -79,23 +76,12 @@ func (e *ToolExecutor) Execute(
 		title = strings.TrimSuffix(filepath.Base(filename), filepath.Ext(filename))
 	}
 
-	// Resolve the CJK font.
-	fontPath, _ := args["font_path"].(string)
-	font, err := ResolveCJKFont(fontPath)
-	if err != nil {
-		return errResult(errorFontNotFound, err.Error(), started)
-	}
-
-	// Local image access is not exposed through this tool by default; only
-	// HTTP(S) URLs and data URIs will be accepted. If a caller needs local
-	// filesystem access they can supply an explicit "image_roots" list.
 	roots := parseStringSlice(args["image_roots"])
 
 	pdfBytes, err := Render(RenderOptions{
 		Ctx:               ctx,
 		Title:             title,
 		Markdown:          content,
-		Font:              font,
 		AllowedImageRoots: roots,
 		Logger:            e.logger,
 	})

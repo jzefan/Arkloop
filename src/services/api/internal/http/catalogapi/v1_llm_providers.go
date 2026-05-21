@@ -512,6 +512,17 @@ func listLlmProviders(
 		writeLlmProviderServiceError(r.Context(), w, traceID, err)
 		return
 	}
+	if scope == data.LlmRouteScopeUser {
+		platformProviders, err := service.ListProviders(r.Context(), actor.AccountID, data.LlmRouteScopePlatform, nil)
+		if err != nil {
+			writeLlmProviderServiceError(r.Context(), w, traceID, err)
+			return
+		}
+		for idx := range platformProviders {
+			platformProviders[idx].ReadOnly = true
+		}
+		providers = append(platformProviders, providers...)
+	}
 	if augmenter != nil {
 		extra, err := augmenter(r.Context(), actor.AccountID, scope, actor.UserID)
 		if err != nil {

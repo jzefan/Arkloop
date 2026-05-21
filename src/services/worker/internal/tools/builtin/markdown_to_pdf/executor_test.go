@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/base64"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -32,15 +33,21 @@ func (s *recordingStore) PutObject(_ context.Context, key string, data []byte, o
 	return nil
 }
 
-// requireSystemFont returns a system TTF/TTC path if any is available on the
-// host; otherwise it skips the test. Necessary because the end-to-end tests
-// depend on being able to register a real CJK font. CI environments without
-// a CJK font installed will skip these tests rather than fail them.
-func requireSystemFont(t *testing.T) {
+// requireChrome skips the test if no Chromium/Chrome binary can be found in PATH.
+func requireChrome(t *testing.T) {
 	t.Helper()
-	if _, err := ResolveCJKFont(""); err != nil {
-		t.Skipf("no system CJK font available: %v", err)
+	for _, name := range []string{"chromium", "chromium-browser", "google-chrome-stable", "google-chrome"} {
+		if _, err := exec.LookPath(name); err == nil {
+			return
+		}
 	}
+	// Also try ARK_CHROMIUM_PATH env override.
+	if p := strings.TrimSpace(os.Getenv("ARK_CHROMIUM_PATH")); p != "" {
+		if _, err := os.Stat(p); err == nil {
+			return
+		}
+	}
+	t.Skip("chromium/google-chrome not found; install Chromium or set ARK_CHROMIUM_PATH")
 }
 
 // -----------------------------------------------------------------------------
@@ -114,7 +121,7 @@ func TestNormalizePDFFilename(t *testing.T) {
 }
 
 func TestExecuteNormalizesFilenameToPDF(t *testing.T) {
-	requireSystemFont(t)
+	requireChrome(t)
 	store := &recordingStore{}
 	runID := uuid.New()
 	accountID := uuid.New()
@@ -141,7 +148,7 @@ func TestExecuteNormalizesFilenameToPDF(t *testing.T) {
 // -----------------------------------------------------------------------------
 
 func TestExecuteStoresPDFArtifactMetadata(t *testing.T) {
-	requireSystemFont(t)
+	requireChrome(t)
 	store := &recordingStore{}
 	runID := uuid.New()
 	accountID := uuid.New()
@@ -178,18 +185,10 @@ func TestExecuteStoresPDFArtifactMetadata(t *testing.T) {
 
 // -----------------------------------------------------------------------------
 // Render: semantic feature coverage
-//
-// These tests assert semantic properties of the generated PDF (valid magic,
-// multiple pages, multiple stream objects, font registration, etc.) rather
-// than the exact byte sequences of the previous hand-written implementation.
 // -----------------------------------------------------------------------------
 
 func TestRenderProducesValidPDF(t *testing.T) {
-	requireSystemFont(t)
-	font, err := ResolveCJKFont("")
-	if err != nil {
-		t.Fatalf("ResolveCJKFont: %v", err)
-	}
+	requireChrome(t)
 
 	pdf, err := Render(RenderOptions{
 		Title: "示例报告",
@@ -226,7 +225,6 @@ func main() {
 }
 ` + "```" + `
 `,
-		Font: font,
 	})
 	if err != nil {
 		t.Fatalf("Render: %v", err)
@@ -234,24 +232,16 @@ func main() {
 	if !looksLikePDF(pdf) {
 		t.Fatal("output is not a valid PDF")
 	}
-	// Some font must be embedded (Subtype /TrueType or /CIDFontType2 — either
-	// one indicates our CJK font made it into the file).
-	if !bytes.Contains(pdf, []byte("/Subtype /TrueType")) && !bytes.Contains(pdf, []byte("/CIDFontType2")) {
-		t.Fatalf("expected an embedded TrueType font in the PDF; header: %s", string(pdf[:64]))
-	}
-	// EOF marker at end of file.
-	if !bytes.Contains(pdf[max(0, len(pdf)-64):], []byte("%%EOF")) {
+	if !bytes.Contains(pdf[max(0, len(pdf)-128):], []byte("%%EOF")) {
 		t.Fatalf("expected trailing %%EOF marker")
+	}
+	if len(pdf) < 4096 {
+		t.Fatalf("PDF unexpectedly small: %d bytes", len(pdf))
 	}
 }
 
 func TestRenderPaginatesLongReports(t *testing.T) {
-	requireSystemFont(t)
-	font, err := ResolveCJKFont("")
-	if err != nil {
-		t.Fatalf("ResolveCJKFont: %v", err)
-	}
-	// Generate enough paragraphs to overflow a single page.
+	requireChrome(t)
 	var body strings.Builder
 	for i := 0; i < 30; i++ {
 		body.WriteString("这是第 ")
@@ -261,13 +251,11 @@ func TestRenderPaginatesLongReports(t *testing.T) {
 	pdf, err := Render(RenderOptions{
 		Title:    "长报告",
 		Markdown: "# 长报告\n\n" + body.String(),
-		Font:     font,
 	})
 	if err != nil {
 		t.Fatalf("Render: %v", err)
 	}
-	// Count page objects. gopdf emits one `/Type /Page` per page (distinct
-	// from the single `/Type /Pages` catalog entry).
+	// Chrome embeds /Type /Page for each page in the PDF cross-reference table.
 	pageObjCount := bytes.Count(pdf, []byte("/Type /Page\n")) +
 		bytes.Count(pdf, []byte("/Type /Page ")) +
 		bytes.Count(pdf, []byte("/Type /Page>"))
@@ -311,8 +299,7 @@ func TestLoadImageRejectsLocalOutsideAllowedRoots(t *testing.T) {
 	if err := os.WriteFile(png, bs, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	// With empty allowedRoots, local reads are still performed but
-	// unconstrained: the guard only fires when roots list is non-empty.
+	// With nil allowedRoots, local reads are unconstrained.
 	if _, err := LoadImage(context.Background(), png, nil); err != nil {
 		t.Fatalf("LoadImage local with nil roots: %v", err)
 	}
@@ -328,44 +315,6 @@ func TestLoadImageRejectsLocalOutsideAllowedRoots(t *testing.T) {
 	}
 	if img.Format != "png" {
 		t.Fatalf("expected png, got %s", img.Format)
-	}
-}
-
-// -----------------------------------------------------------------------------
-// TTC → TTF extraction
-// -----------------------------------------------------------------------------
-
-func TestResolveCJKFontUsesEnvOverride(t *testing.T) {
-	// Use the host system's own font (whatever default we'd have picked) as
-	// the "explicit path" to confirm the override branch works end-to-end.
-	// If no host font exists, skip.
-	def, err := ResolveCJKFont("")
-	if err != nil {
-		t.Skipf("no system CJK font: %v", err)
-	}
-	t.Setenv("ARK_MD_PDF_FONT", def.SourcePath)
-	override, err := ResolveCJKFont("")
-	if err != nil {
-		t.Fatalf("resolve with env: %v", err)
-	}
-	if override.SourcePath != def.SourcePath {
-		t.Fatalf("env override ignored: want %q, got %q", def.SourcePath, override.SourcePath)
-	}
-	if len(override.Data) < 1024 {
-		t.Fatalf("resolved font data unexpectedly small: %d bytes", len(override.Data))
-	}
-	// Whether or not the source was a TTC, the returned Data must be a
-	// valid standalone TrueType file.
-	if len(override.Data) < 4 || !bytes.Equal(override.Data[:4], []byte{0x00, 0x01, 0x00, 0x00}) {
-		t.Fatalf("returned font data does not begin with TrueType sfnt magic")
-	}
-}
-
-func TestEnsureTrueTypeRejectsCFFFont(t *testing.T) {
-	// "OTTO" magic indicates OpenType CFF, which gopdf cannot parse.
-	data := append([]byte{0x4F, 0x54, 0x54, 0x4F}, make([]byte, 256)...)
-	if _, _, err := ensureTrueTypeTTF(data, 0); err == nil {
-		t.Fatal("expected CFF rejection")
 	}
 }
 

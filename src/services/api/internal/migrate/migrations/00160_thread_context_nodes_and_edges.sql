@@ -11,6 +11,7 @@ UPDATE thread_context_replacements
    SET end_context_seq = end_thread_seq
  WHERE end_context_seq IS NULL;
 
+-- +goose StatementBegin
 DO $$
 BEGIN
     IF NOT EXISTS (
@@ -25,6 +26,7 @@ BEGIN
             );
     END IF;
 END $$;
+-- +goose StatementEnd
 
 CREATE INDEX IF NOT EXISTS idx_thread_context_replacements_thread_active_context
     ON thread_context_replacements (

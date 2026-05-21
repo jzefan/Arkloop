@@ -466,6 +466,26 @@ func (c ProviderRoutingConfig) GetHighestPriorityRouteByCredentialAndModel(name 
 	}, inputJSON)
 }
 
+func (c ProviderRoutingConfig) GetHighestPriorityRouteByProviderKindAndModel(providerKind string, model string, inputJSON map[string]any) (ProviderRouteRule, ProviderCredential, bool) {
+	providerKind = strings.TrimSpace(providerKind)
+	if providerKind == "" || strings.TrimSpace(model) == "" {
+		return ProviderRouteRule{}, ProviderCredential{}, false
+	}
+	credentialIDs := map[string]struct{}{}
+	for _, cred := range c.Credentials {
+		if strings.EqualFold(string(cred.ProviderKind), providerKind) {
+			credentialIDs[cred.ID] = struct{}{}
+		}
+	}
+	if len(credentialIDs) == 0 {
+		return ProviderRouteRule{}, ProviderCredential{}, false
+	}
+	return c.pickBestRoute(func(route ProviderRouteRule) bool {
+		_, ok := credentialIDs[route.CredentialID]
+		return ok && route.Model == model
+	}, inputJSON)
+}
+
 func (c ProviderRoutingConfig) GetHighestPriorityRouteByModel(model string, inputJSON map[string]any) (ProviderRouteRule, ProviderCredential, bool) {
 	if strings.TrimSpace(model) == "" {
 		return ProviderRouteRule{}, ProviderCredential{}, false

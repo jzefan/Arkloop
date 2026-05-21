@@ -20,6 +20,8 @@ import (
 
 	"arkloop/services/api/internal/audit"
 	"arkloop/services/api/internal/auth"
+	"arkloop/services/api/internal/auth/oidc"
+	"arkloop/services/api/internal/http/oauthapi"
 	"arkloop/services/api/internal/data"
 	"arkloop/services/api/internal/entitlement"
 	"arkloop/services/api/internal/featureflag"
@@ -65,6 +67,17 @@ type HandlerConfig struct {
 	EmailVerifyService    *auth.EmailVerifyService
 	EmailOTPLoginService  *auth.EmailOTPLoginService
 	AccountService        *auth.AccountService
+
+	// OIDC IdP wiring; if any field is nil, the OAuth endpoints are skipped.
+	OAuthClientsRepo       *data.OAuthClientRepository
+	OAuthAuthCodesRepo     *data.OAuthAuthorizationCodeRepository
+	OAuthRefreshTokensRepo *data.OAuthRefreshTokenRepository
+	OAuthConsentsRepo      *data.OAuthConsentRepository
+	RefreshTokensRepo      *data.RefreshTokenRepository
+	OIDCService            *oidc.Service
+	OIDCIssuer             string
+	OIDCConsentPath        string
+	InternalServiceToken   string
 	AccountMembershipRepo *data.AccountMembershipRepository
 	ThreadRepo            *data.ThreadRepository
 	ThreadStarRepo        *data.ThreadStarRepository
@@ -252,6 +265,25 @@ func NewHandler(cfg HandlerConfig) nethttp.Handler {
 		UsersRepo:             cfg.UsersRepo,
 		ConfigResolver:        resolver,
 	})
+
+	// OIDC IdP endpoints. Skipped when any required dependency is missing
+	// (e.g. unconfigured envelope encryption on a dev machine without keys).
+	if cfg.OAuthClientsRepo != nil && cfg.OIDCService != nil {
+		oauthapi.RegisterRoutes(mux, oauthapi.Deps{
+			Pool:                 cfg.Pool,
+			ClientsRepo:          cfg.OAuthClientsRepo,
+			AuthCodesRepo:        cfg.OAuthAuthCodesRepo,
+			RefreshTokensRepo:    cfg.OAuthRefreshTokensRepo,
+			ConsentsRepo:         cfg.OAuthConsentsRepo,
+			UsersRepo:            cfg.UsersRepo,
+			SessionRefreshRepo:   cfg.RefreshTokensRepo,
+			OIDCService:          cfg.OIDCService,
+			Issuer:               cfg.OIDCIssuer,
+			FrontendConsentPath:  cfg.OIDCConsentPath,
+			InternalServiceToken: cfg.InternalServiceToken,
+		})
+	}
+	_ = oidc.AlgorithmRS256 // keep import alive even when block above is skipped
 
 	conversationapi.RegisterRoutes(mux, conversationapi.Deps{
 		AuthService:              cfg.AuthService,

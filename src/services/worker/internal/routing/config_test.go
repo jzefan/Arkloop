@@ -199,6 +199,28 @@ func TestGetHighestPriorityRouteByCredentialName_CredentialWithNoRoute(t *testin
 	}
 }
 
+func TestGetHighestPriorityRouteByProviderKindAndModelSupportsLegacySelector(t *testing.T) {
+	cfg := ProviderRoutingConfig{
+		Credentials: []ProviderCredential{
+			{ID: "cred-deepseek", Name: "deepseek official", OwnerKind: CredentialScopeUser, ProviderKind: ProviderKindDeepSeek, AdvancedJSON: map[string]any{}},
+		},
+		Routes: []ProviderRouteRule{
+			{ID: "route-deepseek", Model: "deepseek-v4-flash", CredentialID: "cred-deepseek", When: map[string]any{}},
+		},
+	}
+
+	route, cred, ok := cfg.GetHighestPriorityRouteByProviderKindAndModel("deepseek", "deepseek-v4-flash", map[string]any{})
+	if !ok {
+		t.Fatal("expected provider-kind selector to resolve")
+	}
+	if route.ID != "route-deepseek" {
+		t.Fatalf("expected route-deepseek, got %q", route.ID)
+	}
+	if cred.Name != "deepseek official" {
+		t.Fatalf("expected deepseek official credential, got %q", cred.Name)
+	}
+}
+
 // TestGetHighestPriorityRouteByCredentialName_PrefersWhenMatch 验证同凭证下优先选命中 When 条件的路由。
 func TestGetHighestPriorityRouteByCredentialName_PrefersWhenMatch(t *testing.T) {
 	cfg := ProviderRoutingConfig{

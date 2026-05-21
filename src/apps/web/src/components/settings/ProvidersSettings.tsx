@@ -69,7 +69,17 @@ const OPENVIKING_BACKEND_ADVANCED_KEY = 'openviking_backend'
 type OpenVikingBackendKey = 'openai' | 'azure' | 'volcengine' | 'openai_compatible'
 
 function isManagedLocalProvider(provider: LlmProvider): boolean {
-  return provider.source === 'local' || provider.read_only === true
+  return provider.source === 'local'
+}
+
+function isReadOnlyProvider(provider: LlmProvider): boolean {
+  return provider.read_only === true || provider.scope === 'platform'
+}
+
+function providerScopeLabel(provider: LlmProvider, p: ReturnType<typeof useLocale>['t']['adminProviders']): string {
+  if (isManagedLocalProvider(provider)) return p.localProvider
+  if (provider.scope === 'platform') return p.platformProvider ?? 'Platform'
+  return p.filterCloud ?? 'Cloud'
 }
 
 function localAuthModeLabel(provider: LlmProvider, p: ReturnType<typeof useLocale>['t']['adminProviders']): string | null {
@@ -313,7 +323,7 @@ export function ProvidersSettings({ accessToken }: Props) {
   }, [filter, providers, query])
 
   const handleCopyProvider = useCallback(async (provider: LlmProvider) => {
-    if (isManagedLocalProvider(provider)) return
+    if (isManagedLocalProvider(provider) || isReadOnlyProvider(provider)) return
     setError('')
     setCopyingProviderId(provider.id)
     try {
@@ -327,7 +337,7 @@ export function ProvidersSettings({ accessToken }: Props) {
   }, [accessToken, load, p.saveFailed])
 
   const handleDeleteProvider = useCallback(async () => {
-    if (!deleteTarget || isManagedLocalProvider(deleteTarget)) return
+    if (!deleteTarget || isManagedLocalProvider(deleteTarget) || isReadOnlyProvider(deleteTarget)) return
     setError('')
     setDeletingProviderId(deleteTarget.id)
     try {
@@ -483,6 +493,7 @@ function ProviderSummaryCard({
   deleting: boolean
 }) {
   const local = isManagedLocalProvider(provider)
+  const readOnly = isReadOnlyProvider(provider)
   const enabledModels = provider.models.filter((model) => model.show_in_picker).length
   const apiMode = vendorLabel(toVendorKey(provider.provider, provider.openai_api_mode), p)
   const baseUrl = provider.base_url?.trim() || '—'
@@ -509,9 +520,9 @@ function ProviderSummaryCard({
         </div>
         <div className="flex shrink-0 items-center gap-1">
           <span className="rounded-md bg-[var(--c-bg-deep)] px-1.5 py-0.5 text-[10px] font-medium leading-tight text-[var(--c-text-muted)]">
-            {local ? p.localProvider : (p.filterCloud ?? 'Cloud')}
+            {providerScopeLabel(provider, p)}
           </span>
-          {provider.read_only && (
+          {readOnly && (
             <span className="rounded-md bg-[var(--c-bg-deep)] px-1.5 py-0.5 text-[10px] font-medium leading-tight text-[var(--c-text-muted)]">
               {p.readOnlyProvider}
             </span>
@@ -533,7 +544,7 @@ function ProviderSummaryCard({
         >
           <Pencil size={12} />
         </SettingsIconButton>
-        {!local && (
+        {!local && !readOnly && (
           <SettingsIconButton
             label={p.copyProvider ?? 'Copy provider'}
             className="pointer-events-auto h-8 w-8"
@@ -552,7 +563,7 @@ function ProviderSummaryCard({
             iconOnly
           />
         </div>
-        {!local && (
+        {!local && !readOnly && (
           <SettingsIconButton
             label={p.deleteProvider}
             className="pointer-events-auto h-8 w-8"
@@ -586,7 +597,7 @@ function AddProviderModal({ accessToken, p, onClose, onCreated }: {
   onCreated: (provider: LlmProvider) => void
 }) {
   const [name, setName] = useState('')
-  const [preset, setPreset] = useState<VendorPresetKey>('openai_responses')
+  const [preset, setPreset] = useState<VendorPresetKey>('deepseek')
   const [apiKey, setApiKey] = useState('')
   const [baseUrl, setBaseUrl] = useState('')
   const [headers, setHeaders] = useState<HeaderEntry[]>([])
@@ -727,7 +738,8 @@ function ProviderDetail({
   const [formHeaders, setFormHeaders] = useState<HeaderEntry[]>(() => readHeaderEntriesFromAdvancedJSON(provider.advanced_json))
   const [err, setErr] = useState('')
   const autoSaveTimerRef = useRef<number | null>(null)
-  const readOnly = isManagedLocalProvider(provider)
+  const local = isManagedLocalProvider(provider)
+  const readOnly = isReadOnlyProvider(provider)
 
   useEffect(() => {
     setFormPreset(toVendorKey(provider.provider, provider.openai_api_mode))
@@ -803,7 +815,7 @@ function ProviderDetail({
             <ProviderDetailRow label={p.providerName}>
               <div className="flex flex-wrap items-center justify-end gap-1.5">
                 <span className="rounded-md px-2 py-1 text-xs font-medium text-[var(--c-text-muted)]" style={{ background: 'var(--c-bg-sub)' }}>
-                  {p.localProvider}
+                  {providerScopeLabel(provider, p)}
                 </span>
                 <span className="rounded-md px-2 py-1 text-xs font-medium text-[var(--c-text-muted)]" style={{ background: 'var(--c-bg-sub)' }}>
                   {p.readOnlyProvider}
@@ -817,7 +829,7 @@ function ProviderDetail({
             </ProviderDetailRow>
           </ProviderDetailCard>
         </ProviderDetailSection>
-        <ModelsSection provider={provider} accessToken={accessToken} onChanged={onUpdated} p={p} readOnly localModelManagement />
+        <ModelsSection provider={provider} accessToken={accessToken} onChanged={onUpdated} p={p} readOnly localModelManagement={local} />
       </div>
     )
   }
@@ -1320,7 +1332,7 @@ const ModelRow = memo(function ModelRow({ pm, onToggle, onEdit, onDelete, readOn
         )}
       </div>
       <div className="flex w-full shrink-0 items-center justify-end gap-2 sm:w-auto">
-        <SettingsSwitch checked={pm.show_in_picker} onChange={() => onToggle(pm.id, pm.show_in_picker)} />
+        <SettingsSwitch checked={pm.show_in_picker} onChange={() => onToggle(pm.id, pm.show_in_picker)} disabled={readOnly} />
         {!readOnly && (
           <SettingsIconButton
             label="Edit model"

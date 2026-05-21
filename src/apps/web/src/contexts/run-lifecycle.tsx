@@ -67,7 +67,10 @@ interface RunLifecycleContextValue {
   clearCompletedTitleTail: () => void
   clearLiveRunState: () => void
 
+  markInputAnswered: (requestId: string) => void
+
   injectionBlockedRunIdRef: React.RefObject<string | null>
+  answeredInputRequestIdsRef: React.RefObject<Set<string>>
   processedEventCountRef: React.RefObject<number>
   freezeCutoffRef: React.RefObject<number | null>
   lastVisibleNonTerminalSeqRef: React.RefObject<number>
@@ -106,6 +109,7 @@ export function RunLifecycleProvider({ children }: { children: ReactNode }) {
 
   // SSE dispatch 所需 refs
   const injectionBlockedRunIdRef = useRef<string | null>(null)
+  const answeredInputRequestIdsRef = useRef<Set<string>>(new Set())
   const processedEventCountRef = useRef(0)
   const freezeCutoffRef = useRef<number | null>(null)
   const lastVisibleNonTerminalSeqRef = useRef(0)
@@ -161,6 +165,10 @@ export function RunLifecycleProvider({ children }: { children: ReactNode }) {
     }
   }, [])
 
+  const markInputAnswered = useCallback((requestId: string) => {
+    answeredInputRequestIdsRef.current.add(requestId)
+  }, [])
+
   const clearLiveRunState = useCallback(() => {
     setActiveRunId(null)
     setSending(false)
@@ -205,6 +213,7 @@ export function RunLifecycleProvider({ children }: { children: ReactNode }) {
     sse.reset()
     processedEventCountRef.current = 0
     lastVisibleNonTerminalSeqRef.current = 0
+    answeredInputRequestIdsRef.current = new Set()
     setCancelSubmitting(false)
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeRunId, clearCompletedTitleTail])
@@ -327,7 +336,9 @@ export function RunLifecycleProvider({ children }: { children: ReactNode }) {
     armCompletedTitleTail,
     clearCompletedTitleTail,
     clearLiveRunState,
+    markInputAnswered,
     injectionBlockedRunIdRef,
+    answeredInputRequestIdsRef,
     processedEventCountRef,
     freezeCutoffRef,
     lastVisibleNonTerminalSeqRef,
@@ -360,6 +371,7 @@ export function RunLifecycleProvider({ children }: { children: ReactNode }) {
     armCompletedTitleTail,
     clearCompletedTitleTail,
     clearLiveRunState,
+    markInputAnswered,
   ])
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>

@@ -503,6 +503,7 @@ export interface LocaleStrings {
   // user input card
   userInput: {
     dismiss: string
+    cancel: string
     submit: string
     submitting: string
     next: string
@@ -1384,6 +1385,7 @@ export interface LocaleStrings {
     deleteProvider: string;
     deleteProviderConfirm: string;
     localProvider: string;
+    platformProvider?: string;
     readOnlyProvider: string;
     authModeOAuth: string;
     providerName: string;

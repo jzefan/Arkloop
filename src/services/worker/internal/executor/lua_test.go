@@ -260,6 +260,68 @@ func TestLuaExecutor_NoOutput_StillCompletes(t *testing.T) {
 	}
 }
 
+func TestLuaExecutor_SubAgentCallbackRun_ShortCircuits(t *testing.T) {
+	// 用一段必然会让脚本失败的代码作哨兵；如果 short-circuit 失效，
+	// 脚本会被执行并 emit run.failed，测试就会捕获到。
+	ex, _ := NewLuaExecutor(map[string]any{
+		"script": `error("this script must not run for callback runs")`,
+	})
+
+	cases := []map[string]any{
+		{"run_kind": "subagent_callback"},
+		{"source": "subagent_callback"},
+		{"run_kind": "  subagent_callback  "}, // trim 容错
+	}
+	for i, input := range cases {
+		rc := buildLuaRC(nil)
+		rc.InputJSON = input
+		emitter := events.NewEmitter("trace-callback")
+
+		var got []events.RunEvent
+		err := ex.Execute(context.Background(), rc, emitter, func(ev events.RunEvent) error {
+			got = append(got, ev)
+			return nil
+		})
+		if err != nil {
+			t.Fatalf("case %d: Execute returned unexpected error: %v", i, err)
+		}
+		if len(got) != 1 || got[0].Type != "run.completed" {
+			t.Fatalf("case %d: expected exactly one run.completed event, got %+v", i, got)
+		}
+		for _, ev := range got {
+			if ev.Type == "run.failed" || ev.Type == "message.delta" {
+				t.Fatalf("case %d: callback short-circuit must not emit %s", i, ev.Type)
+			}
+		}
+	}
+}
+
+func TestLuaExecutor_NormalRun_RunsScript(t *testing.T) {
+	// 对照组：非 callback run 应正常执行脚本，不能被误拦截。
+	ex, _ := NewLuaExecutor(map[string]any{
+		"script": `context.set_output("normal")`,
+	})
+	rc := buildLuaRC(nil)
+	rc.InputJSON = map[string]any{"run_kind": "user_message"}
+	emitter := events.NewEmitter("trace-normal")
+
+	var deltas []string
+	err := ex.Execute(context.Background(), rc, emitter, func(ev events.RunEvent) error {
+		if ev.Type == "message.delta" {
+			if delta, ok := ev.DataJSON["content_delta"].(string); ok {
+				deltas = append(deltas, delta)
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	if len(deltas) != 1 || deltas[0] != "normal" {
+		t.Fatalf("expected 1 message.delta with 'normal', got %+v", deltas)
+	}
+}
+
 func TestLuaExecutor_ScriptError_EmitsRunFailed(t *testing.T) {
 	ex, _ := NewLuaExecutor(map[string]any{
 		"script": `this is not valid lua @@@@`,

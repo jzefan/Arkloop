@@ -996,7 +996,7 @@ function CompositionsPreview() {
 }
 
 function ProviderModalPreview({ open, onClose }: { open: boolean; onClose: () => void }) {
-  const [providerType, setProviderType] = useState('responses')
+  const [providerType, setProviderType] = useState('deepseek')
 
   const fieldLabelCls = 'mb-1 block text-[12px] font-medium text-[var(--c-text-secondary)]'
 
@@ -1024,6 +1024,7 @@ function ProviderModalPreview({ open, onClose }: { open: boolean; onClose: () =>
               onChange={setProviderType}
               triggerClassName="h-[35px] px-3.5"
               options={[
+                { value: 'deepseek', label: 'DeepSeek' },
                 { value: 'responses', label: 'OpenAI (Responses)' },
                 { value: 'chat', label: 'OpenAI compatible' },
                 { value: 'local', label: 'Local provider' },

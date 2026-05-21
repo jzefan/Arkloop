@@ -311,6 +311,9 @@ func resolveSelectedRouteBySelector(cfg routing.ProviderRoutingConfig, selector 
 	if exact {
 		route, cred, ok := cfg.GetHighestPriorityRouteByCredentialAndModel(credentialName, modelName, inputJSON)
 		if !ok {
+			route, cred, ok = cfg.GetHighestPriorityRouteByProviderKindAndModel(credentialName, modelName, inputJSON)
+		}
+		if !ok {
 			return nil, &RouteNotFoundError{Selector: selector}
 		}
 		if denied := denyByokIfNeeded(cred, byokEnabled); denied != nil {

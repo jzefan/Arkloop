@@ -1,5 +1,7 @@
 # syntax=docker/dockerfile:1
 FROM golang:1.26-alpine AS builder
+ENV GOPROXY=https://goproxy.cn,https://goproxy.io,https://proxy.golang.org,direct
+ENV GOSUMDB=sum.golang.google.cn
 WORKDIR /workspace
 COPY src/services/gateway/go.mod src/services/gateway/go.sum src/services/gateway/
 COPY src/services/shared/go.mod src/services/shared/go.sum src/services/shared/

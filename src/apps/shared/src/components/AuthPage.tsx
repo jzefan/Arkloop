@@ -536,7 +536,7 @@ export function AuthPage({ onLoggedIn, brandLabel, locale, t, api }: Props) {
                     placeholder={t.enterUsername ?? ''}
                     value={regLogin}
                     onChange={(e) => setRegLogin(e.target.value)}
-                    autoComplete="username"
+                    autoComplete="off"
                     autoCapitalize="none"
                     spellCheck={false}
                   />

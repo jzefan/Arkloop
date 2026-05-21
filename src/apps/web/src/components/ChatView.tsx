@@ -1083,6 +1083,13 @@ export const ChatView = memo(function ChatView() {
   } = useChatActions({ scrollToBottom: activateAnchor })
   void sendMessage
 
+  // Optimistically hide the UserInputCard immediately on cancel, then fire the API cancel.
+  // Without this, the card stays visible until the SSE run-cancelled event returns (~1-3s lag).
+  const handleUserInputCancel = useCallback(() => {
+    setPendingUserInput(null)
+    handleCancel()
+  }, [setPendingUserInput, handleCancel])
+
   // 加载 thread 数据
   useEffect(() => {
     if (!threadId) return
@@ -2822,6 +2829,7 @@ export const ChatView = memo(function ChatView() {
               request={pendingUserInput}
               onSubmit={handleUserInputSubmit}
               onDismiss={handleUserInputDismiss}
+              onCancel={handleUserInputCancel}
               disabled={!activeRunId}
             />
           </motion.div>

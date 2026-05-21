@@ -53,8 +53,20 @@ const (
 
 	bootstrapPlatformAdminEnv = "ARKLOOP_BOOTSTRAP_PLATFORM_ADMIN"
 
-	runTimeoutMinutesEnv     = "ARKLOOP_RUN_TIMEOUT_MINUTES"
-	defaultRunTimeoutMinutes = 5
+	// ARKLOOP_RUN_TIMEOUT_MINUTES 上界 StaleRunReaper 把 running/cancelling
+	// 状态视为"卡死"前所允许的静默时间（见 jobs.StaleRunReaper 与
+	// data.RunEventRepository.ListStaleRunning）。
+	//
+	// 这个值必须 ≥ 任何 persona 在一次 root run 内可能产生的最长静默间隔
+	// （status_updated_at 只在 status 变迁时刷新，run_events 写入不会刷新它）。
+	// 当前已知最坏情况：industry-education-index/agent.lua 的 WAIT_MS = 8min，
+	// 单模型评估在评估子 agent 全部超时后会再自动重试一次，合计 ≈ 16min。
+	// 默认值取 30min，留出图像/PDF 等收尾工序的缓冲；如果新增 persona 的
+	// 等待窗口超过 minRecommendedRunTimeoutMinutes，请同步上调该默认值或
+	// 通过环境变量覆盖。
+	runTimeoutMinutesEnv              = "ARKLOOP_RUN_TIMEOUT_MINUTES"
+	defaultRunTimeoutMinutes          = 30
+	minRecommendedRunTimeoutMinutes   = 20
 
 	runEventsRetentionMonthsEnv     = "ARKLOOP_RUN_EVENTS_RETENTION_MONTHS"
 	defaultRunEventsRetentionMonths = 3

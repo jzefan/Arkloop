@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"arkloop/services/shared/runkind"
 	"arkloop/services/shared/skillstore"
 	"arkloop/services/worker/internal/agent"
 	"arkloop/services/worker/internal/data"
@@ -46,6 +47,20 @@ func (e *LuaExecutor) Execute(
 	emitter events.Emitter,
 	yield func(events.RunEvent) error,
 ) error {
+	// Lua persona 没有"消费 subagent callback"的语义——它们是过程式脚本，
+	// 不像 agent.simple 会把 pending_subagent_callbacks 折进下一轮 prompt。
+	// 如果一条 callback root run 被分发到 lua persona，朴素地跑脚本会从头
+	// 复刻一遍完整任务（例如 industry-education-index 会重新走 16min 评估
+	// 流程），结果还把父 thread 锁成 busy 直到这条幽灵 run 完成。
+	//
+	// 因此对所有 lua persona，callback run 一律直接 emit run.completed：
+	// 触发 callback 落地的 thread_subagent_callbacks 记录会在 writer terminal
+	// 阶段被 MarkConsumed（参考 handler_agent_loop.go 中的 callbackIDsToConsume
+	// 与 w.callbackID 兜底逻辑），thread 立刻释放，用户可以继续提问。
+	if rc != nil && isSubAgentCallbackRun(rc.InputJSON) {
+		return yield(emitter.Emit("run.completed", map[string]any{}, nil, nil))
+	}
+
 	L := lua.NewState(lua.Options{SkipOpenLibs: true})
 	defer L.Close()
 
@@ -105,6 +120,21 @@ func (e *LuaExecutor) Execute(
 		completedData["usage"] = usageJSON
 	}
 	return yield(emitter.Emit("run.completed", completedData, nil, nil))
+}
+
+// isSubAgentCallbackRun 判断当前 run 是否由 subagent 终态触发的回调 run。
+// 判定字段与 projector.enqueueCallbackRunIfIdle 写入的 startedData 保持一致。
+func isSubAgentCallbackRun(input map[string]any) bool {
+	if input == nil {
+		return false
+	}
+	if raw, ok := input["run_kind"].(string); ok && strings.TrimSpace(raw) == runkind.SubagentCallback {
+		return true
+	}
+	if raw, ok := input["source"].(string); ok && strings.TrimSpace(raw) == runkind.SubagentCallback {
+		return true
+	}
+	return false
 }
 
 // luaRuntime 持有单次 Execute 调用的运行时状态，注册为 Lua bindings。

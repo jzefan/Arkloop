@@ -95,6 +95,11 @@ services:
       ARKLOOP_API_DIRECT_POOL_ACQUIRE_TIMEOUT_MS: "${ARKLOOP_API_DIRECT_POOL_ACQUIRE_TIMEOUT_MS:-200}"
       ARKLOOP_API_GO_ADDR: "0.0.0.0:19001"
       ARKLOOP_OUTBOUND_TRUST_FAKE_IP: "${ARKLOOP_OUTBOUND_TRUST_FAKE_IP:-true}"
+      # OIDC IdP：颁发 access/id token 给 worker（再由 worker 调 exam）
+      # OIDC IdP: mints access/id tokens that worker forwards to exam
+      ARKLOOP_OIDC_ISSUER: "${ARKLOOP_OIDC_ISSUER:-http://api:19001}"
+      ARKLOOP_INTERNAL_SERVICE_TOKEN: "${ARKLOOP_INTERNAL_SERVICE_TOKEN:?请在 .env 中设置 ARKLOOP_INTERNAL_SERVICE_TOKEN}"
+      ARKLOOP_OIDC_CONSENT_PATH: "${ARKLOOP_OIDC_CONSENT_PATH:-/oauth/consent}"
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -232,6 +237,17 @@ services:
       ARKLOOP_OUTBOUND_TRUST_FAKE_IP: "${ARKLOOP_OUTBOUND_TRUST_FAKE_IP:-true}"
       ARKLOOP_PROMPT_GUARD_MODEL_DIR: "/var/lib/arkloop/models/prompt-guard"
       ARKLOOP_ONNX_RUNTIME_LIB: "/usr/lib/libonnxruntime.so"
+      # Exam 集成：worker 调用 exam 后端时用到的两个地址 + 服务令牌
+      # Exam integration: where worker calls exam + the shared service token
+      EXAM_BASE_URL: "${EXAM_BASE_URL:-}"
+      ARKLOOP_API_INTERNAL_URL: "${ARKLOOP_API_INTERNAL_URL:-http://api:19001}"
+      ARKLOOP_INTERNAL_SERVICE_TOKEN: "${ARKLOOP_INTERNAL_SERVICE_TOKEN:?请在 .env 中设置 ARKLOOP_INTERNAL_SERVICE_TOKEN}"
+    extra_hosts:
+      # 让 worker 容器内可以通过 host.docker.internal 访问宿主机服务
+      # （开发环境下 exam 跑在宿主机进程时必需）。
+      # Lets worker resolve host.docker.internal to reach host services
+      # (required when exam runs as a host process during dev).
+      - "host.docker.internal:host-gateway"
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -408,11 +424,16 @@ services:
   # --- SearXNG: Self-hosted metasearch engine ---
   # web_search provider, replaces Tavily API
   searxng:
-    image: searxng/searxng:2025.9.29-77fd3ee53
+    image: searxng/searxng:latest
     restart: unless-stopped
     entrypoint: ["/bin/sh", "/opt/patch-settings.sh"]
     profiles:
       - searxng
+    environment:
+      # Set to 1 on behind-GFW deployments to make patch-settings.sh disable
+      # engines that always time out (google / duckduckgo / brave / etc.).
+      # Leave empty for overseas deployments. See config/searxng/patch-settings.sh.
+      SEARXNG_DISABLE_GFW_BLOCKED: "${SEARXNG_DISABLE_GFW_BLOCKED:-}"
     volumes:
       - searxng_data:/etc/searxng
       - ./config/searxng/patch-settings.sh:/opt/patch-settings.sh:ro

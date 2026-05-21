@@ -5,11 +5,38 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgconn"
 )
+
+func TestMapLlmRouteWriteError_pgLegacyUniqueModel(t *testing.T) {
+	cred := uuid.MustParse("daf76e8d-f87c-4ac1-8d20-fc1ab65b0049")
+	err := &pgconn.PgError{Code: "23505", ConstraintName: "ux_llm_routes_credential_model_lower"}
+	got := mapLlmRouteWriteError(err, cred, "gpt-4o")
+	var conflict LlmRouteModelConflictError
+	if !errors.As(got, &conflict) {
+		t.Fatalf("want LlmRouteModelConflictError, got %T %v", got, got)
+	}
+	if conflict.CredentialID != cred || conflict.Model != "gpt-4o" {
+		t.Fatalf("conflict: %+v", conflict)
+	}
+}
 
 func TestMapLlmRouteWriteError_sqliteUniqueModel(t *testing.T) {
 	cred := uuid.MustParse("daf76e8d-f87c-4ac1-8d20-fc1ab65b0049")
 	err := errors.New(`constraint failed: UNIQUE constraint failed: index 'ux_llm_routes_credential_model' (2067)`)
+	got := mapLlmRouteWriteError(err, cred, "gpt-4o")
+	var conflict LlmRouteModelConflictError
+	if !errors.As(got, &conflict) {
+		t.Fatalf("want LlmRouteModelConflictError, got %T %v", got, got)
+	}
+	if conflict.CredentialID != cred || conflict.Model != "gpt-4o" {
+		t.Fatalf("conflict: %+v", conflict)
+	}
+}
+
+func TestMapLlmRouteWriteError_sqliteLegacyUniqueModel(t *testing.T) {
+	cred := uuid.MustParse("daf76e8d-f87c-4ac1-8d20-fc1ab65b0049")
+	err := errors.New(`constraint failed: UNIQUE constraint failed: index 'ux_llm_routes_credential_model_lower' (2067)`)
 	got := mapLlmRouteWriteError(err, cred, "gpt-4o")
 	var conflict LlmRouteModelConflictError
 	if !errors.As(got, &conflict) {

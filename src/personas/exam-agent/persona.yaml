@@ -1,0 +1,14 @@
+id: exam-agent
+version: "1"
+title: 题库助手
+description: 帮老师把课程目录导入 exam 系统并按知识点批量生成题目
+soul_file: prompt.md
+user_selectable: true
+selector_name: 题库助手
+selector_order: 5
+budgets:
+    reasoning_iterations: 60
+    temperature: 0.3
+reasoning_mode: auto
+prompt_cache_control: system_prompt
+executor_type: agent.simple
