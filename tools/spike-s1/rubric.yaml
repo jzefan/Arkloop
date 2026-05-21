@@ -1,0 +1,44 @@
+# Spike S1 evaluation rubric.
+# Edit the page-number lists to point at locations in YOUR sample PDF
+# that you want to manually score. evaluate.py walks these lists.
+
+heading_detection:
+  # Sample 20 actual chapter/section headings from the book.
+  # For each, look up the corresponding block in parsed.json (by page
+  # and approximate text) and judge: was the heading correctly typed
+  # ("heading", not "paragraph")? Was heading_path correct?
+  samples:
+    - {page: 12, expected_text: "第一章 力学基础", expected_path: ["第一章 力学基础"]}
+    - {page: 14, expected_text: "1.1 质点运动", expected_path: ["第一章 力学基础", "1.1 质点运动"]}
+    # Add 18 more, distributed across chapters.
+
+multi_column_pages:
+  # List 5 pages with notable multi-column layout (physics texts often
+  # have side-by-side problem statements + figures).
+  samples:
+    - {page: 45, description: "Two-column theory + problem layout"}
+    - {page: 120, description: "Three-column glossary"}
+    # Add 3 more.
+
+ocr_pages:
+  # List ANY scanned pages you can find in the book. If none, set to [].
+  samples:
+    - {page: 187, description: "Scanned reprint of historical photo + caption"}
+
+images_with_captions:
+  # List images you'd expect to be extracted (with their caption text).
+  samples:
+    - {page: 79, expected_caption_contains: "杨氏双缝"}
+    - {page: 156, expected_caption_contains: "电场线"}
+    # Add 12+ if the book is figure-heavy.
+
+tables:
+  # List table locations.
+  samples:
+    - {page: 80, expected_dims: {rows: 5, cols: 3}, description: "Experimental data table"}
+
+formulas:
+  # List formula locations. For each, manually judge after parsing:
+  # was the formula text intact? Was it LaTeX-form (rare for PyMuPDF)?
+  samples:
+    - {page: 78, expected_text: "Δy = λL/d", description: "Interference fringe spacing"}
