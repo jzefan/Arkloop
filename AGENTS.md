@@ -204,3 +204,17 @@ Web 有 80+ CSS 变量，Console 有 44+ CSS 变量。写 UI 时必须使用 CSS
 存储: `arkloop:web:theme` / `arkloop:console:theme` (localStorage)
 Context: `ThemeProvider` + `useTheme()` (from `@arkloop/shared/contexts/theme`)
 
+## Agent skills
+
+### Issue tracker
+
+GitHub Issues on `jzefan/arkloop` (uses the `gh` CLI). See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Canonical 5-state vocabulary, default names. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context: root `CONTEXT.md` + `docs/adr/`. See `docs/agents/domain.md`.
+
