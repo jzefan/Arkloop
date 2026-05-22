@@ -16,6 +16,7 @@ const (
 	WebhookDeliverJobType         = "webhook.deliver"
 	EmailSendJobType              = "email.send"
 	ContextCompactMaintainJobType = "context_compact_maintain"
+	KBIngestJobType               = "kb.ingest"
 
 	JobStatusQueued = "queued"
 	JobStatusLeased = "leased"
