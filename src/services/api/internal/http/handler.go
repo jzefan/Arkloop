@@ -439,6 +439,8 @@ func NewHandler(cfg HandlerConfig) nethttp.Handler {
 
 	if cfg.KBIngestService != nil {
 		kbdebugapi.Register(mux, cfg.KBDebugToken, cfg.KBIngestService, cfg.KBIngestService)
+	} else if cfg.KBDebugToken != "" {
+		kbdebugapi.Register(mux, "", nil, nil)
 	}
 
 	notFound := nethttp.HandlerFunc(func(w nethttp.ResponseWriter, r *nethttp.Request) {

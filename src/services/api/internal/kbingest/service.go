@@ -18,11 +18,21 @@ import (
 // Service implements kbdebugapi.Ingester and kbdebugapi.Searcher.
 type Service struct {
 	embedder embedding.Embedder
-	repo     *data.KBChunksRepository
+	repo     chunksRepository
+}
+
+type chunksRepository interface {
+	Dim() int
+	Upsert(ctx context.Context, rows []data.KBChunkUpsert) error
+	Search(ctx context.Context, kbName string, query []float32, k int) ([]data.KBChunkHit, error)
 }
 
 // New constructs a Service. The embedder's Dim() must match repo.Dim().
 func New(embedder embedding.Embedder, repo *data.KBChunksRepository) (*Service, error) {
+	return newWithRepository(embedder, repo)
+}
+
+func newWithRepository(embedder embedding.Embedder, repo chunksRepository) (*Service, error) {
 	if embedder == nil {
 		return nil, fmt.Errorf("nil embedder")
 	}
