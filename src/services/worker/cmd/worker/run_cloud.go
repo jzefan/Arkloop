@@ -8,18 +8,22 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
 
 	sharedconfig "arkloop/services/shared/config"
+	"arkloop/services/shared/embedding"
 	"arkloop/services/shared/eventbus"
 	sharedlog "arkloop/services/shared/log"
 	"arkloop/services/shared/objectstore"
 	"arkloop/services/worker/internal/app"
 	"arkloop/services/worker/internal/consumer"
+	workerdata "arkloop/services/worker/internal/data"
 	"arkloop/services/worker/internal/email"
 	"arkloop/services/worker/internal/executor"
+	"arkloop/services/worker/internal/kbingest"
 	"arkloop/services/worker/internal/pipeline"
 	"arkloop/services/worker/internal/queue"
 	"arkloop/services/worker/internal/registration"
@@ -296,14 +300,101 @@ func chooseHandler(ctx context.Context, logger *slog.Logger, pool *pgxpool.Pool,
 		logger.Info("email send handler ready", "job_type", queue.EmailSendJobType)
 	}
 
+	kbHandler := consumer.Handler(&unconfiguredHandler{reason: "kb.ingest not configured"})
+	kbRepo, err := workerdata.NewKBChunksRepository(pool)
+	if err != nil {
+		logger.Warn("kb.ingest handler disabled", "reason", err.Error())
+	} else {
+		kbStore, storeErr := openWorkerKBStore(ctx)
+		apiKey := strings.TrimSpace(firstNonEmpty(os.Getenv("ARK_EMBED_API_KEY"), os.Getenv("ARK_API_KEY")))
+		if storeErr != nil {
+			logger.Warn("kb.ingest handler disabled", "reason", storeErr.Error())
+		} else if kbStore == nil {
+			logger.Warn("kb.ingest handler disabled", "reason", "object store not configured")
+		} else if apiKey == "" {
+			logger.Warn("kb.ingest handler disabled", "reason", "ARK_EMBED_API_KEY/ARK_API_KEY not set")
+		} else {
+			doubao := embedding.NewDoubao(embedding.DoubaoConfig{
+				BaseURL:    firstNonEmpty(os.Getenv("ARK_EMBED_BASE_URL"), "https://ark.cn-beijing.volces.com/api/v3"),
+				APIKey:     apiKey,
+				Model:      firstNonEmpty(os.Getenv("ARK_EMBED_MODEL"), "doubao-embedding-text-240715"),
+				BatchSize:  embedBatchSizeFromEnv(),
+				MaxRetries: 3,
+				Dim:        kbRepo.Dim(),
+			})
+			processor, err := kbingest.NewProcessor(&kbBlobReader{store: kbStore}, kbRepo, doubao)
+			if err != nil {
+				logger.Warn("kb.ingest handler disabled", "reason", err.Error())
+			} else {
+				kbHandler = processor
+				logger.Info("kb.ingest handler enabled", "job_type", queue.KBIngestJobType)
+			}
+		}
+	}
+
 	return &dispatchHandler{
 		handlers: map[string]consumer.Handler{
 			queue.RunExecuteJobType: native,
 			webhook.DeliverJobType:  delivery,
 			queue.EmailSendJobType:  emailHandler,
+			queue.KBIngestJobType:   kbHandler,
 		},
 		fallback: native,
 	}, nil
+}
+
+type unconfiguredHandler struct {
+	reason string
+}
+
+func (h *unconfiguredHandler) Handle(ctx context.Context, lease queue.JobLease) error {
+	return fmt.Errorf("%s", h.reason)
+}
+
+type kbBlobReader struct {
+	store objectstore.Store
+}
+
+func (r *kbBlobReader) GetBlob(ctx context.Context, workspaceRef, sha256 string) ([]byte, error) {
+	return r.store.Get(ctx, kbBlobKey(workspaceRef, sha256))
+}
+
+func openWorkerKBStore(ctx context.Context) (objectstore.Store, error) {
+	runtimeCfg, err := objectstore.LoadRuntimeConfigFromEnv()
+	if err != nil || !runtimeCfg.Enabled() {
+		return nil, err
+	}
+	opener, err := runtimeCfg.BucketOpener()
+	if err != nil || opener == nil {
+		return nil, err
+	}
+	bucket := strings.TrimSpace(os.Getenv("ARKLOOP_S3_BUCKET"))
+	if bucket == "" {
+		return nil, nil
+	}
+	return opener.Open(ctx, bucket)
+}
+
+func kbBlobKey(workspaceRef, sha256 string) string {
+	return "workspaces/" + workspaceRef + "/kb/blobs/" + sha256
+}
+
+func embedBatchSizeFromEnv() int {
+	if raw := strings.TrimSpace(os.Getenv("ARK_EMBED_BATCH")); raw != "" {
+		if v, err := strconv.Atoi(raw); err == nil && v > 0 {
+			return v
+		}
+	}
+	return 32
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if cleaned := strings.TrimSpace(value); cleaned != "" {
+			return cleaned
+		}
+	}
+	return ""
 }
 
 // dispatchHandler 按 job type 路由到对应 handler。

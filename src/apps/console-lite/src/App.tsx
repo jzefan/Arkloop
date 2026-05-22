@@ -8,6 +8,8 @@ import { ModelsPage } from './pages/ModelsPage'
 import { ToolsPage } from './pages/ToolsPage'
 import { RunsPage } from './pages/RunsPage'
 import { ModulesPage } from './pages/ModulesPage'
+import { KnowledgeBasesPage } from './pages/KnowledgeBasesPage'
+import { KnowledgeBaseDetailPage } from './pages/KnowledgeBaseDetailPage'
 import { SettingsPage } from './pages/SettingsPage'
 import { SecurityPage } from './pages/SecurityPage'
 import { BootstrapPage } from './pages/BootstrapPage'
@@ -120,6 +122,8 @@ function App() {
           <Route path="tools" element={<ToolsPage />} />
           <Route path="memory" element={<Navigate to="/tools" replace />} />
           <Route path="runs" element={<RunsPage />} />
+          <Route path="knowledge-bases" element={<KnowledgeBasesPage />} />
+          <Route path="knowledge-bases/:id" element={<KnowledgeBaseDetailPage />} />
           <Route path="modules" element={<ModulesPage />} />
           <Route path="security" element={<SecurityPage />} />
           <Route path="settings" element={<SettingsPage />} />

@@ -6,12 +6,11 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// KBChunksRepository persists and searches embedded chunks via pgvector under
-// the M1.0 schema (FK to knowledge_bases + kb_documents).
 type KBChunksRepository struct {
-	pool DB
+	pool *pgxpool.Pool
 	dim  int
 }
 
@@ -39,7 +38,7 @@ type KBChunkHit struct {
 	Score       float32
 }
 
-func NewKBChunksRepository(pool DB) (*KBChunksRepository, error) {
+func NewKBChunksRepository(pool *pgxpool.Pool) (*KBChunksRepository, error) {
 	if pool == nil {
 		return nil, fmt.Errorf("nil pool")
 	}
@@ -69,7 +68,7 @@ func (r *KBChunksRepository) Upsert(ctx context.Context, rows []KBChunkUpsert) e
 	}
 	for i, row := range rows {
 		if len(row.Embedding) != r.dim {
-			return fmt.Errorf("row %d: embedding dim %d != table dim %d", i, len(row.Embedding), r.dim)
+			return fmt.Errorf("row %d: dim %d != table %d", i, len(row.Embedding), r.dim)
 		}
 	}
 	for _, row := range rows {
@@ -90,8 +89,7 @@ ON CONFLICT (kb_id, document_id, ordinal) DO UPDATE SET
     text         = EXCLUDED.text,
     token_count  = EXCLUDED.token_count,
     embedding    = EXCLUDED.embedding`,
-			row.KBID, row.DocumentID, row.Ordinal, headingPath, chunkType,
-			row.Text, row.TokenCount, vecLiteral(row.Embedding))
+			row.KBID, row.DocumentID, row.Ordinal, headingPath, chunkType, row.Text, row.TokenCount, vecLiteral(row.Embedding))
 		if err != nil {
 			return fmt.Errorf("upsert kb=%s doc=%s ord=%d: %w", row.KBID, row.DocumentID, row.Ordinal, err)
 		}
@@ -99,10 +97,9 @@ ON CONFLICT (kb_id, document_id, ordinal) DO UPDATE SET
 	return nil
 }
 
-// Search returns up to k chunks in kbID ordered by cosine similarity desc.
-func (r *KBChunksRepository) Search(ctx context.Context, kbID uuid.UUID, query []float32, k int) ([]KBChunkHit, error) {
-	if len(query) != r.dim {
-		return nil, fmt.Errorf("query dim %d != table dim %d", len(query), r.dim)
+func (r *KBChunksRepository) Search(ctx context.Context, kbID uuid.UUID, q []float32, k int) ([]KBChunkHit, error) {
+	if len(q) != r.dim {
+		return nil, fmt.Errorf("query dim %d != table dim %d", len(q), r.dim)
 	}
 	if k <= 0 {
 		k = 8
@@ -114,12 +111,11 @@ FROM   kb_chunks c
 JOIN   kb_documents d ON d.id = c.document_id
 WHERE  c.kb_id = $1
 ORDER  BY c.embedding <=> $2
-LIMIT  $3`, kbID, vecLiteral(query), k)
+LIMIT  $3`, kbID, vecLiteral(q), k)
 	if err != nil {
-		return nil, fmt.Errorf("kb search: %w", err)
+		return nil, err
 	}
 	defer rows.Close()
-
 	var out []KBChunkHit
 	for rows.Next() {
 		var h KBChunkHit
@@ -132,8 +128,14 @@ LIMIT  $3`, kbID, vecLiteral(query), k)
 	return out, rows.Err()
 }
 
-// vecLiteral renders a []float32 as pgvector's text representation,
-// e.g. "[0.1,0.2,0.3]". pgx encodes this string into the vector column.
+func (r *KBChunksRepository) UpdateDocStatus(ctx context.Context, docID uuid.UUID, status, errorMessage string) error {
+	_, err := r.pool.Exec(ctx, `
+UPDATE kb_documents
+SET    status = $2, error_message = $3, updated_at = now()
+WHERE  id = $1`, docID, status, errorMessage)
+	return err
+}
+
 func vecLiteral(v []float32) string {
 	var sb strings.Builder
 	sb.Grow(len(v) * 6)

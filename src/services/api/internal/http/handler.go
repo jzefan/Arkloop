@@ -15,18 +15,17 @@ import (
 	"arkloop/services/api/internal/http/billingapi"
 	"arkloop/services/api/internal/http/catalogapi"
 	"arkloop/services/api/internal/http/conversationapi"
-	"arkloop/services/api/internal/http/kbdebugapi"
+	"arkloop/services/api/internal/http/kbapi"
 	"arkloop/services/api/internal/http/platformapi"
 	"arkloop/services/api/internal/http/scheduledjobsapi"
-	"arkloop/services/api/internal/kbingest"
 
 	"arkloop/services/api/internal/audit"
 	"arkloop/services/api/internal/auth"
 	"arkloop/services/api/internal/auth/oidc"
-	"arkloop/services/api/internal/http/oauthapi"
 	"arkloop/services/api/internal/data"
 	"arkloop/services/api/internal/entitlement"
 	"arkloop/services/api/internal/featureflag"
+	"arkloop/services/api/internal/http/oauthapi"
 	"arkloop/services/api/internal/observability"
 	"arkloop/services/api/internal/personas"
 	sharedconfig "arkloop/services/shared/config"
@@ -64,11 +63,11 @@ type HandlerConfig struct {
 	TrustXForwardedFor       bool
 	MaxInFlight              int
 
-	AuthService           *auth.Service
-	RegistrationService   *auth.RegistrationService
-	EmailVerifyService    *auth.EmailVerifyService
-	EmailOTPLoginService  *auth.EmailOTPLoginService
-	AccountService        *auth.AccountService
+	AuthService          *auth.Service
+	RegistrationService  *auth.RegistrationService
+	EmailVerifyService   *auth.EmailVerifyService
+	EmailOTPLoginService *auth.EmailOTPLoginService
+	AccountService       *auth.AccountService
 
 	// OIDC IdP wiring; if any field is nil, the OAuth endpoints are skipped.
 	OAuthClientsRepo       *data.OAuthClientRepository
@@ -80,16 +79,16 @@ type HandlerConfig struct {
 	OIDCIssuer             string
 	OIDCConsentPath        string
 	InternalServiceToken   string
-	AccountMembershipRepo *data.AccountMembershipRepository
-	ThreadRepo            *data.ThreadRepository
-	ThreadStarRepo        *data.ThreadStarRepository
-	ThreadShareRepo       *data.ThreadShareRepository
-	ThreadReportRepo      *data.ThreadReportRepository
-	MessageRepo           *data.MessageRepository
-	RunEventRepo          *data.RunEventRepository
-	RunPipelineEventsRepo *data.RunPipelineEventsRepository
-	ShellSessionRepo      *data.ShellSessionRepository
-	AuditWriter           *audit.Writer
+	AccountMembershipRepo  *data.AccountMembershipRepository
+	ThreadRepo             *data.ThreadRepository
+	ThreadStarRepo         *data.ThreadStarRepository
+	ThreadShareRepo        *data.ThreadShareRepository
+	ThreadReportRepo       *data.ThreadReportRepository
+	MessageRepo            *data.MessageRepository
+	RunEventRepo           *data.RunEventRepository
+	RunPipelineEventsRepo  *data.RunPipelineEventsRepository
+	ShellSessionRepo       *data.ShellSessionRepository
+	AuditWriter            *audit.Writer
 
 	LlmCredentialsRepo           *data.LlmCredentialsRepository
 	LlmRoutesRepo                *data.LlmRoutesRepository
@@ -179,9 +178,7 @@ type HandlerConfig struct {
 	RepoPersonas       []personas.RepoPersona
 	PersonaSyncTrigger interface{ Trigger() }
 
-	// Optional M0 kb-debug routes (nil disables them).
-	KBIngestService *kbingest.Service
-	KBDebugToken    string
+	KBHandlerCtx *kbapi.HandlerCtxExt
 }
 
 type artifactStore interface {
@@ -469,10 +466,8 @@ func NewHandler(cfg HandlerConfig) nethttp.Handler {
 		})
 	}
 
-	if cfg.KBIngestService != nil {
-		kbdebugapi.Register(mux, cfg.KBDebugToken, cfg.KBIngestService, cfg.KBIngestService)
-	} else if cfg.KBDebugToken != "" {
-		kbdebugapi.Register(mux, "", nil, nil)
+	if cfg.KBHandlerCtx != nil {
+		kbapi.Register(mux, cfg.KBHandlerCtx)
 	}
 
 	notFound := nethttp.HandlerFunc(func(w nethttp.ResponseWriter, r *nethttp.Request) {

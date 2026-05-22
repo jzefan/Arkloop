@@ -23,8 +23,8 @@ import (
 	"arkloop/services/api/internal/featureflag"
 	apihttp "arkloop/services/api/internal/http"
 	"arkloop/services/api/internal/http/accountapi"
+	"arkloop/services/api/internal/http/kbapi"
 	"arkloop/services/api/internal/jobs"
-	"arkloop/services/api/internal/kbingest"
 	"arkloop/services/api/internal/migrate"
 	"arkloop/services/api/internal/personas"
 	"arkloop/services/api/internal/personasync"
@@ -842,24 +842,46 @@ func (a *Application) Run(ctx context.Context) error {
 		Pool:                     pool,
 	})
 
-	var kbIngestService *kbingest.Service
-	if a.config.KBDebugToken != "" && a.config.DoubaoEmbedAPIKey != "" && pool != nil {
-		kbRepo, err := data.NewKBChunksRepository(pool)
+	var kbHandlerCtx *kbapi.HandlerCtxExt
+	if pool != nil && jobRepo != nil && messageAttachmentStore != nil {
+		kbRepo, err := data.NewKnowledgeBasesRepository(pool)
 		if err != nil {
-			return fmt.Errorf("kb_chunks repo: %w", err)
+			return fmt.Errorf("knowledge bases repo: %w", err)
 		}
-		doubao := embedding.NewDoubao(embedding.DoubaoConfig{
-			BaseURL:    a.config.DoubaoEmbedBaseURL,
-			APIKey:     a.config.DoubaoEmbedAPIKey,
-			Model:      a.config.DoubaoEmbedModel,
-			BatchSize:  a.config.DoubaoEmbedBatchSize,
-			MaxRetries: 3,
-			Dim:        kbRepo.Dim(),
+		docsRepo, err := data.NewKBDocumentsRepository(pool)
+		if err != nil {
+			return fmt.Errorf("kb documents repo: %w", err)
+		}
+		chunksRepo, err := data.NewKBChunksRepository(pool)
+		if err != nil {
+			return fmt.Errorf("kb chunks repo: %w", err)
+		}
+		var embedder embedding.Embedder
+		if strings.TrimSpace(a.config.DoubaoEmbedAPIKey) != "" {
+			embedder = embedding.NewDoubao(embedding.DoubaoConfig{
+				BaseURL:    a.config.DoubaoEmbedBaseURL,
+				APIKey:     a.config.DoubaoEmbedAPIKey,
+				Model:      a.config.DoubaoEmbedModel,
+				BatchSize:  a.config.DoubaoEmbedBatchSize,
+				MaxRetries: 3,
+				Dim:        chunksRepo.Dim(),
+			})
+		}
+		kbHandlerCtx = kbapi.NewHandlerCtx(kbapi.Deps{
+			AuthService:             authService,
+			AccountMembershipRepo:   membershipRepo,
+			APIKeysRepo:             apiKeysRepo,
+			AuditWriter:             auditWriter,
+			KnowledgeBasesRepo:      kbRepo,
+			KBDocumentsRepo:         docsRepo,
+			KBChunksRepo:            chunksRepo,
+			ProfileRegistriesRepo:   profileRegistriesRepo,
+			WorkspaceRegistriesRepo: workspaceRegistriesRepo,
+			BlobStore:               messageAttachmentStore,
+			Embedder:                embedder,
+			JobEnqueuer:             &kbapi.JobQueueEnqueuer{Repo: jobRepo},
+			MaxUploadBytes:          10 * 1024 * 1024,
 		})
-		kbIngestService, err = kbingest.New(doubao, kbRepo)
-		if err != nil {
-			return fmt.Errorf("kbingest: %w", err)
-		}
 	}
 
 	server := &http.Server{
@@ -968,8 +990,7 @@ func (a *Application) Run(ctx context.Context) error {
 			},
 			RepoPersonas:       repoPersonas,
 			PersonaSyncTrigger: personaSyncManager,
-			KBIngestService:    kbIngestService,
-			KBDebugToken:       a.config.KBDebugToken,
+			KBHandlerCtx:       kbHandlerCtx,
 		}),
 		ReadHeaderTimeout: 5 * time.Second,
 		WriteTimeout:      60 * time.Second,

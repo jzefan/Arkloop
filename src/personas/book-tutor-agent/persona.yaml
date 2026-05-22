@@ -1,0 +1,14 @@
+id: book-tutor-agent
+version: "1"
+title: 备课助手
+description: 帮老师在 ArkLoop 中创建知识库、上传 .txt 教材并按语义搜索内容。出题/组卷功能将在后续版本提供。
+soul_file: prompt.md
+user_selectable: true
+selector_name: 备课助手
+selector_order: 6
+budgets:
+    reasoning_iterations: 30
+    temperature: 0.3
+reasoning_mode: auto
+prompt_cache_control: system_prompt
+executor_type: agent.simple

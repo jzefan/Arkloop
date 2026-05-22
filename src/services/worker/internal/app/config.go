@@ -63,8 +63,8 @@ func DefaultConfig() Config {
 		PollSeconds:                 5,
 		LeaseSeconds:                30,
 		HeartbeatSeconds:            10,
-		QueueJobTypes:               []string{queue.RunExecuteJobType, queue.WebhookDeliverJobType, queue.EmailSendJobType, queue.ContextCompactMaintainJobType},
-		Capabilities:                []string{queue.RunExecuteJobType, queue.WebhookDeliverJobType, queue.EmailSendJobType, queue.ContextCompactMaintainJobType},
+		QueueJobTypes:               []string{queue.RunExecuteJobType, queue.WebhookDeliverJobType, queue.EmailSendJobType, queue.ContextCompactMaintainJobType, queue.KBIngestJobType},
+		Capabilities:                []string{queue.RunExecuteJobType, queue.WebhookDeliverJobType, queue.EmailSendJobType, queue.ContextCompactMaintainJobType, queue.KBIngestJobType},
 		Version:                     "unknown",
 		MCPCacheTTLSeconds:          60,
 		ToolProviderCacheTTLSeconds: 60,
@@ -231,6 +231,7 @@ func (c Config) Validate() error {
 		queue.WebhookDeliverJobType:         {},
 		queue.EmailSendJobType:              {},
 		queue.ContextCompactMaintainJobType: {},
+		queue.KBIngestJobType:               {},
 	}
 	for _, jobType := range c.QueueJobTypes {
 		if _, ok := supported[jobType]; !ok {

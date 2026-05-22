@@ -18,6 +18,7 @@ import (
 const (
 	RunExecuteJobType = "run.execute"
 	EmailSendJobType  = "email.send"
+	KBIngestJobType   = "kb.ingest"
 
 	JobStatusQueued = "queued"
 	JobStatusLeased = "leased"
@@ -83,7 +84,11 @@ func (r *JobRepository) EnqueueRun(
 	if accountID == uuid.Nil {
 		return uuid.Nil, fmt.Errorf("account_id must not be empty")
 	}
-	if runID == uuid.Nil {
+	chosenJobType := strings.TrimSpace(queueJobType)
+	if chosenJobType == "" {
+		chosenJobType = RunExecuteJobType
+	}
+	if chosenJobType == RunExecuteJobType && runID == uuid.Nil {
 		return uuid.Nil, fmt.Errorf("run_id must not be empty")
 	}
 
@@ -93,11 +98,6 @@ func (r *JobRepository) EnqueueRun(
 	if chosenTraceID == "" {
 		chosenTraceID = observability.NewTraceID()
 	}
-	chosenJobType := strings.TrimSpace(queueJobType)
-	if chosenJobType == "" {
-		chosenJobType = RunExecuteJobType
-	}
-
 	payloadCopy := map[string]any{}
 	for key, value := range payload {
 		payloadCopy[key] = value

@@ -1,0 +1,173 @@
+package kbapi
+
+import (
+	"context"
+	"encoding/json"
+	"net/http/httptest"
+	"strings"
+	"testing"
+
+	"arkloop/services/api/internal/data"
+
+	"github.com/google/uuid"
+)
+
+type fakeKBStore struct {
+	items map[uuid.UUID]*data.KnowledgeBase
+}
+
+func newFakeKBStore() *fakeKBStore { return &fakeKBStore{items: map[uuid.UUID]*data.KnowledgeBase{}} }
+
+func (f *fakeKBStore) Create(ctx context.Context, in data.KBCreate) (*data.KnowledgeBase, error) {
+	for _, kb := range f.items {
+		if kb.WorkspaceRef == in.WorkspaceRef && kb.Name == in.Name {
+			return nil, data.ErrKBDuplicateName
+		}
+	}
+	kb := &data.KnowledgeBase{
+		ID:              uuid.New(),
+		AccountID:       in.AccountID,
+		WorkspaceRef:    in.WorkspaceRef,
+		Name:            in.Name,
+		Description:     in.Description,
+		IntegrationMode: "standalone",
+	}
+	f.items[kb.ID] = kb
+	return kb, nil
+}
+
+func (f *fakeKBStore) GetByID(ctx context.Context, id uuid.UUID) (*data.KnowledgeBase, error) {
+	return f.items[id], nil
+}
+
+func (f *fakeKBStore) ListByWorkspace(ctx context.Context, accountID uuid.UUID, ws string) ([]data.KnowledgeBase, error) {
+	var out []data.KnowledgeBase
+	for _, kb := range f.items {
+		if kb.AccountID == accountID && kb.WorkspaceRef == ws {
+			out = append(out, *kb)
+		}
+	}
+	return out, nil
+}
+
+func (f *fakeKBStore) Delete(ctx context.Context, id uuid.UUID) error {
+	if _, ok := f.items[id]; !ok {
+		return data.ErrKBNotFound
+	}
+	delete(f.items, id)
+	return nil
+}
+
+type fakeMembership struct{ allow bool }
+
+func (f *fakeMembership) IsWorkspaceMember(ctx context.Context, accountID uuid.UUID, ws string) (bool, error) {
+	return f.allow, nil
+}
+
+func newHandlerCtx(allow bool) *handlerCtx {
+	return &handlerCtx{
+		kbStore:    newFakeKBStore(),
+		membership: &fakeMembership{allow: allow},
+	}
+}
+
+func TestCreateKBHappyPath(t *testing.T) {
+	ctx := newHandlerCtx(true)
+	body := strings.NewReader(`{"name":"my-kb","workspace_ref":"ws-1","description":"desc"}`)
+	req := httptest.NewRequest("POST", "/v1/knowledge-bases", body)
+	req = injectActor(req, uuid.New(), uuid.New())
+	w := httptest.NewRecorder()
+	handleCreateKB(ctx)(w, req)
+	if w.Code != 201 {
+		t.Fatalf("got %d, body=%s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		ID           string `json:"id"`
+		Name         string `json:"name"`
+		WorkspaceRef string `json:"workspace_ref"`
+	}
+	_ = json.NewDecoder(w.Body).Decode(&resp)
+	if resp.ID == "" || resp.Name != "my-kb" || resp.WorkspaceRef != "ws-1" {
+		t.Errorf("got %+v", resp)
+	}
+}
+
+func TestCreateKBRejectsNonMember(t *testing.T) {
+	ctx := newHandlerCtx(false)
+	body := strings.NewReader(`{"name":"x","workspace_ref":"ws-1"}`)
+	req := httptest.NewRequest("POST", "/v1/knowledge-bases", body)
+	req = injectActor(req, uuid.New(), uuid.New())
+	w := httptest.NewRecorder()
+	handleCreateKB(ctx)(w, req)
+	if w.Code != 403 {
+		t.Errorf("got %d", w.Code)
+	}
+}
+
+func TestCreateKBRejectsBadJSON(t *testing.T) {
+	ctx := newHandlerCtx(true)
+	req := httptest.NewRequest("POST", "/v1/knowledge-bases", strings.NewReader("not json"))
+	req = injectActor(req, uuid.New(), uuid.New())
+	w := httptest.NewRecorder()
+	handleCreateKB(ctx)(w, req)
+	if w.Code != 400 {
+		t.Errorf("got %d", w.Code)
+	}
+}
+
+func TestCreateKBRejectsDuplicateName(t *testing.T) {
+	ctx := newHandlerCtx(true)
+	for i, body := range []*strings.Reader{
+		strings.NewReader(`{"name":"dup","workspace_ref":"ws"}`),
+		strings.NewReader(`{"name":"dup","workspace_ref":"ws"}`),
+	} {
+		req := httptest.NewRequest("POST", "/v1/knowledge-bases", body)
+		req = injectActor(req, uuid.New(), uuid.New())
+		w := httptest.NewRecorder()
+		handleCreateKB(ctx)(w, req)
+		if i == 0 && w.Code != 201 {
+			t.Fatalf("first should succeed, got %d", w.Code)
+		}
+		if i == 1 && w.Code != 409 {
+			t.Errorf("second should 409, got %d", w.Code)
+		}
+	}
+}
+
+func TestListKBs(t *testing.T) {
+	ctx := newHandlerCtx(true)
+	acc := uuid.New()
+	for _, name := range []string{"a", "b"} {
+		_, _ = ctx.kbStore.Create(context.Background(), data.KBCreate{AccountID: acc, WorkspaceRef: "ws", Name: name})
+	}
+	req := httptest.NewRequest("GET", "/v1/knowledge-bases?workspace_ref=ws", nil)
+	req = injectActor(req, acc, uuid.New())
+	w := httptest.NewRecorder()
+	handleListKB(ctx)(w, req)
+	if w.Code != 200 {
+		t.Fatalf("got %d, body=%s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		Items []map[string]any `json:"items"`
+	}
+	_ = json.NewDecoder(w.Body).Decode(&resp)
+	if len(resp.Items) != 2 {
+		t.Errorf("got %d items, want 2", len(resp.Items))
+	}
+}
+
+func TestDeleteKB(t *testing.T) {
+	ctx := newHandlerCtx(true)
+	kb, _ := ctx.kbStore.Create(context.Background(), data.KBCreate{AccountID: uuid.New(), WorkspaceRef: "ws", Name: "k"})
+	req := httptest.NewRequest("DELETE", "/v1/knowledge-bases/"+kb.ID.String(), nil)
+	req.SetPathValue("id", kb.ID.String())
+	req = injectActor(req, kb.AccountID, uuid.New())
+	w := httptest.NewRecorder()
+	handleDeleteKB(ctx)(w, req)
+	if w.Code != 204 {
+		t.Errorf("got %d", w.Code)
+	}
+	if got, _ := ctx.kbStore.GetByID(context.Background(), kb.ID); got != nil {
+		t.Error("expected nil after delete")
+	}
+}
