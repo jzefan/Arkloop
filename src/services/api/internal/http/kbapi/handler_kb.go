@@ -15,8 +15,14 @@ import (
 // handlerCtx is the per-request collaborator bundle. Production wiring passes
 // real repos; tests pass fakes. Interfaces are intentionally narrow.
 type handlerCtx struct {
-	kbStore    kbStore
-	membership membershipChecker
+	kbStore        kbStore
+	docStore       docStore
+	chunksRepo     chunksReader
+	membership     membershipChecker
+	blob           blobWriter
+	jobs           jobEnqueue
+	embedder       embeddingForSearch
+	maxUploadBytes int64
 }
 
 type kbStore interface {
@@ -24,6 +30,29 @@ type kbStore interface {
 	GetByID(ctx context.Context, id uuid.UUID) (*data.KnowledgeBase, error)
 	ListByWorkspace(ctx context.Context, accountID uuid.UUID, ws string) ([]data.KnowledgeBase, error)
 	Delete(ctx context.Context, id uuid.UUID) error
+}
+
+type docStore interface {
+	Create(ctx context.Context, in data.DocCreate) (*data.KBDocument, error)
+	GetByID(ctx context.Context, id uuid.UUID) (*data.KBDocument, error)
+	ListByKB(ctx context.Context, kbID uuid.UUID) ([]data.KBDocument, error)
+	Delete(ctx context.Context, id uuid.UUID) error
+}
+
+type blobWriter interface {
+	PutBlob(ctx context.Context, workspaceRef, sha256 string, data []byte) error
+}
+
+type jobEnqueue interface {
+	EnqueueKBIngest(ctx context.Context, accountID, kbID, docID uuid.UUID, workspaceRef, blobSHA256, mimeType, filename, traceID string) (uuid.UUID, error)
+}
+
+type chunksReader interface {
+	Search(ctx context.Context, kbID uuid.UUID, query []float32, k int) ([]data.KBChunkHit, error)
+}
+
+type embeddingForSearch interface {
+	Embed(ctx context.Context, texts []string) ([][]float32, error)
 }
 
 // actor is the resolved caller identity. Real routes wrap httpkit.ResolveActor;
