@@ -11,6 +11,7 @@ export interface LocaleStrings {
     models: string
     tools: string
     runs: string
+    knowledgeBases: string
     modules: string
     settings: string
     installTasks: string
@@ -267,6 +268,54 @@ export interface LocaleStrings {
     toolResult: string
     error: string
     view: string
+  }
+  knowledgeBases: {
+    title: string
+    detailTitle: string
+    create: string
+    createTitle: string
+    nameLabel: string
+    namePlaceholder: string
+    descriptionLabel: string
+    refresh: string
+    back: string
+    empty: string
+    workspaceResolving: string
+    workspaceHint: (workspaceRef: string) => string
+    colName: string
+    colWorkspace: string
+    colDocs: string
+    colMode: string
+    colCreated: string
+    colActions: string
+    deleteTitle: string
+    deleteConfirm: (name: string) => string
+    noDescription: string
+    docsTitle: string
+    docsEmpty: string
+    colFilename: string
+    colStatus: string
+    colChunks: string
+    colSize: string
+    upload: string
+    uploading: string
+    searchTitle: string
+    searchPlaceholder: string
+    search: string
+    score: string
+    paragraph: (ordinal: number) => string
+    docDeleteTitle: string
+    docDeleteConfirm: (filename: string) => string
+    notFound: string
+    status: {
+      queued: string
+      parsing: string
+      chunking: string
+      embedding: string
+      upserting: string
+      ready: string
+      failed: string
+    }
   }
   common: {
     save: string
