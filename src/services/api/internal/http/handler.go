@@ -15,6 +15,7 @@ import (
 	"arkloop/services/api/internal/http/billingapi"
 	"arkloop/services/api/internal/http/catalogapi"
 	"arkloop/services/api/internal/http/conversationapi"
+	"arkloop/services/api/internal/http/kbapi"
 	"arkloop/services/api/internal/http/platformapi"
 	"arkloop/services/api/internal/http/scheduledjobsapi"
 
@@ -176,6 +177,8 @@ type HandlerConfig struct {
 
 	RepoPersonas       []personas.RepoPersona
 	PersonaSyncTrigger interface{ Trigger() }
+
+	KBHandlerCtx *kbapi.HandlerCtxExt
 }
 
 type artifactStore interface {
@@ -461,6 +464,10 @@ func NewHandler(cfg HandlerConfig) nethttp.Handler {
 			ThreadRepo:            cfg.ThreadRepo,
 			Pool:                  cfg.Pool,
 		})
+	}
+
+	if cfg.KBHandlerCtx != nil {
+		kbapi.Register(mux, cfg.KBHandlerCtx)
 	}
 
 	notFound := nethttp.HandlerFunc(func(w nethttp.ResponseWriter, r *nethttp.Request) {

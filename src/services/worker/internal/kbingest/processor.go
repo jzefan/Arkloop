@@ -134,6 +134,9 @@ type ingestPayload struct {
 }
 
 func parsePayload(raw map[string]any) (ingestPayload, error) {
+	if inner, ok := raw["payload"].(map[string]any); ok {
+		raw = inner
+	}
 	kbID, err := parseUUIDField(raw, "kb_id")
 	if err != nil {
 		return ingestPayload{}, err

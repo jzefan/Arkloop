@@ -7,7 +7,11 @@ import (
 	nethttp "net/http"
 	"strings"
 
+	"arkloop/services/api/internal/audit"
+	"arkloop/services/api/internal/auth"
 	"arkloop/services/api/internal/data"
+	"arkloop/services/api/internal/http/httpkit"
+	"arkloop/services/api/internal/observability"
 
 	"github.com/google/uuid"
 )
@@ -23,6 +27,11 @@ type handlerCtx struct {
 	jobs           jobEnqueue
 	embedder       embeddingForSearch
 	maxUploadBytes int64
+
+	authService           *auth.Service
+	accountMembershipRepo *data.AccountMembershipRepository
+	apiKeysRepo           *data.APIKeysRepository
+	auditWriter           *audit.Writer
 }
 
 type kbStore interface {
@@ -53,6 +62,25 @@ type chunksReader interface {
 
 type embeddingForSearch interface {
 	Embed(ctx context.Context, texts []string) ([][]float32, error)
+}
+
+type HandlerCtxExt = handlerCtx
+
+func NewHandlerCtx(deps Deps) *handlerCtx {
+	return &handlerCtx{
+		kbStore:               deps.KnowledgeBasesRepo,
+		docStore:              deps.KBDocumentsRepo,
+		chunksRepo:            deps.KBChunksRepo,
+		membership:            &WorkspaceMembership{Workspaces: deps.WorkspaceRegistriesRepo},
+		blob:                  &WorkspaceBlobAdapter{Store: deps.BlobStore},
+		jobs:                  deps.JobEnqueuer,
+		embedder:              deps.Embedder,
+		maxUploadBytes:        deps.MaxUploadBytes,
+		authService:           deps.AuthService,
+		accountMembershipRepo: deps.AccountMembershipRepo,
+		apiKeysRepo:           deps.APIKeysRepo,
+		auditWriter:           deps.AuditWriter,
+	}
 }
 
 // actor is the resolved caller identity. Real routes wrap httpkit.ResolveActor;
@@ -225,5 +253,16 @@ func kbResponse(kb *data.KnowledgeBase) map[string]any {
 		"document_count":   kb.DocumentCount,
 		"created_at":       kb.CreatedAt,
 		"updated_at":       kb.UpdatedAt,
+	}
+}
+
+func (h *handlerCtx) withActor(next nethttp.HandlerFunc) nethttp.HandlerFunc {
+	return func(w nethttp.ResponseWriter, r *nethttp.Request) {
+		traceID := observability.TraceIDFromContext(r.Context())
+		a, ok := httpkit.ResolveActor(w, r, traceID, h.authService, h.accountMembershipRepo, h.apiKeysRepo, h.auditWriter)
+		if !ok {
+			return
+		}
+		next(w, injectActor(r, a.AccountID, a.UserID))
 	}
 }
