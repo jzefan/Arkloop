@@ -101,3 +101,17 @@ func TestSearchHandlerHappyPath(t *testing.T) {
 		t.Errorf("unexpected hits: %+v", resp.Hits)
 	}
 }
+
+func TestRegisterRejectsWhenDependenciesMissing(t *testing.T) {
+	mux := http.NewServeMux()
+	Register(mux, "secret", nil, nil)
+	req := httptest.NewRequest(http.MethodPost, "/v1/_debug/kb/search", strings.NewReader(`{"kb_name":"k","query":"q"}`))
+	req.Header.Set("Authorization", "Bearer secret")
+	w := httptest.NewRecorder()
+
+	mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("status=%d body=%s, want %d", w.Code, w.Body.String(), http.StatusUnauthorized)
+	}
+}

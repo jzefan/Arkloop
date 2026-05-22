@@ -103,6 +103,9 @@ func newSearchHandler(srch Searcher) http.Handler {
 // Register wires both endpoints onto the supplied mux behind the debug-token
 // middleware.
 func Register(mux *http.ServeMux, debugToken string, ing Ingester, srch Searcher) {
+	if ing == nil || srch == nil {
+		debugToken = ""
+	}
 	guard := RequireDebugToken(debugToken)
 	mux.Handle("POST /v1/_debug/kb/ingest", guard(newIngestHandler(ing)))
 	mux.Handle("POST /v1/_debug/kb/search", guard(newSearchHandler(srch)))
