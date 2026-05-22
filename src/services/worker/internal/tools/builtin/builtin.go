@@ -10,12 +10,13 @@ import (
 	"arkloop/services/worker/internal/tools/builtin/askuser"
 	"arkloop/services/worker/internal/tools/builtin/edit"
 	enterplanmode "arkloop/services/worker/internal/tools/builtin/enter_plan_mode"
+	"arkloop/services/worker/internal/tools/builtin/exam"
 	exitplanmode "arkloop/services/worker/internal/tools/builtin/exit_plan_mode"
 	"arkloop/services/worker/internal/tools/builtin/fileops"
 	"arkloop/services/worker/internal/tools/builtin/glob"
 	"arkloop/services/worker/internal/tools/builtin/grep"
+	"arkloop/services/worker/internal/tools/builtin/kb"
 	loadskill "arkloop/services/worker/internal/tools/builtin/load_skill"
-	"arkloop/services/worker/internal/tools/builtin/exam"
 	loadtools "arkloop/services/worker/internal/tools/builtin/load_tools"
 	read "arkloop/services/worker/internal/tools/builtin/read"
 	showwidget "arkloop/services/worker/internal/tools/builtin/show_widget"
@@ -47,6 +48,7 @@ func AgentSpecs() []tools.AgentToolSpec {
 		webfetch.AgentSpecJina,
 		webfetch.AgentSpecFirecrawl,
 		webfetch.AgentSpecBasic,
+		kb.AgentSpec,
 		read.AgentSpec,
 		read.AgentSpecMiniMax,
 		writefile.AgentSpec,
@@ -82,6 +84,7 @@ func LlmSpecs() []llm.ToolSpec {
 		arkloophelp.LlmSpec,
 		websearch.LlmSpec,
 		webfetch.LlmSpec,
+		kb.LlmSpec,
 		read.LlmSpec,
 		writefile.LlmSpec,
 		edit.LlmSpec,
@@ -115,31 +118,32 @@ func Executors(pool *pgxpool.Pool, rdb *redis.Client, resolver sharedconfig.Reso
 		examExec = exam.NewToolExecutor(nil)
 	}
 	return map[string]tools.Executor{
-		TimelineTitleAgentSpec.Name:       TimelineTitleExecutor{},
-		loadskill.AgentSpec.Name:          loadskill.NewToolExecutor(skillStore),
-		visualizereadme.AgentSpec.Name:    visualizereadme.NewToolExecutor(),
-		artifactguidelines.AgentSpec.Name: artifactguidelines.ToolExecutor{},
-		arkloophelp.AgentSpec.Name:        arkloophelp.Executor{},
-		websearch.AgentSpec.Name:          websearch.NewToolExecutor(resolver),
-		websearch.AgentSpecBasic.Name:     websearch.NewToolExecutorWithProvider(websearch.NewBasicProvider()),
-		websearch.AgentSpecTavily.Name:    websearch.NewTavilyExecutor(resolver),
-		websearch.AgentSpecSearxng.Name:   websearch.NewSearxngExecutor(resolver),
-		webfetch.AgentSpec.Name:           webfetch.NewToolExecutor(resolver),
-		webfetch.AgentSpecJina.Name:       webfetch.NewJinaExecutor(resolver),
-		webfetch.AgentSpecFirecrawl.Name:  webfetch.NewFirecrawlExecutor(resolver),
-		webfetch.AgentSpecBasic.Name:      webfetch.NewBasicExecutor(resolver),
-		read.AgentSpec.Name:               read.NewToolExecutorWithTracker(tracker),
-		read.AgentSpecMiniMax.Name:        read.NewToolExecutorWithTracker(tracker),
-		writefile.AgentSpec.Name:          &writefile.Executor{Tracker: tracker},
-		edit.AgentSpec.Name:               &edit.Executor{Tracker: tracker},
-		glob.AgentSpec.Name:               &glob.Executor{},
-		grep.AgentSpec.Name:               &grep.Executor{},
-		summarizethread.AgentSpec.Name:    &summarizethread.ToolExecutor{Pool: pool, RDB: rdb},
-		askuser.AgentSpec.Name:            askuser.ToolExecutor{},
-		showwidget.AgentSpec.Name:         showwidget.NewToolExecutor(),
-		todowrite.AgentSpec.Name:          &todowrite.Executor{},
-		enterplanmode.AgentSpec.Name:      enterplanmode.New(),
-		exitplanmode.AgentSpec.Name:       exitplanmode.New(),
+		TimelineTitleAgentSpec.Name:        TimelineTitleExecutor{},
+		loadskill.AgentSpec.Name:           loadskill.NewToolExecutor(skillStore),
+		visualizereadme.AgentSpec.Name:     visualizereadme.NewToolExecutor(),
+		artifactguidelines.AgentSpec.Name:  artifactguidelines.ToolExecutor{},
+		arkloophelp.AgentSpec.Name:         arkloophelp.Executor{},
+		websearch.AgentSpec.Name:           websearch.NewToolExecutor(resolver),
+		websearch.AgentSpecBasic.Name:      websearch.NewToolExecutorWithProvider(websearch.NewBasicProvider()),
+		websearch.AgentSpecTavily.Name:     websearch.NewTavilyExecutor(resolver),
+		websearch.AgentSpecSearxng.Name:    websearch.NewSearxngExecutor(resolver),
+		webfetch.AgentSpec.Name:            webfetch.NewToolExecutor(resolver),
+		webfetch.AgentSpecJina.Name:        webfetch.NewJinaExecutor(resolver),
+		webfetch.AgentSpecFirecrawl.Name:   webfetch.NewFirecrawlExecutor(resolver),
+		webfetch.AgentSpecBasic.Name:       webfetch.NewBasicExecutor(resolver),
+		kb.AgentSpec.Name:                  kb.NewToolExecutor(pool),
+		read.AgentSpec.Name:                read.NewToolExecutorWithTracker(tracker),
+		read.AgentSpecMiniMax.Name:         read.NewToolExecutorWithTracker(tracker),
+		writefile.AgentSpec.Name:           &writefile.Executor{Tracker: tracker},
+		edit.AgentSpec.Name:                &edit.Executor{Tracker: tracker},
+		glob.AgentSpec.Name:                &glob.Executor{},
+		grep.AgentSpec.Name:                &grep.Executor{},
+		summarizethread.AgentSpec.Name:     &summarizethread.ToolExecutor{Pool: pool, RDB: rdb},
+		askuser.AgentSpec.Name:             askuser.ToolExecutor{},
+		showwidget.AgentSpec.Name:          showwidget.NewToolExecutor(),
+		todowrite.AgentSpec.Name:           &todowrite.Executor{},
+		enterplanmode.AgentSpec.Name:       enterplanmode.New(),
+		exitplanmode.AgentSpec.Name:        exitplanmode.New(),
 		exam.ToolNameRecognizeCatalogImage: examExec,
 		exam.ToolNameParseCatalogExcel:     examExec,
 		exam.ToolNameCreateCatalogTree:     examExec,
