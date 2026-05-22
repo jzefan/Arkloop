@@ -37,6 +37,7 @@ type Deps struct {
 	KnowledgeBasesRepo      *data.KnowledgeBasesRepository
 	KBDocumentsRepo         *data.KBDocumentsRepository
 	KBChunksRepo            *data.KBChunksRepository
+	ProfileRegistriesRepo   *data.ProfileRegistriesRepository
 	WorkspaceRegistriesRepo *data.WorkspaceRegistriesRepository
 
 	BlobStore objectstore.Store

@@ -12,6 +12,7 @@ import (
 	"arkloop/services/api/internal/data"
 	"arkloop/services/api/internal/http/httpkit"
 	"arkloop/services/api/internal/observability"
+	sharedenvironmentref "arkloop/services/shared/environmentref"
 
 	"github.com/google/uuid"
 )
@@ -32,6 +33,8 @@ type handlerCtx struct {
 	accountMembershipRepo *data.AccountMembershipRepository
 	apiKeysRepo           *data.APIKeysRepository
 	auditWriter           *audit.Writer
+	profileRepo           *data.ProfileRegistriesRepository
+	workspaceRepo         *data.WorkspaceRegistriesRepository
 }
 
 type kbStore interface {
@@ -80,6 +83,8 @@ func NewHandlerCtx(deps Deps) *handlerCtx {
 		accountMembershipRepo: deps.AccountMembershipRepo,
 		apiKeysRepo:           deps.APIKeysRepo,
 		auditWriter:           deps.AuditWriter,
+		profileRepo:           deps.ProfileRegistriesRepo,
+		workspaceRepo:         deps.WorkspaceRegistriesRepo,
 	}
 }
 
@@ -131,9 +136,17 @@ func handleCreateKB(h *handlerCtx) nethttp.HandlerFunc {
 		}
 		req.Name = strings.TrimSpace(req.Name)
 		req.WorkspaceRef = strings.TrimSpace(req.WorkspaceRef)
-		if req.Name == "" || req.WorkspaceRef == "" {
-			writeErr(w, nethttp.StatusBadRequest, "kb.missing_field", "name and workspace_ref are required")
+		if req.Name == "" {
+			writeErr(w, nethttp.StatusBadRequest, "kb.missing_field", "name is required")
 			return
+		}
+		if req.WorkspaceRef == "" {
+			ws, err := h.ensureDefaultWorkspace(r.Context(), a)
+			if err != nil {
+				writeErr(w, nethttp.StatusInternalServerError, "internal.workspace_failed", "failed to resolve default workspace")
+				return
+			}
+			req.WorkspaceRef = ws
 		}
 		if err := ensureWorkspaceMember(r.Context(), h.membership, a.AccountID, req.WorkspaceRef); err != nil {
 			writeErr(w, nethttp.StatusForbidden, "auth.no_workspace_access", "no access to this workspace")
@@ -167,8 +180,12 @@ func handleListKB(h *handlerCtx) nethttp.HandlerFunc {
 		}
 		ws := strings.TrimSpace(r.URL.Query().Get("workspace_ref"))
 		if ws == "" {
-			writeErr(w, nethttp.StatusBadRequest, "kb.missing_workspace_ref", "workspace_ref query param is required")
-			return
+			var err error
+			ws, err = h.ensureDefaultWorkspace(r.Context(), a)
+			if err != nil {
+				writeErr(w, nethttp.StatusInternalServerError, "internal.workspace_failed", "failed to resolve default workspace")
+				return
+			}
 		}
 		if err := ensureWorkspaceMember(r.Context(), h.membership, a.AccountID, ws); err != nil {
 			writeErr(w, nethttp.StatusForbidden, "auth.no_workspace_access", "no access to this workspace")
@@ -185,6 +202,51 @@ func handleListKB(h *handlerCtx) nethttp.HandlerFunc {
 		}
 		writeJSON(w, nethttp.StatusOK, map[string]any{"items": items})
 	}
+}
+
+func handleDefaultWorkspace(h *handlerCtx) nethttp.HandlerFunc {
+	return func(w nethttp.ResponseWriter, r *nethttp.Request) {
+		a, ok := actorFromCtx(r.Context())
+		if !ok {
+			writeErr(w, nethttp.StatusUnauthorized, "auth.unauthenticated", "unauthenticated")
+			return
+		}
+		workspaceRef, err := h.ensureDefaultWorkspace(r.Context(), a)
+		if err != nil {
+			writeErr(w, nethttp.StatusInternalServerError, "internal.workspace_failed", "failed to resolve default workspace")
+			return
+		}
+		writeJSON(w, nethttp.StatusOK, map[string]any{"workspace_ref": workspaceRef})
+	}
+}
+
+func (h *handlerCtx) ensureDefaultWorkspace(ctx context.Context, a actor) (string, error) {
+	if h == nil || h.profileRepo == nil || h.workspaceRepo == nil {
+		return "", errors.New("workspace repos not configured")
+	}
+	profileRef := sharedenvironmentref.BuildProfileRef(a.AccountID, &a.UserID)
+	if err := h.profileRepo.Ensure(ctx, profileRef, a.AccountID, a.UserID); err != nil {
+		return "", err
+	}
+	profile, err := h.profileRepo.Get(ctx, profileRef)
+	if err != nil {
+		return "", err
+	}
+	if profile != nil && profile.DefaultWorkspaceRef != nil && strings.TrimSpace(*profile.DefaultWorkspaceRef) != "" {
+		workspaceRef := strings.TrimSpace(*profile.DefaultWorkspaceRef)
+		if err := h.workspaceRepo.Ensure(ctx, workspaceRef, a.AccountID, a.UserID, nil); err != nil {
+			return "", err
+		}
+		return workspaceRef, nil
+	}
+	workspaceRef := "wsref_" + strings.ReplaceAll(uuid.NewString(), "-", "")
+	if err := h.workspaceRepo.Ensure(ctx, workspaceRef, a.AccountID, a.UserID, nil); err != nil {
+		return "", err
+	}
+	if err := h.profileRepo.SetDefaultWorkspaceRef(ctx, profileRef, workspaceRef); err != nil {
+		return "", err
+	}
+	return workspaceRef, nil
 }
 
 func handleGetKB(h *handlerCtx) nethttp.HandlerFunc {

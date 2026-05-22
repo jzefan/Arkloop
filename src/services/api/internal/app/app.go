@@ -843,7 +843,7 @@ func (a *Application) Run(ctx context.Context) error {
 	})
 
 	var kbHandlerCtx *kbapi.HandlerCtxExt
-	if pool != nil && jobRepo != nil && messageAttachmentStore != nil && strings.TrimSpace(a.config.DoubaoEmbedAPIKey) != "" {
+	if pool != nil && jobRepo != nil && messageAttachmentStore != nil {
 		kbRepo, err := data.NewKnowledgeBasesRepository(pool)
 		if err != nil {
 			return fmt.Errorf("knowledge bases repo: %w", err)
@@ -856,14 +856,17 @@ func (a *Application) Run(ctx context.Context) error {
 		if err != nil {
 			return fmt.Errorf("kb chunks repo: %w", err)
 		}
-		embedder := embedding.NewDoubao(embedding.DoubaoConfig{
-			BaseURL:    a.config.DoubaoEmbedBaseURL,
-			APIKey:     a.config.DoubaoEmbedAPIKey,
-			Model:      a.config.DoubaoEmbedModel,
-			BatchSize:  a.config.DoubaoEmbedBatchSize,
-			MaxRetries: 3,
-			Dim:        chunksRepo.Dim(),
-		})
+		var embedder embedding.Embedder
+		if strings.TrimSpace(a.config.DoubaoEmbedAPIKey) != "" {
+			embedder = embedding.NewDoubao(embedding.DoubaoConfig{
+				BaseURL:    a.config.DoubaoEmbedBaseURL,
+				APIKey:     a.config.DoubaoEmbedAPIKey,
+				Model:      a.config.DoubaoEmbedModel,
+				BatchSize:  a.config.DoubaoEmbedBatchSize,
+				MaxRetries: 3,
+				Dim:        chunksRepo.Dim(),
+			})
+		}
 		kbHandlerCtx = kbapi.NewHandlerCtx(kbapi.Deps{
 			AuthService:             authService,
 			AccountMembershipRepo:   membershipRepo,
@@ -872,6 +875,7 @@ func (a *Application) Run(ctx context.Context) error {
 			KnowledgeBasesRepo:      kbRepo,
 			KBDocumentsRepo:         docsRepo,
 			KBChunksRepo:            chunksRepo,
+			ProfileRegistriesRepo:   profileRegistriesRepo,
 			WorkspaceRegistriesRepo: workspaceRegistriesRepo,
 			BlobStore:               messageAttachmentStore,
 			Embedder:                embedder,

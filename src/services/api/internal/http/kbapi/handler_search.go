@@ -22,6 +22,10 @@ func handleSearch(h *handlerCtx) nethttp.HandlerFunc {
 			writeErr(w, nethttp.StatusBadRequest, "kb.missing_query", "q query param is required")
 			return
 		}
+		if h.embedder == nil {
+			writeErr(w, nethttp.StatusServiceUnavailable, "kb.embedding_not_configured", "embedding provider is not configured")
+			return
+		}
 		k := 8
 		if v := r.URL.Query().Get("k"); v != "" {
 			if n, err := strconv.Atoi(v); err == nil && n > 0 && n <= 50 {
