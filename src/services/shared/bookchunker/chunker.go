@@ -88,7 +88,7 @@ func ChunkText(text string, opts ChunkOptions) ([]TextChunk, error) {
 		window := flat[pos:end]
 		chunks = append(chunks, TextChunk{
 			Ordinal:    len(chunks),
-			Text:       enc.Decode(window),
+			Text:       safeDecode(enc, window),
 			TokenCount: len(window),
 		})
 		if end == len(flat) {
@@ -101,6 +101,10 @@ func ChunkText(text string, opts ChunkOptions) ([]TextChunk, error) {
 		pos += step
 	}
 	return chunks, nil
+}
+
+func safeDecode(enc *tiktoken.Tiktoken, tokens []int) string {
+	return strings.ToValidUTF8(enc.Decode(tokens), "")
 }
 
 // Chunk splits text into chunks per opts. Empty input returns nil.
