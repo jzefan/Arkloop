@@ -1,32 +1,36 @@
-// Package bookchunker splits long text into overlapping chunks suitable for
-// embedding-based retrieval. Pure function; no I/O. M0 inputs are paragraph-
-// separated plain text; M1 will extend the signature with a structured
-// ParsedDoc input but keep the chunk output shape stable.
+// Package bookchunker splits a ParsedDoc into overlapping chunks suitable
+// for embedding-based retrieval. Each input Block becomes one or more
+// output Chunks; special blocks (image/table/formula) are emitted as a
+// single chunk each, preserving their type and metadata.
+//
+// Pure function: no I/O, no goroutines, deterministic given the same input.
 package bookchunker
 
 import (
 	"fmt"
 	"strings"
 
+	"arkloop/services/shared/bookparser"
+
 	"github.com/pkoukk/tiktoken-go"
 )
 
-// TextChunk is one output unit. Ordinal is 0-based source order.
+// TextChunk is one output unit. Ordinal is 0-based across the whole document.
 type TextChunk struct {
-	Ordinal    int
-	Text       string
-	TokenCount int
+	Ordinal     int
+	ChunkType   string
+	Text        string
+	HeadingPath []string
+	TokenCount  int
 }
 
-// ChunkOptions tunes split behavior. Use DefaultOptions for M0.
 type ChunkOptions struct {
 	MinTokens     int
 	MaxTokens     int
 	OverlapTokens int
-	Encoding      string // tiktoken encoding name; cl100k_base is the M0 default
+	Encoding      string
 }
 
-// DefaultOptions returns the M0 default parameters.
 func DefaultOptions() ChunkOptions {
 	return ChunkOptions{
 		MinTokens:     256,
@@ -36,91 +40,153 @@ func DefaultOptions() ChunkOptions {
 	}
 }
 
-// Chunk splits text into chunks per opts. Empty input returns nil.
-func ChunkText(text string, opts ChunkOptions) ([]TextChunk, error) {
-	if strings.TrimSpace(text) == "" {
+// Chunk transforms doc into a sequence of chunks per opts. Empty doc returns nil.
+func Chunk(doc bookparser.ParsedDoc, opts ChunkOptions) ([]TextChunk, error) {
+	if len(doc.Blocks) == 0 {
 		return nil, nil
 	}
+	opts = normalizeOptions(opts)
+	enc, err := tiktoken.GetEncoding(opts.Encoding)
+	if err != nil && opts.Encoding != DefaultOptions().Encoding {
+		return nil, fmt.Errorf("load tiktoken encoding %q: %w", opts.Encoding, err)
+	}
+
+	var out []TextChunk
+	for _, block := range doc.Blocks {
+		blockType := normalizeBlockType(block.Type)
+		if blockType != bookparser.BlockParagraph && blockType != bookparser.BlockHeading {
+			tokenCount := countTokens(enc, block.Text)
+			out = append(out, TextChunk{
+				Ordinal:     len(out),
+				ChunkType:   string(blockType),
+				Text:        block.Text,
+				HeadingPath: copyPath(block.HeadingPath),
+				TokenCount:  tokenCount,
+			})
+			continue
+		}
+
+		tokenCount := countTokens(enc, block.Text)
+		if tokenCount <= opts.MaxTokens {
+			out = append(out, TextChunk{
+				Ordinal:     len(out),
+				ChunkType:   string(blockType),
+				Text:        block.Text,
+				HeadingPath: copyPath(block.HeadingPath),
+				TokenCount:  tokenCount,
+			})
+			continue
+		}
+
+		for _, segment := range splitLongText(enc, block.Text, opts) {
+			out = append(out, TextChunk{
+				Ordinal:     len(out),
+				ChunkType:   string(blockType),
+				Text:        segment.Text,
+				HeadingPath: copyPath(block.HeadingPath),
+				TokenCount:  segment.TokenCount,
+			})
+		}
+	}
+	return out, nil
+}
+
+func normalizeOptions(opts ChunkOptions) ChunkOptions {
+	defaults := DefaultOptions()
 	if opts.Encoding == "" {
-		opts.Encoding = DefaultOptions().Encoding
+		opts.Encoding = defaults.Encoding
 	}
 	if opts.MaxTokens <= 0 {
-		opts.MaxTokens = DefaultOptions().MaxTokens
+		opts.MaxTokens = defaults.MaxTokens
 	}
 	if opts.MinTokens <= 0 {
-		opts.MinTokens = DefaultOptions().MinTokens
+		opts.MinTokens = defaults.MinTokens
 	}
 	if opts.OverlapTokens < 0 {
 		opts.OverlapTokens = 0
 	}
-	enc, err := tiktoken.GetEncoding(opts.Encoding)
-	if err != nil {
-		return nil, fmt.Errorf("load tiktoken encoding %q: %w", opts.Encoding, err)
-	}
+	return opts
+}
 
-	paragraphs := splitParagraphs(text)
-	tokens := make([][]int, len(paragraphs))
-	totalTokens := 0
-	for i, p := range paragraphs {
-		tokens[i] = enc.Encode(p, nil, nil)
-		totalTokens += len(tokens[i])
+func normalizeBlockType(t bookparser.BlockType) bookparser.BlockType {
+	switch t {
+	case bookparser.BlockParagraph, bookparser.BlockHeading, bookparser.BlockImage, bookparser.BlockTable, bookparser.BlockFormula:
+		return t
+	default:
+		return bookparser.BlockParagraph
 	}
-	if totalTokens <= opts.MaxTokens {
-		return []TextChunk{{
-			Ordinal:    0,
-			Text:       strings.Join(paragraphs, "\n\n"),
-			TokenCount: totalTokens,
-		}}, nil
-	}
+}
 
-	flat := make([]int, 0, totalTokens)
-	for _, t := range tokens {
-		flat = append(flat, t...)
+func copyPath(p []string) []string {
+	if len(p) == 0 {
+		return nil
 	}
-
-	var chunks []TextChunk
-	pos := 0
-	for pos < len(flat) {
-		end := pos + opts.MaxTokens
-		if end > len(flat) {
-			end = len(flat)
-		}
-		window := flat[pos:end]
-		chunks = append(chunks, TextChunk{
-			Ordinal:    len(chunks),
-			Text:       safeDecode(enc, window),
-			TokenCount: len(window),
-		})
-		if end == len(flat) {
-			break
-		}
-		step := opts.MaxTokens - opts.OverlapTokens
-		if step < opts.MinTokens {
-			step = opts.MinTokens
-		}
-		pos += step
-	}
-	return chunks, nil
+	cp := make([]string, len(p))
+	copy(cp, p)
+	return cp
 }
 
 func safeDecode(enc *tiktoken.Tiktoken, tokens []int) string {
 	return strings.ToValidUTF8(enc.Decode(tokens), "")
 }
 
-// Chunk splits text into chunks per opts. Empty input returns nil.
-func Chunk(text string, opts ChunkOptions) ([]TextChunk, error) {
-	return ChunkText(text, opts)
+type textSegment struct {
+	Text       string
+	TokenCount int
 }
 
-// splitParagraphs splits on blank lines, trimming each paragraph.
-func splitParagraphs(text string) []string {
-	raw := strings.Split(strings.ReplaceAll(text, "\r\n", "\n"), "\n\n")
-	out := make([]string, 0, len(raw))
-	for _, p := range raw {
-		p = strings.TrimSpace(p)
-		if p != "" {
-			out = append(out, p)
+func countTokens(enc *tiktoken.Tiktoken, text string) int {
+	if enc == nil {
+		return len([]rune(text))
+	}
+	return len(enc.Encode(text, nil, nil))
+}
+
+func splitLongText(enc *tiktoken.Tiktoken, text string, opts ChunkOptions) []textSegment {
+	if enc == nil {
+		return splitRunes(text, opts)
+	}
+	tokens := enc.Encode(text, nil, nil)
+	var out []textSegment
+	pos := 0
+	for pos < len(tokens) {
+		end := pos + opts.MaxTokens
+		if end > len(tokens) {
+			end = len(tokens)
 		}
+		window := tokens[pos:end]
+		out = append(out, textSegment{Text: safeDecode(enc, window), TokenCount: len(window)})
+		if end == len(tokens) {
+			break
+		}
+		pos += chunkStep(opts)
 	}
 	return out
+}
+
+func splitRunes(text string, opts ChunkOptions) []textSegment {
+	runes := []rune(text)
+	var out []textSegment
+	pos := 0
+	for pos < len(runes) {
+		end := pos + opts.MaxTokens
+		if end > len(runes) {
+			end = len(runes)
+		}
+		window := runes[pos:end]
+		out = append(out, textSegment{Text: string(window), TokenCount: len(window)})
+		if end == len(runes) {
+			break
+		}
+		pos += chunkStep(opts)
+	}
+	return out
+}
+
+func chunkStep(opts ChunkOptions) int {
+	step := opts.MaxTokens - opts.OverlapTokens
+	if step < opts.MinTokens {
+		step = opts.MinTokens
+	}
+	return step
 }
