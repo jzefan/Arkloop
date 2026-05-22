@@ -8,37 +8,37 @@ import (
 	"github.com/google/uuid"
 )
 
-// KBChunksRepository persists and searches embedded chunks via pgvector.
-// M0 uses a single flat table keyed by (kb_name, document_ref, ordinal);
-// M1 will replace this with FK-bearing knowledge_bases / kb_documents.
+// KBChunksRepository persists and searches embedded chunks via pgvector under
+// the M1.0 schema (FK to knowledge_bases + kb_documents).
 type KBChunksRepository struct {
 	pool DB
 	dim  int
 }
 
-// KBChunkUpsert is the input row for Upsert.
 type KBChunkUpsert struct {
-	KBName      string
-	DocumentRef string
+	KBID        uuid.UUID
+	DocumentID  uuid.UUID
 	Ordinal     int
+	HeadingPath []string
+	ChunkType   string
 	Text        string
 	TokenCount  int
 	Embedding   []float32
 }
 
-// KBChunkHit is a search result.
 type KBChunkHit struct {
 	ID          uuid.UUID
-	KBName      string
+	KBID        uuid.UUID
+	DocumentID  uuid.UUID
 	DocumentRef string
 	Ordinal     int
+	HeadingPath []string
+	ChunkType   string
 	Text        string
 	TokenCount  int
-	Score       float32 // cosine similarity in [-1, 1]; 1 = identical
+	Score       float32
 }
 
-// NewKBChunksRepository probes the pgvector column dimension once and caches it.
-// This makes Dim cheap and exposes mismatches early (e.g. forgot to migrate).
 func NewKBChunksRepository(pool DB) (*KBChunksRepository, error) {
 	if pool == nil {
 		return nil, fmt.Errorf("nil pool")
@@ -56,38 +56,51 @@ WHERE  n.nspname = current_schema()
 		return nil, fmt.Errorf("probe pgvector dim: %w", err)
 	}
 	if dim <= 0 {
-		return nil, fmt.Errorf("invalid pgvector dim from catalog: %d (run migration 00192?)", dim)
+		return nil, fmt.Errorf("invalid pgvector dim from catalog: %d (run migration 00193?)", dim)
 	}
 	return &KBChunksRepository{pool: pool, dim: dim}, nil
 }
 
-// Dim returns the pgvector column dimension. Always call this before
-// constructing Embedder configs to verify they agree.
 func (r *KBChunksRepository) Dim() int { return r.dim }
 
-// Upsert writes chunks. Conflict on (kb_name, document_ref, ordinal) is an UPDATE.
 func (r *KBChunksRepository) Upsert(ctx context.Context, rows []KBChunkUpsert) error {
+	if len(rows) == 0 {
+		return nil
+	}
 	for i, row := range rows {
 		if len(row.Embedding) != r.dim {
-			return fmt.Errorf("row (kb=%s,doc=%s,ord=%d): embedding dim %d != table dim %d",
-				row.KBName, row.DocumentRef, row.Ordinal, len(row.Embedding), r.dim)
+			return fmt.Errorf("row %d: embedding dim %d != table dim %d", i, len(row.Embedding), r.dim)
 		}
-		if _, err := r.pool.Exec(ctx, `
-INSERT INTO kb_chunks (kb_name, document_ref, ordinal, text, token_count, embedding)
-VALUES ($1, $2, $3, $4, $5, $6)
-ON CONFLICT (kb_name, document_ref, ordinal)
-DO UPDATE SET text = EXCLUDED.text,
-              token_count = EXCLUDED.token_count,
-              embedding = EXCLUDED.embedding`,
-			row.KBName, row.DocumentRef, row.Ordinal, row.Text, row.TokenCount, vecLiteral(row.Embedding)); err != nil {
-			return fmt.Errorf("upsert row %d: %w", i, err)
+	}
+	for _, row := range rows {
+		headingPath := row.HeadingPath
+		if headingPath == nil {
+			headingPath = []string{}
+		}
+		chunkType := row.ChunkType
+		if chunkType == "" {
+			chunkType = "paragraph"
+		}
+		_, err := r.pool.Exec(ctx, `
+INSERT INTO kb_chunks (kb_id, document_id, ordinal, heading_path, chunk_type, text, token_count, embedding, metadata_json)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, '{}'::jsonb)
+ON CONFLICT (kb_id, document_id, ordinal) DO UPDATE SET
+    heading_path = EXCLUDED.heading_path,
+    chunk_type   = EXCLUDED.chunk_type,
+    text         = EXCLUDED.text,
+    token_count  = EXCLUDED.token_count,
+    embedding    = EXCLUDED.embedding`,
+			row.KBID, row.DocumentID, row.Ordinal, headingPath, chunkType,
+			row.Text, row.TokenCount, vecLiteral(row.Embedding))
+		if err != nil {
+			return fmt.Errorf("upsert kb=%s doc=%s ord=%d: %w", row.KBID, row.DocumentID, row.Ordinal, err)
 		}
 	}
 	return nil
 }
 
-// Search returns up to k chunks in kbName ordered by cosine similarity desc.
-func (r *KBChunksRepository) Search(ctx context.Context, kbName string, query []float32, k int) ([]KBChunkHit, error) {
+// Search returns up to k chunks in kbID ordered by cosine similarity desc.
+func (r *KBChunksRepository) Search(ctx context.Context, kbID uuid.UUID, query []float32, k int) ([]KBChunkHit, error) {
 	if len(query) != r.dim {
 		return nil, fmt.Errorf("query dim %d != table dim %d", len(query), r.dim)
 	}
@@ -95,13 +108,13 @@ func (r *KBChunksRepository) Search(ctx context.Context, kbName string, query []
 		k = 8
 	}
 	rows, err := r.pool.Query(ctx, `
-SELECT id, kb_name, document_ref, ordinal, text, token_count,
-       (1 - (embedding <=> $2))::real AS score
-FROM   kb_chunks
-WHERE  kb_name = $1
-ORDER  BY embedding <=> $2
-LIMIT  $3`,
-		kbName, vecLiteral(query), k)
+SELECT c.id, c.kb_id, c.document_id, d.original_filename, c.ordinal, c.heading_path, c.chunk_type, c.text, c.token_count,
+       (1 - (c.embedding <=> $2))::real AS score
+FROM   kb_chunks c
+JOIN   kb_documents d ON d.id = c.document_id
+WHERE  c.kb_id = $1
+ORDER  BY c.embedding <=> $2
+LIMIT  $3`, kbID, vecLiteral(query), k)
 	if err != nil {
 		return nil, fmt.Errorf("kb search: %w", err)
 	}
@@ -110,7 +123,8 @@ LIMIT  $3`,
 	var out []KBChunkHit
 	for rows.Next() {
 		var h KBChunkHit
-		if err := rows.Scan(&h.ID, &h.KBName, &h.DocumentRef, &h.Ordinal, &h.Text, &h.TokenCount, &h.Score); err != nil {
+		if err := rows.Scan(&h.ID, &h.KBID, &h.DocumentID, &h.DocumentRef, &h.Ordinal,
+			&h.HeadingPath, &h.ChunkType, &h.Text, &h.TokenCount, &h.Score); err != nil {
 			return nil, err
 		}
 		out = append(out, h)
