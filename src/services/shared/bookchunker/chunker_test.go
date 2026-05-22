@@ -1,8 +1,10 @@
 package bookchunker
 
 import (
+	"os"
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 // 中文教科书片段，约 2000 字符，3 个段落（两个空行分隔）。
@@ -86,6 +88,22 @@ func TestChunkDeterministic(t *testing.T) {
 	for i := range a {
 		if a[i].Text != b[i].Text || a[i].TokenCount != b[i].TokenCount {
 			t.Fatalf("chunk %d differs across runs", i)
+		}
+	}
+}
+
+func TestChunkProducesValidUTF8(t *testing.T) {
+	buf, err := os.ReadFile("testdata/cn_textbook_excerpt.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	chunks, err := Chunk(string(buf), DefaultOptions())
+	if err != nil {
+		t.Fatalf("chunk: %v", err)
+	}
+	for i, chunk := range chunks {
+		if !utf8.ValidString(chunk.Text) {
+			t.Fatalf("chunk %d is not valid UTF-8: %q", i, chunk.Text)
 		}
 	}
 }
