@@ -24,6 +24,7 @@ import (
 	apihttp "arkloop/services/api/internal/http"
 	"arkloop/services/api/internal/http/accountapi"
 	"arkloop/services/api/internal/jobs"
+	"arkloop/services/api/internal/kbingest"
 	"arkloop/services/api/internal/migrate"
 	"arkloop/services/api/internal/personas"
 	"arkloop/services/api/internal/personasync"
@@ -31,6 +32,7 @@ import (
 	"arkloop/services/api/internal/skillseed"
 	sharedconfig "arkloop/services/shared/config"
 	"arkloop/services/shared/discordbot"
+	"arkloop/services/shared/embedding"
 	"arkloop/services/shared/objectstore"
 	sharedredis "arkloop/services/shared/redis"
 	"arkloop/services/shared/telegrambot"
@@ -840,6 +842,26 @@ func (a *Application) Run(ctx context.Context) error {
 		Pool:                     pool,
 	})
 
+	var kbIngestService *kbingest.Service
+	if a.config.KBDebugToken != "" && a.config.DoubaoEmbedAPIKey != "" && pool != nil {
+		kbRepo, err := data.NewKBChunksRepository(pool)
+		if err != nil {
+			return fmt.Errorf("kb_chunks repo: %w", err)
+		}
+		doubao := embedding.NewDoubao(embedding.DoubaoConfig{
+			BaseURL:    a.config.DoubaoEmbedBaseURL,
+			APIKey:     a.config.DoubaoEmbedAPIKey,
+			Model:      a.config.DoubaoEmbedModel,
+			BatchSize:  a.config.DoubaoEmbedBatchSize,
+			MaxRetries: 3,
+			Dim:        kbRepo.Dim(),
+		})
+		kbIngestService, err = kbingest.New(doubao, kbRepo)
+		if err != nil {
+			return fmt.Errorf("kbingest: %w", err)
+		}
+	}
+
 	server := &http.Server{
 		Handler: apihttp.NewHandler(apihttp.HandlerConfig{
 			Pool:                         pool,
@@ -946,6 +968,8 @@ func (a *Application) Run(ctx context.Context) error {
 			},
 			RepoPersonas:       repoPersonas,
 			PersonaSyncTrigger: personaSyncManager,
+			KBIngestService:    kbIngestService,
+			KBDebugToken:       a.config.KBDebugToken,
 		}),
 		ReadHeaderTimeout: 5 * time.Second,
 		WriteTimeout:      60 * time.Second,
