@@ -87,6 +87,21 @@
 48. As a Linked KB 的老师, I want persona 在写回 exam 前显示"将写入 exam（课程：《X》、知识点：《Y》）"的明确提示, so that 我清楚这步会改动 exam 数据，不会误操作。
 49. As a 集成模式由 Linked 转为 Standalone（或反向）的诉求, I want 系统直接告诉我"KB 创建后模式不可变，请新建一个 KB", so that 不会被假承诺误导，知道走正确路径。
 
+### Option 2: 直接出题/组卷（命题技能 + 已有题样本，无 KB）
+
+> 这条流是 Option 1（"上传书籍 → 知识库 → 出题/组卷"）的补充。**不需要上传任何教材**：靠老师装的"命题技能"（如《妇产科国考命题专家》）+ exam 已有题做样本锚点驱动 AI 出题。仅在 Linked 模式（`ARKLOOP_EXAM_INTEGRATION_ENABLED=true`）下提供，Standalone 部署看不见这条流。
+
+50. As a 老师, I want 在工作区里安装一份"命题技能"（如《妇产科国考命题专家》）, so that AI 出题时按该领域权威风格输出（A1-A4 题型、医学命题规范、解析风格），而不是泛泛 LLM 通用风格。
+51. As a 老师, I want 进入"命题专家"persona 时它自动列出 profile 已装的命题技能让我选一个, so that 不需要每次手敲 skill_key。
+52. As a 老师, I want 选定命题技能后，persona 用一句话和我确认要在 exam 哪个课程下出题, so that 后续操作 scope 限定在课程内，候选知识点和种子题只来自该课程。
+53. As a 老师, I want 在 exam 中按知识点 / 难度 / 题型 / pattern_tag（A1-A4 等）筛选已有题作为本次出题的"参考样本", so that AI 能学到这门课已有题的命题水准、用词风格、解析表达。
+54. As a 老师, I want AI 出的新题 `pattern_tag` 必须和我选的参考样本一致（参考是 A2 → 新题也只能是 A2）, so that 题型分布稳定，不会被 AI 偷偷换成简单题型。新题 `pattern_tag` 不一致时 persona 把不合规题展示给我，让我选"重生成"或"放过这道"，**绝不静默修正**。
+55. As a 老师, I want 当我选的知识点下没有任何已有题, persona 明确拒绝并引导我"先去 exam-agent 录入几道再回来", so that 不会让 AI 在没有水准锚点的情况下野蛮发挥（这是这条流的强约束，不允许"无种子 fallback 模式"）。
+56. As a 老师, I want 生成完的题逐题预览，确认后批量写回 exam（沿用 Linked KB 的 `POST /api/questions/batch` 端点）, so that 这套生成的题立刻进 exam 题库可用；写入时 `pattern_tag` 也一并存进 exam 的 questions 表。
+57. As a 老师, I want 累够题后用一句话触发组卷（`exam_build_paper`）, so that 这次 session 一站式从生成走到组卷出货，不用再切到别的 persona。
+58. As a 平台运维, I want 命题技能必须在 `skill.yaml` 显式声明 `category: item-writing`、`pattern_tags`、`target_question_types`、`subject_tags` 这几个字段, so that worker 加载时能校验、persona 启动时能筛选展示，未声明的"命题技能"不会被错误使用。
+59. As a 用户, I want 没有装任何命题技能时进 persona, persona 友好提示我"去 console-lite 知识库/技能页装一个 item-writing 类技能再来", so that 不被空白 selector 困扰。
+
 ## Implementation Decisions
 
 ### 范围与归属
@@ -257,6 +272,65 @@ ARKLOOP_EXAM_BASE_URL=https://exam.example.edu     # required when enabled
   - Linked KB 不做题库/试卷 UI——老师去 exam 前台看
   - 进度通过 polling `GET .../documents/:id` 实现（不引入新 SSE 通道）
 
+### Option 2: 直接出题/组卷（命题技能 + 已有题样本）
+
+> 这是本 PRD 在 M2 阶段并入的第二条独立流，**不依赖 KB**。主流程是"老师选命题技能 → 选课程 → 选种子题 → AI 按技能风格出新题 → 写回 exam → 组卷"。仅在 Linked 模式下提供。
+
+#### O2-A. 新 persona `exam-builder-agent`
+
+- 文件：`src/personas/exam-builder-agent/{persona.yaml, prompt.md}`
+- `selector_name`："命题专家"；`selector_order=7`；`user_selectable` 由 `ARKLOOP_EXAM_INTEGRATION_ENABLED` 决定（沿用 `exam-agent` 的过滤模式）
+- 工作流（每步在 prompt 里写死）：
+  1. 列出 profile 已装的 `category=item-writing` skills；多个让老师选，单个直接用，0 个引导去装
+  2. 用 `load_skill(skill_key)` 把 SKILL.md 注入对话历史
+  3. `ask_user` 确认 exam 课程（候选可由 skill 的 `subject_tags` 与 exam 课程名做粗匹配建议）
+  4. 老师说"在 X 知识点出 N 道 A2 题"——persona 调 `exam_list_seed_questions(knowledge_point_id, type?, difficulty?, pattern_tag?)` 列候选；老师勾选种子题
+  5. 调 `exam_build_questions(seed_question_ids[], skill_key, count<=5)`；返回每道新题逐题 `show_widget` 给老师
+  6. 老师 confirm → `exam_save_questions(questions[])` 写回 exam（Endpoint 3）；部分失败时持续展示具体 error_code / error_message
+  7. 累够题后老师说"组卷"→ `exam_build_paper(course_id, spec, seed?, name)`；写回 exam Endpoint 4；同时给一份 markdown 副本
+
+#### O2-B. 命题技能（item-writing skill）格式标准化
+
+`skill.yaml` 在 ArkLoop 现有字段（`skill_key, version, display_name, description, instruction_path`）基础上，**新增以下字段**（仅 `category=item-writing` 类技能必填）：
+
+```yaml
+category: item-writing                    # 必填，标识技能用途
+subject_tags: ["妇产科", "医学"]            # 多 skill 时筛选/课程匹配建议
+pattern_tags: ["A1", "A2", "A3", "A4"]    # 该技能输出哪些 pattern_tag
+target_question_types: ["single_choice"]  # 该技能产出哪种 question.type
+```
+
+**校验位置**：`shared/skillstore` 加载 skill 时校验 `category=item-writing` 必有上述字段，缺失则该 skill 不进 selector（普通 chat persona 仍可用，向后兼容）。
+
+**首发 skill**：`src/skills/gyn-medical-exam/{SKILL.md, skill.yaml}`，由现有 `src/skills/exam-build/final_gyn_exam__skill_md.md` 重命名 + 补 yaml 而来。
+
+#### O2-C. `pattern_tag` 字段全链路
+
+- **exam 后端**：`questions` 表新增 `pattern_tag TEXT NULL` 列；`GET /api/questions` 接受 `pattern_tag` 作 query filter，返回值中带该字段；`POST /api/questions/batch` 接受 `pattern_tag` 作 per-item 字段（这部分通过扩 `docs/integrations/exam-api.md` 锁进 Spike S2 合约冻结，**和 M2a 同一份合约 PR 提交给 exam 团队**）
+- **ArkLoop 端**：`questionstore.Question` 结构加 `PatternTag string`；`examstore` 透传；`exam_list_seed_questions` 把它作可选 filter；`exam_build_questions` 工具内**强校验**——LLM 返回的每道题 `pattern_tag` 必须等于对应种子题，否则该题进 SaveResult.Failed 并附 `pattern_tag_mismatch` 错码
+- **prompt 软约束**：`exam_build_questions` 工具自己拼 LLM prompt 时，把"题型必须保持 X"写进硬约束（双保险，prompt 让 LLM 大概率合规，代码兜底防漂移）
+
+#### O2-D. 4 个新 worker tools（与现有 `exam_*` 同前缀）
+
+| 工具 | 说明 |
+|------|------|
+| `exam_list_seed_questions` | 内部走 `examstore.ListReferenceQuestions`，过滤 + 分页 |
+| `exam_build_questions` | 调 LLM 出题，强校验 pattern_tag，**不写库**——返给 persona 让老师 confirm |
+| `exam_save_questions` | 内部走 `examstore.SaveQuestions`（Endpoint 3），返回 SaveResult 含 created/failed |
+| `exam_build_paper` | 内部组卷：拉 pool（`examstore.ListQuestionsForPaperPool`）→ `papercompose.Compose` 纯函数抽样 → ShortageWarning 时返给 persona → 老师 confirm 后 `examstore.SavePaper` |
+
+工具注册同样受 `ARKLOOP_EXAM_INTEGRATION_ENABLED` 开关控制。
+
+#### O2-E. 老师无种子题时的处理
+
+由 `exam_build_questions` 工具拒绝（`seed_required` 错码），persona prompt 写明引导话术："该知识点下还没有可参考的种子题。请先用『题库助手』（exam-agent）录入几道，再回来用我做仿题。"——这是这条流的硬边界，**绝不 fallback 到无种子模式**（避免与 exam-agent 职责重叠）。
+
+#### O2-F. console-lite 与 Option 2
+
+- Persona selector 把 `exam-builder-agent` 列进去（条件：开关 on）
+- "技能"管理页（如已有则复用；未有则单独一轮设计）：让老师能看到 / 装 / 卸 item-writing 类 skill；本 PRD 不强制要求"技能"页落地，作为下游优化项；底线：老师能通过 ClawHub 装 skill 即可
+- 不引入新的"命题专家"主页——所有交互走 chat 即可
+
 ### 对 exam 系统的依赖（**仅 Linked 模式必需**）
 
 本 PRD 的 standalone 模式**不依赖 exam**，可独立交付。Linked 模式实施前 exam 后端需开放以下端点（写入按老师 OIDC token 鉴权）：
@@ -264,16 +338,20 @@ ARKLOOP_EXAM_BASE_URL=https://exam.example.edu     # required when enabled
 | 端点 | 用途 |
 |------|------|
 | `GET /api/knowledge-points?course_id=` | 列知识点 |
-| `GET /api/questions?knowledge_point_id=&type=&difficulty=&limit=&offset=` | 拉参考题 / 组卷题池 |
-| `POST /api/questions/batch` | 批量写入（支持部分失败） |
+| `GET /api/questions?knowledge_point_id=&type=&difficulty=&pattern_tag=&limit=&offset=` | 拉参考题 / 组卷题池 / Option 2 种子题筛选 |
+| `POST /api/questions/batch` | 批量写入（支持部分失败；payload 含 `pattern_tag` 字段） |
 | `POST /api/papers` | 写入组好的试卷 + 题目映射 |
 
+**额外 schema 改动**（与 4 端点合约一并冻结）：exam 侧 `questions` 表新增 `pattern_tag TEXT NULL` 列，UI 是否暴露由 exam 团队决定（对 ArkLoop 不强制要求）。
+
 > **里程碑建议**：
-> - **M0（3-4 天，打地基）**：chunker + Doubao embedder + pgvector 一张表 + 2 个 debug HTTP endpoint，验证 ingest/search 链路通透，把 pgvector 上线/compose 改动压一次。详见 `docs/superpowers/specs/2026-05-21-book-kb-rag-design.md`。
-> - **M1（不阻塞 exam 集成、可独立交付）**：完整 KB schema + PDF 摄入 + `kb_search` + `kb_draft_questions` + Standalone QuestionStore + 组卷 + Standalone UI。部署级开关默认 false。
-> - **M2（待 exam 端点 ready）**：加 `examstore` 实现 + 部署级开关 + Linked KB 模式 + UI 上的 Linked 选项。
-> - **M1 启动前必做的 spike**：S1 PDF 解析可行性（PyMuPDF + Tesseract 中文质量），S2 exam 后端合约对齐。
-> - 三阶段对外接口稳定，M1→M2 只是 QuestionStore 多一个实现 + UI 多一个选项，无破坏性改动。
+> - **M0（已交付）**：chunker + Doubao embedder + pgvector 一张表 + 2 个 debug HTTP endpoint，验证 ingest/search 链路通透，把 pgvector 上线/compose 改动压一次。详见 `docs/superpowers/specs/2026-05-21-book-kb-rag-design.md`。
+> - **M1.0 / M1.1（已交付）**：完整 KB schema（含 `integration_mode` / `exam_course_id` 字段提前埋） + PDF 摄入 + `kb_search` + console-lite KB 管理页 + book-tutor-agent 仅 KB 检索能力。
+> - **M1.2 / M1.3（待开始）**：`kb_draft_questions` + Standalone QuestionStore + 组卷 + Standalone UI；不依赖 exam，与 M2a/M2b 解耦，可独立排期。
+> - **M2a（待开始，统一吞掉原 M2-prep 范围）**：部署级开关 `ARKLOOP_EXAM_INTEGRATION_ENABLED` + `questionstore` 接口包 + KB `visibility` 字段 + mime 白名单 + blob 引用计数 + examstore 真实现 + Linked KB 模式（kb.integration_mode UI、TOC widget 流）+ Spike S2 4 端点合约冻结（含 `pattern_tag` 字段）。详见 `docs/superpowers/specs/2026-05-23-book-kb-rag-m2a-design.md`。
+> - **M2b（依赖 M2a 的 examstore + skill 校验骨架）**：Option 2 全链路——`exam-builder-agent` persona、命题技能标准化、4 个新 `exam_*` 工具、`pattern_tag` 全链路校验、`gyn-medical-exam` 首发 skill。M2a 设计与 M2b 设计可以并行写，实施串行（M2b 等 M2a examstore PR merge）。详见 `docs/superpowers/specs/2026-05-23-book-kb-rag-m2b-design.md`。
+> - **M1 启动前必做的 spike**：S1 PDF 解析可行性（PyMuPDF + Tesseract 中文质量，已完成），S2 exam 后端合约对齐（含 `pattern_tag`，作为 M2a 启动前置）。
+> - 各阶段对外接口稳定，M1→M2a 只是 QuestionStore 多一个实现 + UI 多一个选项；M2a→M2b 只是新增一个 persona + 4 个工具 + skill 元数据扩字段，无破坏性改动。
 
 ### 关键架构约束
 
@@ -336,6 +414,17 @@ ARKLOOP_EXAM_BASE_URL=https://exam.example.edu     # required when enabled
   - book-tutor-agent 上传/出题/组卷链路完整可走（用 localstore）
   - `exam-agent` persona 不出现在 selector 列表
 - **"部分失败"处理**（用户故事 23）：localstore 和 examstore 两个实现都必须覆盖。
+
+### Option 2 (skill-driven item building) 测试边界
+
+- **`exam_build_questions` 工具单元测试**：注入 fake `examstore` + fake LLM client，断言：
+  - skill content 通过 `load_skill` 在工具内被读取并拼到 LLM prompt
+  - LLM 返回每道题的 `pattern_tag` 与对应种子题的 `pattern_tag` 一致 → 接受；不一致 → 工具返回包含 `pattern_tag_mismatch` 的 per-item 错误，老师侧可见
+  - 没有种子题（`seed_question_ids` 为空）时工具直接返 `seed_required` 错码，不调 LLM
+- **`exam_list_seed_questions` / `exam_save_questions` / `exam_build_paper`**：薄壳工具，单元测试覆盖参数转 examstore 调用 + 错误冒泡即可，重复 examstore 自身测试无价值
+- **skillstore 校验**：单元测试 `category=item-writing` 类 skill 必填字段缺失时加载失败、合法字段时正确解析 `pattern_tags` / `target_question_types`
+- **`exam-builder-agent` persona "条件出现"**：startup test 验证 `ARKLOOP_EXAM_INTEGRATION_ENABLED=false` 时该 persona 不在 `/v1/personas` 列表（与 `exam-agent` 的开关一致行为）
+- **gyn-medical-exam skill smoke**：装 skill → 启 persona → list seed → build → 验证产出 5 道题的 `pattern_tag` 全等于种子；不要求 LLM 输出"高质量"，只要求结构合规
 
 ## Out of Scope
 
