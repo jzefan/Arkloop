@@ -1,0 +1,50 @@
+=== Spike S1 Evaluation Report ===
+File: fuchan-10.pdf (511 pages)
+
+[Heading detection]
+  p24 '第一章…' type✓ path✗
+  p29 '第二章…' type✓ path✗
+  p44 '第三章…' type✓ path✗
+  p59 '第四章…' type✓ path✗
+  p72 '第五章…' type✓ path✗
+  p29 '第一节…' type✓ path✗
+  p36 '第三节…' type✓ path✗
+  p42 '第五节…' type✓ path✗
+  p44 '第一节…' type✓ path✗
+  p52 '第三节…' type✓ path✗
+  Correctly typed as heading: 10/10 = 100%
+  Correct heading_path:        0/10 = 0%
+
+[Text extraction order (multi-column)]
+  This is a manual check. For each page below, open the PDF + parsed.json side by side
+  and decide whether the parsed paragraphs read in source order.
+
+  p51 (two-column dense theory (ch.3)): reading order correct? [y/n]   p81 (two-column theory (ch.6)): reading order correct? [y/n]   p111 (two-column theory (ch.9 medical complications)): reading order correct? [y/n]   p121 (two-column theory (ch.9 continued)): reading order correct? [y/n]   p141 (two-column theory (ch.10 fetal abnormalities)): reading order correct? [y/n]   Correct reading order: 5/5 = 100%
+
+[OCR (scanned pages)]
+  No scanned pages in rubric.
+
+[Image extraction]
+  p32 '图' ✓
+  p92 '图' ✓
+  p174 '图' ✓
+  p225 '图' ✓
+  p289 '图' ✓
+  p366 '图' ✓
+  Images detected: 6/6 = 100%
+
+[Table extraction]
+  p373 rows 1/5 cols 5/4 ✗
+  p311 rows 1/5 cols 2/4 ✗
+  p429 rows 2/5 cols 5/4 ✗
+  p473 rows 1/5 cols 4/4 ✗
+  p269: NOT FOUND
+  Tables extracted: 0/5 = 0%
+
+
+[Elapsed]
+  65.1s for 511 pages = 7.8 pages/s
+
+=== Recommendation ===
+- Tesseract OCR acceptable for M1.1; revisit only if user complaints surface.
+- Formula extraction unreliable; document as a known M1.1 limitation; deferred LaTeX work goes to v2.

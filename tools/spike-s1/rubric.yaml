@@ -1,44 +1,61 @@
-# Spike S1 evaluation rubric.
-# Edit the page-number lists to point at locations in YOUR sample PDF
-# that you want to manually score. evaluate.py walks these lists.
+# Spike S1 evaluation rubric — concrete samples for《妇产科学》第10版 (511 pages, 38.5MB)
+# Generated from real TOC + parsed.json analysis on 2026-05-23.
 
 heading_detection:
-  # Sample 20 actual chapter/section headings from the book.
-  # For each, look up the corresponding block in parsed.json (by page
-  # and approximate text) and judge: was the heading correctly typed
-  # ("heading", not "paragraph")? Was heading_path correct?
+  # 5 chapter (L1) + 5 section (L2) headings sampled from the real TOC.
+  # NOTE: PDF TOC uses U+3000 ideographic spaces; parser preserves them.
   samples:
-    - {page: 29, expected_text: "第二章 女性生殖系统发育与解剖", expected_path: ["第一章 力学基础"]}
-    - {page: 14, expected_text: "1.1 质点运动", expected_path: ["第一章 力学基础", "1.1 质点运动"]}
-    # Add 18 more, distributed across chapters.
+    - {page: 24, expected_text: "第一章", expected_path: ["第一章　绪论"]}
+    - {page: 29, expected_text: "第二章", expected_path: ["第二章　女性生殖系统发育与解剖"]}
+    - {page: 44, expected_text: "第三章", expected_path: ["第三章　女性生殖系统生理"]}
+    - {page: 59, expected_text: "第四章", expected_path: ["第四章　妊娠生理"]}
+    - {page: 72, expected_text: "第五章", expected_path: ["第五章　妊娠诊断"]}
+    - {page: 29, expected_text: "第一节", expected_path: ["第二章　女性生殖系统发育与解剖", "第一节　女性生殖器官的发育"]}
+    - {page: 36, expected_text: "第三节", expected_path: ["第二章　女性生殖系统发育与解剖", "第三节　血管、淋巴及神经"]}
+    - {page: 42, expected_text: "第五节", expected_path: ["第二章　女性生殖系统发育与解剖", "第五节　邻近器官"]}
+    - {page: 44, expected_text: "第一节", expected_path: ["第三章　女性生殖系统生理", "第一节　女性生命各阶段生理变化"]}
+    - {page: 52, expected_text: "第三节", expected_path: ["第三章　女性生殖系统生理", "第三节　子宫内膜及生殖器其他部位的周期性变化"]}
 
 multi_column_pages:
-  # List 5 pages with notable multi-column layout (physics texts often
-  # have side-by-side problem statements + figures).
+  # 5 pages detected as two-column by bbox-clustering on the source PDF.
+  # Operator visually checks: did parsed blocks read in column-then-row order?
   samples:
-    - {page: 45, description: "Two-column theory + problem layout"}
-    - {page: 120, description: "Three-column glossary"}
-    # Add 3 more.
+    - {page: 51, description: "two-column dense theory (ch.3)"}
+    - {page: 81, description: "two-column theory (ch.6)"}
+    - {page: 111, description: "two-column theory (ch.9 medical complications)"}
+    - {page: 121, description: "two-column theory (ch.9 continued)"}
+    - {page: 141, description: "two-column theory (ch.10 fetal abnormalities)"}
 
 ocr_pages:
-  # List ANY scanned pages you can find in the book. If none, set to [].
-  samples:
-    - {page: 187, description: "Scanned reprint of historical photo + caption"}
+  # This textbook is fully text-extractable (parser reported 0 scanned pages).
+  # Tesseract chi_sim quality could not be evaluated on THIS book.
+  # M1.1 OCR decision needs a separate scanned PDF if/when available.
+  samples: []
 
 images_with_captions:
-  # List images you'd expect to be extracted (with their caption text).
+  # 6 content pages with 1-3 image blocks (avoiding cover/TOC/back-matter
+  # which over-report from vector decorations).
+  # Auto-score: is there an image block on the page in parsed.json?
+  # Caption matching is NOT auto-scored (parser currently sets caption=None).
   samples:
-    - {page: 79, expected_caption_contains: "杨氏双缝"}
-    - {page: 156, expected_caption_contains: "电场线"}
-    # Add 12+ if the book is figure-heavy.
+    - {page: 32,  expected_caption_contains: "图"}
+    - {page: 92,  expected_caption_contains: "图"}
+    - {page: 174, expected_caption_contains: "图"}
+    - {page: 225, expected_caption_contains: "图"}
+    - {page: 289, expected_caption_contains: "图"}
+    - {page: 366, expected_caption_contains: "图"}
 
 tables:
-  # List table locations.
+  # 5 tables from real content pages (pages 16-23 are TOC and over-detected).
+  # pdfplumber dims are auto-checked with ±1 tolerance.
   samples:
-    - {page: 80, expected_dims: {rows: 5, cols: 3}, description: "Experimental data table"}
+    - {page: 373, expected_dims: {rows: 5, cols: 4}, description: "later-chapter clinical data table"}
+    - {page: 311, expected_dims: {rows: 5, cols: 4}, description: "chapter 23-region table"}
+    - {page: 429, expected_dims: {rows: 5, cols: 4}, description: "oncology-region table"}
+    - {page: 473, expected_dims: {rows: 5, cols: 4}, description: "appendix-region table"}
+    - {page: 269, expected_dims: {rows: 4, cols: 3}, description: "mid-chapter table"}
 
 formulas:
-  # List formula locations. For each, manually judge after parsing:
-  # was the formula text intact? Was it LaTeX-form (rare for PyMuPDF)?
-  samples:
-    - {page: 78, expected_text: "Δy = λL/d", description: "Interference fringe spacing"}
+  # Obstetrics textbook is low on formulas; we sampled none here.
+  # A formula-heavy STEM textbook would need a separate rubric.
+  samples: []
