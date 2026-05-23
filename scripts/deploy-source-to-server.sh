@@ -328,8 +328,11 @@ if not seen:
         out.append('')
     out.append(f'{key}={value}')
 path.write_text('\\n'.join(out) + '\\n', encoding='utf-8')
-PY
-docker compose up -d --build web" || {
+PY" || {
+  echo "==> Failed to set ARKLOOP_WEB_PORT in .env" >&2
+  exit 1
+}
+ssh_cmd "cd ${REMOTE_DIR} && docker compose up -d --build web" || {
   echo "==> Web startup failed. Checking logs..."
   ssh_cmd "cd ${REMOTE_DIR} && docker compose ps"
   ssh_cmd "cd ${REMOTE_DIR} && docker compose logs --tail 100 web gateway api"
