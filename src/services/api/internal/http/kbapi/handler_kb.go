@@ -29,6 +29,8 @@ type handlerCtx struct {
 	embedder       embeddingForSearch
 	maxUploadBytes int64
 
+	examIntegrationEnabled bool
+
 	authService           *auth.Service
 	accountMembershipRepo *data.AccountMembershipRepository
 	apiKeysRepo           *data.APIKeysRepository
@@ -71,20 +73,21 @@ type HandlerCtxExt = handlerCtx
 
 func NewHandlerCtx(deps Deps) *handlerCtx {
 	return &handlerCtx{
-		kbStore:               deps.KnowledgeBasesRepo,
-		docStore:              deps.KBDocumentsRepo,
-		chunksRepo:            deps.KBChunksRepo,
-		membership:            &WorkspaceMembership{Workspaces: deps.WorkspaceRegistriesRepo},
-		blob:                  &WorkspaceBlobAdapter{Store: deps.BlobStore},
-		jobs:                  deps.JobEnqueuer,
-		embedder:              deps.Embedder,
-		maxUploadBytes:        deps.MaxUploadBytes,
-		authService:           deps.AuthService,
-		accountMembershipRepo: deps.AccountMembershipRepo,
-		apiKeysRepo:           deps.APIKeysRepo,
-		auditWriter:           deps.AuditWriter,
-		profileRepo:           deps.ProfileRegistriesRepo,
-		workspaceRepo:         deps.WorkspaceRegistriesRepo,
+		kbStore:                deps.KnowledgeBasesRepo,
+		docStore:               deps.KBDocumentsRepo,
+		chunksRepo:             deps.KBChunksRepo,
+		membership:             &WorkspaceMembership{Workspaces: deps.WorkspaceRegistriesRepo},
+		blob:                   &WorkspaceBlobAdapter{Store: deps.BlobStore},
+		jobs:                   deps.JobEnqueuer,
+		embedder:               deps.Embedder,
+		maxUploadBytes:         deps.MaxUploadBytes,
+		examIntegrationEnabled: deps.ExamIntegrationEnabled,
+		authService:            deps.AuthService,
+		accountMembershipRepo:  deps.AccountMembershipRepo,
+		apiKeysRepo:            deps.APIKeysRepo,
+		auditWriter:            deps.AuditWriter,
+		profileRepo:            deps.ProfileRegistriesRepo,
+		workspaceRepo:          deps.WorkspaceRegistriesRepo,
 	}
 }
 
@@ -117,9 +120,12 @@ func writeErr(w nethttp.ResponseWriter, status int, code, msg string) {
 }
 
 type createKBReq struct {
-	Name         string `json:"name"`
-	WorkspaceRef string `json:"workspace_ref"`
-	Description  string `json:"description"`
+	Name            string  `json:"name"`
+	WorkspaceRef    string  `json:"workspace_ref"`
+	Description     string  `json:"description"`
+	Visibility      string  `json:"visibility"`       // "" -> workspace_member
+	IntegrationMode string  `json:"integration_mode"` // "" -> standalone
+	ExamCourseID    *string `json:"exam_course_id"`   // required iff mode=exam
 }
 
 func handleCreateKB(h *handlerCtx) nethttp.HandlerFunc {
@@ -140,6 +146,32 @@ func handleCreateKB(h *handlerCtx) nethttp.HandlerFunc {
 			writeErr(w, nethttp.StatusBadRequest, "kb.missing_field", "name is required")
 			return
 		}
+		// visibility validation
+		switch req.Visibility {
+		case "", "workspace_member", "private":
+		default:
+			writeErr(w, nethttp.StatusBadRequest, "kb.invalid_visibility", "visibility must be workspace_member or private")
+			return
+		}
+		// integration_mode validation
+		switch req.IntegrationMode {
+		case "", "standalone":
+		case "exam":
+			if !h.examIntegrationEnabled {
+				writeErr(w, nethttp.StatusBadRequest, "kb.integration_disabled",
+					"本部署未启用 exam 集成，请联系管理员或选择独立模式")
+				return
+			}
+			if req.ExamCourseID == nil || strings.TrimSpace(*req.ExamCourseID) == "" {
+				writeErr(w, nethttp.StatusBadRequest, "kb.missing_exam_course",
+					"选择绑定 exam 课程模式时必须指定 exam_course_id")
+				return
+			}
+		default:
+			writeErr(w, nethttp.StatusBadRequest, "kb.invalid_integration_mode",
+				"integration_mode must be standalone or exam")
+			return
+		}
 		if req.WorkspaceRef == "" {
 			ws, err := h.ensureDefaultWorkspace(r.Context(), a)
 			if err != nil {
@@ -153,11 +185,14 @@ func handleCreateKB(h *handlerCtx) nethttp.HandlerFunc {
 			return
 		}
 		kb, err := h.kbStore.Create(r.Context(), data.KBCreate{
-			AccountID:    a.AccountID,
-			WorkspaceRef: req.WorkspaceRef,
-			Name:         req.Name,
-			Description:  req.Description,
-			CreatedBy:    &a.UserID,
+			AccountID:       a.AccountID,
+			WorkspaceRef:    req.WorkspaceRef,
+			Name:            req.Name,
+			Description:     req.Description,
+			Visibility:      req.Visibility,
+			IntegrationMode: req.IntegrationMode,
+			ExamCourseID:    req.ExamCourseID,
+			CreatedBy:       &a.UserID,
 		})
 		if err != nil {
 			if errors.Is(err, data.ErrKBDuplicateName) {
@@ -198,7 +233,11 @@ func handleListKB(h *handlerCtx) nethttp.HandlerFunc {
 		}
 		items := make([]map[string]any, 0, len(kbs))
 		for i := range kbs {
-			items = append(items, kbResponse(&kbs[i]))
+			kb := &kbs[i]
+			if kb.Visibility == "private" && (kb.CreatedBy == nil || *kb.CreatedBy != a.UserID) {
+				continue
+			}
+			items = append(items, kbResponse(kb))
 		}
 		writeJSON(w, nethttp.StatusOK, map[string]any{"items": items})
 	}
@@ -302,20 +341,28 @@ func loadAuthorizedKB(w nethttp.ResponseWriter, r *nethttp.Request, h *handlerCt
 		writeErr(w, nethttp.StatusForbidden, "auth.no_workspace_access", "no access to this workspace")
 		return nil, false
 	}
+	if !ensureKBVisible(w, kb, a) {
+		return nil, false
+	}
 	return kb, true
 }
 
 func kbResponse(kb *data.KnowledgeBase) map[string]any {
-	return map[string]any{
+	resp := map[string]any{
 		"id":               kb.ID,
 		"name":             kb.Name,
 		"workspace_ref":    kb.WorkspaceRef,
 		"description":      kb.Description,
+		"visibility":       kb.Visibility,
 		"integration_mode": kb.IntegrationMode,
 		"document_count":   kb.DocumentCount,
 		"created_at":       kb.CreatedAt,
 		"updated_at":       kb.UpdatedAt,
 	}
+	if kb.ExamCourseID != nil {
+		resp["exam_course_id"] = *kb.ExamCourseID
+	}
+	return resp
 }
 
 func (h *handlerCtx) withActor(next nethttp.HandlerFunc) nethttp.HandlerFunc {

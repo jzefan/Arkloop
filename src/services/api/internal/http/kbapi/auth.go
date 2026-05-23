@@ -4,6 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	nethttp "net/http"
+
+	"arkloop/services/api/internal/data"
 
 	"github.com/google/uuid"
 )
@@ -29,4 +32,17 @@ func ensureWorkspaceMember(ctx context.Context, c membershipChecker, accountID u
 		return errNoWorkspaceAccess
 	}
 	return nil
+}
+
+// ensureKBVisible enforces KB.Visibility on top of workspace membership.
+// Returns true if the actor can see the KB; otherwise writes 404 and returns false.
+func ensureKBVisible(w nethttp.ResponseWriter, kb *data.KnowledgeBase, a actor) bool {
+	if kb.Visibility != "private" {
+		return true
+	}
+	if kb.CreatedBy != nil && *kb.CreatedBy == a.UserID {
+		return true
+	}
+	writeErr(w, nethttp.StatusNotFound, "kb.not_found", "kb not found")
+	return false
 }
