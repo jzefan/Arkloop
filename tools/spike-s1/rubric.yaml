@@ -8,7 +8,7 @@ heading_detection:
   # and approximate text) and judge: was the heading correctly typed
   # ("heading", not "paragraph")? Was heading_path correct?
   samples:
-    - {page: 12, expected_text: "第一章 力学基础", expected_path: ["第一章 力学基础"]}
+    - {page: 29, expected_text: "第二章 女性生殖系统发育与解剖", expected_path: ["第一章 力学基础"]}
     - {page: 14, expected_text: "1.1 质点运动", expected_path: ["第一章 力学基础", "1.1 质点运动"]}
     # Add 18 more, distributed across chapters.
 
