@@ -51,6 +51,7 @@ func handleSearch(h *handlerCtx) nethttp.HandlerFunc {
 				"chunk_type":   hit.ChunkType,
 				"text":         hit.Text,
 				"score":        hit.Score,
+				"metadata":     hit.Metadata,
 			})
 		}
 		writeJSON(w, nethttp.StatusOK, map[string]any{"hits": items})

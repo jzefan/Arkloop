@@ -296,6 +296,7 @@ export interface LocaleStrings {
     colFilename: string
     colStatus: string
     colChunks: string
+    colContent: string
     colSize: string
     upload: string
     uploading: string
@@ -304,6 +305,7 @@ export interface LocaleStrings {
     search: string
     score: string
     paragraph: (ordinal: number) => string
+    chunkTypes: Record<string, string>
     docDeleteTitle: string
     docDeleteConfirm: (filename: string) => string
     notFound: string

@@ -94,7 +94,7 @@ func TestChunkDeterministic(t *testing.T) {
 
 func TestChunkHandlesSpecialBlockAsSingleChunk(t *testing.T) {
 	doc := bookparser.ParsedDoc{Blocks: []bookparser.Block{
-		{Type: bookparser.BlockTable, Text: "| A | B |\n|---|---|\n| 1 | 2 |"},
+		{Type: bookparser.BlockTable, Text: "| A | B |\n|---|---|\n| 1 | 2 |", Metadata: map[string]any{"page": 3}},
 	}}
 	chunks, _ := Chunk(doc, DefaultOptions())
 	if len(chunks) != 1 {
@@ -102,6 +102,50 @@ func TestChunkHandlesSpecialBlockAsSingleChunk(t *testing.T) {
 	}
 	if chunks[0].ChunkType != string(bookparser.BlockTable) {
 		t.Errorf("expected table type, got %q", chunks[0].ChunkType)
+	}
+	if chunks[0].Metadata["page"] != 3 {
+		t.Errorf("metadata not preserved: %+v", chunks[0].Metadata)
+	}
+}
+
+func TestChunkPreservesMetadataOnSplitParagraph(t *testing.T) {
+	doc := bookparser.ParsedDoc{Blocks: []bookparser.Block{
+		{
+			Type:     bookparser.BlockParagraph,
+			Text:     strings.Repeat("光学实验数据 ", 80),
+			Metadata: map[string]any{"page": 2, "bbox": []any{1, 2, 3, 4}},
+		},
+	}}
+	chunks, err := Chunk(doc, ChunkOptions{MaxTokens: 20, MinTokens: 10, OverlapTokens: 2})
+	if err != nil {
+		t.Fatalf("chunk: %v", err)
+	}
+	if len(chunks) < 2 {
+		t.Fatalf("got %d chunks, want split chunks", len(chunks))
+	}
+	for i, chunk := range chunks {
+		if chunk.Metadata["page"] != 2 {
+			t.Fatalf("chunk %d metadata: %+v", i, chunk.Metadata)
+		}
+	}
+}
+
+func TestChunkDropsHeadingPathWhenInferredRatioLow(t *testing.T) {
+	doc := bookparser.ParsedDoc{
+		Meta: map[string]any{"heading_inferred_ratio": 0.25},
+		Blocks: []bookparser.Block{
+			{Type: bookparser.BlockParagraph, Text: "正文 A", HeadingPath: []string{"误判标题"}},
+			{Type: bookparser.BlockImage, Text: "[Image]", HeadingPath: []string{"误判标题"}},
+		},
+	}
+	chunks, err := Chunk(doc, DefaultOptions())
+	if err != nil {
+		t.Fatalf("chunk: %v", err)
+	}
+	for i, chunk := range chunks {
+		if len(chunk.HeadingPath) != 0 {
+			t.Fatalf("chunk %d heading path should be empty: %+v", i, chunk.HeadingPath)
+		}
 	}
 }
 

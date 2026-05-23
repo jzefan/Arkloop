@@ -41,7 +41,7 @@ func (f fakeAccess) IsActorWorkspaceMember(ctx context.Context, accountID, kbID 
 func TestKBSearchHappyPath(t *testing.T) {
 	kbID := uuid.New()
 	exe := NewExecutor(&fakeChunksRepo{hits: []wdata.KBChunkHit{
-		{DocumentRef: "physics.txt", Ordinal: 3, Text: "光的干涉", Score: 0.91},
+		{DocumentRef: "physics.txt", Ordinal: 3, Text: "光的干涉", Score: 0.91, Metadata: map[string]any{"page": 2}},
 		{DocumentRef: "physics.txt", Ordinal: 4, Text: "杨氏双缝", Score: 0.74},
 	}}, fakeEmbedder{dim: 8}, fakeAccess{allow: true})
 	accountID := uuid.New()
@@ -53,6 +53,10 @@ func TestKBSearchHappyPath(t *testing.T) {
 	hits, _ := result.ResultJSON["hits"].([]map[string]any)
 	if len(hits) != 2 {
 		t.Errorf("got %d hits", len(hits))
+	}
+	meta, _ := hits[0]["metadata"].(map[string]any)
+	if meta["page"] != 2 {
+		t.Fatalf("metadata not returned: %+v", hits[0])
 	}
 }
 

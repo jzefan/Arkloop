@@ -880,7 +880,7 @@ func (a *Application) Run(ctx context.Context) error {
 			BlobStore:               messageAttachmentStore,
 			Embedder:                embedder,
 			JobEnqueuer:             &kbapi.JobQueueEnqueuer{Repo: jobRepo},
-			MaxUploadBytes:          10 * 1024 * 1024,
+			MaxUploadBytes:          100 * 1024 * 1024,
 		})
 	}
 
