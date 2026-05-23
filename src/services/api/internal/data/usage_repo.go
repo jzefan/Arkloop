@@ -314,8 +314,22 @@ func detectUsageHourExpr(db Querier) string {
 	return "strftime('%Y-%m-%dT%H:00:00', created_at)"
 }
 
+// columnExists 探测 usage_records 是否存在指定列。仓库在不同构建中可能
+// 同时面向 Postgres（cloud）或 SQLite（//go:build desktop 链路），先尝试
+// SQL 标准的 information_schema 查询，失败再回退 SQLite 的 PRAGMA。
 func columnExists(db Querier, columnName string) bool {
-	rows, err := db.Query(context.Background(), `PRAGMA table_info(usage_records)`)
+	rows, err := db.Query(context.Background(),
+		`SELECT 1 FROM information_schema.columns
+		 WHERE table_name = 'usage_records' AND column_name = $1
+		 LIMIT 1`,
+		columnName,
+	)
+	if err == nil {
+		defer rows.Close()
+		return rows.Next()
+	}
+
+	rows, err = db.Query(context.Background(), `PRAGMA table_info(usage_records)`)
 	if err != nil {
 		return false
 	}
@@ -323,12 +337,12 @@ func columnExists(db Querier, columnName string) bool {
 
 	for rows.Next() {
 		var (
-			cid int
-			name string
-			columnType string
-			notNull int
+			cid          int
+			name         string
+			columnType   string
+			notNull      int
 			defaultValue any
-			pk int
+			pk           int
 		)
 		if scanErr := rows.Scan(&cid, &name, &columnType, &notNull, &defaultValue, &pk); scanErr != nil {
 			return false
