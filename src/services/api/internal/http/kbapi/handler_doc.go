@@ -15,7 +15,7 @@ import (
 	"github.com/google/uuid"
 )
 
-const defaultMaxUploadBytes int64 = 10 * 1024 * 1024
+const defaultMaxUploadBytes int64 = 100 * 1024 * 1024
 
 func handleUploadDoc(h *handlerCtx) nethttp.HandlerFunc {
 	return func(w nethttp.ResponseWriter, r *nethttp.Request) {
@@ -36,7 +36,7 @@ func handleUploadDoc(h *handlerCtx) nethttp.HandlerFunc {
 		if err := r.ParseMultipartForm(maxBytes); err != nil {
 			var maxErr *nethttp.MaxBytesError
 			if errors.As(err, &maxErr) {
-				writeErr(w, nethttp.StatusRequestEntityTooLarge, "kb.upload_too_large", "uploaded file exceeds 10MB limit")
+				writeErr(w, nethttp.StatusRequestEntityTooLarge, "kb.upload_too_large", "uploaded file exceeds 100MB limit")
 				return
 			}
 			writeErr(w, nethttp.StatusBadRequest, "kb.bad_multipart", "could not parse multipart body")
@@ -52,7 +52,7 @@ func handleUploadDoc(h *handlerCtx) nethttp.HandlerFunc {
 		ext := strings.ToLower(filepath.Ext(header.Filename))
 		mime := mimeFromExt(ext)
 		if mime == "" {
-			writeErr(w, nethttp.StatusUnsupportedMediaType, "kb.unsupported_format", "only .txt and .md are supported in M1.0")
+			writeErr(w, nethttp.StatusUnsupportedMediaType, "kb.unsupported_format", "supported formats: .txt, .md, .pdf, .docx, .png, .jpg, .jpeg, .webp")
 			return
 		}
 		buf := &bytes.Buffer{}
@@ -192,6 +192,16 @@ func mimeFromExt(ext string) string {
 		return "text/plain"
 	case ".md":
 		return "text/markdown"
+	case ".pdf":
+		return "application/pdf"
+	case ".docx":
+		return "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+	case ".png":
+		return "image/png"
+	case ".jpg", ".jpeg":
+		return "image/jpeg"
+	case ".webp":
+		return "image/webp"
 	default:
 		return ""
 	}

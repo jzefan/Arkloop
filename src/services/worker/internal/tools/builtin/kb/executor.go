@@ -123,6 +123,7 @@ func (e *Executor) Execute(ctx context.Context, toolName string, args map[string
 			"chunk_type":   hit.ChunkType,
 			"text":         hit.Text,
 			"score":        hit.Score,
+			"metadata":     hit.Metadata,
 		})
 	}
 	return tools.ExecutionResult{ResultJSON: map[string]any{"hits": out}}

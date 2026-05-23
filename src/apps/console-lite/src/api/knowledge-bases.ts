@@ -40,6 +40,7 @@ export interface SearchHit {
   chunk_type: string
   text: string
   score: number
+  metadata?: Record<string, unknown>
 }
 
 export async function getDefaultKBWorkspace(accessToken: string): Promise<string> {

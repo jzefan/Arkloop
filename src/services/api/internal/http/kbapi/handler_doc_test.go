@@ -69,10 +69,12 @@ func (b *fakeBlobStore) PutBlob(ctx context.Context, workspaceRef, sha256 string
 
 type fakeJobEnqueue struct {
 	called int
+	mimes  []string
 }
 
 func (q *fakeJobEnqueue) EnqueueKBIngest(ctx context.Context, accountID, kbID, docID uuid.UUID, workspaceRef, blobSHA256, mimeType, filename, traceID string) (uuid.UUID, error) {
 	q.called++
+	q.mimes = append(q.mimes, mimeType)
 	return uuid.New(), nil
 }
 
@@ -155,11 +157,48 @@ func TestUploadDocRejectsOversize(t *testing.T) {
 	}
 }
 
+func TestUploadDocAcceptsM11Formats(t *testing.T) {
+	cases := []struct {
+		filename string
+		mime     string
+	}{
+		{"a.pdf", "application/pdf"},
+		{"a.docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"},
+		{"a.png", "image/png"},
+		{"a.jpg", "image/jpeg"},
+		{"a.jpeg", "image/jpeg"},
+		{"a.webp", "image/webp"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.filename, func(t *testing.T) {
+			ctx, docs, blob, jobs, kbStore := newDocCtx(true)
+			acc := uuid.New()
+			kb, _ := kbStore.Create(context.Background(), data.KBCreate{AccountID: acc, WorkspaceRef: "ws", Name: "n"})
+			body, ctType := buildMultipart(t, tc.filename, []byte("payload"))
+			req := httptest.NewRequest("POST", "/v1/knowledge-bases/"+kb.ID.String()+"/documents", body)
+			req.Header.Set("Content-Type", ctType)
+			req.SetPathValue("id", kb.ID.String())
+			req = injectActor(req, acc, uuid.New())
+			w := httptest.NewRecorder()
+			handleUploadDoc(ctx)(w, req)
+			if w.Code != 201 {
+				t.Fatalf("got %d body=%s", w.Code, w.Body.String())
+			}
+			if len(docs.items) != 1 || len(blob.puts) != 1 || jobs.called != 1 {
+				t.Fatalf("unexpected side effects docs=%d blobs=%d jobs=%d", len(docs.items), len(blob.puts), jobs.called)
+			}
+			if jobs.mimes[0] != tc.mime {
+				t.Fatalf("mime got %q, want %q", jobs.mimes[0], tc.mime)
+			}
+		})
+	}
+}
+
 func TestUploadDocRejectsUnsupportedExt(t *testing.T) {
 	ctx, _, _, _, kbStore := newDocCtx(true)
 	acc := uuid.New()
 	kb, _ := kbStore.Create(context.Background(), data.KBCreate{AccountID: acc, WorkspaceRef: "ws", Name: "n"})
-	body, ctType := buildMultipart(t, "a.pdf", []byte("%PDF"))
+	body, ctType := buildMultipart(t, "a.zip", []byte("PK"))
 	req := httptest.NewRequest("POST", "/v1/knowledge-bases/"+kb.ID.String()+"/documents", body)
 	req.Header.Set("Content-Type", ctType)
 	req.SetPathValue("id", kb.ID.String())

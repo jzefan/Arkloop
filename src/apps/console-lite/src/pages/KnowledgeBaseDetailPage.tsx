@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react'
 import { useNavigate, useOutletContext, useParams } from 'react-router-dom'
-import { ArrowLeft, FileText, RefreshCw, Search, Trash2, Upload } from 'lucide-react'
+import { ArrowLeft, FileText, Image as ImageIcon, RefreshCw, Search, Sigma, Table2, Trash2, Upload } from 'lucide-react'
 import {
   deleteDocument,
   getKnowledgeBase,
@@ -48,6 +48,51 @@ function formatDate(value: string, locale: 'zh' | 'en'): string {
   const date = new Date(value)
   if (Number.isNaN(date.getTime())) return value
   return date.toLocaleString(locale === 'zh' ? 'zh-CN' : 'en')
+}
+
+function numberMeta(meta: Record<string, unknown> | undefined, key: string): number | undefined {
+  const value = meta?.[key]
+  return typeof value === 'number' && Number.isFinite(value) ? value : undefined
+}
+
+function blockTypeCounts(doc: KBDocument): Record<string, number> {
+  const raw = doc.parse_meta?.block_type_counts
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {}
+  const out: Record<string, number> = {}
+  for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
+    if (typeof value === 'number' && Number.isFinite(value) && value > 0) out[key] = value
+  }
+  return out
+}
+
+function chunkLabel(tk: { chunkTypes: Record<string, string> }, chunkType: string): string {
+  return tk.chunkTypes[chunkType] ?? chunkType
+}
+
+function chunkIcon(chunkType: string) {
+  switch (chunkType) {
+    case 'image':
+      return <ImageIcon size={13} />
+    case 'table':
+      return <Table2 size={13} />
+    case 'formula':
+      return <Sigma size={13} />
+    default:
+      return <FileText size={13} />
+  }
+}
+
+function metadataSummary(hit: SearchHit): string {
+  const metadata = hit.metadata ?? {}
+  const parts: string[] = []
+  const page = metadata.page
+  if (typeof page === 'number' || typeof page === 'string') parts.push(`p.${page}`)
+  const width = metadata.width
+  const height = metadata.height
+  if ((typeof width === 'number' || typeof width === 'string') && (typeof height === 'number' || typeof height === 'string')) {
+    parts.push(`${width}x${height}`)
+  }
+  return parts.join(' · ')
 }
 
 export function KnowledgeBaseDetailPage() {
@@ -174,7 +219,36 @@ export function KnowledgeBaseDetailPage() {
       key: 'chunks',
       header: tk.colChunks,
       cellClassName: 'whitespace-nowrap tabular-nums',
-      render: (doc) => String(typeof doc.parse_meta?.chunk_count === 'number' ? doc.parse_meta.chunk_count : '--'),
+      render: (doc) => String(numberMeta(doc.parse_meta, 'chunk_count') ?? '--'),
+    },
+    {
+      key: 'content',
+      header: tk.colContent,
+      cellClassName: 'min-w-[200px]',
+      render: (doc) => {
+        const counts = blockTypeCounts(doc)
+        const entries = Object.entries(counts)
+        const total = entries.reduce((sum, [, count]) => sum + count, 0)
+        if (total <= 0) return <span className="text-xs text-[var(--c-text-muted)]">--</span>
+        return (
+          <div className="flex min-w-[180px] flex-col gap-1.5">
+            <div className="flex h-1.5 overflow-hidden rounded-full bg-[var(--c-bg-sub)]">
+              {entries.map(([type, count]) => (
+                <span
+                  key={type}
+                  className={type === 'image' ? 'bg-[var(--c-status-success)]' : type === 'table' ? 'bg-[var(--c-status-warning)]' : type === 'formula' ? 'bg-[var(--c-status-error)]' : 'bg-[var(--c-text-tertiary)]'}
+                  style={{ width: `${Math.max(4, (count / total) * 100)}%` }}
+                />
+              ))}
+            </div>
+            <div className="flex flex-wrap gap-x-2 gap-y-1 text-[11px] text-[var(--c-text-muted)]">
+              {entries.map(([type, count]) => (
+                <span key={type}>{chunkLabel(tk, type)} {count}</span>
+              ))}
+            </div>
+          </div>
+        )
+      },
     },
     {
       key: 'size',
@@ -250,7 +324,7 @@ export function KnowledgeBaseDetailPage() {
                   <input
                     ref={fileInputRef}
                     type="file"
-                    accept=".txt,.md"
+                    accept=".txt,.md,.pdf,.docx,.png,.jpg,.jpeg,.webp"
                     onChange={handleUpload}
                     disabled={uploading}
                     className="hidden"
@@ -320,8 +394,13 @@ export function KnowledgeBaseDetailPage() {
                     className="rounded-lg border border-[var(--c-border-console)] bg-[var(--c-bg-deep2)] p-3"
                   >
                     <div className="mb-1 flex flex-wrap items-center gap-2 text-[11px] text-[var(--c-text-muted)]">
+                      <span className="inline-flex items-center gap-1">
+                        {chunkIcon(hit.chunk_type)}
+                        {chunkLabel(tk, hit.chunk_type)}
+                      </span>
                       <span>{hit.document_ref} · {tk.paragraph(hit.ordinal)}</span>
                       <span>{tk.score}: {hit.score.toFixed(3)}</span>
+                      {metadataSummary(hit) && <span>{metadataSummary(hit)}</span>}
                       {hit.heading_path.length > 0 && <span>{hit.heading_path.join(' / ')}</span>}
                     </div>
                     <p className="text-sm leading-6 text-[var(--c-text-secondary)]">

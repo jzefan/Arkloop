@@ -2,6 +2,7 @@ package data
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -23,6 +24,7 @@ type KBChunkUpsert struct {
 	Text        string
 	TokenCount  int
 	Embedding   []float32
+	Metadata    map[string]any
 }
 
 type KBChunkHit struct {
@@ -36,6 +38,7 @@ type KBChunkHit struct {
 	Text        string
 	TokenCount  int
 	Score       float32
+	Metadata    map[string]any
 }
 
 func NewKBChunksRepository(pool *pgxpool.Pool) (*KBChunksRepository, error) {
@@ -80,16 +83,21 @@ func (r *KBChunksRepository) Upsert(ctx context.Context, rows []KBChunkUpsert) e
 		if chunkType == "" {
 			chunkType = "paragraph"
 		}
-		_, err := r.pool.Exec(ctx, `
+		metadataJSON, err := json.Marshal(nonNilMap(row.Metadata))
+		if err != nil {
+			return fmt.Errorf("marshal chunk metadata kb=%s doc=%s ord=%d: %w", row.KBID, row.DocumentID, row.Ordinal, err)
+		}
+		_, err = r.pool.Exec(ctx, `
 INSERT INTO kb_chunks (kb_id, document_id, ordinal, heading_path, chunk_type, text, token_count, embedding, metadata_json)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, '{}'::jsonb)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb)
 ON CONFLICT (kb_id, document_id, ordinal) DO UPDATE SET
     heading_path = EXCLUDED.heading_path,
     chunk_type   = EXCLUDED.chunk_type,
     text         = EXCLUDED.text,
     token_count  = EXCLUDED.token_count,
-    embedding    = EXCLUDED.embedding`,
-			row.KBID, row.DocumentID, row.Ordinal, headingPath, chunkType, row.Text, row.TokenCount, vecLiteral(row.Embedding))
+    embedding    = EXCLUDED.embedding,
+    metadata_json = EXCLUDED.metadata_json`,
+			row.KBID, row.DocumentID, row.Ordinal, headingPath, chunkType, row.Text, row.TokenCount, vecLiteral(row.Embedding), metadataJSON)
 		if err != nil {
 			return fmt.Errorf("upsert kb=%s doc=%s ord=%d: %w", row.KBID, row.DocumentID, row.Ordinal, err)
 		}
@@ -106,6 +114,7 @@ func (r *KBChunksRepository) Search(ctx context.Context, kbID uuid.UUID, q []flo
 	}
 	rows, err := r.pool.Query(ctx, `
 SELECT c.id, c.kb_id, c.document_id, d.original_filename, c.ordinal, c.heading_path, c.chunk_type, c.text, c.token_count,
+       c.metadata_json,
        (1 - (c.embedding <=> $2))::real AS score
 FROM   kb_chunks c
 JOIN   kb_documents d ON d.id = c.document_id
@@ -119,16 +128,34 @@ LIMIT  $3`, kbID, vecLiteral(q), k)
 	var out []KBChunkHit
 	for rows.Next() {
 		var h KBChunkHit
+		var metadataRaw []byte
 		if err := rows.Scan(&h.ID, &h.KBID, &h.DocumentID, &h.DocumentRef, &h.Ordinal,
-			&h.HeadingPath, &h.ChunkType, &h.Text, &h.TokenCount, &h.Score); err != nil {
+			&h.HeadingPath, &h.ChunkType, &h.Text, &h.TokenCount, &metadataRaw, &h.Score); err != nil {
 			return nil, err
+		}
+		if len(metadataRaw) > 0 {
+			_ = json.Unmarshal(metadataRaw, &h.Metadata)
+		}
+		if h.Metadata == nil {
+			h.Metadata = map[string]any{}
 		}
 		out = append(out, h)
 	}
 	return out, rows.Err()
 }
 
-func (r *KBChunksRepository) UpdateDocStatus(ctx context.Context, docID uuid.UUID, status, errorMessage string) error {
+func (r *KBChunksRepository) UpdateDocStatus(ctx context.Context, docID uuid.UUID, status, errorMessage string, parseMeta map[string]any) error {
+	if parseMeta != nil {
+		metaJSON, err := json.Marshal(parseMeta)
+		if err != nil {
+			return err
+		}
+		_, err = r.pool.Exec(ctx, `
+UPDATE kb_documents
+SET    status = $2, error_message = $3, parse_meta_json = $4::jsonb, updated_at = now()
+WHERE  id = $1`, docID, status, errorMessage, metaJSON)
+		return err
+	}
 	_, err := r.pool.Exec(ctx, `
 UPDATE kb_documents
 SET    status = $2, error_message = $3, updated_at = now()
@@ -148,4 +175,11 @@ func vecLiteral(v []float32) string {
 	}
 	sb.WriteByte(']')
 	return sb.String()
+}
+
+func nonNilMap(m map[string]any) map[string]any {
+	if m == nil {
+		return map[string]any{}
+	}
+	return m
 }

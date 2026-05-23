@@ -42,6 +42,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates tzdata curl \
     fonts-arphic-uming \
     fonts-wqy-zenhei \
+    python3 \
+    python3-docx \
+    python3-fitz \
+    python3-pdfplumber \
+    python3-pil \
+    python3-pytesseract \
+    tesseract-ocr \
+    tesseract-ocr-chi-sim \
     && rm -rf /var/lib/apt/lists/*
 
 # Chromium 单独 RUN，失败时降级为警告而非 build 失败：
@@ -70,5 +78,7 @@ RUN (curl -fsSL --retry 3 --retry-delay 2 --max-time 90 "$RTK_URL" -o /tmp/rtk.t
 
 COPY --from=builder /worker /usr/local/bin/worker
 COPY --from=builder /workspace/src/personas /usr/local/share/arkloop/personas
+COPY --from=builder /workspace/src/services/shared/bookparser/sandbox /usr/local/share/arkloop/bookparser
 ENV ARKLOOP_PERSONAS_ROOT=/usr/local/share/arkloop/personas
+ENV ARKLOOP_BOOKPARSER_RUNNER=/usr/local/share/arkloop/bookparser/bookparser_runner.py
 ENTRYPOINT ["worker"]

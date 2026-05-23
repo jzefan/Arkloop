@@ -33,7 +33,7 @@ func TestSearchHappyPath(t *testing.T) {
 	ctx := &handlerCtx{
 		kbStore:    newFakeKBStore(),
 		membership: &fakeMembership{allow: true},
-		chunksRepo: &fakeChunks{hits: []data.KBChunkHit{{DocumentRef: "a.txt", Ordinal: 0, Text: "光的干涉", Score: 0.92}}},
+		chunksRepo: &fakeChunks{hits: []data.KBChunkHit{{DocumentRef: "a.txt", Ordinal: 0, Text: "光的干涉", Score: 0.92, Metadata: map[string]any{"page": 2}}}},
 		embedder:   fakeEmbed{},
 	}
 	acc := uuid.New()
@@ -52,6 +52,10 @@ func TestSearchHappyPath(t *testing.T) {
 	_ = json.NewDecoder(w.Body).Decode(&resp)
 	if len(resp.Hits) != 1 {
 		t.Errorf("got %d hits", len(resp.Hits))
+	}
+	meta, _ := resp.Hits[0]["metadata"].(map[string]any)
+	if meta["page"] != float64(2) {
+		t.Errorf("metadata not returned: %+v", resp.Hits[0])
 	}
 }
 

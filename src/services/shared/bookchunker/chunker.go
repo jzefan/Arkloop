@@ -22,6 +22,7 @@ type TextChunk struct {
 	Text        string
 	HeadingPath []string
 	TokenCount  int
+	Metadata    map[string]any
 }
 
 type ChunkOptions struct {
@@ -52,16 +53,22 @@ func Chunk(doc bookparser.ParsedDoc, opts ChunkOptions) ([]TextChunk, error) {
 	}
 
 	var out []TextChunk
+	keepHeadingPath := keepInferredHeadingPath(doc.Meta)
 	for _, block := range doc.Blocks {
 		blockType := normalizeBlockType(block.Type)
+		headingPath := copyPath(block.HeadingPath)
+		if !keepHeadingPath {
+			headingPath = nil
+		}
 		if blockType != bookparser.BlockParagraph && blockType != bookparser.BlockHeading {
 			tokenCount := countTokens(enc, block.Text)
 			out = append(out, TextChunk{
 				Ordinal:     len(out),
 				ChunkType:   string(blockType),
 				Text:        block.Text,
-				HeadingPath: copyPath(block.HeadingPath),
+				HeadingPath: headingPath,
 				TokenCount:  tokenCount,
+				Metadata:    copyMetadata(block.Metadata),
 			})
 			continue
 		}
@@ -72,8 +79,9 @@ func Chunk(doc bookparser.ParsedDoc, opts ChunkOptions) ([]TextChunk, error) {
 				Ordinal:     len(out),
 				ChunkType:   string(blockType),
 				Text:        block.Text,
-				HeadingPath: copyPath(block.HeadingPath),
+				HeadingPath: headingPath,
 				TokenCount:  tokenCount,
+				Metadata:    copyMetadata(block.Metadata),
 			})
 			continue
 		}
@@ -83,8 +91,9 @@ func Chunk(doc bookparser.ParsedDoc, opts ChunkOptions) ([]TextChunk, error) {
 				Ordinal:     len(out),
 				ChunkType:   string(blockType),
 				Text:        segment.Text,
-				HeadingPath: copyPath(block.HeadingPath),
+				HeadingPath: headingPath,
 				TokenCount:  segment.TokenCount,
+				Metadata:    copyMetadata(block.Metadata),
 			})
 		}
 	}
@@ -124,6 +133,39 @@ func copyPath(p []string) []string {
 	cp := make([]string, len(p))
 	copy(cp, p)
 	return cp
+}
+
+func copyMetadata(m map[string]any) map[string]any {
+	if len(m) == 0 {
+		return nil
+	}
+	cp := make(map[string]any, len(m))
+	for k, v := range m {
+		cp[k] = v
+	}
+	return cp
+}
+
+func keepInferredHeadingPath(meta map[string]any) bool {
+	if meta == nil {
+		return true
+	}
+	raw, ok := meta["heading_inferred_ratio"]
+	if !ok {
+		return true
+	}
+	switch v := raw.(type) {
+	case float64:
+		return v >= 0.5
+	case float32:
+		return v >= 0.5
+	case int:
+		return float64(v) >= 0.5
+	case int64:
+		return float64(v) >= 0.5
+	default:
+		return true
+	}
 }
 
 func safeDecode(enc *tiktoken.Tiktoken, tokens []int) string {

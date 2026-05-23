@@ -22,7 +22,7 @@ type BlobReader interface {
 type ChunksRepo interface {
 	Dim() int
 	Upsert(ctx context.Context, rows []data.KBChunkUpsert) error
-	UpdateDocStatus(ctx context.Context, id uuid.UUID, status, msg string) error
+	UpdateDocStatus(ctx context.Context, id uuid.UUID, status, msg string, parseMeta map[string]any) error
 }
 
 type Processor struct {
@@ -33,6 +33,10 @@ type Processor struct {
 }
 
 func NewProcessor(blob BlobReader, chunks ChunksRepo, embedder embedding.Embedder) (*Processor, error) {
+	return NewProcessorWithParser(blob, chunks, embedder, bookparser.NewMultiFormatParser(nil))
+}
+
+func NewProcessorWithParser(blob BlobReader, chunks ChunksRepo, embedder embedding.Embedder, parser bookparser.Parser) (*Processor, error) {
 	if blob == nil {
 		return nil, fmt.Errorf("nil blob reader")
 	}
@@ -42,10 +46,13 @@ func NewProcessor(blob BlobReader, chunks ChunksRepo, embedder embedding.Embedde
 	if embedder == nil {
 		return nil, fmt.Errorf("nil embedder")
 	}
+	if parser == nil {
+		return nil, fmt.Errorf("nil parser")
+	}
 	if embedder.Dim() != chunks.Dim() {
 		return nil, fmt.Errorf("kb_ingest: embedder dim %d != repo dim %d", embedder.Dim(), chunks.Dim())
 	}
-	return &Processor{blob: blob, chunks: chunks, embedder: embedder, parser: bookparser.NewTextOnlyParser()}, nil
+	return &Processor{blob: blob, chunks: chunks, embedder: embedder, parser: parser}, nil
 }
 
 func (p *Processor) Handle(ctx context.Context, lease queue.JobLease) error {
@@ -54,11 +61,11 @@ func (p *Processor) Handle(ctx context.Context, lease queue.JobLease) error {
 		return err
 	}
 	fail := func(err error) error {
-		_ = p.chunks.UpdateDocStatus(ctx, payload.DocumentID, "failed", err.Error())
+		_ = p.chunks.UpdateDocStatus(ctx, payload.DocumentID, "failed", err.Error(), nil)
 		return err
 	}
 
-	if err := p.chunks.UpdateDocStatus(ctx, payload.DocumentID, "parsing", ""); err != nil {
+	if err := p.chunks.UpdateDocStatus(ctx, payload.DocumentID, "parsing", "", nil); err != nil {
 		return err
 	}
 	raw, err := p.blob.GetBlob(ctx, payload.WorkspaceRef, payload.BlobSHA256)
@@ -70,21 +77,26 @@ func (p *Processor) Handle(ctx context.Context, lease queue.JobLease) error {
 		return fail(fmt.Errorf("parse: %w", err))
 	}
 
-	if err := p.chunks.UpdateDocStatus(ctx, payload.DocumentID, "chunking", ""); err != nil {
+	if err := p.chunks.UpdateDocStatus(ctx, payload.DocumentID, "chunking", "", doc.Meta); err != nil {
 		return err
 	}
 	chunks, err := bookchunker.Chunk(doc, bookchunker.DefaultOptions())
 	if err != nil {
 		return fail(fmt.Errorf("chunk: %w", err))
 	}
+	parseMeta := copyParseMeta(doc.Meta)
+	parseMeta["chunk_count"] = len(chunks)
+	if _, ok := parseMeta["block_type_counts"]; !ok {
+		parseMeta["block_type_counts"] = chunkTypeCounts(chunks)
+	}
 	if len(chunks) == 0 {
-		if err := p.chunks.UpdateDocStatus(ctx, payload.DocumentID, "ready", ""); err != nil {
+		if err := p.chunks.UpdateDocStatus(ctx, payload.DocumentID, "ready", "", parseMeta); err != nil {
 			return err
 		}
 		return nil
 	}
 
-	if err := p.chunks.UpdateDocStatus(ctx, payload.DocumentID, "embedding", ""); err != nil {
+	if err := p.chunks.UpdateDocStatus(ctx, payload.DocumentID, "embedding", "", parseMeta); err != nil {
 		return err
 	}
 	texts := make([]string, len(chunks))
@@ -99,7 +111,7 @@ func (p *Processor) Handle(ctx context.Context, lease queue.JobLease) error {
 		return fail(fmt.Errorf("embed: got %d vectors for %d chunks", len(vecs), len(chunks)))
 	}
 
-	if err := p.chunks.UpdateDocStatus(ctx, payload.DocumentID, "upserting", ""); err != nil {
+	if err := p.chunks.UpdateDocStatus(ctx, payload.DocumentID, "upserting", "", parseMeta); err != nil {
 		return err
 	}
 	rows := make([]data.KBChunkUpsert, len(chunks))
@@ -113,12 +125,13 @@ func (p *Processor) Handle(ctx context.Context, lease queue.JobLease) error {
 			Text:        chunk.Text,
 			TokenCount:  chunk.TokenCount,
 			Embedding:   vecs[i],
+			Metadata:    chunk.Metadata,
 		}
 	}
 	if err := p.chunks.Upsert(ctx, rows); err != nil {
 		return fail(fmt.Errorf("upsert: %w", err))
 	}
-	if err := p.chunks.UpdateDocStatus(ctx, payload.DocumentID, "ready", ""); err != nil {
+	if err := p.chunks.UpdateDocStatus(ctx, payload.DocumentID, "ready", "", parseMeta); err != nil {
 		return err
 	}
 	return nil
@@ -171,4 +184,24 @@ func parseUUIDField(raw map[string]any, key string) (uuid.UUID, error) {
 func stringField(raw map[string]any, key string) string {
 	value, _ := raw[key].(string)
 	return strings.TrimSpace(value)
+}
+
+func copyParseMeta(meta map[string]any) map[string]any {
+	out := make(map[string]any, len(meta)+1)
+	for k, v := range meta {
+		out[k] = v
+	}
+	return out
+}
+
+func chunkTypeCounts(chunks []bookchunker.TextChunk) map[string]int {
+	counts := map[string]int{}
+	for _, chunk := range chunks {
+		t := strings.TrimSpace(chunk.ChunkType)
+		if t == "" {
+			t = string(bookparser.BlockParagraph)
+		}
+		counts[t]++
+	}
+	return counts
 }

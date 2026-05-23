@@ -46,5 +46,5 @@ type Deps struct {
 	JobEnqueuer KBIngestEnqueuer // for enqueuing kb_ingest
 
 	// Limits
-	MaxUploadBytes int64 // 10 MB default
+	MaxUploadBytes int64 // 100 MiB default
 }
