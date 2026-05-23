@@ -476,12 +476,14 @@ func NewHandler(cfg HandlerConfig) nethttp.Handler {
 	})
 
 	base := nethttp.HandlerFunc(func(w nethttp.ResponseWriter, r *nethttp.Request) {
-		handler, pattern := mux.Handler(r)
+		// mux.Handler 只返回匹配结果，不会把 path values 写进 r；
+		// 命中后必须改调 mux.ServeHTTP 才能让 r.PathValue 拿到值。
+		_, pattern := mux.Handler(r)
 		if pattern == "" {
 			notFound.ServeHTTP(w, r)
 			return
 		}
-		handler.ServeHTTP(w, r)
+		mux.ServeHTTP(w, r)
 	})
 
 	handler := RecoverMiddleware(base, cfg.Logger)
