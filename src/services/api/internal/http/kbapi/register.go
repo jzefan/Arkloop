@@ -15,6 +15,9 @@ func Register(mux *nethttp.ServeMux, h *handlerCtx) {
 	mux.Handle("DELETE /v1/knowledge-bases/{id}/documents/{doc_id}", h.withActor(handleDeleteDoc(h)))
 	mux.Handle("GET /v1/knowledge-bases/{id}/search", h.withActor(handleSearch(h)))
 	mux.HandleFunc("GET /v1/config", handlePlatformConfig(h))
+	if h.examIntegrationEnabled {
+		mux.Handle("GET /v1/exam/courses", h.withActor(handleExamCourses(h)))
+	}
 }
 
 func handlePlatformConfig(h *handlerCtx) nethttp.HandlerFunc {

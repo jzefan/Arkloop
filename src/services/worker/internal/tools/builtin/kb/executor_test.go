@@ -16,6 +16,10 @@ func (f *fakeChunksRepo) Search(ctx context.Context, kbID uuid.UUID, q []float32
 	return f.hits, nil
 }
 
+func (f *fakeChunksRepo) ListHeadings(ctx context.Context, kbID, docID uuid.UUID) ([]wdata.KBChunkHit, error) {
+	return nil, nil
+}
+
 func (f *fakeChunksRepo) Dim() int { return 8 }
 
 type fakeEmbedder struct{ dim int }

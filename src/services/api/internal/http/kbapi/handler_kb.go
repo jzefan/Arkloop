@@ -30,6 +30,7 @@ type handlerCtx struct {
 	maxUploadBytes int64
 
 	examIntegrationEnabled bool
+	examCoursesLister      examCoursesLister
 
 	authService           *auth.Service
 	accountMembershipRepo *data.AccountMembershipRepository
@@ -37,6 +38,10 @@ type handlerCtx struct {
 	auditWriter           *audit.Writer
 	profileRepo           *data.ProfileRegistriesRepository
 	workspaceRepo         *data.WorkspaceRegistriesRepository
+}
+
+type examCoursesLister interface {
+	ListCourses(ctx context.Context, token string) ([]map[string]any, error)
 }
 
 type kbStore interface {
@@ -365,6 +370,27 @@ func kbResponse(kb *data.KnowledgeBase) map[string]any {
 		resp["exam_course_id"] = *kb.ExamCourseID
 	}
 	return resp
+}
+
+func handleExamCourses(h *handlerCtx) nethttp.HandlerFunc {
+	return func(w nethttp.ResponseWriter, r *nethttp.Request) {
+		if h.examCoursesLister == nil {
+			writeErr(w, nethttp.StatusNotFound, "exam.not_configured", "exam integration not configured")
+			return
+		}
+		// Use the actor's token from the auth header to proxy to exam
+		token := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+		if token == "" {
+			writeErr(w, nethttp.StatusUnauthorized, "auth.unauthenticated", "missing token")
+			return
+		}
+		courses, err := h.examCoursesLister.ListCourses(r.Context(), token)
+		if err != nil {
+			writeErr(w, nethttp.StatusBadGateway, "exam.upstream_failed", err.Error())
+			return
+		}
+		writeJSON(w, nethttp.StatusOK, map[string]any{"items": courses})
+	}
 }
 
 func (h *handlerCtx) withActor(next nethttp.HandlerFunc) nethttp.HandlerFunc {

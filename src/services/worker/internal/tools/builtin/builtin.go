@@ -136,6 +136,7 @@ func Executors(pool *pgxpool.Pool, rdb *redis.Client, resolver sharedconfig.Reso
 		webfetch.AgentSpecFirecrawl.Name:   webfetch.NewFirecrawlExecutor(resolver),
 		webfetch.AgentSpecBasic.Name:       webfetch.NewBasicExecutor(resolver),
 		kb.AgentSpec.Name:                  kb.NewToolExecutor(pool),
+		kb.ExtractTOCAgentSpec.Name:        kb.NewToolExecutor(pool),
 		read.AgentSpec.Name:                read.NewToolExecutorWithTracker(tracker),
 		read.AgentSpecMiniMax.Name:         read.NewToolExecutorWithTracker(tracker),
 		writefile.AgentSpec.Name:           &writefile.Executor{Tracker: tracker},

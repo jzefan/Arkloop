@@ -144,6 +144,38 @@ LIMIT  $3`, kbID, vecLiteral(q), k)
 	return out, rows.Err()
 }
 
+// ListHeadings returns heading chunks for a document, ordered by ordinal.
+func (r *KBChunksRepository) ListHeadings(ctx context.Context, kbID, docID uuid.UUID) ([]KBChunkHit, error) {
+	rows, err := r.pool.Query(ctx, `
+SELECT c.id, c.kb_id, c.document_id, d.original_filename, c.ordinal, c.heading_path, c.chunk_type, c.text, c.token_count,
+       c.metadata_json, 0::real AS score
+FROM   kb_chunks c
+JOIN   kb_documents d ON d.id = c.document_id
+WHERE  c.kb_id = $1 AND c.document_id = $2 AND c.chunk_type = 'heading'
+ORDER  BY c.ordinal`, kbID, docID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []KBChunkHit
+	for rows.Next() {
+		var h KBChunkHit
+		var metadataRaw []byte
+		if err := rows.Scan(&h.ID, &h.KBID, &h.DocumentID, &h.DocumentRef, &h.Ordinal,
+			&h.HeadingPath, &h.ChunkType, &h.Text, &h.TokenCount, &metadataRaw, &h.Score); err != nil {
+			return nil, err
+		}
+		if len(metadataRaw) > 0 {
+			_ = json.Unmarshal(metadataRaw, &h.Metadata)
+		}
+		if h.Metadata == nil {
+			h.Metadata = map[string]any{}
+		}
+		out = append(out, h)
+	}
+	return out, rows.Err()
+}
+
 func (r *KBChunksRepository) UpdateDocStatus(ctx context.Context, docID uuid.UUID, status, errorMessage string, parseMeta map[string]any) error {
 	if parseMeta != nil {
 		metaJSON, err := json.Marshal(parseMeta)
