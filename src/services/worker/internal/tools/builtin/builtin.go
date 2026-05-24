@@ -114,12 +114,16 @@ func Executors(pool *pgxpool.Pool, rdb *redis.Client, resolver sharedconfig.Reso
 	// missing, NewClient returns an error and we register a stub that responds
 	// IsNotConfigured() == true so the policy layer hides them from the model.
 	var examExec *exam.ToolExecutor
+	var builderExec *exam.BuilderExecutor
 	if os.Getenv("ARKLOOP_EXAM_INTEGRATION_ENABLED") != "true" {
 		examExec = exam.NewToolExecutor(nil)
+		builderExec = exam.NewBuilderExecutor(nil)
 	} else if examClient, err := exam.NewClient(); err == nil {
 		examExec = exam.NewToolExecutor(examClient)
+		builderExec = exam.NewBuilderExecutor(examClient)
 	} else {
 		examExec = exam.NewToolExecutor(nil)
+		builderExec = exam.NewBuilderExecutor(nil)
 	}
 	return map[string]tools.Executor{
 		TimelineTitleAgentSpec.Name:        TimelineTitleExecutor{},
@@ -153,5 +157,9 @@ func Executors(pool *pgxpool.Pool, rdb *redis.Client, resolver sharedconfig.Reso
 		exam.ToolNameParseCatalogExcel:     examExec,
 		exam.ToolNameCreateCatalogTree:     examExec,
 		exam.ToolNameGenerateQuestions:     examExec,
+		exam.ToolNameListSeedQuestions:     builderExec,
+		exam.ToolNameBuildQuestions:        builderExec,
+		exam.ToolNameSaveQuestions:         builderExec,
+		exam.ToolNameBuildPaper:            builderExec,
 	}, tracker
 }
