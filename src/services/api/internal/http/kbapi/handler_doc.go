@@ -232,36 +232,13 @@ func isAllowedMime(mime string) bool {
 	return ok
 }
 
-// sniffMime detects MIME from content bytes + file extension fallback.
-func sniffMime(data []byte, ext string) string {
-	// Extension-based detection first (more reliable for text formats)
-	extMime := mimeFromExt(ext)
-	if extMime != "" && (extMime == "text/markdown" || extMime == "application/vnd.openxmlformats-officedocument.wordprocessingml.document") {
-		// http.DetectContentType can't distinguish .md from .txt or .docx from .zip
-		return extMime
-	}
-	if len(data) > 0 {
-		detected := nethttp.DetectContentType(data)
-		// Normalize: strip charset params
-		if idx := strings.IndexByte(detected, ';'); idx > 0 {
-			detected = strings.TrimSpace(detected[:idx])
-		}
-		detected = strings.ToLower(detected)
-		// DetectContentType returns "application/zip" for .docx; trust extension
-		if detected == "application/zip" && ext == ".docx" {
-			return "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-		}
-		// DetectContentType returns "text/plain" for .md
-		if detected == "text/plain" && ext == ".md" {
-			return "text/markdown"
-		}
-		if detected != "application/octet-stream" {
-			return detected
-		}
-	}
-	// Fallback to extension
-	if extMime != "" {
-		return extMime
-	}
-	return "application/octet-stream"
+// sniffMime returns the canonical MIME for a supported extension, or empty
+// string for unknown extensions (caller rejects with 415).
+//
+// We deliberately do NOT use http.DetectContentType: it returns "text/plain"
+// for short fixtures and binary content lacking magic bytes, which would
+// silently widen the whitelist for malformed uploads. Trusting the extension
+// is safer for our supported set (txt/md/pdf/docx/png/jpg/webp).
+func sniffMime(_ []byte, ext string) string {
+	return mimeFromExt(ext)
 }
