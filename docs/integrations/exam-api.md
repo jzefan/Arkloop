@@ -309,8 +309,83 @@ exam side (responsibility of exam team):
 | 5 | paper template pre-required for Endpoint 4 | exam | open |
 | 6 | OIDC scope names — accept proposed list? | exam | open |
 | 7 | rate-limit policy documentation | exam | open |
+| 8 | `pattern_tag` field on questions (schema + endpoint changes) | exam | open |
+| 9 | `GET /api/courses` endpoint (or confirm equivalent) | exam | open |
 
-> Resolve each → mark with date + decision → commit. Once all 7 resolved, this doc becomes a frozen v1 contract referenced by ArkLoop M2 spec.
+> Resolve each → mark with date + decision → commit. Once all 9 resolved, this doc becomes a frozen v1 contract referenced by ArkLoop M2a spec.
+
+---
+
+## ArkLoop proposals for open questions
+
+For exam team review — accept / counter-propose / reject each:
+
+| # | ArkLoop Proposal |
+|---|------------------|
+| 1 | **Option A preferred**: exam adds `source_snippets JSONB` column to questions table. If rejected, ArkLoop stores snapshots in its own `kb_question_snapshots` table (fallback option B). |
+| 2 | Single `name` column is sufficient. ArkLoop does not need a separate code field. |
+| 3 | Either global or per-course is fine — endpoint shape stays the same. Just confirm so ArkLoop knows whether `course_id` is a filter or a partition key. |
+| 4 | If exam validates options count by type, document the rules (e.g. single_choice = 4-5 options). ArkLoop will mirror in LLM prompt constraints. |
+| 5 | ArkLoop prefers no paper template pre-required — `POST /api/papers` creates a standalone paper. If exam requires a template, document the pre-creation endpoint. |
+| 6 | Accept proposed scopes: `exam:read:knowledge-points`, `exam:read:questions`, `exam:write:questions`, `exam:write:papers`. |
+| 7 | ArkLoop accepts any documented rate limits. If none, ArkLoop defaults to 4 concurrent + 3 retries. |
+
+---
+
+## Endpoint addendum: `pattern_tag` field on questions
+
+> Required by ArkLoop M2b (Option 2: skill-driven item building, PRD stories 50-59).
+
+### Schema change (exam side)
+
+```sql
+ALTER TABLE questions ADD COLUMN pattern_tag TEXT NULL;
+```
+
+### Endpoint changes
+
+- **`GET /api/questions`**: accept optional query param `pattern_tag`; include `pattern_tag` in response items (null when not set)
+- **`POST /api/questions/batch`**: accept optional per-item `pattern_tag` field; persist to column
+
+### Semantics
+
+`pattern_tag` encodes item-writing pattern style. For medical exams: `A1` / `A2` / `A3` / `A4`. For other domains: extensible free-text (e.g. `proof_based`, `case_study`). ArkLoop enforces tag consistency in its own tool layer; exam just stores and filters.
+
+---
+
+## Endpoint 5 (new): `GET /api/courses`
+
+> Required by ArkLoop M2a console-lite KB creation form (teacher selects which exam course to bind a Linked KB to).
+
+### Request
+
+```http
+GET /api/courses
+Authorization: Bearer <oidc_token>
+```
+
+Returns courses accessible to the authenticated teacher.
+
+### Response (200)
+
+```json
+{
+  "items": [
+    {"id": "exam-course-uuid", "name": "大学物理（上）"}
+  ]
+}
+```
+
+### Errors
+
+- `401` if token invalid / expired
+- `403` if scope not granted
+
+### Open question 9
+
+Does this endpoint already exist under a different path (e.g. `/api/learning/directions`)? If so, ArkLoop will use that path instead. Please confirm.
+
+---
 
 ## Resolution log
 
