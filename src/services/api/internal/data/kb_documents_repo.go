@@ -135,6 +135,16 @@ func (r *KBDocumentsRepository) Delete(ctx context.Context, id uuid.UUID) error 
 	return nil
 }
 
+// CountByBlobSHA256 returns how many kb_documents rows reference the given sha.
+func (r *KBDocumentsRepository) CountByBlobSHA256(ctx context.Context, sha string) (int, error) {
+	var n int
+	err := r.pool.QueryRow(ctx, `SELECT COUNT(*) FROM kb_documents WHERE blob_sha256 = $1`, sha).Scan(&n)
+	if err != nil {
+		return 0, fmt.Errorf("count by sha: %w", err)
+	}
+	return n, nil
+}
+
 func scanDoc(row pgx.Row) (*KBDocument, error) {
 	var d KBDocument
 	var metaRaw []byte

@@ -51,10 +51,12 @@ type docStore interface {
 	GetByID(ctx context.Context, id uuid.UUID) (*data.KBDocument, error)
 	ListByKB(ctx context.Context, kbID uuid.UUID) ([]data.KBDocument, error)
 	Delete(ctx context.Context, id uuid.UUID) error
+	CountByBlobSHA256(ctx context.Context, sha string) (int, error)
 }
 
 type blobWriter interface {
 	PutBlob(ctx context.Context, workspaceRef, sha256 string, data []byte) error
+	DeleteBlob(ctx context.Context, workspaceRef, sha256 string) error
 }
 
 type jobEnqueue interface {
