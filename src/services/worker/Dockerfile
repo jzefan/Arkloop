@@ -44,12 +44,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     python3 \
     python3-pip \
     python3-pil \
-    python3-pytesseract \
     tesseract-ocr \
     tesseract-ocr-chi-sim \
     && rm -rf /var/lib/apt/lists/*
 RUN pip3 install --no-cache-dir --break-system-packages \
-    PyMuPDF pdfplumber python-docx
+    PyMuPDF pdfplumber python-docx pytesseract
 
 # Chromium 单独 RUN，失败时降级为警告而非 build 失败：
 # 1) aliyun mirror 偶发同步落后（尤其 arm64 channel），不应阻塞主链路 build。
