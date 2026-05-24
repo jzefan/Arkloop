@@ -260,6 +260,16 @@ func (s *Seeder) loadFileSkills() (map[string]fileSkill, error) {
 			s.logWarn("skill_seed_missing_key", map[string]any{"dir": entry.Name()})
 			continue
 		}
+		if err := skillstore.ValidateItemWritingSkill(def); err != nil {
+			// item-writing skills with missing required fields are skipped
+			// from the seeder (PRD story 58 — never silently surface them).
+			s.logWarn("skill_seed_invalid_item_writing", map[string]any{
+				"dir":   entry.Name(),
+				"key":   def.SkillKey,
+				"error": err.Error(),
+			})
+			continue
+		}
 
 		files := make(map[string][]byte)
 		if walkErr := filepath.WalkDir(dir, func(p string, d os.DirEntry, err error) error {

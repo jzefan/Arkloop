@@ -87,11 +87,16 @@ var BuildQuestionsLlmSpec = llm.ToolSpec{
 var SaveQuestionsLlmSpec = llm.ToolSpec{
 	Name: ToolNameSaveQuestions,
 	Description: strPtr(
-		"把老师确认的题目批量写入 exam。支持部分失败：成功的返回 exam ID，失败的返回 error_code + error_message。",
+		"把老师确认的题目批量写入 exam。支持部分失败：成功的返回 exam ID，失败的返回 error_code + error_message。" +
+			"传入 expected_pattern_tag 时启用 PRD O2-C 强校验：每道题 pattern_tag 必须等于该值，否则进 Failed (error_code=pattern_tag_mismatch)。",
 	),
 	JSONSchema: map[string]any{
 		"type": "object",
 		"properties": map[string]any{
+			"expected_pattern_tag": map[string]any{
+				"type":        "string",
+				"description": "可选，启用 pattern_tag 强校验。来自 exam_build_questions 返回的 expected_pattern_tag。",
+			},
 			"questions": map[string]any{
 				"type": "array",
 				"items": map[string]any{

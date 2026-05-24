@@ -126,19 +126,52 @@ func (e *BuilderExecutor) buildQuestions(
 		count = 5
 	}
 
-	// This tool delegates actual LLM generation to the agent loop —
-	// it returns a structured "build_request" that the persona prompt
-	// instructs the LLM to fulfill using the loaded skill context.
-	// The tool itself does NOT call LLM; it prepares the generation context.
+	// Fetch seed questions to extract their pattern_tag (PRD §O2-C strict
+	// validation). The persona/LLM must preserve this exact tag in every
+	// generated question; exam_save_questions enforces it again at write time.
+	scopes := []string{"openid", "exam:read"}
+	expectedPatternTag := ""
+	seedSummaries := make([]map[string]any, 0, len(seedIDs))
+	for _, sid := range seedIDs {
+		var resp map[string]any
+		if err := e.client.callExam(ctx, userID, scopes, "GET", "/api/questions/"+sid, nil, &resp); err != nil {
+			// Best-effort: missing seed details don't block the call, but
+			// we surface in the response so persona can warn the teacher.
+			continue
+		}
+		if pt, ok := resp["pattern_tag"].(string); ok && pt != "" {
+			if expectedPatternTag == "" {
+				expectedPatternTag = pt
+			} else if expectedPatternTag != pt {
+				// Mixed pattern_tags across seeds — reject; persona must pick
+				// uniform seeds (PRD §O2-C: 题型分布稳定).
+				return errResult("exam.seed_pattern_mismatch",
+					fmt.Sprintf("seed questions have inconsistent pattern_tag (%s vs %s); pick seeds with the same pattern", expectedPatternTag, pt),
+					started)
+			}
+		}
+		seedSummaries = append(seedSummaries, map[string]any{
+			"id":          resp["id"],
+			"pattern_tag": resp["pattern_tag"],
+			"type":        resp["type"],
+			"difficulty":  resp["difficulty"],
+			"stem":        resp["stem"],
+		})
+	}
+
 	return ok(map[string]any{
-		"action":            "build_questions",
-		"seed_question_ids": seedIDs,
-		"skill_key":         skillKey,
-		"count":             count,
-		"instruction": "Use the loaded skill (SKILL.md) to generate questions. " +
-			"Each question's pattern_tag MUST match the seed questions' pattern_tag. " +
-			"For single_choice / multi_choice questions, produce ≥3 options (3, 4, or 5 — match the seed's option count when sensible; never fewer than 3). " +
-			"Return questions as JSON array.",
+		"action":               "build_questions",
+		"seed_question_ids":    seedIDs,
+		"seed_summaries":       seedSummaries,
+		"skill_key":            skillKey,
+		"count":                count,
+		"expected_pattern_tag": expectedPatternTag,
+		"instruction": fmt.Sprintf(
+			"Use the loaded skill (SKILL.md) to generate %d new questions in the style of the provided seed questions. "+
+				"CRITICAL: Each generated question's pattern_tag MUST equal %q. "+
+				"For single_choice / multi_choice, produce ≥3 options (5 preferred for medical exams). "+
+				"Pass the resulting JSON array verbatim to exam_save_questions with expected_pattern_tag=%q so it enforces this constraint.",
+			count, expectedPatternTag, expectedPatternTag),
 	}, started)
 }
 
@@ -152,12 +185,48 @@ func (e *BuilderExecutor) saveQuestions(
 		return errResult("exam.args_invalid", "questions array is required and must not be empty", started)
 	}
 
-	// Convert to the shape exam expects
+	// Optional but encouraged: expected_pattern_tag enforces PRD §O2-C strict
+	// validation. When set, every question's pattern_tag MUST equal it; mismatched
+	// items are rejected client-side (move to Failed) before hitting exam.
+	expectedPatternTag, _ := args["expected_pattern_tag"].(string)
+
+	// Convert to the shape exam expects + pre-flight pattern_tag check
 	questions := make([]map[string]any, 0, len(questionsRaw))
-	for _, q := range questionsRaw {
-		if qm, ok3 := q.(map[string]any); ok3 {
-			questions = append(questions, qm)
+	preFlightFailed := make([]map[string]any, 0)
+	indexMap := make([]int, 0, len(questionsRaw)) // questions[i] came from index indexMap[i]
+	for i, q := range questionsRaw {
+		qm, ok3 := q.(map[string]any)
+		if !ok3 {
+			preFlightFailed = append(preFlightFailed, map[string]any{
+				"index":         i,
+				"error_code":    "validation_error",
+				"error_message": "question item is not an object",
+			})
+			continue
 		}
+		if expectedPatternTag != "" {
+			gotTag, _ := qm["pattern_tag"].(string)
+			if gotTag != expectedPatternTag {
+				preFlightFailed = append(preFlightFailed, map[string]any{
+					"index":         i,
+					"error_code":    "pattern_tag_mismatch",
+					"error_message": fmt.Sprintf("expected pattern_tag=%q, got %q — strict validation rejected (PRD O2-C)", expectedPatternTag, gotTag),
+				})
+				continue
+			}
+		}
+		questions = append(questions, qm)
+		indexMap = append(indexMap, i)
+	}
+
+	// All items rejected by pre-flight — return without calling exam.
+	if len(questions) == 0 {
+		return ok(map[string]any{
+			"created":       []any{},
+			"failed":        preFlightFailed,
+			"created_count": 0,
+			"failed_count":  len(preFlightFailed),
+		}, started)
 	}
 
 	scopes := []string{"openid", "exam:write"}
@@ -169,11 +238,31 @@ func (e *BuilderExecutor) saveQuestions(
 		map[string]any{"questions": questions}, &resp); err != nil {
 		return errResult("exam.upstream_error", err.Error(), started)
 	}
+
+	// Remap exam-side indices back to caller-side indices, then merge with
+	// pre-flight failures.
+	created := make([]map[string]any, len(resp.Created))
+	for i, c := range resp.Created {
+		idx, _ := c["index"].(float64)
+		if int(idx) < len(indexMap) {
+			c["index"] = indexMap[int(idx)]
+		}
+		created[i] = c
+	}
+	failed := make([]map[string]any, 0, len(resp.Failed)+len(preFlightFailed))
+	failed = append(failed, preFlightFailed...)
+	for _, f := range resp.Failed {
+		idx, _ := f["index"].(float64)
+		if int(idx) < len(indexMap) {
+			f["index"] = indexMap[int(idx)]
+		}
+		failed = append(failed, f)
+	}
 	return ok(map[string]any{
-		"created":       resp.Created,
-		"failed":        resp.Failed,
-		"created_count": len(resp.Created),
-		"failed_count":  len(resp.Failed),
+		"created":       created,
+		"failed":        failed,
+		"created_count": len(created),
+		"failed_count":  len(failed),
 	}, started)
 }
 
