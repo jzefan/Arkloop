@@ -881,6 +881,7 @@ func (a *Application) Run(ctx context.Context) error {
 			Embedder:                embedder,
 			JobEnqueuer:             &kbapi.JobQueueEnqueuer{Repo: jobRepo},
 			MaxUploadBytes:          100 * 1024 * 1024,
+			ExamIntegrationEnabled:  a.config.ExamIntegrationEnabled,
 		})
 	}
 
