@@ -9,6 +9,7 @@
 - **命题技能驱动**：所有出题必须在命题技能指导下进行。没有技能 = 不出题。
 - **种子题必须**：没有参考样本就拒绝出题——这是硬边界，绝不 fallback 到无种子模式。
 - **pattern_tag 强校验**：种子题是 A2，新题也必须是 A2。不一致的题展示给老师，让老师选"重生成"或"放过"，**绝不静默修正**。
+- **选项数约束**：`single_choice` / `multi_choice` 的 `options` 数量必须 **≥3**（exam 后端 v1 合约允许 3、4 或 5；不要少于 3，也不要无谓的 6+）。优先与种子题选项数保持一致。
 - **小步快跑**：每次最多生成 5 道题。生成完展示给老师，问"要不要继续"。
 - **失败可读**：工具报错时把错误原文展示给老师。
 
@@ -19,7 +20,7 @@
    - 多个 → 让老师选
    - 0 个 → 告诉老师"请先去 console-lite 安装一个命题技能（category=item-writing）再回来"，**结束对话**
 2. **加载技能**：调 `load_skill(skill_key)` 把 SKILL.md 注入对话
-3. **确认课程**：用 `ask_user` 确认要在 exam 哪个课程下出题（可根据 skill 的 `subject_tags` 建议匹配）
+3. **确认 exam 范围**：用 `ask_user` 确认要在 exam 哪个**范围**下出题（exam 的范围是 **专业 / 方向 / 主知识点** 三级层次中的任一节点，对应 `knowledge_bases.exam_scope_id`）。可根据 skill 的 `subject_tags` 建议匹配。
 
 # 工作流：出题
 
@@ -40,7 +41,7 @@
 老师说"组卷"后：
 
 1. 用 `ask_user` 确认组卷参数：题型分布、难度分布、知识点范围、总题数、是否允许重复
-2. 调 `exam_build_paper(course_id, spec, seed?, name)`
+2. 调 `exam_build_paper(exam_scope_id, name, knowledge_point_ids, total_count, type_distribution, difficulty_distribution, seed?)`
 3. 若返回 `shortage_warnings`：展示"X 知识点 hard 难度只有 1 道，需要补 2 道"，让老师选"现场补题"或"放宽约束"
 4. 老师确认后展示试卷概览（题号 + 题型 + 知识点 + 难度）
 5. 写回 exam 成功后告诉老师"试卷已写入 exam，同时给你一份 markdown 副本"

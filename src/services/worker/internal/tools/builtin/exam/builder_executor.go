@@ -96,10 +96,10 @@ func (e *BuilderExecutor) listSeedQuestions(
 	}
 	if len(resp.Items) == 0 {
 		return ok(map[string]any{
-			"items":        []any{},
-			"total":        0,
+			"items":         []any{},
+			"total":         0,
 			"seed_required": true,
-			"message":      "该知识点下没有可参考的种子题",
+			"message":       "该知识点下没有可参考的种子题",
 		}, started)
 	}
 	return ok(map[string]any{"items": resp.Items, "total": resp.Total}, started)
@@ -135,7 +135,10 @@ func (e *BuilderExecutor) buildQuestions(
 		"seed_question_ids": seedIDs,
 		"skill_key":         skillKey,
 		"count":             count,
-		"instruction":       "Use the loaded skill (SKILL.md) to generate questions. Each question's pattern_tag MUST match the seed questions' pattern_tag. Return questions as JSON array.",
+		"instruction": "Use the loaded skill (SKILL.md) to generate questions. " +
+			"Each question's pattern_tag MUST match the seed questions' pattern_tag. " +
+			"For single_choice / multi_choice questions, produce ≥3 options (3, 4, or 5 — match the seed's option count when sensible; never fewer than 3). " +
+			"Return questions as JSON array.",
 	}, started)
 }
 
@@ -179,9 +182,9 @@ func (e *BuilderExecutor) saveQuestions(
 func (e *BuilderExecutor) buildPaper(
 	ctx context.Context, args map[string]any, userID uuid.UUID, started time.Time,
 ) tools.ExecutionResult {
-	courseID, _ := args["course_id"].(string)
-	if courseID == "" {
-		return errResult("exam.args_invalid", "course_id is required", started)
+	examScopeID, _ := args["exam_scope_id"].(string)
+	if examScopeID == "" {
+		return errResult("exam.args_invalid", "exam_scope_id is required", started)
 	}
 	name, _ := args["name"].(string)
 	if name == "" {
@@ -198,8 +201,8 @@ func (e *BuilderExecutor) buildPaper(
 
 	// Build spec
 	spec := map[string]any{
-		"total_count":          totalCount,
-		"type_distribution":    args["type_distribution"],
+		"total_count":             totalCount,
+		"type_distribution":       args["type_distribution"],
 		"difficulty_distribution": args["difficulty_distribution"],
 	}
 	if seed, ok2 := args["seed"].(float64); ok2 {
@@ -243,10 +246,10 @@ func (e *BuilderExecutor) buildPaper(
 	var paperResp map[string]any
 	if err := e.client.callExam(ctx, userID, scopes, "POST", "/api/papers",
 		map[string]any{
-			"name":         name,
-			"course_id":    courseID,
-			"spec":         spec,
-			"question_ids": questionIDs,
+			"name":          name,
+			"exam_scope_id": examScopeID,
+			"spec":          spec,
+			"question_ids":  questionIDs,
 		}, &paperResp); err != nil {
 		return errResult("exam.upstream_error", "create paper: "+err.Error(), started)
 	}
