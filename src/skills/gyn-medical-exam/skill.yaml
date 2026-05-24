@@ -1,0 +1,9 @@
+skill_key: gyn-medical-exam
+version: "1"
+display_name: 妇产科国考命题专家
+description: 按国家执业医师考试妇产科风格出题（A1-A4 五选一），含命题规范、质检流程、解析标准
+instruction_path: SKILL.md
+category: item-writing
+subject_tags: ["妇产科", "医学", "国考"]
+pattern_tags: ["A1", "A2", "A3", "A4"]
+target_question_types: ["single_choice"]
