@@ -104,10 +104,10 @@ func (c *Client) doJSON(ctx context.Context, method, path, token string, body an
 	return lastErr
 }
 
-// ListKnowledgePoints calls GET /api/knowledge-points?course_id=...
-func (c *Client) ListKnowledgePoints(ctx context.Context, token, courseID string, limit, offset int) (*KPListResp, error) {
+// ListKnowledgePoints calls GET /api/knowledge-points?exam_scope_id=...
+func (c *Client) ListKnowledgePoints(ctx context.Context, token, examScopeID string, limit, offset int) (*KPListResp, error) {
 	qs := url.Values{}
-	qs.Set("course_id", courseID)
+	qs.Set("exam_scope_id", examScopeID)
 	if limit > 0 {
 		qs.Set("limit", strconv.Itoa(limit))
 	}
@@ -158,26 +158,43 @@ func (c *Client) CreatePaper(ctx context.Context, token string, req PaperReq) (*
 	return &resp, err
 }
 
-// ListCourses calls GET /api/courses
-func (c *Client) ListCourses(ctx context.Context, token string) (*CourseListResp, error) {
-	var resp CourseListResp
-	err := c.doJSON(ctx, "GET", "/api/courses", token, nil, &resp)
+// ListExamScopes calls GET /api/exam-scopes (Q9).
+// Returns the union of scopes accessible to the authenticated teacher across
+// all 3 levels (major / direction / topic).
+func (c *Client) ListExamScopes(ctx context.Context, token string) (*ExamScopeListResp, error) {
+	var resp ExamScopeListResp
+	err := c.doJSON(ctx, "GET", "/api/exam-scopes", token, nil, &resp)
 	return &resp, err
 }
 
 // --- errors ---
 
-type ServerError struct{ Status int; Body string }
+type ServerError struct {
+	Status int
+	Body   string
+}
 
-func (e *ServerError) Error() string { return fmt.Sprintf("examstore: server %d: %s", e.Status, truncate(e.Body, 200)) }
+func (e *ServerError) Error() string {
+	return fmt.Sprintf("examstore: server %d: %s", e.Status, truncate(e.Body, 200))
+}
 
-type ClientError struct{ Status int; Body string }
+type ClientError struct {
+	Status int
+	Body   string
+}
 
-func (e *ClientError) Error() string { return fmt.Sprintf("examstore: client %d: %s", e.Status, truncate(e.Body, 200)) }
+func (e *ClientError) Error() string {
+	return fmt.Sprintf("examstore: client %d: %s", e.Status, truncate(e.Body, 200))
+}
 
-type AuthError struct{ Status int; Body string }
+type AuthError struct {
+	Status int
+	Body   string
+}
 
-func (e *AuthError) Error() string { return fmt.Sprintf("examstore: auth %d: %s", e.Status, truncate(e.Body, 200)) }
+func (e *AuthError) Error() string {
+	return fmt.Sprintf("examstore: auth %d: %s", e.Status, truncate(e.Body, 200))
+}
 
 func truncate(s string, max int) string {
 	if len(s) <= max {

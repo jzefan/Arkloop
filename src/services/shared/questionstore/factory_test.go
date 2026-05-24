@@ -3,7 +3,7 @@ package questionstore
 import "testing"
 
 func TestFor_ExamMode_DisabledReturnsErr(t *testing.T) {
-	_, err := For(KBDescriptor{IntegrationMode: "exam", ExamCourseID: "c1"}, false)
+	_, err := For(KBDescriptor{IntegrationMode: "exam", ExamScopeID: "s1"}, false)
 	if err != ErrIntegrationDisabled {
 		t.Errorf("want ErrIntegrationDisabled, got %v", err)
 	}
@@ -32,16 +32,16 @@ func TestFor_Standalone_CallsNewLocalStoreFunc(t *testing.T) {
 
 func TestFor_Exam_CallsNewExamStoreFunc(t *testing.T) {
 	called := false
-	NewExamStoreFunc = func(courseID string) QuestionStore {
+	NewExamStoreFunc = func(examScopeID string) QuestionStore {
 		called = true
-		if courseID != "c1" {
-			t.Errorf("want courseID=c1, got %s", courseID)
+		if examScopeID != "s1" {
+			t.Errorf("want examScopeID=s1, got %s", examScopeID)
 		}
 		return nil
 	}
 	defer func() { NewExamStoreFunc = nil }()
 
-	_, _ = For(KBDescriptor{IntegrationMode: "exam", ExamCourseID: "c1"}, true)
+	_, _ = For(KBDescriptor{IntegrationMode: "exam", ExamScopeID: "s1"}, true)
 	if !called {
 		t.Error("NewExamStoreFunc not called")
 	}

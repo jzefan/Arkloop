@@ -16,7 +16,7 @@ func Register(mux *nethttp.ServeMux, h *handlerCtx) {
 	mux.Handle("GET /v1/knowledge-bases/{id}/search", h.withActor(handleSearch(h)))
 	mux.HandleFunc("GET /v1/config", handlePlatformConfig(h))
 	if h.examIntegrationEnabled {
-		mux.Handle("GET /v1/exam/courses", h.withActor(handleExamCourses(h)))
+		mux.Handle("GET /v1/exam/scopes", h.withActor(handleExamScopes(h)))
 	}
 }
 

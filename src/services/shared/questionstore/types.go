@@ -61,7 +61,8 @@ type SaveResult struct {
 
 type KnowledgePoint struct {
 	ID        string
-	Name      string
+	Code      string // short stable code from exam's curriculum codebook (Q2)
+	Name      string // human-readable display name (mapped from exam's display_name)
 	ParentID  *string
 	Depth     int
 	SortOrder int
@@ -87,5 +88,5 @@ type ListFilter struct {
 type KBDescriptor struct {
 	ID              string
 	IntegrationMode string // "standalone" | "exam"
-	ExamCourseID    string
+	ExamScopeID     string
 }

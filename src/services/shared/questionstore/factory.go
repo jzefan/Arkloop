@@ -12,7 +12,7 @@ var (
 var NewLocalStoreFunc func(kbID string) QuestionStore
 
 // NewExamStoreFunc is set by the examstore sub-package at init time.
-var NewExamStoreFunc func(courseID string) QuestionStore
+var NewExamStoreFunc func(examScopeID string) QuestionStore
 
 // For returns the appropriate QuestionStore for the given KB descriptor.
 // examEnabled should reflect ARKLOOP_EXAM_INTEGRATION_ENABLED.
@@ -30,7 +30,7 @@ func For(kb KBDescriptor, examEnabled bool) (QuestionStore, error) {
 		if NewExamStoreFunc == nil {
 			return nil, ErrNotImplemented
 		}
-		return NewExamStoreFunc(kb.ExamCourseID), nil
+		return NewExamStoreFunc(kb.ExamScopeID), nil
 	default:
 		return nil, ErrUnsupportedMode
 	}

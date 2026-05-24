@@ -30,7 +30,7 @@ type handlerCtx struct {
 	maxUploadBytes int64
 
 	examIntegrationEnabled bool
-	examCoursesLister      examCoursesLister
+	examScopesLister       examScopesLister
 
 	authService           *auth.Service
 	accountMembershipRepo *data.AccountMembershipRepository
@@ -40,8 +40,8 @@ type handlerCtx struct {
 	workspaceRepo         *data.WorkspaceRegistriesRepository
 }
 
-type examCoursesLister interface {
-	ListCourses(ctx context.Context, token string) ([]map[string]any, error)
+type examScopesLister interface {
+	ListExamScopes(ctx context.Context, token string) ([]map[string]any, error)
 }
 
 type kbStore interface {
@@ -132,7 +132,7 @@ type createKBReq struct {
 	Description     string  `json:"description"`
 	Visibility      string  `json:"visibility"`       // "" -> workspace_member
 	IntegrationMode string  `json:"integration_mode"` // "" -> standalone
-	ExamCourseID    *string `json:"exam_course_id"`   // required iff mode=exam
+	ExamScopeID     *string `json:"exam_scope_id"`    // required iff mode=exam (Q9: renamed from exam_course_id)
 }
 
 func handleCreateKB(h *handlerCtx) nethttp.HandlerFunc {
@@ -169,9 +169,9 @@ func handleCreateKB(h *handlerCtx) nethttp.HandlerFunc {
 					"本部署未启用 exam 集成，请联系管理员或选择独立模式")
 				return
 			}
-			if req.ExamCourseID == nil || strings.TrimSpace(*req.ExamCourseID) == "" {
-				writeErr(w, nethttp.StatusBadRequest, "kb.missing_exam_course",
-					"选择绑定 exam 课程模式时必须指定 exam_course_id")
+			if req.ExamScopeID == nil || strings.TrimSpace(*req.ExamScopeID) == "" {
+				writeErr(w, nethttp.StatusBadRequest, "kb.missing_exam_scope",
+					"选择绑定 exam 范围模式时必须指定 exam_scope_id")
 				return
 			}
 		default:
@@ -198,7 +198,7 @@ func handleCreateKB(h *handlerCtx) nethttp.HandlerFunc {
 			Description:     req.Description,
 			Visibility:      req.Visibility,
 			IntegrationMode: req.IntegrationMode,
-			ExamCourseID:    req.ExamCourseID,
+			ExamScopeID:     req.ExamScopeID,
 			CreatedBy:       &a.UserID,
 		})
 		if err != nil {
@@ -366,15 +366,15 @@ func kbResponse(kb *data.KnowledgeBase) map[string]any {
 		"created_at":       kb.CreatedAt,
 		"updated_at":       kb.UpdatedAt,
 	}
-	if kb.ExamCourseID != nil {
-		resp["exam_course_id"] = *kb.ExamCourseID
+	if kb.ExamScopeID != nil {
+		resp["exam_scope_id"] = *kb.ExamScopeID
 	}
 	return resp
 }
 
-func handleExamCourses(h *handlerCtx) nethttp.HandlerFunc {
+func handleExamScopes(h *handlerCtx) nethttp.HandlerFunc {
 	return func(w nethttp.ResponseWriter, r *nethttp.Request) {
-		if h.examCoursesLister == nil {
+		if h.examScopesLister == nil {
 			writeErr(w, nethttp.StatusNotFound, "exam.not_configured", "exam integration not configured")
 			return
 		}
@@ -384,12 +384,12 @@ func handleExamCourses(h *handlerCtx) nethttp.HandlerFunc {
 			writeErr(w, nethttp.StatusUnauthorized, "auth.unauthenticated", "missing token")
 			return
 		}
-		courses, err := h.examCoursesLister.ListCourses(r.Context(), token)
+		scopes, err := h.examScopesLister.ListExamScopes(r.Context(), token)
 		if err != nil {
 			writeErr(w, nethttp.StatusBadGateway, "exam.upstream_failed", err.Error())
 			return
 		}
-		writeJSON(w, nethttp.StatusOK, map[string]any{"items": courses})
+		writeJSON(w, nethttp.StatusOK, map[string]any{"items": scopes})
 	}
 }
 

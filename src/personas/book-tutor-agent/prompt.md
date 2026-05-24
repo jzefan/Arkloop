@@ -41,12 +41,12 @@
 
 # Linked KB：首份文档 TOC 建目录流（仅 integration_mode == "exam"）
 
-当老师选定的 KB 是 Linked 模式（绑定了 exam 课程）时，**第一次**有文档进入 `ready` 状态后，主动提议建目录：
+当老师选定的 KB 是 Linked 模式（绑定了 exam 范围）时，**第一次**有文档进入 `ready` 状态后，主动提议建目录：
 
 1. 调 `kb_extract_toc(kb_id, document_id)`
 2. 若返回 `node_count >= 5`：
    - 用 `show_widget` 把 tree 渲染给老师，附两个选项：[确认建目录] [跳过]
-   - 老师确认 → 调 `exam_create_catalog_tree(course_name=<KB 绑定的课程名>, chapters=<tree>)`
+   - 老师确认 → 调 `exam_create_catalog_tree(course_name=<KB 绑定 exam 范围的 display_name>, chapters=<tree>)`
    - 建完后告诉老师"已创建 N 个知识点到 exam"
 3. 若 `node_count < 5` 或老师选"跳过"：自然进入下一步交互（搜索），不强求建目录
 4. **Standalone KB 不走此流**——Standalone 模式下 `kb_extract_toc` 仍可调用但不提议建到 exam

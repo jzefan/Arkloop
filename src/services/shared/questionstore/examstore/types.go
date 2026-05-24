@@ -10,12 +10,13 @@ type KPListResp struct {
 }
 
 type KPItem struct {
-	ID        string  `json:"id"`
-	CourseID  string  `json:"course_id"`
-	Name      string  `json:"name"`
-	ParentID  *string `json:"parent_id"`
-	Depth     int     `json:"depth"`
-	SortOrder int     `json:"sort_order"`
+	ID          string  `json:"id"`
+	ExamScopeID string  `json:"exam_scope_id"` // renamed from course_id (Q9)
+	Code        string  `json:"code"`          // new (Q2): short stable code from exam's curriculum codebook
+	DisplayName string  `json:"display_name"`  // renamed from name (Q2): human-readable label
+	ParentID    *string `json:"parent_id"`
+	Depth       int     `json:"depth"`
+	SortOrder   int     `json:"sort_order"`
 }
 
 type QListResp struct {
@@ -81,10 +82,10 @@ type BatchFailed struct {
 }
 
 type PaperReq struct {
-	Name        string      `json:"name"`
-	CourseID    string      `json:"course_id"`
-	Spec        PaperSpec   `json:"spec"`
-	QuestionIDs []string    `json:"question_ids"`
+	Name        string    `json:"name"`
+	ExamScopeID string    `json:"exam_scope_id"` // renamed from course_id (Q9)
+	Spec        PaperSpec `json:"spec"`
+	QuestionIDs []string  `json:"question_ids"`
 }
 
 type PaperSpec struct {
@@ -102,13 +103,19 @@ type PaperResp struct {
 	CreatedAt     time.Time `json:"created_at"`
 }
 
-type CourseListResp struct {
-	Items []CourseItem `json:"items"`
+// ExamScopeListResp is the response body of GET /api/exam-scopes (Q9).
+// Scopes form a 3-level hierarchy (major / direction / topic); the
+// curriculum tree is reconstructed client-side via parent_id pointers.
+type ExamScopeListResp struct {
+	Items []ExamScopeItem `json:"items"`
 }
 
-type CourseItem struct {
-	ID   string `json:"id"`
-	Name string `json:"name"`
+type ExamScopeItem struct {
+	ID          string  `json:"id"`
+	Type        string  `json:"type"` // "major" | "direction" | "topic"
+	Code        string  `json:"code"`
+	DisplayName string  `json:"display_name"`
+	ParentID    *string `json:"parent_id"` // null at major level
 }
 
 // ListFilter mirrors the query params for GET /api/questions.

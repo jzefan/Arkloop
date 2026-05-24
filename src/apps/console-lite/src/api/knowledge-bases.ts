@@ -17,10 +17,22 @@ export interface KnowledgeBase {
   description: string
   visibility: string
   integration_mode: string
-  exam_course_id?: string
+  exam_scope_id?: string
   document_count?: number
   created_at: string
   updated_at: string
+}
+
+// ExamScope mirrors the GET /api/exam-scopes response items proxied via
+// /v1/exam/scopes. The exam curriculum hierarchy has 3 levels (Q9):
+// major (专业) / direction (方向) / topic (主知识点). A Linked KB binds
+// to exactly one scope at any of those levels.
+export interface ExamScope {
+  id: string
+  type: 'major' | 'direction' | 'topic'
+  code: string
+  display_name: string
+  parent_id: string | null
 }
 
 export interface KBDocument {
@@ -64,7 +76,7 @@ export async function createKnowledgeBase(
     description?: string
     visibility?: string
     integration_mode?: string
-    exam_course_id?: string
+    exam_scope_id?: string
   },
 ): Promise<KnowledgeBase> {
   return apiFetch<KnowledgeBase>('/v1/knowledge-bases', {
@@ -80,6 +92,13 @@ export interface PlatformConfig {
 
 export async function getPlatformConfig(accessToken: string): Promise<PlatformConfig> {
   return apiFetch<PlatformConfig>('/v1/config', { accessToken })
+}
+
+// listExamScopes fetches the teacher-accessible exam scopes (major / direction
+// / topic). Returns an empty array when exam integration is disabled.
+export async function listExamScopes(accessToken: string): Promise<ExamScope[]> {
+  const resp = await apiFetch<{ items: ExamScope[] }>('/v1/exam/scopes', { accessToken })
+  return resp.items ?? []
 }
 
 export async function deleteKnowledgeBase(accessToken: string, id: string): Promise<void> {

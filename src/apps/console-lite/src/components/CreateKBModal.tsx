@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { createKnowledgeBase, getPlatformConfig } from '../api/knowledge-bases'
+import { createKnowledgeBase, getPlatformConfig, listExamScopes, type ExamScope } from '../api/knowledge-bases'
 import { useLocale } from '../contexts/LocaleContext'
 import { FormField } from './FormField'
 import { Modal } from './Modal'
@@ -16,6 +16,13 @@ const inputClassName = 'w-full rounded-lg border border-[var(--c-border)] bg-[va
 const radioClassName = 'flex cursor-pointer items-center gap-2 rounded-lg border border-[var(--c-border)] px-3 py-2 text-sm transition-colors hover:bg-[var(--c-bg-sub)]'
 const radioActiveClassName = 'flex cursor-pointer items-center gap-2 rounded-lg border border-[var(--c-border-focus)] bg-[var(--c-bg-sub)] px-3 py-2 text-sm'
 
+// scopeOptionLabel renders the display_name with a small chip showing the
+// scope type (major/direction/topic) so teachers know which hierarchy level
+// they are binding the KB to.
+function scopeOptionLabel(scope: ExamScope): string {
+  return `${scope.display_name} (${scope.type})`
+}
+
 export function CreateKBModal({ open, onClose, onCreated, accessToken, workspaceRef }: Props) {
   const { t } = useLocale()
   const tk = t.knowledgeBases
@@ -23,7 +30,9 @@ export function CreateKBModal({ open, onClose, onCreated, accessToken, workspace
   const [description, setDescription] = useState('')
   const [visibility, setVisibility] = useState<'workspace_member' | 'private'>('workspace_member')
   const [integrationMode, setIntegrationMode] = useState<'standalone' | 'exam'>('standalone')
-  const [examCourseId, setExamCourseId] = useState('')
+  const [examScopeId, setExamScopeId] = useState('')
+  const [examScopes, setExamScopes] = useState<ExamScope[]>([])
+  const [examScopesError, setExamScopesError] = useState('')
   const [examEnabled, setExamEnabled] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState('')
@@ -35,11 +44,24 @@ export function CreateKBModal({ open, onClose, onCreated, accessToken, workspace
       .catch(() => setExamEnabled(false))
   }, [open, accessToken])
 
+  // Fetch exam scopes lazily when the teacher switches to exam mode.
+  useEffect(() => {
+    if (!open || integrationMode !== 'exam' || !examEnabled || examScopes.length > 0) return
+    listExamScopes(accessToken)
+      .then((items) => {
+        setExamScopes(items)
+        setExamScopesError('')
+      })
+      .catch((err) => {
+        setExamScopesError(err instanceof Error ? err.message : String(err))
+      })
+  }, [open, integrationMode, examEnabled, accessToken, examScopes.length])
+
   const handleSubmit = useCallback(async () => {
     const trimmedName = name.trim()
     if (!trimmedName || submitting) return
-    if (integrationMode === 'exam' && !examCourseId.trim()) {
-      setError('请输入 exam 课程 ID')
+    if (integrationMode === 'exam' && !examScopeId.trim()) {
+      setError('请选择 exam 范围')
       return
     }
     setSubmitting(true)
@@ -51,13 +73,13 @@ export function CreateKBModal({ open, onClose, onCreated, accessToken, workspace
         description: description.trim(),
         visibility,
         integration_mode: integrationMode,
-        exam_course_id: integrationMode === 'exam' ? examCourseId.trim() : undefined,
+        exam_scope_id: integrationMode === 'exam' ? examScopeId.trim() : undefined,
       })
       setName('')
       setDescription('')
       setVisibility('workspace_member')
       setIntegrationMode('standalone')
-      setExamCourseId('')
+      setExamScopeId('')
       onCreated(kb.id)
       onClose()
     } catch (err) {
@@ -65,7 +87,7 @@ export function CreateKBModal({ open, onClose, onCreated, accessToken, workspace
     } finally {
       setSubmitting(false)
     }
-  }, [accessToken, description, examCourseId, integrationMode, name, onClose, onCreated, submitting, visibility, workspaceRef])
+  }, [accessToken, description, examScopeId, integrationMode, name, onClose, onCreated, submitting, visibility, workspaceRef])
 
   return (
     <Modal open={open} onClose={onClose} title={tk.createTitle} width="460px">
@@ -108,21 +130,21 @@ export function CreateKBModal({ open, onClose, onCreated, accessToken, workspace
                 <span className="text-[var(--c-text-primary)]">独立模式</span>
               </button>
               <button type="button" onClick={() => setIntegrationMode('exam')} className={integrationMode === 'exam' ? radioActiveClassName : radioClassName}>
-                <span className="text-[var(--c-text-primary)]">绑定 exam 课程</span>
+                <span className="text-[var(--c-text-primary)]">绑定 exam 范围</span>
               </button>
             </div>
           </FormField>
         )}
         {integrationMode === 'exam' && (
-          <FormField label="exam 课程 ID">
-            <input
-              type="text"
-              value={examCourseId}
-              onChange={(event) => setExamCourseId(event.target.value)}
-              className={inputClassName}
-              placeholder="输入 exam 课程 UUID"
+          <FormField label="exam 范围">
+            <ExamScopeSelect
+              scopes={examScopes}
+              value={examScopeId}
+              onChange={setExamScopeId}
+              loading={examScopes.length === 0 && examScopesError === ''}
+              error={examScopesError}
             />
-            <p className="mt-1 text-xs text-[var(--c-text-muted)]">KB 创建后无法切换模式</p>
+            <p className="mt-1 text-xs text-[var(--c-text-muted)]">KB 创建后无法切换模式或范围</p>
           </FormField>
         )}
         {error && <p className="text-xs text-[var(--c-status-error-text)]">{error}</p>}
@@ -146,5 +168,43 @@ export function CreateKBModal({ open, onClose, onCreated, accessToken, workspace
         </div>
       </div>
     </Modal>
+  )
+}
+
+type ExamScopeSelectProps = {
+  scopes: ExamScope[]
+  value: string
+  onChange: (id: string) => void
+  loading: boolean
+  error: string
+}
+
+// ExamScopeSelect renders a native <select> with display_name + a parenthetical
+// type chip (major/direction/topic) on each option so teachers can see which
+// hierarchy level they are binding to. Stays minimal — a custom popover with
+// chip badges per option can come later if the dropdown grows large.
+function ExamScopeSelect({ scopes, value, onChange, loading, error }: ExamScopeSelectProps) {
+  if (error) {
+    return <p className="text-xs text-[var(--c-status-error-text)]">加载 exam 范围失败：{error}</p>
+  }
+  if (loading) {
+    return <p className="text-xs text-[var(--c-text-muted)]">加载 exam 范围中…</p>
+  }
+  if (scopes.length === 0) {
+    return <p className="text-xs text-[var(--c-text-muted)]">未找到可绑定的 exam 范围</p>
+  }
+  return (
+    <select
+      value={value}
+      onChange={(event) => onChange(event.target.value)}
+      className={inputClassName}
+    >
+      <option value="">请选择 exam 范围…</option>
+      {scopes.map((scope) => (
+        <option key={scope.id} value={scope.id}>
+          {scopeOptionLabel(scope)}
+        </option>
+      ))}
+    </select>
   )
 }

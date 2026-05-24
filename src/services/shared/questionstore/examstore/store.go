@@ -14,11 +14,11 @@ type TokenSource func(ctx context.Context) (string, error)
 type Store struct {
 	client      *Client
 	tokenSource TokenSource
-	courseID     string
+	examScopeID string
 }
 
-func NewStore(client *Client, tokenSource TokenSource, courseID string) *Store {
-	return &Store{client: client, tokenSource: tokenSource, courseID: courseID}
+func NewStore(client *Client, tokenSource TokenSource, examScopeID string) *Store {
+	return &Store{client: client, tokenSource: tokenSource, examScopeID: examScopeID}
 }
 
 func (s *Store) token(ctx context.Context) (string, error) {
@@ -78,14 +78,14 @@ func (s *Store) ListKnowledgePoints(ctx context.Context, _ string) ([]questionst
 	if err != nil {
 		return nil, err
 	}
-	resp, err := s.client.ListKnowledgePoints(ctx, tok, s.courseID, 500, 0)
+	resp, err := s.client.ListKnowledgePoints(ctx, tok, s.examScopeID, 500, 0)
 	if err != nil {
 		return nil, err
 	}
 	out := make([]questionstore.KnowledgePoint, len(resp.Items))
 	for i, kp := range resp.Items {
 		out[i] = questionstore.KnowledgePoint{
-			ID: kp.ID, Name: kp.Name, ParentID: kp.ParentID,
+			ID: kp.ID, Code: kp.Code, Name: kp.DisplayName, ParentID: kp.ParentID,
 			Depth: kp.Depth, SortOrder: kp.SortOrder,
 		}
 	}
@@ -98,8 +98,8 @@ func (s *Store) SavePaper(ctx context.Context, name string, _ string, spec quest
 		return "", err
 	}
 	resp, err := s.client.CreatePaper(ctx, tok, PaperReq{
-		Name:     name,
-		CourseID: s.courseID,
+		Name:        name,
+		ExamScopeID: s.examScopeID,
 		Spec: PaperSpec{
 			TotalCount:                 spec.TotalCount,
 			TypeDistribution:           spec.TypeDistribution,
@@ -175,13 +175,13 @@ func mapDraft(d questionstore.QuestionDraft) DraftReq {
 
 // Register wires examstore into the questionstore factory.
 func init() {
-	questionstore.NewExamStoreFunc = func(courseID string) questionstore.QuestionStore {
+	questionstore.NewExamStoreFunc = func(examScopeID string) questionstore.QuestionStore {
 		// This will be called by the factory; the actual Client + TokenSource
 		// must be set via SetGlobalClient before any KB with mode=exam is used.
 		if globalClient == nil {
 			return nil
 		}
-		return NewStore(globalClient, globalTokenSource, courseID)
+		return NewStore(globalClient, globalTokenSource, examScopeID)
 	}
 }
 

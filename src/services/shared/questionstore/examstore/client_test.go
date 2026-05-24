@@ -68,7 +68,7 @@ func TestClient_5xx_RetriesThenFails(t *testing.T) {
 
 	c := NewClient(srv.URL)
 	c.retry = RetryPolicy{MaxAttempts: 3, BaseDelay: 1 * time.Millisecond, MaxDelay: 5 * time.Millisecond}
-	_, err := c.ListCourses(context.Background(), "tok")
+	_, err := c.ListExamScopes(context.Background(), "tok")
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -88,17 +88,19 @@ func TestClient_5xx_RetriesAndSucceeds(t *testing.T) {
 			w.WriteHeader(500)
 			return
 		}
-		json.NewEncoder(w).Encode(CourseListResp{Items: []CourseItem{{ID: "c1", Name: "Physics"}}})
+		json.NewEncoder(w).Encode(ExamScopeListResp{Items: []ExamScopeItem{
+			{ID: "s1", Type: "major", Code: "100201", DisplayName: "临床医学"},
+		}})
 	}))
 	defer srv.Close()
 
 	c := NewClient(srv.URL)
 	c.retry = RetryPolicy{MaxAttempts: 3, BaseDelay: 1 * time.Millisecond, MaxDelay: 5 * time.Millisecond}
-	resp, err := c.ListCourses(context.Background(), "tok")
+	resp, err := c.ListExamScopes(context.Background(), "tok")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(resp.Items) != 1 || resp.Items[0].ID != "c1" {
+	if len(resp.Items) != 1 || resp.Items[0].ID != "s1" || resp.Items[0].DisplayName != "临床医学" {
 		t.Errorf("unexpected: %+v", resp)
 	}
 }
@@ -114,7 +116,7 @@ func TestClient_401_NoRetry(t *testing.T) {
 
 	c := NewClient(srv.URL)
 	c.retry = RetryPolicy{MaxAttempts: 3, BaseDelay: 1 * time.Millisecond, MaxDelay: 5 * time.Millisecond}
-	_, err := c.ListCourses(context.Background(), "tok")
+	_, err := c.ListExamScopes(context.Background(), "tok")
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -142,7 +144,7 @@ func TestClient_ConcurrencyLimit(t *testing.T) {
 		}
 		time.Sleep(10 * time.Millisecond)
 		atomic.AddInt32(&current, -1)
-		json.NewEncoder(w).Encode(CourseListResp{})
+		json.NewEncoder(w).Encode(ExamScopeListResp{})
 	}))
 	defer srv.Close()
 
@@ -151,7 +153,7 @@ func TestClient_ConcurrencyLimit(t *testing.T) {
 	done := make(chan struct{}, 8)
 	for i := 0; i < 8; i++ {
 		go func() {
-			c.ListCourses(context.Background(), "tok")
+			c.ListExamScopes(context.Background(), "tok")
 			done <- struct{}{}
 		}()
 	}
@@ -160,5 +162,67 @@ func TestClient_ConcurrencyLimit(t *testing.T) {
 	}
 	if atomic.LoadInt32(&maxInFlight) > 4 {
 		t.Errorf("max in-flight %d exceeded semaphore limit 4", maxInFlight)
+	}
+}
+
+// TestClient_ListExamScopes_MultiLevelShape verifies that GET /api/exam-scopes
+// returns the new 3-level hierarchy shape (major / direction / topic) per Q9.
+func TestClient_ListExamScopes_MultiLevelShape(t *testing.T) {
+	var gotPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		majorID := "scope-major-1"
+		dirID := "scope-dir-1"
+		json.NewEncoder(w).Encode(ExamScopeListResp{Items: []ExamScopeItem{
+			{ID: majorID, Type: "major", Code: "100201", DisplayName: "临床医学", ParentID: nil},
+			{ID: dirID, Type: "direction", Code: "0201-1", DisplayName: "妇产科方向", ParentID: &majorID},
+			{ID: "scope-topic-1", Type: "topic", Code: "0201", DisplayName: "妇产科学", ParentID: &dirID},
+		}})
+	}))
+	defer srv.Close()
+
+	c := NewClient(srv.URL)
+	resp, err := c.ListExamScopes(context.Background(), "tok")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotPath != "/api/exam-scopes" {
+		t.Errorf("want path /api/exam-scopes, got %s", gotPath)
+	}
+	if len(resp.Items) != 3 {
+		t.Fatalf("want 3 items, got %d", len(resp.Items))
+	}
+	if resp.Items[0].Type != "major" || resp.Items[0].ParentID != nil {
+		t.Errorf("major mismatch: %+v", resp.Items[0])
+	}
+	if resp.Items[1].Type != "direction" || resp.Items[1].ParentID == nil || *resp.Items[1].ParentID != "scope-major-1" {
+		t.Errorf("direction mismatch: %+v", resp.Items[1])
+	}
+	if resp.Items[2].Type != "topic" || resp.Items[2].DisplayName != "妇产科学" {
+		t.Errorf("topic mismatch: %+v", resp.Items[2])
+	}
+}
+
+// TestClient_ListKnowledgePoints_UsesExamScopeIDParam verifies the renamed query param.
+func TestClient_ListKnowledgePoints_UsesExamScopeIDParam(t *testing.T) {
+	var gotQuery string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotQuery = r.URL.RawQuery
+		json.NewEncoder(w).Encode(KPListResp{Items: []KPItem{
+			{ID: "kp1", ExamScopeID: "scope-1", Code: "K-3.2-INTF", DisplayName: "光的干涉"},
+		}, Total: 1})
+	}))
+	defer srv.Close()
+
+	c := NewClient(srv.URL)
+	resp, err := c.ListKnowledgePoints(context.Background(), "tok", "scope-1", 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotQuery != "exam_scope_id=scope-1" {
+		t.Errorf("want query exam_scope_id=scope-1, got %s", gotQuery)
+	}
+	if resp.Items[0].Code != "K-3.2-INTF" || resp.Items[0].DisplayName != "光的干涉" {
+		t.Errorf("KP fields mismatch: %+v", resp.Items[0])
 	}
 }
