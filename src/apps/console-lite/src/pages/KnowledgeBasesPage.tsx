@@ -107,7 +107,12 @@ export function KnowledgeBasesPage() {
     {
       key: 'mode',
       header: tk.colMode,
-      render: (row) => <Badge variant="neutral">{row.integration_mode}</Badge>,
+      render: (row) => (
+        <div className="flex flex-wrap gap-1">
+          {row.visibility === 'private' && <Badge variant="neutral">私有</Badge>}
+          <Badge variant={row.integration_mode === 'exam' ? 'success' : 'neutral'}>{row.integration_mode === 'exam' ? '已绑定 exam' : 'standalone'}</Badge>
+        </div>
+      ),
     },
     {
       key: 'created',

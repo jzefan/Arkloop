@@ -1,5 +1,5 @@
-import { useCallback, useState } from 'react'
-import { createKnowledgeBase } from '../api/knowledge-bases'
+import { useCallback, useEffect, useState } from 'react'
+import { createKnowledgeBase, getPlatformConfig } from '../api/knowledge-bases'
 import { useLocale } from '../contexts/LocaleContext'
 import { FormField } from './FormField'
 import { Modal } from './Modal'
@@ -13,18 +13,35 @@ type Props = {
 }
 
 const inputClassName = 'w-full rounded-lg border border-[var(--c-border)] bg-[var(--c-bg-input)] px-3 py-2 text-sm text-[var(--c-text-primary)] placeholder:text-[var(--c-text-muted)] outline-none transition-colors focus:border-[var(--c-border-focus)]'
+const radioClassName = 'flex cursor-pointer items-center gap-2 rounded-lg border border-[var(--c-border)] px-3 py-2 text-sm transition-colors hover:bg-[var(--c-bg-sub)]'
+const radioActiveClassName = 'flex cursor-pointer items-center gap-2 rounded-lg border border-[var(--c-border-focus)] bg-[var(--c-bg-sub)] px-3 py-2 text-sm'
 
 export function CreateKBModal({ open, onClose, onCreated, accessToken, workspaceRef }: Props) {
   const { t } = useLocale()
   const tk = t.knowledgeBases
   const [name, setName] = useState('')
   const [description, setDescription] = useState('')
+  const [visibility, setVisibility] = useState<'workspace_member' | 'private'>('workspace_member')
+  const [integrationMode, setIntegrationMode] = useState<'standalone' | 'exam'>('standalone')
+  const [examCourseId, setExamCourseId] = useState('')
+  const [examEnabled, setExamEnabled] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState('')
+
+  useEffect(() => {
+    if (!open) return
+    getPlatformConfig(accessToken)
+      .then((cfg) => setExamEnabled(cfg.exam_integration_enabled))
+      .catch(() => setExamEnabled(false))
+  }, [open, accessToken])
 
   const handleSubmit = useCallback(async () => {
     const trimmedName = name.trim()
     if (!trimmedName || submitting) return
+    if (integrationMode === 'exam' && !examCourseId.trim()) {
+      setError('请输入 exam 课程 ID')
+      return
+    }
     setSubmitting(true)
     setError('')
     try {
@@ -32,9 +49,15 @@ export function CreateKBModal({ open, onClose, onCreated, accessToken, workspace
         name: trimmedName,
         workspace_ref: workspaceRef,
         description: description.trim(),
+        visibility,
+        integration_mode: integrationMode,
+        exam_course_id: integrationMode === 'exam' ? examCourseId.trim() : undefined,
       })
       setName('')
       setDescription('')
+      setVisibility('workspace_member')
+      setIntegrationMode('standalone')
+      setExamCourseId('')
       onCreated(kb.id)
       onClose()
     } catch (err) {
@@ -42,7 +65,7 @@ export function CreateKBModal({ open, onClose, onCreated, accessToken, workspace
     } finally {
       setSubmitting(false)
     }
-  }, [accessToken, description, name, onClose, onCreated, submitting, workspaceRef])
+  }, [accessToken, description, examCourseId, integrationMode, name, onClose, onCreated, submitting, visibility, workspaceRef])
 
   return (
     <Modal open={open} onClose={onClose} title={tk.createTitle} width="460px">
@@ -68,6 +91,40 @@ export function CreateKBModal({ open, onClose, onCreated, accessToken, workspace
             className={inputClassName}
           />
         </FormField>
+        <FormField label="可见性">
+          <div className="flex gap-2">
+            <button type="button" onClick={() => setVisibility('workspace_member')} className={visibility === 'workspace_member' ? radioActiveClassName : radioClassName}>
+              <span className="text-[var(--c-text-primary)]">工作区全员可见</span>
+            </button>
+            <button type="button" onClick={() => setVisibility('private')} className={visibility === 'private' ? radioActiveClassName : radioClassName}>
+              <span className="text-[var(--c-text-primary)]">仅自己</span>
+            </button>
+          </div>
+        </FormField>
+        {examEnabled && (
+          <FormField label="集成模式">
+            <div className="flex gap-2">
+              <button type="button" onClick={() => setIntegrationMode('standalone')} className={integrationMode === 'standalone' ? radioActiveClassName : radioClassName}>
+                <span className="text-[var(--c-text-primary)]">独立模式</span>
+              </button>
+              <button type="button" onClick={() => setIntegrationMode('exam')} className={integrationMode === 'exam' ? radioActiveClassName : radioClassName}>
+                <span className="text-[var(--c-text-primary)]">绑定 exam 课程</span>
+              </button>
+            </div>
+          </FormField>
+        )}
+        {integrationMode === 'exam' && (
+          <FormField label="exam 课程 ID">
+            <input
+              type="text"
+              value={examCourseId}
+              onChange={(event) => setExamCourseId(event.target.value)}
+              className={inputClassName}
+              placeholder="输入 exam 课程 UUID"
+            />
+            <p className="mt-1 text-xs text-[var(--c-text-muted)]">KB 创建后无法切换模式</p>
+          </FormField>
+        )}
         {error && <p className="text-xs text-[var(--c-status-error-text)]">{error}</p>}
         <div className="mt-2 flex justify-end gap-2">
           <button

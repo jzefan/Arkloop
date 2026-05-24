@@ -15,7 +15,9 @@ export interface KnowledgeBase {
   name: string
   workspace_ref: string
   description: string
+  visibility: string
   integration_mode: string
+  exam_course_id?: string
   document_count?: number
   created_at: string
   updated_at: string
@@ -56,13 +58,28 @@ export async function listKnowledgeBases(accessToken: string, workspaceRef?: str
 
 export async function createKnowledgeBase(
   accessToken: string,
-  body: { name: string; workspace_ref?: string; description?: string },
+  body: {
+    name: string
+    workspace_ref?: string
+    description?: string
+    visibility?: string
+    integration_mode?: string
+    exam_course_id?: string
+  },
 ): Promise<KnowledgeBase> {
   return apiFetch<KnowledgeBase>('/v1/knowledge-bases', {
     method: 'POST',
     body: JSON.stringify(body),
     accessToken,
   })
+}
+
+export interface PlatformConfig {
+  exam_integration_enabled: boolean
+}
+
+export async function getPlatformConfig(accessToken: string): Promise<PlatformConfig> {
+  return apiFetch<PlatformConfig>('/v1/config', { accessToken })
 }
 
 export async function deleteKnowledgeBase(accessToken: string, id: string): Promise<void> {
