@@ -732,6 +732,7 @@ func (a *Application) Run(ctx context.Context) error {
 		a.logger.Error("LoadFromDir failed", "path", personasRoot, "err", err)
 		return err
 	}
+	repoPersonas = personas.ApplyExamIntegrationGate(repoPersonas, a.config.ExamIntegrationEnabled)
 	a.logger.Info("milestone: personas loaded", "count", len(repoPersonas))
 
 	var personaSyncManager *personasync.Manager
