@@ -1,6 +1,8 @@
 package builtin
 
 import (
+	"os"
+
 	sharedconfig "arkloop/services/shared/config"
 	"arkloop/services/shared/objectstore"
 	"arkloop/services/worker/internal/llm"
@@ -112,7 +114,9 @@ func Executors(pool *pgxpool.Pool, rdb *redis.Client, resolver sharedconfig.Reso
 	// missing, NewClient returns an error and we register a stub that responds
 	// IsNotConfigured() == true so the policy layer hides them from the model.
 	var examExec *exam.ToolExecutor
-	if examClient, err := exam.NewClient(); err == nil {
+	if os.Getenv("ARKLOOP_EXAM_INTEGRATION_ENABLED") != "true" {
+		examExec = exam.NewToolExecutor(nil)
+	} else if examClient, err := exam.NewClient(); err == nil {
 		examExec = exam.NewToolExecutor(examClient)
 	} else {
 		examExec = exam.NewToolExecutor(nil)
@@ -132,6 +136,7 @@ func Executors(pool *pgxpool.Pool, rdb *redis.Client, resolver sharedconfig.Reso
 		webfetch.AgentSpecFirecrawl.Name:   webfetch.NewFirecrawlExecutor(resolver),
 		webfetch.AgentSpecBasic.Name:       webfetch.NewBasicExecutor(resolver),
 		kb.AgentSpec.Name:                  kb.NewToolExecutor(pool),
+		kb.ExtractTOCAgentSpec.Name:        kb.NewToolExecutor(pool),
 		read.AgentSpec.Name:                read.NewToolExecutorWithTracker(tracker),
 		read.AgentSpecMiniMax.Name:         read.NewToolExecutorWithTracker(tracker),
 		writefile.AgentSpec.Name:           &writefile.Executor{Tracker: tracker},

@@ -155,6 +155,10 @@ type Config struct {
 	DoubaoEmbedModel     string
 	DoubaoEmbedBatchSize int
 	DoubaoEmbedDim       int
+
+	// Exam integration (M2a)
+	ExamIntegrationEnabled bool
+	ExamBaseURL            string
 }
 
 func DefaultConfig() Config {
@@ -399,6 +403,18 @@ func LoadConfigFromEnv() (Config, error) {
 		cfg.DoubaoEmbedDim = v
 	}
 
+	// Exam integration
+	if raw, ok := lookupEnv("ARKLOOP_EXAM_INTEGRATION_ENABLED"); ok {
+		enabled, err := parseBool(raw)
+		if err != nil {
+			return Config{}, fmt.Errorf("ARKLOOP_EXAM_INTEGRATION_ENABLED: %w", err)
+		}
+		cfg.ExamIntegrationEnabled = enabled
+	}
+	if raw, ok := lookupEnv("EXAM_BASE_URL"); ok {
+		cfg.ExamBaseURL = strings.TrimSpace(raw)
+	}
+
 	if err := cfg.Validate(); err != nil {
 		return Config{}, err
 	}
@@ -454,6 +470,9 @@ func (c Config) Validate() error {
 		if err := c.Auth.Validate(); err != nil {
 			return err
 		}
+	}
+	if c.ExamIntegrationEnabled && c.ExamBaseURL == "" {
+		return fmt.Errorf("ARKLOOP_EXAM_INTEGRATION_ENABLED=true but EXAM_BASE_URL is empty")
 	}
 	return nil
 }

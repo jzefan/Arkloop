@@ -56,6 +56,16 @@ func (f *fakeDocStore) Delete(ctx context.Context, id uuid.UUID) error {
 	return nil
 }
 
+func (f *fakeDocStore) CountByBlobSHA256(ctx context.Context, sha string) (int, error) {
+	n := 0
+	for _, d := range f.items {
+		if d.BlobSHA256 == sha {
+			n++
+		}
+	}
+	return n, nil
+}
+
 type fakeBlobStore struct {
 	puts map[string][]byte
 }
@@ -64,6 +74,11 @@ func newFakeBlobStore() *fakeBlobStore { return &fakeBlobStore{puts: map[string]
 
 func (b *fakeBlobStore) PutBlob(ctx context.Context, workspaceRef, sha256 string, data []byte) error {
 	b.puts[workspaceRef+"/"+sha256] = append([]byte(nil), data...)
+	return nil
+}
+
+func (b *fakeBlobStore) DeleteBlob(ctx context.Context, workspaceRef, sha256 string) error {
+	delete(b.puts, workspaceRef+"/"+sha256)
 	return nil
 }
 

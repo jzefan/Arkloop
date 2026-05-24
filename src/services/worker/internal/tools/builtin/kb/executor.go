@@ -25,6 +25,7 @@ const (
 
 type ChunksReader interface {
 	Search(ctx context.Context, kbID uuid.UUID, query []float32, k int) ([]wdata.KBChunkHit, error)
+	ListHeadings(ctx context.Context, kbID, docID uuid.UUID) ([]wdata.KBChunkHit, error)
 	Dim() int
 }
 
@@ -71,6 +72,17 @@ func (e *Executor) IsNotConfigured() bool {
 }
 
 func (e *Executor) Execute(ctx context.Context, toolName string, args map[string]any, execCtx tools.ExecutionContext, toolCallID string) tools.ExecutionResult {
+	switch toolName {
+	case ToolNameSearch:
+		return e.executeSearch(ctx, args, execCtx)
+	case ToolNameExtractTOC:
+		return e.executeExtractTOC(ctx, args, execCtx)
+	default:
+		return errResult(errorNotConfigured, "unknown kb tool: "+toolName)
+	}
+}
+
+func (e *Executor) executeSearch(ctx context.Context, args map[string]any, execCtx tools.ExecutionContext) tools.ExecutionResult {
 	if e.IsNotConfigured() {
 		return errResult(errorNotConfigured, "kb_search is not configured")
 	}
@@ -127,6 +139,79 @@ func (e *Executor) Execute(ctx context.Context, toolName string, args map[string
 		})
 	}
 	return tools.ExecutionResult{ResultJSON: map[string]any{"hits": out}}
+}
+
+func (e *Executor) executeExtractTOC(ctx context.Context, args map[string]any, execCtx tools.ExecutionContext) tools.ExecutionResult {
+	if e.IsNotConfigured() {
+		return errResult(errorNotConfigured, "kb_extract_toc is not configured")
+	}
+	accountID := uuid.Nil
+	if execCtx.AccountID != nil {
+		accountID = *execCtx.AccountID
+	}
+	if accountID == uuid.Nil {
+		return errResult(errorPermissionDenied, "kb_extract_toc requires an account context")
+	}
+	kbID, err := uuid.Parse(strings.TrimSpace(asString(args["kb_id"])))
+	if err != nil || kbID == uuid.Nil {
+		return errResult(errorArgsInvalid, "kb_id is required and must be a UUID")
+	}
+	docID, err := uuid.Parse(strings.TrimSpace(asString(args["document_id"])))
+	if err != nil || docID == uuid.Nil {
+		return errResult(errorArgsInvalid, "document_id is required and must be a UUID")
+	}
+	ok, err := e.access.IsActorWorkspaceMember(ctx, accountID, kbID)
+	if err != nil {
+		return errResult(errorSearchFailed, "access check failed: "+err.Error())
+	}
+	if !ok {
+		return errResult(errorPermissionDenied, "caller is not a member of this KB workspace")
+	}
+	// Extract TOC from document's parse_meta_json via direct query
+	toc, nodeCount, err := e.extractTOCFromDB(ctx, kbID, docID)
+	if err != nil {
+		return errResult(errorSearchFailed, "extract toc: "+err.Error())
+	}
+	return tools.ExecutionResult{ResultJSON: map[string]any{"tree": toc, "node_count": nodeCount}}
+}
+
+func (e *Executor) extractTOCFromDB(ctx context.Context, kbID, docID uuid.UUID) (any, int, error) {
+	if e.chunks == nil {
+		return nil, 0, errors.New("chunks reader not configured")
+	}
+	// Query heading chunks for this document, ordered by ordinal
+	hits, err := e.chunks.ListHeadings(ctx, kbID, docID)
+	if err != nil {
+		return nil, 0, err
+	}
+	if len(hits) < 5 {
+		return nil, len(hits), nil
+	}
+	// Build tree from heading_path arrays
+	type tocNode struct {
+		Name     string     `json:"name"`
+		Children []*tocNode `json:"children,omitempty"`
+	}
+	root := &tocNode{Name: "root"}
+	for _, h := range hits {
+		current := root
+		for _, segment := range h.HeadingPath {
+			found := false
+			for _, child := range current.Children {
+				if child.Name == segment {
+					current = child
+					found = true
+					break
+				}
+			}
+			if !found {
+				node := &tocNode{Name: segment}
+				current.Children = append(current.Children, node)
+				current = node
+			}
+		}
+	}
+	return root.Children, len(hits), nil
 }
 
 type DBAccessChecker struct {

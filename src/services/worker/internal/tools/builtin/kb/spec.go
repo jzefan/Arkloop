@@ -6,11 +6,20 @@ import (
 )
 
 const ToolNameSearch = "kb_search"
+const ToolNameExtractTOC = "kb_extract_toc"
 
 var AgentSpec = tools.AgentToolSpec{
 	Name:        ToolNameSearch,
 	Version:     "1",
 	Description: "semantic retrieval over a workspace-scoped knowledge base",
+	RiskLevel:   tools.RiskLevelLow,
+	SideEffects: false,
+}
+
+var ExtractTOCAgentSpec = tools.AgentToolSpec{
+	Name:        ToolNameExtractTOC,
+	Version:     "1",
+	Description: "extract a document's TOC tree (heading hierarchy) for catalog creation in exam",
 	RiskLevel:   tools.RiskLevelLow,
 	SideEffects: false,
 }
@@ -38,6 +47,26 @@ var LlmSpec = llm.ToolSpec{
 			},
 		},
 		"required":             []string{"kb_id", "query"},
+		"additionalProperties": false,
+	},
+}
+
+var ExtractTOCLlmSpec = llm.ToolSpec{
+	Name:        ToolNameExtractTOC,
+	Description: stringPtr("从已摄入的 KB 文档中提取目录树（heading 层级结构）。返回 tree + node_count；node_count < 5 时 tree 为 null。用于 Linked KB 建目录到 exam。"),
+	JSONSchema: map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"kb_id": map[string]any{
+				"type":        "string",
+				"description": "KB UUID",
+			},
+			"document_id": map[string]any{
+				"type":        "string",
+				"description": "文档 UUID",
+			},
+		},
+		"required":             []string{"kb_id", "document_id"},
 		"additionalProperties": false,
 	},
 }

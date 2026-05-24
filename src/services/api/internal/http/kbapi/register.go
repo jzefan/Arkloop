@@ -14,4 +14,16 @@ func Register(mux *nethttp.ServeMux, h *handlerCtx) {
 	mux.Handle("GET /v1/knowledge-bases/{id}/documents/{doc_id}", h.withActor(handleGetDoc(h)))
 	mux.Handle("DELETE /v1/knowledge-bases/{id}/documents/{doc_id}", h.withActor(handleDeleteDoc(h)))
 	mux.Handle("GET /v1/knowledge-bases/{id}/search", h.withActor(handleSearch(h)))
+	mux.HandleFunc("GET /v1/config", handlePlatformConfig(h))
+	if h.examIntegrationEnabled {
+		mux.Handle("GET /v1/exam/scopes", h.withActor(handleExamScopes(h)))
+	}
+}
+
+func handlePlatformConfig(h *handlerCtx) nethttp.HandlerFunc {
+	return func(w nethttp.ResponseWriter, r *nethttp.Request) {
+		writeJSON(w, nethttp.StatusOK, map[string]any{
+			"exam_integration_enabled": h.examIntegrationEnabled,
+		})
+	}
 }

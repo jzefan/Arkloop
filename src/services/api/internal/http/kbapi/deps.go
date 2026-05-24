@@ -47,4 +47,7 @@ type Deps struct {
 
 	// Limits
 	MaxUploadBytes int64 // 100 MiB default
+
+	// Feature flags
+	ExamIntegrationEnabled bool
 }

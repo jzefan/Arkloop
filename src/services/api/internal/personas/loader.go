@@ -258,3 +258,17 @@ func loadOptionalPersonaPromptMarkdown(personaDir string, value any, label strin
 	}
 	return content, nil
 }
+
+// ApplyExamIntegrationGate disables exam-bound personas when integration is off.
+func ApplyExamIntegrationGate(ps []RepoPersona, examEnabled bool) []RepoPersona {
+	if examEnabled {
+		return ps
+	}
+	for i := range ps {
+		switch ps[i].ID {
+		case "exam-agent", "exam-builder-agent":
+			ps[i].UserSelectable = false
+		}
+	}
+	return ps
+}

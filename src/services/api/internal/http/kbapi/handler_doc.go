@@ -52,13 +52,18 @@ func handleUploadDoc(h *handlerCtx) nethttp.HandlerFunc {
 		ext := strings.ToLower(filepath.Ext(header.Filename))
 		mime := mimeFromExt(ext)
 		if mime == "" {
-			writeErr(w, nethttp.StatusUnsupportedMediaType, "kb.unsupported_format", "supported formats: .txt, .md, .pdf, .docx, .png, .jpg, .jpeg, .webp")
-			return
+			mime = sniffMime(nil, ext) // will be overridden below after reading
 		}
 		buf := &bytes.Buffer{}
 		n, err := io.Copy(buf, file)
 		if err != nil {
 			writeErr(w, nethttp.StatusBadRequest, "kb.read_failed", "could not read uploaded file")
+			return
+		}
+		mime = sniffMime(buf.Bytes(), ext)
+		if !isAllowedMime(mime) {
+			writeErr(w, nethttp.StatusUnsupportedMediaType, "kb.unsupported_mime",
+				"不支持的文件类型："+mime+"（支持 .txt/.md/.pdf/.docx/.png/.jpg/.webp）")
 			return
 		}
 		sum := sha256.Sum256(buf.Bytes())
@@ -146,6 +151,7 @@ func handleDeleteDoc(h *handlerCtx) nethttp.HandlerFunc {
 		if !ok {
 			return
 		}
+		sha := doc.BlobSHA256
 		if err := h.docStore.Delete(r.Context(), doc.ID); err != nil {
 			if errors.Is(err, data.ErrDocNotFound) {
 				writeErr(w, nethttp.StatusNotFound, "kb.doc_not_found", "document not found")
@@ -153,6 +159,10 @@ func handleDeleteDoc(h *handlerCtx) nethttp.HandlerFunc {
 			}
 			writeErr(w, nethttp.StatusInternalServerError, "internal.error", "delete failed")
 			return
+		}
+		// Clean up blob if this was the last reference
+		if remaining, err := h.docStore.CountByBlobSHA256(r.Context(), sha); err == nil && remaining == 0 {
+			_ = h.blob.DeleteBlob(r.Context(), kb.WorkspaceRef, sha)
 		}
 		w.WriteHeader(nethttp.StatusNoContent)
 	}
@@ -205,4 +215,53 @@ func mimeFromExt(ext string) string {
 	default:
 		return ""
 	}
+}
+
+var allowedMimes = map[string]struct{}{
+	"text/plain":    {},
+	"text/markdown": {},
+	"application/pdf": {},
+	"application/vnd.openxmlformats-officedocument.wordprocessingml.document": {},
+	"image/png":  {},
+	"image/jpeg": {},
+	"image/webp": {},
+}
+
+func isAllowedMime(mime string) bool {
+	_, ok := allowedMimes[mime]
+	return ok
+}
+
+// sniffMime detects MIME from content bytes + file extension fallback.
+func sniffMime(data []byte, ext string) string {
+	// Extension-based detection first (more reliable for text formats)
+	extMime := mimeFromExt(ext)
+	if extMime != "" && (extMime == "text/markdown" || extMime == "application/vnd.openxmlformats-officedocument.wordprocessingml.document") {
+		// http.DetectContentType can't distinguish .md from .txt or .docx from .zip
+		return extMime
+	}
+	if len(data) > 0 {
+		detected := nethttp.DetectContentType(data)
+		// Normalize: strip charset params
+		if idx := strings.IndexByte(detected, ';'); idx > 0 {
+			detected = strings.TrimSpace(detected[:idx])
+		}
+		detected = strings.ToLower(detected)
+		// DetectContentType returns "application/zip" for .docx; trust extension
+		if detected == "application/zip" && ext == ".docx" {
+			return "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+		}
+		// DetectContentType returns "text/plain" for .md
+		if detected == "text/plain" && ext == ".md" {
+			return "text/markdown"
+		}
+		if detected != "application/octet-stream" {
+			return detected
+		}
+	}
+	// Fallback to extension
+	if extMime != "" {
+		return extMime
+	}
+	return "application/octet-stream"
 }

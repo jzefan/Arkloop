@@ -32,6 +32,10 @@ func (b *WorkspaceBlobAdapter) PutBlob(ctx context.Context, workspaceRef, sha256
 	return b.Store.Put(ctx, kbBlobKey(workspaceRef, sha256), data)
 }
 
+func (b *WorkspaceBlobAdapter) DeleteBlob(ctx context.Context, workspaceRef, sha256 string) error {
+	return b.Store.Delete(ctx, kbBlobKey(workspaceRef, sha256))
+}
+
 func kbBlobKey(workspaceRef, sha256 string) string {
 	return "workspaces/" + workspaceRef + "/kb/blobs/" + sha256
 }

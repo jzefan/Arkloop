@@ -29,12 +29,19 @@ type handlerCtx struct {
 	embedder       embeddingForSearch
 	maxUploadBytes int64
 
+	examIntegrationEnabled bool
+	examScopesLister       examScopesLister
+
 	authService           *auth.Service
 	accountMembershipRepo *data.AccountMembershipRepository
 	apiKeysRepo           *data.APIKeysRepository
 	auditWriter           *audit.Writer
 	profileRepo           *data.ProfileRegistriesRepository
 	workspaceRepo         *data.WorkspaceRegistriesRepository
+}
+
+type examScopesLister interface {
+	ListExamScopes(ctx context.Context, token string) ([]map[string]any, error)
 }
 
 type kbStore interface {
@@ -49,10 +56,12 @@ type docStore interface {
 	GetByID(ctx context.Context, id uuid.UUID) (*data.KBDocument, error)
 	ListByKB(ctx context.Context, kbID uuid.UUID) ([]data.KBDocument, error)
 	Delete(ctx context.Context, id uuid.UUID) error
+	CountByBlobSHA256(ctx context.Context, sha string) (int, error)
 }
 
 type blobWriter interface {
 	PutBlob(ctx context.Context, workspaceRef, sha256 string, data []byte) error
+	DeleteBlob(ctx context.Context, workspaceRef, sha256 string) error
 }
 
 type jobEnqueue interface {
@@ -71,20 +80,21 @@ type HandlerCtxExt = handlerCtx
 
 func NewHandlerCtx(deps Deps) *handlerCtx {
 	return &handlerCtx{
-		kbStore:               deps.KnowledgeBasesRepo,
-		docStore:              deps.KBDocumentsRepo,
-		chunksRepo:            deps.KBChunksRepo,
-		membership:            &WorkspaceMembership{Workspaces: deps.WorkspaceRegistriesRepo},
-		blob:                  &WorkspaceBlobAdapter{Store: deps.BlobStore},
-		jobs:                  deps.JobEnqueuer,
-		embedder:              deps.Embedder,
-		maxUploadBytes:        deps.MaxUploadBytes,
-		authService:           deps.AuthService,
-		accountMembershipRepo: deps.AccountMembershipRepo,
-		apiKeysRepo:           deps.APIKeysRepo,
-		auditWriter:           deps.AuditWriter,
-		profileRepo:           deps.ProfileRegistriesRepo,
-		workspaceRepo:         deps.WorkspaceRegistriesRepo,
+		kbStore:                deps.KnowledgeBasesRepo,
+		docStore:               deps.KBDocumentsRepo,
+		chunksRepo:             deps.KBChunksRepo,
+		membership:             &WorkspaceMembership{Workspaces: deps.WorkspaceRegistriesRepo},
+		blob:                   &WorkspaceBlobAdapter{Store: deps.BlobStore},
+		jobs:                   deps.JobEnqueuer,
+		embedder:               deps.Embedder,
+		maxUploadBytes:         deps.MaxUploadBytes,
+		examIntegrationEnabled: deps.ExamIntegrationEnabled,
+		authService:            deps.AuthService,
+		accountMembershipRepo:  deps.AccountMembershipRepo,
+		apiKeysRepo:            deps.APIKeysRepo,
+		auditWriter:            deps.AuditWriter,
+		profileRepo:            deps.ProfileRegistriesRepo,
+		workspaceRepo:          deps.WorkspaceRegistriesRepo,
 	}
 }
 
@@ -117,9 +127,12 @@ func writeErr(w nethttp.ResponseWriter, status int, code, msg string) {
 }
 
 type createKBReq struct {
-	Name         string `json:"name"`
-	WorkspaceRef string `json:"workspace_ref"`
-	Description  string `json:"description"`
+	Name            string  `json:"name"`
+	WorkspaceRef    string  `json:"workspace_ref"`
+	Description     string  `json:"description"`
+	Visibility      string  `json:"visibility"`       // "" -> workspace_member
+	IntegrationMode string  `json:"integration_mode"` // "" -> standalone
+	ExamScopeID     *string `json:"exam_scope_id"`    // required iff mode=exam (Q9: renamed from exam_course_id)
 }
 
 func handleCreateKB(h *handlerCtx) nethttp.HandlerFunc {
@@ -140,6 +153,32 @@ func handleCreateKB(h *handlerCtx) nethttp.HandlerFunc {
 			writeErr(w, nethttp.StatusBadRequest, "kb.missing_field", "name is required")
 			return
 		}
+		// visibility validation
+		switch req.Visibility {
+		case "", "workspace_member", "private":
+		default:
+			writeErr(w, nethttp.StatusBadRequest, "kb.invalid_visibility", "visibility must be workspace_member or private")
+			return
+		}
+		// integration_mode validation
+		switch req.IntegrationMode {
+		case "", "standalone":
+		case "exam":
+			if !h.examIntegrationEnabled {
+				writeErr(w, nethttp.StatusBadRequest, "kb.integration_disabled",
+					"本部署未启用 exam 集成，请联系管理员或选择独立模式")
+				return
+			}
+			if req.ExamScopeID == nil || strings.TrimSpace(*req.ExamScopeID) == "" {
+				writeErr(w, nethttp.StatusBadRequest, "kb.missing_exam_scope",
+					"选择绑定 exam 范围模式时必须指定 exam_scope_id")
+				return
+			}
+		default:
+			writeErr(w, nethttp.StatusBadRequest, "kb.invalid_integration_mode",
+				"integration_mode must be standalone or exam")
+			return
+		}
 		if req.WorkspaceRef == "" {
 			ws, err := h.ensureDefaultWorkspace(r.Context(), a)
 			if err != nil {
@@ -153,11 +192,14 @@ func handleCreateKB(h *handlerCtx) nethttp.HandlerFunc {
 			return
 		}
 		kb, err := h.kbStore.Create(r.Context(), data.KBCreate{
-			AccountID:    a.AccountID,
-			WorkspaceRef: req.WorkspaceRef,
-			Name:         req.Name,
-			Description:  req.Description,
-			CreatedBy:    &a.UserID,
+			AccountID:       a.AccountID,
+			WorkspaceRef:    req.WorkspaceRef,
+			Name:            req.Name,
+			Description:     req.Description,
+			Visibility:      req.Visibility,
+			IntegrationMode: req.IntegrationMode,
+			ExamScopeID:     req.ExamScopeID,
+			CreatedBy:       &a.UserID,
 		})
 		if err != nil {
 			if errors.Is(err, data.ErrKBDuplicateName) {
@@ -198,7 +240,11 @@ func handleListKB(h *handlerCtx) nethttp.HandlerFunc {
 		}
 		items := make([]map[string]any, 0, len(kbs))
 		for i := range kbs {
-			items = append(items, kbResponse(&kbs[i]))
+			kb := &kbs[i]
+			if kb.Visibility == "private" && (kb.CreatedBy == nil || *kb.CreatedBy != a.UserID) {
+				continue
+			}
+			items = append(items, kbResponse(kb))
 		}
 		writeJSON(w, nethttp.StatusOK, map[string]any{"items": items})
 	}
@@ -302,19 +348,48 @@ func loadAuthorizedKB(w nethttp.ResponseWriter, r *nethttp.Request, h *handlerCt
 		writeErr(w, nethttp.StatusForbidden, "auth.no_workspace_access", "no access to this workspace")
 		return nil, false
 	}
+	if !ensureKBVisible(w, kb, a) {
+		return nil, false
+	}
 	return kb, true
 }
 
 func kbResponse(kb *data.KnowledgeBase) map[string]any {
-	return map[string]any{
+	resp := map[string]any{
 		"id":               kb.ID,
 		"name":             kb.Name,
 		"workspace_ref":    kb.WorkspaceRef,
 		"description":      kb.Description,
+		"visibility":       kb.Visibility,
 		"integration_mode": kb.IntegrationMode,
 		"document_count":   kb.DocumentCount,
 		"created_at":       kb.CreatedAt,
 		"updated_at":       kb.UpdatedAt,
+	}
+	if kb.ExamScopeID != nil {
+		resp["exam_scope_id"] = *kb.ExamScopeID
+	}
+	return resp
+}
+
+func handleExamScopes(h *handlerCtx) nethttp.HandlerFunc {
+	return func(w nethttp.ResponseWriter, r *nethttp.Request) {
+		if h.examScopesLister == nil {
+			writeErr(w, nethttp.StatusNotFound, "exam.not_configured", "exam integration not configured")
+			return
+		}
+		// Use the actor's token from the auth header to proxy to exam
+		token := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+		if token == "" {
+			writeErr(w, nethttp.StatusUnauthorized, "auth.unauthenticated", "missing token")
+			return
+		}
+		scopes, err := h.examScopesLister.ListExamScopes(r.Context(), token)
+		if err != nil {
+			writeErr(w, nethttp.StatusBadGateway, "exam.upstream_failed", err.Error())
+			return
+		}
+		writeJSON(w, nethttp.StatusOK, map[string]any{"items": scopes})
 	}
 }
 
