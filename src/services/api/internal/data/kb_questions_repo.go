@@ -207,6 +207,66 @@ ORDER  BY created_at DESC, id ASC`
 	return out, total, nil
 }
 
+// ListByKnowledgePoints returns questions whose knowledge_point_id is in the
+// supplied set, scoped to a KB. Type/Difficulty/Limit/Offset from the filter
+// apply; KnowledgePointID inside the filter is ignored (this method always
+// uses the supplied id slice). An empty kpIDs slice returns (nil, nil).
+//
+// Ordering: by knowledge_point_id ASC, then created_at DESC for a stable read
+// useful to paper-composer code that buckets by KP.
+func (r *KBQuestionsRepository) ListByKnowledgePoints(ctx context.Context, kbID uuid.UUID, kpIDs []uuid.UUID, f KBQuestionFilter) ([]KBQuestion, error) {
+	if len(kpIDs) == 0 {
+		return nil, nil
+	}
+	args := []any{kbID, kpIDs}
+	whereParts := []string{"kb_id = $1", "knowledge_point_id = ANY($2)"}
+	if f.QuestionType != "" {
+		args = append(args, f.QuestionType)
+		whereParts = append(whereParts, fmt.Sprintf("question_type = $%d", len(args)))
+	}
+	if f.Difficulty != "" {
+		args = append(args, f.Difficulty)
+		whereParts = append(whereParts, fmt.Sprintf("difficulty = $%d", len(args)))
+	}
+	where := strings.Join(whereParts, " AND ")
+
+	q := `
+SELECT id, kb_id, knowledge_point_id, question_type, difficulty, stem,
+       options_json, answer, explanation, source_chunk_ids_json, source_snippets_json,
+       quality_flag, created_by, created_at, updated_at
+FROM   kb_questions
+WHERE  ` + where + `
+ORDER  BY knowledge_point_id ASC, created_at DESC, id ASC`
+
+	if f.Limit > 0 {
+		args = append(args, f.Limit)
+		q += fmt.Sprintf(" LIMIT $%d", len(args))
+	}
+	if f.Offset > 0 {
+		args = append(args, f.Offset)
+		q += fmt.Sprintf(" OFFSET $%d", len(args))
+	}
+
+	rows, err := r.pool.Query(ctx, q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []KBQuestion
+	for rows.Next() {
+		item, err := scanKBQuestionFromRows(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, *item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // Update applies a partial patch and returns the updated row. Updated_at is
 // bumped whenever at least one field changes.
 func (r *KBQuestionsRepository) Update(ctx context.Context, id uuid.UUID, patch KBQuestionPatch) (*KBQuestion, error) {
