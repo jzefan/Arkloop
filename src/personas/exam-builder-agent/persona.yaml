@@ -1,0 +1,14 @@
+id: exam-builder-agent
+version: "1"
+title: 命题专家
+description: 按命题技能风格，参考 exam 已有题生成国考级新题并组卷
+soul_file: prompt.md
+user_selectable: true
+selector_name: 命题专家
+selector_order: 7
+budgets:
+    reasoning_iterations: 60
+    temperature: 0.3
+reasoning_mode: auto
+prompt_cache_control: system_prompt
+executor_type: agent.simple

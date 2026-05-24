@@ -37,11 +37,30 @@ type PackageManifest struct {
 }
 
 type SkillDefinition struct {
-	SkillKey        string `yaml:"skill_key"`
-	Version         string `yaml:"version"`
-	DisplayName     string `yaml:"display_name"`
-	Description     string `yaml:"description"`
-	InstructionPath string `yaml:"instruction_path"`
+	SkillKey             string   `yaml:"skill_key"`
+	Version              string   `yaml:"version"`
+	DisplayName          string   `yaml:"display_name"`
+	Description          string   `yaml:"description"`
+	InstructionPath      string   `yaml:"instruction_path"`
+	Category             string   `yaml:"category"`
+	SubjectTags          []string `yaml:"subject_tags"`
+	PatternTags          []string `yaml:"pattern_tags"`
+	TargetQuestionTypes  []string `yaml:"target_question_types"`
+}
+
+// ValidateItemWritingSkill checks that a skill with category=item-writing
+// has all required metadata fields. Returns nil for non-item-writing skills.
+func ValidateItemWritingSkill(def SkillDefinition) error {
+	if def.Category != "item-writing" {
+		return nil
+	}
+	if len(def.PatternTags) == 0 {
+		return fmt.Errorf("item-writing skill %q must declare pattern_tags", def.SkillKey)
+	}
+	if len(def.TargetQuestionTypes) == 0 {
+		return fmt.Errorf("item-writing skill %q must declare target_question_types", def.SkillKey)
+	}
+	return nil
 }
 
 type BundleFile struct {
