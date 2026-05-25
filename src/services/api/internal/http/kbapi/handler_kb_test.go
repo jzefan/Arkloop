@@ -173,6 +173,52 @@ func TestDeleteKB(t *testing.T) {
 	}
 }
 
+// System banks ("组卷题库") are owned by the worker's paper-builder flow,
+// not by users. They must be invisible to the per-KB REST routes (GET,
+// DELETE, document upload/list/get/delete, search) so admins cannot
+// accidentally browse, mutate, or delete them via console-lite. The
+// pattern is: loadAuthorizedKB returns 404 if kb.Kind == 'system_paper_bank'.
+func TestPerKBRoutesHideSystemBank(t *testing.T) {
+	ctx := newHandlerCtx(true)
+	acc := uuid.New()
+	user := uuid.New()
+	bank := &data.KnowledgeBase{
+		ID:           uuid.New(),
+		AccountID:    acc,
+		WorkspaceRef: "ws",
+		Name:         "组卷题库",
+		Kind:         data.KBKindSystemPaperBank,
+		Visibility:   "workspace_member",
+	}
+	store := ctx.kbStore.(*fakeKBStore)
+	store.items[bank.ID] = bank
+
+	cases := []struct {
+		name    string
+		method  string
+		handler nethttp.HandlerFunc
+	}{
+		{"GET", "GET", handleGetKB(ctx)},
+		{"DELETE", "DELETE", handleDeleteKB(ctx)},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(tc.method, "/v1/knowledge-bases/"+bank.ID.String(), nil)
+			req.SetPathValue("id", bank.ID.String())
+			req = injectActor(req, acc, user)
+			w := httptest.NewRecorder()
+			tc.handler(w, req)
+			if w.Code != 404 {
+				t.Errorf("expected 404 for system bank, got %d, body=%s", w.Code, w.Body.String())
+			}
+		})
+	}
+	// And the bank should still exist after the failed DELETE attempt.
+	if got, _ := store.GetByID(context.Background(), bank.ID); got == nil {
+		t.Error("system bank must not be deleted via REST")
+	}
+}
+
 type fakeExamTokenSource struct {
 	token  string
 	userID uuid.UUID
