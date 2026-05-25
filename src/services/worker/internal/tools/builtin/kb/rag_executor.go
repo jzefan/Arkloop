@@ -83,8 +83,7 @@ WHERE  kb.account_id = $1
 		query += fmt.Sprintf("\n  AND kb.workspace_ref = $%d", len(argsSQL))
 	}
 	if !includeSystemBanks {
-		argsSQL = append(argsSQL, paperBankName)
-		query += fmt.Sprintf("\n  AND kb.name <> $%d", len(argsSQL))
+		query += "\n  AND kb.kb_kind = 'user'"
 	}
 	if readyOnly {
 		query += "\n  AND EXISTS (SELECT 1 FROM kb_documents d WHERE d.kb_id = kb.id AND d.status = 'ready')"
@@ -627,23 +626,34 @@ WHERE  id = $1 AND account_id = $2`, kbID, accountID).Scan(&kb.ID, &kb.AccountID
 	return kb, nil
 }
 
+// ensurePaperBankKB returns the (account-level) system paper bank for this
+// account, creating it on first use. Lookup ignores workspace_ref so that
+// teachers across multiple workspaces in the same Account share one bank
+// (PRD §组卷题库 "按 Account 维度存在"). The bank's workspace_ref column is
+// still set to the calling workspace for traceability, but it does not
+// affect the lookup key.
 func (e *Executor) ensurePaperBankKB(ctx context.Context, accountID uuid.UUID, workspaceRef string, userID *uuid.UUID) (uuid.UUID, error) {
 	var id uuid.UUID
 	err := e.pool.QueryRow(ctx, `
 SELECT id
 FROM   knowledge_bases
-WHERE  account_id = $1 AND workspace_ref = $2 AND name = $3
-LIMIT  1`, accountID, workspaceRef, paperBankName).Scan(&id)
+WHERE  account_id = $1 AND kb_kind = 'system_paper_bank'
+LIMIT  1`, accountID).Scan(&id)
 	if err == nil {
 		return id, nil
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return uuid.Nil, err
 	}
+	// First-use insert. The partial unique index
+	// knowledge_bases_one_system_bank_per_account makes this race-safe:
+	// concurrent workers attempting to create the bank will land on the same
+	// row via ON CONFLICT and re-read the existing id.
 	err = e.pool.QueryRow(ctx, `
-INSERT INTO knowledge_bases (workspace_ref, account_id, name, description, visibility, integration_mode, created_by)
-VALUES ($1, $2, $3, $4, 'workspace_member', 'standalone', $5)
-ON CONFLICT (workspace_ref, name) DO UPDATE SET updated_at = knowledge_bases.updated_at
+INSERT INTO knowledge_bases (workspace_ref, account_id, name, description, visibility, integration_mode, kb_kind, created_by)
+VALUES ($1, $2, $3, $4, 'workspace_member', 'standalone', 'system_paper_bank', $5)
+ON CONFLICT (account_id) WHERE kb_kind = 'system_paper_bank'
+DO UPDATE SET updated_at = knowledge_bases.updated_at
 RETURNING id`, workspaceRef, accountID, paperBankName, "ArkLoop 智能组卷生成题目的固定题库", nullableUUID(userID)).Scan(&id)
 	return id, err
 }

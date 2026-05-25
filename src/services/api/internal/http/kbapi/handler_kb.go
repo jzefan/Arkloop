@@ -343,6 +343,14 @@ func loadAuthorizedKB(w nethttp.ResponseWriter, r *nethttp.Request, h *handlerCt
 		writeErr(w, nethttp.StatusNotFound, "kb.not_found", "kb not found")
 		return nil, false
 	}
+	// System banks (e.g. "组卷题库") are owned by the worker's paper-builder
+	// flow, not by the user; hide them from every per-KB REST route so that
+	// admins can't accidentally browse, mutate, or delete them via the
+	// console-lite UI. Teachers reach them through worker tools instead.
+	if kb.Kind == data.KBKindSystemPaperBank {
+		writeErr(w, nethttp.StatusNotFound, "kb.not_found", "kb not found")
+		return nil, false
+	}
 	if err := ensureWorkspaceMember(r.Context(), h.membership, a.AccountID, kb.WorkspaceRef); err != nil {
 		writeErr(w, nethttp.StatusForbidden, "auth.no_workspace_access", "no access to this workspace")
 		return nil, false
