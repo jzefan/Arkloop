@@ -16,4 +16,5 @@ COPY src/apps/shared/nginx-spa.conf.template /etc/nginx/templates/default.conf.t
 COPY --from=builder /workspace/src/apps/web/dist /usr/share/nginx/html
 ENV API_UPSTREAM=http://gateway:19000
 ENV BRIDGE_UPSTREAM=http://bridge:19003
+ENV NGINX_CLIENT_MAX_BODY_SIZE=100m
 HEALTHCHECK CMD wget -qO- http://127.0.0.1/healthz >/dev/null || exit 1

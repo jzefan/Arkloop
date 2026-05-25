@@ -32,7 +32,7 @@ import (
 
 const (
 	gatewayConfigRedisKey            = "arkloop:gateway:config"
-	gatewayMaxRequestBodyBytes int64 = 32 << 20 // 32 MiB
+	gatewayMaxRequestBodyBytes int64 = 100 << 20 // 100 MiB; matches KB document upload limit.
 	gatewayReadTimeout               = 2 * time.Minute
 )
 

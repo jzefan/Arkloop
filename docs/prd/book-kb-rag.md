@@ -29,9 +29,9 @@
   - **Standalone 模式（不连 exam）**：题目/试卷存在 ArkLoop 自己的 `kb_questions` / `kb_papers` 表；生成时参考本地题库做去重和风格示范；老师可导出 markdown/PDF 自行使用。**适合没有 exam 系统的自托管用户或试用阶段**。
 - **老师端 persona `book-tutor-agent`（展示名：智能组卷）**：老师用自然语言指定知识点/范围/题型/难度/数量；内部三段式：
   1. `kb_search` 从教材 KB 检索相关章节内容；
-  2. `questions_list_for_reference` 拉该知识点已有题目作为"参考样本 + 去重黑名单"——**底层走 exam 还是 ArkLoop 本地由 KB 配置决定，persona 不感知**；
-  3. 把检索内容 + 参考样本 + 老师指令一起给 LLM 生成草稿；老师逐题确认后 `questions_save_batch` 写入对应后端。
-- **组卷**：按题型/难度/知识点分布从题池抽样；题池实时从对应后端（exam 或本地）拉取；老师确认后 `paper_save` 落到对应后端，同时返回 markdown 预览，并在老师需要时导出 PDF。
+  2. `kb_draft_questions` 拉该知识点已有题目作为"参考样本 + 去重黑名单"，并把检索内容、参考样本和老师指令交给 LLM 形成草稿——**底层走 exam 还是 ArkLoop 本地由 KB 配置决定，persona 不感知**；
+  3. 老师逐题确认后 `kb_save_questions` 写入对应后端。
+- **组卷**：按题型/难度/知识点分布从题池抽样；题池实时从对应后端（exam 或本地）拉取；老师确认后 `kb_compose_paper` 落到对应后端，同时返回 markdown 预览，并在老师需要时导出 PDF。
 - **目录联动**（仅 Linked 模式）：若书带清晰 TOC，persona 可从 KB 提取目录结构 → `show_widget` 让老师改 → 复用现有 `exam_create_catalog_tree` 建到 exam。Standalone 模式下 KB 自带一个轻量"知识点"标签集合（自由文本，不强制层级）。
 - **与 `exam-agent` 的关系**：`exam-agent` 仍只在 Linked 部署下出现（依赖 exam_* 工具），继续负责"Excel/图片目录导入 + 不依赖 KB 的轻量出题"；`book-tutor-agent` 在两种部署下都可用。
 
@@ -89,7 +89,7 @@
 40. As a 用户, I want 上传文件大小、类型、单 KB 文档数有明确上限和清晰报错, so that 不会偷偷写挂数据库。
 41. As a 用户, I want 解析或入库失败不会把整个 KB 弄坏, so that 单文档失败可重试，其他文档不受影响。
 42. As a 自托管部署的用户（没接 exam）, I want 安装 ArkLoop 后不需要任何 exam 相关配置就能用 book-tutor-agent 上传书、生成题、组卷, so that 没 exam 系统也能独立使用这套能力。
-43. As a 平台管理员, I want 通过环境变量 `ARKLOOP_EXAM_INTEGRATION_ENABLED=true/false` 一键决定本部署是否启用 exam 集成, so that 升级或维护 exam 时可以临时关掉集成不影响 standalone KB 的使用。
+43. As a 平台管理员, I want 通过环境变量 `ARKLOOP_EXAM_INTEGRATION_ENABLED=true/false` 一键决定本部署是否启用 exam 集成，并通过 `EXAM_BASE_URL` 配置 exam 后端地址, so that 升级或维护 exam 时可以临时关掉集成不影响 standalone KB 的使用。
 44. As a 老师, I want 新建 KB 时显式选择"独立模式"还是"绑定 exam 课程", so that 我清楚这本知识库生成的题最终去哪。
 45. As a 老师, I want 看到 KB 列表里每个 KB 标注它的模式（独立 / 已绑定 exam 课程：《大学物理》）, so that 不会搞混。
 46. Deferred. Standalone KB 的 console-lite 题库浏览、编辑、删除功能暂不进入当前范围；老师端通过智能组卷完成生成、预览、确认保存。
@@ -126,7 +126,7 @@
 
 ```
 ARKLOOP_EXAM_INTEGRATION_ENABLED=true|false
-ARKLOOP_EXAM_BASE_URL=https://exam.example.edu     # required when enabled
+EXAM_BASE_URL=https://exam.example.edu             # required when enabled
 ```
 
 - `false`（默认）：`book-tutor-agent` 只暴露 standalone QuestionStore；UI 上"绑定 exam 课程"选项隐藏；`exam-agent` persona 不注册（`user_selectable=false`）；4 个新 `exam_*` 工具不挂到 worker registry。
@@ -146,13 +146,13 @@ ARKLOOP_EXAM_BASE_URL=https://exam.example.edu     # required when enabled
 
 - `knowledge_bases(id, workspace_ref, account_id, name, description, visibility, integration_mode, exam_scope_id?, created_by, created_at, updated_at)`
 - `kb_documents(id, kb_id, original_filename, mime_type, blob_sha256, size_bytes, status, error_message, parse_meta_json, created_by, created_at, updated_at)` —— 原始文件按 sha256 走现有 Workspace blob 存储复用，不重复保存
-- `kb_chunks(id, kb_id, document_id, ordinal, heading_path, block_refs_json, chunk_type, text, token_count, embedding vector(<S0>), metadata_json, created_at)` —— `embedding` 列使用 **pgvector** 扩展；维度对应 Doubao `doubao-embedding-text-240715`，具体数字**待 design 文档 Spike S0 用 `cmd/embedprobe` 验证**后写定（候选记忆值 2560，未确认；不可凭记忆写 DDL）；建 hnsw 索引（`vector_cosine_ops`）
+- `kb_chunks(id, kb_id, document_id, ordinal, heading_path, chunk_type, text, token_count, embedding vector(1024), metadata_json, created_at)` —— `embedding` 列使用 **pgvector** 扩展；M0 Spike 已固定当前迁移为 `vector(1024)`，运行时用 embedder 维度保护避免模型漂移；建 hnsw 索引（`vector_cosine_ops`）
 - `kb_knowledge_points(id, kb_id, name, parent_id?, exam_knowledge_point_id?, sort_order, created_at)` —— 两种模式都用的轻量知识点表：
   - Standalone：完全在本地维护，自由层级
   - Linked：作为 exam 知识点树在 ArkLoop 侧的镜像/快照，`exam_knowledge_point_id` 关联到 exam（同步策略：persona 操作时按需拉取/刷新，不做后台同步）
 - `kb_document_knowledge_points(kb_id, document_id, knowledge_point_id, created_at)` —— 文档↔知识点软关联
 - **仅 Standalone 模式使用**（Linked 模式下这两张表对该 KB 为空）：
-  - `kb_questions(id, kb_id, knowledge_point_id, question_type, difficulty, stem, options_json, answer, explanation, source_chunk_ids_json, source_snippets_json, quality_flag, created_by, created_at, updated_at)` —— `source_snippets_json` 存写入时的 chunk 原文快照（每条 200-500 字），保证重摄入后老师仍能看到当时的原文（用户故事 18 的承诺）
+  - `kb_questions(id, kb_id, knowledge_point_id, question_type, difficulty, stem, options_json, answer, explanation, source_chunk_ids_json, source_snippets_json, quality_flag, created_by, created_at, updated_at)` —— `source_snippets_json` 存写入时的 chunk 原文快照（每条目标 200-500 字，过长截断；保存层会在缺失时按 `source_chunk_ids` 自动补齐），保证重摄入后老师仍能看到当时的原文（用户故事 19 的承诺）
   - `kb_papers(id, kb_id, name, spec_json, seed, question_ids_json, created_by, created_at)`
 - 所有表通过 `account_id` 隔离，遵循现有租户约束模式
 
@@ -186,7 +186,7 @@ ARKLOOP_EXAM_BASE_URL=https://exam.example.edu     # required when enabled
 #### C. Embedder（独立包 `src/services/shared/embedding/`）
 - 接口：`Embed(ctx, texts []string) ([][]float32, error)`
 - 实现复用现有 `api/internal/llmproviders` 体系
-- **默认 provider：Doubao `doubao-embedding-text-240715`，维度 2560**（中文母语 + 国内可直连 + 已有 provider 集成；详见 design `docs/superpowers/specs/2026-05-21-book-kb-rag-design.md`）
+- **默认 provider：Doubao `doubao-embedding-text-240715`，当前迁移维度 1024**（中文母语 + 国内可直连 + 已有 provider 集成；详见 design `docs/superpowers/specs/2026-05-21-book-kb-rag-design.md`）
 - 接口同时支持 OpenAI 系列和 OpenViking 本地 backend，但**切换模型 = KB 全量重建**（pgvector 列维度是 DDL 级常量）
 - 自带 batch（≤32 文本/批）+ 限流 + 重试（指数退避，3 次）封装；接口对外只暴露文本→向量
 
@@ -347,7 +347,7 @@ target_question_types: ["single_choice"]  # 该技能产出哪种 question.type
 
 | 端点 | 用途 |
 |------|------|
-| `GET /api/knowledge-points?course_id=` | 列知识点 |
+| `GET /api/knowledge-points?exam_scope_id=` | 列知识点 |
 | `GET /api/questions?knowledge_point_id=&type=&difficulty=&pattern_tag=&limit=&offset=` | 拉参考题 / 组卷题池 / Option 2 种子题筛选 |
 | `POST /api/questions/batch` | 批量写入（支持部分失败；payload 含 `pattern_tag` 字段） |
 | `POST /api/papers` | 写入组好的试卷 + 题目映射 |
@@ -357,7 +357,7 @@ target_question_types: ["single_choice"]  # 该技能产出哪种 question.type
 > **里程碑建议**：
 > - **M0（已交付）**：chunker + Doubao embedder + pgvector 一张表 + 2 个 debug HTTP endpoint，验证 ingest/search 链路通透，把 pgvector 上线/compose 改动压一次。详见 `docs/superpowers/specs/2026-05-21-book-kb-rag-design.md`。
 > - **M1.0 / M1.1（已交付）**：完整 KB schema（含 `integration_mode` / `exam_scope_id` 字段） + PDF 摄入 + `kb_search` + console-lite KB 管理页 + book-tutor-agent 仅 KB 检索能力。
-> - **M1.2 / M1.3（部分已交付，继续收尾）**：`kb_draft_questions` + 本地"组卷题库"保存 + `kb_compose_paper` 已打通；继续补齐组卷约束、PDF 导出触发、端到端验收。Standalone 管理 UI 暂缓。
+> - **M1.2 / M1.3（部分已交付，继续收尾）**：`kb_draft_questions` + 本地"组卷题库"保存 + `kb_compose_paper` 已打通；组卷约束、PDF 导出触发、来源快照自动补齐、linked 模式工具级端到端测试已补。继续补齐复杂 PaperComposer、草稿编辑体验和真实联调。Standalone 管理 UI 暂缓。
 > - **M2a（部分已交付，继续收尾）**：部署级开关、KB `visibility`、mime 白名单、blob 引用计数、exam 合约、Linked KB 模式已落地；Linked KB 的老师端工具代理已打通。继续补齐真实联调与错误观测。
 > - **M2b（部分已交付，继续收尾）**：`exam-builder-agent` persona、命题技能标准化、4 个新 `exam_*` 工具、`pattern_tag` 校验、`gyn-medical-exam` 首发 skill 已落地基础链路。继续补齐技能 selector 体验和端到端验收。
 > - **M1 启动前必做的 spike**：S1 PDF 解析可行性（PyMuPDF + Tesseract 中文质量，已完成），S2 exam 后端合约对齐（含 `pattern_tag`，作为 M2a 启动前置）。
@@ -368,7 +368,7 @@ target_question_types: ["single_choice"]  # 该技能产出哪种 question.type
 - KB 资源通过 Workspace 路径鉴权（`workspace_ref` → `account_memberships`）；不另起 ACL
 - 摄入流水线跑在 worker 队列里（M1 起），api 仅做触发和状态查询；不与 agent 推理路径共用 worker 实例（部署时可分组）
 - Worker 通过 `worker/internal/data/kb_chunks_repo.go` 直连 PgBouncer 读 `kb_chunks`（沿用现有 `runs_repo` 模式，零额外 HTTP 跳数；schema 通过 `shared/database` 包跨服务同步管理）
-- **题目/试卷数据零本地存储**——ArkLoop 不复制 exam 的真相源
+- **Linked 模式题目/试卷数据零本地存储**——ArkLoop 不复制 exam 的真相源；Standalone 模式按产品边界写入 ArkLoop 本地 `组卷题库` / `kb_papers`
 - 所有 KB 接口走 Gateway → API 路径，复用现有 rate limiting / risk scoring
 - 大文件上传走 Workspace blob 存储（manifest + sha256 blob），不写 KB 表本身的 BLOB 列
 
@@ -408,7 +408,7 @@ target_question_types: ["single_choice"]  # 该技能产出哪种 question.type
 
 ### 端到端
 
-- 不要求新增 e2e；现有 `tests/smoke/` 体系下可在后续 PR 加一个 "上传 PDF → ready → 检索命中 → kb_draft_questions → exam_create_questions_batch → kb_compose_paper → exam_create_paper" 的脚本，但**不卡住本 PRD**。
+- 需要保留至少一条老师主链路端到端测试。当前已在 worker 工具层覆盖 "source_chunk_ids → source_snippets 自动补齐 → 保存题目 → 实时拉题池 → 确认保存试卷"；后续真实部署 smoke 再补 "上传 PDF → ready → 检索命中 → kb_draft_questions → kb_save_questions → kb_compose_paper"。
 
 ### QuestionStore 与集成模式的测试边界
 
@@ -442,7 +442,7 @@ target_question_types: ["single_choice"]  # 该技能产出哪种 question.type
 - 跨 KB 检索（同时检索多个 KB）
 - 多语言混合检索的优化（中英文混排可工作，但不专门调）
 - **Linked KB 在 ArkLoop 端缓存 exam 题目/试卷**——Linked 模式下题/卷永远以 exam 为权威源，ArkLoop 不复制
-- **Linked KB 的题目/试卷管理 UI**（列题、改题、删题、归档）——这些视图老师去 exam 前台用。Standalone KB 在 ArkLoop 提供基础题库 UI（用户故事 46）
+- **Linked KB 的题目/试卷管理 UI**（列题、改题、删题、归档）——这些视图老师去 exam 前台用。Standalone KB 的题库浏览/编辑/删除、试卷列表/导出管理 UI 已暂缓（用户故事 46/47）
 - 答案自动判分 / 学生作答记录（exam 系统的事）
 - 与 exam 之间的双向同步（exam → ArkLoop 反向反查 KB 关联等）——本 PRD 只做单向写
 - 在线协同编辑题目（先纯老师本地确认）
@@ -464,7 +464,7 @@ target_question_types: ["single_choice"]  # 该技能产出哪种 question.type
 - **与 exam 后端的协作流程**（仅 Linked 模式 / M2 阶段）：拉一次 exam 后端的同事对齐"对 exam 系统的依赖"表里 4 个端点的字段细节（特别是 `POST /api/questions/batch` 的部分失败返回结构 和 `POST /api/papers` 是否需要预先创建 paper template）。字段约定冻结后写进 `docs/integrations/exam-api.md` 作为合约。
 - **`examstore` 直接调 exam REST，不走 worker tool 层**：因为这是工程间调用而非 LLM 调用，没必要让 LLM 看见。worker tool 注册保持简洁：只有 5 个 `kb_*` 工具对老师可见。
 - **现有 `exam-agent` 不动**：它现在的 4 个 `exam_*` 工具继续保留；这些工具与本 PRD 的 `examstore` 没有共用代码（exam-agent 走工具层是因为要给 LLM 调用；examstore 走 HTTP client 是工程间调用），不强行统一。
-- **配置缺失的友好降级**：`ARKLOOP_EXAM_INTEGRATION_ENABLED=true` 但 `ARKLOOP_EXAM_BASE_URL` 未设置时，应用启动直接报错退出（按现有 config 校验风格）；运行时 examstore 调 exam 失败时，工具层返回结构化错误，persona 给老师可读提示（不静默降级到 standalone，避免老师以为题已写入 exam）。
+- **配置缺失的友好降级**：`ARKLOOP_EXAM_INTEGRATION_ENABLED=true` 但 `EXAM_BASE_URL` 未设置时，应用启动直接报错退出（按现有 config 校验风格）；运行时 examstore 调 exam 失败时，工具层返回结构化错误，persona 给老师可读提示（不静默降级到 standalone，避免老师以为题已写入 exam）。
 - **去重策略**：`kb_draft_questions` 的"去重"只在 prompt 层做（把已有题题干列给 LLM 让它避开）。**不做向量比对自动去重**——召回准确度不够时会误杀，老师反而失控；保留"老师人眼最终判定"的回路。
 - **数据流图（两种模式）**：
   - **共用前半段**：教材 PDF → KB chunks (pgvector) → `kb_search` 召回 → `QuestionStore.ListReferenceQuestions` 拉样本 → 拼 prompt → LLM 生成草稿（不写库） → 老师 `show_widget` 确认 → `QuestionStore.SaveQuestions` 落库

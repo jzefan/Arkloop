@@ -144,7 +144,17 @@ export async function uploadDocument(
   })
   if (!resp.ok) {
     const text = await resp.text()
-    throw new Error(text || `upload failed (${resp.status})`)
+    if (resp.status === 413) {
+      throw new Error('文件过大，当前知识库上传上限为 100MB。请压缩 PDF 或拆分后再上传。')
+    }
+    let message = ''
+    try {
+      const payload = JSON.parse(text) as { message?: string; error?: string }
+      message = payload.message || payload.error || ''
+    } catch {
+      message = text.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim()
+    }
+    throw new Error(message || `upload failed (${resp.status})`)
   }
   return resp.json() as Promise<{ document_id: string; job_id: string }>
 }

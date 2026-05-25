@@ -74,7 +74,7 @@ var ListKnowledgeBasesLlmSpec = llm.ToolSpec{
 		"properties": map[string]any{
 			"workspace_ref": map[string]any{
 				"type":        "string",
-				"description": "可选工作区 ref；省略时使用当前执行上下文 workspace_ref，仍为空则列当前 Account 下可见 KB。",
+				"description": "可选工作区 ref；省略时列当前 Account 下可见 KB，不按当前聊天临时 workspace 过滤。",
 			},
 			"ready_only": map[string]any{
 				"type":        "boolean",

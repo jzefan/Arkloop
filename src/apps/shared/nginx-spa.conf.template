@@ -1,6 +1,7 @@
 server {
   listen 80;
   server_name _;
+  client_max_body_size ${NGINX_CLIENT_MAX_BODY_SIZE};
   root /usr/share/nginx/html;
   index index.html;
   resolver 127.0.0.11 ipv6=off valid=30s;
