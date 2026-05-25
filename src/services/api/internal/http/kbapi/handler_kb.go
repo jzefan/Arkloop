@@ -30,7 +30,8 @@ type handlerCtx struct {
 	maxUploadBytes int64
 
 	examIntegrationEnabled bool
-	examScopesLister       examScopesLister
+	examScopesLister       ExamScopesLister
+	examTokenSource        ExamTokenSource
 
 	authService           *auth.Service
 	accountMembershipRepo *data.AccountMembershipRepository
@@ -38,10 +39,6 @@ type handlerCtx struct {
 	auditWriter           *audit.Writer
 	profileRepo           *data.ProfileRegistriesRepository
 	workspaceRepo         *data.WorkspaceRegistriesRepository
-}
-
-type examScopesLister interface {
-	ListExamScopes(ctx context.Context, token string) ([]map[string]any, error)
 }
 
 type kbStore interface {
@@ -89,6 +86,8 @@ func NewHandlerCtx(deps Deps) *handlerCtx {
 		embedder:               deps.Embedder,
 		maxUploadBytes:         deps.MaxUploadBytes,
 		examIntegrationEnabled: deps.ExamIntegrationEnabled,
+		examScopesLister:       deps.ExamScopesLister,
+		examTokenSource:        deps.ExamTokenSource,
 		authService:            deps.AuthService,
 		accountMembershipRepo:  deps.AccountMembershipRepo,
 		apiKeysRepo:            deps.APIKeysRepo,
@@ -171,7 +170,7 @@ func handleCreateKB(h *handlerCtx) nethttp.HandlerFunc {
 			}
 			if req.ExamScopeID == nil || strings.TrimSpace(*req.ExamScopeID) == "" {
 				writeErr(w, nethttp.StatusBadRequest, "kb.missing_exam_scope",
-					"选择绑定 exam 范围模式时必须指定 exam_scope_id")
+					"选择绑定课程范围时必须指定 exam_scope_id")
 				return
 			}
 		default:
@@ -373,15 +372,23 @@ func kbResponse(kb *data.KnowledgeBase) map[string]any {
 }
 
 func handleExamScopes(h *handlerCtx) nethttp.HandlerFunc {
+	return handleKnowledgeBaseScopes(h)
+}
+
+func handleKnowledgeBaseScopes(h *handlerCtx) nethttp.HandlerFunc {
 	return func(w nethttp.ResponseWriter, r *nethttp.Request) {
-		if h.examScopesLister == nil {
+		if h.examScopesLister == nil || h.examTokenSource == nil {
 			writeErr(w, nethttp.StatusNotFound, "exam.not_configured", "exam integration not configured")
 			return
 		}
-		// Use the actor's token from the auth header to proxy to exam
-		token := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
-		if token == "" {
+		a, ok := actorFromCtx(r.Context())
+		if !ok {
 			writeErr(w, nethttp.StatusUnauthorized, "auth.unauthenticated", "missing token")
+			return
+		}
+		token, err := h.examTokenSource.IssueExamToken(r.Context(), a.UserID, []string{"openid", "exam:read"})
+		if err != nil {
+			writeErr(w, nethttp.StatusBadGateway, "exam.token_issue_failed", err.Error())
 			return
 		}
 		scopes, err := h.examScopesLister.ListExamScopes(r.Context(), token)

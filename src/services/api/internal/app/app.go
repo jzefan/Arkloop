@@ -28,6 +28,7 @@ import (
 	"arkloop/services/api/internal/migrate"
 	"arkloop/services/api/internal/personas"
 	"arkloop/services/api/internal/personasync"
+	"arkloop/services/api/internal/questionstore/localstore"
 	"arkloop/services/api/internal/scheduler"
 	"arkloop/services/api/internal/skillseed"
 	sharedconfig "arkloop/services/shared/config"
@@ -849,6 +850,24 @@ func (a *Application) Run(ctx context.Context) error {
 		if err != nil {
 			return fmt.Errorf("knowledge bases repo: %w", err)
 		}
+		kpRepo, err := data.NewKBKnowledgePointsRepository(pool)
+		if err != nil {
+			return fmt.Errorf("kb knowledge points repo: %w", err)
+		}
+		kbQuestionsRepo, err := data.NewKBQuestionsRepository(pool)
+		if err != nil {
+			return fmt.Errorf("kb questions repo: %w", err)
+		}
+		kbPapersRepo, err := data.NewKBPapersRepository(pool)
+		if err != nil {
+			return fmt.Errorf("kb papers repo: %w", err)
+		}
+		localstore.Register(localstore.Dependencies{
+			KnowledgeBases:  kbRepo,
+			KnowledgePoints: kpRepo,
+			Questions:       kbQuestionsRepo,
+			Papers:          kbPapersRepo,
+		})
 		docsRepo, err := data.NewKBDocumentsRepository(pool)
 		if err != nil {
 			return fmt.Errorf("kb documents repo: %w", err)
@@ -868,6 +887,16 @@ func (a *Application) Run(ctx context.Context) error {
 				Dim:        chunksRepo.Dim(),
 			})
 		}
+		var examTokenSource kbapi.ExamTokenSource
+		if a.config.ExamIntegrationEnabled && oidcService != nil {
+			examTokenSource = kbapi.NewOIDCExamTokenSource(
+				oidcService,
+				userRepo,
+				oidcIssuerFromConfig(a.config.Auth),
+				"",
+				60*time.Second,
+			)
+		}
 		kbHandlerCtx = kbapi.NewHandlerCtx(kbapi.Deps{
 			AuthService:             authService,
 			AccountMembershipRepo:   membershipRepo,
@@ -883,6 +912,8 @@ func (a *Application) Run(ctx context.Context) error {
 			JobEnqueuer:             &kbapi.JobQueueEnqueuer{Repo: jobRepo},
 			MaxUploadBytes:          100 * 1024 * 1024,
 			ExamIntegrationEnabled:  a.config.ExamIntegrationEnabled,
+			ExamTokenSource:         examTokenSource,
+			ExamScopesLister:        kbapi.NewExamScopesLister(a.config.ExamBaseURL),
 		})
 	}
 

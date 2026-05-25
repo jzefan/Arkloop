@@ -3,6 +3,7 @@ package kbapi
 import (
 	"context"
 	"encoding/json"
+	nethttp "net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -169,5 +170,79 @@ func TestDeleteKB(t *testing.T) {
 	}
 	if got, _ := ctx.kbStore.GetByID(context.Background(), kb.ID); got != nil {
 		t.Error("expected nil after delete")
+	}
+}
+
+type fakeExamTokenSource struct {
+	token  string
+	userID uuid.UUID
+	scopes []string
+}
+
+func (f *fakeExamTokenSource) IssueExamToken(ctx context.Context, userID uuid.UUID, scopes []string) (string, error) {
+	f.userID = userID
+	f.scopes = append([]string(nil), scopes...)
+	return f.token, nil
+}
+
+type fakeExamScopesLister struct {
+	gotToken string
+}
+
+func (f *fakeExamScopesLister) ListExamScopes(ctx context.Context, token string) ([]map[string]any, error) {
+	f.gotToken = token
+	return []map[string]any{{"id": "scope-1", "name": "Scope 1"}}, nil
+}
+
+func TestHandleExamScopes_MintsExamTokenForCurrentActor(t *testing.T) {
+	userID := uuid.New()
+	tokenSource := &fakeExamTokenSource{token: "exam-token"}
+	lister := &fakeExamScopesLister{}
+	ctx := &handlerCtx{
+		examScopesLister: lister,
+		examTokenSource:  tokenSource,
+	}
+
+	req := httptest.NewRequest(nethttp.MethodGet, "/v1/exam/scopes", nil)
+	req.Header.Set("Authorization", "Bearer arkloop-token")
+	req = injectActor(req, uuid.New(), userID)
+	w := httptest.NewRecorder()
+
+	handleExamScopes(ctx)(w, req)
+
+	if w.Code != nethttp.StatusOK {
+		t.Fatalf("got %d, body=%s", w.Code, w.Body.String())
+	}
+	if lister.gotToken != "exam-token" {
+		t.Fatalf("lister got token %q, want minted exam token", lister.gotToken)
+	}
+	if tokenSource.userID != userID {
+		t.Fatalf("token source got user %s, want %s", tokenSource.userID, userID)
+	}
+	if got := strings.Join(tokenSource.scopes, " "); got != "openid exam:read" {
+		t.Fatalf("token source scopes %q, want openid exam:read", got)
+	}
+}
+
+func TestHandleKnowledgeBaseScopes_MintsExamTokenInternally(t *testing.T) {
+	userID := uuid.New()
+	tokenSource := &fakeExamTokenSource{token: "exam-token"}
+	lister := &fakeExamScopesLister{}
+	ctx := &handlerCtx{
+		examScopesLister: lister,
+		examTokenSource:  tokenSource,
+	}
+
+	req := httptest.NewRequest(nethttp.MethodGet, "/v1/knowledge-bases/scopes", nil)
+	req = injectActor(req, uuid.New(), userID)
+	w := httptest.NewRecorder()
+
+	handleKnowledgeBaseScopes(ctx)(w, req)
+
+	if w.Code != nethttp.StatusOK {
+		t.Fatalf("got %d, body=%s", w.Code, w.Body.String())
+	}
+	if lister.gotToken != "exam-token" {
+		t.Fatalf("lister got token %q, want minted exam token", lister.gotToken)
 	}
 }

@@ -50,4 +50,6 @@ type Deps struct {
 
 	// Feature flags
 	ExamIntegrationEnabled bool
+	ExamTokenSource        ExamTokenSource
+	ExamScopesLister       ExamScopesLister
 }

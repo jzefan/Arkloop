@@ -2,6 +2,7 @@ package kb
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -18,6 +19,7 @@ import (
 
 const (
 	errorArgsInvalid      = "tool.args_invalid"
+	errorConfirmation     = "tool.confirmation_required"
 	errorPermissionDenied = "tool.permission_denied"
 	errorSearchFailed     = "tool.search_failed"
 	errorNotConfigured    = "config.missing"
@@ -37,7 +39,9 @@ type Executor struct {
 	chunks    ChunksReader
 	embedder  embedding.Embedder
 	access    AccessChecker
+	pool      *pgxpool.Pool
 	configErr error
+	searchErr error
 }
 
 func NewExecutor(chunks ChunksReader, embedder embedding.Embedder, access AccessChecker) *Executor {
@@ -53,10 +57,13 @@ func NewToolExecutor(pool *pgxpool.Pool) *Executor {
 		return &Executor{configErr: err}
 	}
 	apiKey := firstNonEmpty(os.Getenv("ARK_EMBED_API_KEY"), os.Getenv("ARK_API_KEY"))
+	exec := NewExecutor(chunks, nil, DBAccessChecker{Pool: pool})
+	exec.pool = pool
 	if apiKey == "" {
-		return &Executor{configErr: errors.New("ARK_EMBED_API_KEY/ARK_API_KEY not configured")}
+		exec.searchErr = errors.New("ARK_EMBED_API_KEY/ARK_API_KEY not configured")
+		return exec
 	}
-	embedder := embedding.NewDoubao(embedding.DoubaoConfig{
+	exec.embedder = embedding.NewDoubao(embedding.DoubaoConfig{
 		BaseURL:    firstNonEmpty(os.Getenv("ARK_EMBED_BASE_URL"), "https://ark.cn-beijing.volces.com/api/v3"),
 		APIKey:     apiKey,
 		Model:      firstNonEmpty(os.Getenv("ARK_EMBED_MODEL"), "doubao-embedding-text-240715"),
@@ -64,11 +71,11 @@ func NewToolExecutor(pool *pgxpool.Pool) *Executor {
 		MaxRetries: 3,
 		Dim:        chunks.Dim(),
 	})
-	return NewExecutor(chunks, embedder, DBAccessChecker{Pool: pool})
+	return exec
 }
 
 func (e *Executor) IsNotConfigured() bool {
-	return e == nil || e.configErr != nil || e.chunks == nil || e.embedder == nil || e.access == nil
+	return e == nil || e.configErr != nil || e.chunks == nil || e.access == nil
 }
 
 func (e *Executor) Execute(ctx context.Context, toolName string, args map[string]any, execCtx tools.ExecutionContext, toolCallID string) tools.ExecutionResult {
@@ -77,6 +84,14 @@ func (e *Executor) Execute(ctx context.Context, toolName string, args map[string
 		return e.executeSearch(ctx, args, execCtx)
 	case ToolNameExtractTOC:
 		return e.executeExtractTOC(ctx, args, execCtx)
+	case ToolNameListKnowledgePoints:
+		return e.executeListKnowledgePoints(ctx, args, execCtx)
+	case ToolNameDraftQuestions:
+		return e.executeDraftQuestions(ctx, args, execCtx)
+	case ToolNameSaveQuestions:
+		return e.executeSaveQuestions(ctx, args, execCtx)
+	case ToolNameComposePaper:
+		return e.executeComposePaper(ctx, args, execCtx)
 	default:
 		return errResult(errorNotConfigured, "unknown kb tool: "+toolName)
 	}
@@ -85,6 +100,13 @@ func (e *Executor) Execute(ctx context.Context, toolName string, args map[string
 func (e *Executor) executeSearch(ctx context.Context, args map[string]any, execCtx tools.ExecutionContext) tools.ExecutionResult {
 	if e.IsNotConfigured() {
 		return errResult(errorNotConfigured, "kb_search is not configured")
+	}
+	if e.embedder == nil {
+		msg := "kb_search embedder is not configured"
+		if e.searchErr != nil {
+			msg = msg + ": " + e.searchErr.Error()
+		}
+		return errResult(errorNotConfigured, msg)
 	}
 	accountID := uuid.Nil
 	if execCtx.AccountID != nil {
@@ -139,6 +161,44 @@ func (e *Executor) executeSearch(ctx context.Context, args map[string]any, execC
 		})
 	}
 	return tools.ExecutionResult{ResultJSON: map[string]any{"hits": out}}
+}
+
+func (e *Executor) searchHits(ctx context.Context, kbID uuid.UUID, query string, k int) ([]wdata.KBChunkHit, error) {
+	if e.embedder == nil {
+		if e.searchErr != nil {
+			return nil, e.searchErr
+		}
+		return nil, errors.New("embedder not configured")
+	}
+	vecs, err := e.embedder.Embed(ctx, []string{query})
+	if err != nil || len(vecs) != 1 {
+		if err == nil {
+			err = fmt.Errorf("expected 1 embedding vector, got %d", len(vecs))
+		}
+		return nil, err
+	}
+	return e.chunks.Search(ctx, kbID, vecs[0], k)
+}
+
+func hitToMap(hit wdata.KBChunkHit) map[string]any {
+	return map[string]any{
+		"id":           hit.ID.String(),
+		"document_ref": hit.DocumentRef,
+		"ordinal":      hit.Ordinal,
+		"heading_path": hit.HeadingPath,
+		"chunk_type":   hit.ChunkType,
+		"text":         hit.Text,
+		"score":        hit.Score,
+		"metadata":     hit.Metadata,
+	}
+}
+
+func jsonBytes(v any, fallback string) []byte {
+	b, err := json.Marshal(v)
+	if err != nil || len(b) == 0 || string(b) == "null" {
+		return []byte(fallback)
+	}
+	return b
 }
 
 func (e *Executor) executeExtractTOC(ctx context.Context, args map[string]any, execCtx tools.ExecutionContext) tools.ExecutionResult {
@@ -255,6 +315,23 @@ func intFromAny(v any, fallback int) int {
 		}
 	}
 	return fallback
+}
+
+func parseStringSlice(v any) []string {
+	switch x := v.(type) {
+	case []string:
+		return x
+	case []any:
+		out := make([]string, 0, len(x))
+		for _, item := range x {
+			if s, ok := item.(string); ok && strings.TrimSpace(s) != "" {
+				out = append(out, strings.TrimSpace(s))
+			}
+		}
+		return out
+	default:
+		return nil
+	}
 }
 
 type jsonNumber interface{ String() string }
