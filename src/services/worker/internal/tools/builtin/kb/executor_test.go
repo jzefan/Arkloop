@@ -2,6 +2,7 @@ package kb
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -21,7 +22,77 @@ func (f *fakeChunksRepo) ListHeadings(ctx context.Context, kbID, docID uuid.UUID
 	return nil, nil
 }
 
+func (f *fakeChunksRepo) GetByIDs(ctx context.Context, kbID uuid.UUID, ids []uuid.UUID) ([]wdata.KBChunkHit, error) {
+	byID := make(map[uuid.UUID]wdata.KBChunkHit, len(f.hits))
+	for _, hit := range f.hits {
+		byID[hit.ID] = hit
+	}
+	out := make([]wdata.KBChunkHit, 0, len(ids))
+	for _, id := range ids {
+		if hit, ok := byID[id]; ok && hit.KBID == kbID {
+			out = append(out, hit)
+		}
+	}
+	return out, nil
+}
+
 func (f *fakeChunksRepo) Dim() int { return 8 }
+
+type captureProvider struct {
+	body any
+	resp any
+}
+
+func (p *captureProvider) CallExam(ctx context.Context, userID uuid.UUID, scopes []string, method, path string, body any, out any) error {
+	p.body = body
+	b, _ := json.Marshal(p.resp)
+	_ = json.Unmarshal(b, out)
+	return nil
+}
+
+type routeProvider struct {
+	calls       []string
+	bodies      []any
+	paperBody   map[string]any
+	questionReq map[string]any
+}
+
+func (p *routeProvider) CallExam(ctx context.Context, userID uuid.UUID, scopes []string, method, path string, body any, out any) error {
+	p.calls = append(p.calls, method+" "+path)
+	p.bodies = append(p.bodies, body)
+	switch {
+	case method == "POST" && path == "/api/questions/batch":
+		p.questionReq, _ = body.(map[string]any)
+		encodeInto(map[string]any{
+			"created": []map[string]any{{"index": 0, "id": "q-new-1"}},
+			"failed":  []map[string]any{},
+		}, out)
+	case method == "GET" && strings.HasPrefix(path, "/api/questions?"):
+		encodeInto(map[string]any{
+			"items": []map[string]any{{
+				"id":                 "q-new-1",
+				"knowledge_point_id": "kp-interference",
+				"type":               "single_choice",
+				"difficulty":         "medium",
+				"stem":               "干涉题",
+				"answer":             "A",
+				"explanation":        "根据教材干涉实验可得。",
+				"source_snippets":    []map[string]any{{"snippet": "课程资料快照"}},
+			}},
+		}, out)
+	case method == "POST" && path == "/api/papers":
+		p.paperBody, _ = body.(map[string]any)
+		encodeInto(map[string]any{"id": "paper-1", "name": p.paperBody["name"]}, out)
+	default:
+		encodeInto(map[string]any{}, out)
+	}
+	return nil
+}
+
+func encodeInto(v any, out any) {
+	b, _ := json.Marshal(v)
+	_ = json.Unmarshal(b, out)
+}
 
 type fakeEmbedder struct{ dim int }
 
@@ -107,6 +178,167 @@ func TestKBSaveQuestionsRequiresConfirmation(t *testing.T) {
 
 	if result.Error == nil || result.Error.ErrorClass != errorConfirmation {
 		t.Fatalf("expected confirmation error, got %+v", result.Error)
+	}
+}
+
+func TestProviderSaveQuestionsAutofillsSourceSnippetsFromChunkIDs(t *testing.T) {
+	kbID := uuid.New()
+	chunkID := uuid.New()
+	sourceText := strings.Repeat("课程资料中的物理光学干涉实验依据。", 18)
+	provider := &captureProvider{resp: map[string]any{
+		"created": []map[string]any{{"index": 0, "id": "q-new-1"}},
+		"failed":  []map[string]any{},
+	}}
+	exe := NewExecutor(&fakeChunksRepo{hits: []wdata.KBChunkHit{{
+		ID:          chunkID,
+		KBID:        kbID,
+		DocumentRef: "physics.pdf",
+		Ordinal:     7,
+		HeadingPath: []string{"第三章", "物理光学"},
+		Text:        sourceText,
+	}}}, fakeEmbedder{dim: 8}, fakeAccess{allow: true})
+	exe.provider = provider
+	userID := uuid.New()
+	scopeID := "scope-physics"
+
+	result := exe.executeProviderSaveQuestions(context.Background(), kbDescriptor{
+		ID:              kbID,
+		IntegrationMode: "exam",
+		ExamScopeID:     &scopeID,
+	}, map[string]any{
+		"questions": []any{
+			map[string]any{
+				"knowledge_point_id": "kp-interference",
+				"type":               "single_choice",
+				"difficulty":         "medium",
+				"stem":               "干涉题",
+				"answer":             "A",
+				"source_chunk_ids":   []any{chunkID.String()},
+			},
+		},
+	}, tools.ExecutionContext{UserID: &userID})
+
+	if result.Error != nil {
+		t.Fatalf("execute error: %+v", result.Error)
+	}
+	body, _ := provider.body.(map[string]any)
+	questions, _ := body["questions"].([]map[string]any)
+	if len(questions) != 1 {
+		t.Fatalf("provider body missing questions: %#v", provider.body)
+	}
+	snippets, _ := questions[0]["source_snippets"].([]map[string]any)
+	if len(snippets) != 1 {
+		t.Fatalf("expected one auto-filled source snippet, got %#v", questions[0]["source_snippets"])
+	}
+	if snippets[0]["chunk_id"] != chunkID.String() || snippets[0]["document_ref"] != "physics.pdf" || snippets[0]["ordinal"] != 7 {
+		t.Fatalf("unexpected snippet metadata: %+v", snippets[0])
+	}
+	text, _ := snippets[0]["snippet"].(string)
+	if len([]rune(text)) > 500 || len([]rune(text)) < 200 {
+		t.Fatalf("snippet length = %d, want 200..500", len([]rune(text)))
+	}
+}
+
+func TestProviderSaveQuestionsRejectsQuestionsWithoutSource(t *testing.T) {
+	provider := &captureProvider{resp: map[string]any{"created": []map[string]any{}, "failed": []map[string]any{}}}
+	exe := NewExecutor(&fakeChunksRepo{}, fakeEmbedder{dim: 8}, fakeAccess{allow: true})
+	exe.provider = provider
+	userID := uuid.New()
+	scopeID := "scope-physics"
+
+	result := exe.executeProviderSaveQuestions(context.Background(), kbDescriptor{
+		ID:              uuid.New(),
+		IntegrationMode: "exam",
+		ExamScopeID:     &scopeID,
+	}, map[string]any{
+		"questions": []any{
+			map[string]any{
+				"knowledge_point_id": "kp-interference",
+				"type":               "single_choice",
+				"difficulty":         "medium",
+				"stem":               "干涉题",
+				"answer":             "A",
+			},
+		},
+	}, tools.ExecutionContext{UserID: &userID})
+
+	if result.Error != nil {
+		t.Fatalf("execute error: %+v", result.Error)
+	}
+	if provider.body != nil {
+		t.Fatalf("provider should not be called when all questions fail validation")
+	}
+	failed, _ := result.ResultJSON["failed"].([]map[string]any)
+	if len(failed) != 1 || failed[0]["error_code"] != "source_required" {
+		t.Fatalf("expected source_required failure, got %+v", result.ResultJSON)
+	}
+}
+
+func TestLinkedPaperBuilderE2E_SaveQuestionThenComposePaper(t *testing.T) {
+	kbID := uuid.New()
+	chunkID := uuid.New()
+	provider := &routeProvider{}
+	exe := NewExecutor(&fakeChunksRepo{hits: []wdata.KBChunkHit{{
+		ID:          chunkID,
+		KBID:        kbID,
+		DocumentRef: "physics.pdf",
+		Ordinal:     3,
+		HeadingPath: []string{"第三章", "3.2 干涉"},
+		Text:        strings.Repeat("杨氏双缝干涉实验说明。", 30),
+	}}}, fakeEmbedder{dim: 8}, fakeAccess{allow: true})
+	exe.provider = provider
+	userID := uuid.New()
+	scopeID := "scope-physics"
+	kb := kbDescriptor{ID: kbID, IntegrationMode: "exam", ExamScopeID: &scopeID}
+	execCtx := tools.ExecutionContext{UserID: &userID}
+
+	save := exe.executeProviderSaveQuestions(context.Background(), kb, map[string]any{
+		"questions": []any{map[string]any{
+			"knowledge_point_id": "kp-interference",
+			"type":               "single_choice",
+			"difficulty":         "medium",
+			"stem":               "干涉题",
+			"answer":             "A",
+			"source_chunk_ids":   []any{chunkID.String()},
+		}},
+	}, execCtx)
+	if save.Error != nil || save.ResultJSON["created_count"] != 1 {
+		t.Fatalf("save failed: err=%+v result=%+v", save.Error, save.ResultJSON)
+	}
+
+	compose := exe.executeProviderComposePaper(context.Background(), kb, map[string]any{
+		"name":                    "物理光学小测",
+		"knowledge_point_ids":     []any{"kp-interference"},
+		"total_count":             1,
+		"type_distribution":       map[string]any{"single_choice": 1},
+		"difficulty_distribution": map[string]any{"medium": 1},
+		"confirmed":               true,
+	}, execCtx)
+	if compose.Error != nil {
+		t.Fatalf("compose failed: %+v", compose.Error)
+	}
+	if compose.ResultJSON["saved"] != true || compose.ResultJSON["paper_id"] != "paper-1" {
+		t.Fatalf("paper not saved: %+v", compose.ResultJSON)
+	}
+	if provider.paperBody["exam_scope_id"] != scopeID {
+		t.Fatalf("paper save did not target scope: %+v", provider.paperBody)
+	}
+	var q map[string]any
+	switch questions := provider.questionReq["questions"].(type) {
+	case []map[string]any:
+		if len(questions) == 1 {
+			q = questions[0]
+		}
+	case []any:
+		if len(questions) == 1 {
+			q, _ = questions[0].(map[string]any)
+		}
+	}
+	if q == nil {
+		t.Fatalf("question save body missing: %+v", provider.questionReq)
+	}
+	if len(normalizeSourceSnippets(q["source_snippets"])) != 1 {
+		t.Fatalf("question source snapshot not sent: %+v", q)
 	}
 }
 

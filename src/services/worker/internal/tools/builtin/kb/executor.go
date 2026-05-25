@@ -28,6 +28,7 @@ const (
 type ChunksReader interface {
 	Search(ctx context.Context, kbID uuid.UUID, query []float32, k int) ([]wdata.KBChunkHit, error)
 	ListHeadings(ctx context.Context, kbID, docID uuid.UUID) ([]wdata.KBChunkHit, error)
+	GetByIDs(ctx context.Context, kbID uuid.UUID, ids []uuid.UUID) ([]wdata.KBChunkHit, error)
 	Dim() int
 }
 
@@ -211,6 +212,105 @@ func jsonBytes(v any, fallback string) []byte {
 		return []byte(fallback)
 	}
 	return b
+}
+
+func (e *Executor) prepareQuestionSources(ctx context.Context, kbID uuid.UUID, q map[string]any) (string, string, error) {
+	if q == nil {
+		return "validation_error", "question must be an object", errors.New("question must be an object")
+	}
+	if snippets := normalizeSourceSnippets(q["source_snippets"]); len(snippets) > 0 {
+		q["source_snippets"] = snippets
+		return "", "", nil
+	}
+	chunkIDs, err := parseUUIDSlice(q["source_chunk_ids"])
+	if err != nil {
+		return "source_chunk_ids_invalid", "source_chunk_ids must be UUID strings", err
+	}
+	if len(chunkIDs) == 0 {
+		return "source_required", "source_snippets or source_chunk_ids are required", errors.New("missing source")
+	}
+	if e == nil || e.chunks == nil {
+		return "source_unavailable", "source chunks are not available", errors.New("chunks reader not configured")
+	}
+	chunks, err := e.chunks.GetByIDs(ctx, kbID, chunkIDs)
+	if err != nil {
+		return "source_lookup_failed", "failed to read source chunks", err
+	}
+	if len(chunks) == 0 {
+		return "source_not_found", "source_chunk_ids did not match this knowledge base", errors.New("source chunks not found")
+	}
+	snippets := make([]map[string]any, 0, len(chunks))
+	matchedIDs := make([]string, 0, len(chunks))
+	for _, hit := range chunks {
+		text := trimRunes(strings.TrimSpace(hit.Text), 500)
+		if text == "" {
+			continue
+		}
+		item := map[string]any{
+			"chunk_id":     hit.ID.String(),
+			"document_ref": hit.DocumentRef,
+			"ordinal":      hit.Ordinal,
+			"snippet":      text,
+		}
+		if len(hit.HeadingPath) > 0 {
+			item["heading_path"] = hit.HeadingPath
+		}
+		snippets = append(snippets, item)
+		matchedIDs = append(matchedIDs, hit.ID.String())
+	}
+	if len(snippets) == 0 {
+		return "source_not_found", "source chunks have no readable text", errors.New("empty source chunks")
+	}
+	q["source_snippets"] = snippets
+	q["source_chunk_ids"] = matchedIDs
+	return "", "", nil
+}
+
+func normalizeSourceSnippets(v any) []map[string]any {
+	switch items := v.(type) {
+	case []map[string]any:
+		return normalizeSourceSnippetMaps(items)
+	case []any:
+		maps := make([]map[string]any, 0, len(items))
+		for _, raw := range items {
+			if item, ok := raw.(map[string]any); ok {
+				maps = append(maps, item)
+			}
+		}
+		return normalizeSourceSnippetMaps(maps)
+	default:
+		return nil
+	}
+}
+
+func normalizeSourceSnippetMaps(items []map[string]any) []map[string]any {
+	out := make([]map[string]any, 0, len(items))
+	for _, item := range items {
+		text := strings.TrimSpace(firstNonEmpty(asString(item["snippet"]), asString(item["text"]), asString(item["source_text"])))
+		if text == "" {
+			continue
+		}
+		cleaned := make(map[string]any, len(item)+1)
+		for k, v := range item {
+			cleaned[k] = v
+		}
+		cleaned["snippet"] = trimRunes(text, 500)
+		delete(cleaned, "text")
+		delete(cleaned, "source_text")
+		out = append(out, cleaned)
+	}
+	return out
+}
+
+func trimRunes(s string, max int) string {
+	if max <= 0 {
+		return ""
+	}
+	runes := []rune(s)
+	if len(runes) <= max {
+		return s
+	}
+	return strings.TrimSpace(string(runes[:max]))
 }
 
 func (e *Executor) executeExtractTOC(ctx context.Context, args map[string]any, execCtx tools.ExecutionContext) tools.ExecutionResult {

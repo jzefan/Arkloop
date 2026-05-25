@@ -176,6 +176,49 @@ ORDER  BY c.ordinal`, kbID, docID)
 	return out, rows.Err()
 }
 
+// GetByIDs returns chunks by id for a KB, preserving the caller's id order.
+func (r *KBChunksRepository) GetByIDs(ctx context.Context, kbID uuid.UUID, ids []uuid.UUID) ([]KBChunkHit, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	rows, err := r.pool.Query(ctx, `
+SELECT c.id, c.kb_id, c.document_id, d.original_filename, c.ordinal, c.heading_path, c.chunk_type, c.text, c.token_count,
+       c.metadata_json, 0::real AS score
+FROM   kb_chunks c
+JOIN   kb_documents d ON d.id = c.document_id
+WHERE  c.kb_id = $1 AND c.id = ANY($2)`, kbID, ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	byID := make(map[uuid.UUID]KBChunkHit, len(ids))
+	for rows.Next() {
+		var h KBChunkHit
+		var metadataRaw []byte
+		if err := rows.Scan(&h.ID, &h.KBID, &h.DocumentID, &h.DocumentRef, &h.Ordinal,
+			&h.HeadingPath, &h.ChunkType, &h.Text, &h.TokenCount, &metadataRaw, &h.Score); err != nil {
+			return nil, err
+		}
+		if len(metadataRaw) > 0 {
+			_ = json.Unmarshal(metadataRaw, &h.Metadata)
+		}
+		if h.Metadata == nil {
+			h.Metadata = map[string]any{}
+		}
+		byID[h.ID] = h
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	out := make([]KBChunkHit, 0, len(byID))
+	for _, id := range ids {
+		if h, ok := byID[id]; ok {
+			out = append(out, h)
+		}
+	}
+	return out, nil
+}
+
 func (r *KBChunksRepository) UpdateDocStatus(ctx context.Context, docID uuid.UUID, status, errorMessage string, parseMeta map[string]any) error {
 	if parseMeta != nil {
 		metaJSON, err := json.Marshal(parseMeta)

@@ -265,6 +265,10 @@ func (e *Executor) executeSaveQuestions(ctx context.Context, args map[string]any
 			failed = append(failed, failureMap(i, "validation_error", "question must be an object"))
 			continue
 		}
+		if code, msg, err := e.prepareQuestionSources(ctx, kb.ID, q); err != nil {
+			failed = append(failed, failureMap(i, code, msg))
+			continue
+		}
 		id, code, msg, err := e.insertQuestion(ctx, bankID, q, execCtx.UserID)
 		if err != nil {
 			failed = append(failed, failureMap(i, code, msg))
@@ -469,6 +473,10 @@ func (e *Executor) executeProviderSaveQuestions(ctx context.Context, kb kbDescri
 		}
 		if strings.TrimSpace(asString(q["created_by_source"])) == "" {
 			q["created_by_source"] = "ai"
+		}
+		if code, msg, err := e.prepareQuestionSources(ctx, kb.ID, q); err != nil {
+			failed = append(failed, failureMap(i, code, msg))
+			continue
 		}
 		questions = append(questions, q)
 		indexMap = append(indexMap, i)
