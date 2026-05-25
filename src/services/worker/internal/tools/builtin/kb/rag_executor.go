@@ -134,7 +134,7 @@ func (e *Executor) executeListKnowledgePoints(ctx context.Context, args map[stri
 		return errResult(errorPermissionDenied, "caller is not a member of this KB workspace")
 	}
 	if kb.IntegrationMode == "exam" {
-		return errResult("kb.exam_linked_not_supported", "linked KB knowledge-point listing is not available in this tool path yet")
+		return providerUnavailable("课程范围的知识点暂时不可用，请稍后重试或联系管理员检查保存目标。")
 	}
 	rows, err := e.pool.Query(ctx, `
 SELECT id, name, parent_id, sort_order
@@ -173,6 +173,9 @@ func (e *Executor) executeDraftQuestions(ctx context.Context, args map[string]an
 	}
 	if !ok {
 		return errResult(errorPermissionDenied, "caller is not a member of this KB workspace")
+	}
+	if kb.IntegrationMode == "exam" {
+		return providerUnavailable("当前课程资料绑定的保存目标暂时不可用，暂不能基于该范围生成题目草稿。")
 	}
 	kpID, err := uuid.Parse(strings.TrimSpace(asString(args["knowledge_point_id"])))
 	if err != nil || kpID == uuid.Nil {
@@ -241,6 +244,9 @@ func (e *Executor) executeSaveQuestions(ctx context.Context, args map[string]any
 	if !ok {
 		return errResult(errorPermissionDenied, "caller is not a member of this KB workspace")
 	}
+	if kb.IntegrationMode == "exam" {
+		return providerUnavailable("当前课程资料绑定的保存目标暂时不可用，题目草稿还没有保存。请稍后重试。")
+	}
 	questionsRaw, ok := args["questions"].([]any)
 	if !ok || len(questionsRaw) == 0 {
 		return errResult(errorArgsInvalid, "questions array is required")
@@ -280,6 +286,9 @@ func (e *Executor) executeComposePaper(ctx context.Context, args map[string]any,
 	}
 	if !ok {
 		return errResult(errorPermissionDenied, "caller is not a member of this KB workspace")
+	}
+	if kb.IntegrationMode == "exam" {
+		return providerUnavailable("当前课程资料绑定的保存目标暂时不可用，暂不能保存试卷。请稍后重试。")
 	}
 	name := strings.TrimSpace(asString(args["name"]))
 	if name == "" {
@@ -672,6 +681,15 @@ func nullableUUID(id *uuid.UUID) any {
 
 func failureMap(index int, code, message string) map[string]any {
 	return map[string]any{"index": index, "error_code": code, "error_message": message}
+}
+
+func providerUnavailable(message string) tools.ExecutionResult {
+	return tools.ExecutionResult{
+		Error: &tools.ExecutionError{
+			ErrorClass: "kb.provider_unavailable",
+			Message:    message,
+		},
+	}
 }
 
 func parseUUIDSlice(v any) ([]uuid.UUID, error) {

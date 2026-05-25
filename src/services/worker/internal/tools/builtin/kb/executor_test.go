@@ -134,3 +134,16 @@ func TestPaperPreviewPanelContainsConfirmationPrompt(t *testing.T) {
 		t.Fatalf("unexpected panel kind: %+v", panel)
 	}
 }
+
+func TestProviderUnavailableIsTeacherFriendly(t *testing.T) {
+	result := providerUnavailable("当前课程资料绑定的保存目标暂时不可用，暂不能保存试卷。请稍后重试。")
+	if result.Error == nil {
+		t.Fatal("expected error")
+	}
+	if result.Error.ErrorClass != "kb.provider_unavailable" {
+		t.Fatalf("unexpected error class: %+v", result.Error)
+	}
+	if strings.Contains(strings.ToLower(result.Error.Message), "exam") || strings.Contains(strings.ToLower(result.Error.Message), "provider") {
+		t.Fatalf("message should not expose provider internals: %q", result.Error.Message)
+	}
+}
