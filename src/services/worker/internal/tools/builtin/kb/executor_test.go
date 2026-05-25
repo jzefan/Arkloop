@@ -2,6 +2,7 @@ package kb
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	wdata "arkloop/services/worker/internal/data"
@@ -118,5 +119,18 @@ func TestSelectQuestionsReportsTypeShortage(t *testing.T) {
 	}
 	if len(warnings) != 1 || warnings[0]["type"] != "single_choice" {
 		t.Fatalf("expected single_choice shortage, got %+v", warnings)
+	}
+}
+
+func TestPaperPreviewPanelContainsConfirmationPrompt(t *testing.T) {
+	panel := paperPreviewPanel("期中卷", []questionRow{
+		{ID: uuid.New(), Stem: "光的干涉题", Type: "single_choice", Difficulty: "medium"},
+	}, "# 期中卷", false)
+	code, _ := panel["widget_code"].(string)
+	if !strings.Contains(code, "sendPrompt('确认保存这份试卷')") {
+		t.Fatalf("expected confirmation sendPrompt in widget code: %s", code)
+	}
+	if panel["kind"] != "paper_preview" {
+		t.Fatalf("unexpected panel kind: %+v", panel)
 	}
 }

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"html"
 	"math/rand"
 	"sort"
 	"strings"
@@ -224,6 +225,7 @@ func (e *Executor) executeDraftQuestions(ctx context.Context, args map[string]an
 		"retrieval_query":      query,
 		"retrieval_hits":       hitMaps,
 		"reference_questions":  refs,
+		"ui_panel":             questionDraftPanel(kpName, count, qType, difficulty, len(hitMaps), len(refs)),
 		"instruction":          "基于 retrieval_hits 中的课程资料和 reference_questions 中的命题风格生成题目草稿。不要保存。每道题必须包含 type、difficulty、stem、options、answer、explanation、source_snippets；选择题至少 3 个选项；source_snippets 应引用 retrieval_hits 的 id/document_ref/ordinal 和 200-500 字依据。",
 	}}
 }
@@ -307,6 +309,7 @@ func (e *Executor) executeComposePaper(ctx context.Context, args map[string]any,
 			"shortage_warnings": warnings,
 			"pool_size":         len(pool),
 			"question_bank":     "组卷题库",
+			"ui_panel":          shortagePanel(warnings),
 		}}
 	}
 	ids := make([]string, 0, len(selected))
@@ -322,6 +325,7 @@ func (e *Executor) executeComposePaper(ctx context.Context, args map[string]any,
 		"question_count": len(ids),
 		"markdown":       markdown,
 		"saved":          false,
+		"ui_panel":       paperPreviewPanel(name, selected, markdown, confirmed),
 	}
 	if !confirmed {
 		out["message"] = "已生成试卷预览，老师确认后再次调用并传 confirmed=true 保存。"
@@ -537,6 +541,102 @@ func renderPaperMarkdown(name string, questions []questionRow) string {
 		}
 	}
 	return b.String()
+}
+
+func questionDraftPanel(kpName string, count int, qType, difficulty string, hitCount, referenceCount int) map[string]any {
+	if strings.TrimSpace(qType) == "" {
+		qType = "未指定"
+	}
+	if strings.TrimSpace(difficulty) == "" {
+		difficulty = "未指定"
+	}
+	title := "出题要求确认"
+	code := `<style>
+.paper-panel{font-family:ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#18212f;border:1px solid #d8dee8;border-radius:8px;padding:14px;background:#fff;max-width:720px}
+.paper-panel h3{font-size:16px;margin:0 0 10px}.paper-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+.paper-cell{border:1px solid #edf0f5;border-radius:6px;padding:8px;background:#f8fafc}.paper-label{font-size:12px;color:#667085}.paper-value{font-size:14px;margin-top:2px}
+.paper-actions{display:flex;gap:8px;margin-top:12px;flex-wrap:wrap}.paper-actions button{border:0;border-radius:6px;padding:8px 10px;background:#1f6feb;color:white;cursor:pointer}.paper-actions button.secondary{background:#eef2f6;color:#18212f}
+</style><div class="paper-panel"><h3>出题要求确认</h3><div class="paper-grid">` +
+		panelCell("知识点", kpName) +
+		panelCell("题目数量", fmt.Sprintf("%d 道", count)) +
+		panelCell("题型", qType) +
+		panelCell("难度", difficulty) +
+		panelCell("课程资料命中", fmt.Sprintf("%d 条", hitCount)) +
+		panelCell("参考题", fmt.Sprintf("%d 道", referenceCount)) +
+		`</div><div class="paper-actions"><button onclick="sendPrompt('按这个要求生成题目草稿')">生成题目草稿</button><button class="secondary" onclick="sendPrompt('我想调整出题要求')">调整要求</button></div></div>`
+	return map[string]any{
+		"kind":                "question_draft_form",
+		"title":               title,
+		"widget_code":         code,
+		"confirmation_prompt": "按这个要求生成题目草稿",
+	}
+}
+
+func shortagePanel(warnings []map[string]any) map[string]any {
+	var rows strings.Builder
+	for _, w := range warnings {
+		label := "题池"
+		if typ, ok := w["type"].(string); ok && typ != "" {
+			label = typ
+		}
+		rows.WriteString(`<div class="shortage-row"><strong>`)
+		rows.WriteString(html.EscapeString(label))
+		rows.WriteString(`</strong><span>需要 `)
+		rows.WriteString(html.EscapeString(fmt.Sprint(w["requested"])))
+		rows.WriteString(`，可用 `)
+		rows.WriteString(html.EscapeString(fmt.Sprint(w["available"])))
+		rows.WriteString(`</span></div>`)
+	}
+	code := `<style>
+.shortage-panel{font-family:ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;border:1px solid #f1c27d;border-radius:8px;background:#fff8eb;color:#2a1d0c;padding:14px;max-width:720px}
+.shortage-panel h3{margin:0 0 10px;font-size:16px}.shortage-row{display:flex;justify-content:space-between;border-top:1px solid #f3dfbf;padding:8px 0;gap:12px}
+.shortage-actions{display:flex;gap:8px;margin-top:10px;flex-wrap:wrap}.shortage-actions button{border:0;border-radius:6px;padding:8px 10px;background:#b45309;color:white;cursor:pointer}.shortage-actions button.secondary{background:#f3e7d2;color:#2a1d0c}
+</style><div class="shortage-panel"><h3>题量不足</h3>` + rows.String() + `<div class="shortage-actions"><button onclick="sendPrompt('先补题再组卷')">先补题</button><button class="secondary" onclick="sendPrompt('我想放宽组卷条件')">放宽条件</button><button class="secondary" onclick="sendPrompt('缩小组卷范围')">缩小范围</button></div></div>`
+	return map[string]any{
+		"kind":        "paper_shortage",
+		"title":       "题量不足",
+		"widget_code": code,
+	}
+}
+
+func paperPreviewPanel(name string, questions []questionRow, markdown string, confirmed bool) map[string]any {
+	var rows strings.Builder
+	limit := len(questions)
+	if limit > 8 {
+		limit = 8
+	}
+	for i := 0; i < limit; i++ {
+		q := questions[i]
+		rows.WriteString(`<li><span>`)
+		rows.WriteString(html.EscapeString(fmt.Sprintf("%d. %s", i+1, q.Stem)))
+		rows.WriteString(`</span><em>`)
+		rows.WriteString(html.EscapeString(q.Type + " / " + q.Difficulty))
+		rows.WriteString(`</em></li>`)
+	}
+	if len(questions) > limit {
+		rows.WriteString(`<li><span>... 还有 `)
+		rows.WriteString(html.EscapeString(fmt.Sprint(len(questions) - limit)))
+		rows.WriteString(` 道</span></li>`)
+	}
+	action := `<button onclick="sendPrompt('确认保存这份试卷')">确认保存试卷</button><button class="secondary" onclick="sendPrompt('我想调整试卷')">调整试卷</button>`
+	if confirmed {
+		action = `<button onclick="sendPrompt('继续组卷')">继续组卷</button>`
+	}
+	code := `<style>
+.preview-panel{font-family:ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#14202f;border:1px solid #d8dee8;border-radius:8px;background:#fff;padding:14px;max-width:760px}
+.preview-panel h3{margin:0 0 8px;font-size:16px}.preview-panel ul{list-style:none;padding:0;margin:0;display:grid;gap:6px}.preview-panel li{border:1px solid #edf0f5;border-radius:6px;padding:8px;background:#f8fafc;display:grid;gap:3px}
+.preview-panel em{font-size:12px;color:#667085;font-style:normal}.preview-actions{display:flex;gap:8px;margin-top:12px;flex-wrap:wrap}.preview-actions button{border:0;border-radius:6px;padding:8px 10px;background:#1f6feb;color:#fff;cursor:pointer}.preview-actions button.secondary{background:#eef2f6;color:#14202f}
+</style><div class="preview-panel"><h3>` + html.EscapeString(name) + `</h3><ul>` + rows.String() + `</ul><div class="preview-actions">` + action + `</div></div>`
+	return map[string]any{
+		"kind":          "paper_preview",
+		"title":         "试卷预览",
+		"widget_code":   code,
+		"markdown_size": len(markdown),
+	}
+}
+
+func panelCell(label, value string) string {
+	return `<div class="paper-cell"><div class="paper-label">` + html.EscapeString(label) + `</div><div class="paper-value">` + html.EscapeString(value) + `</div></div>`
 }
 
 func (q questionRow) toMap() map[string]any {

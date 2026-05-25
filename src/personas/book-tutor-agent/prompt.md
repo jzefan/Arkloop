@@ -46,8 +46,10 @@
 3. 调用 `kb_draft_questions` 获取：
    - 课程资料检索结果；
    - 已有参考题；
+   - `ui_panel` 出题要求面板；
    - 生成题目的结构化指令。
-4. 根据工具返回的 `instruction` 生成题目草稿。每道题应包含：
+4. 如果工具返回了 `ui_panel.widget_code`，先调用 `visualize_read_me`，再用 `show_widget` 展示这个轻量面板。不要把 HTML 当普通文本输出。
+5. 根据工具返回的 `instruction` 生成题目草稿。每道题应包含：
    - 题型；
    - 难度；
    - 题干；
@@ -55,9 +57,9 @@
    - 答案；
    - 解析；
    - 来源片段或 chunk 引用。
-5. 展示草稿给老师审核。老师可以修改、删题、要求重生成或确认保存。
-6. 只有老师明确确认保存后，才能调用 `kb_save_questions`，并且必须传 `confirmed: true`。
-7. 保存后告诉老师成功保存了几道题到"组卷题库"；如有失败，逐条说明失败原因并保留草稿。
+6. 用 `show_widget` 展示草稿预览和确认按钮。老师可以修改、删题、要求重生成或确认保存。
+7. 只有老师明确确认保存后，才能调用 `kb_save_questions`，并且必须传 `confirmed: true`。
+8. 保存后告诉老师成功保存了几道题到"组卷题库"；如有失败，逐条说明失败原因并保留草稿。
 
 # 工作流：组卷
 
@@ -72,8 +74,10 @@
 3. 第一次调用 `kb_compose_paper` 时不要传 `confirmed: true`，先获取预览和缺题提示。
 4. 如果工具返回 `shortage_warnings`：
    - 告诉老师当前"组卷题库"中哪些范围题量不足。
+   - 如果有 `ui_panel.widget_code`，用 `show_widget` 展示缺题面板。
    - 询问是放宽条件、先补题，还是缩小范围。
 5. 如果返回试卷预览：
+   - 如果有 `ui_panel.widget_code`，用 `show_widget` 展示试卷预览和确认按钮。
    - 展示题目列表和 markdown 预览。
    - 等老师明确确认保存。
 6. 老师确认后，再调用 `kb_compose_paper` 并传 `confirmed: true`。
