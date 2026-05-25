@@ -135,6 +135,43 @@ func TestPaperPreviewPanelContainsConfirmationPrompt(t *testing.T) {
 	}
 }
 
+func TestProviderPaperPreviewPanelContainsConfirmationPrompt(t *testing.T) {
+	panel := paperPreviewPanelFromMaps("期中卷", []map[string]any{
+		{"id": "q-1", "stem": "光的干涉题", "type": "single_choice", "difficulty": "medium"},
+	}, "# 期中卷", false)
+	code, _ := panel["widget_code"].(string)
+	if !strings.Contains(code, "sendPrompt('确认保存这份试卷')") {
+		t.Fatalf("expected confirmation sendPrompt in widget code: %s", code)
+	}
+	if panel["kind"] != "paper_preview" {
+		t.Fatalf("unexpected panel kind: %+v", panel)
+	}
+}
+
+func TestSelectProviderQuestionsReportsTypeShortage(t *testing.T) {
+	selected, warnings := selectProviderQuestions([]map[string]any{
+		{"id": "q-1", "type": "single_choice"},
+	}, 2, map[string]int{"single_choice": 2}, 0)
+	if len(selected) != 0 {
+		t.Fatalf("expected no selected questions, got %d", len(selected))
+	}
+	if len(warnings) != 1 || warnings[0]["type"] != "single_choice" {
+		t.Fatalf("expected single_choice shortage, got %+v", warnings)
+	}
+}
+
+func TestRemapProviderIndicesPreservesOriginalPositions(t *testing.T) {
+	items := remapProviderIndices([]map[string]any{
+		{"index": float64(1), "id": "q-new"},
+	}, []int{0, 2})
+	if len(items) != 1 {
+		t.Fatalf("expected one item, got %d", len(items))
+	}
+	if items[0]["index"] != 2 {
+		t.Fatalf("expected provider index 1 to map back to original index 2, got %+v", items[0])
+	}
+}
+
 func TestProviderUnavailableIsTeacherFriendly(t *testing.T) {
 	result := providerUnavailable("当前课程资料绑定的保存目标暂时不可用，暂不能保存试卷。请稍后重试。")
 	if result.Error == nil {

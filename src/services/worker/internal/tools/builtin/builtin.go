@@ -127,17 +127,19 @@ func Executors(pool *pgxpool.Pool, rdb *redis.Client, resolver sharedconfig.Reso
 	// IsNotConfigured() == true so the policy layer hides them from the model.
 	var examExec *exam.ToolExecutor
 	var builderExec *exam.BuilderExecutor
+	var providerClient *exam.Client
 	if os.Getenv("ARKLOOP_EXAM_INTEGRATION_ENABLED") != "true" {
 		examExec = exam.NewToolExecutor(nil)
 		builderExec = exam.NewBuilderExecutor(nil)
 	} else if examClient, err := exam.NewClient(); err == nil {
+		providerClient = examClient
 		examExec = exam.NewToolExecutor(examClient)
 		builderExec = exam.NewBuilderExecutor(examClient)
 	} else {
 		examExec = exam.NewToolExecutor(nil)
 		builderExec = exam.NewBuilderExecutor(nil)
 	}
-	kbExec := kb.NewToolExecutor(pool)
+	kbExec := kb.NewToolExecutorWithProvider(pool, providerClient)
 	return map[string]tools.Executor{
 		TimelineTitleAgentSpec.Name:          TimelineTitleExecutor{},
 		loadskill.AgentSpec.Name:             loadskill.NewToolExecutor(skillStore),

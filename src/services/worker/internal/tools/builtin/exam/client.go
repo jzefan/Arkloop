@@ -35,11 +35,11 @@ const (
 // (their TTL is 60s; over-engineering caching for a high-stakes path isn't
 // worth it).
 type Client struct {
-	examBaseURL      string
-	arkLoopBaseURL   string
-	serviceToken     string
-	httpClient       *http.Client
-	clientID         string
+	examBaseURL    string
+	arkLoopBaseURL string
+	serviceToken   string
+	httpClient     *http.Client
+	clientID       string
 }
 
 // NewClient returns a Client wired from env vars. Returns (nil, error) when
@@ -160,6 +160,20 @@ func (c *Client) callExam(
 		}
 	}
 	return nil
+}
+
+// CallExam invokes an exam-backend endpoint as userID. It is exported for
+// provider-neutral worker tools that need to proxy exam-backed operations
+// without exposing exam terminology in their own package API.
+func (c *Client) CallExam(
+	ctx context.Context,
+	userID uuid.UUID,
+	scopes []string,
+	method, path string,
+	body any,
+	out any,
+) error {
+	return c.callExam(ctx, userID, scopes, method, path, body, out)
 }
 
 func truncate(s string, max int) string {

@@ -39,9 +39,14 @@ type Executor struct {
 	chunks    ChunksReader
 	embedder  embedding.Embedder
 	access    AccessChecker
+	provider  ProviderClient
 	pool      *pgxpool.Pool
 	configErr error
 	searchErr error
+}
+
+type ProviderClient interface {
+	CallExam(ctx context.Context, userID uuid.UUID, scopes []string, method, path string, body any, out any) error
 }
 
 func NewExecutor(chunks ChunksReader, embedder embedding.Embedder, access AccessChecker) *Executor {
@@ -49,6 +54,10 @@ func NewExecutor(chunks ChunksReader, embedder embedding.Embedder, access Access
 }
 
 func NewToolExecutor(pool *pgxpool.Pool) *Executor {
+	return NewToolExecutorWithProvider(pool, nil)
+}
+
+func NewToolExecutorWithProvider(pool *pgxpool.Pool, provider ProviderClient) *Executor {
 	if pool == nil {
 		return &Executor{configErr: errors.New("database pool not configured")}
 	}
@@ -59,6 +68,7 @@ func NewToolExecutor(pool *pgxpool.Pool) *Executor {
 	apiKey := firstNonEmpty(os.Getenv("ARK_EMBED_API_KEY"), os.Getenv("ARK_API_KEY"))
 	exec := NewExecutor(chunks, nil, DBAccessChecker{Pool: pool})
 	exec.pool = pool
+	exec.provider = provider
 	if apiKey == "" {
 		exec.searchErr = errors.New("ARK_EMBED_API_KEY/ARK_API_KEY not configured")
 		return exec
