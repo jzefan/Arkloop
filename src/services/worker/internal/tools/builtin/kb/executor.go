@@ -84,6 +84,8 @@ func (e *Executor) Execute(ctx context.Context, toolName string, args map[string
 		return e.executeSearch(ctx, args, execCtx)
 	case ToolNameExtractTOC:
 		return e.executeExtractTOC(ctx, args, execCtx)
+	case ToolNameListKnowledgeBases:
+		return e.executeListKnowledgeBases(ctx, args, execCtx)
 	case ToolNameListKnowledgePoints:
 		return e.executeListKnowledgePoints(ctx, args, execCtx)
 	case ToolNameDraftQuestions:

@@ -39,6 +39,91 @@ type questionRow struct {
 	CreatedAt        time.Time
 }
 
+func (e *Executor) executeListKnowledgeBases(ctx context.Context, args map[string]any, execCtx tools.ExecutionContext) tools.ExecutionResult {
+	if e.IsNotConfigured() || e.pool == nil {
+		return errResult(errorNotConfigured, "kb_list_knowledge_bases is not configured")
+	}
+	accountID := uuid.Nil
+	if execCtx.AccountID != nil {
+		accountID = *execCtx.AccountID
+	}
+	if accountID == uuid.Nil {
+		return errResult(errorPermissionDenied, "kb_list_knowledge_bases requires an account context")
+	}
+	userID := uuid.Nil
+	if execCtx.UserID != nil {
+		userID = *execCtx.UserID
+	}
+	workspaceRef := strings.TrimSpace(asString(args["workspace_ref"]))
+	if workspaceRef == "" {
+		workspaceRef = strings.TrimSpace(execCtx.WorkspaceRef)
+	}
+	readyOnly := true
+	if v, ok := args["ready_only"].(bool); ok {
+		readyOnly = v
+	}
+	includeSystemBanks := false
+	if v, ok := args["include_system_banks"].(bool); ok {
+		includeSystemBanks = v
+	}
+
+	query := `
+SELECT kb.id, kb.name, kb.description, kb.workspace_ref, kb.visibility, kb.integration_mode, kb.exam_scope_id,
+       COALESCE((SELECT COUNT(*) FROM kb_documents d WHERE d.kb_id = kb.id), 0) AS document_count,
+       COALESCE((SELECT COUNT(*) FROM kb_documents d WHERE d.kb_id = kb.id AND d.status = 'ready'), 0) AS ready_document_count
+FROM   knowledge_bases kb
+WHERE  kb.account_id = $1
+  AND  (kb.visibility <> 'private' OR kb.created_by = $2)`
+	argsSQL := []any{accountID, userID}
+	if workspaceRef != "" {
+		argsSQL = append(argsSQL, workspaceRef)
+		query += fmt.Sprintf("\n  AND kb.workspace_ref = $%d", len(argsSQL))
+	}
+	if !includeSystemBanks {
+		argsSQL = append(argsSQL, paperBankName)
+		query += fmt.Sprintf("\n  AND kb.name <> $%d", len(argsSQL))
+	}
+	if readyOnly {
+		query += "\n  AND EXISTS (SELECT 1 FROM kb_documents d WHERE d.kb_id = kb.id AND d.status = 'ready')"
+	}
+	query += "\nORDER BY kb.created_at DESC, kb.id ASC"
+
+	rows, err := e.pool.Query(ctx, query, argsSQL...)
+	if err != nil {
+		return errResult(errorSearchFailed, "list knowledge bases: "+err.Error())
+	}
+	defer rows.Close()
+
+	items := []map[string]any{}
+	for rows.Next() {
+		var id uuid.UUID
+		var name, description, ws, visibility, mode string
+		var examScopeID *string
+		var documentCount, readyDocumentCount int
+		if err := rows.Scan(&id, &name, &description, &ws, &visibility, &mode, &examScopeID, &documentCount, &readyDocumentCount); err != nil {
+			return errResult(errorSearchFailed, "scan knowledge base: "+err.Error())
+		}
+		item := map[string]any{
+			"id":                   id.String(),
+			"name":                 name,
+			"description":          description,
+			"workspace_ref":        ws,
+			"visibility":           visibility,
+			"integration_mode":     mode,
+			"document_count":       documentCount,
+			"ready_document_count": readyDocumentCount,
+		}
+		if examScopeID != nil {
+			item["scope_id"] = *examScopeID
+		}
+		items = append(items, item)
+	}
+	if err := rows.Err(); err != nil {
+		return errResult(errorSearchFailed, "list knowledge bases: "+err.Error())
+	}
+	return tools.ExecutionResult{ResultJSON: map[string]any{"items": items, "ready_only": readyOnly}}
+}
+
 func (e *Executor) executeListKnowledgePoints(ctx context.Context, args map[string]any, execCtx tools.ExecutionContext) tools.ExecutionResult {
 	kb, ok, err := e.authorizedKB(ctx, args, execCtx)
 	if err != nil {

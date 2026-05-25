@@ -6,11 +6,20 @@ import (
 )
 
 const (
+	ToolNameListKnowledgeBases  = "kb_list_knowledge_bases"
 	ToolNameListKnowledgePoints = "kb_list_knowledge_points"
 	ToolNameDraftQuestions      = "kb_draft_questions"
 	ToolNameSaveQuestions       = "kb_save_questions"
 	ToolNameComposePaper        = "kb_compose_paper"
 )
+
+var ListKnowledgeBasesAgentSpec = tools.AgentToolSpec{
+	Name:        ToolNameListKnowledgeBases,
+	Version:     "1",
+	Description: "list teacher-available ready knowledge bases for paper building",
+	RiskLevel:   tools.RiskLevelLow,
+	SideEffects: false,
+}
 
 var ListKnowledgePointsAgentSpec = tools.AgentToolSpec{
 	Name:        ToolNameListKnowledgePoints,
@@ -53,6 +62,31 @@ var ListKnowledgePointsLlmSpec = llm.ToolSpec{
 			"kb_id": map[string]any{"type": "string", "description": "KB UUID"},
 		},
 		"required":             []string{"kb_id"},
+		"additionalProperties": false,
+	},
+}
+
+var ListKnowledgeBasesLlmSpec = llm.ToolSpec{
+	Name:        ToolNameListKnowledgeBases,
+	Description: stringPtr("列出当前老师可用且已有 ready 文档的课程资料知识库。用于让老师选择课程资料，不需要老师手填 KB UUID。默认不返回系统固定的组卷题库。"),
+	JSONSchema: map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"workspace_ref": map[string]any{
+				"type":        "string",
+				"description": "可选工作区 ref；省略时使用当前执行上下文 workspace_ref，仍为空则列当前 Account 下可见 KB。",
+			},
+			"ready_only": map[string]any{
+				"type":        "boolean",
+				"description": "是否只返回至少有一个 ready 文档的 KB，默认 true。",
+				"default":     true,
+			},
+			"include_system_banks": map[string]any{
+				"type":        "boolean",
+				"description": "是否包含系统固定题库（如组卷题库），默认 false。",
+				"default":     false,
+			},
+		},
 		"additionalProperties": false,
 	},
 }
