@@ -156,7 +156,11 @@ var ComposePaperLlmSpec = llm.ToolSpec{
 			"total_count":             map[string]any{"type": "integer", "minimum": 1},
 			"type_distribution":       map[string]any{"type": "object", "description": "{type→count}"},
 			"difficulty_distribution": map[string]any{"type": "object", "description": "{level→count}"},
-			"seed":                    map[string]any{"type": "integer", "description": "随机种子（可选）"},
+			"knowledge_point_distribution": map[string]any{
+				"type":        "object",
+				"description": "{knowledge_point_id→count}；用于指定各知识点题量。",
+			},
+			"seed": map[string]any{"type": "integer", "description": "随机种子（可选）"},
 		},
 		"required":             []string{"kb_id", "name", "knowledge_point_ids", "total_count"},
 		"additionalProperties": false,

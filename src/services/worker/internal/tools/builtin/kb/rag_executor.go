@@ -313,8 +313,10 @@ func (e *Executor) executeComposePaper(ctx context.Context, args map[string]any,
 		return errResult(errorSearchFailed, "list paper pool: "+err.Error())
 	}
 	typeDist := mapStringInt(args["type_distribution"])
+	difficultyDist := mapStringInt(args["difficulty_distribution"])
+	kpDist := mapStringInt(args["knowledge_point_distribution"])
 	seed := int64(intFromAny(args["seed"], 0))
-	selected, warnings := selectQuestions(pool, totalCount, typeDist, seed)
+	selected, warnings := selectQuestions(pool, totalCount, typeDist, difficultyDist, kpDist, seed)
 	if len(warnings) > 0 {
 		return tools.ExecutionResult{ResultJSON: map[string]any{
 			"shortage_warnings": warnings,
@@ -343,9 +345,11 @@ func (e *Executor) executeComposePaper(ctx context.Context, args map[string]any,
 		return tools.ExecutionResult{ResultJSON: out}
 	}
 	spec := map[string]any{
-		"total_count":       totalCount,
-		"type_distribution": typeDist,
-		"seed":              seed,
+		"total_count":                  totalCount,
+		"type_distribution":            typeDist,
+		"difficulty_distribution":      difficultyDist,
+		"knowledge_point_distribution": kpDist,
+		"seed":                         seed,
 	}
 	specJSON := jsonBytes(spec, "{}")
 	idsJSON := jsonBytes(ids, "[]")
@@ -528,8 +532,10 @@ func (e *Executor) executeProviderComposePaper(ctx context.Context, kb kbDescrip
 		pool = append(pool, resp.Items...)
 	}
 	typeDist := mapStringInt(args["type_distribution"])
+	difficultyDist := mapStringInt(args["difficulty_distribution"])
+	kpDist := mapStringInt(args["knowledge_point_distribution"])
 	seed := int64(intFromAny(args["seed"], 0))
-	selected, warnings := selectProviderQuestions(pool, totalCount, typeDist, seed)
+	selected, warnings := selectProviderQuestions(pool, totalCount, typeDist, difficultyDist, kpDist, seed)
 	if len(warnings) > 0 {
 		return tools.ExecutionResult{ResultJSON: map[string]any{
 			"shortage_warnings": warnings,
@@ -559,9 +565,11 @@ func (e *Executor) executeProviderComposePaper(ctx context.Context, kb kbDescrip
 		"name":          name,
 		"exam_scope_id": scopeID,
 		"spec": map[string]any{
-			"total_count":       totalCount,
-			"type_distribution": typeDist,
-			"seed":              seed,
+			"total_count":                  totalCount,
+			"type_distribution":            typeDist,
+			"difficulty_distribution":      difficultyDist,
+			"knowledge_point_distribution": kpDist,
+			"seed":                         seed,
 		},
 		"question_ids": ids,
 	}, &paperResp)
@@ -714,34 +722,28 @@ ORDER  BY created_at DESC, id ASC`, bankID, kpIDs)
 	return out, rows.Err()
 }
 
-func selectQuestions(pool []questionRow, total int, typeDist map[string]int, seed int64) ([]questionRow, []map[string]any) {
+func selectQuestions(pool []questionRow, total int, typeDist, difficultyDist, kpDist map[string]int, seed int64) ([]questionRow, []map[string]any) {
 	sort.Slice(pool, func(i, j int) bool { return pool[i].ID.String() < pool[j].ID.String() })
 	if seed != 0 {
 		r := rand.New(rand.NewSource(seed))
 		r.Shuffle(len(pool), func(i, j int) { pool[i], pool[j] = pool[j], pool[i] })
 	}
-	var selected []questionRow
-	var warnings []map[string]any
-	if len(typeDist) > 0 {
-		for typ, n := range typeDist {
-			var bucket []questionRow
-			for _, q := range pool {
-				if q.Type == typ {
-					bucket = append(bucket, q)
-				}
-			}
-			if len(bucket) < n {
-				warnings = append(warnings, map[string]any{"type": typ, "available": len(bucket), "requested": n, "message": "题型题量不足"})
-				continue
-			}
-			selected = append(selected, bucket[:n]...)
-		}
-		return selected, warnings
+	warnings := validateDistributions(total, distributionSet{
+		{Key: "type", Message: "题型题量不足", Requested: typeDist, Available: countQuestionRows(pool, func(q questionRow) string { return q.Type })},
+		{Key: "difficulty", Message: "难度题量不足", Requested: difficultyDist, Available: countQuestionRows(pool, func(q questionRow) string { return q.Difficulty })},
+		{Key: "knowledge_point_id", Message: "知识点题量不足", Requested: kpDist, Available: countQuestionRows(pool, questionRowKnowledgePointID)},
+	})
+	if len(warnings) > 0 {
+		return nil, warnings
 	}
 	if len(pool) < total {
 		return nil, []map[string]any{{"available": len(pool), "requested": total, "message": "题池题量不足"}}
 	}
-	return pool[:total], nil
+	selected := greedySelectQuestionRows(pool, total, typeDist, difficultyDist, kpDist)
+	if warnings := unmetDistributionWarnings(selected, typeDist, difficultyDist, kpDist); len(warnings) > 0 {
+		return nil, warnings
+	}
+	return selected, nil
 }
 
 func renderPaperMarkdown(name string, questions []questionRow) string {
@@ -766,6 +768,103 @@ func renderPaperMarkdown(name string, questions []questionRow) string {
 		}
 	}
 	return b.String()
+}
+
+type distributionSpec struct {
+	Key       string
+	Message   string
+	Requested map[string]int
+	Available map[string]int
+}
+
+type distributionSet []distributionSpec
+
+func validateDistributions(total int, specs distributionSet) []map[string]any {
+	var warnings []map[string]any
+	for _, spec := range specs {
+		if sumPositive(spec.Requested) > total {
+			warnings = append(warnings, map[string]any{
+				spec.Key:    "all",
+				"requested": sumPositive(spec.Requested),
+				"available": total,
+				"message":   "约束题量超过试卷总题数",
+			})
+			continue
+		}
+		for value, requested := range spec.Requested {
+			if requested <= 0 {
+				continue
+			}
+			available := spec.Available[value]
+			if available < requested {
+				warnings = append(warnings, map[string]any{
+					spec.Key:    value,
+					"available": available,
+					"requested": requested,
+					"message":   spec.Message,
+				})
+			}
+		}
+	}
+	return warnings
+}
+
+func greedySelectQuestionRows(pool []questionRow, total int, typeDist, difficultyDist, kpDist map[string]int) []questionRow {
+	remainingType := copyIntMap(typeDist)
+	remainingDifficulty := copyIntMap(difficultyDist)
+	remainingKP := copyIntMap(kpDist)
+	selected := make([]questionRow, 0, total)
+	used := map[string]bool{}
+	for len(selected) < total {
+		bestIndex := -1
+		bestScore := -1
+		for i, q := range pool {
+			id := q.ID.String()
+			if used[id] {
+				continue
+			}
+			score := unmetScore(q.Type, remainingType) + unmetScore(q.Difficulty, remainingDifficulty) + unmetScore(questionRowKnowledgePointID(q), remainingKP)
+			if score > bestScore {
+				bestScore = score
+				bestIndex = i
+			}
+		}
+		if bestIndex < 0 {
+			break
+		}
+		q := pool[bestIndex]
+		selected = append(selected, q)
+		used[q.ID.String()] = true
+		decrementIfNeeded(remainingType, q.Type)
+		decrementIfNeeded(remainingDifficulty, q.Difficulty)
+		decrementIfNeeded(remainingKP, questionRowKnowledgePointID(q))
+	}
+	return selected
+}
+
+func unmetDistributionWarnings(selected []questionRow, typeDist, difficultyDist, kpDist map[string]int) []map[string]any {
+	return validateDistributions(len(selected), distributionSet{
+		{Key: "type", Message: "题型约束无法同时满足", Requested: typeDist, Available: countQuestionRows(selected, func(q questionRow) string { return q.Type })},
+		{Key: "difficulty", Message: "难度约束无法同时满足", Requested: difficultyDist, Available: countQuestionRows(selected, func(q questionRow) string { return q.Difficulty })},
+		{Key: "knowledge_point_id", Message: "知识点约束无法同时满足", Requested: kpDist, Available: countQuestionRows(selected, questionRowKnowledgePointID)},
+	})
+}
+
+func countQuestionRows(pool []questionRow, attr func(questionRow) string) map[string]int {
+	out := map[string]int{}
+	for _, q := range pool {
+		if value := strings.TrimSpace(attr(q)); value != "" {
+			out[value]++
+		}
+	}
+	return out
+}
+
+func questionRowKnowledgePointID(q questionRow) string {
+	if q.KnowledgePointID == nil || *q.KnowledgePointID == uuid.Nil {
+		return ""
+	}
+	return q.KnowledgePointID.String()
 }
 
 func questionDraftPanel(kpName string, count int, qType, difficulty string, hitCount, referenceCount int) map[string]any {
@@ -802,7 +901,13 @@ func shortagePanel(warnings []map[string]any) map[string]any {
 	for _, w := range warnings {
 		label := "题池"
 		if typ, ok := w["type"].(string); ok && typ != "" {
-			label = typ
+			label = "题型 " + typ
+		}
+		if difficulty, ok := w["difficulty"].(string); ok && difficulty != "" {
+			label = "难度 " + difficulty
+		}
+		if kpID, ok := w["knowledge_point_id"].(string); ok && kpID != "" {
+			label = "知识点 " + kpID
 		}
 		rows.WriteString(`<div class="shortage-row"><strong>`)
 		rows.WriteString(html.EscapeString(label))
@@ -994,7 +1099,7 @@ func remapProviderIndices(items []map[string]any, indexMap []int) []map[string]a
 	return out
 }
 
-func selectProviderQuestions(pool []map[string]any, total int, typeDist map[string]int, seed int64) ([]map[string]any, []map[string]any) {
+func selectProviderQuestions(pool []map[string]any, total int, typeDist, difficultyDist, kpDist map[string]int, seed int64) ([]map[string]any, []map[string]any) {
 	questions := make([]map[string]any, 0, len(pool))
 	for _, q := range pool {
 		if strings.TrimSpace(asString(q["id"])) != "" {
@@ -1006,35 +1111,22 @@ func selectProviderQuestions(pool []map[string]any, total int, typeDist map[stri
 		r := rand.New(rand.NewSource(seed))
 		r.Shuffle(len(questions), func(i, j int) { questions[i], questions[j] = questions[j], questions[i] })
 	}
-	var selected []map[string]any
-	var warnings []map[string]any
-	used := map[string]bool{}
-	if len(typeDist) > 0 {
-		for typ, n := range typeDist {
-			var bucket []map[string]any
-			for _, q := range questions {
-				if asString(q["type"]) == typ {
-					bucket = append(bucket, q)
-				}
-			}
-			if len(bucket) < n {
-				warnings = append(warnings, map[string]any{"type": typ, "available": len(bucket), "requested": n, "message": "题型题量不足"})
-				continue
-			}
-			for _, q := range bucket[:n] {
-				id := asString(q["id"])
-				if !used[id] {
-					selected = append(selected, q)
-					used[id] = true
-				}
-			}
-		}
-		return selected, warnings
+	warnings := validateDistributions(total, distributionSet{
+		{Key: "type", Message: "题型题量不足", Requested: typeDist, Available: countProviderQuestions(questions, func(q map[string]any) string { return asString(q["type"]) })},
+		{Key: "difficulty", Message: "难度题量不足", Requested: difficultyDist, Available: countProviderQuestions(questions, func(q map[string]any) string { return asString(q["difficulty"]) })},
+		{Key: "knowledge_point_id", Message: "知识点题量不足", Requested: kpDist, Available: countProviderQuestions(questions, func(q map[string]any) string { return asString(q["knowledge_point_id"]) })},
+	})
+	if len(warnings) > 0 {
+		return nil, warnings
 	}
 	if len(questions) < total {
 		return nil, []map[string]any{{"available": len(questions), "requested": total, "message": "题池题量不足"}}
 	}
-	return questions[:total], nil
+	selected := greedySelectProviderQuestions(questions, total, typeDist, difficultyDist, kpDist)
+	if warnings := unmetProviderDistributionWarnings(selected, typeDist, difficultyDist, kpDist); len(warnings) > 0 {
+		return nil, warnings
+	}
+	return selected, nil
 }
 
 func providerQuestionIDs(questions []map[string]any) []string {
@@ -1045,6 +1137,59 @@ func providerQuestionIDs(questions []map[string]any) []string {
 		}
 	}
 	return ids
+}
+
+func greedySelectProviderQuestions(pool []map[string]any, total int, typeDist, difficultyDist, kpDist map[string]int) []map[string]any {
+	remainingType := copyIntMap(typeDist)
+	remainingDifficulty := copyIntMap(difficultyDist)
+	remainingKP := copyIntMap(kpDist)
+	selected := make([]map[string]any, 0, total)
+	used := map[string]bool{}
+	for len(selected) < total {
+		bestIndex := -1
+		bestScore := -1
+		for i, q := range pool {
+			id := asString(q["id"])
+			if id == "" || used[id] {
+				continue
+			}
+			score := unmetScore(asString(q["type"]), remainingType) +
+				unmetScore(asString(q["difficulty"]), remainingDifficulty) +
+				unmetScore(asString(q["knowledge_point_id"]), remainingKP)
+			if score > bestScore {
+				bestScore = score
+				bestIndex = i
+			}
+		}
+		if bestIndex < 0 {
+			break
+		}
+		q := pool[bestIndex]
+		selected = append(selected, q)
+		used[asString(q["id"])] = true
+		decrementIfNeeded(remainingType, asString(q["type"]))
+		decrementIfNeeded(remainingDifficulty, asString(q["difficulty"]))
+		decrementIfNeeded(remainingKP, asString(q["knowledge_point_id"]))
+	}
+	return selected
+}
+
+func unmetProviderDistributionWarnings(selected []map[string]any, typeDist, difficultyDist, kpDist map[string]int) []map[string]any {
+	return validateDistributions(len(selected), distributionSet{
+		{Key: "type", Message: "题型约束无法同时满足", Requested: typeDist, Available: countProviderQuestions(selected, func(q map[string]any) string { return asString(q["type"]) })},
+		{Key: "difficulty", Message: "难度约束无法同时满足", Requested: difficultyDist, Available: countProviderQuestions(selected, func(q map[string]any) string { return asString(q["difficulty"]) })},
+		{Key: "knowledge_point_id", Message: "知识点约束无法同时满足", Requested: kpDist, Available: countProviderQuestions(selected, func(q map[string]any) string { return asString(q["knowledge_point_id"]) })},
+	})
+}
+
+func countProviderQuestions(pool []map[string]any, attr func(map[string]any) string) map[string]int {
+	out := map[string]int{}
+	for _, q := range pool {
+		if value := strings.TrimSpace(attr(q)); value != "" {
+			out[value]++
+		}
+	}
+	return out
 }
 
 func renderProviderPaperMarkdown(name string, questions []map[string]any) string {
@@ -1087,6 +1232,40 @@ func numericIndex(v any) (int, bool) {
 		}
 	}
 	return 0, false
+}
+
+func copyIntMap(in map[string]int) map[string]int {
+	out := map[string]int{}
+	for k, v := range in {
+		if strings.TrimSpace(k) != "" && v > 0 {
+			out[k] = v
+		}
+	}
+	return out
+}
+
+func sumPositive(in map[string]int) int {
+	total := 0
+	for _, v := range in {
+		if v > 0 {
+			total += v
+		}
+	}
+	return total
+}
+
+func unmetScore(value string, remaining map[string]int) int {
+	if remaining[strings.TrimSpace(value)] > 0 {
+		return 1
+	}
+	return 0
+}
+
+func decrementIfNeeded(remaining map[string]int, value string) {
+	value = strings.TrimSpace(value)
+	if remaining[value] > 0 {
+		remaining[value]--
+	}
 }
 
 func parseUUIDSlice(v any) ([]uuid.UUID, error) {

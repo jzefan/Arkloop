@@ -113,12 +113,50 @@ func TestKBSaveQuestionsRequiresConfirmation(t *testing.T) {
 func TestSelectQuestionsReportsTypeShortage(t *testing.T) {
 	selected, warnings := selectQuestions([]questionRow{
 		{ID: uuid.New(), Type: "single_choice"},
-	}, 2, map[string]int{"single_choice": 2}, 0)
+	}, 2, map[string]int{"single_choice": 2}, nil, nil, 0)
 	if len(selected) != 0 {
 		t.Fatalf("expected no selected questions, got %d", len(selected))
 	}
 	if len(warnings) != 1 || warnings[0]["type"] != "single_choice" {
 		t.Fatalf("expected single_choice shortage, got %+v", warnings)
+	}
+}
+
+func TestSelectQuestionsSatisfiesDifficultyDistribution(t *testing.T) {
+	pool := []questionRow{
+		{ID: uuid.MustParse("00000000-0000-0000-0000-000000000001"), Type: "single_choice", Difficulty: "easy"},
+		{ID: uuid.MustParse("00000000-0000-0000-0000-000000000002"), Type: "single_choice", Difficulty: "medium"},
+		{ID: uuid.MustParse("00000000-0000-0000-0000-000000000003"), Type: "single_choice", Difficulty: "medium"},
+		{ID: uuid.MustParse("00000000-0000-0000-0000-000000000004"), Type: "single_choice", Difficulty: "hard"},
+	}
+
+	selected, warnings := selectQuestions(pool, 3, nil, map[string]int{"easy": 1, "medium": 2}, nil, 0)
+
+	if len(warnings) != 0 {
+		t.Fatalf("expected no warnings, got %+v", warnings)
+	}
+	counts := map[string]int{}
+	for _, q := range selected {
+		counts[q.Difficulty]++
+	}
+	if counts["easy"] != 1 || counts["medium"] != 2 {
+		t.Fatalf("unexpected difficulty distribution: selected=%+v counts=%+v", selected, counts)
+	}
+}
+
+func TestSelectQuestionsReportsKnowledgePointShortage(t *testing.T) {
+	kpID := uuid.New()
+	otherID := uuid.New()
+	selected, warnings := selectQuestions([]questionRow{
+		{ID: uuid.New(), KnowledgePointID: &kpID, Type: "single_choice", Difficulty: "medium"},
+		{ID: uuid.New(), KnowledgePointID: &otherID, Type: "single_choice", Difficulty: "medium"},
+	}, 2, nil, nil, map[string]int{kpID.String(): 2}, 0)
+
+	if len(selected) != 0 {
+		t.Fatalf("expected no selected questions, got %d", len(selected))
+	}
+	if len(warnings) != 1 || warnings[0]["knowledge_point_id"] != kpID.String() {
+		t.Fatalf("expected knowledge point shortage, got %+v", warnings)
 	}
 }
 
@@ -151,12 +189,32 @@ func TestProviderPaperPreviewPanelContainsConfirmationPrompt(t *testing.T) {
 func TestSelectProviderQuestionsReportsTypeShortage(t *testing.T) {
 	selected, warnings := selectProviderQuestions([]map[string]any{
 		{"id": "q-1", "type": "single_choice"},
-	}, 2, map[string]int{"single_choice": 2}, 0)
+	}, 2, map[string]int{"single_choice": 2}, nil, nil, 0)
 	if len(selected) != 0 {
 		t.Fatalf("expected no selected questions, got %d", len(selected))
 	}
 	if len(warnings) != 1 || warnings[0]["type"] != "single_choice" {
 		t.Fatalf("expected single_choice shortage, got %+v", warnings)
+	}
+}
+
+func TestSelectProviderQuestionsSatisfiesDifficultyDistribution(t *testing.T) {
+	selected, warnings := selectProviderQuestions([]map[string]any{
+		{"id": "q-1", "type": "single_choice", "difficulty": "easy", "knowledge_point_id": "kp-1"},
+		{"id": "q-2", "type": "single_choice", "difficulty": "medium", "knowledge_point_id": "kp-1"},
+		{"id": "q-3", "type": "single_choice", "difficulty": "medium", "knowledge_point_id": "kp-2"},
+	}, 2, nil, map[string]int{"medium": 2}, nil, 0)
+
+	if len(warnings) != 0 {
+		t.Fatalf("expected no warnings, got %+v", warnings)
+	}
+	if len(selected) != 2 {
+		t.Fatalf("expected two selected questions, got %d", len(selected))
+	}
+	for _, q := range selected {
+		if q["difficulty"] != "medium" {
+			t.Fatalf("expected only medium questions, got %+v", selected)
+		}
 	}
 }
 

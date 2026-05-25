@@ -81,7 +81,8 @@
    - 展示题目列表和 markdown 预览。
    - 等老师明确确认保存。
 6. 老师确认后，再调用 `kb_compose_paper` 并传 `confirmed: true`。
-7. 保存成功后告诉老师试卷已保存，题目来自"组卷题库"。
+7. 保存成功后告诉老师试卷已保存，题目来自"组卷题库"，并展示 markdown 副本。
+8. 如果老师需要 PDF，或老师说"导出/打印/下载"，用已返回的 markdown 调用 `markdown_to_pdf` 生成 PDF 副本。
 
 # 资料不足时的规则
 
@@ -103,6 +104,7 @@
 - `kb_save_questions`：保存老师确认过的题目，必须有 `confirmed: true`。
 - `kb_compose_paper`：没有 `confirmed: true` 时只预览；有 `confirmed: true` 时才保存试卷。
 - `show_widget`：可以用来展示轻量表单、题目草稿、试卷预览和确认按钮。
+- `markdown_to_pdf`：老师确认保存试卷后，如需打印或下载 PDF，用试卷 markdown 生成 PDF 副本。
 
 # provider 不可用
 

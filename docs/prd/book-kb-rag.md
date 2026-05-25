@@ -6,10 +6,10 @@
 
 ## Problem Statement
 
-老师手上有大量 PDF/Word 教材（含图片、表格、公式）。他们希望：
+学校/教研团队手上有大量 PDF/Word 教材（含图片、表格、公式）。他们希望：
 
-1. 把整本书上传进 ArkLoop，让平台"读懂"内容；
-2. 之后直接对老师说"为第 3 章物理光学知识点出 10 道题，5 道单选 5 道填空，中等难度"，由 AI **基于教材内容**生成题目；
+1. 由管理端把整本书上传进 ArkLoop，让平台"读懂"内容并形成可复用课程资料知识库；
+2. 老师在 ArkLoop 老师端直接说"为第 3 章物理光学知识点出 10 道题，5 道单选 5 道填空，中等难度"，由 AI **基于教材内容**生成题目；
 3. 生成的**知识点、题目、试卷必须沉淀到 exam 系统**（学校师生最终用的就是 exam，不能让题目散落在 ArkLoop 里没人能再用到）；
 4. 生成新题时**能参考 exam 题库已有的题目**——一方面避免和已有题大幅重复，另一方面让 AI 学到这门课已经形成的命题风格、难度区间、答案/解析的表达习惯；
 5. 同一个工作区里的多位老师共享同一份教材知识库，不用各自重复上传。
@@ -23,29 +23,39 @@
 
 在 ArkLoop 内新增**知识库（KnowledgeBase, KB）**资源（归属 Workspace），承担"教材内容的语义检索层"。题目/试卷/知识点的存储后端**可切换**：连 exam 系统（权威）或留在 ArkLoop 本地（独立模式）。两种模式对老师在 persona 里的操作体验一致。
 
-- **KB（ArkLoop 侧）**：老师在工作区里创建 KB，上传 PDF / DOCX / 图片；后台异步完成 解析 → 切分 → 向量化 → 写入 pgvector；UI 展示每份文档处理状态。
+- **KB（ArkLoop 侧）**：管理端在工作区里创建 KB，上传 PDF / DOCX / 图片；后台异步完成 解析 → 切分 → 向量化 → 写入 pgvector；UI 展示每份文档处理状态。老师端不承担知识库建设、上传、删除、重建等复杂管理工作。
 - **两种集成模式**（见下文"集成模式开关"小节，部署级 + KB 级双重控制）：
   - **Linked 模式（连 exam）**：题目/试卷/知识点的真相源在 exam；生成时拉 exam 已有题做参考，老师确认后写回 exam；试卷快照在 exam。**这是有 exam 系统时的推荐模式**。
   - **Standalone 模式（不连 exam）**：题目/试卷存在 ArkLoop 自己的 `kb_questions` / `kb_papers` 表；生成时参考本地题库做去重和风格示范；老师可导出 markdown/PDF 自行使用。**适合没有 exam 系统的自托管用户或试用阶段**。
-- **新 persona `book-tutor-agent`**：用自然语言指定知识点/范围/题型/难度/数量；内部三段式：
+- **老师端 persona `book-tutor-agent`（展示名：智能组卷）**：老师用自然语言指定知识点/范围/题型/难度/数量；内部三段式：
   1. `kb_search` 从教材 KB 检索相关章节内容；
   2. `questions_list_for_reference` 拉该知识点已有题目作为"参考样本 + 去重黑名单"——**底层走 exam 还是 ArkLoop 本地由 KB 配置决定，persona 不感知**；
   3. 把检索内容 + 参考样本 + 老师指令一起给 LLM 生成草稿；老师逐题确认后 `questions_save_batch` 写入对应后端。
-- **组卷**：纯函数 `PaperComposer` 按题型/难度/知识点分布从题池抽样；题池实时从对应后端（exam 或本地）拉取；老师确认后 `paper_save` 落到对应后端，同时产出 markdown/PDF 导出。
+- **组卷**：按题型/难度/知识点分布从题池抽样；题池实时从对应后端（exam 或本地）拉取；老师确认后 `paper_save` 落到对应后端，同时返回 markdown 预览，并在老师需要时导出 PDF。
 - **目录联动**（仅 Linked 模式）：若书带清晰 TOC，persona 可从 KB 提取目录结构 → `show_widget` 让老师改 → 复用现有 `exam_create_catalog_tree` 建到 exam。Standalone 模式下 KB 自带一个轻量"知识点"标签集合（自由文本，不强制层级）。
 - **与 `exam-agent` 的关系**：`exam-agent` 仍只在 Linked 部署下出现（依赖 exam_* 工具），继续负责"Excel/图片目录导入 + 不依赖 KB 的轻量出题"；`book-tutor-agent` 在两种部署下都可用。
 
+### 2026-05-25 产品边界更新
+
+后续实现以当前产品决策为准：
+
+- **管理端负责复杂知识库建设**：创建 KB、绑定课程范围、上传/删除资料、查看摄入状态、检索调试等都放在 console-lite/管理端。
+- **老师端只负责使用知识库**：老师通过 web/chat 中的 **智能组卷** 入口问答、出题、组卷。老师不需要知道数据来自本地题库还是外部系统，也不需要进入 exam 前端。
+- **Standalone UI 暂缓**：Standalone 模式继续保留后端能力和老师端智能组卷能力，但暂不做 console-lite 里的题库浏览/编辑/删除、试卷列表/导出等管理 UI。
+- **保存前必须确认**：AI 生成题目和试卷都先作为草稿展示；只有老师明确确认后才保存。
+- **固定题库口径**：通过 ArkLoop 智能组卷生成的题目进入固定的"组卷题库"；题目和试卷都要保存。
+
 ## User Stories
 
-1. As a 工作区里的老师, I want 在工作区下创建一个命名的知识库（如《大学物理（上）》）, so that 同工作区其他老师能复用同一份教材而不需要各自上传。
-2. As a 老师, I want 把一本 PDF 教材上传进指定知识库, so that 系统能解析其文本、图片、表格、公式作为后续出题素材。
-3. As a 老师, I want 同时上传多个文件（章节拆开的 PDF、补充的 DOCX 习题册）, so that 一次操作完成整本书的导入。
-4. As a 老师, I want 实时看到每个文档的处理进度和状态（queued / parsing / chunking / embedding / ready / failed）, so that 知道什么时候可以开始出题。
-5. As a 老师, I want 处理失败的文档能看到具体失败原因（比如"扫描件 OCR 失败"、"文件加密"）, so that 我能针对性修复后重传。
-6. As a 老师, I want 删除知识库里某个文档, so that 错传或过期的资料可以清掉，且向量库里对应 chunk 也一并清除。
-7. As a 老师, I want 删除整个知识库, so that 学期结束后可以一键清理。
-8. As a 老师, I want 看到知识库占用的存储和 chunk 数量, so that 心里有数。
-9. As a 老师, I want 在 console-lite "知识库"管理页里浏览 KB 列表、点开看每个 KB 的文档清单, so that 不需要靠 API 才能管理资源。
+1. As a 管理员/教研人员, I want 在工作区下创建一个命名的知识库（如《大学物理（上）》）, so that 同工作区老师能复用同一份教材而不需要各自上传。
+2. As a 管理员/教研人员, I want 把一本 PDF 教材上传进指定知识库, so that 系统能解析其文本、图片、表格、公式作为后续出题素材。
+3. As a 管理员/教研人员, I want 同时上传多个文件（章节拆开的 PDF、补充的 DOCX 习题册）, so that 一次操作完成整本书的导入。
+4. As a 管理员/教研人员, I want 实时看到每个文档的处理进度和状态（queued / parsing / chunking / embedding / ready / failed）, so that 知道什么时候可以让老师开始出题。
+5. As a 管理员/教研人员, I want 处理失败的文档能看到具体失败原因（比如"扫描件 OCR 失败"、"文件加密"）, so that 我能针对性修复后重传。
+6. As a 管理员/教研人员, I want 删除知识库里某个文档, so that 错传或过期的资料可以清掉，且向量库里对应 chunk 也一并清除。
+7. As a 管理员/教研人员, I want 删除整个知识库, so that 学期结束后可以一键清理。
+8. As a 管理员/教研人员, I want 看到知识库占用的存储和 chunk 数量, so that 心里有数。
+9. As a 管理员/教研人员, I want 在 console-lite "知识库"管理页里浏览 KB 列表、点开看每个 KB 的文档清单, so that 不需要靠 API 才能管理资源。
 10. As a 老师, I want 知识库支持 PDF（含扫描件）、DOCX、纯文本、图片（PNG/JPG）这几种常见格式, so that 不被格式所限。
 11. As a 系统, I want 教材里的图片在解析时被 OCR + 多模态描述, so that 出题时能引用图示（如"如图所示的电路"）。
 12. As a 系统, I want 教材里的表格被转成 markdown 表格保留行列结构, so that 表格内容的语义不丢失。
@@ -55,7 +65,7 @@
 16. As a 老师, I want 在 book-tutor-agent 里用自然语言说"给我从第 3 章选 5 道单选题，难度中等", so that 不需要点几十次按钮。
 17. As a 老师, I want persona 在生成题目前先告诉我它检索到了哪些章节/段落, so that 我能判断它是不是抓对了内容。
 18. As a 老师, I want persona 在生成题目前**先去 exam 拉出该知识点下已有题目**，作为参考样本和去重依据, so that 新题既不会与已有题重复，也能契合这门课已经形成的命题风格/难度区间/解析表达。
-19. As a 老师, I want 每道生成的题目都标注来源（书名 + 章节路径 + chunk_id + **写入时的原文 200-500 字快照**）, so that 即使我后续重新上传/覆盖了教材文件，老题仍能看到当时的原文片段做核对。
+19. As a 老师, I want 每道生成的题目都标注来源（书名 + 章节路径 + chunk_id + **写入时的原文 200-500 字快照**）, so that 即使后续管理端重新上传/覆盖了教材文件，老题仍能看到当时的原文片段做核对。
 20. As a 老师, I want 生成的题目自动绑定 exam 知识点 ID, so that 写回 exam 后能在 exam 前台按知识点查到。
 21. As a 老师, I want persona 一次只生成 ≤ 5 道题, so that 不满意可以中断调整方向，不浪费 token（沿用现有 exam-agent 的节奏约定）。
 22. As a 老师, I want **生成完的题目我可以逐题预览，确认后才统一调 exam_create_questions 写回 exam**, so that 不让 AI 直接污染我的官方题库。
@@ -67,7 +77,7 @@
 28. As a 老师, I want **组卷的候选题池由 persona 实时从 exam 拉取**, so that 取到的是 exam 当下最新的题库，不会用过期快照。
 29. As a 老师, I want 组卷时如果 exam 题池里某个知识点/难度的题不够, persona 先提示我"X 知识点 hard 难度只有 1 道，需要补 2 道", so that 我能选择"现场用 RAG 补几道再组"或"放宽约束"。
 30. As a 老师, I want **组好的试卷确认后写回 exam**（试卷+题目映射+元数据），同时给我一份 markdown/PDF 副本, so that 学校 exam 前台能直接派发，纸质版也有。
-31. As a 老师, I want 上传一本带清晰 TOC 的书后，persona 能给我"要不要把目录建到 exam 知识点树"的选项，自动调 `exam_create_catalog_tree`, so that 不用我先到 exam 后台手建目录树才能用。
+31. As a 管理员/教研人员, I want 上传一本带清晰 TOC 的书后，管理端能辅助提取目录并建设知识点树, so that 老师开始智能组卷前已经有可用的课程资料范围。
 32. As a 老师, I want KB 里的 document 与 exam 知识点之间可以建立软关联（哪个文档对应哪些知识点）, so that 后续做"针对这本书的所有题"这种聚合视图。
 33. As a 同一个工作区的另一位老师, I want 看到工作区已有的知识库, so that 我不用从零开始建库。
 34. As a 工作区管理员, I want 控制知识库的可见性（工作区内全员/只自己）, so that 私人备课资料和共享教材分开管理。
@@ -82,9 +92,9 @@
 43. As a 平台管理员, I want 通过环境变量 `ARKLOOP_EXAM_INTEGRATION_ENABLED=true/false` 一键决定本部署是否启用 exam 集成, so that 升级或维护 exam 时可以临时关掉集成不影响 standalone KB 的使用。
 44. As a 老师, I want 新建 KB 时显式选择"独立模式"还是"绑定 exam 课程", so that 我清楚这本知识库生成的题最终去哪。
 45. As a 老师, I want 看到 KB 列表里每个 KB 标注它的模式（独立 / 已绑定 exam 课程：《大学物理》）, so that 不会搞混。
-46. As a Standalone KB 的老师, I want 在 console-lite 里直接浏览、编辑、删除本地题库里的题, so that AI 出题错了我能立刻改而不是只能丢掉重生成。
-47. As a Standalone KB 的老师, I want 把组好的试卷导出为 markdown / PDF, so that 可以打印或贴到其他系统。
-48. As a Linked KB 的老师, I want persona 在写回 exam 前显示"将写入 exam（课程：《X》、知识点：《Y》）"的明确提示, so that 我清楚这步会改动 exam 数据，不会误操作。
+46. Deferred. Standalone KB 的 console-lite 题库浏览、编辑、删除功能暂不进入当前范围；老师端通过智能组卷完成生成、预览、确认保存。
+47. Deferred. Standalone KB 的 console-lite 试卷列表/导出功能暂不进入当前范围；老师端组卷结果先返回 markdown，PDF 导出按老师需要通过智能体触发。
+48. As a Linked KB 的老师, I want persona 在保存前明确提示"确认后将保存到组卷题库/试卷库", so that 我知道这步会保存正式数据，不会误操作；老师不需要感知底层系统名称。
 49. As a 集成模式由 Linked 转为 Standalone（或反向）的诉求, I want 系统直接告诉我"KB 创建后模式不可变，请新建一个 KB", so that 不会被假承诺误导，知道走正确路径。
 
 ### Option 2: 直接出题/组卷（命题技能 + 已有题样本，无 KB）
@@ -125,7 +135,7 @@ ARKLOOP_EXAM_BASE_URL=https://exam.example.edu     # required when enabled
 **2. KB 级绑定字段**
 
 - `knowledge_bases.integration_mode` enum：`standalone | exam`
-- `knowledge_bases.exam_course_id` —— 仅在 `integration_mode='exam'` 时必填
+- `knowledge_bases.exam_scope_id` —— 仅在 `integration_mode='exam'` 时必填
 - 创建后不可切换（避免迁移题目的复杂性）；要换就建新 KB
 
 **模式判定逻辑**：worker 的 `kb_*` 工具拿到 `kb_id` 后先查 `integration_mode`，按结果挑 `QuestionStore` 实现。Persona prompt 不区分模式，工具内部分流。
@@ -134,7 +144,7 @@ ARKLOOP_EXAM_BASE_URL=https://exam.example.edu     # required when enabled
 
 **ArkLoop 侧（api 服务，新增 goose 迁移）**：
 
-- `knowledge_bases(id, workspace_ref, account_id, name, description, visibility, integration_mode, exam_course_id?, created_by, created_at, updated_at)`
+- `knowledge_bases(id, workspace_ref, account_id, name, description, visibility, integration_mode, exam_scope_id?, created_by, created_at, updated_at)`
 - `kb_documents(id, kb_id, original_filename, mime_type, blob_sha256, size_bytes, status, error_message, parse_meta_json, created_by, created_at, updated_at)` —— 原始文件按 sha256 走现有 Workspace blob 存储复用，不重复保存
 - `kb_chunks(id, kb_id, document_id, ordinal, heading_path, block_refs_json, chunk_type, text, token_count, embedding vector(<S0>), metadata_json, created_at)` —— `embedding` 列使用 **pgvector** 扩展；维度对应 Doubao `doubao-embedding-text-240715`，具体数字**待 design 文档 Spike S0 用 `cmd/embedprobe` 验证**后写定（候选记忆值 2560，未确认；不可凭记忆写 DDL）；建 hnsw 索引（`vector_cosine_ops`）
 - `kb_knowledge_points(id, kb_id, name, parent_id?, exam_knowledge_point_id?, sort_order, created_at)` —— 两种模式都用的轻量知识点表：
@@ -255,20 +265,20 @@ ARKLOOP_EXAM_BASE_URL=https://exam.example.edu     # required when enabled
 - 纯函数：相同 (spec, pool, seed) 恒定输出 → 复现性、property test 友好
 
 #### H. Persona / UI
-- **新 persona `src/personas/book-tutor-agent/`**：`persona.yaml`（user_selectable=true、selector_name="备课助手"）+ `prompt.md`，统一工作流（与模式无关，由 QuestionStore 自动分流）：
-  1. `ask_user` 确认要操作的 KB（persona 通过 KB 的 `integration_mode` 知道当前后端是 exam 还是本地，仅在向老师措辞时区分："写入 exam 题库" vs "写入本地题库"）；
-  2. （Linked + 新书 + 有 TOC 时）提议从 KB 抽 TOC → 老师确认 → 调 `exam_create_catalog_tree` 建到 exam。Standalone 模式下用 `kb_list_knowledge_points` 引导老师手动加几个标签；
+- **新 persona `src/personas/book-tutor-agent/`**：`persona.yaml`（user_selectable=true、selector_name="智能组卷"）+ `prompt.md`，统一工作流（与模式无关，由工具自动分流）：
+  1. 确认要使用的 KB；如果老师未指定，先调用 `kb_list_knowledge_bases` 列出当前可用且 ready 的课程资料知识库；
+  2. 老师端不创建、上传、删除或重建 KB；复杂建设和目录维护由管理端完成；
   3. `kb_search` + `kb_list_knowledge_points` 把"教材内容"和"已有题样本"摆给老师看；
   4. `kb_draft_questions` 单批 ≤5 道生成草稿；
   5. `show_widget` 逐题预览，老师可改可删；
-  6. 老师确认 → `kb_save_questions` 落库（exam 或本地由 QuestionStore 决定），错的题报回老师修；
-  7. 累够题后组卷 → `kb_compose_paper` → `markdown_to_pdf` 导出副本。
+  6. 老师确认 → `kb_save_questions` 保存到"组卷题库"，错的题报回老师修；
+  7. 累够题后组卷 → `kb_compose_paper` 先预览，老师确认后保存试卷；返回 markdown，老师需要 PDF 时再调用 `markdown_to_pdf` 导出副本。
 - 复用现有 `show_widget / ask_user / markdown_to_pdf / end_reply` builtin tool
 - **`exam-agent` 仅在部署级开关开启时注册**（`user_selectable` 由启动时根据 env 动态决定，或在 persona 加载阶段过滤）
 - **Console-lite "知识库"管理页**：
   - list KB、查看 documents 状态、上传/删除文档/KB
-  - 新建 KB 表单：模式单选（`Standalone` / `Linked to exam course`），仅当部署级开关开启时显示 Linked 选项并要求选 `exam_course_id`
-  - Standalone KB 额外提供：知识点标签管理、题库浏览（list + 编辑 + 删除）、试卷列表与导出
+  - 新建 KB 表单：模式单选（`Standalone` / `Linked to exam scope`），仅当部署级开关开启时显示 Linked 选项并要求选 `exam_scope_id`
+  - Standalone KB 当前不提供题库浏览/编辑/删除、试卷列表/导出等管理 UI；这些能力暂缓
   - Linked KB 不做题库/试卷 UI——老师去 exam 前台看
   - 进度通过 polling `GET .../documents/:id` 实现（不引入新 SSE 通道）
 
@@ -346,10 +356,10 @@ target_question_types: ["single_choice"]  # 该技能产出哪种 question.type
 
 > **里程碑建议**：
 > - **M0（已交付）**：chunker + Doubao embedder + pgvector 一张表 + 2 个 debug HTTP endpoint，验证 ingest/search 链路通透，把 pgvector 上线/compose 改动压一次。详见 `docs/superpowers/specs/2026-05-21-book-kb-rag-design.md`。
-> - **M1.0 / M1.1（已交付）**：完整 KB schema（含 `integration_mode` / `exam_course_id` 字段提前埋） + PDF 摄入 + `kb_search` + console-lite KB 管理页 + book-tutor-agent 仅 KB 检索能力。
-> - **M1.2 / M1.3（待开始）**：`kb_draft_questions` + Standalone QuestionStore + 组卷 + Standalone UI；不依赖 exam，与 M2a/M2b 解耦，可独立排期。
-> - **M2a（待开始，统一吞掉原 M2-prep 范围）**：部署级开关 `ARKLOOP_EXAM_INTEGRATION_ENABLED` + `questionstore` 接口包 + KB `visibility` 字段 + mime 白名单 + blob 引用计数 + examstore 真实现 + Linked KB 模式（kb.integration_mode UI、TOC widget 流）+ Spike S2 4 端点合约冻结（含 `pattern_tag` 字段）。详见 `docs/superpowers/specs/2026-05-23-book-kb-rag-m2a-design.md`。
-> - **M2b（依赖 M2a 的 examstore + skill 校验骨架）**：Option 2 全链路——`exam-builder-agent` persona、命题技能标准化、4 个新 `exam_*` 工具、`pattern_tag` 全链路校验、`gyn-medical-exam` 首发 skill。M2a 设计与 M2b 设计可以并行写，实施串行（M2b 等 M2a examstore PR merge）。详见 `docs/superpowers/specs/2026-05-23-book-kb-rag-m2b-design.md`。
+> - **M1.0 / M1.1（已交付）**：完整 KB schema（含 `integration_mode` / `exam_scope_id` 字段） + PDF 摄入 + `kb_search` + console-lite KB 管理页 + book-tutor-agent 仅 KB 检索能力。
+> - **M1.2 / M1.3（部分已交付，继续收尾）**：`kb_draft_questions` + 本地"组卷题库"保存 + `kb_compose_paper` 已打通；继续补齐组卷约束、PDF 导出触发、端到端验收。Standalone 管理 UI 暂缓。
+> - **M2a（部分已交付，继续收尾）**：部署级开关、KB `visibility`、mime 白名单、blob 引用计数、exam 合约、Linked KB 模式已落地；Linked KB 的老师端工具代理已打通。继续补齐真实联调与错误观测。
+> - **M2b（部分已交付，继续收尾）**：`exam-builder-agent` persona、命题技能标准化、4 个新 `exam_*` 工具、`pattern_tag` 校验、`gyn-medical-exam` 首发 skill 已落地基础链路。继续补齐技能 selector 体验和端到端验收。
 > - **M1 启动前必做的 spike**：S1 PDF 解析可行性（PyMuPDF + Tesseract 中文质量，已完成），S2 exam 后端合约对齐（含 `pattern_tag`，作为 M2a 启动前置）。
 > - 各阶段对外接口稳定，M1→M2a 只是 QuestionStore 多一个实现 + UI 多一个选项；M2a→M2b 只是新增一个 persona + 4 个工具 + skill 元数据扩字段，无破坏性改动。
 
@@ -461,4 +471,3 @@ target_question_types: ["single_choice"]  # 该技能产出哪种 question.type
   - **Linked 模式**：QuestionStore 后半段 → exam REST → exam 数据库
   - **Standalone 模式**：QuestionStore 后半段 → `kb_questions` 表
   - 组卷同理：题池来源（exam vs 本地表）由 QuestionStore 决定，PaperComposer 纯函数完全无感。
-
