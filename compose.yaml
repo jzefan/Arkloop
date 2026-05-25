@@ -240,6 +240,8 @@ services:
       # Exam 集成：worker 调用 exam 后端时用到的两个地址 + 服务令牌
       # Exam integration: where worker calls exam + the shared service token
       EXAM_BASE_URL: "${EXAM_BASE_URL:-}"
+      EXAM_ADMIN_USERNAME: "${EXAM_ADMIN_USERNAME:-}"
+      EXAM_ADMIN_PASSWORD: "${EXAM_ADMIN_PASSWORD:-}"
       ARKLOOP_API_INTERNAL_URL: "${ARKLOOP_API_INTERNAL_URL:-http://api:19001}"
       ARKLOOP_INTERNAL_SERVICE_TOKEN: "${ARKLOOP_INTERNAL_SERVICE_TOKEN:?请在 .env 中设置 ARKLOOP_INTERNAL_SERVICE_TOKEN}"
     extra_hosts:

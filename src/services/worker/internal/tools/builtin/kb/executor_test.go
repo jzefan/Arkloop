@@ -3,6 +3,7 @@ package kb
 import (
 	"context"
 	"encoding/json"
+	"os"
 	"strings"
 	"testing"
 
@@ -38,51 +39,35 @@ func (f *fakeChunksRepo) GetByIDs(ctx context.Context, kbID uuid.UUID, ids []uui
 
 func (f *fakeChunksRepo) Dim() int { return 8 }
 
-type captureProvider struct {
-	body any
-	resp any
+// adminProvider is a ProviderClient fake that records every CallExamAsAdmin
+// invocation. The plain CallExam path is intentionally not used by linked-
+// mode read flows after the admin-credentials migration; if the executor
+// ever falls back to it, that's a regression and the test should fail
+// loudly.
+type adminProvider struct {
+	calls            []string
+	bodies           []any
+	bankResponses    []map[string]any
+	questionResponse map[string]any
+	kpResponse       map[string]any
 }
 
-func (p *captureProvider) CallExam(ctx context.Context, userID uuid.UUID, scopes []string, method, path string, body any, out any) error {
-	p.body = body
-	b, _ := json.Marshal(p.resp)
-	_ = json.Unmarshal(b, out)
+func (p *adminProvider) CallExam(ctx context.Context, userID uuid.UUID, scopes []string, method, path string, body any, out any) error {
+	p.calls = append(p.calls, "USER "+method+" "+path)
+	encodeInto(map[string]any{}, out)
 	return nil
 }
 
-type routeProvider struct {
-	calls       []string
-	bodies      []any
-	paperBody   map[string]any
-	questionReq map[string]any
-}
-
-func (p *routeProvider) CallExam(ctx context.Context, userID uuid.UUID, scopes []string, method, path string, body any, out any) error {
-	p.calls = append(p.calls, method+" "+path)
+func (p *adminProvider) CallExamAsAdmin(ctx context.Context, method, path string, body any, out any) error {
+	p.calls = append(p.calls, "ADMIN "+method+" "+path)
 	p.bodies = append(p.bodies, body)
 	switch {
-	case method == "POST" && path == "/api/questions/batch":
-		p.questionReq, _ = body.(map[string]any)
-		encodeInto(map[string]any{
-			"created": []map[string]any{{"index": 0, "id": "q-new-1"}},
-			"failed":  []map[string]any{},
-		}, out)
+	case method == "GET" && path == "/api/question-banks":
+		encodeInto(p.bankResponses, out)
+	case method == "GET" && strings.HasPrefix(path, "/api/knowledge-points?"):
+		encodeInto(p.kpResponse, out)
 	case method == "GET" && strings.HasPrefix(path, "/api/questions?"):
-		encodeInto(map[string]any{
-			"items": []map[string]any{{
-				"id":                 "q-new-1",
-				"knowledge_point_id": "kp-interference",
-				"type":               "single_choice",
-				"difficulty":         "medium",
-				"stem":               "干涉题",
-				"answer":             "A",
-				"explanation":        "根据教材干涉实验可得。",
-				"source_snippets":    []map[string]any{{"snippet": "课程资料快照"}},
-			}},
-		}, out)
-	case method == "POST" && path == "/api/papers":
-		p.paperBody, _ = body.(map[string]any)
-		encodeInto(map[string]any{"id": "paper-1", "name": p.paperBody["name"]}, out)
+		encodeInto(p.questionResponse, out)
 	default:
 		encodeInto(map[string]any{}, out)
 	}
@@ -181,167 +166,6 @@ func TestKBSaveQuestionsRequiresConfirmation(t *testing.T) {
 	}
 }
 
-func TestProviderSaveQuestionsAutofillsSourceSnippetsFromChunkIDs(t *testing.T) {
-	kbID := uuid.New()
-	chunkID := uuid.New()
-	sourceText := strings.Repeat("课程资料中的物理光学干涉实验依据。", 18)
-	provider := &captureProvider{resp: map[string]any{
-		"created": []map[string]any{{"index": 0, "id": "q-new-1"}},
-		"failed":  []map[string]any{},
-	}}
-	exe := NewExecutor(&fakeChunksRepo{hits: []wdata.KBChunkHit{{
-		ID:          chunkID,
-		KBID:        kbID,
-		DocumentRef: "physics.pdf",
-		Ordinal:     7,
-		HeadingPath: []string{"第三章", "物理光学"},
-		Text:        sourceText,
-	}}}, fakeEmbedder{dim: 8}, fakeAccess{allow: true})
-	exe.provider = provider
-	userID := uuid.New()
-	scopeID := "scope-physics"
-
-	result := exe.executeProviderSaveQuestions(context.Background(), kbDescriptor{
-		ID:              kbID,
-		IntegrationMode: "exam",
-		ExamScopeID:     &scopeID,
-	}, map[string]any{
-		"questions": []any{
-			map[string]any{
-				"knowledge_point_id": "kp-interference",
-				"type":               "single_choice",
-				"difficulty":         "medium",
-				"stem":               "干涉题",
-				"answer":             "A",
-				"source_chunk_ids":   []any{chunkID.String()},
-			},
-		},
-	}, tools.ExecutionContext{UserID: &userID})
-
-	if result.Error != nil {
-		t.Fatalf("execute error: %+v", result.Error)
-	}
-	body, _ := provider.body.(map[string]any)
-	questions, _ := body["questions"].([]map[string]any)
-	if len(questions) != 1 {
-		t.Fatalf("provider body missing questions: %#v", provider.body)
-	}
-	snippets, _ := questions[0]["source_snippets"].([]map[string]any)
-	if len(snippets) != 1 {
-		t.Fatalf("expected one auto-filled source snippet, got %#v", questions[0]["source_snippets"])
-	}
-	if snippets[0]["chunk_id"] != chunkID.String() || snippets[0]["document_ref"] != "physics.pdf" || snippets[0]["ordinal"] != 7 {
-		t.Fatalf("unexpected snippet metadata: %+v", snippets[0])
-	}
-	text, _ := snippets[0]["snippet"].(string)
-	if len([]rune(text)) > 500 || len([]rune(text)) < 200 {
-		t.Fatalf("snippet length = %d, want 200..500", len([]rune(text)))
-	}
-}
-
-func TestProviderSaveQuestionsRejectsQuestionsWithoutSource(t *testing.T) {
-	provider := &captureProvider{resp: map[string]any{"created": []map[string]any{}, "failed": []map[string]any{}}}
-	exe := NewExecutor(&fakeChunksRepo{}, fakeEmbedder{dim: 8}, fakeAccess{allow: true})
-	exe.provider = provider
-	userID := uuid.New()
-	scopeID := "scope-physics"
-
-	result := exe.executeProviderSaveQuestions(context.Background(), kbDescriptor{
-		ID:              uuid.New(),
-		IntegrationMode: "exam",
-		ExamScopeID:     &scopeID,
-	}, map[string]any{
-		"questions": []any{
-			map[string]any{
-				"knowledge_point_id": "kp-interference",
-				"type":               "single_choice",
-				"difficulty":         "medium",
-				"stem":               "干涉题",
-				"answer":             "A",
-			},
-		},
-	}, tools.ExecutionContext{UserID: &userID})
-
-	if result.Error != nil {
-		t.Fatalf("execute error: %+v", result.Error)
-	}
-	if provider.body != nil {
-		t.Fatalf("provider should not be called when all questions fail validation")
-	}
-	failed, _ := result.ResultJSON["failed"].([]map[string]any)
-	if len(failed) != 1 || failed[0]["error_code"] != "source_required" {
-		t.Fatalf("expected source_required failure, got %+v", result.ResultJSON)
-	}
-}
-
-func TestLinkedPaperBuilderE2E_SaveQuestionThenComposePaper(t *testing.T) {
-	kbID := uuid.New()
-	chunkID := uuid.New()
-	provider := &routeProvider{}
-	exe := NewExecutor(&fakeChunksRepo{hits: []wdata.KBChunkHit{{
-		ID:          chunkID,
-		KBID:        kbID,
-		DocumentRef: "physics.pdf",
-		Ordinal:     3,
-		HeadingPath: []string{"第三章", "3.2 干涉"},
-		Text:        strings.Repeat("杨氏双缝干涉实验说明。", 30),
-	}}}, fakeEmbedder{dim: 8}, fakeAccess{allow: true})
-	exe.provider = provider
-	userID := uuid.New()
-	scopeID := "scope-physics"
-	kb := kbDescriptor{ID: kbID, IntegrationMode: "exam", ExamScopeID: &scopeID}
-	execCtx := tools.ExecutionContext{UserID: &userID}
-
-	save := exe.executeProviderSaveQuestions(context.Background(), kb, map[string]any{
-		"questions": []any{map[string]any{
-			"knowledge_point_id": "kp-interference",
-			"type":               "single_choice",
-			"difficulty":         "medium",
-			"stem":               "干涉题",
-			"answer":             "A",
-			"source_chunk_ids":   []any{chunkID.String()},
-		}},
-	}, execCtx)
-	if save.Error != nil || save.ResultJSON["created_count"] != 1 {
-		t.Fatalf("save failed: err=%+v result=%+v", save.Error, save.ResultJSON)
-	}
-
-	compose := exe.executeProviderComposePaper(context.Background(), kb, map[string]any{
-		"name":                    "物理光学小测",
-		"knowledge_point_ids":     []any{"kp-interference"},
-		"total_count":             1,
-		"type_distribution":       map[string]any{"single_choice": 1},
-		"difficulty_distribution": map[string]any{"medium": 1},
-		"confirmed":               true,
-	}, execCtx)
-	if compose.Error != nil {
-		t.Fatalf("compose failed: %+v", compose.Error)
-	}
-	if compose.ResultJSON["saved"] != true || compose.ResultJSON["paper_id"] != "paper-1" {
-		t.Fatalf("paper not saved: %+v", compose.ResultJSON)
-	}
-	if provider.paperBody["exam_scope_id"] != scopeID {
-		t.Fatalf("paper save did not target scope: %+v", provider.paperBody)
-	}
-	var q map[string]any
-	switch questions := provider.questionReq["questions"].(type) {
-	case []map[string]any:
-		if len(questions) == 1 {
-			q = questions[0]
-		}
-	case []any:
-		if len(questions) == 1 {
-			q, _ = questions[0].(map[string]any)
-		}
-	}
-	if q == nil {
-		t.Fatalf("question save body missing: %+v", provider.questionReq)
-	}
-	if len(normalizeSourceSnippets(q["source_snippets"])) != 1 {
-		t.Fatalf("question source snapshot not sent: %+v", q)
-	}
-}
-
 func TestSelectQuestionsReportsTypeShortage(t *testing.T) {
 	selected, warnings := selectQuestions([]questionRow{
 		{ID: uuid.New(), Type: "single_choice"},
@@ -405,60 +229,50 @@ func TestPaperPreviewPanelContainsConfirmationPrompt(t *testing.T) {
 	}
 }
 
-func TestProviderPaperPreviewPanelContainsConfirmationPrompt(t *testing.T) {
-	panel := paperPreviewPanelFromMaps("期中卷", []map[string]any{
-		{"id": "q-1", "stem": "光的干涉题", "type": "single_choice", "difficulty": "medium"},
-	}, "# 期中卷", false)
-	code, _ := panel["widget_code"].(string)
-	if !strings.Contains(code, "sendPrompt('确认保存这份试卷')") {
-		t.Fatalf("expected confirmation sendPrompt in widget code: %s", code)
+func TestQuestionPanelsUseChineseLabelsForTypeAndDifficulty(t *testing.T) {
+	draft := questionDraftPanel("第二章", 3, "single_choice", "medium", 2, 1)
+	draftCode, _ := draft["widget_code"].(string)
+	if !strings.Contains(draftCode, "单选题") || !strings.Contains(draftCode, "中等") {
+		t.Fatalf("draft panel should display Chinese type/difficulty labels: %s", draftCode)
 	}
-	if panel["kind"] != "paper_preview" {
-		t.Fatalf("unexpected panel kind: %+v", panel)
+	if strings.Contains(draftCode, "single_choice") || strings.Contains(draftCode, "medium") {
+		t.Fatalf("draft panel leaked internal enum labels: %s", draftCode)
+	}
+
+	preview := paperPreviewPanel("妇产科小测", []questionRow{
+		{ID: uuid.New(), Stem: "女性生殖系统发育题", Type: "single_choice", Difficulty: "medium"},
+	}, "# 妇产科小测", false)
+	previewCode, _ := preview["widget_code"].(string)
+	if !strings.Contains(previewCode, "单选题 / 中等") {
+		t.Fatalf("preview panel should display Chinese type/difficulty labels: %s", previewCode)
+	}
+	if strings.Contains(previewCode, "single_choice / medium") {
+		t.Fatalf("preview panel leaked internal enum labels: %s", previewCode)
+	}
+
+	shortage := shortagePanel([]map[string]any{
+		{"type": "single_choice", "requested": 3, "available": 1},
+		{"difficulty": "medium", "requested": 3, "available": 1},
+	})
+	shortageCode, _ := shortage["widget_code"].(string)
+	if !strings.Contains(shortageCode, "题型 单选题") || !strings.Contains(shortageCode, "难度 中等") {
+		t.Fatalf("shortage panel should display Chinese type/difficulty labels: %s", shortageCode)
+	}
+	if strings.Contains(shortageCode, "single_choice") || strings.Contains(shortageCode, "medium") {
+		t.Fatalf("shortage panel leaked internal enum labels: %s", shortageCode)
 	}
 }
 
-func TestSelectProviderQuestionsReportsTypeShortage(t *testing.T) {
-	selected, warnings := selectProviderQuestions([]map[string]any{
-		{"id": "q-1", "type": "single_choice"},
-	}, 2, map[string]int{"single_choice": 2}, nil, nil, 0)
-	if len(selected) != 0 {
-		t.Fatalf("expected no selected questions, got %d", len(selected))
+func TestBookTutorPromptDefaultsGynSkillForGynecologyExamWork(t *testing.T) {
+	content, err := os.ReadFile("../../../../../../personas/book-tutor-agent/prompt.md")
+	if err != nil {
+		t.Fatalf("read book tutor prompt: %v", err)
 	}
-	if len(warnings) != 1 || warnings[0]["type"] != "single_choice" {
-		t.Fatalf("expected single_choice shortage, got %+v", warnings)
-	}
-}
-
-func TestSelectProviderQuestionsSatisfiesDifficultyDistribution(t *testing.T) {
-	selected, warnings := selectProviderQuestions([]map[string]any{
-		{"id": "q-1", "type": "single_choice", "difficulty": "easy", "knowledge_point_id": "kp-1"},
-		{"id": "q-2", "type": "single_choice", "difficulty": "medium", "knowledge_point_id": "kp-1"},
-		{"id": "q-3", "type": "single_choice", "difficulty": "medium", "knowledge_point_id": "kp-2"},
-	}, 2, nil, map[string]int{"medium": 2}, nil, 0)
-
-	if len(warnings) != 0 {
-		t.Fatalf("expected no warnings, got %+v", warnings)
-	}
-	if len(selected) != 2 {
-		t.Fatalf("expected two selected questions, got %d", len(selected))
-	}
-	for _, q := range selected {
-		if q["difficulty"] != "medium" {
-			t.Fatalf("expected only medium questions, got %+v", selected)
+	prompt := string(content)
+	for _, required := range []string{"妇产科", "妇产科学", "gyn-medical-exam", "load_skill"} {
+		if !strings.Contains(prompt, required) {
+			t.Fatalf("prompt missing %q", required)
 		}
-	}
-}
-
-func TestRemapProviderIndicesPreservesOriginalPositions(t *testing.T) {
-	items := remapProviderIndices([]map[string]any{
-		{"index": float64(1), "id": "q-new"},
-	}, []int{0, 2})
-	if len(items) != 1 {
-		t.Fatalf("expected one item, got %d", len(items))
-	}
-	if items[0]["index"] != 2 {
-		t.Fatalf("expected provider index 1 to map back to original index 2, got %+v", items[0])
 	}
 }
 
@@ -472,5 +286,117 @@ func TestProviderUnavailableIsTeacherFriendly(t *testing.T) {
 	}
 	if strings.Contains(strings.ToLower(result.Error.Message), "exam") || strings.Contains(strings.ToLower(result.Error.Message), "provider") {
 		t.Fatalf("message should not expose provider internals: %q", result.Error.Message)
+	}
+}
+
+// TestLinkedReadPathsUseAdminCredentials enforces the post-admin-migration
+// invariant: linked-mode KP listing and draft-questions reference fetch
+// MUST go through CallExamAsAdmin (not the per-user CallExam). Ordinary
+// teacher accounts cannot see exam's platform-administrator question bank
+// (e.g. 国考医学), so falling back to user tokens here would silently
+// return empty references.
+func TestLinkedReadPathsUseAdminCredentials(t *testing.T) {
+	provider := &adminProvider{
+		bankResponses: []map[string]any{
+			{"id": "bank-paper", "name": "组卷题库"},
+			{"id": "bank-national-medical", "name": "国考医学"},
+		},
+		kpResponse: map[string]any{
+			"items": []map[string]any{{"id": "kp-1", "display_name": "妇产科基础"}},
+			"total": 1,
+		},
+		questionResponse: map[string]any{
+			"items": []map[string]any{{
+				"id":                 "q-admin-1",
+				"knowledge_point_id": "kp-1",
+				"type":               "single_choice",
+				"difficulty":         "medium",
+				"stem":               "国考医学题",
+				"answer":             "A",
+			}},
+		},
+	}
+	exe := NewExecutor(&fakeChunksRepo{}, fakeEmbedder{dim: 8}, fakeAccess{allow: true})
+	exe.provider = provider
+
+	scope := "scope-physics"
+	kb := kbDescriptor{ID: uuid.New(), IntegrationMode: "exam", ExamScopeID: &scope}
+	execCtx := tools.ExecutionContext{}
+
+	kpRes := exe.executeProviderListKnowledgePoints(context.Background(), kb, execCtx)
+	if kpRes.Error != nil {
+		t.Fatalf("list kp error: %+v", kpRes.Error)
+	}
+
+	draftRes := exe.executeProviderDraftQuestions(context.Background(), kb, map[string]any{
+		"knowledge_point_id": "kp-1",
+		"count":              float64(3),
+		"type":               "single_choice",
+		"difficulty":         "medium",
+	}, execCtx)
+	if draftRes.Error != nil {
+		t.Fatalf("draft questions error: %+v", draftRes.Error)
+	}
+	refs, _ := draftRes.ResultJSON["reference_questions"].([]map[string]any)
+	if len(refs) != 1 || refs[0]["id"] != "q-admin-1" {
+		t.Fatalf("expected admin-only reference question to be returned, got %+v", refs)
+	}
+
+	for _, c := range provider.calls {
+		if strings.HasPrefix(c, "USER ") {
+			t.Fatalf("linked-mode read path leaked into per-user CallExam: %s (calls=%v)",
+				c, provider.calls)
+		}
+	}
+	wantFragments := []string{
+		"ADMIN GET /api/knowledge-points?",
+		"ADMIN GET /api/question-banks",
+		"ADMIN GET /api/questions?",
+	}
+	for _, want := range wantFragments {
+		found := false
+		for _, c := range provider.calls {
+			if strings.HasPrefix(c, want) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("missing expected admin call %q in %v", want, provider.calls)
+		}
+	}
+}
+
+func TestListKnowledgeBasesDoesNotImplicitlyUseRunWorkspace(t *testing.T) {
+	got := listKnowledgeBasesWorkspaceRef(map[string]any{})
+	if got != "" {
+		t.Fatalf("expected empty workspace filter when teacher did not choose one, got %q", got)
+	}
+
+	got = listKnowledgeBasesWorkspaceRef(map[string]any{"workspace_ref": "  wsref_course  "})
+	if got != "wsref_course" {
+		t.Fatalf("expected explicit workspace_ref to be preserved, got %q", got)
+	}
+}
+
+func TestDeriveChapterKnowledgePointNamesFromHeadings(t *testing.T) {
+	names := deriveChapterKnowledgePointNames([]headingCandidate{
+		{Text: "10", Ordinal: 1},
+		{Text: "第二章", Ordinal: 100},
+		{Text: "女性生殖系统发育与解剖", Ordinal: 101},
+		{Text: "第三章", Ordinal: 150},
+		{Text: "女性生殖系统生理", Ordinal: 151},
+		{Text: "第三章", Ordinal: 152},
+		{Text: "女性生殖系统生理", Ordinal: 153},
+	})
+
+	want := []string{"第二章 女性生殖系统发育与解剖", "第三章 女性生殖系统生理"}
+	if len(names) != len(want) {
+		t.Fatalf("expected %d names, got %d: %+v", len(want), len(names), names)
+	}
+	for i := range want {
+		if names[i] != want[i] {
+			t.Fatalf("name[%d] = %q, want %q (all=%+v)", i, names[i], want[i], names)
+		}
 	}
 }

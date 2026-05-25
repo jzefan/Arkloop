@@ -8,6 +8,7 @@ import (
 	"html"
 	"math/rand"
 	"net/url"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -19,7 +20,12 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-const paperBankName = "组卷题库"
+const (
+	paperBankName                = "组卷题库"
+	fallbackExamQuestionBankName = "国考医学"
+)
+
+var chapterHeadingRE = regexp.MustCompile(`^第\s*[零〇一二三四五六七八九十百千万0-9]+\s*章`)
 
 type kbDescriptor struct {
 	ID              uuid.UUID
@@ -42,6 +48,18 @@ type questionRow struct {
 	CreatedAt        time.Time
 }
 
+type knowledgePointItem struct {
+	ID        uuid.UUID
+	Name      string
+	ParentID  *uuid.UUID
+	SortOrder int
+}
+
+type headingCandidate struct {
+	Text    string
+	Ordinal int
+}
+
 func (e *Executor) executeListKnowledgeBases(ctx context.Context, args map[string]any, execCtx tools.ExecutionContext) tools.ExecutionResult {
 	if e.IsNotConfigured() || e.pool == nil {
 		return errResult(errorNotConfigured, "kb_list_knowledge_bases is not configured")
@@ -57,10 +75,7 @@ func (e *Executor) executeListKnowledgeBases(ctx context.Context, args map[strin
 	if execCtx.UserID != nil {
 		userID = *execCtx.UserID
 	}
-	workspaceRef := strings.TrimSpace(asString(args["workspace_ref"]))
-	if workspaceRef == "" {
-		workspaceRef = strings.TrimSpace(execCtx.WorkspaceRef)
-	}
+	workspaceRef := listKnowledgeBasesWorkspaceRef(args)
 	readyOnly := true
 	if v, ok := args["ready_only"].(bool); ok {
 		readyOnly = v
@@ -126,6 +141,113 @@ WHERE  kb.account_id = $1
 	return tools.ExecutionResult{ResultJSON: map[string]any{"items": items, "ready_only": readyOnly}}
 }
 
+func listKnowledgeBasesWorkspaceRef(args map[string]any) string {
+	return strings.TrimSpace(asString(args["workspace_ref"]))
+}
+
+func (e *Executor) listLocalKnowledgePointItems(ctx context.Context, kbID uuid.UUID) ([]knowledgePointItem, error) {
+	rows, err := e.pool.Query(ctx, `
+SELECT id, name, parent_id, sort_order
+FROM   kb_knowledge_points
+WHERE  kb_id = $1
+ORDER  BY sort_order ASC, created_at ASC`, kbID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []knowledgePointItem{}
+	for rows.Next() {
+		var item knowledgePointItem
+		if err := rows.Scan(&item.ID, &item.Name, &item.ParentID, &item.SortOrder); err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
+func (e *Executor) ensureFallbackKnowledgePointsFromHeadings(ctx context.Context, kbID uuid.UUID) (int, error) {
+	rows, err := e.pool.Query(ctx, `
+SELECT btrim(text), ordinal
+FROM   kb_chunks
+WHERE  kb_id = $1
+  AND  chunk_type = 'heading'
+  AND  btrim(text) <> ''
+ORDER  BY ordinal ASC`, kbID)
+	if err != nil {
+		return 0, err
+	}
+	defer rows.Close()
+
+	headings := []headingCandidate{}
+	for rows.Next() {
+		var h headingCandidate
+		if err := rows.Scan(&h.Text, &h.Ordinal); err != nil {
+			return 0, err
+		}
+		headings = append(headings, h)
+	}
+	if err := rows.Err(); err != nil {
+		return 0, err
+	}
+	names := deriveChapterKnowledgePointNames(headings)
+	for i, name := range names {
+		if _, err := e.pool.Exec(ctx, `
+INSERT INTO kb_knowledge_points (kb_id, name, sort_order)
+VALUES ($1, $2, $3)`, kbID, name, i+1); err != nil {
+			return i, err
+		}
+	}
+	return len(names), nil
+}
+
+func deriveChapterKnowledgePointNames(headings []headingCandidate) []string {
+	out := []string{}
+	seen := map[string]struct{}{}
+	for i, h := range headings {
+		chapter := normalizedChapterHeading(h.Text)
+		if chapter == "" {
+			continue
+		}
+		name := chapter
+		if i+1 < len(headings) {
+			title := normalizedChapterTitle(headings[i+1].Text)
+			if title != "" {
+				name = chapter + " " + title
+			}
+		}
+		if _, ok := seen[name]; ok {
+			continue
+		}
+		seen[name] = struct{}{}
+		out = append(out, name)
+	}
+	return out
+}
+
+func normalizedChapterHeading(text string) string {
+	cleaned := strings.Join(strings.Fields(strings.TrimSpace(text)), "")
+	if !chapterHeadingRE.MatchString(cleaned) {
+		return ""
+	}
+	return cleaned
+}
+
+func normalizedChapterTitle(text string) string {
+	cleaned := strings.Join(strings.Fields(strings.TrimSpace(text)), "")
+	if cleaned == "" || chapterHeadingRE.MatchString(cleaned) {
+		return ""
+	}
+	runes := []rune(cleaned)
+	if len(runes) < 2 || len(runes) > 80 {
+		return ""
+	}
+	if _, err := strconv.Atoi(cleaned); err == nil {
+		return ""
+	}
+	return cleaned
+}
+
 func (e *Executor) executeListKnowledgePoints(ctx context.Context, args map[string]any, execCtx tools.ExecutionContext) tools.ExecutionResult {
 	kb, ok, err := e.authorizedKB(ctx, args, execCtx)
 	if err != nil {
@@ -137,34 +259,31 @@ func (e *Executor) executeListKnowledgePoints(ctx context.Context, args map[stri
 	if kb.IntegrationMode == "exam" {
 		return e.executeProviderListKnowledgePoints(ctx, kb, execCtx)
 	}
-	rows, err := e.pool.Query(ctx, `
-SELECT id, name, parent_id, sort_order
-FROM   kb_knowledge_points
-WHERE  kb_id = $1
-ORDER  BY sort_order ASC, created_at ASC`, kb.ID)
+	items, err := e.listLocalKnowledgePointItems(ctx, kb.ID)
 	if err != nil {
 		return errResult(errorSearchFailed, "list knowledge points: "+err.Error())
 	}
-	defer rows.Close()
-	items := []map[string]any{}
-	for rows.Next() {
-		var id uuid.UUID
-		var name string
-		var parent *uuid.UUID
-		var sortOrder int
-		if err := rows.Scan(&id, &name, &parent, &sortOrder); err != nil {
-			return errResult(errorSearchFailed, "scan knowledge point: "+err.Error())
+	if len(items) == 0 {
+		inserted, err := e.ensureFallbackKnowledgePointsFromHeadings(ctx, kb.ID)
+		if err != nil {
+			return errResult(errorSearchFailed, "derive knowledge points: "+err.Error())
 		}
-		item := map[string]any{"id": id.String(), "name": name, "sort_order": sortOrder}
-		if parent != nil {
-			item["parent_id"] = parent.String()
+		if inserted > 0 {
+			items, err = e.listLocalKnowledgePointItems(ctx, kb.ID)
+			if err != nil {
+				return errResult(errorSearchFailed, "list knowledge points: "+err.Error())
+			}
 		}
-		items = append(items, item)
 	}
-	if err := rows.Err(); err != nil {
-		return errResult(errorSearchFailed, "list knowledge points: "+err.Error())
+	out := []map[string]any{}
+	for _, kp := range items {
+		item := map[string]any{"id": kp.ID.String(), "name": kp.Name, "sort_order": kp.SortOrder}
+		if kp.ParentID != nil {
+			item["parent_id"] = kp.ParentID.String()
+		}
+		out = append(out, item)
 	}
-	return tools.ExecutionResult{ResultJSON: map[string]any{"items": items}}
+	return tools.ExecutionResult{ResultJSON: map[string]any{"items": out}}
 }
 
 func (e *Executor) executeDraftQuestions(ctx context.Context, args map[string]any, execCtx tools.ExecutionContext) tools.ExecutionResult {
@@ -245,9 +364,10 @@ func (e *Executor) executeSaveQuestions(ctx context.Context, args map[string]any
 	if !ok {
 		return errResult(errorPermissionDenied, "caller is not a member of this KB workspace")
 	}
-	if kb.IntegrationMode == "exam" {
-		return e.executeProviderSaveQuestions(ctx, kb, args, execCtx)
-	}
+	// All saves go to the user's account-level system paper bank, regardless
+	// of the source KB's integration mode. Linked KBs use exam only as a
+	// reference data source (admin-read); the bank that holds the teacher's
+	// confirmed questions is local. See PRD §组卷题库.
 	questionsRaw, ok := args["questions"].([]any)
 	if !ok || len(questionsRaw) == 0 {
 		return errResult(errorArgsInvalid, "questions array is required")
@@ -292,9 +412,8 @@ func (e *Executor) executeComposePaper(ctx context.Context, args map[string]any,
 	if !ok {
 		return errResult(errorPermissionDenied, "caller is not a member of this KB workspace")
 	}
-	if kb.IntegrationMode == "exam" {
-		return e.executeProviderComposePaper(ctx, kb, args, execCtx)
-	}
+	// All composes pull from the local 组卷题库 (account-level system bank)
+	// and save the resulting paper there. Linked KBs do not write to exam.
 	name := strings.TrimSpace(asString(args["name"]))
 	if name == "" {
 		return errResult(errorArgsInvalid, "name is required")
@@ -370,10 +489,10 @@ RETURNING id`, bankID, name, specJSON, seed, idsJSON, markdown, nullableUUID(exe
 }
 
 func (e *Executor) executeProviderListKnowledgePoints(ctx context.Context, kb kbDescriptor, execCtx tools.ExecutionContext) tools.ExecutionResult {
-	userID, scopeID, ok := e.providerRequestContext(kb, execCtx)
-	if !ok {
+	if e == nil || e.provider == nil || kb.ExamScopeID == nil || strings.TrimSpace(*kb.ExamScopeID) == "" {
 		return providerUnavailable("当前课程资料绑定的数据暂时不可用，暂时无法读取知识点。请稍后重试。")
 	}
+	scopeID := strings.TrimSpace(*kb.ExamScopeID)
 	query := url.Values{}
 	query.Set("exam_scope_id", scopeID)
 	query.Set("limit", "500")
@@ -382,15 +501,17 @@ func (e *Executor) executeProviderListKnowledgePoints(ctx context.Context, kb kb
 		Items []map[string]any `json:"items"`
 		Total int              `json:"total"`
 	}
-	if err := e.provider.CallExam(ctx, userID, []string{"openid", "exam:read"}, "GET", "/api/knowledge-points?"+query.Encode(), nil, &resp); err != nil {
+	// Use the admin token: linked-mode KBs are bound to scopes inside the
+	// platform-administrator question bank (e.g. 国考医学题库) which an
+	// ordinary teacher account cannot see.
+	if err := e.provider.CallExamAsAdmin(ctx, "GET", "/api/knowledge-points?"+query.Encode(), nil, &resp); err != nil {
 		return providerUnavailable("当前课程资料绑定的数据暂时不可用，暂时无法读取知识点。请稍后重试。")
 	}
 	return tools.ExecutionResult{ResultJSON: map[string]any{"items": resp.Items, "total": resp.Total}}
 }
 
 func (e *Executor) executeProviderDraftQuestions(ctx context.Context, kb kbDescriptor, args map[string]any, execCtx tools.ExecutionContext) tools.ExecutionResult {
-	userID, _, ok := e.providerRequestContext(kb, execCtx)
-	if !ok {
+	if e == nil || e.provider == nil {
 		return providerUnavailable("当前课程资料绑定的题库暂时不可用，暂时无法获取参考题。请稍后重试。")
 	}
 	kpID := strings.TrimSpace(asString(args["knowledge_point_id"]))
@@ -418,21 +539,15 @@ func (e *Executor) executeProviderDraftQuestions(ctx context.Context, kb kbDescr
 	}
 	qType := strings.TrimSpace(asString(args["type"]))
 	difficulty := strings.TrimSpace(asString(args["difficulty"]))
-	refQuery := url.Values{}
-	refQuery.Set("knowledge_point_id", kpID)
-	refQuery.Set("limit", "5")
-	refQuery.Set("offset", "0")
-	if qType != "" {
-		refQuery.Set("type", qType)
+	// Reference questions come from the platform-administrator question
+	// bank (e.g. 国考医学) via admin credentials; ordinary teacher
+	// accounts cannot see this bank otherwise.
+	bankIDs, err := e.providerQuestionBankIDs(ctx)
+	if err != nil {
+		return providerUnavailable("当前课程资料绑定的题库暂时不可用，暂时无法获取参考题。请稍后重试。")
 	}
-	if difficulty != "" {
-		refQuery.Set("difficulty", difficulty)
-	}
-	var refs struct {
-		Items []map[string]any `json:"items"`
-		Total int              `json:"total"`
-	}
-	if err := e.provider.CallExam(ctx, userID, []string{"openid", "exam:read"}, "GET", "/api/questions?"+refQuery.Encode(), nil, &refs); err != nil {
+	refs, usedBankName, err := e.listProviderReferenceQuestionsWithFallback(ctx, kpID, qType, difficulty, bankIDs, 5)
+	if err != nil {
 		return providerUnavailable("当前课程资料绑定的题库暂时不可用，暂时无法获取参考题。请稍后重试。")
 	}
 	kpName := providerQuestionLabel(kpID, refs.Items)
@@ -444,6 +559,7 @@ func (e *Executor) executeProviderDraftQuestions(ctx context.Context, kb kbDescr
 		"count":                count,
 		"type":                 qType,
 		"difficulty":           difficulty,
+		"question_bank":        usedBankName,
 		"retrieval_query":      query,
 		"retrieval_hits":       hitMaps,
 		"reference_questions":  refs.Items,
@@ -452,143 +568,79 @@ func (e *Executor) executeProviderDraftQuestions(ctx context.Context, kb kbDescr
 	}}
 }
 
-func (e *Executor) executeProviderSaveQuestions(ctx context.Context, kb kbDescriptor, args map[string]any, execCtx tools.ExecutionContext) tools.ExecutionResult {
-	userID, _, ok := e.providerRequestContext(kb, execCtx)
-	if !ok {
-		return providerUnavailable("当前课程资料绑定的保存目标暂时不可用，题目草稿还没有保存。请稍后重试。")
-	}
-	questionsRaw, ok := args["questions"].([]any)
-	if !ok || len(questionsRaw) == 0 {
-		return errResult(errorArgsInvalid, "questions array is required")
-	}
-	questions := make([]map[string]any, 0, len(questionsRaw))
-	failed := make([]map[string]any, 0)
-	indexMap := make([]int, 0, len(questionsRaw))
-	for i, raw := range questionsRaw {
-		q, ok := raw.(map[string]any)
-		if !ok {
-			failed = append(failed, failureMap(i, "validation_error", "question must be an object"))
-			continue
-		}
-		if strings.TrimSpace(asString(q["created_by_source"])) == "" {
-			q["created_by_source"] = "ai"
-		}
-		if code, msg, err := e.prepareQuestionSources(ctx, kb.ID, q); err != nil {
-			failed = append(failed, failureMap(i, code, msg))
-			continue
-		}
-		questions = append(questions, q)
-		indexMap = append(indexMap, i)
-	}
-	if len(questions) == 0 {
-		return tools.ExecutionResult{ResultJSON: map[string]any{
-			"question_bank": "组卷题库",
-			"created":       []map[string]any{},
-			"failed":        failed,
-			"created_count": 0,
-			"failed_count":  len(failed),
-		}}
-	}
-	var resp struct {
-		Created []map[string]any `json:"created"`
-		Failed  []map[string]any `json:"failed"`
-	}
-	if err := e.provider.CallExam(ctx, userID, []string{"openid", "exam:write"}, "POST", "/api/questions/batch", map[string]any{"questions": questions}, &resp); err != nil {
-		return providerUnavailable("当前课程资料绑定的保存目标暂时不可用，题目草稿还没有保存。请稍后重试。")
-	}
-	created := remapProviderIndices(resp.Created, indexMap)
-	failed = append(failed, remapProviderIndices(resp.Failed, indexMap)...)
-	return tools.ExecutionResult{ResultJSON: map[string]any{
-		"question_bank": "组卷题库",
-		"created":       created,
-		"failed":        failed,
-		"created_count": len(created),
-		"failed_count":  len(failed),
-	}}
+type providerQuestionListResp struct {
+	Items []map[string]any `json:"items"`
+	Total int              `json:"total"`
 }
 
-func (e *Executor) executeProviderComposePaper(ctx context.Context, kb kbDescriptor, args map[string]any, execCtx tools.ExecutionContext) tools.ExecutionResult {
-	userID, scopeID, ok := e.providerRequestContext(kb, execCtx)
-	if !ok {
-		return providerUnavailable("当前课程资料绑定的保存目标暂时不可用，暂不能保存试卷。请稍后重试。")
+// providerQuestionBankIDs reads the exam question-bank list with the
+// admin token and returns a name→id map. Linked-mode read paths use this
+// to discover the 国考医学 reference bank id (which ordinary teacher
+// accounts cannot see).
+func (e *Executor) providerQuestionBankIDs(ctx context.Context) (map[string]string, error) {
+	var banks []map[string]any
+	if err := e.provider.CallExamAsAdmin(ctx, "GET", "/api/question-banks", nil, &banks); err != nil {
+		return nil, err
 	}
-	name := strings.TrimSpace(asString(args["name"]))
-	if name == "" {
-		return errResult(errorArgsInvalid, "name is required")
-	}
-	kpIDs := parseStringSlice(args["knowledge_point_ids"])
-	if len(kpIDs) == 0 {
-		return errResult(errorArgsInvalid, "knowledge_point_ids must be a non-empty array of strings")
-	}
-	totalCount := intFromAny(args["total_count"], 0)
-	if totalCount <= 0 {
-		return errResult(errorArgsInvalid, "total_count must be positive")
-	}
-	pool := make([]map[string]any, 0)
-	for _, kpID := range kpIDs {
-		query := url.Values{}
-		query.Set("knowledge_point_id", kpID)
-		query.Set("limit", "200")
-		query.Set("offset", "0")
-		var resp struct {
-			Items []map[string]any `json:"items"`
+	ids := map[string]string{}
+	for _, bank := range banks {
+		name := strings.TrimSpace(asString(bank["name"]))
+		id := strings.TrimSpace(asString(bank["id"]))
+		if name != "" && id != "" {
+			ids[name] = id
 		}
-		if err := e.provider.CallExam(ctx, userID, []string{"openid", "exam:read"}, "GET", "/api/questions?"+query.Encode(), nil, &resp); err != nil {
-			return providerUnavailable("当前课程资料绑定的题库暂时不可用，暂时无法组卷。请稍后重试。")
-		}
-		pool = append(pool, resp.Items...)
 	}
-	typeDist := mapStringInt(args["type_distribution"])
-	difficultyDist := mapStringInt(args["difficulty_distribution"])
-	kpDist := mapStringInt(args["knowledge_point_distribution"])
-	seed := int64(intFromAny(args["seed"], 0))
-	selected, warnings := selectProviderQuestions(pool, totalCount, typeDist, difficultyDist, kpDist, seed)
-	if len(warnings) > 0 {
-		return tools.ExecutionResult{ResultJSON: map[string]any{
-			"shortage_warnings": warnings,
-			"pool_size":         len(pool),
-			"question_bank":     "组卷题库",
-			"ui_panel":          shortagePanel(warnings),
-		}}
+	return ids, nil
+}
+
+// listProviderReferenceQuestionsWithFallback fetches reference questions
+// for a knowledge point using admin credentials. After the admin-token
+// migration there is no per-account exam bank, so this only ever queries
+// the platform-administrator reference bank (e.g. 国考医学) — the loop
+// is kept generic to allow alternative reference banks in future
+// deployments without changing call sites.
+func (e *Executor) listProviderReferenceQuestionsWithFallback(
+	ctx context.Context,
+	kpID string,
+	qType string,
+	difficulty string,
+	bankIDs map[string]string,
+	limit int,
+) (providerQuestionListResp, string, error) {
+	if fallbackBankID := bankIDs[fallbackExamQuestionBankName]; fallbackBankID != "" {
+		refs, err := e.listProviderQuestions(ctx, kpID, qType, difficulty, fallbackBankID, limit)
+		return refs, fallbackExamQuestionBankName, err
 	}
-	ids := providerQuestionIDs(selected)
-	markdown := renderProviderPaperMarkdown(name, selected)
-	confirmed, _ := args["confirmed"].(bool)
-	out := map[string]any{
-		"question_bank":  "组卷题库",
-		"name":           name,
-		"question_ids":   ids,
-		"question_count": len(ids),
-		"markdown":       markdown,
-		"saved":          false,
-		"ui_panel":       paperPreviewPanelFromMaps(name, selected, markdown, confirmed),
+	return providerQuestionListResp{Items: []map[string]any{}}, "", nil
+}
+
+func (e *Executor) listProviderQuestions(
+	ctx context.Context,
+	kpID string,
+	qType string,
+	difficulty string,
+	questionBankID string,
+	limit int,
+) (providerQuestionListResp, error) {
+	query := url.Values{}
+	query.Set("knowledge_point_id", kpID)
+	if questionBankID != "" {
+		query.Set("question_bank_id", questionBankID)
 	}
-	if !confirmed {
-		out["message"] = "已生成试卷预览，老师确认后再次调用并传 confirmed=true 保存。"
-		return tools.ExecutionResult{ResultJSON: out}
+	if qType != "" {
+		query.Set("type", qType)
 	}
-	var paperResp map[string]any
-	err := e.provider.CallExam(ctx, userID, []string{"openid", "exam:read", "exam:write"}, "POST", "/api/papers", map[string]any{
-		"name":          name,
-		"exam_scope_id": scopeID,
-		"spec": map[string]any{
-			"total_count":                  totalCount,
-			"type_distribution":            typeDist,
-			"difficulty_distribution":      difficultyDist,
-			"knowledge_point_distribution": kpDist,
-			"seed":                         seed,
-		},
-		"question_ids": ids,
-	}, &paperResp)
-	if err != nil {
-		return providerUnavailable("当前课程资料绑定的保存目标暂时不可用，暂不能保存试卷。请稍后重试。")
+	if difficulty != "" {
+		query.Set("difficulty", difficulty)
 	}
-	out["saved"] = true
-	if id, ok := paperResp["id"].(string); ok && id != "" {
-		out["paper_id"] = id
+	if limit <= 0 {
+		limit = 20
 	}
-	out["paper"] = paperResp
-	return tools.ExecutionResult{ResultJSON: out}
+	query.Set("limit", strconv.Itoa(limit))
+	query.Set("offset", "0")
+	var resp providerQuestionListResp
+	err := e.provider.CallExamAsAdmin(ctx, "GET", "/api/questions?"+query.Encode(), nil, &resp)
+	return resp, err
 }
 
 func (e *Executor) authorizedKB(ctx context.Context, args map[string]any, execCtx tools.ExecutionContext) (kbDescriptor, bool, error) {
@@ -888,9 +940,13 @@ func questionRowKnowledgePointID(q questionRow) string {
 func questionDraftPanel(kpName string, count int, qType, difficulty string, hitCount, referenceCount int) map[string]any {
 	if strings.TrimSpace(qType) == "" {
 		qType = "未指定"
+	} else {
+		qType = displayQuestionType(qType)
 	}
 	if strings.TrimSpace(difficulty) == "" {
 		difficulty = "未指定"
+	} else {
+		difficulty = displayDifficulty(difficulty)
 	}
 	title := "出题要求确认"
 	code := `<style>
@@ -919,10 +975,10 @@ func shortagePanel(warnings []map[string]any) map[string]any {
 	for _, w := range warnings {
 		label := "题池"
 		if typ, ok := w["type"].(string); ok && typ != "" {
-			label = "题型 " + typ
+			label = "题型 " + displayQuestionType(typ)
 		}
 		if difficulty, ok := w["difficulty"].(string); ok && difficulty != "" {
-			label = "难度 " + difficulty
+			label = "难度 " + displayDifficulty(difficulty)
 		}
 		if kpID, ok := w["knowledge_point_id"].(string); ok && kpID != "" {
 			label = "知识点 " + kpID
@@ -958,7 +1014,7 @@ func paperPreviewPanel(name string, questions []questionRow, markdown string, co
 		rows.WriteString(`<li><span>`)
 		rows.WriteString(html.EscapeString(fmt.Sprintf("%d. %s", i+1, q.Stem)))
 		rows.WriteString(`</span><em>`)
-		rows.WriteString(html.EscapeString(q.Type + " / " + q.Difficulty))
+		rows.WriteString(html.EscapeString(strings.Trim(strings.Join([]string{displayQuestionType(q.Type), displayDifficulty(q.Difficulty)}, " / "), " /")))
 		rows.WriteString(`</em></li>`)
 	}
 	if len(questions) > limit {
@@ -983,52 +1039,38 @@ func paperPreviewPanel(name string, questions []questionRow, markdown string, co
 	}
 }
 
-func paperPreviewPanelFromMaps(name string, questions []map[string]any, markdown string, confirmed bool) map[string]any {
-	rows := paperPreviewRowsFromMaps(questions)
-	action := `<button onclick="sendPrompt('确认保存这份试卷')">确认保存试卷</button><button class="secondary" onclick="sendPrompt('我想调整试卷')">调整试卷</button>`
-	if confirmed {
-		action = `<button onclick="sendPrompt('继续组卷')">继续组卷</button>`
-	}
-	code := `<style>
-.preview-panel{font-family:ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#14202f;border:1px solid #d8dee8;border-radius:8px;background:#fff;padding:14px;max-width:760px}
-.preview-panel h3{margin:0 0 8px;font-size:16px}.preview-panel ul{list-style:none;padding:0;margin:0;display:grid;gap:6px}.preview-panel li{border:1px solid #edf0f5;border-radius:6px;padding:8px;background:#f8fafc;display:grid;gap:3px}
-.preview-panel em{font-size:12px;color:#667085;font-style:normal}.preview-actions{display:flex;gap:8px;margin-top:12px;flex-wrap:wrap}.preview-actions button{border:0;border-radius:6px;padding:8px 10px;background:#1f6feb;color:#fff;cursor:pointer}.preview-actions button.secondary{background:#eef2f6;color:#14202f}
-</style><div class="preview-panel"><h3>` + html.EscapeString(name) + `</h3><ul>` + rows + `</ul><div class="preview-actions">` + action + `</div></div>`
-	return map[string]any{
-		"kind":          "paper_preview",
-		"title":         "试卷预览",
-		"widget_code":   code,
-		"markdown_size": len(markdown),
-	}
-}
-
-func paperPreviewRowsFromMaps(questions []map[string]any) string {
-	var rows strings.Builder
-	limit := len(questions)
-	if limit > 8 {
-		limit = 8
-	}
-	for i := 0; i < limit; i++ {
-		q := questions[i]
-		stem := strings.TrimSpace(asString(q["stem"]))
-		qType := strings.TrimSpace(asString(q["type"]))
-		difficulty := strings.TrimSpace(asString(q["difficulty"]))
-		rows.WriteString(`<li><span>`)
-		rows.WriteString(html.EscapeString(fmt.Sprintf("%d. %s", i+1, stem)))
-		rows.WriteString(`</span><em>`)
-		rows.WriteString(html.EscapeString(strings.Trim(strings.Join([]string{qType, difficulty}, " / "), " /")))
-		rows.WriteString(`</em></li>`)
-	}
-	if len(questions) > limit {
-		rows.WriteString(`<li><span>... 还有 `)
-		rows.WriteString(html.EscapeString(fmt.Sprint(len(questions) - limit)))
-		rows.WriteString(` 道</span></li>`)
-	}
-	return rows.String()
-}
-
 func panelCell(label, value string) string {
 	return `<div class="paper-cell"><div class="paper-label">` + html.EscapeString(label) + `</div><div class="paper-value">` + html.EscapeString(value) + `</div></div>`
+}
+
+func displayQuestionType(value string) string {
+	switch strings.TrimSpace(value) {
+	case "single_choice":
+		return "单选题"
+	case "multi_choice":
+		return "多选题"
+	case "fill_in":
+		return "填空题"
+	case "short_answer":
+		return "简答题"
+	case "essay":
+		return "论述题"
+	default:
+		return strings.TrimSpace(value)
+	}
+}
+
+func displayDifficulty(value string) string {
+	switch strings.TrimSpace(value) {
+	case "easy":
+		return "简单"
+	case "medium":
+		return "中等"
+	case "hard":
+		return "困难"
+	default:
+		return strings.TrimSpace(value)
+	}
 }
 
 func (q questionRow) toMap() map[string]any {
@@ -1075,21 +1117,6 @@ func providerUnavailable(message string) tools.ExecutionResult {
 	}
 }
 
-func (e *Executor) providerRequestContext(kb kbDescriptor, execCtx tools.ExecutionContext) (uuid.UUID, string, bool) {
-	if e == nil || e.provider == nil || kb.ExamScopeID == nil {
-		return uuid.Nil, "", false
-	}
-	userID := uuid.Nil
-	if execCtx.UserID != nil {
-		userID = *execCtx.UserID
-	}
-	scopeID := strings.TrimSpace(*kb.ExamScopeID)
-	if userID == uuid.Nil || scopeID == "" {
-		return uuid.Nil, "", false
-	}
-	return userID, scopeID, true
-}
-
 func providerQuestionLabel(kpID string, refs []map[string]any) string {
 	if len(refs) > 0 {
 		if name := strings.TrimSpace(asString(refs[0]["knowledge_point_name"])); name != "" {
@@ -1102,155 +1129,6 @@ func providerQuestionLabel(kpID string, refs []map[string]any) string {
 	return kpID
 }
 
-func remapProviderIndices(items []map[string]any, indexMap []int) []map[string]any {
-	out := make([]map[string]any, len(items))
-	for i, item := range items {
-		clone := map[string]any{}
-		for k, v := range item {
-			clone[k] = v
-		}
-		if idx, ok := numericIndex(clone["index"]); ok && idx >= 0 && idx < len(indexMap) {
-			clone["index"] = indexMap[idx]
-		}
-		out[i] = clone
-	}
-	return out
-}
-
-func selectProviderQuestions(pool []map[string]any, total int, typeDist, difficultyDist, kpDist map[string]int, seed int64) ([]map[string]any, []map[string]any) {
-	questions := make([]map[string]any, 0, len(pool))
-	for _, q := range pool {
-		if strings.TrimSpace(asString(q["id"])) != "" {
-			questions = append(questions, q)
-		}
-	}
-	sort.Slice(questions, func(i, j int) bool { return asString(questions[i]["id"]) < asString(questions[j]["id"]) })
-	if seed != 0 {
-		r := rand.New(rand.NewSource(seed))
-		r.Shuffle(len(questions), func(i, j int) { questions[i], questions[j] = questions[j], questions[i] })
-	}
-	warnings := validateDistributions(total, distributionSet{
-		{Key: "type", Message: "题型题量不足", Requested: typeDist, Available: countProviderQuestions(questions, func(q map[string]any) string { return asString(q["type"]) })},
-		{Key: "difficulty", Message: "难度题量不足", Requested: difficultyDist, Available: countProviderQuestions(questions, func(q map[string]any) string { return asString(q["difficulty"]) })},
-		{Key: "knowledge_point_id", Message: "知识点题量不足", Requested: kpDist, Available: countProviderQuestions(questions, func(q map[string]any) string { return asString(q["knowledge_point_id"]) })},
-	})
-	if len(warnings) > 0 {
-		return nil, warnings
-	}
-	if len(questions) < total {
-		return nil, []map[string]any{{"available": len(questions), "requested": total, "message": "题池题量不足"}}
-	}
-	selected := greedySelectProviderQuestions(questions, total, typeDist, difficultyDist, kpDist)
-	if warnings := unmetProviderDistributionWarnings(selected, typeDist, difficultyDist, kpDist); len(warnings) > 0 {
-		return nil, warnings
-	}
-	return selected, nil
-}
-
-func providerQuestionIDs(questions []map[string]any) []string {
-	ids := make([]string, 0, len(questions))
-	for _, q := range questions {
-		if id := strings.TrimSpace(asString(q["id"])); id != "" {
-			ids = append(ids, id)
-		}
-	}
-	return ids
-}
-
-func greedySelectProviderQuestions(pool []map[string]any, total int, typeDist, difficultyDist, kpDist map[string]int) []map[string]any {
-	remainingType := copyIntMap(typeDist)
-	remainingDifficulty := copyIntMap(difficultyDist)
-	remainingKP := copyIntMap(kpDist)
-	selected := make([]map[string]any, 0, total)
-	used := map[string]bool{}
-	for len(selected) < total {
-		bestIndex := -1
-		bestScore := -1
-		for i, q := range pool {
-			id := asString(q["id"])
-			if id == "" || used[id] {
-				continue
-			}
-			score := unmetScore(asString(q["type"]), remainingType) +
-				unmetScore(asString(q["difficulty"]), remainingDifficulty) +
-				unmetScore(asString(q["knowledge_point_id"]), remainingKP)
-			if score > bestScore {
-				bestScore = score
-				bestIndex = i
-			}
-		}
-		if bestIndex < 0 {
-			break
-		}
-		q := pool[bestIndex]
-		selected = append(selected, q)
-		used[asString(q["id"])] = true
-		decrementIfNeeded(remainingType, asString(q["type"]))
-		decrementIfNeeded(remainingDifficulty, asString(q["difficulty"]))
-		decrementIfNeeded(remainingKP, asString(q["knowledge_point_id"]))
-	}
-	return selected
-}
-
-func unmetProviderDistributionWarnings(selected []map[string]any, typeDist, difficultyDist, kpDist map[string]int) []map[string]any {
-	return validateDistributions(len(selected), distributionSet{
-		{Key: "type", Message: "题型约束无法同时满足", Requested: typeDist, Available: countProviderQuestions(selected, func(q map[string]any) string { return asString(q["type"]) })},
-		{Key: "difficulty", Message: "难度约束无法同时满足", Requested: difficultyDist, Available: countProviderQuestions(selected, func(q map[string]any) string { return asString(q["difficulty"]) })},
-		{Key: "knowledge_point_id", Message: "知识点约束无法同时满足", Requested: kpDist, Available: countProviderQuestions(selected, func(q map[string]any) string { return asString(q["knowledge_point_id"]) })},
-	})
-}
-
-func countProviderQuestions(pool []map[string]any, attr func(map[string]any) string) map[string]int {
-	out := map[string]int{}
-	for _, q := range pool {
-		if value := strings.TrimSpace(attr(q)); value != "" {
-			out[value]++
-		}
-	}
-	return out
-}
-
-func renderProviderPaperMarkdown(name string, questions []map[string]any) string {
-	var b strings.Builder
-	b.WriteString("# ")
-	b.WriteString(name)
-	b.WriteString("\n\n")
-	for i, q := range questions {
-		fmt.Fprintf(&b, "%d. **%s**（%s / %s）\n\n", i+1, asString(q["stem"]), asString(q["type"]), asString(q["difficulty"]))
-		if opts, ok := q["options"].([]any); ok {
-			for _, opt := range opts {
-				om, _ := opt.(map[string]any)
-				fmt.Fprintf(&b, "   %v. %v\n", om["key"], om["text"])
-			}
-			if len(opts) > 0 {
-				b.WriteString("\n")
-			}
-		}
-		if answer := strings.TrimSpace(asString(q["answer"])); answer != "" {
-			fmt.Fprintf(&b, "   **答案：** %s\n\n", answer)
-		}
-		if explanation := strings.TrimSpace(asString(q["explanation"])); explanation != "" {
-			fmt.Fprintf(&b, "   **解析：** %s\n\n", explanation)
-		}
-	}
-	return b.String()
-}
-
-func numericIndex(v any) (int, bool) {
-	switch t := v.(type) {
-	case int:
-		return t, true
-	case int64:
-		return int(t), true
-	case float64:
-		return int(t), true
-	case jsonNumber:
-		if i, err := strconv.Atoi(t.String()); err == nil {
-			return i, true
-		}
-	}
-	return 0, false
-}
 
 func copyIntMap(in map[string]int) map[string]int {
 	out := map[string]int{}

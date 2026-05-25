@@ -47,7 +47,15 @@ type Executor struct {
 }
 
 type ProviderClient interface {
+	// CallExam invokes an exam endpoint as a specific ArkLoop user. Used by
+	// exam-agent personal-data tools. Not used by linked-mode read paths
+	// after the admin-credential migration.
 	CallExam(ctx context.Context, userID uuid.UUID, scopes []string, method, path string, body any, out any) error
+	// CallExamAsAdmin invokes an exam endpoint with a cached admin bearer
+	// token. Used by linked-mode read paths so that ArkLoop teachers can
+	// see exam's platform-administrator question bank (e.g. 国考医学题库)
+	// even though their own accounts lack visibility.
+	CallExamAsAdmin(ctx context.Context, method, path string, body any, out any) error
 }
 
 func NewExecutor(chunks ChunksReader, embedder embedding.Embedder, access AccessChecker) *Executor {
