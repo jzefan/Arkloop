@@ -110,7 +110,7 @@ export function KnowledgeBasesPage() {
       render: (row) => (
         <div className="flex flex-wrap gap-1">
           {row.visibility === 'private' && <Badge variant="neutral">私有</Badge>}
-          <Badge variant={row.integration_mode === 'exam' ? 'success' : 'neutral'}>{row.integration_mode === 'exam' ? '已绑定 exam 范围' : 'standalone'}</Badge>
+          <Badge variant={row.integration_mode === 'exam' ? 'success' : 'neutral'}>{row.integration_mode === 'exam' ? '已绑定课程范围' : '独立题库'}</Badge>
         </div>
       ),
     },

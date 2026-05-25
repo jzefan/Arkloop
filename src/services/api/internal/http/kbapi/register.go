@@ -7,6 +7,9 @@ func Register(mux *nethttp.ServeMux, h *handlerCtx) {
 	mux.Handle("POST /v1/knowledge-bases", h.withActor(handleCreateKB(h)))
 	mux.Handle("GET /v1/knowledge-bases", h.withActor(handleListKB(h)))
 	mux.Handle("GET /v1/knowledge-bases/default-workspace", h.withActor(handleDefaultWorkspace(h)))
+	if h.examIntegrationEnabled {
+		mux.Handle("GET /v1/knowledge-bases/scopes", h.withActor(handleKnowledgeBaseScopes(h)))
+	}
 	mux.Handle("GET /v1/knowledge-bases/{id}", h.withActor(handleGetKB(h)))
 	mux.Handle("DELETE /v1/knowledge-bases/{id}", h.withActor(handleDeleteKB(h)))
 	mux.Handle("POST /v1/knowledge-bases/{id}/documents", h.withActor(handleUploadDoc(h)))

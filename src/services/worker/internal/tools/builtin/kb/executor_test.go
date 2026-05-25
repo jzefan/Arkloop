@@ -85,3 +85,38 @@ func TestKBSearchValidatesInput(t *testing.T) {
 		t.Fatalf("expected args error for missing query, got %+v", result.Error)
 	}
 }
+
+func TestKBSaveQuestionsRequiresConfirmation(t *testing.T) {
+	exe := NewExecutor(&fakeChunksRepo{}, fakeEmbedder{dim: 8}, fakeAccess{allow: true})
+	accountID := uuid.New()
+	userID := uuid.New()
+
+	result := exe.Execute(context.Background(), ToolNameSaveQuestions, map[string]any{
+		"kb_id": uuid.New().String(),
+		"questions": []any{
+			map[string]any{
+				"knowledge_point_id": uuid.New().String(),
+				"type":               "single_choice",
+				"difficulty":         "medium",
+				"stem":               "题干",
+				"answer":             "A",
+			},
+		},
+	}, tools.ExecutionContext{AccountID: &accountID, UserID: &userID}, "")
+
+	if result.Error == nil || result.Error.ErrorClass != errorConfirmation {
+		t.Fatalf("expected confirmation error, got %+v", result.Error)
+	}
+}
+
+func TestSelectQuestionsReportsTypeShortage(t *testing.T) {
+	selected, warnings := selectQuestions([]questionRow{
+		{ID: uuid.New(), Type: "single_choice"},
+	}, 2, map[string]int{"single_choice": 2}, 0)
+	if len(selected) != 0 {
+		t.Fatalf("expected no selected questions, got %d", len(selected))
+	}
+	if len(warnings) != 1 || warnings[0]["type"] != "single_choice" {
+		t.Fatalf("expected single_choice shortage, got %+v", warnings)
+	}
+}

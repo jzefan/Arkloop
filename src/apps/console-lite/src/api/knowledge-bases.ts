@@ -23,11 +23,10 @@ export interface KnowledgeBase {
   updated_at: string
 }
 
-// ExamScope mirrors the GET /api/exam-scopes response items proxied via
-// /v1/exam/scopes. The exam curriculum hierarchy has 3 levels (Q9):
-// major (专业) / direction (方向) / topic (主知识点). A Linked KB binds
-// to exactly one scope at any of those levels.
-export interface ExamScope {
+// KnowledgeScope is the curriculum hierarchy exposed by ArkLoop. Deployments
+// may back it with a linked question-bank provider, but callers do not need to
+// know where the data is stored.
+export interface KnowledgeScope {
   id: string
   type: 'major' | 'direction' | 'topic'
   code: string
@@ -94,10 +93,8 @@ export async function getPlatformConfig(accessToken: string): Promise<PlatformCo
   return apiFetch<PlatformConfig>('/v1/config', { accessToken })
 }
 
-// listExamScopes fetches the teacher-accessible exam scopes (major / direction
-// / topic). Returns an empty array when exam integration is disabled.
-export async function listExamScopes(accessToken: string): Promise<ExamScope[]> {
-  const resp = await apiFetch<{ items: ExamScope[] }>('/v1/exam/scopes', { accessToken })
+export async function listKnowledgeScopes(accessToken: string): Promise<KnowledgeScope[]> {
+  const resp = await apiFetch<{ items: KnowledgeScope[] }>('/v1/knowledge-bases/scopes', { accessToken })
   return resp.items ?? []
 }
 
