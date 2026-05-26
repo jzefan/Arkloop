@@ -245,11 +245,10 @@ services:
       ARKLOOP_API_INTERNAL_URL: "${ARKLOOP_API_INTERNAL_URL:-http://api:19001}"
       ARKLOOP_INTERNAL_SERVICE_TOKEN: "${ARKLOOP_INTERNAL_SERVICE_TOKEN:?请在 .env 中设置 ARKLOOP_INTERNAL_SERVICE_TOKEN}"
     extra_hosts:
-      # 让 worker 容器内可以通过 host.docker.internal 访问宿主机服务
-      # （开发环境下 exam 跑在宿主机进程时必需）。
-      # Lets worker resolve host.docker.internal to reach host services
-      # (required when exam runs as a host process during dev).
       - "host.docker.internal:host-gateway"
+    dns:
+      - 223.5.5.5
+      - 8.8.8.8
     depends_on:
       migrate:
         condition: service_completed_successfully
