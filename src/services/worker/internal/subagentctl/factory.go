@@ -307,6 +307,13 @@ func (f *SubAgentRunFactory) copySnapshotMessages(ctx context.Context, tx pgx.Tx
 	}
 	repo := data.MessagesRepository{}
 	for _, item := range messages {
+		// Skip messages with empty content — these can appear when a
+		// previous run timed out before the model produced any output,
+		// leaving a placeholder assistant message with no text. Refusing
+		// to copy them is better than aborting the entire spawn.
+		if strings.TrimSpace(item.Content) == "" && len(item.ContentJSON) == 0 {
+			continue
+		}
 		if _, err := repo.InsertThreadMessage(ctx, tx, accountID, threadID, item.Role, item.Content, cloneRawJSON(item.ContentJSON), nil); err != nil {
 			return fmt.Errorf("copy snapshot message: %w", err)
 		}
