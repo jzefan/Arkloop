@@ -1,10 +1,11 @@
 import { useRef, useEffect, useState, useCallback, useLayoutEffect } from 'react'
-import { ChevronDown, Brain, Check } from 'lucide-react'
+import { ChevronDown, Check } from 'lucide-react'
 import { listLlmProviders, type LlmProvider } from '../api'
 import { useLocale } from '../contexts/LocaleContext'
 import { isDesktop } from '@arkloop/shared/desktop'
 import { getAvailableCatalogFromAdvancedJson } from '@arkloop/shared/llm/available-catalog-advanced-json'
 import { SettingsSwitch } from './settings/_SettingsSwitch'
+import { CJR_DEEPSEEK_FLASH_MODEL, CJR_DEEPSEEK_PRO_MODEL } from '../storage'
 
 const REASONING_LEVELS = ['off', 'minimal', 'low', 'medium', 'high', 'max'] as const
 const SUBMENU_INSET_LEFT = 10
@@ -25,14 +26,49 @@ const SUBMENU_ROW_STYLE = {
 const providersCache = new Map<string, LlmProvider[]>()
 
 function pickFirstChatPickerModel(providers: LlmProvider[]): string | null {
-  for (const p of providers) {
-    for (const m of p.models) {
-      if (m.show_in_picker && !m.tags.includes('embedding')) {
-        return `${p.name}^${m.model}`
-      }
-    }
+  void providers
+  return CJR_DEEPSEEK_FLASH_MODEL
+}
+
+function buildCjrDeepSeekProvider(): LlmProvider {
+  return {
+    id: 'cjr-deepseek',
+    scope: 'platform',
+    provider: 'deepseek',
+    name: 'deepseek',
+    key_prefix: null,
+    base_url: null,
+    openai_api_mode: null,
+    created_at: '',
+    models: [
+      {
+        id: 'cjr-deepseek-flash',
+        provider_id: 'cjr-deepseek',
+        model: 'deepseek-v4-flash',
+        priority: 0,
+        is_default: true,
+        show_in_picker: true,
+        tags: [],
+        when: {},
+        multiplier: 1,
+      },
+      {
+        id: 'cjr-deepseek-pro',
+        provider_id: 'cjr-deepseek',
+        model: 'deepseek-v4-pro',
+        priority: 1,
+        is_default: false,
+        show_in_picker: true,
+        tags: [],
+        when: {},
+        multiplier: 1,
+      },
+    ],
   }
-  return null
+}
+
+function isCjrDeepSeekSelector(value: string | null): value is typeof CJR_DEEPSEEK_FLASH_MODEL | typeof CJR_DEEPSEEK_PRO_MODEL {
+  return value === CJR_DEEPSEEK_FLASH_MODEL || value === CJR_DEEPSEEK_PRO_MODEL
 }
 
 type Props = {
@@ -46,7 +82,7 @@ type Props = {
   onThinkingChange: (mode: string) => void
 }
 
-export function ModelPicker({ accessToken, value, onChange, onAddModel, variant = 'chat', controlHeight = 'default', thinkingEnabled, onThinkingChange }: Props) {
+export function ModelPicker({ accessToken, value, onChange, variant = 'chat', controlHeight = 'default', thinkingEnabled, onThinkingChange }: Props) {
   const { t } = useLocale()
   const mp = t.modelPicker
   const desktopShell = isDesktop()
@@ -138,14 +174,12 @@ export function ModelPicker({ accessToken, value, onChange, onAddModel, variant 
 
   const anyPickerModel = pickFirstChatPickerModel(providers) !== null
 
+  const safeValue = isCjrDeepSeekSelector(value) ? value : CJR_DEEPSEEK_FLASH_MODEL
+
   const displayLabel = (() => {
-    if (value) {
-      const parts = value.split('^')
+    if (safeValue) {
+      const parts = safeValue.split('^')
       const modelName = parts[parts.length - 1]
-      if (thinkingEnabled !== 'off') {
-        const effortName = thinkingEnabled.charAt(0).toUpperCase() + thinkingEnabled.slice(1)
-        return `${modelName} · ${effortName}`
-      }
       return modelName
     }
     if (desktopShell) {
@@ -164,15 +198,15 @@ export function ModelPicker({ accessToken, value, onChange, onAddModel, variant 
   }
 
   const q = search.trim().toLowerCase()
-  const visibleProviders = providers
+  const visibleProviders = [buildCjrDeepSeekProvider()]
     .map((p) => ({
       ...p,
       models: p.models.filter((m) => m.show_in_picker && !m.tags.includes('embedding') && (!q || m.model.toLowerCase().includes(q))),
     }))
     .filter((p) => p.models.length > 0)
 
-  const selectedProviderName = value ? value.split('^')[0] : null
-  const selectedModelId = value ? value.split('^').slice(1).join('^') : null
+  const selectedProviderName = safeValue.split('^')[0]
+  const selectedModelId = safeValue.split('^').slice(1).join('^')
 
   const sortedProviders = selectedProviderName
     ? [
@@ -188,7 +222,7 @@ export function ModelPicker({ accessToken, value, onChange, onAddModel, variant 
 
   const hasModels = sortedProviders.length > 0
 
-  const showWebDefaultRow = !desktopShell
+  const showWebDefaultRow = false
 
   return (
     <div ref={rootRef} className="relative" style={{ flexShrink: 0 }}>
@@ -210,9 +244,9 @@ export function ModelPicker({ accessToken, value, onChange, onAddModel, variant 
           fontWeight: 400,
           fontSize: '14px',
           background: hovered ? 'var(--c-bg-deep)' : 'transparent',
-          color: hovered && value
+          color: hovered && safeValue
             ? 'var(--c-text-primary)'
-            : value
+            : safeValue
               ? 'var(--c-text-secondary)'
               : 'var(--c-text-tertiary)',
           opacity: hovered ? 1 : 0.8,
@@ -281,17 +315,6 @@ export function ModelPicker({ accessToken, value, onChange, onAddModel, variant 
                 </button>
               )}
 
-              {desktopShell && !hasModels && !loading && !search && (
-                <button
-                  type="button"
-                  onClick={() => { setOpen(false); onAddModel() }}
-                  className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm hover:bg-[var(--c-bg-deep)]"
-                  style={{ color: 'var(--c-text-secondary)' }}
-                >
-                  <span>{mp.addProviderFirst}</span>
-                </button>
-              )}
-
               {loading && providers.length === 0 && (
                 <p className="px-3 py-2 text-xs" style={{ color: 'var(--c-text-muted)' }}>...</p>
               )}
@@ -318,7 +341,7 @@ export function ModelPicker({ accessToken, value, onChange, onAddModel, variant 
                         </div>
                         {provider.models.map((m) => {
                           const combo = `${provider.name}^${m.model}`
-                          const isSelected = value === combo
+                          const isSelected = safeValue === combo
                           const supportsReasoning = getAvailableCatalogFromAdvancedJson(m.advanced_json)?.reasoning === true
                           const isOptionsOpen = optionsFor === combo
 
@@ -344,12 +367,6 @@ export function ModelPicker({ accessToken, value, onChange, onAddModel, variant 
                                 <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                                   {m.model}
                                 </span>
-                                {isSelected && thinkingEnabled !== 'off' && (
-                                  <span style={{ marginLeft: '6px', display: 'inline-flex', alignItems: 'center', gap: '3px', fontSize: '12px', color: 'var(--c-text-muted)', fontWeight: 400, flexShrink: 0 }}>
-                                    <Brain size={12} />
-                                    {thinkingEnabled.charAt(0).toUpperCase() + thinkingEnabled.slice(1)}
-                                  </span>
-                                )}
                               </button>
                               <div className="flex shrink-0 items-center gap-1 pr-3">
                                 {supportsReasoning && (hoveredCombo === combo || isOptionsOpen) && (
@@ -416,16 +433,6 @@ export function ModelPicker({ accessToken, value, onChange, onAddModel, variant 
                 <p className="px-3 py-2 text-xs" style={{ color: 'var(--c-text-muted)' }}>{mp.noByok}</p>
               )}
 
-              <div style={{ height: '1px', background: 'var(--c-border-subtle)', margin: '2px 4px' }} />
-
-              <button
-                type="button"
-                onClick={() => { setOpen(false); onAddModel() }}
-                className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm hover:bg-[var(--c-bg-deep)]"
-                style={{ color: 'var(--c-text-secondary)' }}
-              >
-                <span>+ {mp.addModel}</span>
-              </button>
             </div>
           </div>
 

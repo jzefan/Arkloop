@@ -23,6 +23,11 @@ type platformModelPresetSpec struct {
 	Models     []string
 	BaseURL    *string
 	Priority   int
+	// RouteAdvancedJSON 在 upsert route 时直接写入 llm_routes.advanced_json，
+	// 用来声明非默认的能力字段（例如 OpenRouter 的图像路由必须把
+	// available_catalog.output_modalities 设成 ["image"]，否则
+	// image_generate 工具的路由选择器会忽略它）。
+	RouteAdvancedJSON map[string]any
 }
 
 func syncPlatformModelPresets(
@@ -60,14 +65,15 @@ func platformModelPresetSpecsFromEnv(getenv func(string) string) []platformModel
 		getenv = os.Getenv
 	}
 	defs := []struct {
-		provider   string
-		name       string
-		keyEnvs    []string
-		modelsEnv  string
-		baseURLEnv string
-		secretName string
-		models     []string
-		priority   int
+		provider          string
+		name              string
+		keyEnvs           []string
+		modelsEnv         string
+		baseURLEnv        string
+		secretName        string
+		models            []string
+		priority          int
+		routeAdvancedJSON map[string]any
 	}{
 		{
 			provider:   "deepseek",
@@ -89,6 +95,26 @@ func platformModelPresetSpecsFromEnv(getenv func(string) string) []platformModel
 			// Stable DashScope OpenAI-compatible model IDs (Qwen3 generation).
 			models:   []string{"qwen3.5-plus", "qwen3-max-2026-01-23"},
 			priority: 200,
+		},
+		{
+			// OpenRouter 走 OpenAI 兼容协议（provider="openai"），但配
+			// base_url=https://openrouter.ai/api/v1。这里专门为图像模型
+			// 设置 output_modalities=["image"]，让 image_generate 工具的
+			// SelectedRouteModelCapabilities 把它识别成 image route，否则
+			// 会被 routing 层当成文本模型跳过。
+			provider:   "openai",
+			name:       "OpenRouter",
+			keyEnvs:    []string{"ARKLOOP_OPENROUTER_API_KEY", "OPENROUTER_API_KEY"},
+			modelsEnv:  "ARKLOOP_OPENROUTER_MODELS",
+			baseURLEnv: "ARKLOOP_OPENROUTER_BASE_URL",
+			secretName: "llm:openrouter",
+			models:     []string{"openai/gpt-5-image-mini"},
+			priority:   50,
+			routeAdvancedJSON: map[string]any{
+				"available_catalog": map[string]any{
+					"output_modalities": []any{"image"},
+				},
+			},
 		},
 		{
 			provider:   "doubao",
@@ -123,13 +149,14 @@ func platformModelPresetSpecsFromEnv(getenv func(string) string) []platformModel
 			baseURL = &raw
 		}
 		out = append(out, platformModelPresetSpec{
-			Provider:   def.provider,
-			Name:       def.name,
-			APIKey:     apiKey,
-			SecretName: def.secretName,
-			Models:     models,
-			BaseURL:    baseURL,
-			Priority:   def.priority,
+			Provider:          def.provider,
+			Name:              def.name,
+			APIKey:            apiKey,
+			SecretName:        def.secretName,
+			Models:            models,
+			BaseURL:           baseURL,
+			Priority:          def.priority,
+			RouteAdvancedJSON: def.routeAdvancedJSON,
 		})
 	}
 	return out
@@ -203,7 +230,7 @@ func syncPlatformModelPreset(
 	for idx, model := range spec.Models {
 		isDefault := idx == 0
 		priority := spec.Priority - idx
-		if err := upsertPlatformRoute(ctx, db, routesRepo, credential.ID, model, priority, isDefault); err != nil {
+		if err := upsertPlatformRoute(ctx, db, routesRepo, credential.ID, model, priority, isDefault, spec.RouteAdvancedJSON); err != nil {
 			return fmt.Errorf("upsert platform route %s/%s: %w", spec.Provider, model, err)
 		}
 	}
@@ -223,7 +250,11 @@ func findPlatformCredentialByName(ctx context.Context, repo *data.LlmCredentials
 	return nil, nil
 }
 
-func upsertPlatformRoute(ctx context.Context, db data.Querier, repo *data.LlmRoutesRepository, credentialID uuid.UUID, model string, priority int, isDefault bool) error {
+func upsertPlatformRoute(ctx context.Context, db data.Querier, repo *data.LlmRoutesRepository, credentialID uuid.UUID, model string, priority int, isDefault bool, advancedJSON map[string]any) error {
+	createAdvanced := map[string]any{}
+	for k, v := range advancedJSON {
+		createAdvanced[k] = v
+	}
 	routes, err := repo.ListByCredential(ctx, uuid.Nil, credentialID, data.LlmRouteScopePlatform)
 	if err != nil {
 		return err
@@ -237,6 +268,10 @@ func upsertPlatformRoute(ctx context.Context, db data.Querier, repo *data.LlmRou
 				return execErr
 			}
 		}
+		// 已存在的 route 保留运维侧手改的 advanced_json，但 spec 声明的能力字段
+		// （如 available_catalog.output_modalities）按 spec 强制刷新——否则旧 route
+		// 无法变成 image route。
+		merged := mergeAdvancedJSON(route.AdvancedJSON, advancedJSON)
 		_, err := repo.Update(ctx, data.UpdateLlmRouteParams{
 			Scope:               data.LlmRouteScopePlatform,
 			RouteID:             route.ID,
@@ -246,7 +281,7 @@ func upsertPlatformRoute(ctx context.Context, db data.Querier, repo *data.LlmRou
 			ShowInPicker:        true,
 			Tags:                []string{"platform", "preset"},
 			WhenJSON:            json.RawMessage("{}"),
-			AdvancedJSON:        route.AdvancedJSON,
+			AdvancedJSON:        merged,
 			Multiplier:          route.Multiplier,
 			CostPer1kInput:      route.CostPer1kInput,
 			CostPer1kOutput:     route.CostPer1kOutput,
@@ -265,7 +300,7 @@ func upsertPlatformRoute(ctx context.Context, db data.Querier, repo *data.LlmRou
 		ShowInPicker: true,
 		Tags:         []string{"platform", "preset"},
 		WhenJSON:     json.RawMessage("{}"),
-		AdvancedJSON: map[string]any{},
+		AdvancedJSON: createAdvanced,
 		Multiplier:   1.0,
 	})
 	if err == nil || !isLlmRouteDefaultConflict(err) {
@@ -283,10 +318,37 @@ func upsertPlatformRoute(ctx context.Context, db data.Querier, repo *data.LlmRou
 		ShowInPicker: true,
 		Tags:         []string{"platform", "preset"},
 		WhenJSON:     json.RawMessage("{}"),
-		AdvancedJSON: map[string]any{},
+		AdvancedJSON: createAdvanced,
 		Multiplier:   1.0,
 	})
 	return err
+}
+
+// mergeAdvancedJSON 深度合并 spec 声明的能力字段进现有 advanced_json。
+// 顶层 key 用 overlay 覆盖 base；available_catalog 等嵌套 map 再合并一层
+// 保留 base 里运维侧手填的并列字段。
+func mergeAdvancedJSON(base, overlay map[string]any) map[string]any {
+	out := map[string]any{}
+	for k, v := range base {
+		out[k] = v
+	}
+	for k, v := range overlay {
+		if vm, ok := v.(map[string]any); ok {
+			if existing, exists := out[k].(map[string]any); exists {
+				merged := map[string]any{}
+				for ek, ev := range existing {
+					merged[ek] = ev
+				}
+				for ok, ov := range vm {
+					merged[ok] = ov
+				}
+				out[k] = merged
+				continue
+			}
+		}
+		out[k] = v
+	}
+	return out
 }
 
 func isLlmRouteDefaultConflict(err error) bool {

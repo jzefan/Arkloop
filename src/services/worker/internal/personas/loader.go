@@ -481,6 +481,17 @@ func parseExecutorConfig(value any, executorType string, personaDir string) (map
 	if err := loadExecutorDataFile(out, personaDir, "vocational_colleges_file", "vocational_colleges"); err != nil {
 		return nil, err
 	}
+	// yuhua-stone-director uses this to ship styles.json alongside the
+	// persona; the Lua sandbox has no io access so we read it here and surface
+	// it via context.get("styles") in the runtime.
+	if err := loadExecutorDataFile(out, personaDir, "styles_file", "styles"); err != nil {
+		return nil, err
+	}
+	// Backward compatibility for existing installed personas that still point at
+	// style_preset.json.
+	if err := loadExecutorDataFile(out, personaDir, "style_preset_file", "style_preset"); err != nil {
+		return nil, err
+	}
 
 	scriptFileRaw, hasScriptFile := out["script_file"]
 	if !hasScriptFile || scriptFileRaw == nil {

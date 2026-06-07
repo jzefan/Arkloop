@@ -297,6 +297,36 @@ func TestLoadPersonaWithExecutorDataFile(t *testing.T) {
 	}
 }
 
+func TestLoadPersonaWithExecutorStylesFile(t *testing.T) {
+	dir := t.TempDir()
+	writePersonaFiles(t, dir, "test_lua",
+		"id: test_lua\nversion: \"1\"\ntitle: Test Lua\nexecutor_type: agent.lua\nexecutor_config:\n  script_file: agent.lua\n  styles_file: styles.json\n",
+		"# prompt",
+	)
+	if err := os.WriteFile(filepath.Join(dir, "test_lua", "agent.lua"), []byte("context.set_output('ok')\n"), 0644); err != nil {
+		t.Fatalf("WriteFile agent.lua failed: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "test_lua", "styles.json"), []byte(`{"default_style_id":"realistic-documentary","styles":{"realistic-documentary":{"display_name":"写实纪录风"}}}`), 0644); err != nil {
+		t.Fatalf("WriteFile styles.json failed: %v", err)
+	}
+
+	registry, err := LoadRegistry(dir)
+	if err != nil {
+		t.Fatalf("LoadRegistry failed: %v", err)
+	}
+	def, ok := registry.Get("test_lua")
+	if !ok {
+		t.Fatalf("expected test_lua persona loaded")
+	}
+	raw, ok := def.ExecutorConfig["styles"].(string)
+	if !ok || !strings.Contains(raw, "realistic-documentary") {
+		t.Fatalf("expected executor_config.styles from styles file, got %#v", def.ExecutorConfig["styles"])
+	}
+	if _, exists := def.ExecutorConfig["styles_file"]; exists {
+		t.Fatalf("expected styles_file removed after loading")
+	}
+}
+
 func TestLoadPersonaWithExecutorScriptFileConflict(t *testing.T) {
 	dir := t.TempDir()
 	writePersonaFiles(t, dir, "bad_lua",

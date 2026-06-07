@@ -1,0 +1,25 @@
+id: yuhua-stone-director
+version: "1"
+title: 奇石鉴赏智能体
+description: 上传一张奇石图，生成一支让人啧啧称奇的鉴赏短片：每镜聚焦石的纹理形态，人物作为凝视者，观众看完会想再看一眼这块石头。
+soul_file: soul.md
+user_selectable: true
+selector_name: 奇石鉴赏
+selector_order: 8
+tool_allowlist:
+    - audio_tts
+    - image_generate
+    - video_generate
+    - video_concat
+    - frame_extract
+    - document_write
+budgets:
+    max_output_tokens: 8192
+    reasoning_iterations: 200
+    temperature: 0.7
+reasoning_mode: auto
+prompt_cache_control: system_prompt
+executor_type: agent.lua
+executor_config:
+    script_file: agent.lua
+    styles_file: styles.json

@@ -1,0 +1,15 @@
+id: yuhua-stone-storyboard
+version: "1"
+title: 雨花石导演 · 16 镜头分镜
+description: 系统级子 persona — 把故事拆成 16 镜头分镜 JSON，每镜含画面、运动、旁白、字幕。
+user_selectable: false
+settings_visible: false
+is_system: true
+is_builtin: true
+budgets:
+    reasoning_iterations: 10
+    max_output_tokens: 12288
+    temperature: 0.4
+reasoning_mode: auto
+prompt_cache_control: system_prompt
+executor_type: agent.simple

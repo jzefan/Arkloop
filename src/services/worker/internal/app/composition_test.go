@@ -119,10 +119,10 @@ func TestRegisterStoredArtifactTools(t *testing.T) {
 	if !registered {
 		t.Fatal("expected stored artifact tools to register")
 	}
-	if len(specs) != 4 {
-		t.Fatalf("expected 4 llm specs, got %d", len(specs))
+	if len(specs) != 8 {
+		t.Fatalf("expected 8 llm specs, got %d", len(specs))
 	}
-	for _, name := range []string{"create_artifact", "document_write", "markdown_to_pdf", "image_generate"} {
+	for _, name := range []string{"create_artifact", "document_write", "markdown_to_pdf", "audio_tts", "image_generate", "video_generate", "video_concat", "frame_extract"} {
 		if _, ok := registry.Get(name); !ok {
 			t.Fatalf("expected tool %s to be registered", name)
 		}

@@ -48,7 +48,57 @@ type Props = {
   onThreadDeleted: (threadId: string) => void
   /** 点到历史会话时先收起设置等全屏层；否则同 URL 的 navigate 不会触发，桌面端无法回到聊天 */
   beforeNavigateToThread?: () => void
+  onQuickPrompt?: (prompt: string) => void
 }
+
+type CjrNavItem = {
+  icon: string
+  label: string
+  prompt?: string
+  badge?: string
+  badgeTone?: 'blue' | 'gray' | 'orange'
+}
+
+type CjrNavGroup = {
+  title: string
+  items: CjrNavItem[]
+}
+
+const CJR_NAV_GROUPS: CjrNavGroup[] = [
+  {
+    title: '标准制度',
+    items: [
+      { icon: '📋', label: '标准库', prompt: '标准库' },
+      { icon: '📑', label: '管理制度政策文件', prompt: '管理制度政策文件' },
+      { icon: '🔔', label: '通知通告', prompt: '通知通告' },
+    ],
+  },
+  {
+    title: '项目',
+    items: [
+      { icon: '🏫', label: '产业学院', prompt: '产业学院建设方案', badge: '12' },
+      { icon: '🔧', label: '现场工程师', prompt: '现场工程师培养', badge: '5' },
+      { icon: '🔗', label: '共同体', prompt: '产教融合共同体', badge: '8' },
+    ],
+  },
+  {
+    title: 'Agent',
+    items: [
+      { icon: '🤖', label: '岗策', prompt: '@岗策Agent', badge: '在线', badgeTone: 'blue' },
+      { icon: '🤖', label: '课谱', prompt: '@课谱Agent', badge: '在线', badgeTone: 'blue' },
+      { icon: '🤖', label: '院建', prompt: '@院建Agent', badge: '待机', badgeTone: 'gray' },
+      { icon: '🤖', label: '项治', prompt: '@项治Agent', badge: '忙碌', badgeTone: 'orange' },
+    ],
+  },
+  {
+    title: '成效',
+    items: [
+      { icon: '📊', label: '产教融合指数', prompt: '产教融合指数' },
+    ],
+  },
+]
+
+const CJR_HISTORY_FALLBACK = ['新能源汽车岗位分析', '2024Q2合规校验', '产业学院建设方案']
 
 type ProjectGroup = { path: string; label: string; threads: ThreadResponse[] }
 type GtdBucket = ThreadGtdBucket
@@ -257,6 +307,7 @@ export function Sidebar({
   onNewThread,
   onThreadDeleted,
   beforeNavigateToThread,
+  onQuickPrompt,
 }: Props) {
   const { me, accessToken, logout } = useAuth()
   const {
@@ -280,6 +331,7 @@ export function Sidebar({
   const { threadId } = useParams<{ threadId: string }>()
   const activeThreadId = suppressActiveThreadHighlight ? undefined : threadId
   const { t } = useLocale()
+  const [cjrActiveItem, setCjrActiveItem] = useState('标准库')
 
   const [starredIds, setStarredIds] = useState<string[]>([])
   const [userMenuOpen, setUserMenuOpen] = useState(false)
@@ -1495,6 +1547,84 @@ export function Sidebar({
     </div>,
     document.body,
   ) : null
+  const cjrHistoryItems = threads.length > 0
+    ? threads.slice(0, 3).map((thread) => ({
+        id: thread.id,
+        title: threadTitle(thread, t.untitled),
+      }))
+    : CJR_HISTORY_FALLBACK.map((title) => ({ id: '', title }))
+
+  return (
+    <aside className="cjr-sidebar">
+      <div className="cjr-sidebar-header">
+        <div className="cjr-logo">
+          <div className="cjr-logo-icon">H1</div>
+          <span>CJR-H1.2</span>
+        </div>
+        <button className="cjr-new-chat-btn" type="button" onClick={onNewThread}>
+          <Plus size={16} strokeWidth={2.5} />
+          <span>新建会话</span>
+        </button>
+      </div>
+
+      <div className="cjr-nav-scroll">
+        {CJR_NAV_GROUPS.map((group) => (
+          <div className="cjr-nav-group" key={group.title}>
+            <div className="cjr-nav-group-title">{group.title}</div>
+            {group.items.map((item) => {
+              const active = cjrActiveItem === item.label
+              return (
+                <button
+                  key={`${group.title}-${item.label}`}
+                  type="button"
+                  className={['cjr-nav-item', active ? 'active' : ''].filter(Boolean).join(' ')}
+                  onClick={() => {
+                    setCjrActiveItem(item.label)
+                    if (item.prompt) {
+                      onQuickPrompt?.(item.prompt)
+                    }
+                  }}
+                >
+                  <span className="cjr-nav-icon" aria-hidden="true">{item.icon}</span>
+                  <span className="cjr-nav-text">{item.label}</span>
+                  {item.badge && (
+                    <span className={['cjr-nav-badge', item.badgeTone ? `tone-${item.badgeTone}` : ''].filter(Boolean).join(' ')}>
+                      {item.badge}
+                    </span>
+                  )}
+                </button>
+              )
+            })}
+          </div>
+        ))}
+      </div>
+
+      <div className="cjr-sidebar-footer">
+        <div className="cjr-history-title">历史会话</div>
+        {cjrHistoryItems.map((item) => (
+          <button
+            key={`${item.id || 'fallback'}-${item.title}`}
+            type="button"
+            className="cjr-history-item"
+            onClick={() => {
+              if (item.id) {
+                beforeNavigateToThread?.()
+                navigate(`/t/${item.id}`)
+                return
+              }
+              onQuickPrompt?.(item.title)
+            }}
+          >
+            <svg className="cjr-history-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+            </svg>
+            <span>{item.title}</span>
+          </button>
+        ))}
+      </div>
+    </aside>
+  )
+
   const navButtonClass = 'group flex h-[32px] w-full items-center gap-[10px] overflow-hidden whitespace-nowrap rounded-lg px-[8px] text-[15px] text-[var(--c-text-secondary)] transition-colors duration-[60ms] hover:bg-[var(--c-bg-deep)] hover:text-[var(--c-text-primary)]'
   const navButtonStyle = { fontWeight: 'var(--c-sidebar-nav-weight)' }
   const navLabelClass = 'min-w-0 overflow-hidden whitespace-nowrap transition-opacity duration-100'

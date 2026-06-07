@@ -1,0 +1,15 @@
+id: yuhua-stone-storywriter
+version: "1"
+title: 雨花石导演 · 故事撰写
+description: 系统级子 persona — 基于 VL 输出与 Character Bible 草案，撰写 2 分钟 16 段奇石电影故事。
+user_selectable: false
+settings_visible: false
+is_system: true
+is_builtin: true
+budgets:
+    reasoning_iterations: 12
+    max_output_tokens: 8192
+    temperature: 0.75
+reasoning_mode: auto
+prompt_cache_control: system_prompt
+executor_type: agent.simple

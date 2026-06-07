@@ -1,0 +1,70 @@
+{
+  "schema_version": "2",
+  "preset_id": "yuhua-stone-multi-style",
+  "default_style_id": "realistic-documentary",
+  "shared": {
+    "color_palette_options": [
+      ["warm ivory", "mineral gray", "leaf green"],
+      ["ink gray", "porcelain blue", "soft white"],
+      ["moonlit blue", "mist silver", "petal pink"]
+    ],
+    "music_style_palette": [
+      { "id": "guqin-solo", "name": "古琴独奏", "mood_fit": ["zen-quiet", "contemplative-cool"], "tempo": "slow", "keywords": ["guqin", "quiet", "serene"] },
+      { "id": "dizi-flute", "name": "笛箫", "mood_fit": ["zen-quiet", "elegant-warm", "bright-cheerful"], "tempo": "medium-slow", "keywords": ["dizi", "xiao", "bamboo flute"] },
+      { "id": "guzheng-bright", "name": "古筝明朗", "mood_fit": ["bright-cheerful", "elegant-warm"], "tempo": "medium", "keywords": ["guzheng", "bright", "clear"] },
+      { "id": "modern-guofeng", "name": "现代国风器乐", "mood_fit": ["bright-cheerful", "elegant-warm"], "tempo": "medium", "keywords": ["modern guofeng", "light percussion", "cinematic"] },
+      { "id": "ambient-pad", "name": "氛围声学", "mood_fit": ["zen-quiet", "contemplative-cool"], "tempo": "slow", "keywords": ["ambient", "soft pad", "minimal"] }
+    ]
+  },
+  "styles": {
+    "realistic-documentary": {
+      "display_name": "写实纪录风",
+      "short_description": "自然博物馆、园林溪畔、阳光窗台等当代真实场景，柔和自然采光，纪录片质感。",
+      "long_description": "写实纪录风：自然采光、纪录片摄影、50/85mm 镜头、写实景深、清晰中性。明快舒心，人与自然/博物馆和谐。禁超现实光晕、魔法粒子、梦境氛围、戏剧化打光。",
+      "scene_locations_hint": "自然博物馆矿物展厅 / 园林溪畔 / 阳光窗台 / 收藏家工作室 / 艺术画廊",
+      "mood_palette": [
+        { "id": "bright-cheerful", "name": "明亮欢快", "lighting": "正午自然光、高对比、明亮饱和", "pacing": "中速、轻快切换" },
+        { "id": "elegant-warm", "name": "雅致温暖", "lighting": "黄昏暖光、室内柔光", "pacing": "慢速、对称构图" },
+        { "id": "zen-quiet", "name": "禅意静谧", "lighting": "北窗柔光、清晨自然光", "pacing": "中慢速、留白适中" },
+        { "id": "contemplative-cool", "name": "沉思清冷", "lighting": "雨天青灰北光", "pacing": "慢速、安静观察" }
+      ],
+      "image_prompt_suffix_template": "REALISTIC documentary photography, natural museum-quality lighting, 50mm or 85mm lens, realistic depth of field, clear neutral composition, bright comfortable tone, no surreal effects. Mood: {mood_name}; lighting: {mood_lighting}.",
+      "video_prompt_suffix_template": "REALISTIC documentary photography, natural museum-quality lighting, no surreal effects. Motion should be subtle, observational, and continuous. Pacing: {mood_pacing}.",
+      "negative_prompts": ["no surreal halo", "no magical particles", "no dream atmosphere", "no dramatic theatrical lighting", "no fantasy costume", "no ancient robe", "no changed stone"],
+      "voice_style_default": { "tone": "温润知性", "speed": "中等偏慢", "language_style": "3/4 白话 + 1/4 古典点缀" },
+      "voice_over_examples": ["这一抹纹路，像山雨刚刚停住。", "光透进去，石心里有一座小小的庭院。", "她没有急着判断，只让石头自己说话。", "方寸之间，见云水，也见人间。"]
+    },
+    "dreamlike-mystical": {
+      "display_name": "梦幻意境流",
+      "short_description": "晨雾山间、月下水面、云海远峰等朦胧诗意场景，柔焦漫光，画意感强。",
+      "long_description": "梦幻意境流：柔焦、晕染、漫光、轻雾、光晕，浅景深与抽象空间。允许适度光晕/粒子/雾气，但不要纯虚构生物或魔法武器。",
+      "scene_locations_hint": "晨雾山间 / 月下水面 / 云海远峰 / 夜色花影 / 薄纱后的窗景",
+      "mood_palette": [
+        { "id": "zen-quiet", "name": "雾色静观", "lighting": "柔焦漫光、晨雾微亮", "pacing": "缓慢、漂浮感、长呼吸" },
+        { "id": "elegant-warm", "name": "暖梦雅致", "lighting": "薄纱暖光、柔和光晕", "pacing": "中慢速、诗意推进" },
+        { "id": "contemplative-cool", "name": "月下沉思", "lighting": "月下冷光、轻雾晕染", "pacing": "慢速、若隐若现" }
+      ],
+      "image_prompt_suffix_template": "dreamy ethereal cinematography, soft diffused light, gentle haze, painterly mood, impressionistic, shallow depth of field. Mood: {mood_name}; lighting: {mood_lighting}.",
+      "video_prompt_suffix_template": "dreamy ethereal cinematography, soft diffused light, gentle haze, painterly mood, impressionistic. Movement is slow, floating, and poetic. Pacing: {mood_pacing}.",
+      "negative_prompts": ["no fantasy creature", "no magical weapon", "no costume drama", "no changed stone", "no horror mood", "no heavy darkness"],
+      "voice_style_default": { "tone": "诗化、抽象", "speed": "慢", "language_style": "1/2 白话 + 1/2 古典/意象" },
+      "voice_over_examples": ["雾把世界放轻，只留下石上的一线山河。", "她掌心微动，月色便在纹路里醒来。", "这一点光，不像照见，更像被石头记起。", "若有云水来过，大约就停在这里。"]
+    },
+    "oriental-poetic": {
+      "display_name": "东方诗意流",
+      "short_description": "竹影窗棂、宣纸案桌、青花瓷旁等宋画/水墨气质，淡墨灰青，多留白。",
+      "long_description": "东方诗意流：宋画式留白、对称中轴、横长画幅感，北窗冷调、淡墨灰青。人物仍现代棉麻/真丝，不穿汉服，但可配古典器物。",
+      "scene_locations_hint": "竹影窗棂 / 宣纸案桌 / 青花瓷旁 / 苔石庭院 / 墨水砚台",
+      "mood_palette": [
+        { "id": "zen-quiet", "name": "宋画静观", "lighting": "北窗冷调、淡墨灰青", "pacing": "慢速、留白多、对称稳定" },
+        { "id": "elegant-warm", "name": "案头清雅", "lighting": "纸面柔光、温润侧光", "pacing": "中慢速、器物细节推进" },
+        { "id": "contemplative-cool", "name": "墨色沉思", "lighting": "冷灰天光、水墨阴影", "pacing": "慢速、横长画幅感" }
+      ],
+      "image_prompt_suffix_template": "Song Dynasty ink painting composition, negative space, muted ink tones, contemplative serenity, modern woman in contemporary linen or silk, classical objects, no hanfu. Mood: {mood_name}; lighting: {mood_lighting}.",
+      "video_prompt_suffix_template": "Song Dynasty ink painting composition, negative space, muted ink tones, contemplative serenity. Slow measured camera, quiet continuity, no costume drama. Pacing: {mood_pacing}.",
+      "negative_prompts": ["no hanfu", "no ancient costume", "no fantasy palace", "no magic", "no changed stone", "no saturated neon", "no clutter"],
+      "voice_style_default": { "tone": "清雅含蓄", "speed": "慢", "language_style": "1/3 白话 + 2/3 宋词诗经化用" },
+      "voice_over_examples": ["一石在案，竹影便有了可停之处。", "纹如远岫，色近新雨，静看已是半日。", "她指尖轻过，似有微云从石面归来。", "所谓清赏，不过方寸之间，天地自宽。"]
+    }
+  }
+}

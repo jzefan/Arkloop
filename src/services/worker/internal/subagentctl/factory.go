@@ -305,20 +305,88 @@ func (f *SubAgentRunFactory) copySnapshotMessages(ctx context.Context, tx pgx.Tx
 	if len(messages) == 0 {
 		return nil
 	}
+	// 过滤孤儿 tool 消息：OpenAI/兼容协议要求 role=tool 的消息必须紧随
+	// （或不远地跟在）一条 assistant tool_calls 之后。父对话里如果存在
+	// 没有匹配 tool_calls 前驱的 tool 消息（例如 context.emit("tool.result", …)
+	// 落库但没有对应 assistant tool_calls，常见于通过 emit 直接发"虚拟"工具
+	// 调用如进度 todo_write 的 persona），原样复制到子 thread 会让 VL/LLM
+	// 拒收：`Messages with role 'tool' must be a response to a preceding
+	// message with 'tool_calls'`。这里在复制前剔除所有这种孤儿。
+	filtered := filterOrphanToolMessages(messages)
 	repo := data.MessagesRepository{}
-	for _, item := range messages {
-		// Skip messages with empty content — these can appear when a
-		// previous run timed out before the model produced any output,
-		// leaving a placeholder assistant message with no text. Refusing
-		// to copy them is better than aborting the entire spawn.
-		if strings.TrimSpace(item.Content) == "" && len(item.ContentJSON) == 0 {
+	for _, item := range filtered {
+		hasContent := strings.TrimSpace(item.Content) != ""
+		hasJSON := len(item.ContentJSON) > 0
+		// 完全空消息（既无文本又无结构化负载）一律跳过——通常是上一次 run 在
+		// 模型还没产出任何输出前就挂了，留下的占位 assistant 消息。
+		if !hasContent && !hasJSON {
 			continue
 		}
-		if _, err := repo.InsertThreadMessage(ctx, tx, accountID, threadID, item.Role, item.Content, cloneRawJSON(item.ContentJSON), nil); err != nil {
+		content := item.Content
+		if !hasContent {
+			// content_json 非空但 content 文本为空：messages_repo.InsertThreadMessage
+			// 硬性要求 content trim 后非空（详见 messages_repo.go:738），直接传会让
+			// 整个 spawn 失败。注入一个语义稳定的占位让插入通过，同时保留 content_json
+			// 里的多模态/工具调用负载——下游 LLM 收到的还是完整结构化内容。
+			content = "[non-text message]"
+		}
+		if _, err := repo.InsertThreadMessage(ctx, tx, accountID, threadID, item.Role, content, cloneRawJSON(item.ContentJSON), nil); err != nil {
 			return fmt.Errorf("copy snapshot message: %w", err)
 		}
 	}
 	return nil
+}
+
+// filterOrphanToolMessages 丢弃没有匹配 assistant tool_calls 前驱的 tool 消息。
+//
+// 判定规则：扫描时维护一个 "开放 tool_use id 集合"——遇到 assistant 消息时
+// 解析它 content_json 里的 tool_use 块、把每个 id 加进集合；遇到 tool 消息时
+// 看它的 tool_use_id 是否在集合里（在则放行并从集合移除，不在则丢弃）。
+// 缺少 tool_use_id 字段的 tool 消息（典型如 context.emit("tool.result", …)
+// 写出的 todo_write 进度结果）一律视为孤儿丢弃。
+func filterOrphanToolMessages(messages []ContextSnapshotMessage) []ContextSnapshotMessage {
+	openIDs := map[string]struct{}{}
+	out := make([]ContextSnapshotMessage, 0, len(messages))
+	for _, msg := range messages {
+		if msg.Role == "assistant" && len(msg.ContentJSON) > 0 {
+			var blocks []json.RawMessage
+			if json.Unmarshal(msg.ContentJSON, &blocks) == nil {
+				for _, raw := range blocks {
+					var block map[string]any
+					if json.Unmarshal(raw, &block) != nil {
+						continue
+					}
+					if t, _ := block["type"].(string); t == "tool_use" {
+						if id, _ := block["id"].(string); id != "" {
+							openIDs[id] = struct{}{}
+						}
+					}
+				}
+			}
+			out = append(out, msg)
+			continue
+		}
+		if msg.Role == "tool" {
+			useID := ""
+			if len(msg.ContentJSON) > 0 {
+				var toolMsg map[string]any
+				if json.Unmarshal(msg.ContentJSON, &toolMsg) == nil {
+					useID, _ = toolMsg["tool_use_id"].(string)
+				}
+			}
+			if useID == "" {
+				continue
+			}
+			if _, ok := openIDs[useID]; !ok {
+				continue
+			}
+			delete(openIDs, useID)
+			out = append(out, msg)
+			continue
+		}
+		out = append(out, msg)
+	}
+	return out
 }
 
 func buildRunStartedData(subAgent data.SubAgentRecord, snapshot *ContextSnapshot, personaID string, modelOverride string) map[string]any {

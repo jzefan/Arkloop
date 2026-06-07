@@ -6,14 +6,13 @@ import (
 	"errors"
 	"fmt"
 	"html"
-	"math/rand"
 	"net/url"
 	"regexp"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
 
+	"arkloop/services/shared/papercompose"
 	"arkloop/services/worker/internal/tools"
 
 	"github.com/google/uuid"
@@ -412,8 +411,13 @@ func (e *Executor) executeComposePaper(ctx context.Context, args map[string]any,
 	if !ok {
 		return errResult(errorPermissionDenied, "caller is not a member of this KB workspace")
 	}
-	// All composes pull from the local 组卷题库 (account-level system bank)
-	// and save the resulting paper there. Linked KBs do not write to exam.
+	// Linked KBs (integration_mode="exam") publish the composed paper back to
+	// exam so it reaches students in the exam frontend: pool is pulled from exam
+	// and the paper is created in exam, both as the teacher (per-user OIDC).
+	// Standalone KBs compose from — and save to — the local 组卷题库 below.
+	if kb.IntegrationMode == "exam" {
+		return e.composePaperLinked(ctx, kb, args, execCtx)
+	}
 	name := strings.TrimSpace(asString(args["name"]))
 	if name == "" {
 		return errResult(errorArgsInvalid, "name is required")
@@ -486,6 +490,158 @@ RETURNING id`, bankID, name, specJSON, seed, idsJSON, markdown, nullableUUID(exe
 	out["saved"] = true
 	out["paper_id"] = paperID.String()
 	return tools.ExecutionResult{ResultJSON: out}
+}
+
+// composePaperLinked composes and publishes a paper for a Linked KB. The pool is
+// pulled from exam and the paper is created in exam, both as the teacher
+// (per-user OIDC), so the result is visible to students in the exam frontend.
+// On confirmed=false it only returns a preview; the paper is created on
+// confirmed=true. Shortages are returned without writing.
+func (e *Executor) composePaperLinked(ctx context.Context, kb kbDescriptor, args map[string]any, execCtx tools.ExecutionContext) tools.ExecutionResult {
+	if e == nil || e.provider == nil {
+		return providerUnavailable("当前课程资料绑定的 exam 暂不可用，无法组卷发布。请稍后重试。")
+	}
+	var userID uuid.UUID
+	if execCtx.UserID != nil {
+		userID = *execCtx.UserID
+	}
+	name := strings.TrimSpace(asString(args["name"]))
+	if name == "" {
+		return errResult(errorArgsInvalid, "name is required")
+	}
+	kpIDs := parseStringSlice(args["knowledge_point_ids"])
+	if len(kpIDs) == 0 {
+		return errResult(errorArgsInvalid, "knowledge_point_ids must be a non-empty array")
+	}
+	if intFromAny(args["total_count"], 0) <= 0 {
+		return errResult(errorArgsInvalid, "total_count must be positive")
+	}
+	scopeID := ""
+	if kb.ExamScopeID != nil {
+		scopeID = strings.TrimSpace(*kb.ExamScopeID)
+	}
+	if scopeID == "" {
+		return errResult(errorArgsInvalid, "linked KB has no bound exam scope")
+	}
+
+	// Pull candidate pool from exam, per knowledge point, as the teacher.
+	scopes := []string{"openid", "exam:read", "exam:write"}
+	poolRaw := make([]map[string]any, 0)
+	for _, kp := range kpIDs {
+		var resp struct {
+			Items []map[string]any `json:"items"`
+		}
+		q := url.Values{}
+		q.Set("knowledge_point_id", kp)
+		q.Set("limit", "200")
+		if err := e.provider.CallExam(ctx, userID, scopes, "GET", "/api/questions?"+q.Encode(), nil, &resp); err != nil {
+			return errResult(errorSearchFailed, "list exam pool: "+err.Error())
+		}
+		poolRaw = append(poolRaw, resp.Items...)
+	}
+
+	ids, rows, shortages := composeFromExamPool(poolRaw, args)
+	if len(shortages) > 0 {
+		return tools.ExecutionResult{ResultJSON: map[string]any{
+			"shortage_warnings": shortages,
+			"pool_size":         len(poolRaw),
+			"question_bank":     "exam",
+			"ui_panel":          shortagePanel(shortages),
+		}}
+	}
+
+	markdown := renderPaperMarkdown(name, rows)
+	confirmed, _ := args["confirmed"].(bool)
+	out := map[string]any{
+		"question_bank":  "exam",
+		"name":           name,
+		"question_ids":   ids,
+		"question_count": len(ids),
+		"markdown":       markdown,
+		"saved":          false,
+		"ui_panel":       paperPreviewPanel(name, rows, markdown, confirmed),
+	}
+	if !confirmed {
+		out["message"] = "已生成试卷预览（来自 exam 题库），老师确认后再次调用并传 confirmed=true 即发布到 exam。"
+		return tools.ExecutionResult{ResultJSON: out}
+	}
+
+	spec := map[string]any{
+		"total_count":                  intFromAny(args["total_count"], 0),
+		"type_distribution":            args["type_distribution"],
+		"difficulty_distribution":      args["difficulty_distribution"],
+		"knowledge_point_distribution": args["knowledge_point_distribution"],
+	}
+	if seed := intFromAny(args["seed"], 0); seed != 0 {
+		spec["seed"] = seed
+	}
+	var paperResp map[string]any
+	if err := e.provider.CallExam(ctx, userID, scopes, "POST", "/api/papers", map[string]any{
+		"name":          name,
+		"exam_scope_id": scopeID,
+		"spec":          spec,
+		"question_ids":  ids,
+	}, &paperResp); err != nil {
+		return errResult(errorSearchFailed, "create exam paper: "+err.Error())
+	}
+	out["saved"] = true
+	out["published_to"] = "exam"
+	out["paper"] = paperResp
+	if id, ok := paperResp["id"]; ok {
+		out["paper_id"] = id
+	}
+	out["message"] = "试卷已发布到 exam，考生可在 exam 前台看到。"
+	return tools.ExecutionResult{ResultJSON: out}
+}
+
+// composeFromExamPool runs the shared composer over exam-shaped question maps and
+// returns the selected question IDs (publish order), display rows for preview/
+// markdown, and any shortage warnings (in which case ids/rows are nil). It is
+// pure (no DB / no network) so the selection logic is unit-testable in isolation.
+func composeFromExamPool(poolRaw []map[string]any, args map[string]any) ([]string, []questionRow, []map[string]any) {
+	byID := make(map[string]map[string]any, len(poolRaw))
+	pcPool := make([]papercompose.Question, 0, len(poolRaw))
+	for _, q := range poolRaw {
+		id := asString(q["id"])
+		byID[id] = q
+		pcPool = append(pcPool, papercompose.Question{
+			ID:               id,
+			Type:             asString(q["type"]),
+			Difficulty:       asString(q["difficulty"]),
+			KnowledgePointID: asString(q["knowledge_point_id"]),
+		})
+	}
+	selected, shortages := papercompose.Compose(pcPool, papercompose.Spec{
+		Total:          intFromAny(args["total_count"], 0),
+		TypeDist:       mapStringInt(args["type_distribution"]),
+		DifficultyDist: mapStringInt(args["difficulty_distribution"]),
+		KPDist:         mapStringInt(args["knowledge_point_distribution"]),
+	}, int64(intFromAny(args["seed"], 0)))
+	if len(shortages) > 0 {
+		return nil, nil, papercompose.ShortagesToMaps(shortages)
+	}
+	ids := make([]string, 0, len(selected))
+	rows := make([]questionRow, 0, len(selected))
+	for _, q := range selected {
+		ids = append(ids, q.ID)
+		rows = append(rows, examQuestionToRow(byID[q.ID]))
+	}
+	return ids, rows, nil
+}
+
+// examQuestionToRow adapts an exam question JSON map to the local questionRow
+// shape used by the markdown / preview renderers. ID is left zero (unused by
+// renderers); options are re-marshalled into OptionsJSON.
+func examQuestionToRow(q map[string]any) questionRow {
+	opts, _ := json.Marshal(q["options"])
+	return questionRow{
+		Type:        asString(q["type"]),
+		Difficulty:  asString(q["difficulty"]),
+		Stem:        asString(q["stem"]),
+		OptionsJSON: opts,
+		Answer:      asString(q["answer"]),
+		Explanation: asString(q["explanation"]),
+	}
 }
 
 func (e *Executor) executeProviderListKnowledgePoints(ctx context.Context, kb kbDescriptor, execCtx tools.ExecutionContext) tools.ExecutionResult {
@@ -792,28 +948,38 @@ ORDER  BY created_at DESC, id ASC`, bankID, kpIDs)
 	return out, rows.Err()
 }
 
+// selectQuestions composes a paper from the local 组卷题库 pool. It delegates the
+// distribution-constrained selection to the shared papercompose package (the same
+// composer the exam path uses) and maps the storage-agnostic result back to
+// questionRow, preserving the legacy []map[string]any shortage-warning shape that
+// the UI panels consume.
 func selectQuestions(pool []questionRow, total int, typeDist, difficultyDist, kpDist map[string]int, seed int64) ([]questionRow, []map[string]any) {
-	sort.Slice(pool, func(i, j int) bool { return pool[i].ID.String() < pool[j].ID.String() })
-	if seed != 0 {
-		r := rand.New(rand.NewSource(seed))
-		r.Shuffle(len(pool), func(i, j int) { pool[i], pool[j] = pool[j], pool[i] })
+	byID := make(map[string]questionRow, len(pool))
+	pcPool := make([]papercompose.Question, 0, len(pool))
+	for _, q := range pool {
+		id := q.ID.String()
+		byID[id] = q
+		pcPool = append(pcPool, papercompose.Question{
+			ID:               id,
+			Type:             q.Type,
+			Difficulty:       q.Difficulty,
+			KnowledgePointID: questionRowKnowledgePointID(q),
+		})
 	}
-	warnings := validateDistributions(total, distributionSet{
-		{Key: "type", Message: "题型题量不足", Requested: typeDist, Available: countQuestionRows(pool, func(q questionRow) string { return q.Type })},
-		{Key: "difficulty", Message: "难度题量不足", Requested: difficultyDist, Available: countQuestionRows(pool, func(q questionRow) string { return q.Difficulty })},
-		{Key: "knowledge_point_id", Message: "知识点题量不足", Requested: kpDist, Available: countQuestionRows(pool, questionRowKnowledgePointID)},
-	})
-	if len(warnings) > 0 {
-		return nil, warnings
+	selected, shortages := papercompose.Compose(pcPool, papercompose.Spec{
+		Total:          total,
+		TypeDist:       typeDist,
+		DifficultyDist: difficultyDist,
+		KPDist:         kpDist,
+	}, seed)
+	if len(shortages) > 0 {
+		return nil, papercompose.ShortagesToMaps(shortages)
 	}
-	if len(pool) < total {
-		return nil, []map[string]any{{"available": len(pool), "requested": total, "message": "题池题量不足"}}
+	rows := make([]questionRow, 0, len(selected))
+	for _, q := range selected {
+		rows = append(rows, byID[q.ID])
 	}
-	selected := greedySelectQuestionRows(pool, total, typeDist, difficultyDist, kpDist)
-	if warnings := unmetDistributionWarnings(selected, typeDist, difficultyDist, kpDist); len(warnings) > 0 {
-		return nil, warnings
-	}
-	return selected, nil
+	return rows, nil
 }
 
 func renderPaperMarkdown(name string, questions []questionRow) string {
@@ -838,96 +1004,6 @@ func renderPaperMarkdown(name string, questions []questionRow) string {
 		}
 	}
 	return b.String()
-}
-
-type distributionSpec struct {
-	Key       string
-	Message   string
-	Requested map[string]int
-	Available map[string]int
-}
-
-type distributionSet []distributionSpec
-
-func validateDistributions(total int, specs distributionSet) []map[string]any {
-	var warnings []map[string]any
-	for _, spec := range specs {
-		if sumPositive(spec.Requested) > total {
-			warnings = append(warnings, map[string]any{
-				spec.Key:    "all",
-				"requested": sumPositive(spec.Requested),
-				"available": total,
-				"message":   "约束题量超过试卷总题数",
-			})
-			continue
-		}
-		for value, requested := range spec.Requested {
-			if requested <= 0 {
-				continue
-			}
-			available := spec.Available[value]
-			if available < requested {
-				warnings = append(warnings, map[string]any{
-					spec.Key:    value,
-					"available": available,
-					"requested": requested,
-					"message":   spec.Message,
-				})
-			}
-		}
-	}
-	return warnings
-}
-
-func greedySelectQuestionRows(pool []questionRow, total int, typeDist, difficultyDist, kpDist map[string]int) []questionRow {
-	remainingType := copyIntMap(typeDist)
-	remainingDifficulty := copyIntMap(difficultyDist)
-	remainingKP := copyIntMap(kpDist)
-	selected := make([]questionRow, 0, total)
-	used := map[string]bool{}
-	for len(selected) < total {
-		bestIndex := -1
-		bestScore := -1
-		for i, q := range pool {
-			id := q.ID.String()
-			if used[id] {
-				continue
-			}
-			score := unmetScore(q.Type, remainingType) + unmetScore(q.Difficulty, remainingDifficulty) + unmetScore(questionRowKnowledgePointID(q), remainingKP)
-			if score > bestScore {
-				bestScore = score
-				bestIndex = i
-			}
-		}
-		if bestIndex < 0 {
-			break
-		}
-		q := pool[bestIndex]
-		selected = append(selected, q)
-		used[q.ID.String()] = true
-		decrementIfNeeded(remainingType, q.Type)
-		decrementIfNeeded(remainingDifficulty, q.Difficulty)
-		decrementIfNeeded(remainingKP, questionRowKnowledgePointID(q))
-	}
-	return selected
-}
-
-func unmetDistributionWarnings(selected []questionRow, typeDist, difficultyDist, kpDist map[string]int) []map[string]any {
-	return validateDistributions(len(selected), distributionSet{
-		{Key: "type", Message: "题型约束无法同时满足", Requested: typeDist, Available: countQuestionRows(selected, func(q questionRow) string { return q.Type })},
-		{Key: "difficulty", Message: "难度约束无法同时满足", Requested: difficultyDist, Available: countQuestionRows(selected, func(q questionRow) string { return q.Difficulty })},
-		{Key: "knowledge_point_id", Message: "知识点约束无法同时满足", Requested: kpDist, Available: countQuestionRows(selected, questionRowKnowledgePointID)},
-	})
-}
-
-func countQuestionRows(pool []questionRow, attr func(questionRow) string) map[string]int {
-	out := map[string]int{}
-	for _, q := range pool {
-		if value := strings.TrimSpace(attr(q)); value != "" {
-			out[value]++
-		}
-	}
-	return out
 }
 
 func questionRowKnowledgePointID(q questionRow) string {
@@ -1127,41 +1203,6 @@ func providerQuestionLabel(kpID string, refs []map[string]any) string {
 		}
 	}
 	return kpID
-}
-
-
-func copyIntMap(in map[string]int) map[string]int {
-	out := map[string]int{}
-	for k, v := range in {
-		if strings.TrimSpace(k) != "" && v > 0 {
-			out[k] = v
-		}
-	}
-	return out
-}
-
-func sumPositive(in map[string]int) int {
-	total := 0
-	for _, v := range in {
-		if v > 0 {
-			total += v
-		}
-	}
-	return total
-}
-
-func unmetScore(value string, remaining map[string]int) int {
-	if remaining[strings.TrimSpace(value)] > 0 {
-		return 1
-	}
-	return 0
-}
-
-func decrementIfNeeded(remaining map[string]int, value string) {
-	value = strings.TrimSpace(value)
-	if remaining[value] > 0 {
-		remaining[value]--
-	}
 }
 
 func parseUUIDSlice(v any) ([]uuid.UUID, error) {

@@ -527,6 +527,36 @@ var registry = []ToolMeta{
 			"Do not mention raw storage paths. Do not invent artifact keys. " +
 			"If the tool fails, explain the failure plainly instead of pretending the image exists.",
 	},
+	{
+		Name:      "video_generate",
+		Group:     GroupDocument,
+		Label:     "Generate video",
+		ShortDesc: "generate a short video clip (mp4) from a text prompt and optional first-frame image",
+		LLMDescription: "generate a short video clip (mp4) from a text prompt using the configured video model (e.g. Doubao Seedance) and save it as an artifact. " +
+			"Optionally provide a first_frame artifact reference to drive image-to-video — the model will animate from that image. " +
+			"Common options: duration_seconds (3-10, default 5), resolution (\"480p\" / \"720p\", default 480p), model_selector, artifact_name. " +
+			"This tool is asynchronous: it submits a generation task to the provider and polls until completion (typically 10-60 seconds). " +
+			"After success, render the result with Markdown video syntax or a download link to artifact:<key>. " +
+			"Do not invent artifact keys or pretend the video exists when the tool fails.",
+	},
+	{
+		Name:      "frame_extract",
+		Group:     GroupDocument,
+		Label:     "Extract video frame",
+		ShortDesc: "extract a single PNG frame from a video artifact (default last frame) used to chain shot continuity",
+		LLMDescription: "extract a single PNG frame from an mp4 video artifact. Defaults to the last frame; pass at=\"first\" or at_seconds=<float> to pick another position. Returns an image artifact whose key can be fed back into video_generate as first_frame to make two video clips visually continuous. " +
+			"After success, reference the artifact key directly rather than inventing one.",
+	},
+	{
+		Name:      "video_concat",
+		Group:     GroupDocument,
+		Label:     "Concat videos",
+		ShortDesc: "concatenate multiple mp4 artifacts in order into a single mp4 using ffmpeg",
+		LLMDescription: "concatenate multiple mp4 video artifacts (in given order) into one final mp4 using ffmpeg, save as a new artifact. " +
+			"Inputs is an array of artifact references (\"artifact:<key>\"). Default uses stream-copy (fast); pass reencode=true for re-encoding when clips have mixed codecs/resolutions. " +
+			"Use after generating per-shot videos to produce a single playable / downloadable film. " +
+			"After success, render with Markdown video syntax or a download link to artifact:<key>.",
+	},
 	// ── orchestration ──
 	{
 		Name:      "spawn_agent",

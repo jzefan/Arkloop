@@ -277,6 +277,11 @@ func (c *HTTPClient) sendHTTP(ctx context.Context, encoded []byte, timeoutMs int
 		}
 		req.Header.Set(key, value)
 	}
+	// Per-call auth override (per-user MCP): overrides any static Authorization
+	// header for this single request only.
+	if override, ok := authOverrideFromContext(ctx); ok {
+		req.Header.Set("Authorization", "Bearer "+override)
+	}
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {

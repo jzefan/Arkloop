@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"os"
 	"os/signal"
 	"strconv"
 	"strings"
@@ -196,6 +197,7 @@ func (a *Application) Run(ctx context.Context) error {
 		ipFilter *ipfilter.Filter
 		rdb      *goredis.Client
 	)
+	rateLimitDisabled := strings.EqualFold(strings.TrimSpace(os.Getenv("ARKLOOP_RATELIMIT_DISABLED")), "true")
 	if strings.TrimSpace(a.config.RedisURL) != "" {
 		var redisErr error
 		rdb, redisErr = sharedredis.NewClient(ctx, a.config.RedisURL)
@@ -207,18 +209,22 @@ func (a *Application) Run(ctx context.Context) error {
 		// 启动时加载动态配置
 		a.loadDynamicConfig(ctx, rdb)
 
-		bucket, err := ratelimit.NewTokenBucketWithProvider(rdb, a.config.RateLimit, a.effectiveRateLimit)
-		if err != nil {
-			return fmt.Errorf("ratelimit: %w", err)
-		}
-		limiter = bucket
-		ipFilter = ipfilter.NewFilter(rdb, a.config.RedisTimeout, []byte(a.config.JWTSecret))
+		if rateLimitDisabled {
+			a.logger.Info("ratelimit disabled via ARKLOOP_RATELIMIT_DISABLED=true")
+		} else {
+			bucket, err := ratelimit.NewTokenBucketWithProvider(rdb, a.config.RateLimit, a.effectiveRateLimit)
+			if err != nil {
+				return fmt.Errorf("ratelimit: %w", err)
+			}
+			limiter = bucket
 
-		effectiveRL := a.effectiveRateLimit()
-		a.logger.Info("ratelimit enabled",
-			"capacity", effectiveRL.Capacity,
-			"rate_per_minute", effectiveRL.RatePerMinute,
-		)
+			effectiveRL := a.effectiveRateLimit()
+			a.logger.Info("ratelimit enabled",
+				"capacity", effectiveRL.Capacity,
+				"rate_per_minute", effectiveRL.RatePerMinute,
+			)
+		}
+		ipFilter = ipfilter.NewFilter(rdb, a.config.RedisTimeout, []byte(a.config.JWTSecret))
 		a.logger.Info("ipfilter enabled")
 
 		// 后台 30s 轮询动态配置

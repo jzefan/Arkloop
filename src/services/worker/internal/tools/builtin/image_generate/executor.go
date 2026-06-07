@@ -40,12 +40,14 @@ func NewToolExecutor(
 	config sharedconfig.Resolver,
 	routingLoader *routing.ConfigLoader,
 ) *ToolExecutor {
+	// 不在此处预设 generate —— Execute 时按 resolved.Transport.BaseURL 决定走
+	// ArkLoop OpenAI SDK 还是 OpenRouter chat-completions 路径。测试 stub 仍可
+	// 通过赋值 e.generate 覆盖此判定。
 	return &ToolExecutor{
 		store:         store,
 		db:            db,
 		config:        config,
 		routingLoader: routingLoader,
-		generate:      llm.GenerateImageWithResolvedConfig,
 	}
 }
 
@@ -68,11 +70,12 @@ func (e *ToolExecutor) Execute(
 	if prompt == "" {
 		return errResult("tool.args_invalid", "parameter prompt is required", started)
 	}
-	inputImages, err := e.loadInputImages(ctx, args, *execCtx.AccountID)
+	inputImages, err := e.loadInputImages(ctx, args, execCtx)
 	if err != nil {
 		return errResult("tool.args_invalid", err.Error(), started)
 	}
-	selected, err := e.resolveSelectedRoute(ctx, *execCtx.AccountID)
+	explicitSelector := strings.TrimSpace(stringArg(args, "model_selector"))
+	selected, err := e.resolveSelectedRoute(ctx, *execCtx.AccountID, explicitSelector)
 	if err != nil {
 		return errResult("tool.not_configured", err.Error(), started)
 	}
@@ -93,9 +96,20 @@ func (e *ToolExecutor) Execute(
 		return errResult("tool.execution_failed", fmt.Sprintf("resolve image model failed: %s", err.Error()), started)
 	}
 
+	// OpenRouter short circuit：OpenRouter 不支持 OpenAI 原生 /v1/images/generations，
+	// 它的图像模型通过 /v1/chat/completions + modalities=["image","text"] 出图，
+	// 把图片放在 message.images[] 里返回。这里绕过 ArkLoop 的 OpenAI SDK 路径，
+	// 直接 POST chat completions 提取图像。判定靠 base_url 含 "openrouter.ai"。
+	//
+	// e.generate 默认为 nil（仅测试 stub 会赋值覆盖整个 generator 决策）；生产路径
+	// 进入此处时按 resolved.Transport.BaseURL 分流到 OpenRouter 或 OpenAI SDK。
 	generator := e.generate
 	if generator == nil {
-		generator = llm.GenerateImageWithResolvedConfig
+		if isOpenRouterConfig(resolved) {
+			generator = generateImageViaOpenRouterChat
+		} else {
+			generator = llm.GenerateImageWithResolvedConfig
+		}
 	}
 	image, err := generator(ctx, resolved, request)
 	if err != nil {
@@ -106,7 +120,11 @@ func (e *ToolExecutor) Execute(
 	}
 
 	contentType := normalizeImageContentType(image.MimeType, image.Bytes)
-	filename := defaultGeneratedImageName + fileExtForContentType(contentType)
+	artifactBase := sanitizeArtifactName(strings.TrimSpace(stringArg(args, "artifact_name")))
+	if artifactBase == "" {
+		artifactBase = defaultGeneratedImageName
+	}
+	filename := artifactBase + fileExtForContentType(contentType)
 	key := buildArtifactKey(execCtx, filename)
 	var threadID *string
 	if execCtx.ThreadID != nil {
@@ -132,7 +150,7 @@ func (e *ToolExecutor) Execute(
 				"filename":  filename,
 				"size":      len(image.Bytes),
 				"mime_type": contentType,
-				"title":     defaultGeneratedImageName,
+				"title":     artifactBase,
 				"display":   "inline",
 			},
 		},
@@ -151,16 +169,57 @@ func (e *ToolExecutor) IsAvailableForAccount(ctx context.Context, accountID uuid
 	if accountID == uuid.Nil {
 		return false
 	}
-	_, err := e.resolveSelectedRoute(ctx, accountID)
-	return err == nil
+	// 首选路径：账户级 / 系统级配过 image_generative.model selector。
+	if _, err := e.resolveSelectedRoute(ctx, accountID, ""); err == nil {
+		return true
+	}
+	// Fallback：即使没有 image_generative.model 默认配置，只要账户能解析到
+	// 至少一条 image-output route，也允许把 image_generate 工具暴露给 persona。
+	// 实际调用时 persona（例如 yuhua-stone-director）会通过 model_selector
+	// 参数显式指定具体模型，无需依赖账户默认。
+	//
+	// 这避免一个常见的部署陷阱：管理员注入了 OpenRouter / qwen-image 等图像 route
+	// 但忘记设 entitlement override，导致 image_generate 在 allowlist 阶段就被
+	// 过滤、调用时报 "tool not in allowlist"。
+	if e.routingLoader == nil {
+		return false
+	}
+	cfg, err := e.routingLoader.Load(ctx, &accountID)
+	if err != nil || len(cfg.Routes) == 0 {
+		return false
+	}
+	for _, route := range cfg.Routes {
+		caps := routing.RouteModelCapabilities(route)
+		if caps.SupportsOutputModality("image") {
+			return true
+		}
+	}
+	return false
 }
 
-func (e *ToolExecutor) resolveSelectedRoute(ctx context.Context, accountID uuid.UUID) (*routing.SelectedProviderRoute, error) {
+// IsAvailableForModelSelector verifies an explicit selector resolves to a route under the
+// given account. Returns nil when the route is reachable, or an error describing why not.
+// Callers (e.g. the yuhua-stone director persona) use this for pre-flight checks before
+// kicking off long-running pipelines so users see configuration errors immediately
+// instead of mid-run.
+func (e *ToolExecutor) IsAvailableForModelSelector(ctx context.Context, accountID uuid.UUID, selector string) error {
+	if accountID == uuid.Nil {
+		return fmt.Errorf("account context is required")
+	}
+	selector = strings.TrimSpace(selector)
+	if selector == "" {
+		return fmt.Errorf("model selector must not be empty")
+	}
+	_, err := e.resolveSelectedRoute(ctx, accountID, selector)
+	return err
+}
+
+func (e *ToolExecutor) resolveSelectedRoute(ctx context.Context, accountID uuid.UUID, explicitSelector string) (*routing.SelectedProviderRoute, error) {
 	if e.routingLoader == nil {
 		return nil, fmt.Errorf("image generation routing is not configured")
 	}
-	selector := ""
-	if e.db != nil {
+	selector := strings.TrimSpace(explicitSelector)
+	if selector == "" && e.db != nil {
 		_ = e.db.QueryRow(ctx,
 			`SELECT value FROM account_entitlement_overrides
 			  WHERE account_id = $1 AND key = $2
@@ -168,8 +227,8 @@ func (e *ToolExecutor) resolveSelectedRoute(ctx context.Context, accountID uuid.
 			  LIMIT 1`,
 			accountID, imageGenerateConfigKey,
 		).Scan(&selector)
+		selector = strings.TrimSpace(selector)
 	}
-	selector = strings.TrimSpace(selector)
 	if selector == "" && e.config != nil {
 		if value, err := e.config.Resolve(ctx, imageGenerateConfigKey, sharedconfig.Scope{}); err == nil {
 			selector = strings.TrimSpace(value)
@@ -217,6 +276,33 @@ func splitModelSelector(selector string) (string, string, bool) {
 	return credentialName, modelName, true
 }
 
+// sanitizeArtifactName strips path separators and disallowed characters to keep the
+// generated artifact filename safe for object storage keys. Empty input returns
+// empty so the caller can fall back to the default name.
+func sanitizeArtifactName(raw string) string {
+	if raw == "" {
+		return ""
+	}
+	var b strings.Builder
+	b.Grow(len(raw))
+	for _, r := range raw {
+		switch {
+		case r >= 'a' && r <= 'z',
+			r >= 'A' && r <= 'Z',
+			r >= '0' && r <= '9',
+			r == '-' || r == '_':
+			b.WriteRune(r)
+		case r == ' ' || r == '.':
+			b.WriteByte('_')
+		}
+	}
+	cleaned := strings.Trim(b.String(), "-_")
+	if len(cleaned) > 80 {
+		cleaned = cleaned[:80]
+	}
+	return cleaned
+}
+
 func buildArtifactKey(execCtx tools.ExecutionContext, filename string) string {
 	accountID := "_anonymous"
 	if execCtx.AccountID != nil {
@@ -225,9 +311,16 @@ func buildArtifactKey(execCtx tools.ExecutionContext, filename string) string {
 	return filepath.ToSlash(fmt.Sprintf("%s/%s/%s", accountID, execCtx.RunID.String(), filename))
 }
 
-func (e *ToolExecutor) loadInputImages(ctx context.Context, args map[string]any, accountID uuid.UUID) ([]llm.ContentPart, error) {
+type inputImageMessageProvider interface {
+	ReadToolMessages() []llm.Message
+}
+
+func (e *ToolExecutor) loadInputImages(ctx context.Context, args map[string]any, execCtx tools.ExecutionContext) ([]llm.ContentPart, error) {
 	if e == nil || e.store == nil || args == nil {
 		return nil, nil
+	}
+	if execCtx.AccountID == nil {
+		return nil, fmt.Errorf("account context is required")
 	}
 	rawValues, ok := args["input_images"]
 	if !ok || rawValues == nil {
@@ -247,7 +340,15 @@ func (e *ToolExecutor) loadInputImages(ctx context.Context, args map[string]any,
 		if key == "" {
 			return nil, fmt.Errorf("input_images[%d] is empty", idx)
 		}
-		if !artifactKeyMatchesAccount(key, accountID) {
+		if attachmentKey, ok := normalizeAttachmentRef(raw); ok {
+			part, err := inputImageFromMessageAttachment(execCtx.PipelineRC, attachmentKey)
+			if err != nil {
+				return nil, fmt.Errorf("input_images[%d] %s", idx, err.Error())
+			}
+			parts = append(parts, part)
+			continue
+		}
+		if !artifactKeyMatchesAccount(key, *execCtx.AccountID) {
 			return nil, fmt.Errorf("input_images[%d] is outside the current account", idx)
 		}
 		data, contentType, err := e.store.GetWithContentType(ctx, key)
@@ -280,6 +381,48 @@ func normalizeArtifactRef(value string) string {
 		return strings.TrimSpace(strings.TrimPrefix(trimmed, "artifact:"))
 	}
 	return trimmed
+}
+
+func normalizeAttachmentRef(value string) (string, bool) {
+	trimmed := strings.TrimSpace(value)
+	if !strings.HasPrefix(trimmed, "attachment:") {
+		return "", false
+	}
+	return strings.TrimSpace(strings.TrimPrefix(trimmed, "attachment:")), true
+}
+
+func inputImageFromMessageAttachment(pipelineRC any, key string) (llm.ContentPart, error) {
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return llm.ContentPart{}, fmt.Errorf("is empty")
+	}
+	provider, ok := pipelineRC.(inputImageMessageProvider)
+	if !ok || provider == nil {
+		return llm.ContentPart{}, fmt.Errorf("message attachment is unavailable")
+	}
+	for _, msg := range provider.ReadToolMessages() {
+		for _, part := range msg.Content {
+			if part.Kind() != messagecontent.PartTypeImage || part.Attachment == nil {
+				continue
+			}
+			if strings.TrimSpace(part.Attachment.Key) != key {
+				continue
+			}
+			if len(part.Data) == 0 {
+				return llm.ContentPart{}, fmt.Errorf("message attachment image data is empty")
+			}
+			contentType := normalizeImageContentType(part.Attachment.MimeType, part.Data)
+			attachment := *part.Attachment
+			attachment.MimeType = contentType
+			attachment.Size = int64(len(part.Data))
+			return llm.ContentPart{
+				Type:       messagecontent.PartTypeImage,
+				Attachment: &attachment,
+				Data:       append([]byte(nil), part.Data...),
+			}, nil
+		}
+	}
+	return llm.ContentPart{}, fmt.Errorf("message attachment not found")
 }
 
 func artifactKeyMatchesAccount(key string, accountID uuid.UUID) bool {

@@ -47,6 +47,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     tesseract-ocr \
     tesseract-ocr-chi-sim \
     && rm -rf /var/lib/apt/lists/*
+
 RUN pip3 install --no-cache-dir --break-system-packages \
     PyMuPDF pdfplumber python-docx pytesseract
 
@@ -79,4 +80,18 @@ COPY --from=builder /workspace/src/personas /usr/local/share/arkloop/personas
 COPY --from=builder /workspace/src/services/shared/bookparser/sandbox /usr/local/share/arkloop/bookparser
 ENV ARKLOOP_PERSONAS_ROOT=/usr/local/share/arkloop/personas
 ENV ARKLOOP_BOOKPARSER_RUNNER=/usr/local/share/arkloop/bookparser/bookparser_runner.py
+
+# ffmpeg 用于 video_concat 工具（合并多段 mp4 为完整短片）。
+# 走 PyPI 的 imageio-ffmpeg —— 它打包了 johnvansickle 的 static 二进制
+# （linux x86_64 + aarch64 都有），用清华 PyPI 镜像下载稳定可达，比走 apt
+# 命中 debian-security 国内慢/超时 + 比直接拉 johnvansickle 站点更可靠。
+# 放在 Dockerfile 末尾避免 cache invalidation 触发上面 chromium/apt 步骤重跑。
+# 失败时打 warning 但不阻塞 build——video_concat 缺时运行期返回
+# tool.not_configured，不影响主流水线生成单镜视频。
+RUN pip3 install --no-cache-dir --break-system-packages \
+        -i https://pypi.tuna.tsinghua.edu.cn/simple imageio-ffmpeg && \
+    ln -sf "$(python3 -c 'import imageio_ffmpeg; print(imageio_ffmpeg.get_ffmpeg_exe())')" /usr/local/bin/ffmpeg && \
+    ffmpeg -version | head -1 \
+    || echo "WARNING: imageio-ffmpeg install failed; video_concat will return tool.not_configured at runtime"
+
 ENTRYPOINT ["worker"]

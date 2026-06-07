@@ -29,6 +29,11 @@ import (
 // 每个 Execute 调用创建独立 LState，无共享状态，无需加锁。
 type LuaExecutor struct {
 	script string
+	// extras 保留 executor_config 中除 script 之外的所有字段（含通过 loader 的
+	// <X>_file 机制加载进来的数据，例如 school_names / styles）。Execute
+	// 时这些键会被合并到 rc.InputJSON，从而通过 context.get("<X>") 暴露给脚本。
+	// 不覆盖 InputJSON 里已有的同名键 —— 运行时输入优先于 persona 静态配置。
+	extras map[string]any
 }
 
 // NewLuaExecutor 是 "agent.lua" 的工厂函数。
@@ -38,7 +43,14 @@ func NewLuaExecutor(config map[string]any) (pipeline.AgentExecutor, error) {
 	if err != nil {
 		return nil, fmt.Errorf("executor_config.script: %w", err)
 	}
-	return &LuaExecutor{script: script}, nil
+	extras := make(map[string]any, len(config))
+	for key, value := range config {
+		if key == "script" {
+			continue
+		}
+		extras[key] = value
+	}
+	return &LuaExecutor{script: script, extras: extras}, nil
 }
 
 func (e *LuaExecutor) Execute(
@@ -59,6 +71,20 @@ func (e *LuaExecutor) Execute(
 	// 与 w.callbackID 兜底逻辑），thread 立刻释放，用户可以继续提问。
 	if rc != nil && isSubAgentCallbackRun(rc.InputJSON) {
 		return yield(emitter.Emit("run.completed", map[string]any{}, nil, nil))
+	}
+
+	// 把 executor_config 的剩余字段合并到 rc.InputJSON，让 context.get("<X>")
+	// 看到 persona 静态配置（如 school_names、styles）。运行时输入优先级
+	// 更高，所以只在键不存在时填入。
+	if rc != nil && len(e.extras) > 0 {
+		if rc.InputJSON == nil {
+			rc.InputJSON = make(map[string]any, len(e.extras))
+		}
+		for key, value := range e.extras {
+			if _, exists := rc.InputJSON[key]; !exists {
+				rc.InputJSON[key] = value
+			}
+		}
 	}
 
 	L := lua.NewState(lua.Options{SkipOpenLibs: true})
@@ -662,6 +688,7 @@ func (rt *luaRuntime) toolsCall(L *lua.LState) int {
 		RuntimeSnapshot:                  rt.rc.Runtime,
 		PromptCacheSnapshot:              promptCacheSnapshotFromRunContext(rt.rc, rt.rc.Messages),
 		Channel:                          rt.rc.ChannelToolSurface,
+		PipelineRC:                       rt.rc,
 		StreamEvent:                      func(ev events.RunEvent) error { return rt.yield(ev) },
 	}
 	result := rt.rc.ToolExecutor.Execute(rt.ctx, toolName, args, execCtx, "")
@@ -787,6 +814,45 @@ func (rt *luaRuntime) contextGet(L *lua.LState) int {
 			msgs = append(msgs, map[string]any{"role": m.Role, "content": text})
 		}
 		encoded, err := json.Marshal(msgs)
+		if err != nil {
+			L.Push(lua.LNil)
+			return 1
+		}
+		L.Push(lua.LString(string(encoded)))
+		return 1
+	case "user_attachments":
+		// Returns a JSON array of image attachments from the most-recent user
+		// message, each entry: {key, filename, mime_type, size}. Used by
+		// yuhua-stone-director to anchor the user-uploaded stone through every
+		// downstream image_generate call (CRS + shots) so the visual subject is
+		// the actual uploaded image, not a model's reinterpretation.
+		out := []map[string]any{}
+		for i := len(rt.rc.Messages) - 1; i >= 0; i-- {
+			m := rt.rc.Messages[i]
+			if strings.ToLower(strings.TrimSpace(m.Role)) != "user" {
+				continue
+			}
+			found := false
+			for _, p := range m.Content {
+				if p.Attachment == nil {
+					continue
+				}
+				if strings.HasPrefix(strings.ToLower(p.Attachment.MimeType), "image/") {
+					entry := map[string]any{
+						"key":       p.Attachment.Key,
+						"filename":  p.Attachment.Filename,
+						"mime_type": p.Attachment.MimeType,
+						"size":      p.Attachment.Size,
+					}
+					out = append(out, entry)
+					found = true
+				}
+			}
+			if found {
+				break // only the latest user message with images
+			}
+		}
+		encoded, err := json.Marshal(out)
 		if err != nil {
 			L.Push(lua.LNil)
 			return 1
@@ -2205,6 +2271,7 @@ func (rt *luaRuntime) toolsCallParallel(L *lua.LState) int {
 				RuntimeSnapshot:                  rt.rc.Runtime,
 				PromptCacheSnapshot:              promptCacheSnapshotFromRunContext(rt.rc, rt.rc.Messages),
 				Channel:                          rt.rc.ChannelToolSurface,
+				PipelineRC:                       rt.rc,
 				StreamEvent: func(ev events.RunEvent) error {
 					return rt.yield(ev)
 				},

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"arkloop/services/shared/papercompose"
 	"arkloop/services/worker/internal/tools"
 
 	"github.com/google/uuid"
@@ -287,18 +288,12 @@ func (e *BuilderExecutor) buildPaper(
 	if tc, ok2 := args["total_count"].(float64); ok2 && tc > 0 {
 		totalCount = int(tc)
 	}
-
-	// Build spec
-	spec := map[string]any{
-		"total_count":             totalCount,
-		"type_distribution":       args["type_distribution"],
-		"difficulty_distribution": args["difficulty_distribution"],
-	}
-	if seed, ok2 := args["seed"].(float64); ok2 {
-		spec["seed"] = int64(seed)
+	var seed int64
+	if s, ok2 := args["seed"].(float64); ok2 {
+		seed = int64(s)
 	}
 
-	// First: list questions from pool
+	// First: list candidate questions from the exam pool, per knowledge point.
 	scopes := []string{"openid", "exam:read", "exam:write"}
 	poolQuestions := make([]map[string]any, 0)
 	for _, kpID := range kpIDs {
@@ -312,23 +307,43 @@ func (e *BuilderExecutor) buildPaper(
 		poolQuestions = append(poolQuestions, resp.Items...)
 	}
 
-	if len(poolQuestions) < totalCount {
+	// Compose with the shared composer so the exam path honours type/difficulty
+	// distribution + seed (and reports structured shortages) exactly like the kb path.
+	pcPool := make([]papercompose.Question, 0, len(poolQuestions))
+	for _, q := range poolQuestions {
+		pcPool = append(pcPool, papercompose.Question{
+			ID:               asStr(q["id"]),
+			Type:             asStr(q["type"]),
+			Difficulty:       asStr(q["difficulty"]),
+			KnowledgePointID: asStr(q["knowledge_point_id"]),
+		})
+	}
+	selected, shortages := papercompose.Compose(pcPool, papercompose.Spec{
+		Total:          totalCount,
+		TypeDist:       argDistribution(args["type_distribution"]),
+		DifficultyDist: argDistribution(args["difficulty_distribution"]),
+		KPDist:         argDistribution(args["knowledge_point_distribution"]),
+	}, seed)
+	if len(shortages) > 0 {
 		return ok(map[string]any{
-			"shortage_warnings": []map[string]any{{
-				"message":   "题池不足",
-				"available": len(poolQuestions),
-				"requested": totalCount,
-			}},
-			"pool_size": len(poolQuestions),
+			"shortage_warnings": papercompose.ShortagesToMaps(shortages),
+			"pool_size":         len(pcPool),
 		}, started)
 	}
+	questionIDs := make([]string, 0, len(selected))
+	for _, q := range selected {
+		questionIDs = append(questionIDs, q.ID)
+	}
 
-	// Simple selection: take first totalCount questions (real impl would use papercompose)
-	questionIDs := make([]string, 0, totalCount)
-	for i := 0; i < totalCount && i < len(poolQuestions); i++ {
-		if id, ok2 := poolQuestions[i]["id"].(string); ok2 {
-			questionIDs = append(questionIDs, id)
-		}
+	// Persist the chosen spec (so the exam side can reproduce/audit the paper).
+	spec := map[string]any{
+		"total_count":                  totalCount,
+		"type_distribution":            args["type_distribution"],
+		"difficulty_distribution":      args["difficulty_distribution"],
+		"knowledge_point_distribution": args["knowledge_point_distribution"],
+	}
+	if seed != 0 {
+		spec["seed"] = seed
 	}
 
 	// Save paper
@@ -346,6 +361,35 @@ func (e *BuilderExecutor) buildPaper(
 		"paper":          paperResp,
 		"question_count": len(questionIDs),
 	}, started)
+}
+
+// asStr reads a string field from a decoded JSON map, tolerating missing/non-string values.
+func asStr(v any) string {
+	s, _ := v.(string)
+	return s
+}
+
+// argDistribution converts an LLM-supplied {value: count} object (JSON numbers
+// decode to float64) into a map[string]int, dropping non-positive entries.
+func argDistribution(v any) map[string]int {
+	out := map[string]int{}
+	m, ok := v.(map[string]any)
+	if !ok {
+		return out
+	}
+	for k, raw := range m {
+		switch n := raw.(type) {
+		case float64:
+			if n > 0 {
+				out[k] = int(n)
+			}
+		case int:
+			if n > 0 {
+				out[k] = n
+			}
+		}
+	}
+	return out
 }
 
 // ─── helpers ───────────────────────────────────────────────────────────

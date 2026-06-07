@@ -406,7 +406,7 @@ func ComposeDesktopEngine(ctx context.Context, db data.DesktopDB, bus eventbus.E
 		return nil, fmt.Errorf("register desktop artifact tools: %w", err)
 	}
 	if artifactToolsRegistered {
-		slog.InfoContext(ctx, "desktop: stored artifact tools registered", "tools", []string{"create_artifact", "document_write", "markdown_to_pdf", "image_generate"})
+		slog.InfoContext(ctx, "desktop: stored artifact tools registered", "tools", []string{"create_artifact", "document_write", "markdown_to_pdf", "image_generate", "video_generate", "video_concat", "frame_extract"})
 	}
 	if lspManager != nil {
 		allLlmSpecs = append(allLlmSpecs, lsp.LSPToolLLMSpec)

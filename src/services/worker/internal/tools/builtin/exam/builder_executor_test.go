@@ -207,6 +207,163 @@ func TestSaveQuestions_NoExpectedTag_PassThrough(t *testing.T) {
 	}
 }
 
+func TestBuildPaper_HonorsDistribution(t *testing.T) {
+	pool := []map[string]any{
+		{"id": "sc-1", "type": "single_choice", "difficulty": "easy", "knowledge_point_id": "kp-1"},
+		{"id": "sc-2", "type": "single_choice", "difficulty": "medium", "knowledge_point_id": "kp-1"},
+		{"id": "fi-1", "type": "fill_in", "difficulty": "easy", "knowledge_point_id": "kp-1"},
+		{"id": "fi-2", "type": "fill_in", "difficulty": "medium", "knowledge_point_id": "kp-1"},
+	}
+	var posted []string
+	paperCalls := 0
+	srv := minimalExam(t, func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == "GET" && r.URL.Path == "/api/questions":
+			json.NewEncoder(w).Encode(map[string]any{"items": pool, "total": len(pool)})
+		case r.Method == "POST" && r.URL.Path == "/api/papers":
+			paperCalls++
+			var body struct {
+				QuestionIDs []string `json:"question_ids"`
+			}
+			json.NewDecoder(r.Body).Decode(&body)
+			posted = body.QuestionIDs
+			json.NewEncoder(w).Encode(map[string]any{"id": "paper-1", "question_count": len(body.QuestionIDs)})
+		default:
+			w.WriteHeader(404)
+		}
+	})
+	exec := setupBuilderExec(t, srv.URL)
+	uid := uuid.New()
+	res := exec.Execute(context.Background(), ToolNameBuildPaper, map[string]any{
+		"exam_scope_id":       "scope-1",
+		"name":                "妇产科测验",
+		"knowledge_point_ids": []any{"kp-1"},
+		"total_count":         3.0,
+		"type_distribution":   map[string]any{"single_choice": 2.0, "fill_in": 1.0},
+	}, tools.ExecutionContext{UserID: &uid}, "")
+	if res.Error != nil {
+		t.Fatalf("unexpected error: %+v", res.Error)
+	}
+	if paperCalls != 1 {
+		t.Fatalf("expected 1 POST /api/papers, got %d", paperCalls)
+	}
+	if got, _ := res.ResultJSON["question_count"].(int); got != 3 {
+		t.Errorf("question_count: want 3 got %v", res.ResultJSON["question_count"])
+	}
+	if len(posted) != 3 {
+		t.Fatalf("posted ids: want 3 got %v", posted)
+	}
+	sc, fi := 0, 0
+	for _, id := range posted {
+		switch {
+		case strings.HasPrefix(id, "sc-"):
+			sc++
+		case strings.HasPrefix(id, "fi-"):
+			fi++
+		}
+	}
+	if sc != 2 || fi != 1 {
+		t.Errorf("distribution not honored: single_choice=%d fill_in=%d (want 2/1), ids=%v", sc, fi, posted)
+	}
+}
+
+func TestBuildPaper_HonorsKnowledgePointDistribution(t *testing.T) {
+	// Pool spans two knowledge points; spec asks for 2 from kp-A and 1 from kp-B.
+	poolA := []map[string]any{
+		{"id": "a-1", "type": "single_choice", "difficulty": "easy", "knowledge_point_id": "kp-A"},
+		{"id": "a-2", "type": "single_choice", "difficulty": "easy", "knowledge_point_id": "kp-A"},
+		{"id": "a-3", "type": "single_choice", "difficulty": "easy", "knowledge_point_id": "kp-A"},
+	}
+	poolB := []map[string]any{
+		{"id": "b-1", "type": "single_choice", "difficulty": "easy", "knowledge_point_id": "kp-B"},
+		{"id": "b-2", "type": "single_choice", "difficulty": "easy", "knowledge_point_id": "kp-B"},
+	}
+	var posted []string
+	srv := minimalExam(t, func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == "GET" && r.URL.Path == "/api/questions":
+			items := poolA
+			if r.URL.Query().Get("knowledge_point_id") == "kp-B" {
+				items = poolB
+			}
+			json.NewEncoder(w).Encode(map[string]any{"items": items, "total": len(items)})
+		case r.Method == "POST" && r.URL.Path == "/api/papers":
+			var body struct {
+				QuestionIDs []string `json:"question_ids"`
+			}
+			json.NewDecoder(r.Body).Decode(&body)
+			posted = body.QuestionIDs
+			json.NewEncoder(w).Encode(map[string]any{"id": "paper-1"})
+		default:
+			w.WriteHeader(404)
+		}
+	})
+	exec := setupBuilderExec(t, srv.URL)
+	uid := uuid.New()
+	res := exec.Execute(context.Background(), ToolNameBuildPaper, map[string]any{
+		"exam_scope_id":                "scope-1",
+		"name":                         "跨知识点卷",
+		"knowledge_point_ids":          []any{"kp-A", "kp-B"},
+		"total_count":                  3.0,
+		"knowledge_point_distribution": map[string]any{"kp-A": 2.0, "kp-B": 1.0},
+	}, tools.ExecutionContext{UserID: &uid}, "")
+	if res.Error != nil {
+		t.Fatalf("unexpected error: %+v", res.Error)
+	}
+	if len(posted) != 3 {
+		t.Fatalf("posted ids: want 3 got %v", posted)
+	}
+	a, b := 0, 0
+	for _, id := range posted {
+		switch {
+		case strings.HasPrefix(id, "a-"):
+			a++
+		case strings.HasPrefix(id, "b-"):
+			b++
+		}
+	}
+	if a != 2 || b != 1 {
+		t.Errorf("kp distribution not honored: kp-A=%d kp-B=%d (want 2/1), ids=%v", a, b, posted)
+	}
+}
+
+func TestBuildPaper_ReturnsShortageWithoutSaving(t *testing.T) {
+	pool := []map[string]any{
+		{"id": "q-1", "type": "single_choice", "difficulty": "easy", "knowledge_point_id": "kp-1"},
+		{"id": "q-2", "type": "single_choice", "difficulty": "easy", "knowledge_point_id": "kp-1"},
+	}
+	paperCalls := 0
+	srv := minimalExam(t, func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == "GET" && r.URL.Path == "/api/questions":
+			json.NewEncoder(w).Encode(map[string]any{"items": pool, "total": len(pool)})
+		case r.Method == "POST" && r.URL.Path == "/api/papers":
+			paperCalls++
+			json.NewEncoder(w).Encode(map[string]any{"id": "paper-x"})
+		default:
+			w.WriteHeader(404)
+		}
+	})
+	exec := setupBuilderExec(t, srv.URL)
+	uid := uuid.New()
+	res := exec.Execute(context.Background(), ToolNameBuildPaper, map[string]any{
+		"exam_scope_id":       "scope-1",
+		"name":                "测验",
+		"knowledge_point_ids": []any{"kp-1"},
+		"total_count":         5.0,
+	}, tools.ExecutionContext{UserID: &uid}, "")
+	if res.Error != nil {
+		t.Fatalf("unexpected error: %+v", res.Error)
+	}
+	warnings, ok := res.ResultJSON["shortage_warnings"].([]map[string]any)
+	if !ok || len(warnings) == 0 {
+		t.Fatalf("expected shortage_warnings, got %v", res.ResultJSON["shortage_warnings"])
+	}
+	if paperCalls != 0 {
+		t.Errorf("expected no POST /api/papers on shortage, got %d", paperCalls)
+	}
+}
+
 func TestMain(m *testing.M) {
 	// Ensure tests don't pick up real env from shell
 	os.Unsetenv("EXAM_BASE_URL")

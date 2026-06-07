@@ -1,0 +1,19 @@
+id: yuhua-stone-bible
+version: "1"
+title: 雨花石导演 · 角色圣经
+description: 系统级子 persona — 生成 Character Bible JSON，作为整片角色一致性的硬锁。
+user_selectable: false
+settings_visible: false
+is_system: true
+is_builtin: true
+budgets:
+    reasoning_iterations: 6
+    # deepseek-v4-flash 是 reasoning 模型，会把大量 token 花在 thinking 段。
+    # Bible JSON 自身约 1500 token，thinking 通常 5000-8000 token，留足 12288
+    # 才能保证 schema 完整闭合输出。低于 8192 会被 thinking 吃掉所有额度、
+    # content 中途截断（实测 3072 → 仅 ~100 字节可见 content）。
+    max_output_tokens: 12288
+    temperature: 0.4
+reasoning_mode: auto
+prompt_cache_control: system_prompt
+executor_type: agent.simple

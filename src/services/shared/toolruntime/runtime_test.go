@@ -29,6 +29,15 @@ func TestResolveBuiltinArtifactToolsReflectStorageAvailability(t *testing.T) {
 	if _, ok := resolved.ToolNameSet()["image_generate"]; ok {
 		t.Fatal("image_generate should be absent without artifact store")
 	}
+	if _, ok := resolved.ToolNameSet()["video_generate"]; ok {
+		t.Fatal("video_generate should be absent without artifact store")
+	}
+	if _, ok := resolved.ToolNameSet()["video_concat"]; ok {
+		t.Fatal("video_concat should be absent without artifact store")
+	}
+	if _, ok := resolved.ToolNameSet()["frame_extract"]; ok {
+		t.Fatal("frame_extract should be absent without artifact store")
+	}
 
 	resolved = ResolveBuiltin(ResolveInput{ArtifactStoreAvailable: true})
 	if _, ok := resolved.ToolNameSet()["create_artifact"]; !ok {
@@ -39,6 +48,15 @@ func TestResolveBuiltinArtifactToolsReflectStorageAvailability(t *testing.T) {
 	}
 	if _, ok := resolved.ToolNameSet()["image_generate"]; !ok {
 		t.Fatal("image_generate should be present with artifact store")
+	}
+	if _, ok := resolved.ToolNameSet()["video_generate"]; !ok {
+		t.Fatal("video_generate should be present with artifact store")
+	}
+	if _, ok := resolved.ToolNameSet()["video_concat"]; !ok {
+		t.Fatal("video_concat should be present with artifact store")
+	}
+	if _, ok := resolved.ToolNameSet()["frame_extract"]; !ok {
+		t.Fatal("frame_extract should be present with artifact store")
 	}
 }
 
@@ -121,6 +139,7 @@ func TestResolveBuiltinUsesEnvAndProviders(t *testing.T) {
 		"document_write",
 		"edit",
 		"exec_command",
+		"frame_extract",
 		"glob",
 		"grep",
 		"image_generate",
@@ -142,6 +161,8 @@ func TestResolveBuiltinUsesEnvAndProviders(t *testing.T) {
 		"summarize_thread",
 		"terminate_process",
 		"timeline_title",
+		"video_concat",
+		"video_generate",
 		"visualize_read_me",
 		"wait_agent",
 		"web_fetch",

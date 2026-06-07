@@ -5,6 +5,8 @@ import (
 	"time"
 
 	"arkloop/services/worker/internal/tools"
+
+	"github.com/google/uuid"
 )
 
 const (
@@ -82,6 +84,28 @@ func (e *ToolExecutor) Execute(
 		var cancel context.CancelFunc
 		callCtx, cancel = context.WithTimeout(ctx, timeout)
 		defer cancel()
+	}
+
+	// Per-user auth: for servers that must act as the current teacher (e.g. the
+	// exam adapter), mint a short-lived user token and stamp it into the request
+	// context so the HTTP transport sends it as this call's Authorization header.
+	if minter := perUserAuthFor(e.server.ServerID); minter != nil {
+		var userID uuid.UUID
+		if execCtx.UserID != nil {
+			userID = *execCtx.UserID
+		}
+		token, mintErr := minter.Mint(callCtx, userID)
+		if mintErr != nil {
+			return tools.ExecutionResult{
+				Error: &tools.ExecutionError{
+					ErrorClass: ErrorClassMcpProtocolError,
+					Message:    "MCP per-user auth failed: " + mintErr.Error(),
+					Details:    map[string]any{"tool_name": toolName, "server_id": e.server.ServerID},
+				},
+				DurationMs: durationMs(started),
+			}
+		}
+		callCtx = withAuthOverride(callCtx, token)
 	}
 
 	result, err := client.CallTool(callCtx, remoteName, args, timeoutMs)
@@ -163,4 +187,3 @@ func durationMs(started time.Time) int {
 	}
 	return millis
 }
-

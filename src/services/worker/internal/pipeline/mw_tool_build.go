@@ -19,6 +19,9 @@ var runtimeManagedToolNames = map[string]struct{}{
 	"conversation_search":  {},
 	"create_artifact":      {},
 	"document_write":       {},
+	"video_generate":       {},
+	"video_concat":         {},
+	"frame_extract":        {},
 	"markdown_to_pdf":      {},
 	"exec_command":         {},
 	"continue_process":     {},
@@ -252,11 +255,15 @@ func filterAccountScopedAvailability(ctx context.Context, allowlistSet map[strin
 	out := CopyStringSet(allowlistSet)
 	if accountID == uuid.Nil {
 		delete(out, "image_generate")
+		delete(out, "video_generate")
+		delete(out, "audio_tts")
 		return out
 	}
-	if exec, ok := executors["image_generate"]; ok {
-		if checker, ok := exec.(tools.AccountAvailabilityChecker); ok && !checker.IsAvailableForAccount(ctx, accountID) {
-			delete(out, "image_generate")
+	for _, name := range []string{"image_generate", "video_generate", "video_concat", "frame_extract", "audio_tts"} {
+		if exec, ok := executors[name]; ok {
+			if checker, ok := exec.(tools.AccountAvailabilityChecker); ok && !checker.IsAvailableForAccount(ctx, accountID) {
+				delete(out, name)
+			}
 		}
 	}
 	return out

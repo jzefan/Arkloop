@@ -250,6 +250,13 @@ export function AppLayout() {
     queueSkillPrompt(prompt)
   }, [closeSettings, navigate, queueSkillPrompt])
 
+  const handleSidebarPrompt = useCallback((prompt: string) => {
+    closeSettings()
+    closeNotifications()
+    navigate('/')
+    queueSkillPrompt(prompt)
+  }, [closeSettings, closeNotifications, navigate, queueSkillPrompt])
+
   const handleThreadDeleted = useCallback((deletedId: string) => {
     removeThread(deletedId)
     if (location.pathname === `/t/${deletedId}` || location.pathname.startsWith(`/t/${deletedId}/`)) {
@@ -313,6 +320,7 @@ export function AppLayout() {
               onNewThread={handleNewThread}
               onThreadDeleted={handleThreadDeleted}
               beforeNavigateToThread={handleBeforeNavigateToThread}
+              onQuickPrompt={handleSidebarPrompt}
             />
           )}
 

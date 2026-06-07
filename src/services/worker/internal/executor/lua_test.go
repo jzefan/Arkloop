@@ -1962,6 +1962,231 @@ context.set_output(parsed.user_response.mode)
 	}
 }
 
+func TestLuaToolsCallProvidesPipelineContext(t *testing.T) {
+	rc := buildLuaRC(nil)
+	registry := tools.NewRegistry()
+	if err := registry.Register(tools.AgentToolSpec{
+		Name:        "image_generate",
+		Version:     "1",
+		Description: "test tool",
+		RiskLevel:   tools.RiskLevelLow,
+	}); err != nil {
+		t.Fatalf("register tool: %v", err)
+	}
+	dispatcher := tools.NewDispatchingExecutor(registry, tools.NewPolicyEnforcer(registry, tools.AllowlistFromNames([]string{"image_generate"})))
+	if err := dispatcher.Bind("image_generate", stubLuaToolExecutor{
+		execute: func(_ context.Context, _ string, _ map[string]any, execCtx tools.ExecutionContext, _ string) tools.ExecutionResult {
+			if execCtx.PipelineRC == nil {
+				return tools.ExecutionResult{Error: &tools.ExecutionError{
+					ErrorClass: "missing_pipeline_context",
+					Message:    "missing pipeline context",
+				}}
+			}
+			if execCtx.PipelineRC != rc {
+				return tools.ExecutionResult{Error: &tools.ExecutionError{
+					ErrorClass: "wrong_pipeline_context",
+					Message:    "wrong pipeline context",
+				}}
+			}
+			return tools.ExecutionResult{ResultJSON: map[string]any{"ok": true}}
+		},
+	}); err != nil {
+		t.Fatalf("bind tool: %v", err)
+	}
+	rc.ToolExecutor = dispatcher
+
+	evs := runLuaScript(t, `
+local result, err = tools.call("image_generate", json.encode({prompt = "x"}))
+if err then error(err) end
+context.set_output("ok")
+`, rc)
+
+	texts := deltaTexts(evs)
+	if len(texts) == 0 || texts[0] != "ok" {
+		t.Fatalf("unexpected output: %v", texts)
+	}
+}
+
+func TestYuhuaStoneDirectorUsesStylesPicker(t *testing.T) {
+	scriptPath := yuhuaStonePersonaPath(t, "yuhua-stone-director", "agent.lua")
+	script, err := os.ReadFile(scriptPath)
+	if err != nil {
+		t.Fatalf("read yuhua stone director agent lua: %v", err)
+	}
+	stylesPath := yuhuaStonePersonaPath(t, "yuhua-stone-director", "styles.json")
+	stylesJSON, err := os.ReadFile(stylesPath)
+	if err != nil {
+		t.Fatalf("read yuhua stone styles json: %v", err)
+	}
+	for _, clause := range []string{
+		"select_style",
+		"context.ask_user",
+		"style_id",
+		"realistic-documentary",
+		"dreamlike-mystical",
+		"oriental-poetic",
+	} {
+		if !strings.Contains(string(script), clause) && !strings.Contains(string(stylesJSON), clause) {
+			t.Fatalf("style picker missing clause %q", clause)
+		}
+	}
+}
+
+func TestYuhuaStoneDirectorUsesVideoSafeStoneFrames(t *testing.T) {
+	scriptPath := yuhuaStonePersonaPath(t, "yuhua-stone-director", "agent.lua")
+	script, err := os.ReadFile(scriptPath)
+	if err != nil {
+		t.Fatalf("read yuhua stone director agent lua: %v", err)
+	}
+	text := string(script)
+
+	for _, clause := range []string{
+		"video_reference_frame",
+		"NO visible face, NO identifiable face",
+		"the exact uploaded stone remains the main subject",
+		"video_frame_keys",
+	} {
+		if !strings.Contains(text, clause) {
+			t.Fatalf("director must contain video-safe frame clause %q", clause)
+		}
+	}
+	if strings.Contains(text, "base_payload.first_frame = \"artifact:\" .. first_frame_key") {
+		t.Fatal("video first_frame must not use raw shot/tail frames that commonly trigger privacy fallback")
+	}
+}
+
+func TestYuhuaStonePersonasRequireGoddessLevelModernBeauty(t *testing.T) {
+	paths := []string{
+		yuhuaStonePersonaPath(t, "yuhua-stone-vl", "prompt.md"),
+		yuhuaStonePersonaPath(t, "yuhua-stone-storywriter", "prompt.md"),
+		yuhuaStonePersonaPath(t, "yuhua-stone-bible", "prompt.md"),
+	}
+	for _, path := range paths {
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read %s: %v", path, err)
+		}
+		text := string(raw)
+		if !strings.Contains(text, "仙女级别") || !strings.Contains(text, "极致美") {
+			t.Fatalf("%s must require goddess-level modern beauty", path)
+		}
+	}
+}
+
+func TestYuhuaStoneDirectorUsesIntroNarrationAndCrossfade(t *testing.T) {
+	scriptPath := yuhuaStonePersonaPath(t, "yuhua-stone-director", "agent.lua")
+	script, err := os.ReadFile(scriptPath)
+	if err != nil {
+		t.Fatalf("read yuhua stone director agent lua: %v", err)
+	}
+	text := string(script)
+	for _, clause := range []string{
+		"user_intro",
+		"用户输入是上传图片的简单介绍",
+		"render_narration_script",
+		"voice_over_full",
+		"transition = \"crossfade\"",
+	} {
+		if !strings.Contains(text, clause) {
+			t.Fatalf("director must contain continuity/narration clause %q", clause)
+		}
+	}
+}
+
+func TestYuhuaStoneDirectorMixesNarrationIntoFinalMP4(t *testing.T) {
+	scriptPath := yuhuaStonePersonaPath(t, "yuhua-stone-director", "agent.lua")
+	script, err := os.ReadFile(scriptPath)
+	if err != nil {
+		t.Fatalf("read yuhua stone director agent lua: %v", err)
+	}
+	text := string(script)
+	for _, clause := range []string{
+		"AUDIO_TTS_MODEL",
+		"audio_tts",
+		"voice_over_audio",
+		"concat_payload.audio",
+		"audio_mode = \"mix\"",
+		"已混入完整短片",
+	} {
+		if !strings.Contains(text, clause) {
+			t.Fatalf("director must contain narration audio mix clause %q", clause)
+		}
+	}
+
+	personaPath := yuhuaStonePersonaPath(t, "yuhua-stone-director", "persona.yaml")
+	persona, err := os.ReadFile(personaPath)
+	if err != nil {
+		t.Fatalf("read yuhua stone director persona yaml: %v", err)
+	}
+	if !strings.Contains(string(persona), "- audio_tts") {
+		t.Fatal("director persona must allow audio_tts")
+	}
+}
+
+func TestYuhuaStonePromptsPrioritizeAppreciationOverCharacterPlot(t *testing.T) {
+	paths := []string{
+		yuhuaStonePersonaPath(t, "yuhua-stone-vl", "prompt.md"),
+		yuhuaStonePersonaPath(t, "yuhua-stone-storywriter", "prompt.md"),
+		yuhuaStonePersonaPath(t, "yuhua-stone-storyboard", "prompt.md"),
+	}
+	for _, path := range paths {
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read %s: %v", path, err)
+		}
+		text := string(raw)
+		for _, clause := range []string{"鉴赏", "怎么看", "奇在哪里"} {
+			if !strings.Contains(text, clause) {
+				t.Fatalf("%s must prioritize appreciation guidance clause %q", path, clause)
+			}
+		}
+		if !strings.Contains(text, "不是关于人的命运起伏") && !strings.Contains(text, "不要拍成人物微电影") && !strings.Contains(text, "不要写爱情、往事、命运") {
+			t.Fatalf("%s must reject character-plot storytelling", path)
+		}
+	}
+}
+
+func TestYuhuaStonePromptsUseTraditionalStoneAppreciationFramework(t *testing.T) {
+	paths := []string{
+		yuhuaStonePersonaPath(t, "yuhua-stone-vl", "prompt.md"),
+		yuhuaStonePersonaPath(t, "yuhua-stone-storywriter", "prompt.md"),
+		yuhuaStonePersonaPath(t, "yuhua-stone-storyboard", "prompt.md"),
+	}
+	for _, path := range paths {
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read %s: %v", path, err)
+		}
+		text := string(raw)
+		for _, clause := range []string{
+			"瘦、皱、漏、透",
+			"奇、特、险、怪",
+			"形态",
+			"纹理",
+			"颜色",
+			"质地",
+			"意境",
+			"多角度",
+			"湿润",
+			"底座",
+		} {
+			if !strings.Contains(text, clause) {
+				t.Fatalf("%s must include traditional appreciation framework clause %q", path, clause)
+			}
+		}
+	}
+}
+
+func yuhuaStonePersonaPath(t *testing.T, parts ...string) string {
+	t.Helper()
+	_, file, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("failed to resolve test file path")
+	}
+	all := append([]string{filepath.Dir(file), "../../../../personas"}, parts...)
+	return filepath.Clean(filepath.Join(all...))
+}
+
 func industryEducationIndexAgentLuaPath(t *testing.T) string {
 	t.Helper()
 	_, file, _, ok := runtime.Caller(0)

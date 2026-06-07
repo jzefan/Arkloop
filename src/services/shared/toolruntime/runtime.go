@@ -255,8 +255,11 @@ func ResolveBuiltin(input ResolveInput) BuiltinAvailability {
 	if input.ArtifactStoreAvailable {
 		available["create_artifact"] = struct{}{}
 		available["document_write"] = struct{}{}
+		available["frame_extract"] = struct{}{}
 		available["image_generate"] = struct{}{}
 		available["markdown_to_pdf"] = struct{}{}
+		available["video_concat"] = struct{}{}
+		available["video_generate"] = struct{}{}
 	}
 
 	names := make([]string, 0, len(available))

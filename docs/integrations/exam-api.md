@@ -1,5 +1,17 @@
 # ArkLoop ↔ exam — API Contract (v1, frozen)
 
+> **2026-06-01 integration direction**: new external-agent integration must use the MCP boundary:
+>
+> ```text
+> ArkLoop agent
+>   -> Exam MCP Server
+>     -> exam REST/OpenAPI or internal service
+>       -> permission / organization isolation / versioning / audit
+>         -> PostgreSQL
+> ```
+>
+> This v1 REST contract remains frozen as the backend compatibility surface that the Exam MCP server can call internally. ArkLoop personas should not instruct agents to call these REST endpoints directly.
+
 > **Status**: **frozen-v1** (all 9 open questions resolved 2026-05-24; see §Resolution log)
 > **Owner**: jzefan (ArkLoop side) + exam team
 > **Created**: 2026-05-21

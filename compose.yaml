@@ -133,6 +133,9 @@ services:
       ARKLOOP_AUTH_JWT_SECRET: "${ARKLOOP_AUTH_JWT_SECRET}"
       ARKLOOP_RATELIMIT_CAPACITY: "${ARKLOOP_RATELIMIT_CAPACITY:-600}"
       ARKLOOP_RATELIMIT_RATE_PER_MINUTE: "${ARKLOOP_RATELIMIT_RATE_PER_MINUTE:-300}"
+      # 设为 true 完全跳过 ratelimit middleware（仍创建 ipfilter）。
+      # 用于 Redis 故障或长任务流水线（如 yuhua-stone-director）期间暂时关闭限流。
+      ARKLOOP_RATELIMIT_DISABLED: "${ARKLOOP_RATELIMIT_DISABLED:-false}"
     ports:
       - "${ARKLOOP_GATEWAY_PORT:-19000}:19000"
     extra_hosts:
@@ -229,6 +232,9 @@ services:
       ARKLOOP_DATABASE_DIRECT_URL: "postgresql://${ARKLOOP_POSTGRES_USER:-arkloop}:${ARKLOOP_POSTGRES_PASSWORD:?请在 .env 中设置 ARKLOOP_POSTGRES_PASSWORD}@postgres:5432/${ARKLOOP_POSTGRES_DB:-arkloop}"
       ARKLOOP_REDIS_URL: "redis://:${ARKLOOP_REDIS_PASSWORD:-arkloop_redis}@redis:6379/0"
       ARKLOOP_WORKER_CONCURRENCY: "${ARKLOOP_WORKER_CONCURRENCY:-4}"
+      # 多阶段编排 persona（如 yuhua-stone-director）需要拉长 run timeout，
+      # 否则 reaper 会在子 run LLM 调用过程中提前杀掉。
+      ARKLOOP_RUN_TIMEOUT_MINUTES: "${ARKLOOP_RUN_TIMEOUT_MINUTES:-30}"
       # 容器内无宿主机文件系统，MCP 配置从数据库读取
       ARKLOOP_MCP_CONFIG_FILE: ""
       ARKLOOP_STORAGE_BACKEND: "${ARKLOOP_STORAGE_BACKEND:-filesystem}"
@@ -244,6 +250,10 @@ services:
       EXAM_ADMIN_PASSWORD: "${EXAM_ADMIN_PASSWORD:-}"
       ARKLOOP_API_INTERNAL_URL: "${ARKLOOP_API_INTERNAL_URL:-http://api:19001}"
       ARKLOOP_INTERNAL_SERVICE_TOKEN: "${ARKLOOP_INTERNAL_SERVICE_TOKEN:?请在 .env 中设置 ARKLOOP_INTERNAL_SERVICE_TOKEN}"
+      # Exam MCP per-user 鉴权：经 MCP 调 exam 时按老师身份注入现铸 token
+      ARKLOOP_MCP_OIDC_SERVERS: "${ARKLOOP_MCP_OIDC_SERVERS:-}"
+      ARKLOOP_MCP_OIDC_CLIENT_ID: "${ARKLOOP_MCP_OIDC_CLIENT_ID:-exam-web}"
+      ARKLOOP_MCP_OIDC_SCOPES: "${ARKLOOP_MCP_OIDC_SCOPES:-openid exam:read exam:write}"
     extra_hosts:
       - "host.docker.internal:host-gateway"
     dns:

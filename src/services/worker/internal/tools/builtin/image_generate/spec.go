@@ -28,7 +28,7 @@ var LlmSpec = llm.ToolSpec{
 			},
 			"input_images": map[string]any{
 				"type":        "array",
-				"description": "optional source images as artifact references, for example artifact:<key>",
+				"description": "optional source images as artifact references (artifact:<key>) or current-message image attachments (attachment:<key>)",
 				"items": map[string]any{
 					"type": "string",
 				},
@@ -48,6 +48,14 @@ var LlmSpec = llm.ToolSpec{
 			"output_format": map[string]any{
 				"type":        "string",
 				"description": "optional output image format, for example png, jpeg, or webp",
+			},
+			"model_selector": map[string]any{
+				"type":        "string",
+				"description": "optional routing selector to pin a specific image model for this call (overrides account-level image_generative.model). Format: bare model name like \"openai/gpt-5-image-mini\" matches by route.model; or \"credName^modelName\" for exact credential+model pinning.",
+			},
+			"artifact_name": map[string]any{
+				"type":        "string",
+				"description": "optional artifact base name (without extension) to disambiguate multiple image_generate calls within the same run. When omitted, defaults to \"generated-image\" — which means repeated calls in the same run will overwrite each other. Use distinct names like \"character_reference_sheet\" or \"shot_01\" when calling this tool more than once per run.",
 			},
 		},
 		"required":             []string{"prompt"},

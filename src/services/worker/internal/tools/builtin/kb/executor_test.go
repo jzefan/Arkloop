@@ -400,3 +400,76 @@ func TestDeriveChapterKnowledgePointNamesFromHeadings(t *testing.T) {
 		}
 	}
 }
+
+// --- Linked-mode compose core (composeFromExamPool / examQuestionToRow) ---
+
+func TestComposeFromExamPool_HonorsDistribution(t *testing.T) {
+	pool := []map[string]any{
+		{"id": "sc-1", "type": "single_choice", "difficulty": "easy", "knowledge_point_id": "kp-1", "stem": "s1", "answer": "A"},
+		{"id": "sc-2", "type": "single_choice", "difficulty": "medium", "knowledge_point_id": "kp-1", "stem": "s2", "answer": "B"},
+		{"id": "fi-1", "type": "fill_in", "difficulty": "easy", "knowledge_point_id": "kp-1", "stem": "f1", "answer": "x"},
+		{"id": "fi-2", "type": "fill_in", "difficulty": "medium", "knowledge_point_id": "kp-1", "stem": "f2", "answer": "y"},
+	}
+	args := map[string]any{
+		"total_count":       3.0,
+		"type_distribution": map[string]any{"single_choice": 2.0, "fill_in": 1.0},
+	}
+	ids, rows, shortages := composeFromExamPool(pool, args)
+	if len(shortages) != 0 {
+		t.Fatalf("expected no shortages, got %+v", shortages)
+	}
+	if len(ids) != 3 || len(rows) != 3 {
+		t.Fatalf("expected 3 selected, got ids=%d rows=%d", len(ids), len(rows))
+	}
+	sc, fi := 0, 0
+	for _, r := range rows {
+		switch r.Type {
+		case "single_choice":
+			sc++
+		case "fill_in":
+			fi++
+		}
+	}
+	if sc != 2 || fi != 1 {
+		t.Errorf("type distribution not honored: single_choice=%d fill_in=%d (want 2/1)", sc, fi)
+	}
+	// ids must reference real pool entries
+	valid := map[string]bool{"sc-1": true, "sc-2": true, "fi-1": true, "fi-2": true}
+	for _, id := range ids {
+		if !valid[id] {
+			t.Errorf("selected unknown id %q", id)
+		}
+	}
+}
+
+func TestComposeFromExamPool_ReportsShortage(t *testing.T) {
+	pool := []map[string]any{{"id": "q1", "type": "single_choice", "difficulty": "easy"}}
+	ids, rows, shortages := composeFromExamPool(pool, map[string]any{"total_count": 3.0})
+	if ids != nil || rows != nil {
+		t.Fatalf("expected nil ids/rows on shortage, got ids=%v rows=%v", ids, rows)
+	}
+	if len(shortages) != 1 || shortages[0]["message"] == nil {
+		t.Fatalf("expected one total shortage, got %+v", shortages)
+	}
+}
+
+func TestExamQuestionToRow_MapsOptionsAndRenders(t *testing.T) {
+	q := map[string]any{
+		"type": "single_choice", "difficulty": "easy",
+		"stem": "调节月经周期的核心枢纽是", "answer": "B", "explanation": "下丘脑是枢纽",
+		"options": []any{
+			map[string]any{"key": "A", "text": "卵巢"},
+			map[string]any{"key": "B", "text": "下丘脑"},
+		},
+	}
+	row := examQuestionToRow(q)
+	if row.Stem != "调节月经周期的核心枢纽是" || row.Answer != "B" || row.Explanation != "下丘脑是枢纽" {
+		t.Fatalf("unexpected mapping: %+v", row)
+	}
+	md := renderPaperMarkdown("妇产科测验", []questionRow{row})
+	for _, want := range []string{"妇产科测验", "调节月经周期的核心枢纽是", "下丘脑", "B"} {
+		if !strings.Contains(md, want) {
+			t.Errorf("markdown missing %q:\n%s", want, md)
+		}
+	}
+}

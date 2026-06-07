@@ -1,0 +1,791 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CJR-H1.2 · 产教融合智能中枢</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans SC", "PingFang SC", sans-serif;
+            background: #f7f8fa;
+            color: #1a1a1a;
+            height: 100vh;
+            display: flex;
+            overflow: hidden;
+        }
+
+        /* ========== 左侧导航栏 ========== */
+        .sidebar {
+            width: 260px;
+            background: #fff;
+            border-right: 1px solid #e8e8e8;
+            display: flex;
+            flex-direction: column;
+            flex-shrink: 0;
+            user-select: none;
+        }
+        .sidebar-header {
+            padding: 20px 16px 12px;
+        }
+        .logo {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 18px;
+            font-weight: 700;
+            color: #1a1a1a;
+            margin-bottom: 16px;
+        }
+        .logo-icon {
+            width: 28px;
+            height: 28px;
+            background: #1a567d;
+            border-radius: 6px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: #fff;
+            font-size: 12px;
+            font-weight: 700;
+        }
+        .new-chat-btn {
+            width: 100%;
+            padding: 10px 0;
+            border: none;
+            border-radius: 10px;
+            background: #1a567d;
+            color: #fff;
+            font-size: 14px;
+            font-weight: 500;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 6px;
+            transition: background 0.2s;
+        }
+        .new-chat-btn:hover { background: #144a6a; }
+
+        .nav-scroll {
+            flex: 1;
+            overflow-y: auto;
+            padding: 0 12px;
+        }
+        ::-webkit-scrollbar { width: 4px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: #e0e0e0; border-radius: 4px; }
+
+        .nav-group {
+            margin-bottom: 8px;
+        }
+        .nav-group-title {
+            padding: 8px 8px 4px;
+            font-size: 12px;
+            color: #999;
+            font-weight: 500;
+            letter-spacing: 0.5px;
+        }
+        .nav-item {
+            padding: 9px 10px;
+            border-radius: 8px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            font-size: 13px;
+            color: #444;
+            transition: all 0.15s;
+            margin-bottom: 2px;
+        }
+        .nav-item:hover {
+            background: #f5f6f7;
+            color: #1a1a1a;
+        }
+        .nav-item.active {
+            background: #f0f7ff;
+            color: #1a567d;
+            font-weight: 500;
+        }
+        .nav-icon {
+            width: 20px;
+            height: 20px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 15px;
+            flex-shrink: 0;
+        }
+        .nav-text {
+            flex: 1;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        .nav-badge {
+            font-size: 11px;
+            color: #999;
+            background: #f5f5f5;
+            padding: 1px 6px;
+            border-radius: 10px;
+            flex-shrink: 0;
+        }
+
+        .sidebar-footer {
+            padding: 12px;
+            border-top: 1px solid #f0f0f0;
+        }
+        .history-title {
+            font-size: 12px;
+            color: #999;
+            padding: 0 8px 6px;
+            font-weight: 500;
+        }
+        .history-item {
+            padding: 8px 10px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 13px;
+            color: #555;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            transition: background 0.15s;
+            margin-bottom: 2px;
+        }
+        .history-item:hover { background: #f5f6f7; }
+        .history-icon {
+            width: 14px;
+            height: 14px;
+            color: #bbb;
+            flex-shrink: 0;
+        }
+        .history-item span {
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        /* ========== 右侧主区域 ========== */
+        .main {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            min-width: 0;
+            background: #f7f8fa;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .top-bar {
+            height: 52px;
+            display: flex;
+            align-items: center;
+            justify-content: flex-end;
+            padding: 0 24px;
+            flex-shrink: 0;
+        }
+        .top-bar .user {
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            background: #1a567d;
+            color: #fff;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 13px;
+            font-weight: 600;
+            cursor: pointer;
+        }
+
+        /* 首页视图 */
+        .center-wrap {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            padding: 0 24px 40px;
+            overflow-y: auto;
+        }
+        .hero {
+            text-align: center;
+            margin-bottom: 48px;
+        }
+        .hero h1 {
+            font-size: 32px;
+            font-weight: 700;
+            color: #1a1a1a;
+            letter-spacing: -0.5px;
+            margin-bottom: 8px;
+        }
+        .hero-sub {
+            font-size: 14px;
+            color: #999;
+            margin-top: 8px;
+        }
+
+        .input-hero {
+            width: 100%;
+            max-width: 640px;
+            margin-bottom: 36px;
+        }
+        .input-box {
+            background: #fff;
+            border: 1px solid #e0e0e0;
+            border-radius: 16px;
+            padding: 14px 16px;
+            display: flex;
+            align-items: flex-end;
+            gap: 10px;
+            box-shadow: 0 2px 12px rgba(0,0,0,0.04);
+            transition: all 0.3s ease;
+        }
+        .input-box:hover, .input-box:focus-within {
+            border-color: #1a567d;
+            box-shadow: 0 4px 24px rgba(26,86,125,0.08);
+        }
+        .input-box textarea {
+            flex: 1;
+            border: none;
+            outline: none;
+            resize: none;
+            font-size: 15px;
+            line-height: 1.6;
+            min-height: 24px;
+            max-height: 140px;
+            font-family: inherit;
+            color: #1a1a1a;
+        }
+        .input-box textarea::placeholder { color: #bbb; }
+        .input-actions {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            flex-shrink: 0;
+        }
+        .input-icon-btn {
+            width: 32px;
+            height: 32px;
+            border: none;
+            background: transparent;
+            color: #bbb;
+            cursor: pointer;
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.2s;
+            font-size: 18px;
+        }
+        .input-icon-btn:hover { background: #f5f5f5; color: #666; }
+        .input-send-btn {
+            width: 32px;
+            height: 32px;
+            border: none;
+            background: #1a567d;
+            color: #fff;
+            cursor: pointer;
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.2s;
+            font-size: 14px;
+        }
+        .input-send-btn:hover { background: #144a6a; }
+
+        .action-btns {
+            display: flex;
+            gap: 12px;
+            flex-wrap: wrap;
+            justify-content: center;
+            max-width: 640px;
+        }
+        .action-btn {
+            padding: 10px 24px;
+            border-radius: 24px;
+            border: 1px solid #e0e0e0;
+            background: #fff;
+            color: #444;
+            font-size: 14px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s;
+            font-family: inherit;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+        .action-btn:hover {
+            border-color: #1a567d;
+            color: #1a567d;
+            background: #f0f7ff;
+            box-shadow: 0 2px 8px rgba(26,86,125,0.06);
+        }
+
+        /* 对话模式 */
+        .chat-mode {
+            display: none;
+            flex: 1;
+            flex-direction: column;
+            background: #fff;
+        }
+        .chat-mode.active {
+            display: flex;
+        }
+        .chat-header {
+            height: 52px;
+            border-bottom: 1px solid #f0f0f0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 14px;
+            color: #666;
+            font-weight: 500;
+        }
+        .chat-list {
+            flex: 1;
+            overflow-y: auto;
+            padding: 24px 32px;
+        }
+        .msg {
+            max-width: 720px;
+            margin: 0 auto 24px;
+            animation: fadeIn 0.3s ease;
+        }
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(6px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        .msg-user {
+            display: flex;
+            justify-content: flex-end;
+        }
+        .msg-user .bubble {
+            background: #1a567d;
+            color: #fff;
+            padding: 10px 14px;
+            border-radius: 12px 12px 4px 12px;
+            font-size: 14px;
+            line-height: 1.6;
+            max-width: 80%;
+        }
+        .msg-ai {
+            display: flex;
+            gap: 10px;
+        }
+        .msg-ai .avatar {
+            width: 28px;
+            height: 28px;
+            background: #1a567d;
+            color: #fff;
+            border-radius: 6px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 11px;
+            font-weight: 700;
+            flex-shrink: 0;
+        }
+        .msg-ai .bubble {
+            background: #f7f8fa;
+            padding: 12px 16px;
+            border-radius: 12px 12px 12px 4px;
+            font-size: 14px;
+            line-height: 1.7;
+            color: #333;
+            max-width: 80%;
+            white-space: pre-wrap;
+        }
+        .chat-input-wrap {
+            padding: 16px 24px 24px;
+            border-top: 1px solid #f0f0f0;
+            background: #fff;
+        }
+        .chat-input-box {
+            max-width: 720px;
+            margin: 0 auto;
+            border: 1px solid #e0e0e0;
+            border-radius: 12px;
+            padding: 10px 12px;
+            display: flex;
+            align-items: flex-end;
+            gap: 8px;
+            transition: all 0.2s;
+        }
+        .chat-input-box:focus-within {
+            border-color: #1a567d;
+            box-shadow: 0 0 0 3px rgba(26,86,125,0.08);
+        }
+        .chat-input-box textarea {
+            flex: 1;
+            border: none;
+            outline: none;
+            resize: none;
+            font-size: 14px;
+            line-height: 1.6;
+            min-height: 22px;
+            max-height: 120px;
+            font-family: inherit;
+        }
+        .chat-input-box textarea::placeholder { color: #bbb; }
+
+        @media (max-width: 768px) {
+            .sidebar { display: none; }
+            .hero h1 { font-size: 24px; }
+        }
+    </style>
+</head>
+<body>
+
+    <!-- 左侧导航栏 -->
+    <aside class="sidebar">
+        <div class="sidebar-header">
+            <div class="logo">
+                <div class="logo-icon">H1</div>
+                CJR-H1.2
+            </div>
+            <button class="new-chat-btn" onclick="goHome()">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                    <line x1="12" y1="5" x2="12" y2="19"></line>
+                    <line x1="5" y1="12" x2="19" y2="12"></line>
+                </svg>
+                新建会话
+            </button>
+        </div>
+
+        <div class="nav-scroll">
+            <!-- 标准制度 -->
+            <div class="nav-group">
+                <div class="nav-group-title">标准制度</div>
+                <div class="nav-item active" onclick="selectNav(this)">
+                    <div class="nav-icon">📋</div>
+                    <div class="nav-text">标准库</div>
+                </div>
+                <div class="nav-item" onclick="selectNav(this)">
+                    <div class="nav-icon">📑</div>
+                    <div class="nav-text">管理制度政策文件</div>
+                </div>
+                <div class="nav-item" onclick="selectNav(this)">
+                    <div class="nav-icon">🔔</div>
+                    <div class="nav-text">通知通告</div>
+                </div>
+            </div>
+
+            <!-- 项目 -->
+            <div class="nav-group">
+                <div class="nav-group-title">项目</div>
+                <div class="nav-item" onclick="selectNav(this);quickSend('产业学院建设方案')">
+                    <div class="nav-icon">🏫</div>
+                    <div class="nav-text">产业学院</div>
+                    <div class="nav-badge">12</div>
+                </div>
+                <div class="nav-item" onclick="selectNav(this);quickSend('现场工程师培养')">
+                    <div class="nav-icon">🔧</div>
+                    <div class="nav-text">现场工程师</div>
+                    <div class="nav-badge">5</div>
+                </div>
+                <div class="nav-item" onclick="selectNav(this);quickSend('产教融合共同体')">
+                    <div class="nav-icon">🔗</div>
+                    <div class="nav-text">共同体</div>
+                    <div class="nav-badge">8</div>
+                </div>
+            </div>
+
+            <!-- Agent -->
+            <div class="nav-group">
+                <div class="nav-group-title">Agent</div>
+                <div class="nav-item" onclick="selectNav(this);quickSend('@岗策Agent')">
+                    <div class="nav-icon">🤖</div>
+                    <div class="nav-text">岗策</div>
+                    <div class="nav-badge" style="background:#e8f4fd;color:#1a567d;">在线</div>
+                </div>
+                <div class="nav-item" onclick="selectNav(this);quickSend('@课谱Agent')">
+                    <div class="nav-icon">🤖</div>
+                    <div class="nav-text">课谱</div>
+                    <div class="nav-badge" style="background:#e8f4fd;color:#1a567d;">在线</div>
+                </div>
+                <div class="nav-item" onclick="selectNav(this);quickSend('@院建Agent')">
+                    <div class="nav-icon">🤖</div>
+                    <div class="nav-text">院建</div>
+                    <div class="nav-badge" style="background:#f5f5f5;color:#999;">待机</div>
+                </div>
+                <div class="nav-item" onclick="selectNav(this);quickSend('@项治Agent')">
+                    <div class="nav-icon">🤖</div>
+                    <div class="nav-text">项治</div>
+                    <div class="nav-badge" style="background:#fff3e0;color:#f5a623;">忙碌</div>
+                </div>
+            </div>
+
+            <!-- 成效 -->
+            <div class="nav-group">
+                <div class="nav-group-title">成效</div>
+                <div class="nav-item" onclick="selectNav(this);quickSend('产教融合指数')">
+                    <div class="nav-icon">📊</div>
+                    <div class="nav-text">产教融合指数</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 历史会话 -->
+        <div class="sidebar-footer">
+            <div class="history-title">历史会话</div>
+            <div class="history-item" onclick="loadHistory('新能源汽车岗位分析')">
+                <svg class="history-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
+                </svg>
+                <span>新能源汽车岗位分析</span>
+            </div>
+            <div class="history-item" onclick="loadHistory('2024Q2合规校验')">
+                <svg class="history-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
+                </svg>
+                <span>2024Q2合规校验</span>
+            </div>
+            <div class="history-item" onclick="loadHistory('产业学院建设方案')">
+                <svg class="history-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
+                </svg>
+                <span>产业学院建设方案</span>
+            </div>
+        </div>
+    </aside>
+
+    <!-- 右侧主区域 -->
+    <main class="main" id="mainArea">
+        <!-- 首页视图 -->
+        <div class="center-wrap" id="homeView">
+            <div class="hero">
+                <h1>AI赋能产教融合高质量发展</h1>
+                <div class="hero-sub">标准引领 · 智能驱动 · 指数赋能</div>
+            </div>
+
+            <div class="input-hero">
+                <div class="input-box">
+                    <textarea id="mainInput" rows="1" placeholder="输入产教融合指令，或点击下方按钮..." oninput="resize(this)" onkeydown="onKey(event)"></textarea>
+                    <div class="input-actions">
+                        <button class="input-icon-btn" title="附件">+</button>
+                        <button class="input-send-btn" onclick="sendFromHome()">↑</button>
+                    </div>
+                </div>
+            </div>
+
+            <div class="action-btns">
+                <button class="action-btn" onclick="quickSend('研究')">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                        <polyline points="14 2 14 8 20 8"></polyline>
+                        <line x1="16" y1="13" x2="8" y2="13"></line>
+                        <line x1="16" y1="17" x2="8" y2="17"></line>
+                        <polyline points="10 9 9 9 8 9"></polyline>
+                    </svg>
+                    研究
+                </button>
+                <button class="action-btn" onclick="quickSend('项目')">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <rect x="3" y="3" width="7" height="7"></rect>
+                        <rect x="14" y="3" width="7" height="7"></rect>
+                        <rect x="14" y="14" width="7" height="7"></rect>
+                        <rect x="3" y="14" width="7" height="7"></rect>
+                    </svg>
+                    项目
+                </button>
+                <button class="action-btn" onclick="quickSend('案例')">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path>
+                        <circle cx="9" cy="7" r="4"></circle>
+                        <path d="M23 21v-2a4 4 0 0 0-3-3.87"></path>
+                        <path d="M16 3.13a4 4 0 0 1 0 7.75"></path>
+                    </svg>
+                    案例
+                </button>
+                <button class="action-btn" onclick="quickSend('更多')">...</button>
+            </div>
+        </div>
+
+        <!-- 对话模式 -->
+        <div class="chat-mode" id="chatView">
+            <div class="chat-header">AI赋能产教融合高质量发展</div>
+            <div class="chat-list" id="chatList"></div>
+            <div class="chat-input-wrap">
+                <div class="chat-input-box">
+                    <textarea id="chatInput" rows="1" placeholder="继续输入..." oninput="resize(this)" onkeydown="onChatKey(event)"></textarea>
+                    <button class="input-icon-btn" title="附件">+</button>
+                    <button class="input-send-btn" onclick="sendFromChat()">↑</button>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <script>
+        function resize(ta) {
+            ta.style.height = 'auto';
+            ta.style.height = Math.min(ta.scrollHeight, 140) + 'px';
+        }
+        function onKey(e) {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                sendFromHome();
+            }
+        }
+        function onChatKey(e) {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                sendFromChat();
+            }
+        }
+        function selectNav(el) {
+            document.querySelectorAll('.nav-item').forEach(i => i.classList.remove('active'));
+            el.classList.add('active');
+        }
+        function goHome() {
+            document.getElementById('homeView').style.display = 'flex';
+            document.getElementById('chatView').classList.remove('active');
+            document.getElementById('chatList').innerHTML = '';
+            document.getElementById('mainInput').value = '';
+            document.getElementById('mainInput').style.height = 'auto';
+        }
+        function quickSend(text) {
+            enterChat(text);
+        }
+        function enterChat(text) {
+            document.getElementById('homeView').style.display = 'none';
+            document.getElementById('chatView').classList.add('active');
+            if (text) {
+                addMsg(text, 'user');
+                setTimeout(() => reply(text), 600);
+            }
+        }
+        function sendFromHome() {
+            const text = document.getElementById('mainInput').value.trim();
+            if (!text) return;
+            enterChat(text);
+            document.getElementById('mainInput').value = '';
+            document.getElementById('mainInput').style.height = 'auto';
+        }
+        function sendFromChat() {
+            const input = document.getElementById('chatInput');
+            const text = input.value.trim();
+            if (!text) return;
+            addMsg(text, 'user');
+            input.value = '';
+            input.style.height = 'auto';
+            setTimeout(() => reply(text), 600);
+        }
+        function loadHistory(title) {
+            document.getElementById('homeView').style.display = 'none';
+            document.getElementById('chatView').classList.add('active');
+            document.getElementById('chatList').innerHTML = '';
+            addMsg('已加载历史会话「' + title + '」', 'ai');
+        }
+        function addMsg(text, type) {
+            const list = document.getElementById('chatList');
+            const div = document.createElement('div');
+            div.className = 'msg msg-' + type;
+            if (type === 'user') {
+                div.innerHTML = '<div class="bubble">' + esc(text) + '</div>';
+            } else {
+                div.innerHTML = '<div class="avatar">H1</div><div class="bubble">' + esc(text) + '</div>';
+            }
+            list.appendChild(div);
+            list.scrollTop = list.scrollHeight;
+        }
+        function reply(text) {
+            let r = '';
+            if (text.includes('合规')) r = '合规校验结果：
+
+✅ 企业投入 35%（≥30%）
+⚠️ 实习时长 5.2月（需≥6月）
+✅ 双导师 62%（≥50%）
+
+建议：延长实习周期。';
+            else if (text.includes('指数')) r = '2024产教融合指数：
+
+综合 86.9（+3.2）
+
+机制 92.4 ↑
+资源 87.1 ↑
+过程 78.3 ↓
+成果 85.6 ↑
+社会 91.0 ↑';
+            else if (text.includes('岗位') || text.includes('岗策')) r = '新能源汽车岗位分析：
+
+电池工程师  92% ✅
+电控工程师  78% ⚠️
+BMS工程师   65% ❌
+
+建议增加电控与BMS实训。';
+            else if (text.includes('课谱')) r = '课程图谱对齐：
+
+动力电池技术 → 电池工程师  92%
+电机控制技术 → 电控工程师  78%
+车载网络技术 → BMS工程师   65%
+
+3门课程需优化。';
+            else if (text.includes('产业学院')) r = '产业学院项目：
+
+在建：12个
+验收：8个
+运营：5个
+
+本月重点：新能源汽车产业学院中期验收。';
+            else if (text.includes('现场工程师')) r = '现场工程师培养：
+
+在培：156人
+结业：89人
+签约企业：23家
+
+本月新增：智能制造方向45人。';
+            else if (text.includes('共同体')) r = '产教融合共同体：
+
+省级：3个
+市级：5个
+
+本月活动：校企合作对接会（6月15日）。';
+            else if (text.includes('研究')) r = '研究中心：
+
+• 产教融合政策趋势分析
+• 区域产业人才需求预测
+• 专业设置与产业匹配度研究
+
+请输入具体研究方向。';
+            else if (text.includes('项目')) r = '项目管理中心：
+
+• 产业学院（12个）
+• 现场工程师（5个）
+• 共同体（8个）
+
+点击左侧导航可查看详情。';
+            else if (text.includes('案例')) r = '标杆案例库：
+
+• 苏州工业职业技术学院 — 新能源产业学院
+• 无锡科技职业技术学院 — 智能制造共同体
+• 常州信息职业技术学院 — 现场工程师项目
+
+点击可查看详细案例。';
+            else if (text.includes('更多')) r = '更多功能：
+
+• 数据报表导出
+• 多校协同管理
+• 政策订阅推送
+• 智能审批流
+• 第三方系统对接
+
+请联系管理员开通。';
+            else r = '收到。CJR-H1.2 已调度相关智能体处理。
+
+您可以尝试：
+• 合规校验
+• 生成指数
+• 岗位分析
+• 或从左侧选择项目/Agent';
+            addMsg(r, 'ai');
+        }
+        function esc(t) {
+            return t.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+        }
+    </script>
+</body>
+</html>

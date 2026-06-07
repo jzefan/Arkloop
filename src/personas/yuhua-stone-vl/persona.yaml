@@ -1,0 +1,15 @@
+id: yuhua-stone-vl
+version: "1"
+title: 雨花石导演 · 图像理解
+description: 系统级子 persona — 读取一张图片，选定情绪/音乐风格，输出图像理解、氛围、故事概要。
+user_selectable: false
+settings_visible: false
+is_system: true
+is_builtin: true
+budgets:
+    reasoning_iterations: 8
+    max_output_tokens: 2048
+    temperature: 0.6
+reasoning_mode: auto
+prompt_cache_control: system_prompt
+executor_type: agent.simple
