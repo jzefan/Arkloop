@@ -1,4 +1,3 @@
-# syntax=docker/dockerfile:1
 # Sandbox microVM rootfs (Firecracker)
 #
 # 输出: python3.12.ext4

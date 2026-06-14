@@ -1,4 +1,3 @@
-# syntax=docker/dockerfile:1
 # sandbox-agent 容器镜像
 # 用于 Docker sandbox 后端，容器内运行 sandbox-agent 以 TCP 模式监听。
 #

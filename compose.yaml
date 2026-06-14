@@ -1,5 +1,13 @@
+# 统一容器日志上限：单文件 10MB、最多 3 个 → 每容器最多 ~30MB，防止日志撑满磁盘
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
 services:
   postgres:
+    logging: *default-logging
     image: pgvector/pgvector:pg16
     restart: unless-stopped
     command: >
@@ -19,6 +27,7 @@ services:
       retries: 20
 
   redis:
+    logging: *default-logging
     image: redis:7-alpine
     restart: unless-stopped
     command: >
@@ -34,6 +43,7 @@ services:
       retries: 20
 
   seaweedfs:
+    logging: *default-logging
     image: chrislusf/seaweedfs:4.17
     restart: unless-stopped
     profiles:
@@ -59,6 +69,7 @@ services:
       retries: 20
 
   migrate:
+    logging: *default-logging
     build:
       context: .
       dockerfile: src/services/api/Dockerfile
@@ -74,6 +85,7 @@ services:
     restart: "no"
 
   api:
+    logging: *default-logging
     build:
       context: .
       dockerfile: src/services/api/Dockerfile
@@ -120,6 +132,7 @@ services:
       retries: 20
 
   gateway:
+    logging: *default-logging
     build:
       context: .
       dockerfile: src/services/gateway/Dockerfile
@@ -152,6 +165,7 @@ services:
       retries: 20
 
   console-lite:
+    logging: *default-logging
     build:
       context: .
       dockerfile: src/apps/console-lite/Dockerfile
@@ -165,6 +179,7 @@ services:
       retries: 10
 
   console:
+    logging: *default-logging
     build:
       context: .
       dockerfile: src/apps/console/Dockerfile
@@ -180,6 +195,7 @@ services:
       retries: 10
 
   web:
+    logging: *default-logging
     build:
       context: .
       dockerfile: src/apps/web/Dockerfile
@@ -193,6 +209,7 @@ services:
       retries: 10
 
   pgbouncer:
+    logging: *default-logging
     image: edoburu/pgbouncer:v1.25.1-p0
     restart: unless-stopped
     profiles:
@@ -221,6 +238,7 @@ services:
       retries: 20
 
   worker:
+    logging: *default-logging
     build:
       context: .
       dockerfile: src/services/worker/Dockerfile
@@ -232,6 +250,7 @@ services:
       ARKLOOP_DATABASE_DIRECT_URL: "postgresql://${ARKLOOP_POSTGRES_USER:-arkloop}:${ARKLOOP_POSTGRES_PASSWORD:?请在 .env 中设置 ARKLOOP_POSTGRES_PASSWORD}@postgres:5432/${ARKLOOP_POSTGRES_DB:-arkloop}"
       ARKLOOP_REDIS_URL: "redis://:${ARKLOOP_REDIS_PASSWORD:-arkloop_redis}@redis:6379/0"
       ARKLOOP_WORKER_CONCURRENCY: "${ARKLOOP_WORKER_CONCURRENCY:-4}"
+      ARKLOOP_BOOKPARSER_TIMEOUT_SECONDS: "${ARKLOOP_BOOKPARSER_TIMEOUT_SECONDS:-600}"
       # 多阶段编排 persona（如 yuhua-stone-director）需要拉长 run timeout，
       # 否则 reaper 会在子 run LLM 调用过程中提前杀掉。
       ARKLOOP_RUN_TIMEOUT_MINUTES: "${ARKLOOP_RUN_TIMEOUT_MINUTES:-30}"
@@ -274,6 +293,7 @@ services:
   # 启用条件：ARKLOOP_SANDBOX_PROVIDER=firecracker（默认）
   # 需要 Linux 宿主 + /dev/kvm + Firecracker 二进制
   sandbox:
+    logging: *default-logging
     build:
       context: .
       dockerfile: src/services/sandbox/Dockerfile
@@ -332,6 +352,7 @@ services:
   # macOS/Windows/无 KVM 环境使用，通过用户态 Docker socket 创建 sandbox 容器
   # 通过专用网络连接 sandbox-agent，默认允许外网访问以支持 git clone / curl 等开发任务
   sandbox-agent-image:
+    logging: *default-logging
     build:
       context: .
       dockerfile: src/services/sandbox/Dockerfile.agent
@@ -342,6 +363,7 @@ services:
     entrypoint: ["/bin/sh", "-lc", "true"]
 
   sandbox-browser-image:
+    logging: *default-logging
     build:
       context: .
       dockerfile: src/services/sandbox/Dockerfile.browser
@@ -352,6 +374,7 @@ services:
     entrypoint: ["/bin/sh", "-lc", "true"]
 
   sandbox-docker:
+    logging: *default-logging
     build:
       context: .
       dockerfile: src/services/sandbox/Dockerfile
@@ -405,6 +428,7 @@ services:
       retries: 5
 
   openviking:
+    logging: *default-logging
     image: ghcr.io/volcengine/openviking:v0.3.3
     restart: unless-stopped
     profiles:
@@ -435,6 +459,7 @@ services:
   # --- SearXNG: Self-hosted metasearch engine ---
   # web_search provider, replaces Tavily API
   searxng:
+    logging: *default-logging
     image: searxng/searxng:latest
     restart: unless-stopped
     entrypoint: ["/bin/sh", "/opt/patch-settings.sh"]
@@ -458,6 +483,7 @@ services:
   # --- Firecrawl: Self-hosted web scraper ---
   # web_fetch provider, replaces Jina/Basic fetch
   firecrawl:
+    logging: *default-logging
     # upstream 不提供版本标签 (https://github.com/firecrawl/firecrawl/issues/1750)
     image: ghcr.io/firecrawl/firecrawl:latest
     restart: unless-stopped
@@ -492,6 +518,7 @@ services:
       start_period: 30s
 
   firecrawl-playwright:
+    logging: *default-logging
     image: ghcr.io/browserless/chromium:v2.42.0
     restart: unless-stopped
     profiles:
@@ -501,6 +528,7 @@ services:
       CONNECTION_TIMEOUT: "60000"
 
   firecrawl-redis:
+    logging: *default-logging
     image: redis:7-alpine
     restart: unless-stopped
     profiles:
@@ -516,6 +544,7 @@ services:
       retries: 20
 
   firecrawl-postgres:
+    logging: *default-logging
     build:
       context: config/firecrawl-postgres
     restart: unless-stopped
@@ -534,6 +563,7 @@ services:
       retries: 10
 
   firecrawl-rabbitmq:
+    logging: *default-logging
     image: rabbitmq:3-alpine
     restart: unless-stopped
     profiles:
@@ -545,6 +575,7 @@ services:
       retries: 10
 
   bridge:
+    logging: *default-logging
     build:
       context: .
       dockerfile: src/services/bridge/Dockerfile

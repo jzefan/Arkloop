@@ -64,9 +64,6 @@ const EPHEMERAL_CACHE_MAX_ITEMS = 900
 export const DEFAULT_PERSONA_KEY = 'normal'
 export const SEARCH_PERSONA_KEY = 'extended-search'
 export const WORK_PERSONA_KEY = 'work'
-export const CJR_DEEPSEEK_FLASH_MODEL = 'deepseek^deepseek-v4-flash'
-export const CJR_DEEPSEEK_PRO_MODEL = 'deepseek^deepseek-v4-pro'
-export const CJR_DEEPSEEK_MODELS = [CJR_DEEPSEEK_FLASH_MODEL, CJR_DEEPSEEK_PRO_MODEL] as const
 
 export type AppMode = 'chat' | 'work'
 
@@ -594,9 +591,7 @@ export function readSelectedModelFromStorage(): string | null {
   if (!canUseLocalStorage()) return null
   try {
     const raw = localStorage.getItem(SELECTED_MODEL_KEY)
-    const value = raw?.trim() || null
-    if (!value) return null
-    return (CJR_DEEPSEEK_MODELS as readonly string[]).includes(value) ? value : CJR_DEEPSEEK_FLASH_MODEL
+    return raw?.trim() || null
   } catch {
     return null
   }
@@ -606,7 +601,7 @@ export function writeSelectedModelToStorage(model: string | null): void {
   if (!canUseLocalStorage()) return
   try {
     if (model) {
-      localStorage.setItem(SELECTED_MODEL_KEY, (CJR_DEEPSEEK_MODELS as readonly string[]).includes(model) ? model : CJR_DEEPSEEK_FLASH_MODEL)
+      localStorage.setItem(SELECTED_MODEL_KEY, model)
     } else {
       localStorage.removeItem(SELECTED_MODEL_KEY)
     }

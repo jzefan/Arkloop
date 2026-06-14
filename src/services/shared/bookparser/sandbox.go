@@ -13,7 +13,11 @@ import (
 	"time"
 )
 
-const DefaultSandboxMaxPages = 0
+const (
+	DefaultSandboxMaxPages       = 0
+	defaultLocalRunnerTimeout    = 10 * time.Minute
+	localRunnerTimeoutSecondsEnv = "ARKLOOP_BOOKPARSER_TIMEOUT_SECONDS"
+)
 
 type RunnerRequest struct {
 	MIME     string
@@ -72,8 +76,20 @@ func DefaultLocalRunner() *LocalRunner {
 	return &LocalRunner{
 		PythonPath: firstNonEmpty(os.Getenv("ARKLOOP_BOOKPARSER_PYTHON"), "python3"),
 		ScriptPath: DefaultRunnerPath(),
-		Timeout:    2 * time.Minute,
+		Timeout:    localRunnerTimeoutFromEnv(),
 	}
+}
+
+func localRunnerTimeoutFromEnv() time.Duration {
+	raw := strings.TrimSpace(os.Getenv(localRunnerTimeoutSecondsEnv))
+	if raw == "" {
+		return defaultLocalRunnerTimeout
+	}
+	timeout, err := time.ParseDuration(raw + "s")
+	if err != nil || timeout <= 0 {
+		return defaultLocalRunnerTimeout
+	}
+	return timeout
 }
 
 func (r *LocalRunner) Run(ctx context.Context, req RunnerRequest) ([]byte, error) {
@@ -83,7 +99,7 @@ func (r *LocalRunner) Run(ctx context.Context, req RunnerRequest) ([]byte, error
 	}
 	timeout := r.Timeout
 	if timeout <= 0 {
-		timeout = 2 * time.Minute
+		timeout = defaultLocalRunnerTimeout
 	}
 	runCtx, cancel := context.WithTimeout(ctxOrBackground(ctx), timeout)
 	defer cancel()

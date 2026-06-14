@@ -1,4 +1,3 @@
-# syntax=docker/dockerfile:1
 FROM golang:1.26-alpine AS builder
 ENV GOPROXY=https://goproxy.cn,https://goproxy.io,https://proxy.golang.org,direct
 ENV GOSUMDB=sum.golang.google.cn

@@ -11,6 +11,7 @@ const (
 	ToolNameDraftQuestions      = "kb_draft_questions"
 	ToolNameSaveQuestions       = "kb_save_questions"
 	ToolNameComposePaper        = "kb_compose_paper"
+	ToolNamePaperWizard         = "kb_paper_wizard"
 )
 
 var ListKnowledgeBasesAgentSpec = tools.AgentToolSpec{
@@ -51,6 +52,30 @@ var ComposePaperAgentSpec = tools.AgentToolSpec{
 	Description: "compose a paper from the paper-building question bank; saves only when confirmed=true",
 	RiskLevel:   tools.RiskLevelMedium,
 	SideEffects: true,
+}
+
+var PaperWizardAgentSpec = tools.AgentToolSpec{
+	Name:        ToolNamePaperWizard,
+	Version:     "1",
+	Description: "render the guided paper-building wizard (pick KB -> pick chapters -> set A1-A4 counts + difficulty); read-only, no save",
+	RiskLevel:   tools.RiskLevelLow,
+	SideEffects: false,
+}
+
+var PaperWizardLlmSpec = llm.ToolSpec{
+	Name: ToolNamePaperWizard,
+	Description: stringPtr("一次性渲染智能组卷向导面板：老师在面板里依次①选知识库 ②选章节(支持全选) ③设 A1-A4 题型数量与整卷难度，最后点'开始生成'把结构化指令发回。" +
+		"组卷/出题流程一进入就调用本工具并用 show_widget 展示返回的 ui_panel，不要再用文字逐条向老师提问。无可用知识库时返回提示面板。"),
+	JSONSchema: map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"workspace_ref": map[string]any{
+				"type":        "string",
+				"description": "可选工作区 ref；省略时列当前 Account 下全部可见、含 ready 文档的知识库。",
+			},
+		},
+		"additionalProperties": false,
+	},
 }
 
 var ListKnowledgePointsLlmSpec = llm.ToolSpec{

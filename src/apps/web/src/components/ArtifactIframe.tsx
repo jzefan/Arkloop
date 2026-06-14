@@ -815,8 +815,7 @@ export const ArtifactIframe = forwardRef<ArtifactIframeHandle, Props>(
         if (event.data?.type !== 'arkloop:artifact:action') return
         const action = event.data.action
         if (action === 'resize' && typeof event.data.height === 'number') {
-          const maxH = iframe.dataset.maxHeight ? Number(iframe.dataset.maxHeight) : 2000
-          iframe.style.height = `${Math.min(event.data.height, maxH)}px`
+          iframe.style.height = `${Math.min(event.data.height, 2000)}px`
           onAction?.({ type: 'resize', height: event.data.height })
           return
         }

@@ -97,6 +97,7 @@ import {
   uploadStagingAttachment,
   isApiError,
   type CollaborationMode,
+  type RunReasoningMode,
   type UploadedThreadAttachment,
 } from '../api'
 import { readAgentUIEvents, type AgentMessage, useAgentClient } from '../agent-ui'
@@ -149,11 +150,10 @@ import {
   type MessageAgentEvent,
   readInputDraftAttachments,
   readThreadWorkFolder,
+  readThreadReasoningMode,
   writeInputDraftAttachments,
   readRunThinkingHint,
   writeRunThinkingHint,
-  CJR_DEEPSEEK_FLASH_MODEL,
-  CJR_DEEPSEEK_MODELS,
 } from '../storage'
 
 const sidePanelWidth = 360
@@ -178,18 +178,6 @@ function isInterruptedRunStatus(status: string | null | undefined): boolean {
 function chooseThinkingHint(hints: readonly string[]): string {
   if (hints.length === 0) return ''
   return hints[Math.floor(Math.random() * hints.length)] ?? hints[0] ?? ''
-}
-
-const CJR_INDUSTRY_PERSONA_KEY = 'industry-education-index'
-
-function normalizeCjrRunPersona(personaKey?: string): string | undefined {
-  return personaKey === CJR_INDUSTRY_PERSONA_KEY ? CJR_INDUSTRY_PERSONA_KEY : undefined
-}
-
-function normalizeCjrRunModel(model?: string | null): string {
-  return model && (CJR_DEEPSEEK_MODELS as readonly string[]).includes(model)
-    ? model
-    : CJR_DEEPSEEK_FLASH_MODEL
 }
 
 function isSameDraftDomain(left: InputDraftScope | null, right: InputDraftScope): boolean {
@@ -1791,6 +1779,12 @@ export const ChatView = memo(function ChatView() {
     return uploads
   }, [])
 
+  const resolveReasoningMode = useCallback((): RunReasoningMode | undefined => {
+    if (!threadId) return undefined
+    const mode = readThreadReasoningMode(threadId)
+    return mode !== 'off' ? mode as RunReasoningMode : undefined
+  }, [threadId])
+
   const appendQueuedPrompt = useCallback((prompt: QueuedPrompt) => {
     setQueuedPrompts((prev) => [...prev, prompt])
   }, [setQueuedPrompts])
@@ -1823,9 +1817,10 @@ export const ChatView = memo(function ChatView() {
       setMessages((prev) => (prev.some((item) => item.id === message.id) ? prev : [...prev, message]))
       const run = await agentClient.createRun({
         threadId,
-        personaId: normalizeCjrRunPersona(prompt.personaKey),
-        modelOverride: normalizeCjrRunModel(prompt.modelOverride),
+        personaId: prompt.personaKey,
+        modelOverride: prompt.modelOverride,
         workDir: prompt.workDir,
+        reasoningMode: prompt.reasoningMode,
         options: { resumeFromRunId: options?.resumeFromRunId },
       })
       writeRunThinkingHint(run.id, hint)
@@ -2022,9 +2017,10 @@ export const ChatView = memo(function ChatView() {
         appendQueuedPrompt(createQueuedPrompt({
           text,
           attachments: queuedAttachments,
-          personaKey: normalizeCjrRunPersona(personaKey),
-          modelOverride: normalizeCjrRunModel(modelOverride),
+          personaKey,
+          modelOverride,
           workDir: resolveThreadWorkFolder(threadId),
+          reasoningMode: resolveReasoningMode(),
         }))
         attachments.forEach((attachment) => revokeDraftAttachment(attachment))
         setAttachments([])
@@ -2068,9 +2064,10 @@ export const ChatView = memo(function ChatView() {
         })
         const run = await agentClient.createRun({
           threadId: forked.id,
-          personaId: normalizeCjrRunPersona(personaKey),
-          modelOverride: normalizeCjrRunModel(modelOverride),
+          personaId: personaKey,
+          modelOverride,
           workDir: resolveThreadWorkFolder(threadId),
+          reasoningMode: readThreadReasoningMode(threadId) !== 'off' ? readThreadReasoningMode(threadId) as RunReasoningMode : undefined,
         })
         writeRunThinkingHint(run.id, hint)
         if (personaKey === SEARCH_PERSONA_KEY) addSearchThreadId(forked.id)
@@ -2121,9 +2118,10 @@ export const ChatView = memo(function ChatView() {
       await waitForThreadModeUpdates()
       const run = await agentClient.createRun({
         threadId,
-        personaId: normalizeCjrRunPersona(personaKey),
-        modelOverride: normalizeCjrRunModel(modelOverride),
+        personaId: personaKey,
+        modelOverride,
         workDir: resolveThreadWorkFolder(threadId),
+        reasoningMode: readThreadReasoningMode(threadId) !== 'off' ? readThreadReasoningMode(threadId) as RunReasoningMode : undefined,
       })
       writeRunThinkingHint(run.id, hint)
       if (personaKey === SEARCH_PERSONA_KEY) addSearchThreadId(threadId)
@@ -2175,6 +2173,7 @@ export const ChatView = memo(function ChatView() {
     waitForThreadModeUpdates,
     queueReadyAttachments,
     resolveThreadWorkFolder,
+    resolveReasoningMode,
   ])
 
   const terminalSseError = useMemo(() => {

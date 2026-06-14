@@ -1,4 +1,3 @@
-# syntax=docker/dockerfile:1
 # Sandbox 服务需要宿主机具备 KVM 支持和 Firecracker 二进制。
 # 运行容器时必须挂载 /dev/kvm 设备和 Firecracker 二进制：
 #   docker run --device /dev/kvm -v /usr/bin/firecracker:/usr/bin/firecracker ...

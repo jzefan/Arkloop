@@ -358,6 +358,15 @@ export function PersonaModelBar({
                 </>
               ) : (
                 <>
+                  <button
+                    type="button"
+                    onClick={() => { onFileInputClick(); setMenuOpen(false) }}
+                    className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm text-[var(--c-text-secondary)] hover:bg-[var(--c-bg-deep)] hover:text-[var(--c-text-primary)]"
+                  >
+                    <Paperclip size={14} style={{ color: 'var(--c-text-secondary)', flexShrink: 0 }} />
+                    {t.addFromLocal}
+                  </button>
+                  <div style={{ height: '1px', background: 'var(--c-border-subtle)', margin: '2px 4px' }} />
                   {personas.map((persona) => {
                     const isActive = selectedPersonaKey === persona.persona_key
                     const icon = persona.persona_key === SEARCH_PERSONA_KEY
@@ -384,6 +393,27 @@ export function PersonaModelBar({
                       </button>
                     )
                   })}
+                  {showLearningMode && (
+                    <button
+                      type="button"
+                      onClick={toggleLearningMode}
+                      disabled={learningModeDisabled}
+                      className="flex w-full items-center justify-between rounded-lg px-3 py-2 text-sm hover:bg-[var(--c-bg-deep)]"
+                      style={{
+                        color: learningModeEnabled ? 'var(--c-text-primary)' : 'var(--c-text-secondary)',
+                        fontWeight: learningModeEnabled ? 500 : 400,
+                        opacity: learningModeDisabled ? 0.55 : undefined,
+                      }}
+                    >
+                      <span style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <BookOpen size={14} style={{ flexShrink: 0 }} />
+                        {t.learningMode}
+                      </span>
+                      {learningModeEnabled && (
+                        <Check size={13} style={{ color: '#4691F6', flexShrink: 0 }} />
+                      )}
+                    </button>
+                  )}
                 </>
               )}
             </div>

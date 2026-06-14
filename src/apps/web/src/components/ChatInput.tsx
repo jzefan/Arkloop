@@ -9,7 +9,6 @@ import {
   DEFAULT_PERSONA_KEY,
   SEARCH_PERSONA_KEY,
   WORK_PERSONA_KEY,
-  CJR_DEEPSEEK_FLASH_MODEL,
   type InputDraftScope,
   readSelectedPersonaKeyFromStorage,
   writeSelectedPersonaKeyToStorage,
@@ -79,6 +78,9 @@ type Props = {
   accessToken?: string
   onAsrError?: (error: unknown) => void
   onPersonaChange?: (personaKey: string) => void
+  // Fires ONLY on explicit user picks from the persona picker (not on mount /
+  // restore / mode-sync). Use this for side effects like auto-starting a flow.
+  onPersonaUserSelect?: (personaKey: string) => void
   onOpenSettings?: (tab: SettingsTab | 'voice') => void
   appMode?: AppMode
   hasMessages?: boolean
@@ -100,37 +102,14 @@ type TextareaSelection = {
   direction: 'forward' | 'backward' | 'none'
 }
 
-const CJR_INDUSTRY_PERSONA_KEY = 'industry-education-index'
-const CJR_INDUSTRY_PERSONA_NAME = '双高产教融合评估'
-
-function createCjrIndustryPersona(): SelectablePersona {
-  return {
-    persona_key: CJR_INDUSTRY_PERSONA_KEY,
-    selector_name: CJR_INDUSTRY_PERSONA_NAME,
-    selector_order: 0,
-  }
-}
-
-function filterCjrSelectablePersonas(personas: SelectablePersona[]): SelectablePersona[] {
-  const matched = personas.find((persona) =>
-    persona.persona_key === CJR_INDUSTRY_PERSONA_KEY ||
-    persona.selector_name === CJR_INDUSTRY_PERSONA_NAME
-  )
-  if (!matched) return [createCjrIndustryPersona()]
-  return [{
-    ...matched,
-    persona_key: CJR_INDUSTRY_PERSONA_KEY,
-    selector_name: CJR_INDUSTRY_PERSONA_NAME,
-    selector_order: 0,
-  }]
-}
-
 function buildFallbackSelectablePersonas(_selectedPersonaKey: string): SelectablePersona[] {
-  return [createCjrIndustryPersona()]
+  return []
 }
 
-function normalizeCjrSelectedPersona(personaKey: string): string {
-  return personaKey === CJR_INDUSTRY_PERSONA_KEY ? CJR_INDUSTRY_PERSONA_KEY : DEFAULT_PERSONA_KEY
+function pickPreferredPersonaKey(personas: SelectablePersona[], preferred?: string): string {
+  if (preferred && personas.some((persona) => persona.persona_key === preferred)) return preferred
+  if (personas.some((persona) => persona.persona_key === DEFAULT_PERSONA_KEY)) return DEFAULT_PERSONA_KEY
+  return DEFAULT_PERSONA_KEY
 }
 
 export function formatFileSize(bytes: number): string {
@@ -207,6 +186,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
   accessToken,
   onAsrError,
   onPersonaChange,
+  onPersonaUserSelect,
   onOpenSettings,
   appMode,
   hasMessages,
@@ -260,7 +240,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
   const { t } = useLocale()
 
   const [selectablePersonas, setSelectablePersonas] = useState<SelectablePersona[]>([])
-  const [selectedPersonaKey, setSelectedPersonaKey] = useState(() => normalizeCjrSelectedPersona(readSelectedPersonaKeyFromStorage()))
+  const [selectedPersonaKey, setSelectedPersonaKey] = useState(readSelectedPersonaKeyFromStorage)
   const [personaMentionDismissed, setPersonaMentionDismissed] = useState(false)
   const [personaMentionActiveIndex, setPersonaMentionActiveIndex] = useState(0)
   const [focused, setFocused] = useState(false)
@@ -270,7 +250,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
   const [typewriterText, setTypewriterText] = useState('')
   const [workCompactInputWraps, setWorkCompactInputWraps] = useState(false)
   const [textareaFocusRestoreTick, setTextareaFocusRestoreTick] = useState(0)
-  const [selectedModel, setSelectedModel] = useState<string | null>(() => readSelectedModelFromStorage() ?? CJR_DEEPSEEK_FLASH_MODEL)
+  const [selectedModel, setSelectedModel] = useState<string | null>(readSelectedModelFromStorage)
   const compactTextareaWidthRef = useRef<number | null>(null)
   const pendingTextareaFocusRef = useRef<TextareaSelection | null>(null)
   const inputLayoutChangingRef = useRef(false)
@@ -308,10 +288,9 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
     useAttachments({ onAttachFiles, textareaRef })
 
   const persistSelectedPersona = useCallback((personaKey: string) => {
-    const normalized = normalizeCjrSelectedPersona(personaKey)
-    setSelectedPersonaKey(normalized)
-    writeSelectedPersonaKeyToStorage(normalized)
-    onPersonaChange?.(normalized)
+    setSelectedPersonaKey(personaKey)
+    writeSelectedPersonaKeyToStorage(personaKey)
+    onPersonaChange?.(personaKey)
   }, [onPersonaChange])
   // Stable ref to persistSelectedPersona so effects below can call the latest
   // version without depending on its identity. Without this, the
@@ -338,14 +317,16 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
     void listSelectablePersonas(accessToken)
       .then((personas) => {
         if (cancelled) return
-        setSelectablePersonas(filterCjrSelectablePersonas(personas))
+        setSelectablePersonas(personas)
+        if (personas.length === 0) return
+
         const preferredKey = readSelectedPersonaKeyFromStorage()
-        const normalizedKey = normalizeCjrSelectedPersona(preferredKey)
-        if (normalizedKey !== preferredKey) persistSelectedPersonaRef.current(normalizedKey)
+        const nextKey = pickPreferredPersonaKey(personas, preferredKey)
+        if (nextKey !== preferredKey) persistSelectedPersonaRef.current(nextKey)
       })
       .catch(() => {
         if (cancelled) return
-        setSelectablePersonas([createCjrIndustryPersona()])
+        setSelectablePersonas([])
       })
 
     return () => { cancelled = true }
@@ -578,8 +559,10 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
       deactivateMode()
     } else {
       persistSelectedPersona(personaKey)
+      // Explicit user pick — safe to trigger flow side effects (e.g. auto-start).
+      onPersonaUserSelect?.(personaKey)
     }
-  }, [selectedPersonaKey, chipExiting, persistSelectedPersona, deactivateMode])
+  }, [selectedPersonaKey, chipExiting, persistSelectedPersona, deactivateMode, onPersonaUserSelect])
 
   const applyPersonaMentionSelection = useCallback((persona: SelectablePersona) => {
     const nextDraft = draft.replace(/^\s*@[^\s@]*\s*/u, '')
@@ -603,7 +586,9 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
 
   useEffect(() => {
     const id = requestAnimationFrame(() => {
-      if (selectedPersonaKey === SEARCH_PERSONA_KEY) {
+      if (searchMode && selectedPersonaKey !== SEARCH_PERSONA_KEY) {
+        persistSelectedPersona(SEARCH_PERSONA_KEY)
+      } else if (!searchMode && selectedPersonaKey === SEARCH_PERSONA_KEY) {
         persistSelectedPersona(DEFAULT_PERSONA_KEY)
       }
     })
@@ -613,7 +598,9 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
   // sync persona when appMode changes
   useEffect(() => {
     const id = requestAnimationFrame(() => {
-      if (selectedPersonaKey === WORK_PERSONA_KEY) {
+      if (appMode === 'work' && selectedPersonaKey !== WORK_PERSONA_KEY) {
+        persistSelectedPersona(WORK_PERSONA_KEY)
+      } else if (appMode !== 'work' && selectedPersonaKey === WORK_PERSONA_KEY) {
         persistSelectedPersona(DEFAULT_PERSONA_KEY)
       }
     })

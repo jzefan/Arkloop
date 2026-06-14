@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 )
 
 type fakeRunner struct {
@@ -62,5 +63,23 @@ func TestSandboxParserReturnsRunnerError(t *testing.T) {
 	_, err := parser.Parse(context.Background(), strings.NewReader("x"), "image/png")
 	if err == nil || !strings.Contains(err.Error(), "boom") {
 		t.Fatalf("got %v", err)
+	}
+}
+
+func TestDefaultLocalRunnerUsesConfiguredTimeout(t *testing.T) {
+	t.Setenv("ARKLOOP_BOOKPARSER_TIMEOUT_SECONDS", "600")
+
+	runner := DefaultLocalRunner()
+	if runner.Timeout != 10*time.Minute {
+		t.Fatalf("timeout = %s, want 10m", runner.Timeout)
+	}
+}
+
+func TestDefaultLocalRunnerAllowsLargeDocuments(t *testing.T) {
+	t.Setenv("ARKLOOP_BOOKPARSER_TIMEOUT_SECONDS", "")
+
+	runner := DefaultLocalRunner()
+	if runner.Timeout != 10*time.Minute {
+		t.Fatalf("timeout = %s, want 10m", runner.Timeout)
 	}
 }

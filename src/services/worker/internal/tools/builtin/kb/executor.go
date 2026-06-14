@@ -113,6 +113,8 @@ func (e *Executor) Execute(ctx context.Context, toolName string, args map[string
 		return e.executeSaveQuestions(ctx, args, execCtx)
 	case ToolNameComposePaper:
 		return e.executeComposePaper(ctx, args, execCtx)
+	case ToolNamePaperWizard:
+		return e.executePaperWizard(ctx, args, execCtx)
 	default:
 		return errResult(errorNotConfigured, "unknown kb tool: "+toolName)
 	}

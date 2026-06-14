@@ -115,8 +115,6 @@ export function WidgetBlock({ html, title, complete, loadingMessages, compact = 
         compactSpacing={compact}
         style={{
           minHeight: html ? (compact ? '112px' : '120px') : '0px',
-          maxHeight: '60vh',
-          overflow: 'hidden',
           border: 'none',
           borderRadius: '0',
           background: 'transparent',

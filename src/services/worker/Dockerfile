@@ -1,5 +1,3 @@
-# syntax=docker/dockerfile:1
-
 # --- Builder: Debian (glibc) for onnxruntime compatibility ---
 FROM golang:1.26-bookworm AS builder
 ENV GOPROXY=https://goproxy.cn,https://goproxy.io,https://proxy.golang.org,direct
@@ -35,30 +33,34 @@ RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
     go build -ldflags="-s -w" -o /worker ./src/services/worker/cmd/worker
 
-# --- Runtime: Debian slim (glibc) ---
-FROM debian:bookworm-slim
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates tzdata curl \
-    fonts-arphic-uming \
-    fonts-wqy-zenhei \
-    python3 \
-    python3-pip \
-    python3-pil \
-    tesseract-ocr \
-    tesseract-ocr-chi-sim \
-    && rm -rf /var/lib/apt/lists/*
+# --- Runtime: Python slim (Debian/glibc) ---
+FROM python:3.12-slim-bookworm
+ARG PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple
+ARG PIP_DEFAULT_TIMEOUT=180
+
+# OCR, Chinese fonts, and Chromium are optional enhancements. Text-based
+# PDF/DOCX ingestion remains available when a regional apt mirror does not
+# carry one of these packages.
+RUN set -eux; \
+    apt_opts='-o Acquire::ForceIPv4=true -o Acquire::Retries=5 -o Acquire::http::Timeout=60 -o Acquire::https::Timeout=60'; \
+    if apt-get $apt_opts update; then \
+      apt-get $apt_opts install -y --no-install-recommends \
+        fonts-arphic-uming \
+        fonts-wqy-zenhei \
+        tesseract-ocr \
+        tesseract-ocr-chi-sim \
+        chromium \
+      || echo "WARNING: optional OCR/font/Chromium packages unavailable; related features disabled"; \
+    else \
+      echo "WARNING: apt index unavailable; optional OCR/font/Chromium features disabled"; \
+    fi; \
+    rm -rf /var/lib/apt/lists/*
 
 RUN pip3 install --no-cache-dir --break-system-packages \
-    PyMuPDF pdfplumber python-docx pytesseract
-
-# Chromium 单独 RUN，失败时降级为警告而非 build 失败：
-# 1) aliyun mirror 偶发同步落后（尤其 arm64 channel），不应阻塞主链路 build。
-# 2) markdown_to_pdf 是可选工具；缺 chromium 时工具运行时返回 NotConfigured，
-#    不影响题库助手 / OIDC 主链路。
-RUN apt-get update && \
-    (apt-get install -y --no-install-recommends chromium || \
-     echo "WARNING: chromium install failed; markdown_to_pdf disabled at runtime") && \
-    rm -rf /var/lib/apt/lists/*
+        --index-url "$PIP_INDEX_URL" \
+        --timeout "$PIP_DEFAULT_TIMEOUT" \
+        --retries 5 \
+        Pillow PyMuPDF pdfplumber python-docx pytesseract
 
 COPY --from=builder /opt/onnxruntime/lib/libonnxruntime*.so* /usr/lib/
 RUN ldconfig
@@ -69,7 +71,7 @@ RUN ldconfig
 # x86_64 二进制：linux/amd64 镜像直接可用；linux/arm64 镜像下 QEMU 跑得起
 # 但偏慢——若长期跑 arm64，应换 rtk 的 aarch64 release（项目尚未发布）。
 ARG RTK_URL=https://ghfast.top/https://github.com/rtk-ai/rtk/releases/download/v0.40.0/rtk-x86_64-unknown-linux-musl.tar.gz
-RUN (curl -fsSL --retry 3 --retry-delay 2 --max-time 90 "$RTK_URL" -o /tmp/rtk.tar.gz \
+RUN (python3 -c 'import sys, urllib.request; urllib.request.urlretrieve(sys.argv[1], sys.argv[2])' "$RTK_URL" /tmp/rtk.tar.gz \
      && tar -xzf /tmp/rtk.tar.gz -C /usr/local/bin rtk \
      && chmod 755 /usr/local/bin/rtk \
      && rm -f /tmp/rtk.tar.gz) \
@@ -89,7 +91,10 @@ ENV ARKLOOP_BOOKPARSER_RUNNER=/usr/local/share/arkloop/bookparser/bookparser_run
 # 失败时打 warning 但不阻塞 build——video_concat 缺时运行期返回
 # tool.not_configured，不影响主流水线生成单镜视频。
 RUN pip3 install --no-cache-dir --break-system-packages \
-        -i https://pypi.tuna.tsinghua.edu.cn/simple imageio-ffmpeg && \
+        --index-url "$PIP_INDEX_URL" \
+        --timeout "$PIP_DEFAULT_TIMEOUT" \
+        --retries 5 \
+        imageio-ffmpeg && \
     ln -sf "$(python3 -c 'import imageio_ffmpeg; print(imageio_ffmpeg.get_ffmpeg_exe())')" /usr/local/bin/ffmpeg && \
     ffmpeg -version | head -1 \
     || echo "WARNING: imageio-ffmpeg install failed; video_concat will return tool.not_configured at runtime"
